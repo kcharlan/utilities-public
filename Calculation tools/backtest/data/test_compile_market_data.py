@@ -11,7 +11,7 @@ import math
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -358,6 +358,105 @@ class SpliceTests(unittest.TestCase):
         self.assertEqual(rows[56]["quality"], "ok")
 
 
+def invented_fred(first=1954, last=2025):
+    """Algorithmic daily CSV, including empty observations; never source data."""
+    records = [','.join(('observation_date', 'DTB3'))]
+    for year in range(first, last + 1):
+        day = date(year, 1, 1)
+        while day.year == year:
+            records.append(f"{day.isoformat()},{'3' if day.weekday() < 5 else ''}")
+            day += timedelta(days=1)
+    return '\n'.join(records) + '\n'
+
+
+class FredTests(unittest.TestCase):
+    def parse(self, text, end=2025):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'invented.csv'
+            path.write_text(text, encoding='utf-8')
+            return compiler.parse_fred(path, end)
+
+    def test_daily_mean_skips_empty_and_accepts_negative_signed_decimals(self):
+        text = invented_fred().replace('1954-01-01,3', '1954-01-01,-0.05')
+        means = self.parse(text)
+        count = sum(date(1954, 1, 1).__add__(timedelta(days=i)).weekday() < 5 for i in range(365))
+        self.assertEqual(means[1954], round((3 * (count - 1) - .05) / count / 100, 8))
+        self.assertEqual(means[2025], .03)
+        self.assertEqual(self.parse(invented_fred().replace('1954-01-01,3', '"1954-01-01","+3"'))[1954], .03)
+
+    def test_partial_future_year_is_ignored_but_last_year_must_be_complete(self):
+        text = invented_fred()
+        self.assertEqual(self.parse(text + '2026-01-01,3\n')[2025], .03)
+        with self.assertRaisesRegex(ValueError, '2025'):
+            self.parse(invented_fred(last=2024) + '2025-01-01,3\n')
+
+    def test_every_selected_year_requires_count_january_and_december(self):
+        text = invented_fred()
+        for year, month in [(1954, 1), (1982, 12)]:
+            changed = '\n'.join(line for line in text.splitlines() if not line.startswith(f'{year}-{month:02d}-')) + '\n'
+            with self.subTest(year=year), self.assertRaisesRegex(ValueError, str(year)):
+                self.parse(changed)
+        changed = '\n'.join(line for line in text.splitlines() if not line.startswith('2000-')) + '\n'
+        with self.assertRaisesRegex(ValueError, '2000'):
+            self.parse(changed)
+        changed = '\n'.join(line for line in text.splitlines() if not line.startswith(('1990-06-', '1990-07-'))) + '\n'
+        with self.assertRaisesRegex(ValueError, '1990'):
+            self.parse(changed)
+
+    def test_strict_csv_shape_utf8_size_dates_and_values(self):
+        header = ','.join(('observation_date', 'DTB3')) + '\n'
+        for text in ['DATE,DTB3\n', '\uFEFF' + header, header, header + '1954-02-30,3\n', header + '1954-1-01,3\n',
+                     header + '1954-01-01,3\n1954-01-01,3\n',
+                     header + '1954-01-02,3\n1954-01-01,3\n',
+                     header + '1954-01-01,NaN\n', header + '1954-01-01,Infinity\n',
+                     header + '1954-01-01,3,4\n', header + '1954-01-01, 3\n',
+                     header + '1954-01-01,1e3\n', header + '1954-01-01,.\n',
+                     header + '1954-01-01,' + '9' * 400 + '\n']:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                self.parse(text)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'invented.csv'
+            path.write_bytes(b'\xff')
+            with self.assertRaises(ValueError): compiler.validate_source('FRED', path)
+            path.write_text(invented_fred())
+            with mock.patch.object(compiler, 'MAX_DOWNLOAD_BYTES', 10):
+                with self.assertRaisesRegex(ValueError, 'maximum'): compiler.validate_source('FRED', path)
+
+    def test_splice_and_reconciliation_pass_and_fail(self):
+        rows = [{'year': year, 'tbill_tr': None if year < 1928 else .03} for year in range(1872, 2026)]
+        means = self.parse(invented_fred())
+        merged = compiler.merge_fred(rows, means)
+        self.assertIsNone(merged[0]['tbill_dtb3_tr'])
+        self.assertEqual(merged[56]['tbill_dtb3_tr'], rows[56]['tbill_tr'])
+        self.assertEqual(merged[81]['tbill_dtb3_tr'], rows[81]['tbill_tr'])
+        self.assertEqual(merged[82]['tbill_dtb3_tr'], .03)
+        means[1954] += .0000005
+        compiler.merge_fred(rows, means)
+        means[1954] += .000001
+        with self.assertRaisesRegex(ValueError, '1954'): compiler.merge_fred(rows, means)
+
+    def test_manual_cache_and_failed_acquisition_use_csv_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / 'invented-fred.csv'
+            source.write_text(invented_fred())
+            original = source.read_bytes()
+            self.assertEqual(compiler.acquire_source('FRED', compiler.FRED_URL, str(source), False), source)
+            self.assertEqual(source.read_bytes(), original)
+            cached = root / 'DTB3.csv'
+            cached.write_bytes(original)
+            with mock.patch.object(compiler, 'CACHE', root), mock.patch.object(compiler, 'open_source') as opener:
+                self.assertEqual(compiler.acquire_source('FRED', compiler.FRED_URL, None, False), cached)
+                opener.assert_not_called()
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.side_effect = [b'invented invalid CSV', b'']
+            with mock.patch.object(compiler, 'CACHE', root), mock.patch.object(compiler, 'open_source', return_value=response):
+                with self.assertRaisesRegex(RuntimeError, '--fred'):
+                    compiler.acquire_source('FRED', compiler.FRED_URL, None, True)
+            self.assertEqual(cached.read_bytes(), original)
+            self.assertEqual({path.name for path in root.iterdir()}, {'invented-fred.csv', 'DTB3.csv'})
+
+
 class EmitTests(unittest.TestCase):
     def test_csv_uses_empty_string_for_null(self) -> None:
         rows = [
@@ -366,6 +465,7 @@ class EmitTests(unittest.TestCase):
                 "stock_tr": 0.123456789,
                 "bond10_tr": 0.05,
                 "tbill_tr": None,
+                "tbill_dtb3_tr": None,  # Emit always uses the current seven-field schema.
                 "cpi_change": 0.02,
                 "quality": "ok",
             }
@@ -375,14 +475,14 @@ class EmitTests(unittest.TestCase):
             csv_text = (Path(temp_dir) / "market-data.csv").read_text()
         self.assertEqual(
             csv_text,
-            "year,stock_tr,bond10_tr,tbill_tr,cpi_change,quality\n"
-            "1928,0.12345679,0.05,,0.02,ok\n",
+            "year,stock_tr,bond10_tr,tbill_tr,tbill_dtb3_tr,cpi_change,quality\n"
+            "1928,0.12345679,0.05,,,0.02,ok\n",
         )
 
     def test_rejects_non_contiguous_rows(self) -> None:
         rows = [
             {"year": year, "stock_tr": 0.1, "bond10_tr": 0.05, "tbill_tr": 0.03,
-             "cpi_change": 0.02, "quality": "ok"}
+             "tbill_dtb3_tr": 0.03, "cpi_change": 0.02, "quality": "ok"}
             for year in (1928, 1930)
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -392,7 +492,7 @@ class EmitTests(unittest.TestCase):
     def test_json_rejects_non_finite_values(self) -> None:
         rows = [
             {"year": 1928, "stock_tr": math.inf, "bond10_tr": 0.05, "tbill_tr": 0.03,
-             "cpi_change": 0.02, "quality": "ok"}
+             "tbill_dtb3_tr": 0.03, "cpi_change": 0.02, "quality": "ok"}
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(ValueError):
@@ -402,9 +502,9 @@ class EmitTests(unittest.TestCase):
     def test_js_and_csv_have_value_parity(self) -> None:
         rows = [
             {"year": 1928, "stock_tr": 0.123456789, "bond10_tr": 0.05,
-             "tbill_tr": None, "cpi_change": 0.0, "quality": "ok"},
+             "tbill_tr": None, "tbill_dtb3_tr": None, "cpi_change": 0.0, "quality": "ok"},
             {"year": 1929, "stock_tr": -0.1, "bond10_tr": 0.04,
-             "tbill_tr": 0.03, "cpi_change": 0.02, "quality": "ok"},
+             "tbill_tr": 0.03, "tbill_dtb3_tr": 0.04, "cpi_change": 0.02, "quality": "ok"},
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir).resolve()
@@ -414,7 +514,7 @@ class EmitTests(unittest.TestCase):
             with (root / "market-data.csv").open(newline="") as handle:
                 csv_rows = list(csv.DictReader(handle))
         for js_row, csv_row in zip(payload["rows"], csv_rows, strict=True):
-            for key in ("year", "stock_tr", "bond10_tr", "tbill_tr", "cpi_change"):
+            for key in ("year", "stock_tr", "bond10_tr", "tbill_tr", "tbill_dtb3_tr", "cpi_change"):
                 csv_value = None if csv_row[key] == "" else float(csv_row[key])
                 self.assertEqual(float(js_row[key]) if js_row[key] is not None else None, csv_value)
             self.assertEqual(js_row["quality"], csv_row["quality"])
@@ -422,7 +522,7 @@ class EmitTests(unittest.TestCase):
     def test_second_replace_failure_restores_existing_pair(self) -> None:
         rows = [
             {"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.05, "tbill_tr": 0.03,
-             "cpi_change": 0.02, "quality": "ok"}
+             "tbill_dtb3_tr": 0.03, "cpi_change": 0.02, "quality": "ok"}
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir).resolve()
@@ -655,12 +755,14 @@ class GeneratedDateTests(unittest.TestCase):
                 self.assertEqual(failure.exception.code, 2)
 
     def test_main_uses_selected_date_only_for_output_metadata(self) -> None:
-        args = argparse.Namespace(damodaran=None, shiller=None, refresh=False, generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025)
+        args = argparse.Namespace(damodaran=None, shiller=None, fred=None, refresh=False, generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025)
         rows = [{"year": year} for year in range(1872, 2026)]
         damodaran, shiller = {1928: {}}, {1872: {}}
         with (
             mock.patch.object(compiler, "parse_args", return_value=args),
-            mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls")]),
+            mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls"), Path("f.csv")]),
+            mock.patch.object(compiler, "parse_fred", return_value={}),
+            mock.patch.object(compiler, "merge_fred", side_effect=lambda rows, _: rows),
             mock.patch.object(compiler, "parse_damodaran", return_value=(damodaran, pd.DataFrame())),
             mock.patch.object(compiler, "parse_shiller", return_value=shiller),
             mock.patch.object(compiler, "verify_damodaran_anchor"),
@@ -676,10 +778,30 @@ class GeneratedDateTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def test_all_inputs_are_acquired_and_fred_reconciliation_blocks_emission(self):
+        args = argparse.Namespace(damodaran=None, shiller=None, fred='invented.csv', refresh=False,
+                                  generated_date='2026-08-20', output_dir='/synthetic/output', end_year=2025)
+        rows = [{'year': year, 'tbill_tr': None if year < 1928 else .03} for year in range(1872, 2026)]
+        with (mock.patch.object(compiler, 'parse_args', return_value=args),
+              mock.patch.object(compiler, 'acquire_source', side_effect=[Path('d.xls'), Path('s.xls'), Path('f.csv')]) as acquire,
+              mock.patch.object(compiler, 'parse_damodaran', return_value=({}, None)),
+              mock.patch.object(compiler, 'parse_shiller', return_value={}),
+              mock.patch.object(compiler, 'verify_damodaran_anchor'),
+              mock.patch.object(compiler, 'reconcile'),
+              mock.patch.object(compiler, 'splice', return_value=rows),
+              mock.patch.object(compiler, 'parse_fred', return_value={year: .04 for year in range(1954, 2026)}),
+              mock.patch.object(compiler, 'emit') as emit,
+              mock.patch.object(compiler.sys, 'stderr', io.StringIO())):
+            self.assertEqual(compiler.main(), 1)
+        self.assertEqual(acquire.call_count, 3)
+        self.assertEqual(acquire.call_args_list[-1], mock.call('FRED', compiler.FRED_URL, 'invented.csv', False))
+        emit.assert_not_called()
+
     def test_acquires_both_sources_before_parsing(self) -> None:
         args = argparse.Namespace(
             damodaran="damodaran.xls",
             shiller="missing-shiller.xls",
+            fred=None,
             refresh=False,
             generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025,
         )
@@ -717,11 +839,11 @@ class MainTests(unittest.TestCase):
         parse.assert_not_called()
 
     def test_reconciliation_failure_happens_before_any_artifact_write(self) -> None:
-        args = argparse.Namespace(damodaran=None, shiller=None, refresh=False, generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025)
+        args = argparse.Namespace(damodaran=None, shiller=None, fred=None, refresh=False, generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025)
         damodaran = {1928: {"stock_tr": 0.1}}
         with (
             mock.patch.object(compiler, "parse_args", return_value=args),
-            mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls")]),
+            mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls"), Path("f.csv")]),
             mock.patch.object(compiler, "parse_damodaran", return_value=(damodaran, pd.DataFrame())),
             mock.patch.object(compiler, "parse_shiller", return_value={}) as parse_shiller,
             mock.patch.object(compiler, "verify_damodaran_anchor"),

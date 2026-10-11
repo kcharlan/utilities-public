@@ -28,7 +28,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   try {
     if(process.argv.length!==4||process.argv[2]!=='--pair-dir')throw new Error('Expected candidate pair directory');
     const root=path.resolve(process.argv[3]);await guardDirectory(root);
-    const payload=parsePair(await readOwned(path.join(root,'market-data.js')),await readOwned(path.join(root,'market-data.csv')));
+    const payload=parsePair(await readOwned(path.join(root,'market-data.js')),await readOwned(path.join(root,'market-data.csv')),{requireCurrentSchema:true});
     checkHistorical(payload.rows);console.log('Historical controls passed: 69 windows in each allocation.');
   }catch{console.error('Historical candidate validation failed; previous selection is retained.');process.exitCode=1;}
 }

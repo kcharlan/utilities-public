@@ -9,6 +9,9 @@ async function fixture(t) {
  const dataHome=path.join(base,'data home');await fs.mkdir(dataHome,{mode:0o700});
  const calls=[],compiledInputs=[];let revision=0;
  const manual={};for(const id of ['shiller','damodaran']) {manual[id]=path.join(base,id+' invented.xls');await fs.writeFile(manual[id],Buffer.concat([Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]),Buffer.alloc(504,id==='shiller'?17:23)]),{mode:0o644});}
+ // Algorithmic FRED source, distinct from the two legacy workbook formats.
+ const fredText=()=>['observation_date','DTB3'].join(',')+'\n'+Array.from({length:20},(_,i)=>`1954-01-${String(i+1).padStart(2,'0')},${i%3 ? '+3.25' : '-0.05'}`).join('\n')+'\n';
+ manual.fred=path.join(base,'fred invented.csv');await fs.writeFile(manual.fred,fredText(),{mode:0o644});
  for(const target of Object.values(manual))await fs.chmod(target,0o644);
  const hooks={ async run(command,args,options) {
   calls.push({command,args,options});
@@ -16,8 +19,9 @@ async function fixture(t) {
   if(args[0]==='-c') return JSON.stringify({version:'3.14.7',platform:'darwin',machine:'arm64',ready:true,isolated:true});
   if(args[0]?.endsWith('compile_market_data.py')) {
    for(const id of ['shiller','damodaran'])if(!args.includes('--'+id))await fs.writeFile(path.join(options.env.MARKET_ATLAS_DATA_HOME,id==='shiller'?'ie_data.xls':'histretSP.xls'),Buffer.concat([Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]),Buffer.alloc(504,31+revision++)]),{mode:0o600});
+   if(!args.includes('--fred'))await fs.writeFile(path.join(options.env.MARKET_ATLAS_DATA_HOME,'DTB3.csv'),fredText(),{mode:0o600});
    if(args.includes('--acquire-only'))return '';
-   const inputs=new Map();for(const id of ['shiller','damodaran'])if(args.includes('--'+id))inputs.set(id,await fs.readFile(args[args.indexOf('--'+id)+1]));compiledInputs.push({args,inputs});
+   const inputs=new Map();for(const id of ['shiller','damodaran','fred'])if(args.includes('--'+id))inputs.set(id,await fs.readFile(args[args.indexOf('--'+id)+1]));compiledInputs.push({args,inputs});
    const output=args[args.indexOf('--output-dir')+1],pair=inventedPair();for(const [name,bytes]of [['market-data.js',pair.js],['market-data.csv',pair.csv]])await fs.writeFile(path.join(output,name),bytes,{mode:0o600});return '';
   }
   return '';
@@ -37,6 +41,88 @@ test('warm and offline reuse are read-only with zero Python/acquisition/dependen
  const before=await fs.readFile(path.join(f.dataHome,'current.json'));
  const warm=await setupData({...f.options,offline:true});assert.equal(warm.reused,true);assert.deepEqual(f.calls,[]);
  assert.deepEqual(await fs.readFile(path.join(f.dataHome,'current.json')),before);await assert.rejects(fs.stat(path.join(f.dataHome,'.setup.lock')),{code:'ENOENT'});
+});
+test('FRED manual flag forces compilation and CSV snapshots retain source-id names',async t=>{
+ const f=await fixture(t),{setupData,parseArgs}=await api,{retainedInputName}=await contract;
+ await setupData(f.options);f.calls.length=0;
+ const result=await setupData({...f.options,fred:f.manual.fred,offline:true});
+ assert.equal(result.reused,false);assert.equal(parseArgs(['--fred',f.manual.fred]).fred,f.manual.fred);
+ const compile=f.calls.find(call=>call.args?.[0]?.endsWith('compile_market_data.py'));
+ assert.ok(compile.args.includes('--fred'));
+ assert.equal(path.basename(compile.args[compile.args.indexOf('--fred')+1]),retainedInputName('fred'));
+ assert.ok(result.provenance.sources.find(source=>source.id==='fred').path.endsWith('/'+retainedInputName('fred')));
+ const before=await fs.readFile(f.manual.fred);
+ await fs.writeFile(f.manual.fred,before.toString().replace('1954-01-01,-0.05','"1954-01-01","-0.05"'));
+ assert.equal((await setupData({...f.options,fred:f.manual.fred,offline:true})).reused,false);
+});
+test('FRED format validation rejects malformed supplied CSV before mutation',async t=>{
+ const f=await fixture(t),{setupData}=await api;
+ const header=['observation_date','DTB3'].join(',')+'\n';
+ for(const bytes of [Buffer.from('DATE,DTB3\n'),Buffer.from(header+'1954-02-30,3\n'),
+  Buffer.from('\uFEFF'+header+'1954-01-01,3\n'),
+  Buffer.from(header+'1954-01-01,3\n1954-01-01,3\n'),Buffer.from(header+'1954-01-01,NaN\n'),
+  Buffer.from(header+'1954-01-01,3,4\n'),Buffer.from(header+'1954-01-01,1e3\n'),Buffer.from([0xff]),
+  Buffer.alloc(32*1024*1024+1,32)]){
+  await fs.writeFile(f.manual.fred,bytes);await assert.rejects(setupData({...f.options,...f.manual}));
+  assert.deepEqual(f.calls,[]);await assert.rejects(fs.stat(path.join(f.dataHome,'.setup.lock')),{code:'ENOENT'});
+ }
+});
+test('new compilation rejects a legacy-schema regression without changing selection',async t=>{
+ const f=await fixture(t),{setupData}=await api;await setupData(f.options);
+ const before=await fs.readFile(path.join(f.dataHome,'current.json'));
+ const hooks={...f.hooks,run:async(command,args,options)=>{
+  const output=await f.hooks.run(command,args,options);
+  if(args[0]?.endsWith('compile_market_data.py')&&!args.includes('--acquire-only')){
+   const pair=inventedPair({legacy:true}),root=args[args.indexOf('--output-dir')+1];
+   await fs.writeFile(path.join(root,'market-data.js'),pair.js);await fs.writeFile(path.join(root,'market-data.csv'),pair.csv);
+  }return output;
+ }};
+ await assert.rejects(setupData({...f.options,...f.manual,offline:true,hooks}),/tbill_dtb3_tr/);
+ assert.deepEqual(await fs.readFile(path.join(f.dataHome,'current.json')),before);
+});
+test('legacy bundles verify as stale and migrate using unchanged workbooks plus explicit FRED',async t=>{
+ const f=await fixture(t),{setupData}=await api,c=await contract;const initial=await setupData(f.options);
+ // Build an algorithmic legacy snapshot with its original two-input recipe.
+ const pair=inventedPair({legacy:true}),old=structuredClone(initial.provenance),oldRoot=initial.root;
+ await fs.writeFile(path.join(oldRoot,'market-data.js'),pair.js);await fs.writeFile(path.join(oldRoot,'market-data.csv'),pair.csv);
+ const recipePath=path.join(oldRoot,'recipe/data/sources.json'),recipe=JSON.parse(await fs.readFile(recipePath));
+ recipe.sources=recipe.sources.filter(source=>source.id!=='fred');delete recipe.transformations.tbill_dtb3_tr;
+ await fs.writeFile(recipePath,JSON.stringify(recipe)+'\n');
+ old.sources=old.sources.filter(source=>source.id!=='fred');
+ old.files=[{path:'market-data.csv',sha256:c.sha256(pair.csv)},{path:'market-data.js',sha256:c.sha256(pair.js)}];
+ old.dataId=c.fileIdentity(old.files);
+ old.recipeFiles=await Promise.all(c.RECIPE_FILES.map(async name=>({path:name,sha256:c.sha256(await fs.readFile(path.join(oldRoot,'recipe',name)))})));
+ old.recipeId=c.fileIdentity(old.recipeFiles);old.bundleId=c.bundleIdentity(old);
+ await fs.writeFile(path.join(oldRoot,'provenance.json'),JSON.stringify(old)+'\n');
+ const root=path.join(f.dataHome,'datasets',old.bundleId);await fs.rename(oldRoot,root);
+ await fs.writeFile(path.join(f.dataHome,'current.json'),JSON.stringify({schemaVersion:1,bundleId:old.bundleId,dataId:old.dataId,recipeId:old.recipeId})+'\n');
+ const legacy=await c.verifyBundle({...f.options,bundleId:old.bundleId});
+ assert.ok(!Object.hasOwn(legacy.payload.rows[0],'tbill_dtb3_tr'));
+ await assert.rejects(c.verifyBundle({...f.options,bundleId:old.bundleId,requireCurrentRecipe:true}),/stale/);
+ f.calls.length=0;const before=await fs.readFile(path.join(f.dataHome,'current.json'));
+ for(const offline of [true,false]){
+  await assert.rejects(setupData({...f.options,offline}),/Missing retained input/);
+  assert.deepEqual(f.calls,[]);assert.deepEqual(await fs.readFile(path.join(f.dataHome,'current.json')),before);
+ }
+ const next=await setupData({...f.options,fred:f.manual.fred,offline:true});
+ assert.ok(Object.hasOwn(next.payload.rows[0],'tbill_dtb3_tr'));
+ for(const source of old.sources)assert.equal(next.provenance.sources.find(item=>item.id===source.id).sha256,source.sha256);
+ assert.ok(!f.calls.some(call=>call.args?.includes('--acquire-only')));
+});
+for(const target of ['manual','candidate','acquired','retained'])test('FRED integrity remains bound through selection: '+target,async t=>{
+ const f=await fixture(t),{setupData}=await api;const initial=await setupData(f.options);
+ const before=await fs.readFile(path.join(f.dataHome,'current.json'));let captured;
+ const hooks={...f.hooks,run:async(command,args,options)=>{
+  const result=await f.hooks.run(command,args,options);
+  if(args[0]?.endsWith('compile_market_data.py')&&!args.includes('--acquire-only')){
+   captured=args[args.indexOf('--fred')+1];
+   if(target==='manual')await fs.appendFile(f.manual.fred,'1955-01-01,3\n');
+   if(target==='candidate')await fs.appendFile(captured,'1955-01-01,3\n');
+   if(target==='acquired')await fs.appendFile(path.join(options.env.MARKET_ATLAS_DATA_HOME,'DTB3.csv'),'1955-01-01,3\n');
+  }return result;
+ },historical:async()=>{if(target==='retained')await fs.appendFile(path.join(f.dataHome,initial.provenance.sources.find(source=>source.id==='fred').path),'1955-01-01,3\n');}};
+ await assert.rejects(setupData({...f.options,hooks,...(target==='manual'?{fred:f.manual.fred}:{refresh:target==='acquired',generatedDate:'2026-10-01'})}),/input.*changed|input.*hash/i);
+ assert.deepEqual(await fs.readFile(path.join(f.dataHome,'current.json')),before);
 });
 test('setup preserves unrelated site, temporary and legacy entries through warm offline reuse',async t=>{
  const f=await fixture(t),{setupData}=await api;

@@ -811,12 +811,21 @@ test('barbell consumes canonical completed-row stock return without duplicate ar
 });
 
 test('strategies expose depletion and independent frozen frontier range metadata', () => {
+  // Josh has its own gross rate frontier; retain every prior strategy's range.
+  const expected = {
+    fixedReal: ['initialRate', { from: 0.02, to: 0.08, step: 0.0025 }],
+    fixedPercent: ['rate', { from: 0.02, to: 0.08, step: 0.0025 }],
+    guytonKlinger: ['initialRate', { from: 0.02, to: 0.08, step: 0.0025 }],
+    barbell: ['initialRate', { from: 0.02, to: 0.08, step: 0.0025 }],
+    joshTbillFullRefill: ['rate', { from: 0.04, to: 0.12, step: 0.0025 }],
+  };
+  assert.deepEqual(Object.keys(STRATEGIES), Object.keys(expected));
   for (const [id, strategy] of Object.entries(STRATEGIES)) {
     assert.equal(strategy.canDeplete, id !== 'fixedPercent');
-    const key = id === 'fixedPercent' ? 'rate' : 'initialRate';
+    const [key, expectedRange] = expected[id];
     assert.equal(strategy.frontierParamKey, key);
     const range = strategy.paramSchema.find(field => field.key === key).frontierRange;
-    assert.deepEqual(range, { from: 0.02, to: 0.08, step: 0.0025 });
+    assert.deepEqual(range, expectedRange);
     assert.ok(Object.isFrozen(range));
     assert.throws(() => { range.from = 0; }, TypeError);
   }

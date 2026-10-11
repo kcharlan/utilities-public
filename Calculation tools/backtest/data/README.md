@@ -14,7 +14,7 @@ The owner runs setup; agents never acquire data (see the
 [project guide](../README.md)). From the project directory, run
 `npm run setup:data`. Cold setup creates an
 external `.venv` with `python3.14 -m venv --copies`, installs the complete
-reviewed lock, acquires only missing official workbooks, compiles a private
+reviewed lock, acquires only missing official inputs, compiles a private
 candidate and runs the historical acceptance gate. Use `--python EXECUTABLE`
 if the supported interpreter has another command name. Subprocess arguments
 are structured and bounded; no shell or system Python probes/pip are used.
@@ -22,8 +22,8 @@ Timeout and cancellation terminate the process group, including descendants
 that resist termination, before setup releases its private resources.
 
 `npm run setup:data -- --offline` reuses a current verified recipe with zero
-Python/acquisition/dependency calls. `--shiller PATH` or `--damodaran PATH` always
-forces candidate validation, even with a valid current generation. Supply both
+Python/acquisition/dependency calls. `--shiller PATH`, `--damodaran PATH` or `--fred PATH` always
+forces candidate validation, even with a valid current generation. Supply all three
 with a ready venv for entirely offline manual compilation. A missing offline
 input, incompatible venv or missing locked dependency gives a preparation
 error. `--offline --refresh` fails before mutation. `--refresh` uses a separate
@@ -75,8 +75,9 @@ permission modes, ACLs, flags and extended attributes (including
 or metadata are changed. New private containers and files use `0700`/`0600`.
 Setup preserves unrelated site, temporary and legacy entries beneath the data
 home and validates only the files it consumes. Explicit managed sources remain
-restricted to verified `inputs/<sha256>/source.xls` objects and the two known
-fixed-name compatibility caches. Hash-mismatched objects fail without replacing
+restricted to verified `inputs/<sha256>/source.xls` workbook objects,
+`inputs/<sha256>/source.csv` FRED objects and the recipe's fixed-name
+compatibility caches. Hash-mismatched objects fail without replacing
 the originals. Standard venv interpreter links are used only for execution;
 their external targets are never chmodded.
 
@@ -93,7 +94,7 @@ from its source distribution. Do not run the script's shebang directly.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`; a nonempty override
 selects the external local data root. Setup places its compiler venv in `.venv`,
-raw immutable inputs in `inputs/<sha256>/source.xls`, immutable compiled bundles
+raw immutable inputs in `inputs/<sha256>/source.xls` or `source.csv`, immutable compiled bundles
 in `datasets/<bundleId>`, atomic selection in `current.json`, and local builds
 in the flat `site/` directory. Runtime builds are local data-bearing artifacts,
 not public distributables. Preserve older inputs and bundles after refresh.
@@ -132,8 +133,8 @@ See [test commands and browser prerequisites](../tests/README.md).
 
 Full `unittest discover` additionally includes `test_retained_reproduction.py`:
 with bytecode disabled, it checks the current-recipe selected/pinned bundle and
-both retained input hashes through the Node contract, compiles in the same
-compatible venv using both explicit workbooks, the recorded generated date and
+all three retained input hashes through the Node contract, compiles in the same
+compatible venv using two explicit workbooks and FRED CSV, the recorded generated date and
 end year 2025, then compares exact JS/CSV bytes/hashes in private external output.
 Inputs, selector and generation must remain unchanged. This is selected-current
 bundle reproduction; the original August 20 snapshot evidence below remains a
@@ -143,26 +144,53 @@ commands to keep bytecode outside the public source tree.
 
 ## Compiler contract and reproduction
 
-`emit(rows, generated, output_dir)` requires an external output directory. The CLI requires `--output-dir PATH`, supports `--shiller PATH` and
-`--damodaran PATH`, and uses `--end-year 2025` by default. Only the reviewed recipe
+`emit(rows, generated, output_dir)` requires an external output directory. The CLI requires `--output-dir PATH`, supports `--shiller PATH`,
+`--damodaran PATH` and `--fred PATH`, and uses `--end-year 2025` by default. Only the reviewed recipe
 end year is accepted. Later workbook years are fully parsed and validated
 against their matching published geometric anchor before output selection;
 reconciliation remains exactly 1928–2022. Selection retains the 154-row
 1872–2025 output and does not silently advance history. Source recipe/range
 advancement requires review and full historical/browser verification.
 
-For exact reproduction from the recorded old hash-addressed inputs:
+FRED DTB3 uses UTF-8 CSV with the exact header `observation_date,DTB3`.
+Dates must be valid, strictly increasing `YYYY-MM-DD`; values are empty or
+finite signed decimals (negative daily rates are valid). Both compiler and
+setup validate input format and the 32 MiB cap. Retained objects use one
+source-id mapping: Shiller/Damodaran `source.xls`, FRED `source.csv`.
+Manual managed paths use the corresponding hash-addressed filename or the
+recipe's compatibility cache filename (`DTB3.csv` for FRED).
+
+After the existing stock/bond splice, `tbill_dtb3_tr` is null before 1928 and
+copies Damodaran exactly through 1953. From 1954 through 2025 it is the
+arithmetic mean of numeric daily DTB3 percentages, divided by 100 and rounded
+to eight places. Empty observations are skipped. Later years are excluded
+before requiring at least 240 numeric observations and January/December
+coverage in every selected FRED year, including 2025. The 1954–1981 means must
+agree with Damodaran bill returns within 1e-6 decimal or compilation fails.
+This discount-basis rate proxy does not compound within the year.
+
+The current schema is `year,stock_tr,bond10_tr,tbill_tr,tbill_dtb3_tr,cpi_change,quality`.
+Prior six-field pairs still verify so the owner can reuse their retained
+workbooks, but new output must include the DTB3 column. For migration, the
+owner supplies `npm run setup:data -- --fred "<INPUT_DIR>/DTB3.csv"` and builds
+offline. Setup without the first FRED input reports "Missing retained input";
+`--refresh` reacquires all three sources and is not the migration command.
+
+For exact reproduction from a selected seven-field bundle's hash-addressed inputs
+(the original six-field snapshot needs its retained legacy recipe):
 
 ```sh
 "$MARKET_ATLAS_DATA_HOME/.venv/bin/python" data/compile_market_data.py \
   --shiller "$MARKET_ATLAS_DATA_HOME/inputs/SHILLER_SHA256/source.xls" \
   --damodaran "$MARKET_ATLAS_DATA_HOME/inputs/DAMODARAN_SHA256/source.xls" \
+  --fred "$MARKET_ATLAS_DATA_HOME/inputs/FRED_SHA256/source.csv" \
   --output-dir "$MARKET_ATLAS_DATA_HOME/reproduction-candidate" \
-  --end-year 2025 --generated-date 2026-08-20
+  --end-year 2025 --generated-date "<GENERATED_DATE>"
 ```
 
-`SHILLER_SHA256` and `DAMODARAN_SHA256` are conspicuous placeholders: select the
-recorded input hashes from the source notice. `--generated-date` accepts only
+`SHILLER_SHA256`, `DAMODARAN_SHA256` and `FRED_SHA256` are conspicuous placeholders:
+select the input hashes and generated date from the bundle provenance.
+`--generated-date` accepts only
 a valid exact `YYYY-MM-DD` calendar date and otherwise uses today's date.
 It changes metadata only. Backdating is reserved for reproduction from exact
 identified retained inputs, not new acquisition. Explicit-date compiler tests

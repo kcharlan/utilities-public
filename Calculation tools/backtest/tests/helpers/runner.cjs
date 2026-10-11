@@ -3,7 +3,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:
 const http=require('node:http'),{spawn}=require('node:child_process');
 const {makeExpected}=require('./browser-target.cjs');
 const {SOURCE_ROOT,REPO_ROOT,dataOptions}=require('./dataset.cjs');
-const SYNTHETIC_TESTS=Object.freeze(['admission','app-render','browser-target','charts','config-apply','data-contract','format','privacy','setup-data','stats','strategies','structure','theme','window-render','static-build','static-deploy','dataset-helper','runner-contract','browser-contract'].map(n=>n+'.test.js'));
+const SYNTHETIC_TESTS=Object.freeze(['admission','app-render','browser-target','charts','config-apply','data-contract','format','privacy','setup-data','stats','strategies','strategy-baseline','year-end','structure','theme','window-render','static-build','static-deploy','dataset-helper','runner-contract','browser-contract'].map(n=>n+'.test.js'));
 const PYTHON_SYNTHETIC=Object.freeze(['test_compile_market_data','test_external_compiler']);
 const own=(name)=>typeof name==='string'&&name&&!path.isAbsolute(name)&&!/[\\%?#\x00-\x20]/.test(name)&&name.split('/').every(s=>s&&s!=='.'&&s!=='..');
 async function captureInputs(sourceRoot,bundle) {

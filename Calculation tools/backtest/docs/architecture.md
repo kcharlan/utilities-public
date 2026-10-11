@@ -32,7 +32,8 @@ CDN, backend or compilation service. The public checkout deliberately omits
 ## Annual simulation model
 
 The engine accepts validated options and cloned/frozen inputs. Annual rows
-carry stock, ten-year-bond and bill nominal total returns, CPI change and quality.
+carry stock and ten-year-bond nominal total returns, annual bill-rate proxies,
+CPI change and quality.
 Strategy asset requirements constrain available years; missing bill history is
 not fabricated. The compiler's splice, source reconciliation and rounding are
 documented in the [data guide](../data/README.md) and source notice.
@@ -45,19 +46,37 @@ For each year, `runSimulation` uses this order:
    from the selected sleeves before applying returns.
 3. If the requested gross withdrawal exceeds starting assets, record actual
    delivered spending and exhaustion, then stop. That row has zero applied
-   return amounts/fees and no ending CPI update.
+   return amounts/fees and no ending CPI update. For a strategy opting into
+   `settlement: 'yearEnd'`, apply returns and fees first, then compare gross
+   spending with the remaining assets. Its failure row records those actual
+   returns and fees, pays all remaining assets and has no ending CPI update.
 4. Otherwise apply that year's asset returns, charge the annual fee, and execute
    the strategy's dollar/allocation rebalance or the shared annual allocation
    rebalance when applicable.
 5. Update CPI and real ending wealth, append the ledger row, and call the
    optional strategy `afterYear` hook.
 
+Year-end strategies provide `settle(state, ctx)` using frozen start balances,
+post-return/fee balances and requested gross spending. The engine validates
+per-asset withdrawals, then applies ordered transfers with a single tolerance
+based on the year's magnitudes. Small negative roundoff is clamped to zero;
+overdraws fail. This path forbids `withdrawFrom` and rebalance decisions and
+does not execute the shared annual rebalance. Only its ledger rows add
+`settlement` and `transfers`; existing strategy rows retain their format.
+Gross-up/tax arithmetic, notes, CPI validation, completed rows and hooks share
+helpers across both paths.
+
 The tax input is a flat effective rate on withdrawals, not a tax-bracket,
 account-type or cost-basis model. Spending uses beginning-year CPI; real ending
 wealth uses ending-year CPI. The simulation is annual, not a monthly cash-flow
 model. The strategies are fixed real spending, fixed portfolio percentage,
 Guyton–Klinger guardrails, and configurable barbell reserve spending/refill
-rules. Preserve their existing timing and parameter semantics when changing
+rules, and Josh Tbill full refill. The latter sizes spending at year start,
+harvests the year's stock dollar gain after fees, draws the remainder from
+bills (stocks cover shortages), and refills an empty bill sleeve at year end.
+Its spending guardrails and fixed buffer scale with first-year withdrawal;
+the emergency trigger scales with starting balance. Preserve existing timing
+and parameter semantics when changing
 presentation or deployment code.
 
 ## Window, Sweep, Lifestyle and frontier
@@ -98,6 +117,9 @@ non-aborted request; stale results and stale errors cannot overwrite newer
 output. The latest-wins scheduler coalesces control changes to a frame.
 Sweep/frontier jobs yield to the UI and check cancellation. In-memory caches
 include configuration, horizon/start-year and data-generation identity.
+The selected `billSeries` is part of configuration identity for Sweep,
+frontier and pinned comparisons. Generation identity alone does not hash
+observation values and cannot distinguish the two T-bill choices.
 The frontier has its own coordinator and cannot replace Sweep exports.
 
 Controls, pinned comparisons and scenario snapshots stay in memory.
@@ -124,6 +146,15 @@ under `datasets/<bundleId>`, selection in `current.json`, and local builds under
 `site`. The compiler venv and real inputs are never public source.
 The compiled JS assignment is parsed as strict JSON in Node, never evaluated.
 Pair parity, retained recipe bytes, provenance and identities are checked.
+
+The current pair adds `tbill_dtb3_tr` after `tbill_tr`: absent before 1928,
+Damodaran through 1953, then the rounded mean of numeric daily FRED DTB3 rates.
+The default series remains `tbill_tr`; `billSeries: 'dtb3'` selects the new
+column in returns and asset coverage. Both share stock and bond columns.
+Legacy six-field bundles remain readable for prior-selection verification,
+but current compilation/build acceptance requires the seven-field schema.
+Raw FRED input uses `inputs/<sha256>/source.csv`; workbook inputs retain
+`source.xls`. Recipe inventory stays unchanged.
 
 Cold setup prepares the supported external compiler environment and acquires
 missing reviewed official inputs over HTTPS. Warm reuse of the verified current recipe

@@ -57,8 +57,8 @@ and are cleaned after normal completion, errors or cancellation.
 `test:synthetic` runs its explicitly named whole-file invented Node subset and
 both complete invented compiler modules. It does not certify real historical
 or browser acceptance and does not implicitly invoke the root audit suites.
-Full compiler discovery also reproduces the selected pair exactly from both
-retained input workbooks and the recorded compile date, without acquisition or
+Full compiler discovery also reproduces the selected pair exactly from all three
+retained inputs (two workbooks and the FRED CSV) and the recorded compile date, without acquisition or
 selector changes. Missing retained prerequisites fail.
 
 Flat-build and copy-deploy tests cover inventory/bytes, runtime modes,

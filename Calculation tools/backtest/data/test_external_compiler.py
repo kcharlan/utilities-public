@@ -55,17 +55,17 @@ class ExternalCompilerTests(unittest.TestCase):
     def test_acquire_only_finishes_before_any_transform_or_output(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
-            args = argparse.Namespace(output_dir=str(root), damodaran=None, shiller=None,
+            args = argparse.Namespace(output_dir=str(root), damodaran=None, shiller=None, fred=None,
                                       refresh=False, end_year=2025, generated_date="2026-10-01",
                                       acquire_only=True)
             with (mock.patch.object(compiler, "parse_args", return_value=args),
-                  mock.patch.object(compiler, "acquire_source", side_effect=[root / "invented-d.xls", root / "invented-s.xls"]) as acquire,
+                  mock.patch.object(compiler, "acquire_source", side_effect=[root / "invented-d.xls", root / "invented-s.xls", root / "invented-f.csv"]) as acquire,
                   mock.patch.object(compiler, "parse_damodaran", side_effect=AssertionError("transform must not run")) as parse,
                   mock.patch.object(compiler, "emit") as emit,
                   mock.patch.object(compiler.sys, "stdout", io.StringIO()),
                   mock.patch.object(compiler.sys, "stderr", io.StringIO())):
                 self.assertEqual(compiler.main(), 0)
-            self.assertEqual(acquire.call_count, 2)
+            self.assertEqual(acquire.call_count, 3)
             parse.assert_not_called()
             emit.assert_not_called()
             self.assertEqual(list(root.iterdir()), [])
@@ -78,6 +78,7 @@ class ExternalCompilerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
             inputs = {name: root / (name + ".xls") for name in ("damodaran", "shiller")}
+            inputs['fred'] = root / 'invented-f.csv'
             pair = {name: b"invented previous output " + name.encode()
                     for name in ("market-data.js", "market-data.csv")}
             for name, content in pair.items():
@@ -87,16 +88,18 @@ class ExternalCompilerTests(unittest.TestCase):
                 path.write_bytes(b"invented read-only manual source")
                 path.chmod(0o644)
             argv = ["compiler", "--acquire-only", "--output-dir", str(root),
-                    "--damodaran", str(inputs["damodaran"]), "--shiller", str(inputs["shiller"])]
+                    "--damodaran", str(inputs["damodaran"]), "--shiller", str(inputs["shiller"]),
+                    "--fred", str(inputs['fred'])]
             with (mock.patch.object(compiler.sys, "argv", argv),
-                  mock.patch.object(compiler, "validate_workbook") as validate,
+                  mock.patch.object(compiler, "validate_source") as validate,
                   mock.patch.object(compiler, "open_source") as opener,
                   mock.patch.object(compiler, "parse_damodaran") as parse,
                   mock.patch.object(compiler, "emit") as emit,
                   mock.patch.object(compiler.sys, "stdout", io.StringIO())):
                 self.assertEqual(compiler.main(), 0)
             self.assertEqual(validate.call_args_list, [mock.call("Damodaran", inputs["damodaran"]),
-                                                       mock.call("Shiller", inputs["shiller"])])
+                                                       mock.call("Shiller", inputs["shiller"]),
+                                                       mock.call("FRED", inputs['fred'])])
             opener.assert_not_called()
             parse.assert_not_called()
             emit.assert_not_called()
@@ -117,7 +120,7 @@ class ExternalCompilerTests(unittest.TestCase):
             acquired = root / "invented-successful-input.xls"
             acquired.write_bytes(b"invented first acquisition")
             acquired.chmod(0o600)
-            args = argparse.Namespace(output_dir=str(root), damodaran=None, shiller=None,
+            args = argparse.Namespace(output_dir=str(root), damodaran=None, shiller=None, fred=None,
                                       refresh=False, acquire_only=True)
             with (mock.patch.object(compiler, "parse_args", return_value=args),
                   mock.patch.object(compiler, "acquire_source", side_effect=[acquired, RuntimeError("invented second acquisition failure")]),
@@ -209,7 +212,7 @@ class ExternalCompilerTests(unittest.TestCase):
             opener.assert_not_called()
 
     def test_explicit_output_is_private_and_date_reproduction_is_exact(self):
-        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03,
+        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03, "tbill_dtb3_tr": 0.03,
                  "cpi_change": 0.04, "quality": "ok"}]
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve() / "synthetic output"
@@ -222,12 +225,14 @@ class ExternalCompilerTests(unittest.TestCase):
 
     def test_full_controls_run_before_output_selection(self):
         rows = [{"year": year} for year in range(1872, 2027)]
-        args = argparse.Namespace(damodaran=None, shiller=None, refresh=False,
+        args = argparse.Namespace(damodaran=None, shiller=None, fred=None, refresh=False,
                                   generated_date="2026-08-20", output_dir="/synthetic/output", end_year=2025)
         order = []
         with (mock.patch.object(compiler, "parse_args", return_value=args),
               mock.patch.object(compiler, "validate_output_dir", return_value=Path(args.output_dir)),
-              mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls")]),
+              mock.patch.object(compiler, "acquire_source", side_effect=[Path("d.xls"), Path("s.xls"), Path("f.csv")]),
+              mock.patch.object(compiler, "parse_fred", return_value={}),
+              mock.patch.object(compiler, "merge_fred", side_effect=lambda rows, _: rows),
               mock.patch.object(compiler, "parse_damodaran", return_value=({2026: {}}, None)),
               mock.patch.object(compiler, "parse_shiller", return_value={}),
               mock.patch.object(compiler, "verify_damodaran_anchor", side_effect=lambda *_: order.append("anchor")),
@@ -328,7 +333,7 @@ class ExternalCompilerTests(unittest.TestCase):
         build.return_value.open.assert_called_once_with(request, timeout=60)
 
     def test_failed_rollback_retains_last_good_backup_for_manual_recovery(self):
-        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03,
+        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03, "tbill_dtb3_tr": 0.03,
                  "cpi_change": 0.04, "quality": "ok"}]
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve()
@@ -356,7 +361,7 @@ class ExternalCompilerTests(unittest.TestCase):
             self.assertEqual(csv.read_text(), "synthetic old csv")
 
     def test_partial_second_backup_copy_cleans_owned_files_without_changing_pair(self):
-        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03,
+        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03, "tbill_dtb3_tr": 0.03,
                  "cpi_change": 0.04, "quality": "ok"}]
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve()
@@ -380,7 +385,7 @@ class ExternalCompilerTests(unittest.TestCase):
             self.assertTrue(all(p.stat().st_mode & 0o777 == 0o600 for p in output.iterdir()))
 
     def test_partial_candidate_write_cleans_owned_files_without_changing_pair(self):
-        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03,
+        rows = [{"year": 1928, "stock_tr": 0.1, "bond10_tr": 0.02, "tbill_tr": 0.03, "tbill_dtb3_tr": 0.03,
                  "cpi_change": 0.04, "quality": "ok"}]
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve()

@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getDataset } = require('./helpers/dataset.cjs');
 
-const FIELDS = ['year', 'stock_tr', 'bond10_tr', 'tbill_tr', 'cpi_change', 'quality'];
+// Current history exposes both bill bases in stable field order.
+const FIELDS = ['year', 'stock_tr', 'bond10_tr', 'tbill_tr', 'tbill_dtb3_tr', 'cpi_change', 'quality'];
 
 function validateRows(rows) {
   assert.ok(Array.isArray(rows), 'rows must be an array');
@@ -18,10 +19,13 @@ function validateRows(rows) {
     }
     if (row.year < 1928) {
       assert.equal(row.tbill_tr, null, 'pre-1928 bills are unavailable');
+      assert.equal(row.tbill_dtb3_tr, null, 'pre-1928 DTB3 is unavailable');
       assert.equal(row.quality, 'reconstructed', 'pre-1928 quality is reconstructed');
     } else {
       assert.ok(typeof row.tbill_tr === 'number' && Number.isFinite(row.tbill_tr) && row.tbill_tr > -1,
         'modern bills must be a finite decimal greater than -1');
+      assert.ok(typeof row.tbill_dtb3_tr === 'number' && Number.isFinite(row.tbill_dtb3_tr) && row.tbill_dtb3_tr > -1,
+        'modern DTB3 must be a finite decimal greater than -1');
       assert.equal(row.quality, 'ok', 'modern quality is ok');
     }
   }
@@ -33,11 +37,11 @@ function parseCsv(csv) {
   assert.equal(lines.shift(), FIELDS.join(','), 'CSV field order must match JS');
   return lines.map((line) => {
     const cells = line.split(',');
-    assert.equal(cells.length, FIELDS.length, 'CSV row must contain exactly six fields');
+    assert.equal(cells.length, FIELDS.length, 'CSV row must contain exactly seven fields');
     return Object.fromEntries(FIELDS.map((field, index) => {
       const value = cells[index];
       if (field === 'quality') return [field, value];
-      if (field === 'tbill_tr' && value === '') return [field, null];
+      if (field.startsWith('tbill_') && value === '') return [field, null];
       assert.match(value, /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i, `${field} must be a decimal`);
       return [field, Number(value)];
     }));
@@ -52,7 +56,7 @@ test('authentic JS and CSV snapshot has exact annual schema and value parity', a
   const { validDate } = await import('../tools/data_contract.mjs');
   validDate(payload.generated);
   assert.equal(payload.generated, bundle.provenance.generatedDate, 'generation date matches verified provenance');
-  assert.deepEqual(Object.keys(payload.sources), ['stock_tr', 'bond10_tr', 'tbill_tr', 'cpi_change']);
+  assert.deepEqual(Object.keys(payload.sources), FIELDS.slice(1,-1));
   for (const source of Object.values(payload.sources)) assert.ok(typeof source === 'string' && source.length > 0);
   validateRows(payload.rows);
   const csvRows = parseCsv(csv);
@@ -65,7 +69,7 @@ test('authentic JS and CSV snapshot has exact annual schema and value parity', a
 function syntheticRows() {
   return Array.from({ length: 154 }, (_, index) => ({
     year: 1872 + index, stock_tr: 0.11111111, bond10_tr: 0.02222222,
-    tbill_tr: index < 56 ? null : 0.00333333, cpi_change: 0.00444444,
+    tbill_tr: index < 56 ? null : 0.00333333, tbill_dtb3_tr:index < 56 ? null : 0.00333333, cpi_change: 0.00444444,
     quality: index < 56 ? 'reconstructed' : 'ok',
   }));
 }
@@ -84,6 +88,8 @@ test('synthetic dataset defects cannot satisfy the snapshot validator', () => {
     (rows) => { rows[0].quality = 'ok'; },
     (rows) => { rows[56].tbill_tr = null; },
     (rows) => { rows[56].tbill_tr = -1; },
+    (rows) => { rows[0].tbill_dtb3_tr = 0; },
+    (rows) => { rows[56].tbill_dtb3_tr = null; },
     (rows) => { rows[56].quality = 'reconstructed'; },
   ];
   validateRows(syntheticRows());

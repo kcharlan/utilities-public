@@ -8,12 +8,19 @@
   const { comparisonTolerance, spendingProfile } = stats;
 
   const ASSETS = ['stock', 'bond', 'bill'];
-  const RETURN_COLUMNS = {
-    stock: 'stock_tr',
-    bond: 'bond10_tr',
-    bill: 'tbill_tr',
-  };
   const SUM_TOLERANCE = 1e-9;
+
+  function normalizeBillSeries(value = 'damodaran') {
+    if (value !== 'damodaran' && value !== 'dtb3') {
+      throw new RangeError("billSeries must be 'damodaran' or 'dtb3'");
+    }
+    return value;
+  }
+
+  function returnColumns(billSeries) {
+    return { stock: 'stock_tr', bond: 'bond10_tr',
+      bill: normalizeBillSeries(billSeries) === 'dtb3' ? 'tbill_dtb3_tr' : 'tbill_tr' };
+  }
 
   function assertFiniteNumber(value, name) {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -80,6 +87,7 @@
       taxRate: options.taxRate === undefined ? 0 : options.taxRate,
       rebalance: options.rebalance === undefined ? 'annual' : options.rebalance,
       horizon: options.horizon === undefined ? sequenceLength : options.horizon,
+      billSeries: normalizeBillSeries(options.billSeries),
     };
 
     assertFiniteNumber(normalized.startingBalance, 'startingBalance');
@@ -267,21 +275,22 @@
     return { actualAmount, byAsset };
   }
 
-  function applyReturns(balances, yearRow) {
+  function applyReturns(balances, yearRow, billSeries) {
+    const columns = returnColumns(billSeries);
     const balanceBeforeReturns = sumBalances(balances);
     const rates = {};
     const amounts = {};
     for (const asset of ASSETS) {
-      const rate = yearRow[RETURN_COLUMNS[asset]];
+      const rate = yearRow[columns[asset]];
       rates[asset] = rate;
       const missing = rate === null || rate === undefined;
       if (missing && balances[asset] !== 0) {
-        throw new TypeError(`${RETURN_COLUMNS[asset]} for year ${yearRow.year} must be finite for a funded asset`);
+        throw new TypeError(`${columns[asset]} for year ${yearRow.year} must be finite for a funded asset`);
       }
       if (!missing) {
-        assertFiniteNumber(rate, `${RETURN_COLUMNS[asset]} for year ${yearRow.year}; return must be finite and at least -1`);
+        assertFiniteNumber(rate, `${columns[asset]} for year ${yearRow.year}; return must be finite and at least -1`);
         if (rate < -1) {
-          throw new RangeError(`${RETURN_COLUMNS[asset]} for year ${yearRow.year} must be finite and at least -1`);
+          throw new RangeError(`${columns[asset]} for year ${yearRow.year} must be finite and at least -1`);
         }
       }
       const effectiveRate = missing ? 0 : rate;
@@ -496,6 +505,7 @@
 
     const runParams = cloneAndFreeze(params, 'params');
     const rangeOptions = cloneAndFreeze(options, 'options');
+    const columns = returnColumns(normalizeBillSeries(rangeOptions.billSeries));
     let activeAssets = resolveStrategyAssets(strategy, runParams);
     const allocation = rangeOptions.allocation === undefined
       ? runParams.allocation
@@ -526,7 +536,7 @@
       const cpiChange = row.cpi_change;
       let usable = typeof cpiChange === 'number' && Number.isFinite(cpiChange) && cpiChange > -1;
       for (const asset of activeAssets) {
-        const assetReturn = row[RETURN_COLUMNS[asset]];
+        const assetReturn = row[columns[asset]];
         if (typeof assetReturn !== 'number' || !Number.isFinite(assetReturn) || assetReturn < -1) {
           unavailableAssets.add(asset);
           usable = false;
@@ -773,11 +783,112 @@
     return runSimulation(yearSequence, strategy, params, options, 'full');
   }
 
+  function joinNotes(...notes) {
+    return notes.filter(Boolean).join('; ');
+  }
+
+  function requestedSpending(decision, taxRate) {
+    const withdrawal = decision.withdrawal === undefined ? 0 : decision.withdrawal;
+    assertFiniteNumber(withdrawal, 'strategy withdrawal');
+    if (withdrawal < 0) throw new RangeError('strategy withdrawal must not be negative');
+    const gross = withdrawal / (1 - taxRate);
+    assertFiniteNumber(gross, 'gross withdrawal after tax arithmetic');
+    return { withdrawal, gross };
+  }
+
+  function paidSpending(withdrawalResult, taxRate, cpiIndex) {
+    const withdrawalNominal = withdrawalResult.actualAmount * (1 - taxRate);
+    const taxPaid = withdrawalResult.actualAmount - withdrawalNominal;
+    assertFiniteNumber(withdrawalNominal, 'nominal withdrawal after arithmetic');
+    assertFiniteNumber(taxPaid, 'tax paid after arithmetic');
+    const withdrawalReal = withdrawalNominal / cpiIndex;
+    assertFiniteNumber(withdrawalReal, 'real withdrawal after arithmetic');
+    return { withdrawalNominal, withdrawalReal, grossWithdrawal: withdrawalResult.actualAmount, taxPaid };
+  }
+
+  function endingCpi(yearRow, cpiIndex) {
+    assertFiniteNumber(yearRow.cpi_change, `cpi_change for year ${yearRow.year}`);
+    if (yearRow.cpi_change < -1) {
+      throw new RangeError(`cpi_change for year ${yearRow.year} must be at least -1`);
+    }
+    const ending = cpiIndex * (1 + yearRow.cpi_change);
+    assertFiniteNumber(ending, `ending CPI index for year ${yearRow.year}`);
+    if (ending <= 0) throw new RangeError(`CPI index must remain greater than 0 in year ${yearRow.year}`);
+    return ending;
+  }
+
+  function completedAnnualRow(baseRow, yearRow, balances, returnResult, balancesAfterReturns, fees) {
+    const endBalances = copyBalances(balances);
+    const endTotal = sumBalances(endBalances);
+    const endCpiIndex = endingCpi(yearRow, baseRow.cpiIndex);
+    const endTotalReal = endTotal / endCpiIndex;
+    assertFiniteNumber(endTotalReal, `real ending total for year ${yearRow.year}`);
+    return { ...baseRow, returns: returnResult.rates, returnRates: returnResult.rates,
+      returnAmounts: returnResult.amounts, portfolioReturn: returnResult.portfolioReturn,
+      balancesAfterReturns, fees, endBalances, endTotal, endTotalReal, endCpiIndex };
+  }
+
+  function validateYearEndDecision(decision) {
+    if (decision.withdrawFrom !== undefined
+      || (decision.rebalanceTo !== undefined && decision.rebalanceTo !== null)
+      || (decision.rebalanceToDollars !== undefined && decision.rebalanceToDollars !== null)) {
+      throw new TypeError('yearEnd decision must not specify withdrawFrom or rebalance fields');
+    }
+  }
+
+  function applySettlement(balances, settlement, requestedGross, tolerance) {
+    if (!isPlainObject(settlement)) throw new TypeError('settlement must be a plain object');
+    if (!isPlainObject(settlement.withdrawals)) throw new TypeError('settlement.withdrawals must be a plain object');
+    if (Object.keys(settlement.withdrawals).some(asset => !ASSETS.includes(asset))) {
+      throw new RangeError('settlement.withdrawals contains an unknown asset');
+    }
+    if (!Array.isArray(settlement.transfers)) throw new TypeError('settlement.transfers must be an array');
+    if (settlement.notes !== undefined && typeof settlement.notes !== 'string') {
+      throw new TypeError('settlement.notes must be a string');
+    }
+    const byAsset = copyBalances(settlement.withdrawals);
+    for (const asset of ASSETS) {
+      const amount = byAsset[asset];
+      assertFiniteNumber(amount, `settlement.withdrawals.${asset}`);
+      if (amount < 0 || amount > balances[asset] + tolerance) {
+        throw new RangeError(`settlement.withdrawals.${asset} must be non-negative and within its balance`);
+      }
+    }
+    if (Math.abs(sumBalances(byAsset) - requestedGross) > tolerance) {
+      throw new RangeError('settlement.withdrawals must sum to requestedGross');
+    }
+    function subtract(asset, amount, stage) {
+      balances[asset] -= amount;
+      if (balances[asset] < 0 && balances[asset] >= -tolerance) balances[asset] = 0;
+      assertFiniteBalances(balances, stage);
+    }
+    for (const asset of ASSETS) subtract(asset, byAsset[asset], 'after settlement withdrawals');
+    const transfers = [];
+    for (const transfer of settlement.transfers) {
+      if (!isPlainObject(transfer)) throw new TypeError('settlement.transfers entries must be plain objects');
+      const { from, to, amount } = transfer;
+      if (!ASSETS.includes(from) || !ASSETS.includes(to) || from === to) {
+        throw new RangeError('settlement.transfers must use distinct valid assets');
+      }
+      assertFiniteNumber(amount, 'settlement.transfers amount');
+      if (amount < 0 || amount > balances[from] + tolerance) {
+        throw new RangeError('settlement.transfers amount must be non-negative and within its source balance');
+      }
+      subtract(from, amount, 'after settlement transfers');
+      balances[to] += amount;
+      assertFiniteBalances(balances, 'after settlement transfers');
+      transfers.push({ from, to, amount });
+    }
+    return { actualAmount: requestedGross, byAsset, transfers, notes: settlement.notes };
+  }
+
   function runSimulation(yearSequence, strategy, params, options, detail) {
     if (!Array.isArray(yearSequence)) throw new TypeError('yearSequence must be an array');
     if (!strategy || typeof strategy.init !== 'function' || typeof strategy.step !== 'function') {
       throw new TypeError('strategy must provide init() and step()');
     }
+    const yearEnd = strategy.settlement === 'yearEnd';
+    if (yearEnd && typeof strategy.settle !== 'function') throw new TypeError('yearEnd strategy must provide settle()');
 
     const initialized = initializeStrategyPortfolio(strategy, params, options, yearSequence.length);
     const { runOptions, runParams, state } = initialized;
@@ -803,22 +914,32 @@
         options: runOptions,
         params: runParams,
       });
-      const decision = validateDecision(strategy.step(state, context));
-
-      const requestedWithdrawal = decision.withdrawal === undefined ? 0 : decision.withdrawal;
-      assertFiniteNumber(requestedWithdrawal, 'strategy withdrawal');
-      if (requestedWithdrawal < 0) throw new RangeError('strategy withdrawal must not be negative');
-      const requestedGrossWithdrawal = requestedWithdrawal / (1 - runOptions.taxRate);
-      assertFiniteNumber(requestedGrossWithdrawal, 'gross withdrawal after tax arithmetic');
-      const source = validateWithdrawalSource(decision.withdrawFrom);
-      const withdrawalResult = withdraw(balances, requestedGrossWithdrawal, source);
-      const failed = requestedGrossWithdrawal > startTotal;
-      const actualWithdrawalNominal = withdrawalResult.actualAmount * (1 - runOptions.taxRate);
-      const taxPaid = withdrawalResult.actualAmount - actualWithdrawalNominal;
-      assertFiniteNumber(actualWithdrawalNominal, 'nominal withdrawal after arithmetic');
-      assertFiniteNumber(taxPaid, 'tax paid after arithmetic');
-      const withdrawalReal = actualWithdrawalNominal / cpiIndex;
-      assertFiniteNumber(withdrawalReal, 'real withdrawal after arithmetic');
+      const rawDecision = strategy.step(state, context);
+      if (yearEnd && isPlainObject(rawDecision)) validateYearEndDecision(rawDecision);
+      const decision = validateDecision(rawDecision);
+      const { withdrawal: requestedWithdrawal, gross: requestedGrossWithdrawal } = requestedSpending(decision, runOptions.taxRate);
+      const source = yearEnd ? ['stock', 'bill', 'bond'] : validateWithdrawalSource(decision.withdrawFrom);
+      let returnResult, balancesAfterReturns, fees, withdrawalResult, failed;
+      if (yearEnd) {
+        returnResult = applyReturns(balances, yearRow, runOptions.billSeries);
+        balancesAfterReturns = copyBalances(balances);
+        fees = chargeFees(balances, runOptions.feeRate);
+        const available = sumBalances(balances);
+        failed = requestedGrossWithdrawal > available;
+        if (failed) withdrawalResult = withdraw(balances, requestedGrossWithdrawal, 'proportional');
+        else {
+          const settleContext = cloneAndFreeze({ startBalances, balances: copyBalances(balances),
+            returnRates: returnResult.rates, requestedGross: requestedGrossWithdrawal, yearRow,
+            index, cpiIndex, horizon: runOptions.horizon, yearsRemaining: runOptions.horizon - index,
+            options: runOptions, params: runParams }, 'settlement context');
+          withdrawalResult = applySettlement(balances, strategy.settle(state, settleContext),
+            requestedGrossWithdrawal, floatingTolerance(Math.max(requestedGrossWithdrawal, available)));
+        }
+      } else {
+        withdrawalResult = withdraw(balances, requestedGrossWithdrawal, source);
+        failed = requestedGrossWithdrawal > startTotal;
+      }
+      const spending = paidSpending(withdrawalResult, runOptions.taxRate, cpiIndex);
       const strategyNotes = decision.notes === undefined ? '' : decision.notes;
       const sourceNotes = decision.noteWithdrawalSources
         ? withdrawalFundingNote(withdrawalResult.byAsset, source)
@@ -832,30 +953,25 @@
         startTotal,
         requestedWithdrawalNominal: requestedWithdrawal,
         requestedGrossWithdrawal,
-        withdrawalNominal: actualWithdrawalNominal,
-        withdrawalReal,
-        grossWithdrawal: withdrawalResult.actualAmount,
-        taxPaid,
+        ...spending,
         withdrawalsByAsset: withdrawalResult.byAsset,
-        notes: [strategyNotes, sourceNotes].filter(Boolean).join('; '),
+        notes: joinNotes(strategyNotes, sourceNotes, withdrawalResult.notes),
         failed,
       };
+      if (yearEnd) Object.assign(baseRow, { settlement: 'yearEnd', transfers: withdrawalResult.transfers || [] });
 
       if (failed) {
         failureYear = yearRow.year;
-        const skippedReturns = {
-          stock: normalizeSkippedReturn(yearRow.stock_tr),
-          bond: normalizeSkippedReturn(yearRow.bond10_tr),
-          bill: normalizeSkippedReturn(yearRow.tbill_tr),
-        };
+        const columns = returnColumns(runOptions.billSeries);
+        const skippedReturns = Object.fromEntries(ASSETS.map(asset => [asset, normalizeSkippedReturn(yearRow[columns[asset]])]));
         rows.push({
           ...baseRow,
-          returns: skippedReturns,
-          returnRates: skippedReturns,
-          returnAmounts: { stock: 0, bond: 0, bill: 0 },
-          portfolioReturn: null,
-          balancesAfterReturns: copyBalances(balances),
-          fees: { stock: 0, bond: 0, bill: 0 },
+          returns: yearEnd ? returnResult.rates : skippedReturns,
+          returnRates: yearEnd ? returnResult.rates : skippedReturns,
+          returnAmounts: yearEnd ? returnResult.amounts : { stock: 0, bond: 0, bill: 0 },
+          portfolioReturn: yearEnd ? returnResult.portfolioReturn : null,
+          balancesAfterReturns: yearEnd ? balancesAfterReturns : copyBalances(balances),
+          fees: yearEnd ? fees : { stock: 0, bond: 0, bill: 0 },
           endBalances: copyBalances(balances),
           endTotal: 0,
           endTotalReal: 0,
@@ -864,56 +980,34 @@
         break;
       }
 
-      const returnResult = applyReturns(balances, yearRow);
-      const balancesAfterReturns = copyBalances(balances);
-      const fees = chargeFees(balances, runOptions.feeRate);
-      let explicitRebalanceExecuted = false;
-      if (decision.rebalanceToDollars !== undefined && decision.rebalanceToDollars !== null) {
-        balances = balancesFromDollarTargets(
-          sumBalances(balances),
-          decision.rebalanceToDollars,
-          'rebalanceToDollars',
-        );
-        explicitRebalanceExecuted = true;
-      } else if (decision.rebalanceTo !== undefined && decision.rebalanceTo !== null) {
-        rebalance(balances, decision.rebalanceTo);
-        explicitRebalanceExecuted = true;
-      } else if (decision.rebalanceTo === undefined && runOptions.rebalance === 'annual') {
-        rebalance(balances, runOptions.allocation);
+      if (!yearEnd) {
+        returnResult = applyReturns(balances, yearRow, runOptions.billSeries);
+        balancesAfterReturns = copyBalances(balances);
+        fees = chargeFees(balances, runOptions.feeRate);
+        let explicitRebalanceExecuted = false;
+        if (decision.rebalanceToDollars !== undefined && decision.rebalanceToDollars !== null) {
+          balances = balancesFromDollarTargets(
+            sumBalances(balances),
+            decision.rebalanceToDollars,
+            'rebalanceToDollars',
+          );
+          explicitRebalanceExecuted = true;
+        } else if (decision.rebalanceTo !== undefined && decision.rebalanceTo !== null) {
+          rebalance(balances, decision.rebalanceTo);
+          explicitRebalanceExecuted = true;
+        } else if (decision.rebalanceTo === undefined && runOptions.rebalance === 'annual') {
+          rebalance(balances, runOptions.allocation);
+        }
+        if (explicitRebalanceExecuted && decision.rebalanceNote) {
+          baseRow.notes = joinNotes(baseRow.notes, decision.rebalanceNote);
+        }
       }
-      if (explicitRebalanceExecuted && decision.rebalanceNote) {
-        baseRow.notes = [baseRow.notes, decision.rebalanceNote].filter(Boolean).join('; ');
-      }
-
-      const endBalances = copyBalances(balances);
-      const endTotal = sumBalances(endBalances);
-      assertFiniteNumber(yearRow.cpi_change, `cpi_change for year ${yearRow.year}`);
-      if (yearRow.cpi_change < -1) {
-        throw new RangeError(`cpi_change for year ${yearRow.year} must be at least -1`);
-      }
-      const endingYearCpiIndex = cpiIndex * (1 + yearRow.cpi_change);
-      assertFiniteNumber(endingYearCpiIndex, `ending CPI index for year ${yearRow.year}`);
-      if (endingYearCpiIndex <= 0) throw new RangeError(`CPI index must remain greater than 0 in year ${yearRow.year}`);
-      const endTotalReal = endTotal / endingYearCpiIndex;
-      assertFiniteNumber(endTotalReal, `real ending total for year ${yearRow.year}`);
-      const completedRow = {
-        ...baseRow,
-        returns: returnResult.rates,
-        returnRates: returnResult.rates,
-        returnAmounts: returnResult.amounts,
-        portfolioReturn: returnResult.portfolioReturn,
-        balancesAfterReturns,
-        fees,
-        endBalances,
-        endTotal,
-        endTotalReal,
-        endCpiIndex: endingYearCpiIndex,
-      };
+      const completedRow = completedAnnualRow(baseRow, yearRow, balances, returnResult, balancesAfterReturns, fees);
       rows.push(completedRow);
       if (typeof strategy.afterYear === 'function') {
         strategy.afterYear(state, cloneAndFreeze(completedRow, 'strategy afterYear row'), context);
       }
-      cpiIndex = endingYearCpiIndex;
+      cpiIndex = completedRow.endCpiIndex;
       completedYears += 1;
     }
 
@@ -1355,6 +1449,73 @@
     },
   };
 
+  const joshTbillFullRefill = {
+    id: 'joshTbillFullRefill',
+    name: 'Josh Tbill full refill',
+    settlement: 'yearEnd',
+    canDeplete: true,
+    resolveAssets() { return ['stock', 'bill']; },
+    initialAllocation(state) { return { dollarTargets: { bill: state.buffer }, remainderAsset: 'stock' }; },
+    supportsMaxSafeRate: true,
+    rateParamKey: 'rate',
+    safeRateSearch: 'adaptive',
+    frontierParamKey: 'rate',
+    paramSchema: [
+      { key: 'rate', label: 'Withdrawal rate', type: 'percent', default: 0.08, min: 0, max: 0.20, step: 0.001,
+        hint: 'Gross annual withdrawal as a share of the beginning-year portfolio.', frontierRange: Object.freeze({ from: 0.04, to: 0.12, step: 0.0025 }) },
+      { key: 'bufferYears', label: 'T-bill buffer years', type: 'number', default: 3, min: 1, max: 5, step: 1,
+        hint: 'Years of first-year spending held in T-bills and refilled when empty.', frontierRange: Object.freeze({ from: 1, to: 5, step: 1 }) },
+      { key: 'floorMultiple', label: 'Spending floor', type: 'percent', default: 0.75, min: 0, max: 1, step: 0.005,
+        hint: 'Minimum spending as a share of the first-year withdrawal.', frontierRange: Object.freeze({ from: 0.5, to: 1, step: 0.025 }) },
+      { key: 'ceilingMultiple', label: 'Spending ceiling', type: 'percent', default: 1.75, min: 1, max: 5, step: 0.005,
+        hint: 'Maximum spending as a share of the first-year withdrawal.', frontierRange: Object.freeze({ from: 1, to: 3, step: 0.05 }) },
+      { key: 'emergencyMultiple', label: 'Emergency floor', type: 'percent', default: 0.625, min: 0, max: 1, step: 0.005,
+        hint: 'Emergency minimum spending as a share of the first-year withdrawal.', frontierRange: Object.freeze({ from: 0.25, to: 1, step: 0.025 }) },
+      { key: 'emergencyThreshold', label: 'Emergency trigger', type: 'percent', default: 0.5, min: 0, max: 1, step: 0.01,
+        hint: 'Use the emergency floor below this share of the starting balance.', frontierRange: Object.freeze({ from: 0.30, to: 0.70, step: 0.01 }) },
+    ],
+    init(params, options) {
+      const state = {};
+      for (const field of this.paramSchema) {
+        const value = params[field.key] === undefined ? field.default : params[field.key];
+        assertFiniteNumber(value, field.key);
+        if (value < field.min || value > field.max) throw new RangeError(`${field.key} must be between ${field.min} and ${field.max}`);
+        state[field.key] = value;
+      }
+      if (!Number.isInteger(state.bufferYears)) throw new RangeError('bufferYears must be an integer');
+      if (state.floorMultiple > state.ceilingMultiple || state.emergencyMultiple > state.ceilingMultiple) {
+        throw new RangeError('floorMultiple and emergencyMultiple must not exceed ceilingMultiple');
+      }
+      if (state.bufferYears * state.rate > 1) throw new RangeError('bufferYears times rate must not exceed 1');
+      state.startingBalance = options.startingBalance;
+      state.W0 = state.rate * options.startingBalance;
+      state.buffer = state.bufferYears * state.W0;
+      return state;
+    },
+    step(state, ctx) {
+      const emergency = ctx.total < state.emergencyThreshold * state.startingBalance;
+      const floor = (emergency ? state.emergencyMultiple : state.floorMultiple) * state.W0;
+      const ceiling = state.ceilingMultiple * state.W0;
+      const desired = state.rate * ctx.total;
+      const gross = Math.min(ceiling, Math.max(floor, desired));
+      const notes = desired < floor ? (emergency ? 'emergency spending floor' : 'spending floor')
+        : desired > ceiling ? 'spending ceiling' : '';
+      return { withdrawal: gross * (1 - ctx.options.taxRate), noteWithdrawalSources: true, notes };
+    },
+    settle(state, ctx) {
+      const gain = Math.max(0, ctx.balances.stock - ctx.startBalances.stock);
+      const harvest = Math.min(ctx.requestedGross, gain);
+      const fromBill = Math.min(ctx.balances.bill, ctx.requestedGross - harvest);
+      const fromStock = ctx.requestedGross - fromBill;
+      const remainingStock = ctx.balances.stock - fromStock;
+      const remainingBill = ctx.balances.bill - fromBill;
+      const refill = remainingBill <= 1e-6 ? Math.min(remainingStock, state.buffer) : 0;
+      return { withdrawals: { stock: fromStock, bond: 0, bill: fromBill },
+        transfers: refill > 0 ? [{ from: 'stock', to: 'bill', amount: refill }] : [],
+        notes: refill > 0 ? 'T-bills refilled from stocks' + (refill < state.buffer ? ' (partial: stocks exhausted)' : '') : '' };
+    },
+  };
+
   const BacktestEngine = {
     simulate,
     resolveInitialAllocation,
@@ -1362,7 +1523,9 @@
     sweepStartYears,
     sweepGrid,
     maxSafeRate,
-    STRATEGIES: { fixedReal, fixedPercent, guytonKlinger, barbell },
+    normalizeBillSeries,
+    returnColumns,
+    STRATEGIES: { fixedReal, fixedPercent, guytonKlinger, barbell, joshTbillFullRefill },
   };
 
   if (typeof module !== 'undefined' && module.exports) {

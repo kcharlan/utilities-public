@@ -41,7 +41,7 @@ official workbooks. Python execution and package installation occur only in the
 venv. Manual inputs are supported:
 
 ```sh
-npm run setup:data -- --shiller "<INPUT_DIR>/ie_data.xls" --damodaran "<INPUT_DIR>/histretSP.xls"
+npm run setup:data -- --shiller "<INPUT_DIR>/ie_data.xls" --damodaran "<INPUT_DIR>/histretSP.xls" --fred "<INPUT_DIR>/DTB3.csv"
 npm run setup:data -- --refresh
 npm run setup:data -- --offline
 ```
@@ -51,6 +51,23 @@ downloads or dependency installation. `--offline` fails clearly when prerequisit
 are missing. Failed refresh keeps the prior selection. Existing unrelated cache
 entries are left alone. See [data maintenance](data/README.md) and
 [source attribution and local-use restrictions](DATA_SOURCES.md).
+
+The "Josh Tbill full refill" strategy sizes spending at the start of each year,
+then pays it after returns and fees. Stock gains fund spending first; T-bills
+cover the rest, with stocks covering any shortage. An empty bill sleeve is
+refilled from stocks to the fixed first-year spending buffer when possible.
+The T-bill series selector applies to every strategy holding bills. Damodaran
+remains the default; daily FRED DTB3 uses annual mean discount-basis rates,
+with Damodaran through 1953. Neither series compounds within a year.
+The reference spreadsheet's 2024 and/or 2025 bill inputs differ from DTB3;
+available evidence cannot identify which year accounts for the residual gap.
+
+Adding DTB3 to an existing legacy selection requires the owner to supply
+`--fred "<INPUT_DIR>/DTB3.csv"` once, then build offline. Existing Shiller and
+Damodaran retained inputs are reused. Avoid `--refresh` for this migration:
+it reacquires all sources and can change historical controls. Complete
+historical acceptance requires the new selected bundle. Windows extending
+beyond 2025 are incomplete; complete 30-year windows end with starts in 1996.
 
 Build writes `<DATA_HOME>/site`: `index.html`, eight app modules,
 `market-data.js`, `market-data.csv` and `DATA_SOURCES.md`. All twelve files retain

@@ -54,6 +54,17 @@ regular, non-empty files, and still compares code and notice bytes with source.
 Keep the audit independent of the data home; data acquisition stays a manual
 step for the owner.
 
+## Include data choices in result cache identity
+
+`marketGeneration` identifies metadata, coverage and row count, without hashing
+observation values. Result caches must also include every data-selection option,
+including `billSeries`; otherwise changing the selected bill column can retain
+results from the previous series. Discount-basis DTB3 and Damodaran's
+bond-equivalent-style annual figures can change a strategy's verdict, including
+the complete 1999 Josh Tbill full refill window. Preserve the default series
+and display the chosen basis explicitly. Neither annual series compounds
+within a year; outcomes ending after available history remain incomplete.
+
 ## Keep routing and authorization explicit
 
 Use `/calculators/backtest/index.html`. The folder route may remain the shared

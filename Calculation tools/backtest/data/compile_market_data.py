@@ -36,14 +36,13 @@ CONFIGURED_WEBROOT = Path(os.environ.get("UTILITIES_WEBROOT_DIR") or
 CACHE = Path(os.environ.get("MARKET_ATLAS_DATA_HOME") or "~/.cache/market-atlas").expanduser()
 DAMODARAN_URL = SOURCE_SETTINGS["Damodaran"]["url"]
 SHILLER_URL = SOURCE_SETTINGS["Shiller"]["url"]
+FRED_URL = SOURCE_SETTINGS["FRED"]["url"]
 OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 MIN_XLS_BYTES = 512
 MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
-REQUIRED_SHEETS = {
-    "Damodaran": {"Returns by year", "Inflation Rate"},
-    "Shiller": {"Data"},
-}
+REQUIRED_SHEETS = {name: set(source["requiredSheets"]) for name, source in SOURCE_SETTINGS.items()
+                   if source["format"] == "OLE/XLS"}
 FIRST_OUTPUT_YEAR = 1872
 DAMODARAN_FIRST_YEAR = 1928
 DAMODARAN_ANCHOR_LAST_YEAR = 2025
@@ -98,6 +97,74 @@ def validate_workbook(name: str, path: Path) -> None:
         raise ValueError(f"{name} workbook is missing required sheet(s): {', '.join(missing)}")
 
 
+def fred_observations(path: Path) -> list[tuple[date, float | None]]:
+    """Validate complete raw CSV independently of selected output coverage."""
+    if path.stat().st_size > MAX_DOWNLOAD_BYTES:
+        raise ValueError('FRED input exceeds the byte maximum')
+    observations = []
+    previous = None
+    try:
+        with path.open(encoding='utf-8', newline='') as handle:
+            if handle.readline().rstrip('\r\n') != ','.join(SOURCE_SETTINGS['FRED']['layout']['header']):
+                raise ValueError('FRED CSV header changed')
+            reader = csv.reader(handle, strict=True)
+            for row in reader:
+                if len(row) != 2 or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', row[0]):
+                    raise ValueError('FRED CSV requires date-value rows')
+                day = date.fromisoformat(row[0])
+                if previous is not None and day <= previous:
+                    raise ValueError('FRED dates must be strictly increasing')
+                previous = day
+                value = None
+                if row[1] != '':
+                    if not re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)', row[1]):
+                        raise ValueError('FRED values must be finite signed decimals or empty')
+                    value = float(row[1])
+                    if not math.isfinite(value):
+                        raise ValueError('FRED values must be finite')
+                observations.append((day, value))
+    except (UnicodeError, csv.Error) as exc:
+        raise ValueError('FRED requires valid UTF-8 CSV') from exc
+    if not observations:
+        raise ValueError('FRED CSV has no observations')
+    return observations
+
+
+def validate_source(name: str, path: Path) -> None:
+    if path.stat().st_size > MAX_DOWNLOAD_BYTES:
+        raise ValueError(f'{name} input exceeds the byte maximum')
+    if SOURCE_SETTINGS[name]['format'] == 'CSV':
+        fred_observations(path)
+    else:
+        validate_workbook(name, path)
+
+
+def parse_fred(path: Path, end_year: int) -> dict[int, float]:
+    selected: dict[int, list[tuple[date, float]]] = {}
+    for day, value in fred_observations(path):
+        if 1954 <= day.year <= end_year and value is not None:
+            selected.setdefault(day.year, []).append((day, value))
+    means = {}
+    for year in range(1954, end_year + 1):
+        values = selected.get(year, [])
+        months = {day.month for day, _ in values}
+        if len(values) < 240 or not {1, 12}.issubset(months):
+            raise ValueError(f'FRED {year} requires 240 numeric observations and January/December coverage')
+        means[year] = round(statistics.fmean(value for _, value in values) / 100, 8)
+    return means
+
+
+def merge_fred(rows: list[dict[str, Any]], means: dict[int, float]) -> list[dict[str, Any]]:
+    merged = []
+    for row in rows:
+        year = row['year']
+        value = row['tbill_tr'] if year < 1954 else means[year]
+        if 1954 <= year <= 1981 and abs(value - row['tbill_tr']) > 1e-6:
+            raise ValueError(f'FRED reconciliation disagrees with Damodaran for {year}')
+        merged.append({**row, 'tbill_dtb3_tr': value})
+    return merged
+
+
 def validate_source_url(name: str, url: str) -> None:
     """Constrain requests and every redirect before transmitting them."""
     parsed = urllib.parse.urlsplit(url)
@@ -132,7 +199,7 @@ def acquire_source(name: str, url: str, supplied: str | None, refresh: bool) -> 
         path = requested.resolve()
         if not path.is_file():
             raise FileNotFoundError(f"{name} source does not exist")
-        validate_workbook(name, path)
+        validate_source(name, path)
         return path
 
     validate_source_url(name, url)
@@ -141,7 +208,7 @@ def acquire_source(name: str, url: str, supplied: str | None, refresh: bool) -> 
     destination = cache / SOURCE_SETTINGS[name]["cacheFilename"]
     validate_owned_file(destination)
     if destination.exists() and not refresh:
-        validate_workbook(name, destination)
+        validate_source(name, destination)
         return destination
 
     temporary_path: Path | None = None
@@ -158,12 +225,12 @@ def acquire_source(name: str, url: str, supplied: str | None, refresh: bool) -> 
                             f"{name} download exceeds the {MAX_DOWNLOAD_BYTES}-byte maximum"
                         )
                     temporary.write(chunk)
-        validate_workbook(name, temporary_path)
+        validate_source(name, temporary_path)
         os.replace(temporary_path, destination)
     except Exception as exc:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-        flag = "--damodaran" if name == "Damodaran" else "--shiller"
+        flag = '--' + SOURCE_SETTINGS[name]['id']
         raise RuntimeError(
             f"Could not download {name} data from {url}. Download it manually and rerun "
             f"with {flag} PATH. Underlying error: {exc}"
@@ -547,6 +614,7 @@ def emit(rows: list[dict[str, Any]], generated: str, output_dir: Path) -> None:
             "stock_tr": rounded(row["stock_tr"]),
             "bond10_tr": rounded(row["bond10_tr"]),
             "tbill_tr": rounded(row["tbill_tr"]),
+            "tbill_dtb3_tr": rounded(row["tbill_dtb3_tr"]),
             "cpi_change": rounded(row["cpi_change"]),
             "quality": row["quality"],
         }
@@ -564,6 +632,7 @@ def emit(rows: list[dict[str, Any]], generated: str, output_dir: Path) -> None:
                 "Damodaran histretSP.xls US T. Bond 10-year (1928+)"
             ),
             "tbill_tr": "Unavailable 1872-1927; Damodaran histretSP.xls 3-month T.Bill (1928+)",
+            "tbill_dtb3_tr": "Damodaran histretSP.xls 3-month T.Bill (1928-1953); FRED DTB3 3-Month Treasury Bill Secondary Market Rate, Discount Basis, annual mean of daily values (1954+)",
             "cpi_change": (
                 "Shiller ie_data.xls CPI December-to-December (1872-1927); "
                 "FRED CPIAUCNS via Damodaran histretSP.xls (1928+)"
@@ -578,7 +647,7 @@ def emit(rows: list[dict[str, Any]], generated: str, output_dir: Path) -> None:
     )
     csv_buffer = io.StringIO(newline="")
     writer = csv.DictWriter(
-        csv_buffer, fieldnames=["year", "stock_tr", "bond10_tr", "tbill_tr", "cpi_change", "quality"]
+        csv_buffer, fieldnames=["year", "stock_tr", "bond10_tr", "tbill_tr", "tbill_dtb3_tr", "cpi_change", "quality"]
     )
     writer.writeheader()
     writer.writerows(normalized_rows)
@@ -654,6 +723,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--damodaran", help="local histretSP.xls path")
     parser.add_argument("--shiller", help="local ie_data.xls path")
+    parser.add_argument("--fred", help="local DTB3.csv path")
     parser.add_argument("--refresh", action="store_true", help="redownload cached source files")
     parser.add_argument("--acquire-only", action="store_true",
                         help="validate/acquire sources only; do not transform or emit data")
@@ -674,8 +744,9 @@ def main() -> int:
         output_dir = validate_output_dir(Path(args.output_dir))
         damodaran_path = acquire_source("Damodaran", DAMODARAN_URL, args.damodaran, args.refresh)
         shiller_path = acquire_source("Shiller", SHILLER_URL, args.shiller, args.refresh)
+        fred_path = acquire_source("FRED", FRED_URL, args.fred, args.refresh)
         if getattr(args, "acquire_only", False):
-            print("Validated both source workbooks; no compiled outputs written")
+            print("Validated all three source inputs; no compiled outputs written")
             return 0
         damodaran, sheet = parse_damodaran(damodaran_path)
         shiller = parse_shiller(shiller_path)
@@ -683,6 +754,7 @@ def main() -> int:
         reconcile(shiller, damodaran)
         rows = splice(shiller, damodaran)
         rows = select_output_rows(rows, args.end_year)
+        rows = merge_fred(rows, parse_fred(fred_path, args.end_year))
         emit(rows, args.generated_date, output_dir)
         print(f"Wrote {len(rows)} rows ({rows[0]['year']}-{rows[-1]['year']})")
         return 0

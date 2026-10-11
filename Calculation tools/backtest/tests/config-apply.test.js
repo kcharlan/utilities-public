@@ -14,6 +14,7 @@ function loadApplyController() {
     'starting-balance': { value: '1000000' },
     'fee-rate': { value: '0' },
     'tax-rate': { value: '0' },
+    'bill-series': { value: 'damodaran' },
     'allocation-stock': { value: '55' },
     'allocation-bond': { value: '45' },
     'allocation-bill': { value: '0' },
@@ -164,4 +165,49 @@ test('an unknown strategy id is rejected rather than half-applied', () => {
   });
   assert.equal(applied, false);
   assert.equal(controls['starting-balance'].value, before, 'no control may be touched on rejection');
+});
+
+test('pinned configurations restore their bill series and legacy snapshots restore the default', () => {
+  const { context, controls } = loadApplyController();
+  const configuration = { strategyId: 'fixedReal', params: {}, options: {
+    startingBalance: 1000, allocation: { stock: 1, bond: 0, bill: 0 }, feeRate: 0, taxRate: 0,
+    billSeries: 'dtb3',
+  } };
+  assert.equal(context.applyConfigurationToControls(configuration), true);
+  assert.equal(controls['bill-series'].value, 'dtb3');
+  delete configuration.options.billSeries;
+  context.applyConfigurationToControls(configuration);
+  assert.equal(controls['bill-series'].value, 'damodaran');
+});
+
+test('configuration labels distinguish DTB3 while preserving default labels', () => {
+  const { configurationLabelModel, sweepConfigurationKey } = require('../views.js');
+  const configuration = { strategyId: 'fixedReal', params: {}, options: {
+    startingBalance: 1000, allocation: { stock: 1, bond: 0, bill: 0 }, feeRate: 0, taxRate: 0,
+  } };
+  const original = configurationLabelModel(configuration, { name: 'Invented strategy' });
+  const defaultSeries = { ...configuration, options: { ...configuration.options, billSeries: 'damodaran' } };
+  assert.deepEqual(configurationLabelModel(defaultSeries, { name: 'Invented strategy' }), original);
+  const daily = { ...configuration, options: { ...configuration.options, billSeries: 'dtb3' } };
+  assert.match(configurationLabelModel(daily, { name: 'Invented strategy' }).details, /FRED DTB3/);
+  assert.notEqual(sweepConfigurationKey(defaultSeries, 1, 2400, 'invented'), sweepConfigurationKey(daily, 1, 2400, 'invented'));
+});
+
+test('result caching separates otherwise identical configurations by T-bill series', () => {
+  const { createLruCache, sweepConfigurationKey, marketGeneration } = require('../views.js');
+  const engine = require('../engine.js');
+  const data = { generated: '2400-01-01', sources: {}, rows: [{ year: 2400,
+    stock_tr: 0, bond10_tr: 0, tbill_tr: 0, tbill_dtb3_tr: 0.1, cpi_change: 0, quality: 'invented' }] };
+  const cache = createLruCache(2);
+  const totals = [];
+  for (const billSeries of ['damodaran', 'dtb3', 'damodaran']) {
+    const configuration = { strategyId: 'fixedPercent', params: { rate: 0 }, options: {
+      startingBalance: 1000, allocation: { stock: 0, bond: 0, bill: 1 }, feeRate: 0, taxRate: 0, billSeries,
+    } };
+    const key = sweepConfigurationKey(configuration, 1, 2400, marketGeneration(data.rows, data.generated));
+    if (!cache.has(key)) cache.set(key, engine.simulate(data.rows, engine.STRATEGIES.fixedPercent,
+      configuration.params, { ...configuration.options, horizon: 1 }));
+    totals.push(cache.get(key).metrics.terminalWealthNominal);
+  }
+  assert.deepEqual(totals, [1000, 1100, 1000]);
 });
