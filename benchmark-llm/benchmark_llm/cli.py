@@ -18,7 +18,7 @@ from .repo_task import (
     run_repo_task,
 )
 from .storage import ensure_runtime_layout, get_run, list_runs
-from .util import runtime_home_from_environ
+from .util import resolve_base_python, runtime_home_from_environ
 
 
 def _format_elapsed_compact(elapsed_ms: object) -> str:
@@ -185,6 +185,44 @@ def _resolve_models(
     return resolved
 
 
+def _apply_base_python(env: dict[str, str], stderr: TextIO) -> bool:
+    """Set env["BENCH_BASE_PYTHON"] to a stable interpreter for non-model steps.
+
+    A non-empty user override must be an absolute path to an executable file;
+    otherwise write an error to stderr and return False.
+    """
+    override = env.get("BENCH_BASE_PYTHON", "")
+    if override:
+        path = Path(override)
+        if not path.is_absolute() or not (path.is_file() and os.access(path, os.X_OK)):
+            stderr.write(
+                f"BENCH_BASE_PYTHON must be an absolute path to an executable file: {override}\n"
+            )
+            return False
+        if "/Cellar/" in override:
+            stderr.write(
+                f"[bench] warning: BENCH_BASE_PYTHON {override} is a versioned Homebrew Cellar "
+                "path; venvs created from it will break when Homebrew upgrades or removes that version.\n"
+            )
+        elif (path.parent.parent / "pyvenv.cfg").exists():
+            stderr.write(
+                f"[bench] warning: BENCH_BASE_PYTHON {override} lives in a venv; "
+                "venvs created from it will be venv-from-venv.\n"
+            )
+        return True
+    interpreter, warning = resolve_base_python(
+        executable=sys.executable,
+        prefix=sys.prefix,
+        base_prefix=sys.base_prefix,
+        version=sys.version_info[:2],
+        base_executable=getattr(sys, "_base_executable", None),
+    )
+    env["BENCH_BASE_PYTHON"] = interpreter
+    if warning:
+        stderr.write(f"{warning}\n")
+    return True
+
+
 def main(
     argv: list[str] | None = None,
     environ: dict[str, str] | None = None,
@@ -210,6 +248,8 @@ def main(
     runtime_home = runtime_home_from_environ(env)
 
     if args.command == "run":
+        if not _apply_base_python(env, stderr):
+            return 1
         benchmark_dir = Path(args.benchmark_dir).resolve()
         mode = detect_benchmark_mode(benchmark_dir)
         if mode == "plugin":

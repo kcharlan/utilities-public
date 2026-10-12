@@ -6,6 +6,6 @@ test -f "${BENCH_BENCHMARK_DIR}/prompt.txt"
 
 cd "$BENCH_WORKSPACE"
 if [ ! -d .venv ]; then
-  python3 -m venv .venv
+  "${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv .venv
 fi
 git status --short

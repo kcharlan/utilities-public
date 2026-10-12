@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$BENCH_WORKSPACE"
 
-python3 -m venv .venv
+"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv --clear .venv
 source .venv/bin/activate
 python -m pip install pytest==9.1.1 PyYAML==6.0.3
 if [ -f requirements.txt ]; then

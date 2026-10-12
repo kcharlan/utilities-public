@@ -6,10 +6,13 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 import benchmark_llm.cli as cli_module
 from benchmark_llm.cli import main
 from benchmark_llm.execution import run_command
 from benchmark_llm.repo_task import _resolve_repo_steps
+from benchmark_llm.util import resolve_base_python
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -1478,3 +1481,321 @@ def test_repo_task_failure_preserves_run_dir_and_worktree(tmp_path: Path) -> Non
     assert "bench/cleanup-check/demo-model" in _git_output(["branch", "--list"], cwd=source_repo)
     worktree_list = _git_output(["worktree", "list", "--porcelain"], cwd=source_repo)
     assert str(runtime_home / "worktrees") in worktree_list
+
+
+def test_base_python_defaults_to_resolver(tmp_path: Path, monkeypatch) -> None:
+    captured = _capture_repo_task_environ(tmp_path, monkeypatch, {})
+
+    expected, _warning = resolve_base_python(
+        executable=sys.executable,
+        prefix=sys.prefix,
+        base_prefix=sys.base_prefix,
+        version=sys.version_info[:2],
+        base_executable=getattr(sys, "_base_executable", None),
+    )
+    assert captured["BENCH_BASE_PYTHON"] == expected
+
+
+def test_base_python_override_passes_through(tmp_path: Path, monkeypatch) -> None:
+    override = tmp_path / "synthetic-bin" / "python3.99"
+    _write_text(override, "#!/bin/sh\nexit 0\n")
+    os.chmod(override, 0o755)
+
+    captured = _capture_repo_task_environ(
+        tmp_path, monkeypatch, {"BENCH_BASE_PYTHON": str(override)}
+    )
+
+    assert captured["BENCH_BASE_PYTHON"] == str(override)
+
+
+@pytest.mark.parametrize(
+    "bad_override",
+    ["relative/python3", "/nonexistent-synthetic-dir/python3.99"],
+)
+def test_base_python_invalid_override_rejected(
+    tmp_path: Path,
+    monkeypatch,
+    bad_override: str,
+) -> None:
+    benchmark_dir = tmp_path / "bench"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        f"type: repo_task\noutput_dir: {tmp_path / 'results'}\n",
+    )
+
+    called = False
+
+    def fake_run_repo_task(**_: object) -> Path:
+        nonlocal called
+        called = True
+        return tmp_path / "should-not-run"
+
+    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
+
+    stderr = io.StringIO()
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "model-a"],
+        environ={
+            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
+            "BENCH_BASE_PYTHON": bad_override,
+        },
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    assert called is False
+    assert "BENCH_BASE_PYTHON" in stderr.getvalue()
+
+
+def test_repo_task_venv_created_in_step_uses_stable_base_python(tmp_path: Path) -> None:
+    if not Path("/opt/homebrew/bin").is_dir():
+        pytest.skip("Homebrew-specific regression: /opt/homebrew/bin does not exist")
+
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    _git(["init", "-b", "main"], cwd=source_repo)
+    _write_text(source_repo / "seed.txt", "seed\n")
+    _git(["add", "seed.txt"], cwd=source_repo)
+    _git(["commit", "-m", "seed"], cwd=source_repo)
+
+    benchmark_dir = tmp_path / "bench"
+    results_dir = tmp_path / "results"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        "\n".join(
+            [
+                "type: repo_task",
+                "id: base-python-venv-check",
+                f"output_dir: {results_dir}",
+                "workspace:",
+                "  kind: git_worktree",
+                f"  source_repo: {source_repo}",
+                "steps:",
+                "  - name: prepare",
+                "    run: python ./scripts/prepare.py",
+                "  - name: judge",
+                "    run: python ./scripts/judge.py",
+                "scoring:",
+                "  output: score.json",
+            ]
+        )
+        + "\n",
+    )
+    _write_text(benchmark_dir / "prompt.txt", "Do work.\n")
+    _write_text(
+        benchmark_dir / "scripts" / "judge.py",
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "from pathlib import Path",
+                "with (Path(os.environ['BENCH_RUN_DIR']) / 'score.json').open('w', encoding='utf-8') as handle:",
+                "    json.dump({'summary': {'passed': 1, 'total': 1, 'score_percent': 100.0}, 'checks': [{'name': 'ok', 'passed': True}]}, handle)",
+            ]
+        )
+        + "\n",
+    )
+
+    refused_path = tmp_path / "refused.txt"
+    cfg_path = tmp_path / "observed-pyvenv.cfg"
+    link_path = tmp_path / "observed-link.txt"
+    value_path = tmp_path / "observed-value.txt"
+    _write_text(
+        benchmark_dir / "scripts" / "prepare.py",
+        "\n".join(
+            [
+                "import os",
+                "import re",
+                "import subprocess",
+                "import sys",
+                "from pathlib import Path",
+                "value = os.environ.get('BENCH_BASE_PYTHON', '')",
+                "pattern = r'/opt/homebrew/(bin/python3|opt/python@3\\.\\d+/bin/python3\\.\\d+)'",
+                "if not re.fullmatch(pattern, value) or (Path(value).parent.parent / 'pyvenv.cfg').exists():",
+                f"    Path({str(refused_path)!r}).write_text(f'refused BENCH_BASE_PYTHON={{value!r}}', encoding='utf-8')",
+                "    sys.exit(3)",
+                "venv_dir = Path(os.environ['BENCH_WORKSPACE']) / '.venv'",
+                "subprocess.run([value, '-m', 'venv', '--without-pip', str(venv_dir)], check=True)",
+                f"Path({str(cfg_path)!r}).write_text((venv_dir / 'pyvenv.cfg').read_text(encoding='utf-8'), encoding='utf-8')",
+                "links = sorted((venv_dir / 'bin').glob('python3.*'))",
+                f"Path({str(link_path)!r}).write_text(os.readlink(links[0]), encoding='utf-8')",
+                f"Path({str(value_path)!r}).write_text(value, encoding='utf-8')",
+            ]
+        )
+        + "\n",
+    )
+
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    _write_text(hostile_bin / "python", "#!/bin/sh\nexit 97\n")
+    os.chmod(hostile_bin / "python", 0o755)
+
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={
+            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
+            "PATH": str(hostile_bin),
+        },
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert not refused_path.exists(), refused_path.read_text(encoding="utf-8")
+    assert exit_code == 0
+    value = value_path.read_text(encoding="utf-8")
+    home_lines = [
+        line.partition("=")[2].strip()
+        for line in cfg_path.read_text(encoding="utf-8").splitlines()
+        if line.partition("=")[0].strip() == "home"
+    ]
+    assert len(home_lines) == 1
+    home = home_lines[0]
+    assert "/Cellar/" not in home, home
+    assert home == str(Path(value).parent)
+    link = link_path.read_text(encoding="utf-8")
+    assert "/Cellar/" not in link
+    assert link == value
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["Cellar/python@3.99/x/bin/python3.99", "v/bin/python3.99"],
+    ids=["cellar", "venv"],
+)
+def test_base_python_risky_override_warns_and_passes_through(
+    tmp_path: Path, monkeypatch, relative: str
+) -> None:
+    override = tmp_path / relative
+    _write_text(override, "#!/bin/sh\nexit 0\n")
+    os.chmod(override, 0o755)
+    if relative.startswith("v/"):
+        _write_text(tmp_path / "v" / "pyvenv.cfg", "home = /synthetic/bin\n")
+
+    benchmark_dir = tmp_path / "bench"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        f"type: repo_task\noutput_dir: {tmp_path / 'results'}\n",
+    )
+    captured: dict[str, str] = {}
+
+    def fake_run_repo_task(*, environ: dict[str, str], **_: object) -> Path:
+        captured.update(environ)
+        return tmp_path / "results" / "fake-run"
+
+    stderr = io.StringIO()
+    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={
+            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
+            "BENCH_BASE_PYTHON": str(override),
+        },
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert captured["BENCH_BASE_PYTHON"] == str(override)
+    warnings = [l for l in stderr.getvalue().splitlines() if l.startswith("[bench] warning:")]
+    assert any(str(override) in l for l in warnings), stderr.getvalue()
+
+
+def test_repo_task_model_step_never_receives_bench_base_python(tmp_path: Path) -> None:
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    _git(["init", "-b", "main"], cwd=source_repo)
+    _write_text(source_repo / "seed.txt", "seed\n")
+    _git(["add", "seed.txt"], cwd=source_repo)
+    _git(["commit", "-m", "seed"], cwd=source_repo)
+
+    benchmark_dir = tmp_path / "bench"
+    results_dir = tmp_path / "results"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        "\n".join(
+            [
+                "type: repo_task",
+                "id: base-python-isolation-check",
+                f"output_dir: {results_dir}",
+                "workspace:",
+                "  kind: git_worktree",
+                f"  source_repo: {source_repo}",
+                "executor:",
+                "  kind: cli",
+                "  command: python ./scripts/invoke_model.py",
+                "steps:",
+                "  - name: prepare",
+                "    run: python ./scripts/prepare.py",
+                "  - name: execute",
+                "    use_executor: true",
+                "  - name: judge",
+                "    run: python ./scripts/judge.py",
+                "scoring:",
+                "  output: score.json",
+            ]
+        )
+        + "\n",
+    )
+    _write_text(benchmark_dir / "prompt.txt", "Do work.\n")
+    ordinary_base_python_path = tmp_path / "ordinary-base-python.txt"
+    model_base_python_path = tmp_path / "model-base-python.txt"
+    _write_text(
+        benchmark_dir / "scripts" / "prepare.py",
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                "Path(os.environ['BENCH_WORKSPACE'], 'output').mkdir(parents=True, exist_ok=True)",
+                f"Path({str(ordinary_base_python_path)!r}).write_text(repr(os.environ.get('BENCH_BASE_PYTHON')), encoding='utf-8')",
+            ]
+        )
+        + "\n",
+    )
+    _write_text(
+        benchmark_dir / "scripts" / "invoke_model.py",
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                "Path(os.environ['WORKSPACE_ROOT'], 'output', 'result.txt').write_text('done\\n', encoding='utf-8')",
+                f"Path({str(model_base_python_path)!r}).write_text(repr(os.environ.get('BENCH_BASE_PYTHON')), encoding='utf-8')",
+            ]
+        )
+        + "\n",
+    )
+    _write_text(
+        benchmark_dir / "scripts" / "judge.py",
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "from pathlib import Path",
+                "run_dir = Path(os.environ['BENCH_RUN_DIR'])",
+                "workspace = Path(os.environ['BENCH_WORKSPACE'])",
+                "assert (workspace / 'output' / 'result.txt').read_text(encoding='utf-8').strip() == 'done'",
+                "with (run_dir / 'score.json').open('w', encoding='utf-8') as handle:",
+                "    json.dump({'summary': {'passed': 1, 'total': 1, 'score_percent': 100.0}, 'checks': [{'name': 'ok', 'passed': True}]}, handle)",
+            ]
+        )
+        + "\n",
+    )
+
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    _write_text(hostile_bin / "python", "#!/bin/sh\nexit 97\n")
+    os.chmod(hostile_bin / "python", 0o755)
+
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={
+            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
+            "PATH": str(hostile_bin),
+        },
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert ordinary_base_python_path.read_text(encoding="utf-8") != "None"
+    assert model_base_python_path.read_text(encoding="utf-8") == "None"

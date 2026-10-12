@@ -119,3 +119,65 @@ def expand_env_string(template: str, environ: dict[str, str]) -> str:
         return environ[key]
 
     return _ENV_VAR_PATTERN.sub(replace, template)
+
+
+def _pyvenv_home(prefix: str) -> str | None:
+    """Return the first `home` value in <prefix>/pyvenv.cfg, or None."""
+    try:
+        text = (Path(prefix) / "pyvenv.cfg").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip().lower() == "home":
+            return value.strip() or None
+    return None
+
+
+def _is_executable_file(path: Path) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def resolve_base_python(
+    *,
+    executable: str,
+    prefix: str,
+    base_prefix: str,
+    version: tuple[int, int],
+    base_executable: str | None,
+) -> tuple[str, str | None]:
+    """Return (interpreter_path, warning_or_None) for creating durable venvs.
+
+    Prefers a stable (non-Homebrew-Cellar) interpreter path. Symlinks are never
+    resolved: resolving them is what pins venvs to a versioned Cellar path.
+    """
+    exe_name = f"python{version[0]}.{version[1]}"
+    candidate: Path | None
+    if prefix != base_prefix:
+        home = _pyvenv_home(prefix)
+        candidate = Path(home) / exe_name if home else None
+    else:
+        candidate = Path(executable)
+    if candidate is not None and "/Cellar/" in str(candidate):
+        brew_root, rest = str(candidate).split("/Cellar/", 1)
+        formula = rest.split("/", 1)[0]
+        opt = Path(brew_root) / "opt" / formula / "bin" / exe_name
+        if _is_executable_file(opt):
+            candidate = opt
+    if candidate is not None and _is_executable_file(candidate):
+        if "/Cellar/" not in str(candidate):
+            return str(candidate), None
+        return str(candidate), (
+            f"[bench] warning: base Python {candidate} is a versioned Homebrew Cellar path; "
+            "venvs created from it will break when Homebrew upgrades or removes that version."
+        )
+    fallback = base_executable or executable
+    if base_executable is None and prefix != base_prefix:
+        return fallback, (
+            f"[bench] warning: no stable base Python found; falling back to {fallback}, "
+            "which is a venv interpreter, so venvs created from it will be venv-from-venv."
+        )
+    return fallback, (
+        f"[bench] warning: no stable base Python found; falling back to {fallback}, "
+        "so venvs created from it may be pinned to that path."
+    )

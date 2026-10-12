@@ -148,6 +148,27 @@ The benchmark package handles:
 - score production
 - optional post-validation adjudication with the same or a separate CLI/model as an additional benchmark step
 
+#### Python in benchmark steps
+
+`bench run` puts the directory of the interpreter that runs it first on `PATH`, so bare `python` and `python3` in benchmark steps run on the runtime interpreter, even when the caller's `PATH` is hostile or empty.
+
+That interpreter lives inside the runtime's own venv. A venv created from a venv interpreter records the underlying versioned Homebrew Cellar path as its base, so it breaks when Homebrew upgrades or removes that version. To avoid this, `bench run` also exports `BENCH_BASE_PYTHON` to non-model steps: a stable interpreter path derived without resolving symlinks (for Homebrew, the `/opt/homebrew/opt/<formula>/bin/pythonX.Y` form rather than the Cellar path). Benchmark scripts that create a workspace venv must use it:
+
+```bash
+"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv --clear .venv
+```
+
+`--clear` is needed wherever a model step may already have created `.venv`: it discards that venv, which may be pinned, and rebuilds it from the stable base. Both bundled examples do this in their validation step (both `policy-engine` and `cron-eval` rebuild `.venv` with `--clear` at the start of validation; `policy-engine` then reinstalls its tools).
+
+Model-visible steps (model invocation and similar) do not receive `BENCH_BASE_PYTHON`; the runtime strips framework variables there so the benchmark cannot signal an evaluation context.
+
+To choose the interpreter yourself, set `BENCH_BASE_PYTHON` to an absolute path of an executable file before `bench run`. A relative path, a missing file, or a non-executable file prints `BENCH_BASE_PYTHON must be an absolute path to an executable file: <value>` to `stderr` and exits `1`. An override that contains `/Cellar/` or lives in a venv (a `pyvenv.cfg` beside its `bin/` directory) is accepted, but prints a `[bench] warning:` line to `stderr` because venvs created from it can still break. If no stable interpreter can be found, the runtime warns on `stderr`, falls back to the best interpreter it has, and continues the run.
+
+Limitations:
+
+- Model-visible steps also run with the runtime interpreter first on `PATH`, so a venv a model creates with bare `python3 -m venv` is pinned, and stays pinned unless a later non-model step rebuilds it as above.
+- Scripts that ignore the contract (for example, `python3 -m venv` in a step) still create pinned venvs.
+
 For model-execution steps, the runtime intentionally scrubs framework and test harness environment variables before invoking the executor. Use neutral task-oriented inputs such as `MODEL_ID`, `TASK_PROMPT_TEXT`, `TASK_PROMPT_PATH`, and `WORKSPACE_ROOT` inside model runner scripts.
 
 ## Metrics
