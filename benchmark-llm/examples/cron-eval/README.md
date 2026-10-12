@@ -49,3 +49,5 @@ Run artifacts are written beneath the configured `output_dir`. Each successful r
 ## Benchmark contract
 
 The model sees `prompt.txt` and the files under `visible/`. In particular, `visible/spec.md` is the authoritative cron dialect and `visible/starter_test.py` is only a small smoke suite. Hidden fixtures, the reference implementation, and the rubric are staged for validation and are not copied into the model workspace.
+
+The prepare step also creates the workspace `.venv` from the interpreter in `BENCH_BASE_PYTHON`, but only when it is missing. The validation step then rebuilds `.venv` from scratch with the same interpreter, replacing any `.venv` the model created. `bench run` sets that variable for non-model steps only; the model does not see it. These scripts need a bench run context and are not meant to be run directly.

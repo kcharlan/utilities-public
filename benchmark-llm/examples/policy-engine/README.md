@@ -90,6 +90,10 @@ The validation harness creates an isolated workspace environment with
 pytest 9.1.1 and PyYAML 6.0.3 before installing any target repository
 requirements. Pinning the harness-owned tools keeps repeated benchmark runs
 comparable; target requirements remain part of the repository under test.
+The validation step rebuilds the workspace `.venv` from scratch with the
+interpreter in `BENCH_BASE_PYTHON`, replacing any `.venv` the model created.
+This keeps the venv independent of the runtime's own venv and of versioned
+Homebrew paths; the variable is set by `bench run` and is not visible to the model.
 
 Primary CLI validation uses:
 
