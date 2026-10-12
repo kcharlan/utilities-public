@@ -1,0 +1,193 @@
+{
+  "checked": "2026-10-08",
+  "latestRelease": "2026-10-07",
+  "preservedHistoricalRows": 404,
+  "additions": [
+    {
+      "model": "Beam (restricted preview)",
+      "lab": "Reflection AI",
+      "date": "2026-10-05",
+      "tier": "flagship",
+      "note": "Text-only 501B MoE model with 23B active parameters for coding, reasoning, and agents. Early version available to a select group of users; planned weights are not yet public and are due later in October, with broader access through a waitlist.",
+      "source": "https://www.reflection.ai/blog/introducing-beam"
+    },
+    {
+      "model": "EmbeddingGemma 2",
+      "lab": "Google",
+      "date": "2026-10-06",
+      "tier": "specialty",
+      "note": "Apache-2.0 740M on-device multimodal embedding model built on Gemma 4, mapping text, code, images, audio, and video into a shared space. Public weights on Hugging Face and Kaggle; modular text, vision, and audio encoders with 8K context.",
+      "source": "https://blog.google/innovation-and-ai/technology/developers-tools/embeddinggemma-2/"
+    },
+    {
+      "model": "Claude Haiku 5.5",
+      "lab": "Anthropic",
+      "date": "2026-10-07",
+      "tier": "small",
+      "note": "Small model for high-volume summaries, classification, compaction, browser use, and coding subagents. Available on the Claude Platform as claude-haiku-5-5 and through AWS, Google Cloud, and Microsoft Azure.",
+      "source": "https://www.anthropic.com/claude-haiku-5-5"
+    },
+    {
+      "model": "d1-3B / d1-omni-600M",
+      "lab": "Liquid AI",
+      "date": "2026-10-07",
+      "tier": "specialty",
+      "note": "Open-weight edge decision models returning typed answers and calibrated probabilities in one forward pass. d1-3B handles text and vision; the early research d1-omni-600M also accepts audio. Weights available on Hugging Face under the LFM Open License.",
+      "source": "https://www.liquid.ai/blog/d1-open"
+    },
+    {
+      "model": "pplx-embed-v2-late family",
+      "lab": "Perplexity",
+      "date": "2026-10-07",
+      "tier": "specialty",
+      "note": "MIT-licensed 0.6B and 9B multimodal late-interaction embedding models for text, images, and visual documents. Both share an embedding space; public weights produce 128-dimensional vectors per token for MaxSim retrieval.",
+      "source": "https://huggingface.co/perplexity-ai/pplx-embed-v2-late-9b"
+    },
+    {
+      "model": "Mistral Large 4 (public preview)",
+      "lab": "Mistral",
+      "date": "2026-10-06",
+      "tier": "flagship",
+      "note": "Natively multimodal flagship for coding, agents, and enterprise work, available in public API preview through Mistral Studio. Planned open weights are not yet public; Mistral says they will follow by the end of October.",
+      "source": "https://mistral.ai/news/mistral-large-4/"
+    },
+    {
+      "model": "Gemini Nano Banana 2.1",
+      "lab": "Google",
+      "date": "2026-10-06",
+      "tier": "specialty",
+      "note": "Updated image generation and conversational editing model, available as gemini-nano-banana-2.1 through the Gemini API. Supports text/image input, image/text output, search grounding, and batch processing.",
+      "source": "https://ai.google.dev/gemini-api/docs/changelog"
+    },
+    {
+      "model": "pplx-decider-v1.1-27b",
+      "lab": "Perplexity",
+      "date": "2026-10-06",
+      "tier": "specialty",
+      "note": "Updated Apache-2.0 multimodal decision weights using the same Qwen3.8-27B backbone as v1, with revised attention and additional training data. Public weights and inference code are available; a materially distinct checkpoint rather than a pricing-only change.",
+      "source": "https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b"
+    },
+    {
+      "model": "Qwen-Image-2.1-Pro (API)",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-10-02",
+      "tier": "specialty",
+      "note": "Hosted unified image generation and editing release, dated by QwenCloud's model changelog. Adds native RGBA transparency, subject extraction, up to 10 reference images, and marked or masked local editing. Separate from the earlier Qwen-Image-2.1 open-weight event.",
+      "source": "https://docs.qwencloud.com/changelog/models"
+    },
+    {
+      "model": "Clef / Clef-flash",
+      "lab": "Cloudflare",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Apache-2.0 decision models based on Qwen3.8-27B and Qwen3.5-9B, respectively, returning bounded structured choices. Released weights on Hugging Face and hosted APIs on Workers AI; compatible with the Jev decision API.",
+      "source": "https://blog.cloudflare.com/clef-decision-models/"
+    },
+    {
+      "model": "MAI-Voice-2.1 / MAI-Voice-2.1-Flash",
+      "lab": "Microsoft",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Multilingual text-to-speech family with cross-language voice cloning, supporting 23 languages and 26 locales. The Flash variant targets latency-sensitive voice agents; available through MAI Playground and Microsoft Foundry's Azure Speech.",
+      "source": "https://microsoft.ai/news/our-first-streaming-transcription-model/"
+    },
+    {
+      "model": "MAI-Transcribe-2-Streaming",
+      "lab": "Microsoft",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "First streaming MAI transcription model, producing evolving partial and final transcripts in 60 languages with automatic continuous language detection. Available through Azure Speech for live voice agents, dictation, and subtitling.",
+      "source": "https://microsoft.ai/news/our-first-streaming-transcription-model/"
+    },
+    {
+      "model": "pplx-decider-v1-27b",
+      "lab": "Perplexity",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Apache-2.0 decision model fine-tuned from Qwen3.8-27B, returning selected choices and calibrated probabilities for text and image inputs. Public weights and inference example released on Hugging Face.",
+      "source": "https://huggingface.co/perplexity-ai/pplx-decider-v1-27b"
+    },
+    {
+      "model": "Strands Decider 2B",
+      "lab": "AWS Strands Labs",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Small Apache-2.0 open decision model for local experimentation, routing, and tool-call checks. Chooses among supplied options or scores inputs with confidence rather than generating free-form text; weights, code, and training recipe released.",
+      "source": "https://strandsagents.com/blog/introducing-strands-decider/"
+    },
+    {
+      "model": "FLUX 3 Image",
+      "lab": "Black Forest Labs",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Image generation and editing model with bounding-box composition, targeted edits, up to 10 reference images, and output up to 4K. Available through the BFL API and playground; commercial weights access is separate from a public open-weight release.",
+      "source": "https://bfl.ai/models/flux-3-image"
+    },
+    {
+      "model": "Griffin-Lite (research preview)",
+      "lab": "Tavus",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Full-duplex audiovisual interaction system perceiving and generating speech and video concurrently. Research preview available to selected trusted testers; not yet available to customers on the Tavus platform, with access requests by form.",
+      "source": "https://www.tavus.io/griffin"
+    },
+    {
+      "model": "Ling 3.1 Flash",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-09-30",
+      "tier": "mid",
+      "note": "Hosted hybrid reasoning model for coding, agents, and long-document analysis. Vercel's September 30 launch confirms access as inclusionai/ling-3.1-flash, with 560B total/25B active parameters and 262K context on AI Gateway; this predates the October 2 OpenRouter listing.",
+      "source": "https://vercel.com/changelog/ling-3-1-flash-is-now-available-on-ai-gateway"
+    },
+    {
+      "model": "pplx-embed-v2-context-9b-preview",
+      "lab": "Perplexity",
+      "date": "2026-09-30",
+      "tier": "specialty",
+      "note": "MIT-licensed contextual embedding preview encoding document chunks jointly so each vector reflects surrounding context. Public weights return one embedding per chunk; preview embeddings and interfaces may change incompatibly in later releases.",
+      "source": "https://huggingface.co/perplexity-ai/pplx-embed-v2-context-9b-preview"
+    },
+    {
+      "model": "HY Image 3.5 Preview",
+      "lab": "Tencent",
+      "date": "2026-09-22",
+      "tier": "specialty",
+      "note": "Hosted text-to-image and reference-image generation with multi-turn editing. September 22 availability is evidenced by ComfyUI's merged Tencent partner nodes; the October 5 OpenRouter listing is a later access expansion. No public weights verified.",
+      "source": "https://github.com/Comfy-Org/ComfyUI/pull/16462"
+    }
+  ],
+  "confirmedExisting": [
+    {
+      "model": "GPT-6.1 Sol",
+      "date": "2026-09-29",
+      "source": "https://developers.openai.com/api/docs/changelog",
+      "details": "Sep 29 release entry; current model documentation confirms API model gpt-6.1-sol."
+    },
+    {
+      "model": "Gemini 4 Argon",
+      "date": "2026-09-30",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/",
+      "details": "Existing announcement date retained; rollout to trusted defenders through Fairwind, with broader access still forthcoming."
+    }
+  ],
+  "supplementalSources": {
+    "pplx-embed-v2-late family": "https://community.perplexity.ai/t/6296 — official announcement created 2026-10-07T16:30:33.966Z. The 9B repository was created July 20; repository creation is not the public announcement date.",
+    "pplx-decider-v1.1-27b": "https://community.perplexity.ai/t/6286 — official announcement created 2026-10-06T21:11:41.613Z; model card confirms changed attention and training. Its Usage section says private repository, but unauthenticated https://huggingface.co/api/models/perplexity-ai/pplx-decider-v1.1-27b returns private:false and gated:false on October 8, establishing current public access despite conflicting card wording.",
+    "pplx-embed-v2-context-9b-preview": "https://community.perplexity.ai/t/6248 — official announcement created 2026-09-30T20:08:09.783Z; model card confirms released preview weights.",
+    "pplx-decider-v1-27b": "https://huggingface.co/api/models/perplexity-ai/pplx-decider-v1-27b — createdAt 2026-10-01T21:24:11.000Z; model card has released weights and runnable inference example.",
+    "FLUX 3 Image": "https://runware.ai/docs/models/bfl-flux-3-image/guides/text-rendering — serving documentation dates the model October 1, 2026. BFL model page and https://docs.bfl.ml/flux_3/flux3_image_overview confirm access and capabilities; guessed blog URLs were unavailable.",
+    "Griffin-Lite (research preview)": "Primary page HTML visibly dates the announcement October 1st, 2026; read directly with Node fetch. Primary page confirms actual selected tester access, not customer availability.",
+    "HY Image 3.5 Preview": "https://api.github.com/repos/Comfy-Org/ComfyUI/pulls/16462 — merged_at 2026-09-22T06:03:26Z; https://intl.cloud.tencent.com/zh/document/product/1300/83708 confirms current model access. Earlier date supported by shipped partner integration, not October 5 OpenRouter onboarding."
+  },
+  "excluded": [
+    {
+      "model": "GLM-5.3 Fast",
+      "reason": "Gateway lists October 7, but no primary evidence of a distinct model/checkpoint established. Existing GLM-5.3 and GLM-5.3-Flash retained."
+    },
+    {
+      "model": "GPT-6.1 Astra / Grok 4.8 / Kimi K3.1",
+      "reason": "No verified released access established in this sweep."
+    }
+  ],
+  "scope": "Recent gap from October 1 through October 8 plus verified backfills discovered during the sweep. Curated events, not an exhaustive registry; older historical records retained rather than fully reverified."
+}

@@ -295,6 +295,8 @@ new_fixture() {
   mkdir -p "$FIXTURE_ROOT/node bin"
   ln -s "$FIXTURE_NODE" "$FIXTURE_ROOT/node bin/node"
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/static-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+  write_synthetic_file "$FIXTURE_REPO/Calculation tools/ai-model-timeline.html" "invented timeline"
+  cp -p -- "$FIXTURE_REPO/Calculation tools/ai-model-timeline.html" "$FIXTURE_HOME/invented web root/calculators/ai-model-timeline.html"
 
   git -C "$FIXTURE_REPO" init -q
   git -C "$FIXTURE_REPO" config user.name "Synthetic Audit Tester"
@@ -1498,5 +1500,32 @@ test_backtest_source_inventory() {
 test_backtest_drift
 test_backtest_missing_data
 test_backtest_source_inventory
+
+test_timeline_deployment() {
+  new_fixture
+  print 'invented drift' >> "$FIXTURE_HOME/invented web root/calculators/ai-model-timeline.html"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'timeline byte drift'
+  assert_contains "$AUDIT_STDERR" 'ai-model-timeline.html bytes differ'
+
+  new_fixture
+  chmod 644 "$FIXTURE_HOME/invented web root/calculators/ai-model-timeline.html"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'timeline mode drift'
+  assert_contains "$AUDIT_STDERR" 'ai-model-timeline.html mode differs'
+
+  new_fixture
+  rm -- "$FIXTURE_HOME/invented web root/calculators/ai-model-timeline.html"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'missing timeline'
+  assert_contains "$AUDIT_STDERR" 'ai-model-timeline.html is missing'
+
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached 'Calculation tools/ai-model-timeline.html'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'unindexed timeline source'
+  assert_contains "$AUDIT_STDERR" 'ai-model-timeline.html source is pending deletion'
+}
+test_timeline_deployment
 
 print -- "check_local_deployments tests: PASS"

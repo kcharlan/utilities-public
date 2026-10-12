@@ -1,0 +1,3413 @@
+[
+  {
+    "model": "Beam (restricted preview)",
+    "lab": "Reflection AI",
+    "date": "2026-10-05",
+    "tier": "flagship",
+    "note": "Text-only 501B MoE model with 23B active parameters for coding, reasoning, and agents. Early version available to a select group of users; planned weights are not yet public and are due later in October, with broader access through a waitlist.",
+    "source": "https://www.reflection.ai/blog/introducing-beam"
+  },
+  {
+    "model": "EmbeddingGemma 2",
+    "lab": "Google",
+    "date": "2026-10-06",
+    "tier": "specialty",
+    "note": "Apache-2.0 740M on-device multimodal embedding model built on Gemma 4, mapping text, code, images, audio, and video into a shared space. Public weights on Hugging Face and Kaggle; modular text, vision, and audio encoders with 8K context.",
+    "source": "https://blog.google/innovation-and-ai/technology/developers-tools/embeddinggemma-2/"
+  },
+  {
+    "model": "Claude Haiku 5.5",
+    "lab": "Anthropic",
+    "date": "2026-10-07",
+    "tier": "small",
+    "note": "Small model for high-volume summaries, classification, compaction, browser use, and coding subagents. Available on the Claude Platform as claude-haiku-5-5 and through AWS, Google Cloud, and Microsoft Azure.",
+    "source": "https://www.anthropic.com/claude-haiku-5-5"
+  },
+  {
+    "model": "d1-3B / d1-omni-600M",
+    "lab": "Liquid AI",
+    "date": "2026-10-07",
+    "tier": "specialty",
+    "note": "Open-weight edge decision models returning typed answers and calibrated probabilities in one forward pass. d1-3B handles text and vision; the early research d1-omni-600M also accepts audio. Weights available on Hugging Face under the LFM Open License.",
+    "source": "https://www.liquid.ai/blog/d1-open"
+  },
+  {
+    "model": "pplx-embed-v2-late family",
+    "lab": "Perplexity",
+    "date": "2026-10-07",
+    "tier": "specialty",
+    "note": "MIT-licensed 0.6B and 9B multimodal late-interaction embedding models for text, images, and visual documents. Both share an embedding space; public weights produce 128-dimensional vectors per token for MaxSim retrieval.",
+    "source": "https://huggingface.co/perplexity-ai/pplx-embed-v2-late-9b"
+  },
+  {
+    "model": "Mistral Large 4 (public preview)",
+    "lab": "Mistral",
+    "date": "2026-10-06",
+    "tier": "flagship",
+    "note": "Natively multimodal flagship for coding, agents, and enterprise work, available in public API preview through Mistral Studio. Planned open weights are not yet public; Mistral says they will follow by the end of October.",
+    "source": "https://mistral.ai/news/mistral-large-4/"
+  },
+  {
+    "model": "Gemini Nano Banana 2.1",
+    "lab": "Google",
+    "date": "2026-10-06",
+    "tier": "specialty",
+    "note": "Updated image generation and conversational editing model, available as gemini-nano-banana-2.1 through the Gemini API. Supports text/image input, image/text output, search grounding, and batch processing.",
+    "source": "https://ai.google.dev/gemini-api/docs/changelog"
+  },
+  {
+    "model": "pplx-decider-v1.1-27b",
+    "lab": "Perplexity",
+    "date": "2026-10-06",
+    "tier": "specialty",
+    "note": "Updated Apache-2.0 multimodal decision weights using the same Qwen3.8-27B backbone as v1, with revised attention and additional training data. Public weights and inference code are available; a materially distinct checkpoint rather than a pricing-only change.",
+    "source": "https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b"
+  },
+  {
+    "model": "Qwen-Image-2.1-Pro (API)",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-10-02",
+    "tier": "specialty",
+    "note": "Hosted unified image generation and editing release, dated by QwenCloud's model changelog. Adds native RGBA transparency, subject extraction, up to 10 reference images, and marked or masked local editing. Separate from the earlier Qwen-Image-2.1 open-weight event.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "Clef / Clef-flash",
+    "lab": "Cloudflare",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Apache-2.0 decision models based on Qwen3.8-27B and Qwen3.5-9B, respectively, returning bounded structured choices. Released weights on Hugging Face and hosted APIs on Workers AI; compatible with the Jev decision API.",
+    "source": "https://blog.cloudflare.com/clef-decision-models/"
+  },
+  {
+    "model": "MAI-Voice-2.1 / MAI-Voice-2.1-Flash",
+    "lab": "Microsoft",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Multilingual text-to-speech family with cross-language voice cloning, supporting 23 languages and 26 locales. The Flash variant targets latency-sensitive voice agents; available through MAI Playground and Microsoft Foundry's Azure Speech.",
+    "source": "https://microsoft.ai/news/our-first-streaming-transcription-model/"
+  },
+  {
+    "model": "MAI-Transcribe-2-Streaming",
+    "lab": "Microsoft",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "First streaming MAI transcription model, producing evolving partial and final transcripts in 60 languages with automatic continuous language detection. Available through Azure Speech for live voice agents, dictation, and subtitling.",
+    "source": "https://microsoft.ai/news/our-first-streaming-transcription-model/"
+  },
+  {
+    "model": "pplx-decider-v1-27b",
+    "lab": "Perplexity",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Apache-2.0 decision model fine-tuned from Qwen3.8-27B, returning selected choices and calibrated probabilities for text and image inputs. Public weights and inference example released on Hugging Face.",
+    "source": "https://huggingface.co/perplexity-ai/pplx-decider-v1-27b"
+  },
+  {
+    "model": "Strands Decider 2B",
+    "lab": "AWS Strands Labs",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Small Apache-2.0 open decision model for local experimentation, routing, and tool-call checks. Chooses among supplied options or scores inputs with confidence rather than generating free-form text; weights, code, and training recipe released.",
+    "source": "https://strandsagents.com/blog/introducing-strands-decider/"
+  },
+  {
+    "model": "FLUX 3 Image",
+    "lab": "Black Forest Labs",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Image generation and editing model with bounding-box composition, targeted edits, up to 10 reference images, and output up to 4K. Available through the BFL API and playground; commercial weights access is separate from a public open-weight release.",
+    "source": "https://bfl.ai/models/flux-3-image"
+  },
+  {
+    "model": "Griffin-Lite (research preview)",
+    "lab": "Tavus",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "Full-duplex audiovisual interaction system perceiving and generating speech and video concurrently. Research preview available to selected trusted testers; not yet available to customers on the Tavus platform, with access requests by form.",
+    "source": "https://www.tavus.io/griffin"
+  },
+  {
+    "model": "Ling 3.1 Flash",
+    "lab": "Ant Group (inclusionAI)",
+    "date": "2026-09-30",
+    "tier": "mid",
+    "note": "Hosted hybrid reasoning model for coding, agents, and long-document analysis. Vercel's September 30 launch confirms access as inclusionai/ling-3.1-flash, with 560B total/25B active parameters and 262K context on AI Gateway; this predates the October 2 OpenRouter listing.",
+    "source": "https://vercel.com/changelog/ling-3-1-flash-is-now-available-on-ai-gateway"
+  },
+  {
+    "model": "pplx-embed-v2-context-9b-preview",
+    "lab": "Perplexity",
+    "date": "2026-09-30",
+    "tier": "specialty",
+    "note": "MIT-licensed contextual embedding preview encoding document chunks jointly so each vector reflects surrounding context. Public weights return one embedding per chunk; preview embeddings and interfaces may change incompatibly in later releases.",
+    "source": "https://huggingface.co/perplexity-ai/pplx-embed-v2-context-9b-preview"
+  },
+  {
+    "model": "HY Image 3.5 Preview",
+    "lab": "Tencent",
+    "date": "2026-09-22",
+    "tier": "specialty",
+    "note": "Hosted text-to-image and reference-image generation with multi-turn editing. September 22 availability is evidenced by ComfyUI's merged Tencent partner nodes; the October 5 OpenRouter listing is a later access expansion. No public weights verified.",
+    "source": "https://github.com/Comfy-Org/ComfyUI/pull/16462"
+  },
+  {
+    "model": "Pareto 26.10 Preview",
+    "lab": "Unbiased",
+    "date": "2026-10-01",
+    "tier": "specialty",
+    "note": "New preview release of the multi-model Pareto system for coding, research, and agents; available through the Unbiased API under pareto and through OpenRouter.",
+    "source": "https://unbiased.ai/changelog/"
+  },
+  {
+    "model": "Gemini 4 Argon",
+    "lab": "Google",
+    "date": "2026-09-30",
+    "tier": "flagship",
+    "note": "Frontier model for long-horizon coding, professional work, and cybersecurity; rolling out to trusted defenders through the Fairwind Program, not yet generally available to developers or consumers.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/"
+  },
+  {
+    "model": "Cohere Embed 5 family",
+    "lab": "Cohere",
+    "date": "2026-09-30",
+    "tier": "specialty",
+    "note": "Pro and Fast multimodal embedding models share an embedding space, support over 100 languages and 128K context, and are available through the Embed API and enterprise deployment channels.",
+    "source": "https://docs.cohere.com/changelog/embed-v5"
+  },
+  {
+    "model": "HeyGen Video 1",
+    "lab": "HeyGen",
+    "date": "2026-09-30",
+    "tier": "specialty",
+    "note": "General-purpose text-, image-, and reference-to-video model with generated audio, built on MiniMax H3 and post-trained by HeyGen; available through the HeyGen API and partner integrations.",
+    "source": "https://developers.heygen.com/heygen-video-1.0-catalog"
+  },
+  {
+    "model": "Kling 4.0 (early access)",
+    "lab": "Kuaishou",
+    "date": "2026-09-30",
+    "tier": "specialty",
+    "note": "Video model entering restricted early access, with broader rollout planned for October; supports native 30-second generation, audiovisual output, omni references, and multiple keyframes. Native 4K HDR is described as coming soon.",
+    "source": "https://kling.ai/blog/kling40-kling-visual-realism-creative-control-introducing-storytelling"
+  },
+  {
+    "model": "Praxis-1 (partner preview)",
+    "lab": "Runway",
+    "date": "2026-09-30",
+    "tier": "specialty",
+    "note": "World action model for robot control based on video pretraining; running on selected partners' hardware with additional pre-launch access by inquiry. Planned open weights are not yet public.",
+    "source": "https://runway.com/research/introducing-praxis-1"
+  },
+  {
+    "model": "GPT-6.1 Sol",
+    "lab": "OpenAI",
+    "date": "2026-09-29",
+    "tier": "mid",
+    "note": "Updated GPT-6 Sol successor for coding, computer use, and professional work, available as gpt-6.1-sol; 1.05M context and 128K output. Responses supports tools and beta multi-agent delegation; Chat Completions supports use without tools.",
+    "source": "https://developers.openai.com/api/docs/changelog"
+  },
+  {
+    "model": "Claude Sonnet 5.5",
+    "lab": "Anthropic",
+    "date": "2026-09-28",
+    "tier": "mid",
+    "note": "Second Claude 5.5 model for coding and professional work, available through Claude apps, Claude Code, the API, and cloud partners; Anthropic reports faster execution and lower typical cost than Sonnet 5.",
+    "source": "https://www.anthropic.com/claude-sonnet-5-5"
+  },
+  {
+    "model": "Eleven v4 / Eleven v4 Turbo",
+    "lab": "ElevenLabs",
+    "date": "2026-09-28",
+    "tier": "specialty",
+    "note": "New expressive text-to-speech generation with contextual tone and pacing, audio tags, and improved pronunciation; Turbo targets low-latency agents. Available across ElevenAPI, ElevenAgents, and ElevenCreative.",
+    "source": "https://elevenlabs.io/blog/eleven-v4"
+  },
+  {
+    "model": "Kling 4.0 Flash",
+    "lab": "Kuaishou",
+    "date": "2026-09-28",
+    "tier": "specialty",
+    "note": "Fast tier of Kling 4.0 video generation, initially available to Ultra Yearly subscribers ahead of the wider Kling 4.0 rollout.",
+    "source": "https://kling.ai/blog/kling40-kling-visual-realism-creative-control-introducing-storytelling"
+  },
+  {
+    "model": "Naive-N0.5-Flash",
+    "lab": "NaiveAI",
+    "date": "2026-09-27",
+    "tier": "open-weights",
+    "note": "MIT-licensed 309B MoE with 15.5B active parameters and native 1M context for coding and AI research; weights and inference code released publicly, with API access announced separately.",
+    "source": "https://huggingface.co/NaiveAI/Naive-N0.5-Flash"
+  },
+  {
+    "model": "MiMo-V2.6 MOPD family",
+    "lab": "Xiaomi",
+    "date": "2026-09-27",
+    "tier": "open-weights",
+    "note": "Updated Pro-MOPD and Flash-MOPD weights fix repeated tool calls through a revised final distillation run. The API switched to the repaired checkpoints on September 25 Beijing time; public weights and the write-up followed September 27.",
+    "source": "https://mimo.xiaomi.com/blog/mimo-v2-6-tool-call-repetition"
+  },
+  {
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "lab": "MiniMax",
+    "date": "2026-09-27",
+    "tier": "mid",
+    "note": "Multimodal coding and agent preview with 1M context and adjustable reasoning depth; initial access through MiniMax Code and the Token Plan. Thinking cannot be disabled; no public weights.",
+    "source": "https://platform.minimax.io/docs/guides/text-generation"
+  },
+  {
+    "model": "LongCat-2.5-Preview",
+    "lab": "Meituan",
+    "date": "2026-09-25",
+    "tier": "flagship",
+    "note": "Hosted multimodal preview for long-horizon agent work and coding, adding image understanding to the LongCat line; available through the LongCat API, with no public weights verified.",
+    "source": "https://technode.com/2026/09/30/meituan-releases-longcat-2-5-preview-with-image-understanding/"
+  },
+  {
+    "model": "Perceptron Mk1.5",
+    "lab": "Perceptron",
+    "date": "2026-09-25",
+    "tier": "specialty",
+    "note": "Multimodal chat-completions model adding audio input and optional video soundtrack analysis alongside vision; model ID perceptron-mk1.5, with a shared 36,864-token context.",
+    "source": "https://docs.perceptron.inc/perceptron-mk1.5/changelog"
+  },
+  {
+    "model": "Pixel Canary",
+    "lab": "Undisclosed (stealth)",
+    "date": "2026-09-25",
+    "tier": "specialty",
+    "note": "Anonymous coding model launched as a free limited-time stealth API through Vercel AI Gateway. Maker unconfirmed; this records the historical launch, not continued availability.",
+    "source": "https://vercel.com/changelog/pixel-canary-is-now-available-in-stealth-for-free-on-ai-gateway"
+  },
+  {
+    "model": "Decision Model Preview",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-24",
+    "tier": "specialty",
+    "note": "Structured hosted model for parallel classification, yes/no decisions, and scoring, returning probability distributions and confidence for routing, moderation, and validation. API ID decision-model-preview.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "Space Bunny Alpha",
+    "lab": "Undisclosed (stealth)",
+    "date": "2026-09-23",
+    "tier": "specialty",
+    "note": "Anonymous hosted coding and multimodal reasoning preview with 1M context, accessible through OpenRouter and OpenCode. Maker undisclosed; OpenRouter lists withdrawal on October 5.",
+    "source": "https://openrouter.ai/stealth/space-bunny-alpha"
+  },
+  {
+    "model": "Aion 3.5 / Aion 3.5 Mini",
+    "lab": "AionLabs",
+    "date": "2026-09-23",
+    "tier": "specialty",
+    "note": "Hosted roleplaying and storytelling systems built from several specialized GLM-based models; standard and Mini variants listed on OpenRouter with 262K context.",
+    "source": "https://openrouter.ai/aion-labs/aion-3.5"
+  },
+  {
+    "model": "CLM-v0.1-8B",
+    "lab": "Contrastive-LM",
+    "date": "2026-09-23",
+    "tier": "specialty",
+    "note": "Apache-2.0 System One decision model with trained projection heads over a frozen Qwen3-8B encoder. Scores supplied state/action candidates rather than generating prose; public announcement date, with weights already hosted before it.",
+    "source": "https://huggingface.co/Contrastive-LM/CLM-v0.1-8B"
+  },
+  {
+    "model": "Qwen-Audio-3.1-Realtime-Plus",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-20",
+    "tier": "specialty",
+    "note": "Hosted duplex speech conversation update with 262K context, eight new system voices, function calling, web search, and voice cloning; model availability dated by the QwenCloud release log.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "HappyOyster 1.0 family",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-18",
+    "tier": "specialty",
+    "note": "Hosted interactive world-model family comprising Adventure, Directing, and Acting for text/image-driven exploration, performance, and roleplay; listed with API access in the QwenCloud release log.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "Gemini 3.8 Live with Live Avatar",
+    "lab": "Google",
+    "date": "2026-09-24",
+    "tier": "specialty",
+    "note": "Enterprise release pairing Gemini 3.8 Live dialogue with low-latency video generation for expressive, lip-synced avatars; available in Gemini Enterprise.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-8-live-with-live-avatar/"
+  },
+  {
+    "model": "LFM2.5-VL-3B-DSpark",
+    "lab": "Liquid AI",
+    "date": "2026-09-24",
+    "tier": "specialty",
+    "note": "Open 280M-parameter speculative draft model for LFM2.5-VL-3B, accelerating vision-language decoding without changing the target model's output quality.",
+    "source": "https://www.liquid.ai/blog/lfm2-5-vl-dspark"
+  },
+  {
+    "model": "VeriLoop E2",
+    "lab": "Tsinghua SIGS Robot Lab",
+    "date": "2026-09-24",
+    "tier": "open-weights",
+    "note": "Apache-2.0 27B post-trained Qwen3.8-27B model for code, mathematics, and physics with a 262K-token native context; released with a separate verification harness and evaluation evidence.",
+    "source": "https://huggingface.co/tsinghua-sigs-robot-lab/VeriLoop-E2"
+  },
+  {
+    "model": "Gemini 3.8 Flash TTS family",
+    "lab": "Google",
+    "date": "2026-09-23",
+    "tier": "specialty",
+    "note": "Flash TTS offers voice design and fine-grained performance direction; Flash-Lite TTS targets lower-cost, high-volume speech generation. Both launched in Google AI Studio and the Gemini API.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-8-text-to-speech/"
+  },
+  {
+    "model": "Qwen3.8-Max-Prime",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-23",
+    "tier": "flagship",
+    "note": "Separately hosted high-throughput Qwen3.8 Max variant for coding and long-running agents, with a 1M-token context; Prime is a serving variant, not a new weight release.",
+    "source": "https://docs.modelstudio.console.alibabacloud.com/zh/model-studio/prime-mode"
+  },
+  {
+    "model": "Ember-1",
+    "lab": "Fireworks AI",
+    "date": "2026-09-23",
+    "tier": "specialty",
+    "note": "Hosted research-preview reasoning model adapted from Kimi K3 for coding and agents; Fireworks reports similar answer quality with roughly 40% fewer generated tokens.",
+    "source": "https://fireworks.ai/blog/ember-1"
+  },
+  {
+    "model": "Claude Opus 5.5",
+    "lab": "Anthropic",
+    "date": "2026-09-22",
+    "tier": "flagship",
+    "note": "First Claude 5.5 model; major upgrade for long-running coding and knowledge work, with Fable 5.1-level performance on most work and lower typical running cost than Opus 5.",
+    "source": "https://www.anthropic.com/claude-opus-5-5"
+  },
+  {
+    "model": "GPT-6 Sol",
+    "lab": "OpenAI",
+    "date": "2026-09-22",
+    "tier": "mid",
+    "note": "GPT-6's cost-efficient model for demanding coding, agents, and professional work; available in the API as gpt-6-sol and rolling out in Codex and ChatGPT Work.",
+    "source": "https://openai.com/index/introducing-gpt-6-sol-and-luna/"
+  },
+  {
+    "model": "GPT-6 Luna",
+    "lab": "OpenAI",
+    "date": "2026-09-22",
+    "tier": "small",
+    "note": "Fast, low-cost GPT-6 model for focused and high-volume tasks; available in the API as gpt-6-luna and rolling out in Codex and ChatGPT Work.",
+    "source": "https://openai.com/index/introducing-gpt-6-sol-and-luna/"
+  },
+  {
+    "model": "Solar Mini 4",
+    "lab": "Upstage",
+    "date": "2026-09-22",
+    "tier": "small",
+    "note": "Hosted Solar Mini 4 snapshot (solar-mini4-260922) for efficient agent workloads, with a 524K-token context and optional reasoning mode.",
+    "source": "https://console.upstage.ai/api/chat"
+  },
+  {
+    "model": "Grok 4.7",
+    "lab": "xAI",
+    "date": "2026-09-21",
+    "tier": "flagship",
+    "note": "SpaceXAI's updated flagship for long-running coding and knowledge work, built from a larger base model than Grok 4.6; available through Grok API, Cursor, and Grok Build.",
+    "source": "https://x.ai/news/grok-4-7"
+  },
+  {
+    "model": "Qwen3.8-Omni-Flash-Realtime",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-21",
+    "tier": "specialty",
+    "note": "Real-time audio and video interaction model with text and audio output, multichannel audio, video aggregation, and remote MCP tool support over WebSocket or WebRTC.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "MiMo-V2.6 family",
+    "lab": "Xiaomi",
+    "date": "2026-09-21",
+    "tier": "open-weights",
+    "note": "MIT-licensed Pro-RL, Flash-RL, and 9B distilled checkpoints for long-horizon agents, with multimodal input across the series; public weights and model cards released on Hugging Face.",
+    "source": "https://huggingface.co/collections/XiaomiMiMo/mimo-v26"
+  },
+  {
+    "model": "Step 5 Preview",
+    "lab": "StepFun",
+    "date": "2026-09-20",
+    "tier": "flagship",
+    "note": "Hosted frontier model for agentic and professional work, with a 600B sparse mixture of experts, 27B active parameters, and a 1M-token context; API access opened at launch, with weights planned later.",
+    "source": "https://platform.stepfun.ai/"
+  },
+  {
+    "model": "Qwen-Image-2.1",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-20",
+    "tier": "open-weights",
+    "note": "Research-licensed 7B image generation and editing model with native transparent-image output, local edits, and support for up to 10 reference images; weights are available publicly.",
+    "source": "https://qwen.ai/blog?id=qwen-image-2.1"
+  },
+  {
+    "model": "Grok Voice Transcribe 2.0",
+    "lab": "xAI",
+    "date": "2026-09-18",
+    "tier": "specialty",
+    "note": "Speech-to-text model for batch and streaming transcription, with multilingual detection, diarization, word timestamps, and key-term biasing through the Speech-to-Text API.",
+    "source": "https://x.ai/news/grok-voice-transcribe-2"
+  },
+  {
+    "model": "Qwen3.8-Omni-Flash",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-18",
+    "tier": "specialty",
+    "note": "Next-generation native omni-modal model with up to 1M context, text/image/audio/video input, spatial-audio understanding, and agentic support for coding, GUI interaction, multimedia production, summarization, and audio-video dialogue.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "Laya",
+    "lab": "Convai Innovations",
+    "date": "2026-09-18",
+    "tier": "small",
+    "note": "Apache-2.0 421M non-autoregressive decision model for calibrated classification, scoring, and routing rather than free-form text generation.",
+    "source": "https://huggingface.co/convaiinnovations/laya"
+  },
+  {
+    "model": "Antigravity Agent 09-2026",
+    "lab": "Google",
+    "date": "2026-09-17",
+    "tier": "specialty",
+    "note": "Versioned managed-agent snapshot exposed through the Interactions API, with a hosted Linux sandbox and code, file, and web tools; it defaults to Gemini 3.8 Flash but can use another Gemini model.",
+    "source": "https://ai.google.dev/gemini-api/docs/changelog"
+  },
+  {
+    "model": "Qwen3.8-LiveTranslate-Flash-Realtime",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-17",
+    "tier": "specialty",
+    "note": "Realtime audio/video simultaneous-translation model with audio and image input, text and audio output, 60 source languages, voice output in 29 languages, speaker diarization, and about 2.3 seconds end-to-end latency.",
+    "source": "https://docs.qwencloud.com/changelog/models"
+  },
+  {
+    "model": "Ternary Bonsai 2 27B",
+    "lab": "PrismML",
+    "date": "2026-09-17",
+    "tier": "open-weights",
+    "note": "Apache-2.0 27.8B multimodal ternary model based on Qwen3.8-27B; its 5.9 GB release targets local and edge reasoning, vision, coding, and agent workloads.",
+    "source": "https://prismml.com/news/prismml-launches-bonsai-2-27b"
+  },
+  {
+    "model": "Pareto 26.9",
+    "lab": "Unbiased",
+    "date": "2026-09-17",
+    "tier": "specialty",
+    "note": "Live API model system that blends and cascades frontier and open models for text-and-image tasks; access is available through the self-serve Unbiased platform with manual signup approval.",
+    "source": "https://unbiased.ai/model-card/"
+  },
+  {
+    "model": "Xing4.0-29B-A4B",
+    "lab": "China Telecom AI",
+    "date": "2026-09-17",
+    "tier": "open-weights",
+    "note": "Open 29B mixture-of-experts model with 4B active parameters, released for agentic and coding workloads across multiple model repositories.",
+    "source": "https://www.chinatelecom.com.cn/ct/news/jtxw/168741.html"
+  },
+  {
+    "model": "SPARSEUP",
+    "lab": "Linkup Research",
+    "date": "2026-09-17",
+    "tier": "specialty",
+    "note": "Apache-2.0 149M ModernBERT sparse retrieval and embedding model designed for interpretable, efficient search indexes.",
+    "source": "https://www.linkup.so/blog/introducing-sparseup-by-linkup"
+  },
+  {
+    "model": "Needle 3",
+    "lab": "Cactus Compute",
+    "date": "2026-09-17",
+    "tier": "small",
+    "note": "Apache-2.0 121M sliceable on-device automation model for tool calls, structured extraction, classification, and embeddings in 9–35 MB deployments.",
+    "source": "https://huggingface.co/Cactus-Compute/needle3"
+  },
+  {
+    "model": "HuatuoGPT-3-9B",
+    "lab": "Freedom Intelligence",
+    "date": "2026-09-17",
+    "tier": "specialty",
+    "note": "Apache-2.0 medical reasoning model built on Qwen3.5-9B, released with weights, code, a medical reinforcement-learning dataset, and grader.",
+    "source": "https://huggingface.co/FreedomIntelligence/HuatuoGPT-3-9B"
+  },
+  {
+    "model": "XGEN-JING / JING-Flash-v1",
+    "lab": "XGEN Labs",
+    "date": "2026-09-16",
+    "tier": "specialty",
+    "note": "Released interactive-experience checkpoint that generates first-person video and audio from actions, reference images, and history; the public JING-Flash-v1 uses four-step bidirectional generation.",
+    "source": "https://huggingface.co/XGENlabs/XGEN-JING"
+  },
+  {
+    "model": "WeVisDoc-2B / 4B",
+    "lab": "Tencent",
+    "date": "2026-09-16",
+    "tier": "specialty",
+    "note": "Apache-2.0 end-to-end document parsing family that converts page images into structured Markdown with LaTeX formulas and HTML tables.",
+    "source": "https://huggingface.co/tencent/WeVisDoc-4B"
+  },
+  {
+    "model": "Gemini 3.8 Live family",
+    "lab": "Google",
+    "date": "2026-09-15",
+    "tier": "specialty",
+    "note": "GA audio-to-audio Live API family: Gemini 3.8 Live for low-latency dialogue and an Extended Thinking variant for background reasoning during continuous audio.",
+    "source": "https://ai.google.dev/gemini-api/docs/changelog"
+  },
+  {
+    "model": "Koa",
+    "lab": "Salesforce",
+    "date": "2026-09-15",
+    "tier": "specialty",
+    "note": "CRM reasoning model post-trained from NVIDIA Nemotron 3 Super on synthetic enterprise workflows; available to select Agentforce pilot customers ahead of planned winter 2026 GA.",
+    "source": "https://www.salesforce.com/news/press-releases/2026/09/15/koa-reasoning-model/"
+  },
+  {
+    "model": "Jev",
+    "lab": "TypeSafe AI",
+    "date": "2026-09-15",
+    "tier": "specialty",
+    "note": "First public System One Model, returning typed probabilistic decisions rather than generated prose; released through gated early access.",
+    "source": "https://typesafe.ai/blog/introducing-system-one-models-and-jev"
+  },
+  {
+    "model": "open-1b",
+    "lab": "Gensyn",
+    "date": "2026-09-15",
+    "tier": "open-weights",
+    "note": "Apache-2.0 1.61B decoder model released with full training data, every intermediate checkpoint, per-step hashes, training code, and a bitwise replay audit harness.",
+    "source": "https://www.gensyn.ai/news/introducing-open-1b-auditable-training"
+  },
+  {
+    "model": "Kimi K2.8 Preview",
+    "lab": "Moonshot",
+    "date": "2026-09-11",
+    "tier": "mid",
+    "note": "Hosted coding and agent preview fully rolled out in Kimi Code with up to 1M context and low, high, and max reasoning settings.",
+    "source": "https://www.kimi.com/code/docs/en/kimi-code/whats-new.html"
+  },
+  {
+    "model": "Atria Dawn Preview",
+    "lab": "Shanghai AI Lab",
+    "date": "2026-09-11",
+    "tier": "open-weights",
+    "note": "Agentic research and engineering model built on a 744B MoE foundation, with 256K text context, MIT-licensed BF16 and FP8 weights, and hosted API access.",
+    "source": "https://huggingface.co/internlm/Atria-Dawn-Preview"
+  },
+  {
+    "model": "Fugu Max / Fugu Ultra v2",
+    "lab": "Sakana AI",
+    "date": "2026-09-11",
+    "tier": "specialty",
+    "note": "Two API-accessible orchestration tiers sharing Sakana's multi-model architecture: Max targets cost-efficient capability while Ultra v2 targets peak multi-step reasoning, research, and coding quality.",
+    "source": "https://sakana.ai/fugu-max-release/"
+  },
+  {
+    "model": "Agnes-3.0-Flash Preview",
+    "lab": "Agnes AI",
+    "date": "2026-09-11",
+    "tier": "open-weights",
+    "note": "Apache-2.0 33B multimodal preview with text, image, and video input, 262K context, adjustable reasoning, and tool calling.",
+    "source": "https://huggingface.co/Agnes-AI/Agnes-3.0-Flash"
+  },
+  {
+    "model": "DeepSeek-V4.1-Flash",
+    "lab": "DeepSeek",
+    "date": "2026-09-10",
+    "tier": "open-weights",
+    "note": "Open 552B MoE with an asymmetric causal encoder-decoder, 8B active parameters for input and 16B for output, native vision, and substantially reduced KV-cache requirements.",
+    "source": "https://api-docs.deepseek.com/updates/"
+  },
+  {
+    "model": "SWE-2",
+    "lab": "Cognition",
+    "date": "2026-09-10",
+    "tier": "specialty",
+    "note": "Coding model post-trained from Kimi K3 and released for Cognition's Devin Desktop and CLI agent workflows.",
+    "source": "https://cognition.com/blog/swe-2"
+  },
+  {
+    "model": "YuE2-3B",
+    "lab": "M-A-P",
+    "date": "2026-09-10",
+    "tier": "specialty",
+    "note": "Open-weight full-song generation model supporting cover creation and agentic music editing.",
+    "source": "https://huggingface.co/m-a-p/YuE2-3B"
+  },
+  {
+    "model": "Suno v6 family",
+    "lab": "Suno",
+    "date": "2026-09-09",
+    "tier": "specialty",
+    "note": "Music-generation family comprising flagship v6, exploratory v6-wild, and efficient v6-mini, with text, audio, image, and video conditioning plus localized editing.",
+    "source": "https://blog.suno.com/release-notes/introducing-v6"
+  },
+  {
+    "model": "AuK / AuK-Flash",
+    "lab": "Tencent",
+    "date": "2026-09-09",
+    "tier": "specialty",
+    "note": "Open 1.5B speech generation and editing foundation model plus a distilled four-step Flash variant, covering TTS, acoustic editing, enhancement, and source separation.",
+    "source": "https://huggingface.co/tencent/AuK-Flash"
+  },
+  {
+    "model": "Nex-N2.5 family",
+    "lab": "Nex AGI",
+    "date": "2026-09-08",
+    "tier": "open-weights",
+    "note": "Mini, Pro, and Max family: Mini and Pro target multimodal computer use, while Max is a text-only 1.6T/49B-active MoE; launch access mixed hosted and downloadable variants.",
+    "source": "https://nex-agi.com/"
+  },
+  {
+    "model": "Mercury 2.5",
+    "lab": "Inception",
+    "date": "2026-09-08",
+    "tier": "mid",
+    "note": "Production diffusion language model with 260K context, tunable reasoning, parallel tool calls, structured output, and high-throughput serving.",
+    "source": "https://www.inceptionlabs.ai/blog/introducing-mercury-2-5"
+  },
+  {
+    "model": "GPT-Image-2.5 Flare / Sunburst",
+    "lab": "OpenAI",
+    "date": "2026-09-08",
+    "tier": "specialty",
+    "note": "Two API image models: Flare prioritizes faster generation and editing, while Sunburst trades speed for higher precision on detailed creative work.",
+    "source": "https://openai.com/index/introducing-chatgpt-images-2-5/"
+  },
+  {
+    "model": "MiniCPM5-2B",
+    "lab": "OpenBMB",
+    "date": "2026-09-07",
+    "tier": "small",
+    "note": "Compact 2.52B dense model with roughly 131K context and on-device agent and tool-use capabilities.",
+    "source": "https://huggingface.co/openbmb/MiniCPM5-2B"
+  },
+  {
+    "model": "Spark X2.5",
+    "lab": "iFLYTEK",
+    "date": "2026-09-07",
+    "tier": "flagship",
+    "note": "Proprietary 293B/30B-active mixture-of-experts model with 256K context and support for more than 200 languages.",
+    "source": "https://www.xfyun.cn/doc/spark/TokenPlan.html"
+  },
+  {
+    "model": "LLaDA2.2-mini",
+    "lab": "Ant Group (inclusionAI)",
+    "date": "2026-09-05",
+    "tier": "open-weights",
+    "note": "Open 16B MoE diffusion language model with 128K context and Levenshtein-style insertion, deletion, and replacement during generation.",
+    "source": "https://huggingface.co/inclusionAI/LLaDA2.2-mini"
+  },
+  {
+    "model": "Lyria 3.5",
+    "lab": "Google",
+    "date": "2026-09-04",
+    "tier": "specialty",
+    "note": "Music-generation model accepting text and image prompts and producing full-length 44.1 kHz stereo songs; the public launch followed its September 3 API lifecycle entry.",
+    "source": "https://blog.google/innovation-and-ai/products/gemini-app/better-tracks-lyria-gemini/"
+  },
+  {
+    "model": "Ling-3.0-flash-Sante",
+    "lab": "Ant Group (inclusionAI)",
+    "date": "2026-09-04",
+    "tier": "specialty",
+    "note": "Medicine-focused 124B/5.1B-active MoE initially released through hosted model providers.",
+    "source": "https://openrouter.ai/inclusionai/ling-3.0-flash-sante"
+  },
+  {
+    "model": "Ling-3.0-flash-VL",
+    "lab": "Ant Group (inclusionAI)",
+    "date": "2026-09-04",
+    "tier": "open-weights",
+    "note": "Public 124B/5.5B-active vision-language model with image, video, and 256K-context support; hosted API access and downloadable weights were available from the initial release.",
+    "source": "https://huggingface.co/inclusionAI/Ling-3.0-flash-VL"
+  },
+  {
+    "model": "K2 Horizon family",
+    "lab": "MBZUAI (IFM)",
+    "date": "2026-09-03",
+    "tier": "open-weights",
+    "note": "Fully open six-model family led by a 375B/23B-active MoE, with weights, checkpoints, training recipes, code, logs, and evaluation artifacts under Apache 2.0.",
+    "source": "https://ifm.ai/blog/k2/"
+  },
+  {
+    "model": "MAI-Transcribe-2",
+    "lab": "Microsoft",
+    "date": "2026-09-03",
+    "tier": "specialty",
+    "note": "Multilingual speech-recognition model with diarization, configurable transcription styles, word-level timestamps, and keyword biasing across 60 languages.",
+    "source": "https://microsoft.ai/news/mai-transcribe-2-is-the-fastest-most-accurate-and-cheapest-speech-recognition-model-in-the-world/"
+  },
+  {
+    "model": "WeatherNext 3",
+    "lab": "Google",
+    "date": "2026-09-03",
+    "tier": "specialty",
+    "note": "Hourly-initialized weather forecasting model with predictions down to 5 km resolution; public announcement date, following an August 31 dataset launch.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/google-deepmind/introducing-weathernext-3/"
+  },
+  {
+    "model": "GPT-6 Astra",
+    "lab": "OpenAI",
+    "date": "2026-09-03",
+    "tier": "flagship",
+    "note": "OpenAI flagship for complex reasoning, coding, computer use, research, and document creation (gpt-6-astra). Announced with staged access, starting with trusted enterprises; ChatGPT paid-plan and API rollout follows.",
+    "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+  },
+  {
+    "model": "Qwen3.8-Max-0902",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-09-02",
+    "tier": "flagship",
+    "note": "Updated hosted Qwen3.8-Max snapshot (qwen3.8-max-2026-09-02), with stronger autonomous coding, agent coordination, and visual understanding; 1M context.",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/qwen3-8-max"
+  },
+  {
+    "model": "Qwen3.8-Flash (API)",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-08-26",
+    "tier": "mid",
+    "note": "Hosted multimodal workhorse with 1M context, reasoning, coding, tool use, and visual understanding. Model Studio availability date; distinct from the open-weight Flash-Next entry.",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/newly-released-models"
+  },
+  {
+    "model": "Qwen-MT-Image 2.0",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-08-28",
+    "tier": "specialty",
+    "note": "Image translation model supporting 55 source languages, layout preservation, and custom terminology. Model Studio availability date.",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/newly-released-models"
+  },
+  {
+    "model": "Sora (research preview)",
+    "lab": "OpenAI",
+    "date": "2024-02-15",
+    "tier": "specialty",
+    "note": "Text-to-video generation model announced as a research preview.",
+    "source": "https://openai.com/index/video-generation-models-as-world-simulators/"
+  },
+  {
+    "model": "GPT-4o",
+    "lab": "OpenAI",
+    "date": "2024-05-13",
+    "tier": "flagship",
+    "note": "Omni multimodal flagship: text, audio, vision natively with real-time interaction.",
+    "source": "https://openai.com/index/hello-gpt-4o/"
+  },
+  {
+    "model": "GPT-4o mini",
+    "lab": "OpenAI",
+    "date": "2024-07-18",
+    "tier": "small",
+    "note": "Cost-efficient small model replacing GPT-3.5 Turbo.",
+    "source": "https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/"
+  },
+  {
+    "model": "o1-preview",
+    "lab": "OpenAI",
+    "date": "2024-09-12",
+    "tier": "flagship",
+    "note": "First public reasoning model series.",
+    "source": "https://openai.com/index/introducing-openai-o1-preview/"
+  },
+  {
+    "model": "o1-mini",
+    "lab": "OpenAI",
+    "date": "2024-09-12",
+    "tier": "small",
+    "note": "Smaller, faster reasoning model for STEM and coding.",
+    "source": "https://openai.com/index/introducing-openai-o1-preview/"
+  },
+  {
+    "model": "GPT-4o Advanced Voice",
+    "lab": "OpenAI",
+    "date": "2024-09-24",
+    "tier": "specialty",
+    "note": "Natural speech-to-speech rolled out broadly to Plus/Team.",
+    "source": "https://openai.com/"
+  },
+  {
+    "model": "o1 + o1 pro",
+    "lab": "OpenAI",
+    "date": "2024-12-05",
+    "tier": "flagship",
+    "note": "Full o1 in ChatGPT plus o1 pro mode with $200/mo Pro plan.",
+    "source": "https://openai.com/index/introducing-chatgpt-pro/"
+  },
+  {
+    "model": "Sora (general release)",
+    "lab": "OpenAI",
+    "date": "2024-12-09",
+    "tier": "specialty",
+    "note": "Sora Turbo video product launched publicly at sora.com.",
+    "source": "https://openai.com/index/sora-is-here/"
+  },
+  {
+    "model": "Operator (CUA)",
+    "lab": "OpenAI",
+    "date": "2025-01-23",
+    "tier": "specialty",
+    "note": "Browser-using agent powered by the Computer-Using Agent model.",
+    "source": "https://openai.com/index/introducing-operator/"
+  },
+  {
+    "model": "o3-mini",
+    "lab": "OpenAI",
+    "date": "2025-01-31",
+    "tier": "small",
+    "note": "Cost-efficient reasoning model; first reasoning model for free users.",
+    "source": "https://openai.com/index/openai-o3-mini/"
+  },
+  {
+    "model": "Deep Research",
+    "lab": "OpenAI",
+    "date": "2025-02-02",
+    "tier": "specialty",
+    "note": "Agent powered by fine-tuned o3 for multi-step online research.",
+    "source": "https://openai.com/index/introducing-deep-research/"
+  },
+  {
+    "model": "GPT-4.5",
+    "lab": "OpenAI",
+    "date": "2025-02-27",
+    "tier": "flagship",
+    "note": "Research preview of OpenAI's largest chat model (Orion).",
+    "source": "https://openai.com/index/introducing-gpt-4-5/"
+  },
+  {
+    "model": "GPT-4o image generation",
+    "lab": "OpenAI",
+    "date": "2025-03-25",
+    "tier": "specialty",
+    "note": "Native image generation in ChatGPT; the Ghibli wave.",
+    "source": "https://openai.com/index/introducing-4o-image-generation/"
+  },
+  {
+    "model": "GPT-4.1 family",
+    "lab": "OpenAI",
+    "date": "2025-04-14",
+    "tier": "mid",
+    "note": "API-first series with 1M-token context, coding-optimized.",
+    "source": "https://openai.com/index/gpt-4-1/"
+  },
+  {
+    "model": "o3",
+    "lab": "OpenAI",
+    "date": "2025-04-16",
+    "tier": "flagship",
+    "note": "Most capable reasoning model at release, full agentic tool use.",
+    "source": "https://openai.com/index/introducing-o3-and-o4-mini/"
+  },
+  {
+    "model": "o4-mini",
+    "lab": "OpenAI",
+    "date": "2025-04-16",
+    "tier": "small",
+    "note": "Fast, cost-efficient reasoning model alongside o3.",
+    "source": "https://openai.com/index/introducing-o3-and-o4-mini/"
+  },
+  {
+    "model": "gpt-image-1",
+    "lab": "OpenAI",
+    "date": "2025-04-23",
+    "tier": "specialty",
+    "note": "ChatGPT's image model available to developers in the API.",
+    "source": "https://openai.com/index/image-generation-api/"
+  },
+  {
+    "model": "Codex (cloud agent)",
+    "lab": "OpenAI",
+    "date": "2025-05-16",
+    "tier": "specialty",
+    "note": "Cloud software-engineering agent powered by codex-1.",
+    "source": "https://openai.com/index/introducing-codex/"
+  },
+  {
+    "model": "o3-pro",
+    "lab": "OpenAI",
+    "date": "2025-06-10",
+    "tier": "flagship",
+    "note": "Longer-thinking o3 for maximum reliability.",
+    "source": "https://techcrunch.com/2025/06/10/openai-releases-o3-pro-a-souped-up-version-of-its-o3-ai-reasoning-model/"
+  },
+  {
+    "model": "ChatGPT Agent",
+    "lab": "OpenAI",
+    "date": "2025-07-17",
+    "tier": "specialty",
+    "note": "Unified agent mode with its own virtual computer.",
+    "source": "https://openai.com/index/introducing-chatgpt-agent/"
+  },
+  {
+    "model": "gpt-oss-120b / 20b",
+    "lab": "OpenAI",
+    "date": "2025-08-05",
+    "tier": "open-weights",
+    "note": "First open-weight OpenAI LLMs since GPT-2, Apache 2.0.",
+    "source": "https://openai.com/index/introducing-gpt-oss/"
+  },
+  {
+    "model": "GPT-5",
+    "lab": "OpenAI",
+    "date": "2025-08-07",
+    "tier": "flagship",
+    "note": "Unified system routing between fast and thinking models; ChatGPT default.",
+    "source": "https://openai.com/index/introducing-gpt-5/"
+  },
+  {
+    "model": "gpt-realtime",
+    "lab": "OpenAI",
+    "date": "2025-08-28",
+    "tier": "specialty",
+    "note": "Production speech-to-speech model; Realtime API GA.",
+    "source": "https://openai.com/index/introducing-gpt-realtime/"
+  },
+  {
+    "model": "GPT-5-Codex",
+    "lab": "OpenAI",
+    "date": "2025-09-15",
+    "tier": "specialty",
+    "note": "GPT-5 variant optimized for agentic coding.",
+    "source": "https://openai.com/index/introducing-upgrades-to-codex/"
+  },
+  {
+    "model": "Sora 2",
+    "lab": "OpenAI",
+    "date": "2025-09-30",
+    "tier": "specialty",
+    "note": "Video+audio generation with cameos; Sora iOS social app.",
+    "source": "https://openai.com/index/sora-2/"
+  },
+  {
+    "model": "GPT-5.1",
+    "lab": "OpenAI",
+    "date": "2025-11-12",
+    "tier": "flagship",
+    "note": "Instant & Thinking; adaptive reasoning; Pro followed Nov 19.",
+    "source": "https://openai.com/index/gpt-5-1/"
+  },
+  {
+    "model": "GPT-5.1-Codex-Max",
+    "lab": "OpenAI",
+    "date": "2025-11-19",
+    "tier": "specialty",
+    "note": "Frontier agentic coding model with compaction.",
+    "source": "https://openai.com/index/gpt-5-1-codex-max/"
+  },
+  {
+    "model": "GPT-5.2",
+    "lab": "OpenAI",
+    "date": "2025-12-11",
+    "tier": "flagship",
+    "note": "Gains in reasoning, coding, long context, vision.",
+    "source": "https://openai.com/index/introducing-gpt-5-2/"
+  },
+  {
+    "model": "GPT Image 1.5",
+    "lab": "OpenAI",
+    "date": "2025-12-16",
+    "tier": "specialty",
+    "note": "Flagship image model powering ChatGPT Images.",
+    "source": "https://openai.com/"
+  },
+  {
+    "model": "GPT-5.2-Codex",
+    "lab": "OpenAI",
+    "date": "2025-12-18",
+    "tier": "specialty",
+    "note": "Agentic coding model incl. defensive cybersecurity work.",
+    "source": "https://openai.com/index/introducing-gpt-5-2-codex/"
+  },
+  {
+    "model": "GPT-5.3-Codex",
+    "lab": "OpenAI",
+    "date": "2026-02-05",
+    "tier": "specialty",
+    "note": "Codex-native agentic coding model.",
+    "source": "https://openai.com/index/introducing-gpt-5-3-codex/"
+  },
+  {
+    "model": "GPT-5.3-Codex-Spark",
+    "lab": "OpenAI",
+    "date": "2026-02-12",
+    "tier": "small",
+    "note": "Ultra-fast research preview for real-time coding.",
+    "source": "https://openai.com/index/introducing-gpt-5-3-codex-spark/"
+  },
+  {
+    "model": "GPT-5.3 Instant",
+    "lab": "OpenAI",
+    "date": "2026-03-03",
+    "tier": "mid",
+    "note": "Everyday conversation model update.",
+    "source": "https://openai.com/index/gpt-5-3-instant/"
+  },
+  {
+    "model": "GPT-5.4",
+    "lab": "OpenAI",
+    "date": "2026-03-05",
+    "tier": "flagship",
+    "note": "Thinking & Pro; unifies reasoning, coding, agentic workflows.",
+    "source": "https://openai.com/index/introducing-gpt-5-4/"
+  },
+  {
+    "model": "GPT-5.4 mini & nano",
+    "lab": "OpenAI",
+    "date": "2026-03-17",
+    "tier": "small",
+    "note": "Smaller GPT-5.4 models.",
+    "source": "https://openai.com/index/introducing-gpt-5-4-mini-and-nano/"
+  },
+  {
+    "model": "GPT-5.4-Cyber",
+    "lab": "OpenAI",
+    "date": "2026-04-15",
+    "tier": "specialty",
+    "note": "Defensive-cybersecurity fine-tune under trusted access.",
+    "source": "https://openai.com/index/scaling-trusted-access-for-cyber-defense/"
+  },
+  {
+    "model": "GPT-Rosalind",
+    "lab": "OpenAI",
+    "date": "2026-04-16",
+    "tier": "specialty",
+    "note": "Frontier reasoning model for biology and drug discovery.",
+    "source": "https://openai.com/index/introducing-gpt-rosalind/"
+  },
+  {
+    "model": "ChatGPT Images 2.0",
+    "lab": "OpenAI",
+    "date": "2026-04-21",
+    "tier": "specialty",
+    "note": "New image generation model/experience.",
+    "source": "https://openai.com/index/introducing-chatgpt-images-2-0/"
+  },
+  {
+    "model": "GPT-5.5",
+    "lab": "OpenAI",
+    "date": "2026-04-23",
+    "tier": "flagship",
+    "note": "Frontier model; 5.5 Instant became ChatGPT default May 5.",
+    "source": "https://openai.com/index/introducing-gpt-5-5/"
+  },
+  {
+    "model": "GPT-Realtime-2 / Translate / Whisper",
+    "lab": "OpenAI",
+    "date": "2026-05-07",
+    "tier": "specialty",
+    "note": "Three new API audio models.",
+    "source": "https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/"
+  },
+  {
+    "model": "GPT-5.6 (Sol/Terra/Luna)",
+    "lab": "OpenAI",
+    "date": "2026-06-27",
+    "tier": "flagship",
+    "note": "Named capability tiers; broad rollout July 9.",
+    "source": "https://openai.com/index/previewing-gpt-5-6-sol/"
+  },
+  {
+    "model": "GPT-Live",
+    "lab": "OpenAI",
+    "date": "2026-07-08",
+    "tier": "specialty",
+    "note": "New generation of voice models for ChatGPT.",
+    "source": "https://openai.com/index/introducing-gpt-live/"
+  },
+  {
+    "model": "GPT-5.6-Cyber",
+    "lab": "OpenAI",
+    "date": "2026-08-10",
+    "tier": "specialty",
+    "note": "Purpose-trained cyber model for approved Daybreak Red defenders, with fewer refusals on advanced vulnerability research and exploit validation.",
+    "source": "https://openai.com/index/expanding-daybreak-as-the-cyber-defense-window-narrows/"
+  },
+  {
+    "model": "Claude 3 (Opus/Sonnet/Haiku)",
+    "lab": "Anthropic",
+    "date": "2024-03-04",
+    "tier": "flagship",
+    "note": "Three-tier family with vision; Opus topped GPT-4 on many benchmarks.",
+    "source": "https://www.anthropic.com/news/claude-3-family"
+  },
+  {
+    "model": "Claude 3.5 Sonnet",
+    "lab": "Anthropic",
+    "date": "2024-06-20",
+    "tier": "flagship",
+    "note": "Beat Claude 3 Opus at 2x speed; launched with Artifacts.",
+    "source": "https://www.anthropic.com/news/claude-3-5-sonnet"
+  },
+  {
+    "model": "Claude 3.5 Sonnet (new) + computer use",
+    "lab": "Anthropic",
+    "date": "2024-10-22",
+    "tier": "flagship",
+    "note": "Upgraded Sonnet plus first frontier computer-use beta.",
+    "source": "https://www.anthropic.com/news/3-5-models-and-computer-use"
+  },
+  {
+    "model": "Claude 3.5 Haiku",
+    "lab": "Anthropic",
+    "date": "2024-10-22",
+    "tier": "small",
+    "note": "Fast low-cost 3.5-gen model; API Nov 4.",
+    "source": "https://www.anthropic.com/news/3-5-models-and-computer-use"
+  },
+  {
+    "model": "Claude 3.7 Sonnet",
+    "lab": "Anthropic",
+    "date": "2025-02-24",
+    "tier": "flagship",
+    "note": "First hybrid reasoning model; Claude Code preview.",
+    "source": "https://www.anthropic.com/news/claude-3-7-sonnet"
+  },
+  {
+    "model": "Claude Opus 4 & Sonnet 4",
+    "lab": "Anthropic",
+    "date": "2025-05-22",
+    "tier": "flagship",
+    "note": "Claude 4 generation for coding and agents.",
+    "source": "https://www.anthropic.com/news/claude-4"
+  },
+  {
+    "model": "Claude Opus 4.1",
+    "lab": "Anthropic",
+    "date": "2025-08-05",
+    "tier": "flagship",
+    "note": "Opus upgrade for coding precision and agentic tasks.",
+    "source": "https://www.anthropic.com/news/claude-opus-4-1"
+  },
+  {
+    "model": "Claude Sonnet 4.5",
+    "lab": "Anthropic",
+    "date": "2025-09-29",
+    "tier": "flagship",
+    "note": "Best model for agents, coding, computer use at launch.",
+    "source": "https://www.anthropic.com/news/claude-sonnet-4-5"
+  },
+  {
+    "model": "Claude Haiku 4.5",
+    "lab": "Anthropic",
+    "date": "2025-10-15",
+    "tier": "small",
+    "note": "Matches Sonnet 4 coding at a third of the cost.",
+    "source": "https://www.anthropic.com/news/claude-haiku-4-5"
+  },
+  {
+    "model": "Claude Opus 4.5",
+    "lab": "Anthropic",
+    "date": "2025-11-24",
+    "tier": "flagship",
+    "note": "Frontier Opus with major price cut.",
+    "source": "https://www.anthropic.com/news/claude-opus-4-5"
+  },
+  {
+    "model": "Claude Opus 4.6",
+    "lab": "Anthropic",
+    "date": "2026-02-05",
+    "tier": "flagship",
+    "note": "Stronger planning, code review; 1M-token context beta.",
+    "source": "https://www.anthropic.com/news/claude-opus-4-6"
+  },
+  {
+    "model": "Claude Sonnet 4.6",
+    "lab": "Anthropic",
+    "date": "2026-02-17",
+    "tier": "mid",
+    "note": "Sonnet upgrade across coding, computer use, agents.",
+    "source": "https://www.anthropic.com/news/claude-sonnet-4-6"
+  },
+  {
+    "model": "Claude Opus 4.7",
+    "lab": "Anthropic",
+    "date": "2026-04-16",
+    "tier": "flagship",
+    "note": "Advanced software engineering and high-res vision.",
+    "source": "https://www.anthropic.com/news/claude-opus-4-7"
+  },
+  {
+    "model": "Claude Opus 4.8",
+    "lab": "Anthropic",
+    "date": "2026-05-28",
+    "tier": "flagship",
+    "note": "Cheaper fast mode and dynamic workflows.",
+    "source": "https://www.anthropic.com/news/claude-opus-4-8"
+  },
+  {
+    "model": "Claude Fable 5 / Mythos 5",
+    "lab": "Anthropic",
+    "date": "2026-06-09",
+    "tier": "flagship",
+    "note": "First Mythos-class model, state-of-the-art on most benchmarks.",
+    "source": "https://www.anthropic.com/news/claude-fable-5-mythos-5"
+  },
+  {
+    "model": "Claude Sonnet 5",
+    "lab": "Anthropic",
+    "date": "2026-06-30",
+    "tier": "mid",
+    "note": "Sonnet-class model for agentic coding and tool use.",
+    "source": "https://www.anthropic.com/news/claude-sonnet-5"
+  },
+  {
+    "model": "Claude Opus 5",
+    "lab": "Anthropic",
+    "date": "2026-07-24",
+    "tier": "flagship",
+    "note": "Generational Opus upgrade for long-running agents, coding, and professional work; near-Fable intelligence at half the price.",
+    "source": "https://www.anthropic.com/news/claude-opus-5"
+  },
+  {
+    "model": "Claude Fable 5.1 / Mythos 5.1",
+    "lab": "Anthropic",
+    "date": "2026-09-01",
+    "tier": "flagship",
+    "note": "Shared next-generation model for long-running coding and knowledge work; Fable is broadly available with cyber/bio safeguards, while Mythos remains restricted to vetted organizations.",
+    "source": "https://www.anthropic.com/claude-fable-and-mythos-5-1"
+  },
+  {
+    "model": "Gemini 1.0 Ultra",
+    "lab": "Google",
+    "date": "2024-02-08",
+    "tier": "flagship",
+    "note": "Largest Gemini 1.0 model via Gemini Advanced; Bard rebrand.",
+    "source": "https://blog.google/products/gemini/google-bard-gemini-advanced-app/"
+  },
+  {
+    "model": "Gemini 1.5 Pro",
+    "lab": "Google",
+    "date": "2024-02-15",
+    "tier": "flagship",
+    "note": "MoE with breakthrough 1M-token context, limited preview.",
+    "source": "https://blog.google/technology/ai/google-gemini-next-generation-model-february-2024/"
+  },
+  {
+    "model": "Gemma (2B/7B)",
+    "lab": "Google",
+    "date": "2024-02-21",
+    "tier": "open-weights",
+    "note": "Google's first open-weights family from Gemini research.",
+    "source": "https://blog.google/technology/developers/gemma-open-models/"
+  },
+  {
+    "model": "Gemini 1.5 Flash",
+    "lab": "Google",
+    "date": "2024-05-14",
+    "tier": "mid",
+    "note": "Fast, cost-efficient long-context model, I/O 2024.",
+    "source": "https://blog.google/technology/ai/google-gemini-update-flash-ai-assistant-io-2024/"
+  },
+  {
+    "model": "Veo",
+    "lab": "Google",
+    "date": "2024-05-14",
+    "tier": "specialty",
+    "note": "First-gen 1080p text-to-video, I/O 2024.",
+    "source": "https://deepmind.google/models/veo/"
+  },
+  {
+    "model": "Imagen 3",
+    "lab": "Google",
+    "date": "2024-05-14",
+    "tier": "specialty",
+    "note": "Highest-quality Imagen to date, I/O 2024.",
+    "source": "https://deepmind.google/models/imagen/"
+  },
+  {
+    "model": "Gemma 2 (9B/27B)",
+    "lab": "Google",
+    "date": "2024-06-27",
+    "tier": "open-weights",
+    "note": "27B competitive with much larger models.",
+    "source": "https://blog.google/technology/developers/google-gemma-2/"
+  },
+  {
+    "model": "Gemini 2.0 Flash (exp)",
+    "lab": "Google",
+    "date": "2024-12-11",
+    "tier": "mid",
+    "note": "First Gemini 2.0, built for the agentic era.",
+    "source": "https://blog.google/technology/google-deepmind/google-gemini-ai-update-december-2024/"
+  },
+  {
+    "model": "Veo 2",
+    "lab": "Google",
+    "date": "2024-12-16",
+    "tier": "specialty",
+    "note": "4K-capable video with improved physics.",
+    "source": "https://blog.google/technology/google-labs/video-image-generation-update-december-2024/"
+  },
+  {
+    "model": "Gemini 2.0 Flash Thinking",
+    "lab": "Google",
+    "date": "2024-12-19",
+    "tier": "specialty",
+    "note": "Google's first exposed chain-of-thought reasoning model.",
+    "source": "https://techcrunch.com/2024/12/19/google-releases-its-own-reasoning-ai-model/"
+  },
+  {
+    "model": "Gemini 2.0 family GA",
+    "lab": "Google",
+    "date": "2025-02-05",
+    "tier": "flagship",
+    "note": "Flash GA plus Pro Experimental and Flash-Lite.",
+    "source": "https://blog.google/technology/google-deepmind/gemini-model-updates-february-2025/"
+  },
+  {
+    "model": "Gemma 3",
+    "lab": "Google",
+    "date": "2025-03-12",
+    "tier": "open-weights",
+    "note": "Multimodal open models 1B-27B, 128K context.",
+    "source": "https://blog.google/technology/developers/gemma-3/"
+  },
+  {
+    "model": "Gemini 2.5 Pro (exp)",
+    "lab": "Google",
+    "date": "2025-03-25",
+    "tier": "flagship",
+    "note": "Thinking-by-default flagship, topped LMArena.",
+    "source": "https://blog.google/technology/google-deepmind/gemini-model-thinking-updates-march-2025/"
+  },
+  {
+    "model": "Gemini 2.5 Flash",
+    "lab": "Google",
+    "date": "2025-04-17",
+    "tier": "mid",
+    "note": "Hybrid reasoning workhorse with thinking budgets.",
+    "source": "https://developers.googleblog.com/en/start-building-with-gemini-25-flash/"
+  },
+  {
+    "model": "Veo 3",
+    "lab": "Google",
+    "date": "2025-05-20",
+    "tier": "specialty",
+    "note": "Video with native synchronized audio, I/O 2025.",
+    "source": "https://blog.google/technology/ai/google-io-2025-all-our-announcements/"
+  },
+  {
+    "model": "Imagen 4",
+    "lab": "Google",
+    "date": "2025-05-20",
+    "tier": "specialty",
+    "note": "Improved text rendering and detail, I/O 2025.",
+    "source": "https://blog.google/technology/ai/google-io-2025-all-our-announcements/"
+  },
+  {
+    "model": "Gemini 2.5 GA + Flash-Lite",
+    "lab": "Google",
+    "date": "2025-06-17",
+    "tier": "flagship",
+    "note": "2.5 Pro/Flash GA; Flash-Lite introduced.",
+    "source": "https://blog.google/products/gemini/gemini-2-5-model-family-expands/"
+  },
+  {
+    "model": "Gemma 3n",
+    "lab": "Google",
+    "date": "2025-06-26",
+    "tier": "open-weights",
+    "note": "Mobile-first multimodal open models.",
+    "source": "https://developers.googleblog.com/en/introducing-gemma-3n-developer-guide/"
+  },
+  {
+    "model": "Gemini 2.5 Deep Think",
+    "lab": "Google",
+    "date": "2025-08-01",
+    "tier": "specialty",
+    "note": "Parallel-thinking reasoning mode for Ultra subscribers.",
+    "source": "https://techcrunch.com/2025/08/01/google-rolls-out-gemini-deep-think-ai-a-reasoning-model-that-tests-multiple-ideas-in-parallel/"
+  },
+  {
+    "model": "Genie 3",
+    "lab": "Google",
+    "date": "2025-08-05",
+    "tier": "specialty",
+    "note": "Real-time interactive world model, research preview.",
+    "source": "https://deepmind.google/blog/genie-3-a-new-frontier-for-world-models/"
+  },
+  {
+    "model": "Gemma 3 270M",
+    "lab": "Google",
+    "date": "2025-08-14",
+    "tier": "open-weights",
+    "note": "Ultra-compact open model for on-device fine-tuning.",
+    "source": "https://developers.googleblog.com/en/introducing-gemma-3-270m/"
+  },
+  {
+    "model": "Gemini 2.5 Flash Image (Nano Banana)",
+    "lab": "Google",
+    "date": "2025-08-26",
+    "tier": "specialty",
+    "note": "Viral image editing model with character consistency.",
+    "source": "https://developers.googleblog.com/en/introducing-gemini-2-5-flash-image/"
+  },
+  {
+    "model": "Veo 3.1",
+    "lab": "Google",
+    "date": "2025-10-15",
+    "tier": "specialty",
+    "note": "Richer native audio and editing, added to Flow.",
+    "source": "https://techcrunch.com/2025/10/15/google-releases-veo-3-1-adds-it-to-flow-video-editor/"
+  },
+  {
+    "model": "Gemini 3 Pro",
+    "lab": "Google",
+    "date": "2025-11-18",
+    "tier": "flagship",
+    "note": "Record benchmarks; day-one across Search, app, API, Antigravity.",
+    "source": "https://techcrunch.com/2025/11/18/google-launches-gemini-3-with-new-coding-app-and-record-benchmark-scores/"
+  },
+  {
+    "model": "Nano Banana Pro",
+    "lab": "Google",
+    "date": "2025-11-20",
+    "tier": "specialty",
+    "note": "Gemini 3-based image model with reasoning and grounding.",
+    "source": "https://techcrunch.com/2025/11/20/google-releases-nano-banana-pro-its-latest-image-generation-model/"
+  },
+  {
+    "model": "Gemini 3 Deep Think",
+    "lab": "Google",
+    "date": "2025-12-04",
+    "tier": "specialty",
+    "note": "High-intensity reasoning mode, AI Ultra tier.",
+    "source": "https://9to5google.com/2025/12/04/gemini-3-deep-think/"
+  },
+  {
+    "model": "Gemini 3 Flash",
+    "lab": "Google",
+    "date": "2025-12-17",
+    "tier": "mid",
+    "note": "Fast Gemini 3; default in app and AI Mode in Search.",
+    "source": "https://techcrunch.com/2025/12/17/google-launches-gemini-3-flash-makes-it-the-default-model-in-the-gemini-app/"
+  },
+  {
+    "model": "Gemini 3.1 Pro",
+    "lab": "Google",
+    "date": "2026-02-19",
+    "tier": "flagship",
+    "note": "Preview upgrade of the Gemini 3 flagship line.",
+    "source": "https://en.wikipedia.org/wiki/Google_Gemini"
+  },
+  {
+    "model": "Nano Banana 2",
+    "lab": "Google",
+    "date": "2026-02-26",
+    "tier": "specialty",
+    "note": "Next-gen image model in Gemini app.",
+    "source": "https://en.wikipedia.org/wiki/Gemini_(language_model)"
+  },
+  {
+    "model": "Gemma 4",
+    "lab": "Google",
+    "date": "2026-04-02",
+    "tier": "open-weights",
+    "note": "Five-size open family under Apache 2.0.",
+    "source": "https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/"
+  },
+  {
+    "model": "Gemini 3.5 Flash",
+    "lab": "Google",
+    "date": "2026-05-19",
+    "tier": "mid",
+    "note": "First GA Gemini 3.5 model, I/O 2026.",
+    "source": "https://www.macrumors.com/2026/05/19/google-io-2026-roundup/"
+  },
+  {
+    "model": "Gemini Omni",
+    "lab": "Google",
+    "date": "2026-05-19",
+    "tier": "specialty",
+    "note": "Any-input-to-video multimodal model, I/O 2026.",
+    "source": "https://blog.google/innovation-and-ai/technology/ai/google-io-2026-all-our-announcements/"
+  },
+  {
+    "model": "Gemini 3.5 Live Translate",
+    "lab": "Google",
+    "date": "2026-06-09",
+    "tier": "specialty",
+    "note": "Near-real-time speech-to-speech translation across more than 70 languages.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-live-3-5-translate/"
+  },
+  {
+    "model": "DiffusionGemma",
+    "lab": "Google",
+    "date": "2026-06-10",
+    "tier": "open-weights",
+    "note": "Apache-2.0 experimental 26B MoE text-diffusion model with up to 4x faster generation.",
+    "source": "https://blog.google/innovation-and-ai/technology/developers-tools/diffusion-gemma-faster-text-generation/"
+  },
+  {
+    "model": "Nano Banana 2 Lite",
+    "lab": "Google",
+    "date": "2026-06-30",
+    "tier": "specialty",
+    "note": "Fastest, most cost-efficient Gemini Image model for high-throughput generation and editing.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-omni-flash-nano-banana-2-lite/"
+  },
+  {
+    "model": "Gemini 3.6 Flash",
+    "lab": "Google",
+    "date": "2026-07-21",
+    "tier": "mid",
+    "note": "More token-efficient agentic workhorse with improved coding, computer use, and knowledge work.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/"
+  },
+  {
+    "model": "Gemini 3.5 Flash-Lite",
+    "lab": "Google",
+    "date": "2026-07-21",
+    "tier": "small",
+    "note": "Fastest, most cost-effective Gemini 3.5 model for high-throughput agentic workflows.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/"
+  },
+  {
+    "model": "Gemini 3.5 Flash Cyber",
+    "lab": "Google",
+    "date": "2026-07-21",
+    "tier": "specialty",
+    "note": "Cybersecurity-specialized model for finding and fixing vulnerabilities; limited-access pilot announced.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/"
+  },
+  {
+    "model": "Gemini 3.7 Flash",
+    "lab": "Google",
+    "date": "2026-08-13",
+    "tier": "mid",
+    "note": "Agent-first Flash workhorse with major gains in software engineering, knowledge work, and web development three weeks after 3.6 Flash.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-3-7-flash/"
+  },
+  {
+    "model": "Gemini 3.5 Transcribe",
+    "lab": "Google",
+    "date": "2026-08-26",
+    "tier": "specialty",
+    "note": "Real-time and prerecorded speech-to-text model with smart formatting, diarization, custom vocabulary, and support for more than 85 languages.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-5-transcribe/"
+  },
+  {
+    "model": "Gemini Omni 1.1 Flash",
+    "lab": "Google",
+    "date": "2026-08-27",
+    "tier": "specialty",
+    "note": "Production video-generation update with scene extension, first/last-frame interpolation, 360p drafts, and 4K upscaling.",
+    "source": "https://blog.google/innovation-and-ai/technology/developers-tools/build-with-gemini-omni-1-1-flash/"
+  },
+  {
+    "model": "Gemini 3.8 Flash",
+    "lab": "Google",
+    "date": "2026-09-02",
+    "tier": "mid",
+    "note": "Google's most intelligent Flash workhorse, improving long-horizon coding, autonomous agents, and multi-step professional reasoning at 3.7 Flash pricing.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/"
+  },
+  {
+    "model": "Gemini 3.8 Flash Cyber",
+    "lab": "Google",
+    "date": "2026-09-02",
+    "tier": "specialty",
+    "note": "Trusted-access defensive cyber variant with frontier vulnerability discovery and automated patching performance.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/"
+  },
+  {
+    "model": "Llama 3 (8B/70B)",
+    "lab": "Meta",
+    "date": "2024-04-18",
+    "tier": "open-weights",
+    "note": "Major open-weights release powering Meta AI.",
+    "source": "https://ai.meta.com/blog/meta-llama-3/"
+  },
+  {
+    "model": "Llama 3.1 (405B)",
+    "lab": "Meta",
+    "date": "2024-07-23",
+    "tier": "open-weights",
+    "note": "405B frontier-class open model, largest at release.",
+    "source": "https://ai.meta.com/blog/meta-llama-3-1/"
+  },
+  {
+    "model": "Llama 3.2",
+    "lab": "Meta",
+    "date": "2024-09-25",
+    "tier": "open-weights",
+    "note": "First multimodal Llama plus small on-device models.",
+    "source": "https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/"
+  },
+  {
+    "model": "Llama 3.3 70B",
+    "lab": "Meta",
+    "date": "2024-12-06",
+    "tier": "open-weights",
+    "note": "Matches 405B performance at far lower cost.",
+    "source": "https://ai.meta.com/blog/future-of-ai-built-with-llama/"
+  },
+  {
+    "model": "Llama 4 (Scout/Maverick)",
+    "lab": "Meta",
+    "date": "2025-04-05",
+    "tier": "open-weights",
+    "note": "Natively multimodal MoE; Behemoth never released.",
+    "source": "https://ai.meta.com/blog/llama-4-multimodal-intelligence/"
+  },
+  {
+    "model": "Muse Spark",
+    "lab": "Meta",
+    "date": "2026-04-08",
+    "tier": "flagship",
+    "note": "First proprietary frontier model from Meta Superintelligence Labs.",
+    "source": "https://techcrunch.com/2026/04/08/meta-debuts-the-muse-spark-model-in-a-ground-up-overhaul-of-its-ai/"
+  },
+  {
+    "model": "Muse Image / Muse Video preview",
+    "lab": "Meta",
+    "date": "2026-07-07",
+    "tier": "specialty",
+    "note": "Meta Superintelligence Labs' first media-generation models, with agentic image editing and native-audio video.",
+    "source": "https://ai.meta.com/blog/introducing-muse-image-muse-video-msl/"
+  },
+  {
+    "model": "Muse Spark 1.1",
+    "lab": "Meta",
+    "date": "2026-07-09",
+    "tier": "flagship",
+    "note": "Agentic/coding upgrade; opened Meta's paid Model API.",
+    "source": "https://techcrunch.com/2026/07/09/meta-enters-the-crowded-ai-coding-battle-with-muse-spark-1-1/"
+  },
+  {
+    "model": "Muse Glimmer",
+    "lab": "Meta",
+    "date": "2026-08-10",
+    "tier": "open-weights",
+    "note": "Open on-device model designed to run on personal computers.",
+    "source": "https://apnews.com/article/meta-ai-mark-zuckerberg-artificial-intelligence-df8a4e7d7825470d09e8090367457c2c"
+  },
+  {
+    "model": "Muse Spark 1.2",
+    "lab": "Meta",
+    "date": "2026-08-05",
+    "tier": "flagship",
+    "note": "Agentic model update with a 1M-token context window and the Muse Code terminal agent.",
+    "source": "https://developer.meta.com/ai/models/muse-spark/"
+  },
+  {
+    "model": "Muse Spark 1.3",
+    "lab": "Meta",
+    "date": "2026-09-02",
+    "tier": "flagship",
+    "note": "Coding and agentic-task update rolling out in Muse Code and Meta's API; max reasoning follows after additional safety testing.",
+    "source": "https://www.axios.com/2026/09/02/meta-debuts-muse-spark-13-as-personal-agent-work-continues"
+  },
+  {
+    "model": "Grok-1.5",
+    "lab": "xAI",
+    "date": "2024-03-28",
+    "tier": "flagship",
+    "note": "Improved reasoning, 128K context.",
+    "source": "https://x.ai/news/grok-1.5"
+  },
+  {
+    "model": "Grok-1.5V",
+    "lab": "xAI",
+    "date": "2024-04-12",
+    "tier": "specialty",
+    "note": "xAI's first vision-language model, preview.",
+    "source": "https://x.ai/news/grok-1.5v"
+  },
+  {
+    "model": "Grok-2",
+    "lab": "xAI",
+    "date": "2024-08-13",
+    "tier": "flagship",
+    "note": "Frontier-competitive; Flux image generation on X.",
+    "source": "https://x.ai/news/grok-2"
+  },
+  {
+    "model": "Aurora",
+    "lab": "xAI",
+    "date": "2024-12-09",
+    "tier": "specialty",
+    "note": "In-house photorealistic image model in Grok.",
+    "source": "https://x.ai/news/grok-image-generation-release"
+  },
+  {
+    "model": "Grok 3",
+    "lab": "xAI",
+    "date": "2025-02-17",
+    "tier": "flagship",
+    "note": "Colossus-trained; Think mode and DeepSearch.",
+    "source": "https://x.ai/news/grok-3"
+  },
+  {
+    "model": "Grok 4",
+    "lab": "xAI",
+    "date": "2025-07-09",
+    "tier": "flagship",
+    "note": "Native tool use; multi-agent Heavy variant.",
+    "source": "https://techcrunch.com/2025/07/09/elon-musks-xai-launches-grok-4-alongside-a-300-monthly-subscription/"
+  },
+  {
+    "model": "Grok Imagine",
+    "lab": "xAI",
+    "date": "2025-07-28",
+    "tier": "specialty",
+    "note": "Image and short-video generation in the Grok app.",
+    "source": "https://en.wikipedia.org/wiki/Grok_(chatbot)"
+  },
+  {
+    "model": "Grok 4 Fast",
+    "lab": "xAI",
+    "date": "2025-09-19",
+    "tier": "mid",
+    "note": "Near-Grok 4 performance, 2M context, cheap.",
+    "source": "https://www.infoq.com/news/2025/09/xai-grok4-fast/"
+  },
+  {
+    "model": "Grok 4.1",
+    "lab": "xAI",
+    "date": "2025-11-17",
+    "tier": "flagship",
+    "note": "Improved EQ and reduced hallucinations.",
+    "source": "https://x.ai/news/grok-4-1"
+  },
+  {
+    "model": "Grok 4.20",
+    "lab": "xAI",
+    "date": "2026-02-17",
+    "tier": "flagship",
+    "note": "Beta launch after January delays; API Mar 10.",
+    "source": "https://docs.x.ai/developers/release-notes"
+  },
+  {
+    "model": "Grok Imagine Video 1.5",
+    "lab": "xAI",
+    "date": "2026-06-16",
+    "tier": "specialty",
+    "note": "Generally available image-to-video model with improved motion, physics, synchronized audio, and speed.",
+    "source": "https://x.ai/news/grok-imagine-video-1-5"
+  },
+  {
+    "model": "Grok 4.5",
+    "lab": "xAI",
+    "date": "2026-07-08",
+    "tier": "flagship",
+    "note": "~1.5T-parameter coding-focused model.",
+    "source": "https://x.ai/news/grok-4-5"
+  },
+  {
+    "model": "Grok 4.6",
+    "lab": "xAI",
+    "date": "2026-08-12",
+    "tier": "flagship",
+    "note": "Frontier update for long-running agents plus ambitious interactive and visual work, with a 500K context window.",
+    "source": "https://x.ai/news/grok-4-6"
+  },
+  {
+    "model": "Phi-3",
+    "lab": "Microsoft",
+    "date": "2024-04-23",
+    "tier": "small",
+    "note": "Breakout small-language-model family.",
+    "source": "https://azure.microsoft.com/en-us/blog/introducing-phi-3-redefining-whats-possible-with-slms/"
+  },
+  {
+    "model": "Phi-3.5",
+    "lab": "Microsoft",
+    "date": "2024-08-20",
+    "tier": "small",
+    "note": "MoE variant and improved multilingual support.",
+    "source": "https://huggingface.co/microsoft/Phi-3.5-mini-instruct"
+  },
+  {
+    "model": "Phi-4 (14B)",
+    "lab": "Microsoft",
+    "date": "2024-12-12",
+    "tier": "small",
+    "note": "Synthetic-data-trained, strong math reasoning.",
+    "source": "https://techcommunity.microsoft.com/blog/aiplatformblog/introducing-phi-4/4357090"
+  },
+  {
+    "model": "Phi-4-multimodal & mini",
+    "lab": "Microsoft",
+    "date": "2025-02-26",
+    "tier": "small",
+    "note": "Speech/vision/text multimodality for Phi-4.",
+    "source": "https://azure.microsoft.com/en-us/blog/empowering-innovation-the-next-generation-of-the-phi-family/"
+  },
+  {
+    "model": "Phi-4-reasoning",
+    "lab": "Microsoft",
+    "date": "2025-04-30",
+    "tier": "small",
+    "note": "Open reasoning variants rivaling larger models.",
+    "source": "https://azure.microsoft.com/en-us/blog/one-year-of-phi-small-language-models-making-big-leaps-in-ai/"
+  },
+  {
+    "model": "MAI-1-preview & MAI-Voice-1",
+    "lab": "Microsoft",
+    "date": "2025-08-28",
+    "tier": "mid",
+    "note": "First in-house MoE foundation model + speech generation.",
+    "source": "https://microsoft.ai/news/two-new-in-house-models/"
+  },
+  {
+    "model": "Phi-4-reasoning-vision-15B",
+    "lab": "Microsoft",
+    "date": "2026-03-15",
+    "tier": "small",
+    "note": "Vision-language reasoning with adaptive thinking.",
+    "source": "https://huggingface.co/microsoft",
+    "approx": true
+  },
+  {
+    "model": "MAI-Transcribe-1 & MAI-Image-2",
+    "lab": "Microsoft",
+    "date": "2026-04-02",
+    "tier": "specialty",
+    "note": "In-house speech-to-text and image models in Foundry.",
+    "source": "https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/introducing-mai-transcribe-1-mai-voice-1-and-mai-image-2-in-microsoft-foundry/4507787"
+  },
+  {
+    "model": "MAI-Thinking-1 & MAI-Code-1",
+    "lab": "Microsoft",
+    "date": "2026-06-02",
+    "tier": "flagship",
+    "note": "First flagship in-house reasoning + coding models, Build 2026.",
+    "source": "https://www.thurrott.com/a-i/336960/build-2026-microsoft-launches-first-flagship-reasoning-ai-model-and-more"
+  },
+  {
+    "model": "MAI-Cyber-1-Flash",
+    "lab": "Microsoft",
+    "date": "2026-07-27",
+    "tier": "specialty",
+    "note": "Microsoft's first in-house cybersecurity model, integrated into the MDASH vulnerability-research system.",
+    "source": "https://blogs.microsoft.com/blog/2026/07/27/rethinking-security-for-the-age-of-ai/"
+  },
+  {
+    "model": "Titan Text Premier",
+    "lab": "Amazon",
+    "date": "2024-05-03",
+    "tier": "mid",
+    "note": "Top-tier Titan text model GA in Bedrock.",
+    "source": "https://aws.amazon.com/about-aws/whats-new/2024/05/amazon-titan-text-premier-amazon-bedrock/",
+    "approx": true
+  },
+  {
+    "model": "Amazon Nova",
+    "lab": "Amazon",
+    "date": "2024-12-03",
+    "tier": "flagship",
+    "note": "New frontier family unveiled at re:Invent 2024.",
+    "source": "https://www.aboutamazon.com/news/aws/amazon-nova-artificial-intelligence-bedrock-aws"
+  },
+  {
+    "model": "Nova Act",
+    "lab": "Amazon",
+    "date": "2025-03-31",
+    "tier": "specialty",
+    "note": "Browser-action agent model, research preview.",
+    "source": "https://aws.amazon.com/"
+  },
+  {
+    "model": "Nova Sonic",
+    "lab": "Amazon",
+    "date": "2025-04-08",
+    "tier": "specialty",
+    "note": "Unified real-time speech-to-speech model.",
+    "source": "https://siliconangle.com/2025/04/08/amazon-debuts-new-amazon-nova-sonic-voice-model/"
+  },
+  {
+    "model": "Nova Premier",
+    "lab": "Amazon",
+    "date": "2025-04-30",
+    "tier": "flagship",
+    "note": "Amazon's most capable Nova; distillation teacher.",
+    "source": "https://aws.amazon.com/blogs/aws/amazon-nova-premier-our-most-capable-model-for-complex-tasks-and-teacher-for-model-distillation/"
+  },
+  {
+    "model": "Amazon Nova 2",
+    "lab": "Amazon",
+    "date": "2025-12-02",
+    "tier": "flagship",
+    "note": "Second-gen reasoning family at re:Invent 2025.",
+    "source": "https://techcrunch.com/2025/12/02/aws-launches-new-nova-ai-models-and-a-service-that-gives-customers-more-control/"
+  },
+  {
+    "model": "Nemotron-4 340B",
+    "lab": "NVIDIA",
+    "date": "2024-06-14",
+    "tier": "open-weights",
+    "note": "Open family for synthetic training-data generation.",
+    "source": "https://blogs.nvidia.com/blog/nemotron-4-synthetic-data-generation-llm-training/"
+  },
+  {
+    "model": "Llama-3.1-Nemotron-70B",
+    "lab": "NVIDIA",
+    "date": "2024-10-15",
+    "tier": "open-weights",
+    "note": "RLHF-tuned Llama topping alignment benchmarks.",
+    "source": "https://huggingface.co/nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
+    "approx": true
+  },
+  {
+    "model": "Llama Nemotron (Nano/Super/Ultra)",
+    "lab": "NVIDIA",
+    "date": "2025-03-18",
+    "tier": "open-weights",
+    "note": "Open reasoning family with toggleable thinking, GTC 2025.",
+    "source": "https://nvidianews.nvidia.com/news/nvidia-launches-family-of-open-reasoning-ai-models-for-developers-and-enterprises-to-build-agentic-ai-platforms"
+  },
+  {
+    "model": "Nemotron Nano 2",
+    "lab": "NVIDIA",
+    "date": "2025-08-18",
+    "tier": "open-weights",
+    "note": "Hybrid Mamba-Transformer reasoning model.",
+    "source": "https://arxiv.org/abs/2508.14444",
+    "approx": true
+  },
+  {
+    "model": "Nemotron 3 Nano",
+    "lab": "NVIDIA",
+    "date": "2025-12-15",
+    "tier": "open-weights",
+    "note": "31.6B hybrid MoE for agentic AI.",
+    "source": "https://nvidianews.nvidia.com/news/nvidia-debuts-nemotron-3-family-of-open-models"
+  },
+  {
+    "model": "Nemotron 3 Super",
+    "lab": "NVIDIA",
+    "date": "2026-03-11",
+    "tier": "open-weights",
+    "note": "120B mid-size model, GTC 2026.",
+    "source": "https://research.nvidia.com/labs/nemotron/Nemotron-3/"
+  },
+  {
+    "model": "Nemotron 3 Ultra",
+    "lab": "NVIDIA",
+    "date": "2026-06-04",
+    "tier": "open-weights",
+    "note": "550B flagship open-weights model.",
+    "source": "https://research.nvidia.com/labs/nemotron/Nemotron-3/"
+  },
+  {
+    "model": "Nemotron 3.5 Lightning",
+    "lab": "NVIDIA",
+    "date": "2026-08-11",
+    "tier": "open-weights",
+    "note": "Open 30B MoE with 3B active parameters for high-volume, low-latency execution inside long-running agent systems.",
+    "source": "https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/"
+  },
+  {
+    "model": "GLM-4",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2024-01-16",
+    "tier": "flagship",
+    "note": "Flagship unveiled at Zhipu DevDay; GPT-4-class in Chinese.",
+    "source": "https://en.wikipedia.org/wiki/GLM_(AI)"
+  },
+  {
+    "model": "GLM-4-9B",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2024-06-05",
+    "tier": "open-weights",
+    "note": "Open 9B chat/vision models.",
+    "source": "https://huggingface.co/zai-org/glm-4-9b-chat"
+  },
+  {
+    "model": "Ying (CogVideoX)",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2024-07-26",
+    "tier": "specialty",
+    "note": "Text-to-video answer to Sora; weights open-sourced.",
+    "source": "https://www.scmp.com/tech/tech-trends/article/3272135/zhipu-ai-launches-video-model-sign-more-chinese-tech-firms-are-taking-openais-sora"
+  },
+  {
+    "model": "GLM-4-Plus",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2024-08-29",
+    "tier": "flagship",
+    "note": "Upgraded proprietary flagship.",
+    "source": "https://en.wikipedia.org/wiki/Z.ai",
+    "approx": true
+  },
+  {
+    "model": "GLM-4-Voice",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2024-10-25",
+    "tier": "specialty",
+    "note": "End-to-end speech LLM, weights released.",
+    "source": "https://huggingface.co/zai-org/glm-4-voice-9b"
+  },
+  {
+    "model": "GLM-4-0414 + GLM-Z1",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-04-14",
+    "tier": "open-weights",
+    "note": "32B base/chat plus Z1 reasoning models, MIT.",
+    "source": "https://huggingface.co/zai-org/GLM-Z1-32B-0414"
+  },
+  {
+    "model": "GLM-4.1V-Thinking",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-07-02",
+    "tier": "specialty",
+    "note": "9B open vision-language reasoning model.",
+    "source": "https://huggingface.co/zai-org/GLM-4.1V-9B-Thinking"
+  },
+  {
+    "model": "GLM-4.5 / 4.5-Air",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-07-28",
+    "tier": "flagship",
+    "note": "355B-A32B agentic flagship, MIT license.",
+    "source": "https://z.ai/blog/glm-4.5"
+  },
+  {
+    "model": "GLM-4.5V",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-08-11",
+    "tier": "specialty",
+    "note": "106B open vision-language model.",
+    "source": "https://huggingface.co/zai-org/GLM-4.5V"
+  },
+  {
+    "model": "GLM-4.6V",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-12-08",
+    "tier": "specialty",
+    "note": "Open VLM with native tool calling.",
+    "source": "https://venturebeat.com/ai/z-ai-debuts-open-source-glm-4-6v-a-native-tool-calling-vision-model-for"
+  },
+  {
+    "model": "GLM-4.7",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2025-12-23",
+    "tier": "flagship",
+    "note": "~400B MoE coding/agent flagship, open-sourced.",
+    "source": "https://docs.z.ai/release-notes/new-released"
+  },
+  {
+    "model": "GLM-4.7 Flash",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-01-15",
+    "tier": "small",
+    "note": "Free lightweight coding variant.",
+    "source": "https://docs.z.ai/release-notes/new-released",
+    "approx": true
+  },
+  {
+    "model": "GLM-5",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-02-11",
+    "tier": "flagship",
+    "note": "744B-A40B frontier model, open-sourced.",
+    "source": "https://www.reuters.com/technology/chinas-ai-startup-zhipu-releases-new-flagship-model-glm-5-2026-02-11/"
+  },
+  {
+    "model": "GLM-5.1",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-04-08",
+    "tier": "flagship",
+    "note": "Long-horizon agentic flagship, open-sourced Apr 8.",
+    "source": "https://z.ai/blog/glm-5.1"
+  },
+  {
+    "model": "GLM-5.2",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-06-13",
+    "tier": "flagship",
+    "note": "744B MoE, usable 1M context, open weights.",
+    "source": "https://huggingface.co/blog/zai-org/glm-52-blog"
+  },
+  {
+    "model": "GLM-5.3",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-08-14",
+    "tier": "flagship",
+    "note": "Post-trained flagship for complex software engineering and long-horizon agents, with always-on reasoning and a 1M-token context window.",
+    "source": "https://docs.z.ai/guides/llm/glm-5.3"
+  },
+  {
+    "model": "GLM-5.3-Flash",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-08-26",
+    "tier": "open-weights",
+    "note": "MIT-licensed multimodal 320B-A18B MoE using hybrid sparse/linear attention for low-cost 1M-context agents.",
+    "source": "https://docs.z.ai/guides/vlm/glm-5.3-flash"
+  },
+  {
+    "model": "Kimi (2M-char context)",
+    "lab": "Moonshot",
+    "date": "2024-03-18",
+    "tier": "flagship",
+    "note": "Kimi expanded to 2M-character context, major long-context milestone.",
+    "source": "https://en.wikipedia.org/wiki/Moonshot_AI"
+  },
+  {
+    "model": "Kimi k0-math",
+    "lab": "Moonshot",
+    "date": "2024-11-16",
+    "tier": "specialty",
+    "note": "Math reasoning model, first o1-style Moonshot release.",
+    "source": "https://en.wikipedia.org/wiki/Moonshot_AI"
+  },
+  {
+    "model": "Kimi k1 (visual thinking)",
+    "lab": "Moonshot",
+    "date": "2024-12-16",
+    "tier": "specialty",
+    "note": "Vision reasoning model released in Kimi.",
+    "source": "https://en.wikipedia.org/wiki/Moonshot_AI"
+  },
+  {
+    "model": "Kimi K1.5",
+    "lab": "Moonshot",
+    "date": "2025-01-20",
+    "tier": "flagship",
+    "note": "RL-trained multimodal reasoning; same day as DeepSeek-R1.",
+    "source": "https://www.yicaiglobal.com/news/chinese-ai-firms-debut-new-llms-to-rival-openais-powerful-o1-in-math-and-coding"
+  },
+  {
+    "model": "Kimi-VL-A3B",
+    "lab": "Moonshot",
+    "date": "2025-04-10",
+    "tier": "specialty",
+    "note": "Open lightweight MoE vision-language model.",
+    "source": "https://huggingface.co/moonshotai/Kimi-VL-A3B-Instruct",
+    "approx": true
+  },
+  {
+    "model": "Kimi-Dev-72B",
+    "lab": "Moonshot",
+    "date": "2025-06-16",
+    "tier": "specialty",
+    "note": "Open coding model, SOTA open SWE-bench Verified.",
+    "source": "https://huggingface.co/moonshotai/Kimi-Dev-72B",
+    "approx": true
+  },
+  {
+    "model": "Kimi K2",
+    "lab": "Moonshot",
+    "date": "2025-07-11",
+    "tier": "flagship",
+    "note": "1T-A32B open agentic MoE; 'another DeepSeek moment'.",
+    "source": "https://www.reuters.com/business/media-telecom/chinas-moonshot-ai-releases-open-source-model-reclaim-market-position-2025-07-11/"
+  },
+  {
+    "model": "Kimi K2-0905",
+    "lab": "Moonshot",
+    "date": "2025-09-05",
+    "tier": "mid",
+    "note": "Better agentic coding; context doubled to 256K.",
+    "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct-0905"
+  },
+  {
+    "model": "Kimi Linear",
+    "lab": "Moonshot",
+    "date": "2025-10-30",
+    "tier": "specialty",
+    "note": "48B-A3B open model with hybrid linear attention.",
+    "source": "https://huggingface.co/moonshotai/Kimi-Linear-48B-A3B-Instruct",
+    "approx": true
+  },
+  {
+    "model": "Kimi K2 Thinking",
+    "lab": "Moonshot",
+    "date": "2025-11-06",
+    "tier": "flagship",
+    "note": "Open 1T reasoning model beating GPT-5 on HLE/BrowseComp.",
+    "source": "https://www.cnbc.com/2025/11/06/alibaba-backed-moonshot-releases-new-ai-model-kimi-k2-thinking.html"
+  },
+  {
+    "model": "Kimi K2.5",
+    "lab": "Moonshot",
+    "date": "2026-01-27",
+    "tier": "flagship",
+    "note": "Multimodal K2 upgrade with agent-swarm capabilities.",
+    "source": "https://huggingface.co/moonshotai/Kimi-K2.5"
+  },
+  {
+    "model": "Kimi K2.6",
+    "lab": "Moonshot",
+    "date": "2026-04-20",
+    "tier": "flagship",
+    "note": "1T-A32B open MoE, native multimodal input.",
+    "source": "https://www.yicaiglobal.com/news/chinas-moonshot-ai-releases-kimi-k26-pushing-boundaries-in-coding-multi-agent-capabilities"
+  },
+  {
+    "model": "Kimi K2.7-Code",
+    "lab": "Moonshot",
+    "date": "2026-06-12",
+    "tier": "specialty",
+    "note": "Open 1T coding model, +21.8% on Kimi Code Bench v2.",
+    "source": "https://www.marktechpost.com/2026/06/12/moonshot-ai-releases-kimi-k2-7-code/"
+  },
+  {
+    "model": "Kimi K3",
+    "lab": "Moonshot",
+    "date": "2026-07-16",
+    "tier": "flagship",
+    "note": "~2.8T MoE, 1M context, largest open model ever.",
+    "source": "https://simonwillison.net/2026/Jul/16/kimi-k3/"
+  },
+  {
+    "model": "Qwen1.5",
+    "lab": "Alibaba (Qwen)",
+    "date": "2024-02-04",
+    "tier": "open-weights",
+    "note": "Open series 0.5B-72B.",
+    "source": "https://qwenlm.github.io/blog/qwen1.5/"
+  },
+  {
+    "model": "Qwen2",
+    "lab": "Alibaba (Qwen)",
+    "date": "2024-06-06",
+    "tier": "open-weights",
+    "note": "72B topped open leaderboards, Apache 2.0.",
+    "source": "https://qwenlm.github.io/blog/qwen2/"
+  },
+  {
+    "model": "Qwen2-VL",
+    "lab": "Alibaba (Qwen)",
+    "date": "2024-08-29",
+    "tier": "specialty",
+    "note": "Vision-language series with video understanding.",
+    "source": "https://qwenlm.github.io/blog/qwen2-vl/"
+  },
+  {
+    "model": "Qwen2.5",
+    "lab": "Alibaba (Qwen)",
+    "date": "2024-09-19",
+    "tier": "open-weights",
+    "note": "Became world's most-downloaded open family.",
+    "source": "https://qwenlm.github.io/blog/qwen2.5/"
+  },
+  {
+    "model": "QwQ-32B-Preview",
+    "lab": "Alibaba (Qwen)",
+    "date": "2024-11-28",
+    "tier": "specialty",
+    "note": "Open experimental o1-style reasoning model.",
+    "source": "https://qwenlm.github.io/blog/qwq-32b-preview/"
+  },
+  {
+    "model": "Qwen2.5-VL",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-01-27",
+    "tier": "specialty",
+    "note": "Flagship open VLM series.",
+    "source": "https://qwenlm.github.io/blog/qwen2.5-vl/"
+  },
+  {
+    "model": "Qwen2.5-Max",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-01-28",
+    "tier": "flagship",
+    "note": "Large proprietary MoE, Lunar New Year answer to DeepSeek-V3.",
+    "source": "https://qwenlm.github.io/blog/qwen2.5-max/"
+  },
+  {
+    "model": "QwQ-32B",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-03-06",
+    "tier": "open-weights",
+    "note": "RL-trained 32B reasoning model rivaling R1.",
+    "source": "https://qwenlm.github.io/blog/qwq-32b/"
+  },
+  {
+    "model": "Qwen2.5-Omni",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-03-26",
+    "tier": "specialty",
+    "note": "End-to-end any-to-any multimodal model.",
+    "source": "https://qwenlm.github.io/blog/qwen2.5-omni/"
+  },
+  {
+    "model": "Qwen3",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-04-29",
+    "tier": "flagship",
+    "note": "Hybrid thinking family up to 235B-A22B, Apache 2.0.",
+    "source": "https://qwenlm.github.io/blog/qwen3/"
+  },
+  {
+    "model": "Qwen3-Coder",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-07-22",
+    "tier": "specialty",
+    "note": "480B-A35B open agentic coding model.",
+    "source": "https://qwenlm.github.io/blog/qwen3-coder/"
+  },
+  {
+    "model": "Qwen3-Next-80B-A3B",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-09-12",
+    "tier": "open-weights",
+    "note": "Hybrid linear-attention architecture preview.",
+    "source": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "approx": true
+  },
+  {
+    "model": "Qwen3-Omni",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-09-22",
+    "tier": "specialty",
+    "note": "Native end-to-end omni-modal open model.",
+    "source": "https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    "approx": true
+  },
+  {
+    "model": "Qwen3-Max",
+    "lab": "Alibaba (Qwen)",
+    "date": "2025-09-24",
+    "tier": "flagship",
+    "note": "1T+ proprietary flagship, Apsara Conference.",
+    "source": "https://en.wikipedia.org/wiki/Qwen"
+  },
+  {
+    "model": "Qwen3-Max-Thinking",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-01-23",
+    "tier": "flagship",
+    "note": "1T+ reasoning flagship with adaptive tool use.",
+    "source": "https://qwen.ai/",
+    "approx": true
+  },
+  {
+    "model": "Qwen3.5",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-02-16",
+    "tier": "flagship",
+    "note": "397B-A17B natively multimodal open flagship.",
+    "source": "https://www.cnbc.com/2026/02/17/china-alibaba-qwen-ai-agent-latest-model.html"
+  },
+  {
+    "model": "Qwen3.6 series",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-04-15",
+    "tier": "mid",
+    "note": "Open 3.6 series plus proprietary Max Preview.",
+    "source": "https://github.com/QwenLM",
+    "approx": true
+  },
+  {
+    "model": "Qwen3.7-Max",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-05-20",
+    "tier": "flagship",
+    "note": "Agent-focused flagship with 1M context.",
+    "source": "https://technode.com/2026/05/21/alibaba-introduces-qwen3-7-max-as-next-gen-ai-agent-model/"
+  },
+  {
+    "model": "Qwen3.8-Max Preview",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-07-19",
+    "tier": "flagship",
+    "note": "2.4T-parameter flagship preview, claimed second only to Fable 5; open weights promised.",
+    "source": "https://finance.yahoo.com/technology/ai/articles/alibaba-qwen-unveils-preview-flagship-110209258.html"
+  },
+  {
+    "model": "Qwen3.7 Flash",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-07-27",
+    "tier": "small",
+    "note": "Low-cost 1M-context vision-language reasoning model for high-throughput agents and multimodal work.",
+    "source": "https://www.qwencloud.com/models/qwen3.7-flash-2026-07-15"
+  },
+  {
+    "model": "Qwen3.8-Max",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-08-03",
+    "tier": "open-weights",
+    "note": "Released 2.4T-parameter MoE flagship with 95B active parameters and 262K native context, extensible to roughly 1M.",
+    "source": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B"
+  },
+  {
+    "model": "Qwen3.8-27B",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-08-14",
+    "tier": "open-weights",
+    "note": "Apache-2.0 dense 27B vision-language model with 262K native context and hybrid reasoning.",
+    "source": "https://huggingface.co/Qwen/Qwen3.8-27B"
+  },
+  {
+    "model": "Qwen3.8-Flash-Next",
+    "lab": "Alibaba (Qwen)",
+    "date": "2026-08-26",
+    "tier": "open-weights",
+    "note": "Qwen4 architecture preview: 125B MoE with 6B active parameters, sparse attention, gated residuals, and 262K native context.",
+    "source": "https://qwen.ai/blog?id=qwen3.8-flash-next"
+  },
+  {
+    "model": "DeepSeek-V2",
+    "lab": "DeepSeek",
+    "date": "2024-05-06",
+    "tier": "open-weights",
+    "note": "236B MoE with MLA; triggered China's LLM price war.",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-V2"
+  },
+  {
+    "model": "DeepSeek-Coder-V2",
+    "lab": "DeepSeek",
+    "date": "2024-06-17",
+    "tier": "specialty",
+    "note": "Open coding model at GPT-4-Turbo level.",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Instruct"
+  },
+  {
+    "model": "DeepSeek-V2.5",
+    "lab": "DeepSeek",
+    "date": "2024-09-05",
+    "tier": "mid",
+    "note": "Merged V2-Chat and Coder-V2.",
+    "source": "https://api-docs.deepseek.com/updates/"
+  },
+  {
+    "model": "DeepSeek-R1-Lite-Preview",
+    "lab": "DeepSeek",
+    "date": "2024-11-20",
+    "tier": "specialty",
+    "note": "First o1-style reasoning preview.",
+    "source": "https://api-docs.deepseek.com/news/news1120"
+  },
+  {
+    "model": "DeepSeek-V3",
+    "lab": "DeepSeek",
+    "date": "2024-12-26",
+    "tier": "flagship",
+    "note": "671B open MoE trained for ~$5.6M; GPT-4o-class.",
+    "source": "https://api-docs.deepseek.com/news/news1226"
+  },
+  {
+    "model": "DeepSeek-R1",
+    "lab": "DeepSeek",
+    "date": "2025-01-20",
+    "tier": "flagship",
+    "note": "Open MIT reasoning model matching o1; global sensation.",
+    "source": "https://api-docs.deepseek.com/news/news250120"
+  },
+  {
+    "model": "DeepSeek-V3-0324",
+    "lab": "DeepSeek",
+    "date": "2025-03-24",
+    "tier": "mid",
+    "note": "Major V3 checkpoint update, MIT license.",
+    "source": "https://api-docs.deepseek.com/news/news250325"
+  },
+  {
+    "model": "DeepSeek-R1-0528",
+    "lab": "DeepSeek",
+    "date": "2025-05-28",
+    "tier": "mid",
+    "note": "R1 upgrade approaching o3/Gemini 2.5 Pro.",
+    "source": "https://api-docs.deepseek.com/news/news250528"
+  },
+  {
+    "model": "DeepSeek-V3.1",
+    "lab": "DeepSeek",
+    "date": "2025-08-21",
+    "tier": "flagship",
+    "note": "Hybrid thinking model tuned for agents and FP8 chips.",
+    "source": "https://api-docs.deepseek.com/news/news250821"
+  },
+  {
+    "model": "DeepSeek-V3.1-Terminus",
+    "lab": "DeepSeek",
+    "date": "2025-09-22",
+    "tier": "mid",
+    "note": "V3.1 refinement for agents.",
+    "source": "https://api-docs.deepseek.com/news/news250922"
+  },
+  {
+    "model": "DeepSeek-V3.2-Exp",
+    "lab": "DeepSeek",
+    "date": "2025-09-29",
+    "tier": "mid",
+    "note": "Sparse Attention debut, ~50% API price cut.",
+    "source": "https://api-docs.deepseek.com/news/news250929"
+  },
+  {
+    "model": "DeepSeek-OCR",
+    "lab": "DeepSeek",
+    "date": "2025-10-20",
+    "tier": "specialty",
+    "note": "Contexts optical compression via vision tokens.",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-OCR"
+  },
+  {
+    "model": "DeepSeek-V3.2",
+    "lab": "DeepSeek",
+    "date": "2025-12-01",
+    "tier": "flagship",
+    "note": "Final V3.2 (with Speciale variant) as API default.",
+    "source": "https://api-docs.deepseek.com/updates/"
+  },
+  {
+    "model": "DeepSeek-V4 Preview",
+    "lab": "DeepSeek",
+    "date": "2026-04-24",
+    "tier": "flagship",
+    "note": "1.6T-A49B Pro and 284B Flash, 1M context, MIT.",
+    "source": "https://api-docs.deepseek.com/news/news260424/"
+  },
+  {
+    "model": "DeepSeek-V4-Flash-0731",
+    "lab": "DeepSeek",
+    "date": "2026-07-31",
+    "tier": "open-weights",
+    "note": "Official MIT-licensed V4 Flash release with stronger agentic capabilities, superseding the preview checkpoint.",
+    "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731"
+  },
+  {
+    "model": "DeepSeek-V4-Pro (GA)",
+    "lab": "DeepSeek",
+    "date": "2026-08-13",
+    "tier": "flagship",
+    "note": "General release of V4 Pro across app, web, and API with stronger production-agent performance and configurable reasoning effort.",
+    "source": "https://api-docs.deepseek.com/updates/"
+  },
+  {
+    "model": "DeepSeek-V4-Flash-Vision-Exp",
+    "lab": "DeepSeek",
+    "date": "2026-08-21",
+    "tier": "specialty",
+    "note": "Experimental multimodal vision-understanding model matching V4 Flash on text while substantially improving visual agent tasks.",
+    "source": "https://api-docs.deepseek.com/updates/"
+  },
+  {
+    "model": "abab 6.5",
+    "lab": "MiniMax",
+    "date": "2024-04-17",
+    "tier": "flagship",
+    "note": "Trillion-parameter-class MoE powering Hailuo AI.",
+    "source": "https://en.wikipedia.org/wiki/MiniMax_Group",
+    "approx": true
+  },
+  {
+    "model": "MiniMax-01",
+    "lab": "MiniMax",
+    "date": "2025-01-15",
+    "tier": "open-weights",
+    "note": "456B open models, lightning attention, 4M context.",
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-Text-01"
+  },
+  {
+    "model": "MiniMax-M1",
+    "lab": "MiniMax",
+    "date": "2025-06-16",
+    "tier": "flagship",
+    "note": "Open 456B hybrid-attention reasoning, 1M context.",
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-M1-80k"
+  },
+  {
+    "model": "MiniMax-M2",
+    "lab": "MiniMax",
+    "date": "2025-10-23",
+    "tier": "flagship",
+    "note": "230B-A10B open MoE for coding/agents at ~8% Sonnet price.",
+    "source": "https://huggingface.co/MiniMaxAI/MiniMax-M2"
+  },
+  {
+    "model": "MiniMax-M2.1",
+    "lab": "MiniMax",
+    "date": "2025-12-15",
+    "tier": "mid",
+    "note": "M2 update for programming and agents.",
+    "source": "https://platform.minimax.io/docs/release-notes/models",
+    "approx": true
+  },
+  {
+    "model": "MiniMax-M2.5",
+    "lab": "MiniMax",
+    "date": "2026-02-15",
+    "tier": "flagship",
+    "note": "M2.5 and Lightning agentic/coding flagships.",
+    "source": "https://platform.minimax.io/docs/release-notes/models",
+    "approx": true
+  },
+  {
+    "model": "MiniMax-M2.7",
+    "lab": "MiniMax",
+    "date": "2026-03-15",
+    "tier": "mid",
+    "note": "Further M2-line update preceding M3.",
+    "source": "https://platform.minimax.io/docs/release-notes/models",
+    "approx": true
+  },
+  {
+    "model": "MiniMax-M3",
+    "lab": "MiniMax",
+    "date": "2026-06-01",
+    "tier": "flagship",
+    "note": "Open frontier: 1M context, native multimodality.",
+    "source": "https://www.minimax.io/blog/minimax-m3"
+  },
+  {
+    "model": "MiniMax H3",
+    "lab": "MiniMax",
+    "date": "2026-07-31",
+    "tier": "open-weights",
+    "note": "Omnimodal video model generating up to 15 seconds at 2K with native stereo sound; weights followed August 3.",
+    "source": "https://www.financialjuice.com/News/9701940/Chinas-MiniMax-releases-H3-video-model.aspx"
+  },
+  {
+    "model": "Doubao Pro",
+    "lab": "ByteDance",
+    "date": "2024-05-15",
+    "tier": "flagship",
+    "note": "Doubao family launched at aggressive pricing.",
+    "source": "https://www.volcengine.com/"
+  },
+  {
+    "model": "Doubao-1.5-Pro",
+    "lab": "ByteDance",
+    "date": "2025-01-22",
+    "tier": "flagship",
+    "note": "Sparse MoE flagship, strong benchmark-per-cost.",
+    "source": "https://seed.bytedance.com/en/models"
+  },
+  {
+    "model": "Doubao-Seed-1.6",
+    "lab": "ByteDance",
+    "date": "2025-06-11",
+    "tier": "flagship",
+    "note": "Multimodal thinking family at FORCE conference.",
+    "source": "https://seed.bytedance.com/en/models"
+  },
+  {
+    "model": "Seed-OSS-36B",
+    "lab": "ByteDance",
+    "date": "2025-08-20",
+    "tier": "open-weights",
+    "note": "First notable Seed open-weights LLM, 512K context.",
+    "source": "https://huggingface.co/ByteDance-Seed/Seed-OSS-36B-Instruct",
+    "approx": true
+  },
+  {
+    "model": "Seedream 4.0",
+    "lab": "ByteDance",
+    "date": "2025-09-09",
+    "tier": "specialty",
+    "note": "Topped text-to-image leaderboards.",
+    "source": "https://seed.bytedance.com/en/models",
+    "approx": true
+  },
+  {
+    "model": "Doubao-Seed-2.0",
+    "lab": "ByteDance",
+    "date": "2026-02-14",
+    "tier": "flagship",
+    "note": "Multimodal flagship family; Pro ~1T params.",
+    "source": "https://www.caixinglobal.com/2026-02-15/bytedance-unveils-doubao-20-ai-model-to-tackle-complex-tasks-102414865.html"
+  },
+  {
+    "model": "Seed 2.1",
+    "lab": "ByteDance",
+    "date": "2026-06-23",
+    "tier": "flagship",
+    "note": "Agent-oriented flagship at FORCE 2026.",
+    "source": "https://seed.bytedance.com/"
+  },
+  {
+    "model": "Hunyuan-Large",
+    "lab": "Tencent",
+    "date": "2024-11-05",
+    "tier": "open-weights",
+    "note": "389B-A52B, largest open MoE at release.",
+    "source": "https://huggingface.co/tencent/Tencent-Hunyuan-Large"
+  },
+  {
+    "model": "HunyuanVideo",
+    "lab": "Tencent",
+    "date": "2024-12-03",
+    "tier": "specialty",
+    "note": "13B open text-to-video, largest open video model.",
+    "source": "https://huggingface.co/tencent/HunyuanVideo"
+  },
+  {
+    "model": "Hunyuan Turbo S",
+    "lab": "Tencent",
+    "date": "2025-02-27",
+    "tier": "flagship",
+    "note": "Fast-thinking flagship, quicker than R1.",
+    "source": "https://www.reuters.com/technology/artificial-intelligence/tencent-releases-new-ai-model-says-replies-faster-than-deepseek-r1-2025-02-27/"
+  },
+  {
+    "model": "Hunyuan-T1",
+    "lab": "Tencent",
+    "date": "2025-03-21",
+    "tier": "flagship",
+    "note": "Reasoning flagship on Mamba-Transformer hybrid.",
+    "source": "https://www.tencent.com/"
+  },
+  {
+    "model": "Hunyuan-A13B",
+    "lab": "Tencent",
+    "date": "2025-06-27",
+    "tier": "open-weights",
+    "note": "80B-A13B open MoE, 256K context.",
+    "source": "https://huggingface.co/tencent/Hunyuan-A13B-Instruct"
+  },
+  {
+    "model": "HunyuanImage 3.0",
+    "lab": "Tencent",
+    "date": "2025-09-28",
+    "tier": "specialty",
+    "note": "80B open native multimodal image model.",
+    "source": "https://huggingface.co/tencent/HunyuanImage-3.0",
+    "approx": true
+  },
+  {
+    "model": "Hunyuan 2.0",
+    "lab": "Tencent",
+    "date": "2025-12-08",
+    "tier": "flagship",
+    "note": "406B-A32B flagship, backbone of Yuanbao.",
+    "source": "https://technode.com/2025/12/08/tencent-releases-hunyuan-2-0-its-next-generation-ai-model/"
+  },
+  {
+    "model": "Hunyuan Hy3-preview",
+    "lab": "Tencent",
+    "date": "2026-04-23",
+    "tier": "flagship",
+    "note": "295B-A21B hybrid fast/slow-thinking open model.",
+    "source": "https://www.tencent.com/en-us/articles/2202386.html"
+  },
+  {
+    "model": "Hy-MT2 family",
+    "lab": "Tencent",
+    "date": "2026-05-21",
+    "tier": "open-weights",
+    "note": "Open multilingual translation family (1.8B, 7B, and 30B-A3B) covering 33 languages with instruction-following translation.",
+    "source": "https://github.com/Tencent-Hunyuan/Hy-MT2"
+  },
+  {
+    "model": "Hunyuan Hy3 (official)",
+    "lab": "Tencent",
+    "date": "2026-07-07",
+    "tier": "open-weights",
+    "note": "Official Apache 2.0 release; parity claims vs GLM-5.2/V4.",
+    "source": "https://www.tencent.com/",
+    "approx": true
+  },
+  {
+    "model": "ERNIE 4.0 Turbo",
+    "lab": "Baidu",
+    "date": "2024-06-28",
+    "tier": "flagship",
+    "note": "Faster/cheaper flagship at WAVE Summit 2024.",
+    "source": "https://en.wikipedia.org/wiki/Ernie_Bot"
+  },
+  {
+    "model": "ERNIE 4.5 + X1",
+    "lab": "Baidu",
+    "date": "2025-03-16",
+    "tier": "flagship",
+    "note": "Multimodal flagship + first deep-reasoning model.",
+    "source": "https://www.prnewswire.com/news-releases/baidu-unveils-ernie-4-5-and-reasoning-model-ernie-x1--makes-ernie-bot-free-ahead-of-schedule-302402490.html"
+  },
+  {
+    "model": "ERNIE 4.5/X1 Turbo",
+    "lab": "Baidu",
+    "date": "2025-04-25",
+    "tier": "mid",
+    "note": "Cheaper/faster updates at Create 2025.",
+    "source": "https://www.baidu.com/"
+  },
+  {
+    "model": "ERNIE 4.5 open-source",
+    "lab": "Baidu",
+    "date": "2025-06-30",
+    "tier": "open-weights",
+    "note": "First open-weights release: 10 models up to 424B, Apache 2.0.",
+    "source": "https://github.com/PaddlePaddle/ERNIE"
+  },
+  {
+    "model": "ERNIE X1.1",
+    "lab": "Baidu",
+    "date": "2025-09-09",
+    "tier": "mid",
+    "note": "Upgraded reasoning model, WAVE Summit 2025.",
+    "source": "https://www.baidu.com/"
+  },
+  {
+    "model": "ERNIE 5.0",
+    "lab": "Baidu",
+    "date": "2025-11-13",
+    "tier": "flagship",
+    "note": "Natively omni-modal flagship, Baidu World 2025.",
+    "source": "https://www.eweek.com/news/baidu-ernie-5-0-release/"
+  },
+  {
+    "model": "ERNIE 5.0 (formal)",
+    "lab": "Baidu",
+    "date": "2026-01-22",
+    "tier": "flagship",
+    "note": "Production release following November preview.",
+    "source": "https://www.baidu.com/"
+  },
+  {
+    "model": "ERNIE 5.1 Preview",
+    "lab": "Baidu",
+    "date": "2026-04-30",
+    "tier": "flagship",
+    "note": "#1 Chinese model on LMArena at ~6% typical training cost.",
+    "source": "https://www.remio.ai/post/baidu-ernie-5-1-hits-no-1-chinese-model-on-lmarena-built-at-6-of-the-normal-training-cost"
+  },
+  {
+    "model": "Step-2",
+    "lab": "StepFun",
+    "date": "2024-07-04",
+    "tier": "flagship",
+    "note": "Trillion-parameter MoE at WAIC 2024.",
+    "source": "https://en.wikipedia.org/wiki/StepFun",
+    "approx": true
+  },
+  {
+    "model": "Step-R1-V-Mini",
+    "lab": "StepFun",
+    "date": "2025-04-15",
+    "tier": "specialty",
+    "note": "Multimodal visual reasoning model.",
+    "source": "https://en.wikipedia.org/wiki/StepFun",
+    "approx": true
+  },
+  {
+    "model": "Step-3",
+    "lab": "StepFun",
+    "date": "2025-07-25",
+    "tier": "flagship",
+    "note": "321B-A38B multimodal MoE, open-sourced.",
+    "source": "https://huggingface.co/stepfun-ai/step3",
+    "approx": true
+  },
+  {
+    "model": "Step 3.5 Flash",
+    "lab": "StepFun",
+    "date": "2026-01-29",
+    "tier": "mid",
+    "note": "Efficient open flagship for coding value.",
+    "source": "https://www.stepfun.com/",
+    "approx": true
+  },
+  {
+    "model": "Step 3.7 Flash",
+    "lab": "StepFun",
+    "date": "2026-05-29",
+    "tier": "open-weights",
+    "note": "198B-A11B sparse MoE VLM for coding agents.",
+    "source": "https://www.marktechpost.com/2026/05/29/stepfun-releases-step-3-7-flash/"
+  },
+  {
+    "model": "Yi-Large",
+    "lab": "01.AI",
+    "date": "2024-05-13",
+    "tier": "flagship",
+    "note": "Top-10 globally on LMSYS Arena.",
+    "source": "https://en.wikipedia.org/wiki/01.AI",
+    "approx": true
+  },
+  {
+    "model": "Yi-Lightning",
+    "lab": "01.AI",
+    "date": "2024-10-16",
+    "tier": "flagship",
+    "note": "#6 on Chatbot Arena at debut.",
+    "source": "https://www.01.ai/"
+  },
+  {
+    "model": "Mistral Large",
+    "lab": "Mistral",
+    "date": "2024-02-26",
+    "tier": "flagship",
+    "note": "First flagship API model; Azure partnership.",
+    "source": "https://mistral.ai/news/mistral-large"
+  },
+  {
+    "model": "Mixtral 8x22B",
+    "lab": "Mistral",
+    "date": "2024-04-17",
+    "tier": "open-weights",
+    "note": "Sparse MoE open model, Apache 2.0.",
+    "source": "https://mistral.ai/news/mixtral-8x22b"
+  },
+  {
+    "model": "Codestral",
+    "lab": "Mistral",
+    "date": "2024-05-29",
+    "tier": "specialty",
+    "note": "First dedicated code model (22B).",
+    "source": "https://mistral.ai/news/codestral"
+  },
+  {
+    "model": "Mistral Large 2",
+    "lab": "Mistral",
+    "date": "2024-07-24",
+    "tier": "flagship",
+    "note": "123B flagship, days after Llama 3.1.",
+    "source": "https://mistral.ai/news/mistral-large-2407"
+  },
+  {
+    "model": "Pixtral Large",
+    "lab": "Mistral",
+    "date": "2024-11-18",
+    "tier": "flagship",
+    "note": "124B frontier multimodal model.",
+    "source": "https://mistral.ai/news/pixtral-large"
+  },
+  {
+    "model": "Mistral Small 3",
+    "lab": "Mistral",
+    "date": "2025-01-30",
+    "tier": "open-weights",
+    "note": "24B Apache 2.0 latency-optimized model.",
+    "source": "https://mistral.ai/news/mistral-small-3"
+  },
+  {
+    "model": "Mistral Medium 3",
+    "lab": "Mistral",
+    "date": "2025-05-07",
+    "tier": "mid",
+    "note": "Frontier-class performance at 8x lower cost.",
+    "source": "https://mistral.ai/news/mistral-medium-3"
+  },
+  {
+    "model": "Devstral Small",
+    "lab": "Mistral",
+    "date": "2025-05-21",
+    "tier": "specialty",
+    "note": "Open agentic coding model with All Hands AI.",
+    "source": "https://mistral.ai/news/devstral"
+  },
+  {
+    "model": "Magistral",
+    "lab": "Mistral",
+    "date": "2025-06-10",
+    "tier": "specialty",
+    "note": "First reasoning model family.",
+    "source": "https://mistral.ai/news/magistral"
+  },
+  {
+    "model": "Voxtral",
+    "lab": "Mistral",
+    "date": "2025-07-15",
+    "tier": "specialty",
+    "note": "First open audio/speech-understanding models.",
+    "source": "https://techcrunch.com/2025/07/15/mistral-releases-voxtral-its-first-open-source-ai-audio-model/"
+  },
+  {
+    "model": "Mistral Large 3",
+    "lab": "Mistral",
+    "date": "2025-12-02",
+    "tier": "flagship",
+    "note": "Open-weight flagship sparse MoE, 675B.",
+    "source": "https://mistral.ai/"
+  },
+  {
+    "model": "Devstral 2",
+    "lab": "Mistral",
+    "date": "2025-12-15",
+    "tier": "specialty",
+    "note": "Second-gen agentic coding model.",
+    "source": "https://mistral.ai/",
+    "approx": true
+  },
+  {
+    "model": "Mistral Small 4",
+    "lab": "Mistral",
+    "date": "2026-03-16",
+    "tier": "mid",
+    "note": "Unifies reasoning, vision, coding in one open model.",
+    "source": "https://mistral.ai/"
+  },
+  {
+    "model": "Voxtral TTS",
+    "lab": "Mistral",
+    "date": "2026-03-23",
+    "tier": "specialty",
+    "note": "4B multilingual text-to-speech model with expressive generation and low-latency voice adaptation.",
+    "source": "https://mistral.ai/news/voxtral-tts/"
+  },
+  {
+    "model": "Mistral Medium 3.5",
+    "lab": "Mistral",
+    "date": "2026-05-22",
+    "tier": "flagship",
+    "note": "Open-weight 128B flagship merged model for long-horizon coding, reasoning, and productivity work.",
+    "source": "https://mistral.ai/news/vibe-remote-agents-mistral-medium-3-5/"
+  },
+  {
+    "model": "Mistral OCR 4",
+    "lab": "Mistral",
+    "date": "2026-06-23",
+    "tier": "specialty",
+    "note": "Document-intelligence model with bounding boxes, block classification, confidence scores, and 170-language support.",
+    "source": "https://mistral.ai/news/ocr-4/"
+  },
+  {
+    "model": "Leanstral 1.5",
+    "lab": "Mistral",
+    "date": "2026-07-02",
+    "tier": "specialty",
+    "note": "Open 119B-A6B formal-verification model for Lean 4 proof engineering and verified code.",
+    "source": "https://mistral.ai/news/leanstral-1-5/"
+  },
+  {
+    "model": "Robostral Navigate",
+    "lab": "Mistral",
+    "date": "2026-07-08",
+    "tier": "specialty",
+    "note": "First Mistral model for embodied navigation; an 8B vision-language policy using a single RGB camera.",
+    "source": "https://mistral.ai/news/robostral-navigate/"
+  },
+  {
+    "model": "Command R+",
+    "lab": "Cohere",
+    "date": "2024-04-04",
+    "tier": "flagship",
+    "note": "104B enterprise RAG/tool-use flagship.",
+    "source": "https://cohere.com/blog/command-r-plus-microsoft-azure"
+  },
+  {
+    "model": "Aya Expanse",
+    "lab": "Cohere",
+    "date": "2024-10-24",
+    "tier": "open-weights",
+    "note": "Multilingual 8B/32B open family.",
+    "source": "https://cohere.com/blog/aya-expanse-connecting-our-world"
+  },
+  {
+    "model": "Command A",
+    "lab": "Cohere",
+    "date": "2025-03-13",
+    "tier": "flagship",
+    "note": "111B dense flagship, runs on two H100s.",
+    "source": "https://cohere.com/blog/command-a"
+  },
+  {
+    "model": "Command A Vision",
+    "lab": "Cohere",
+    "date": "2025-07-31",
+    "tier": "specialty",
+    "note": "First multimodal Command model.",
+    "source": "https://docs.cohere.com/v1/changelog/2025-07-31-command-a-vision"
+  },
+  {
+    "model": "Command A Reasoning",
+    "lab": "Cohere",
+    "date": "2025-08-21",
+    "tier": "specialty",
+    "note": "First dedicated reasoning model.",
+    "source": "https://cohere.com/blog/command-a-reasoning"
+  },
+  {
+    "model": "Command A+",
+    "lab": "Cohere",
+    "date": "2026-05-21",
+    "tier": "flagship",
+    "note": "218B MoE unifying vision, reasoning; open-source.",
+    "source": "https://www.marktechpost.com/2026/05/21/cohere-releases-command-a-plus/"
+  },
+  {
+    "model": "Jamba",
+    "lab": "AI21",
+    "date": "2024-03-28",
+    "tier": "open-weights",
+    "note": "First production hybrid Mamba-Transformer LLM.",
+    "source": "https://www.ai21.com/blog/announcing-jamba/"
+  },
+  {
+    "model": "Jamba 1.5",
+    "lab": "AI21",
+    "date": "2024-08-22",
+    "tier": "open-weights",
+    "note": "Scaled hybrid family; Large is 398B MoE.",
+    "source": "https://www.ai21.com/"
+  },
+  {
+    "model": "Jamba 1.6",
+    "lab": "AI21",
+    "date": "2025-03-06",
+    "tier": "open-weights",
+    "note": "Updated open family for private deployment.",
+    "source": "https://www.ai21.com/"
+  },
+  {
+    "model": "Jamba Reasoning 3B",
+    "lab": "AI21",
+    "date": "2025-10-08",
+    "tier": "small",
+    "note": "Tiny on-device reasoning model, 256K context.",
+    "source": "https://www.ai21.com/blog/introducing-jamba-reasoning-3b/"
+  },
+  {
+    "model": "Reka Core",
+    "lab": "Reka",
+    "date": "2024-04-15",
+    "tier": "flagship",
+    "note": "Frontier-class multimodal model from small startup.",
+    "source": "https://reka.ai/news/reka-core-our-frontier-class-multimodal-language-model"
+  },
+  {
+    "model": "Reka Flash 3",
+    "lab": "Reka",
+    "date": "2025-03-12",
+    "tier": "open-weights",
+    "note": "21B open reasoning model.",
+    "source": "https://reka.ai/news/introducing-reka-flash"
+  },
+  {
+    "model": "Reka Flash 3.1",
+    "lab": "Reka",
+    "date": "2025-07-10",
+    "tier": "open-weights",
+    "note": "RL-improved 21B plus Reka Quant.",
+    "source": "https://reka.ai/news/reka-flash-3-1-and-reka-quant"
+  },
+  {
+    "model": "OLMo",
+    "lab": "Ai2",
+    "date": "2024-02-01",
+    "tier": "open-weights",
+    "note": "Fully open 7B with data, code, checkpoints.",
+    "source": "https://allenai.org/olmo"
+  },
+  {
+    "model": "Molmo",
+    "lab": "Ai2",
+    "date": "2024-09-25",
+    "tier": "open-weights",
+    "note": "Open multimodal family rivaling proprietary VLMs.",
+    "source": "https://allenai.org/blog/molmo"
+  },
+  {
+    "model": "Tulu 3",
+    "lab": "Ai2",
+    "date": "2024-11-21",
+    "tier": "open-weights",
+    "note": "Fully open post-training recipe; 405B Jan 2025.",
+    "source": "https://allenai.org/tulu"
+  },
+  {
+    "model": "OLMo 2",
+    "lab": "Ai2",
+    "date": "2024-11-26",
+    "tier": "open-weights",
+    "note": "Competitive with Llama 3.1; 32B added Mar 2025.",
+    "source": "https://allenai.org/olmo"
+  },
+  {
+    "model": "OLMo 3",
+    "lab": "Ai2",
+    "date": "2025-11-20",
+    "tier": "open-weights",
+    "note": "First fully open 32B thinking model.",
+    "source": "https://allenai.org/"
+  },
+  {
+    "model": "Granite 3.0",
+    "lab": "IBM",
+    "date": "2024-10-21",
+    "tier": "open-weights",
+    "note": "Apache 2.0 enterprise LLM family.",
+    "source": "https://www.ibm.com/new/ibm-granite-3-0-open-state-of-the-art-enterprise-models"
+  },
+  {
+    "model": "Granite 4.0",
+    "lab": "IBM",
+    "date": "2025-10-02",
+    "tier": "open-weights",
+    "note": "Hybrid Mamba-2/Transformer family.",
+    "source": "https://www.ibm.com/new/announcements/ibm-granite-4-0-hyper-efficient-high-performance-hybrid-models"
+  },
+  {
+    "model": "Granite 4.1",
+    "lab": "IBM",
+    "date": "2026-04-29",
+    "tier": "open-weights",
+    "note": "Ten-model family, 512K context.",
+    "source": "https://research.ibm.com/blog/granite-4-1-ai-foundation-models"
+  },
+  {
+    "model": "DBRX",
+    "lab": "Databricks",
+    "date": "2024-03-27",
+    "tier": "open-weights",
+    "note": "132B MoE, briefly strongest open LLM.",
+    "source": "https://www.databricks.com/blog/introducing-dbrx-new-state-art-open-llm"
+  },
+  {
+    "model": "Arctic",
+    "lab": "Snowflake",
+    "date": "2024-04-24",
+    "tier": "open-weights",
+    "note": "480B hybrid dense-MoE for enterprise SQL/code.",
+    "source": "https://www.snowflake.com/en/blog/arctic-open-efficient-foundation-language-models-snowflake/"
+  },
+  {
+    "model": "Falcon 2",
+    "lab": "TII",
+    "date": "2024-05-13",
+    "tier": "open-weights",
+    "note": "11B multilingual with vision variant.",
+    "source": "https://falconllm.tii.ae/"
+  },
+  {
+    "model": "Falcon Mamba 7B",
+    "lab": "TII",
+    "date": "2024-08-12",
+    "tier": "open-weights",
+    "note": "First strong attention-free open 7B.",
+    "source": "https://huggingface.co/blog/falconmamba"
+  },
+  {
+    "model": "Falcon 3",
+    "lab": "TII",
+    "date": "2024-12-17",
+    "tier": "open-weights",
+    "note": "1B-10B family trained on 14T tokens.",
+    "source": "https://www.tii.ae/news/falcon-3-uaes-technology-innovation-institute-launches-worlds-most-powerful-small-ai-models"
+  },
+  {
+    "model": "Falcon-H1",
+    "lab": "TII",
+    "date": "2025-05-21",
+    "tier": "open-weights",
+    "note": "Hybrid Mamba-Transformer 0.5B-34B.",
+    "source": "https://www.tii.ae/"
+  },
+  {
+    "model": "Falcon-H1 Arabic",
+    "lab": "TII",
+    "date": "2026-01-06",
+    "tier": "specialty",
+    "note": "Leading Arabic-language model claim.",
+    "source": "https://www.tii.ae/"
+  },
+  {
+    "model": "LFM (1B/3B/40B)",
+    "lab": "Liquid AI",
+    "date": "2024-09-30",
+    "tier": "flagship",
+    "note": "Debut non-Transformer liquid architecture.",
+    "source": "https://www.liquid.ai/liquid-foundation-models"
+  },
+  {
+    "model": "LFM2",
+    "lab": "Liquid AI",
+    "date": "2025-07-10",
+    "tier": "open-weights",
+    "note": "On-device family, fastest CPU inference claim.",
+    "source": "https://www.liquid.ai/"
+  },
+  {
+    "model": "LFM2.5",
+    "lab": "Liquid AI",
+    "date": "2026-01-05",
+    "tier": "small",
+    "note": "Next-gen on-device family with vision/audio.",
+    "source": "https://www.liquid.ai/blog/introducing-lfm2-5-the-next-generation-of-on-device-ai"
+  },
+  {
+    "model": "LFM2.5-2.6B",
+    "lab": "Liquid AI",
+    "date": "2026-08-05",
+    "tier": "small",
+    "note": "Open on-device agentic model with 128K context and native tool calling for phones, laptops, PCs, and robots.",
+    "source": "https://huggingface.co/LiquidAI/LFM2.5-2.6B"
+  },
+  {
+    "model": "Hermes 3",
+    "lab": "Nous",
+    "date": "2024-08-16",
+    "tier": "open-weights",
+    "note": "First full-parameter fine-tune of Llama 3.1 405B.",
+    "source": "https://nousresearch.com/hermes3/"
+  },
+  {
+    "model": "Hermes 4",
+    "lab": "Nous",
+    "date": "2025-08-26",
+    "tier": "open-weights",
+    "note": "Open hybrid-reasoning family with toggleable think.",
+    "source": "https://nousresearch.com/"
+  },
+  {
+    "model": "EXAONE 3.0",
+    "lab": "LG AI",
+    "date": "2024-08-07",
+    "tier": "open-weights",
+    "note": "Korea's first open-weight LLM.",
+    "source": "https://huggingface.co/LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct"
+  },
+  {
+    "model": "EXAONE 3.5",
+    "lab": "LG AI",
+    "date": "2024-12-09",
+    "tier": "open-weights",
+    "note": "2.4B/7.8B/32B open family.",
+    "source": "https://huggingface.co/LGAI-EXAONE"
+  },
+  {
+    "model": "EXAONE 4.0",
+    "lab": "LG AI",
+    "date": "2025-07-15",
+    "tier": "open-weights",
+    "note": "Korea's first open hybrid reasoning model.",
+    "source": "https://www.lgresearch.ai/"
+  },
+  {
+    "model": "K-EXAONE",
+    "lab": "LG AI",
+    "date": "2026-01-12",
+    "tier": "flagship",
+    "note": "236B MoE for Korea's national AI project.",
+    "source": "https://www.lgresearch.ai/"
+  },
+  {
+    "model": "EXAONE 4.5",
+    "lab": "LG AI",
+    "date": "2026-04-09",
+    "tier": "flagship",
+    "note": "33B multimodal VLM with STEM benchmark wins.",
+    "source": "https://www.lgresearch.ai/"
+  },
+  {
+    "model": "OpenELM",
+    "lab": "Apple",
+    "date": "2024-04-24",
+    "tier": "open-weights",
+    "note": "First open-weights LLM family for on-device research.",
+    "source": "https://huggingface.co/apple/OpenELM"
+  },
+  {
+    "model": "Foundation Models framework",
+    "lab": "Apple",
+    "date": "2025-06-09",
+    "tier": "small",
+    "note": "WWDC25 opened ~3B on-device model to developers.",
+    "source": "https://machinelearning.apple.com/research/apple-foundation-models-2025-updates"
+  },
+  {
+    "model": "Apple Foundation Models 3",
+    "lab": "Apple",
+    "date": "2026-06-08",
+    "tier": "flagship",
+    "note": "WWDC26 third-gen family incl. 20B on-device with vision.",
+    "source": "https://machinelearning.apple.com/research/introducing-third-generation-of-apple-foundation-models"
+  },
+  {
+    "model": "Inkling",
+    "lab": "Thinking Machines",
+    "date": "2026-07-15",
+    "tier": "flagship",
+    "note": "First model from Mira Murati's lab: 975B open MoE, Apache 2.0.",
+    "source": "https://techcrunch.com/2026/07/15/thinking-machines-amps-up-its-bet-against-one-size-fits-all-ai-with-its-first-open-model-inkling/"
+  }
+]

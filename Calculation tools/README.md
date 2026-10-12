@@ -2,6 +2,8 @@
 
 Four financial calculators are self-contained HTML files with no build step or server component. Open those files directly in a modern browser or serve them with a static host. The independently maintained [Market Atlas](backtest/README.md) app lives in `backtest/` and uses external local historical data and a static packaging step. Its data-bearing builds are local runtime artifacts.
 
+The standalone `ai-model-timeline.html` visualization also lives here. Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/calculators/ai-model-timeline.html). It has no build step. Its direct-copy installer and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#ai-model-timeline-direct-copy-deployment).
+
 Calculations run entirely in the browser, and scenario inputs remain in page memory. The four HTML calculators do not save browser preferences; Market Atlas saves only its appearance preference. Reloading restores the built-in scenario defaults.
 
 ## Calculators

@@ -158,6 +158,51 @@ state; agents never run data acquisition (see the project guide). The
 history. No release manifests, receipts, parser or metadata restoration
 framework is required for this single-owner localhost deployment.
 
+## AI model timeline direct-copy deployment
+
+`Calculation tools/ai-model-timeline.html` is copied to
+`<WEBROOT>/calculators/ai-model-timeline.html`, served by the existing Docker
+webserver at `http://127.0.0.1:7711/calculators/ai-model-timeline.html`.
+`UTILITIES_WEBROOT_DIR` defaults to `~/webroot`; no proxy or container restart
+is needed. Repository updates do not update this installed copy.
+
+After validating the page, stage its source so that the index contains the
+reviewed bytes. From the repository root:
+
+```sh
+node tools/deploy_ai_model_timeline.mjs --dry-run
+node tools/deploy_ai_model_timeline.mjs
+zsh tools/check_local_deployments.zsh
+```
+
+Both installer and audit honor `UTILITIES_WEBROOT_DIR`. The installer also
+accepts `--webroot "<WEBROOT>"` and `--repo "<REPOSITORY>"`. It requires a
+regular stage-zero tracked HTML source with working bytes equal to the index.
+It refuses symlinked destinations, user-created directory links and repository
+webroots, while accepting macOS's standard `/var` and `/tmp` aliases.
+Dry-run performs validation without creating directories or backups.
+
+The installer changes only this one HTML file. When replacing it, the prior
+file is saved at `~/.utilities-deploy-backups/ai-model-timeline/copy-*/ai-model-timeline.html`
+in a new `0700` directory, with backup file mode `0600`. It verifies a temporary
+candidate's bytes and complete permission mode before atomically renaming it
+over the destination. Copy, validation or activation failure leaves the prior
+installed file in place and removes the candidate. Backups are retained.
+To roll back, copy the chosen backup over the installed file and restore its
+desired serving mode (normally `0644`); audit will flag that older copy until
+source and deployment match again. Neighboring calculators and local state are
+preserved.
+
+The fleet audit checks index membership, source and destination regular-file
+types, installed bytes and complete permission modes. It does not update the
+page or reload services. After live deployment, separately compare the HTTP
+response bytes with the reviewed source and exercise the page in a browser.
+Run the isolated installer lifecycle tests with:
+
+```sh
+node --test tools/tests/deploy_ai_model_timeline.test.mjs
+```
+
 ## `~/Library/Scripts`
 
 These files are direct copies of tracked source and should remain byte-for-byte identical:

@@ -7,6 +7,7 @@ zmodload zsh/system
 REPO_ROOT="${0:A:h:h}"
 SCRIPTS_DIR="${UTILITIES_SCRIPTS_DIR:-$HOME/Library/Scripts}"
 LOCAL_ROOT="${UTILITIES_LOCAL_ROOT:-$HOME}"
+WEBROOT_DIR="${UTILITIES_WEBROOT_DIR:-$HOME/webroot}"
 failures=0
 
 report_failure() {
@@ -126,6 +127,7 @@ compare_bytes() {
 }
 
 copy_mappings=(
+  'Calculation tools/ai-model-timeline.html|calculators/ai-model-timeline.html'
   'abacus usage/de-abacus.py|de-abacus.py'
   'colophon/colophon|colophon'
   'div_conv/div_conv|div_conv'
@@ -609,6 +611,9 @@ for mapping in "${copy_mappings[@]}"; do
   deployed_name="${mapping#*|}"
   source_file="$REPO_ROOT/$source_relative"
   deployed_file="$SCRIPTS_DIR/$deployed_name"
+  if [[ "$deployed_name" == calculators/* ]]; then
+    deployed_file="$WEBROOT_DIR/$deployed_name"
+  fi
   artifact_ok=true
 
   if [[ "$git_snapshot_ok" != true ]]; then
