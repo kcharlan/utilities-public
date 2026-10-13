@@ -1,0 +1,15 @@
+{
+   "assets" : {
+      "OFL.txt" : "ddafd2c3f37ef1d83ef284ca63e159befd3820850c5e9eded14ca52eee92c256",
+      "curated_bundled.json" : "0e224968ab241fe872e45f02bf8ef3f1bfccd1cd0a1f91324f3343116a2f3ee2",
+      "curated_price_history.json" : "ba7f5c1c24d9133597bb5299c17ee13c16d66c55b836b2085dca13bda638d428",
+      "font.css" : "9e6349a7de18ed4a93fadc84b1dca4af68a26f5781d7b9d89b22e7b69baa0716",
+      "page.css" : "73c62e8c91fdb7211b8a2b82ef4263d10ae03de1d9219d4ef60c6ecc7d677276",
+      "page.js" : "0d0a249a37e3a108cc6ef83fd224e035fe6afefc993b694340220c7fcb05f966",
+      "page_template.html" : "a2f6815eb1bd4b8c069574616f296928a57d379c65355a77fafc4ec41386d674",
+      "pricing_extend_ranges.txt" : "f0418b408a6957ba9149ff6a7f758a15d5eb3823d5dff53e8677d67d21857c60",
+      "pricing_numeric_ranges.txt" : "631ce1876b729d8dcb66ba2c13fc482a46576738e438fb675b339bade24b1631",
+      "pricing_prepend_ranges.txt" : "52d048d098d3d9f1a07e08cc9351c066f7fb8cdbc3b3f499bfbe4c8160e1e7e7"
+   },
+   "source_sha256" : "5213d93bc79af7ef993e4b9c25f70df8e86c4717c21ec18e594ee6f2701ee6bf"
+}

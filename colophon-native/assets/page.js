@@ -1,0 +1,914 @@
+
+(() => {
+  "use strict";
+  // --- data
+  let data, currentState, searchTimer;
+  const controls = {};
+  const periods = ["7d", "30d", "90d", "mtd", "all", "custom"];
+  const heatColors = () => Array.from({length: 5}, (_, n) =>
+    getComputedStyle(document.documentElement).getPropertyValue("--heat-" + n).trim());
+  // --- time
+  const validMs = ms => typeof ms === "number" && Number.isFinite(ms) && Math.abs(ms) <= 8640000000000000;
+  function localDayKey(ms) {
+    if (!validMs(ms)) return null;
+    const d = new Date(ms);
+    return String(d.getFullYear()).padStart(4, "0") + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function localDayStart(ms) {
+    if (!validMs(ms)) return null;
+    const d = new Date(ms), start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    start.setFullYear(d.getFullYear());
+    return +start;
+  }
+  function addLocalDays(ms, n) {
+    if (!validMs(ms) || !Number.isInteger(n)) return null;
+    const d = new Date(ms), next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+    if (d.getFullYear() >= 0 && d.getFullYear() < 100) {
+      next.setFullYear(d.getFullYear(), d.getMonth(), d.getDate() + n);
+    }
+    return validMs(+next) ? +next : null;
+  }
+  const mondayIndex = ms => validMs(ms) ? (new Date(ms).getDay() + 6) % 7 : null;
+  const localHour = ms => validMs(ms) ? new Date(ms).getHours() : null;
+  function parseDay(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [y, m, d] = value.split("-").map(Number), date = new Date(y, m - 1, d);
+    date.setFullYear(y);
+    return localDayKey(+date) === value ? +date : null;
+  }
+  function splitByLocalDay(start, end) {
+    if (!validMs(start) || !validMs(end) || end <= start) return [];
+    const parts = [];
+    for (let cursor = start; cursor < end;) {
+      const next = addLocalDays(localDayStart(cursor), 1);
+      if (next === null || next <= cursor) break;
+      const stop = Math.min(next, end);
+      parts.push({day: localDayKey(cursor), ms: stop - cursor});
+      cursor = stop;
+    }
+    return parts;
+  }
+  function periodWindow(period, now, custom = {}) {
+    if (!validMs(now)) return null;
+    period = String(period).toLowerCase();
+    const day = localDayStart(now);
+    if (period === "all") return {from: -Infinity, to: now + 1};
+    if (period === "custom") {
+      const from = parseDay(custom.from), last = parseDay(custom.to);
+      return from !== null && last !== null && from <= last ? {from, to: addLocalDays(last, 1)} : null;
+    }
+    if (period === "mtd") {
+      const d = new Date(day), from = new Date(d.getFullYear(), d.getMonth(), 1);
+      from.setFullYear(d.getFullYear());
+      return {from: +from, to: now + 1};
+    }
+    const days = {"7d": 7, "30d": 30, "90d": 90}[period];
+    return days ? {from: addLocalDays(day, 1 - days), to: now + 1} : null;
+  }
+  function previousWindow(period, window, now) {
+    period = String(period).toLowerCase();
+    if (!window || period === "all" || period === "custom") return null;
+    const length = window.to - window.from;
+    if (period === "mtd") {
+      if (!validMs(now)) return null;
+      const d = new Date(now), from = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+      from.setFullYear(d.getFullYear() - (d.getMonth() === 0 ? 1 : 0));
+      return {from: +from, to: Math.min(+from + length, window.from)};
+    }
+    return {from: window.from - length, to: window.from};
+  }
+  const time = {localDayKey, localDayStart, addLocalDays, mondayIndex, localHour, splitByLocalDay, periodWindow, previousWindow};
+  // --- state
+  const stateKeys = ["v", "p", "from", "to", "a", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
+  function normalizeState(raw) {
+    const next = {
+      v: ["overview", "list", "session"].includes(raw.v) ? raw.v : "overview",
+      p: periods.includes(raw.p) ? raw.p : "90d",
+      a: raw.a === "0" ? "0" : "1",
+      sort: ["newest", "longest", "subtime", "tokens", "cost"].includes(raw.sort) ? raw.sort : "newest"
+    };
+    for (const key of ["from", "to", "day"]) if (parseDay(raw[key]) !== null) next[key] = raw[key];
+    if (/^[0-6]-(?:[0-9]|1[0-9]|2[0-3])$/.test(raw.how || "")) next.how = raw.how;
+    if (["aborted", "interrupted", "abandoned"].includes(raw.st)) next.st = raw.st;
+    for (const key of ["q", "ws", "sub", "model", "s"]) {
+      if (typeof raw[key] === "string" && raw[key] && !/[\x00-\x1f\x7f]/.test(raw[key])) {
+        try { encodeURIComponent(raw[key]); next[key] = raw[key]; } catch (_) { /* unusable Unicode */ }
+      }
+    }
+    if (next.from && next.to && next.from > next.to) { delete next.from; delete next.to; }
+    return next;
+  }
+  function readState() {
+    const raw = {}, conflicts = new Set();
+    for (const part of location.hash.slice(1).split("&")) {
+      const at = part.indexOf("=");
+      if (at < 0) continue;
+      try {
+        const key = decodeURIComponent(part.slice(0, at)), value = decodeURIComponent(part.slice(at + 1));
+        if (!stateKeys.includes(key) || conflicts.has(key)) continue;
+        if (Object.prototype.hasOwnProperty.call(raw, key) && raw[key] !== value) {
+          delete raw[key];
+          conflicts.add(key);
+        } else raw[key] = value;
+      } catch (_) { /* malformed escape is no value evidence */ }
+    }
+    return normalizeState(raw);
+  }
+  function writeState(next, {replace = false} = {}) {
+    currentState = normalizeState(next);
+    const hash = "#" + stateKeys.filter(key => key in currentState).map(key => key + "=" + encodeURIComponent(currentState[key])).join("&");
+    if (hash !== location.hash) history[replace ? "replaceState" : "pushState"](null, "", hash);
+    render();
+  }
+  function act(patch) {
+    clearTimeout(searchTimer);
+    writeState({...currentState, q: controls.search.value, ...patch});
+  }
+  // --- filters
+  function ownSearch(row, query) {
+    const text = [row.title_full || "", ...row.turns.flatMap(turn => turn.requests.map(request => request.text)),
+      ...row.session_voice.requests.map(request => request.text)];
+    return text.some(value => value.toLowerCase().includes(query));
+  }
+  function searchMatch(row, state, byId, seen = new Set()) {
+    if (seen.has(row.id) || (state.a === "0" && row.archived)) return false;
+    seen.add(row.id);
+    const query = (state.q || "").toLowerCase();
+    return ownSearch(row, query) || row.children.some(id => byId[id] && searchMatch(byId[id], state, byId, seen));
+  }
+  const filters = {searchMatch};
+  // --- aggregates
+  const inWindow = (ms, window) => validMs(ms) && window && ms >= window.from && ms < window.to;
+  function descendants(row, byId, state) {
+    const rows = [], seen = new Set([row.id]), pending = [...row.children];
+    for (let n = 0; n < pending.length; n++) {
+      const id = pending[n], child = byId[id];
+      if (seen.has(id) || !child) continue;
+      seen.add(id);
+      if (state.a === "0" && child.archived) continue;
+      rows.push(child);
+      pending.push(...child.children);
+    }
+    return rows;
+  }
+  function windowBuckets(row, window) {
+    return row.buckets.filter(bucket => typeof bucket[0] === "number" && inWindow(bucket[0] * 900000, window));
+  }
+  function ownMatch(row, state, window) {
+    if (!window || (state.a === "0" && row.archived)) return false;
+    const buckets = windowBuckets(row, window);
+    const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms && row.start_ms < window.to && row.end_ms >= window.from;
+    if (!span && !buckets.length) return false;
+    const turns = row.turns.filter(turn => inWindow(turn.start_ms, window));
+    return (!state.q || ownSearch(row, state.q.toLowerCase())) &&
+      (!state.ws || row.workspace === state.ws) && (!state.sub || row.subfolder === state.sub) &&
+      (!state.model || buckets.some(bucket => bucket[1] === state.model)) &&
+      (!state.day || turns.some(turn => localDayKey(turn.start_ms) === state.day)) &&
+      (!state.how || turns.some(turn => mondayIndex(turn.start_ms) + "-" + localHour(turn.start_ms) === state.how)) &&
+      (!state.st || turns.some(turn => turn.status === state.st));
+  }
+  function matchSession(session, state, byId) {
+    const matchedSubagents = new Set();
+    if (state.a === "0" && session.archived) return {match: false, matchedSubagents};
+    const window = state._window || periodWindow(state.p || "90d", data.meta.generated_at_ms, state);
+    for (const child of descendants(session, byId, state)) if (ownMatch(child, state, window)) matchedSubagents.add(child.id);
+    return {match: ownMatch(session, state, window) || matchedSubagents.size > 0, matchedSubagents};
+  }
+  filters.matchSession = matchSession;
+  function scope(sessions, state, now) {
+    const window = state._window || periodWindow(state.p || "90d", now, state);
+    const rows = sessions.filter(row => matchSession(row, {...state, _window: window}, data.subagents).match);
+    const agents = new Map();
+    for (const row of rows) for (const child of descendants(row, data.subagents, state)) agents.set(child.id, child);
+    return {window, rows, agents: [...agents.values()]};
+  }
+  function turnIntervals(row, window) {
+    if (!window) return [];
+    return row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status) &&
+      validMs(turn.start_ms) && validMs(turn.end_ms) && typeof turn.duration_ms === "number" && Number.isFinite(turn.duration_ms) && turn.duration_ms >= 0)
+      .map(turn => [Math.max(window.from, turn.start_ms), Math.min(window.to, turn.end_ms)])
+      .filter(([start, end]) => end > start);
+  }
+  function mergedIntervals(parts) {
+    const merged = [];
+    for (const [start, end] of parts.sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+      const last = merged[merged.length - 1];
+      if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+      else merged.push([start, end]);
+    }
+    return merged;
+  }
+  const activeMs = parts => mergedIntervals(parts).reduce((sum, [start, end]) => sum + end - start, 0);
+  function evidenceSum(values, currency = false) {
+    const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0 && (currency || Number.isSafeInteger(value));
+    if (!values.every(valid)) return null;
+    const sum = values.reduce((total, value) => total + value, 0);
+    return valid(sum) ? sum : null;
+  }
+  const currencyMargin = (scale, operations) => Math.max(4 * operations * (Number.EPSILON * scale + Number.MIN_VALUE), 1e-9 * scale + 1e-9);
+  function provesUsage(selected, total, turn, operations, currency = false) {
+    if (evidenceSum([selected, total, turn], currency) === null || turn > total) return false;
+    // Buckets have no turn IDs. Conservation proves this particular turn only
+    // when the window cannot be filled entirely by all other own usage.
+    // Currency subtraction/addition needs a scale- and operation-count guard.
+    // Compiler unit-fold depth is absent from the payload, so also require a
+    // gap beyond the §5.6 representation tolerance, scaled to all operands.
+    // Neither .1 > (.3 - .2) nor accumulated unit-rounding proves inclusion.
+    const scale = selected + total + turn;
+    const margin = currency ? currencyMargin(scale, operations) : 0;
+    return Number.isFinite(margin) && selected - total <= margin && selected - (total - turn) > margin;
+  }
+  function paidCapacity(usage) {
+    if (usage.cost_usd !== null) return evidenceSum([usage.cost_usd], true);
+    const total = evidenceSum([usage.input, usage.output]);
+    // Null alone is unknown. Conserved wholly-unpriced input/output rules out
+    // paid units only with valid cached reads contained in input. This Codex
+    // row path passes zero billed cache-write tokens; reasoning is billed only
+    // through output (§5.6 and pinned codexResolvedCostUSD).
+    return total !== null && evidenceSum([usage.unpriced_tokens, usage.cached_input, usage.cache_write, usage.reasoning]) !== null &&
+      usage.unpriced_tokens === total && usage.cached_input <= usage.input ? 0 : null;
+  }
+  function liveUsage(row, window) {
+    const buckets = windowBuckets(row, window), operations = row.buckets.length + row.turns.length + 4;
+    const volume = value => evidenceSum([value.input, value.output]);
+    const selected = evidenceSum(buckets.flatMap(b => [b[3], b[6]]));
+    const unpriced = evidenceSum(buckets.filter(b => b[8] === null).flatMap(b => [b[3], b[6]]));
+    const completeCosts = evidenceSum([...row.buckets.map(b => b[8]), ...row.turns.map(t => t.usage.cost_usd), row.outside_usage.cost_usd], true) !== null;
+    // Numeric buckets are a lower bound; a null bucket may hide paid units.
+    const cost = evidenceSum(buckets.filter(b => b[8] !== null).map(b => b[8]), true);
+    const components = [row.outside_usage, ...row.turns.map(turn => turn.usage)];
+    const partitioned = ["input", "cached_input", "cache_write", "output", "reasoning", "unpriced_tokens"].every(key =>
+      evidenceSum([row.own_usage[key]]) !== null && evidenceSum(components.map(value => value[key])) === row.own_usage[key]);
+    let tokens = 0, costs = 0;
+    for (const turn of row.turns) if (turn.status === "running") {
+      if (provesUsage(selected, volume(row.own_usage), volume(turn.usage), operations)) tokens++;
+      const competing = [row.outside_usage, ...row.turns.filter(other => other !== turn).map(other => other.usage)];
+      const capacity = evidenceSum(competing.map(paidCapacity), true);
+      const capacityKnown = evidenceSum([cost, capacity], true) !== null;
+      const targetValid = turn.usage.cost_usd === null || evidenceSum([turn.usage.cost_usd], true) !== null;
+      const paid = provesUsage(completeCosts ? cost : null, row.own_usage.cost_usd, turn.usage.cost_usd, operations, true) ||
+        // The target's total may itself be unknown: a positive displayed lower
+        // bound exceeding ALL known competitors still proves its contribution.
+        (row.own_usage.cost_usd === null && partitioned && targetValid && capacityKnown &&
+          cost - capacity > currencyMargin(cost + capacity, operations));
+      const ownVolume = volume(row.own_usage), turnVolume = volume(turn.usage);
+      const validUnpriced = evidenceSum([row.own_usage.unpriced_tokens, turn.usage.unpriced_tokens]) !== null &&
+        row.own_usage.unpriced_tokens <= ownVolume && turn.usage.unpriced_tokens <= turnVolume && turn.usage.unpriced_tokens <= row.own_usage.unpriced_tokens;
+      // All null-bucket tokens may be paid competitors; subtract only this
+      // turn's known unpriced volume from ALL own volume, not own unpriced.
+      if (paid || (validUnpriced && provesUsage(unpriced, ownVolume, turn.usage.unpriced_tokens, operations))) costs++;
+    }
+    return {tokens, costs};
+  }
+  function kpis(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now);
+    const turns = rows.flatMap(row => row.turns.filter(turn => inWindow(turn.start_ms, window)));
+    const durations = turns.filter(turn => turn.status !== "abandoned" && typeof turn.duration_ms === "number" && Number.isFinite(turn.duration_ms) && turn.duration_ms >= 0).map(turn => turn.duration_ms);
+    const usage = [...rows, ...agents].flatMap(row => windowBuckets(row, window));
+    const input = usage.reduce((sum, b) => sum + b[3], 0), cached = usage.reduce((sum, b) => sum + b[4], 0);
+    const running = (list, predicate) => list.flatMap(row => row.turns).filter(turn => turn.status === "running" && predicate(turn)).length;
+    const contributesTime = turn => turnIntervals({turns: [turn]}, window).length > 0;
+    const ownRunning = running(rows, turn => inWindow(turn.start_ms, window) || contributesTime(turn));
+    const usageRunning = [...rows, ...agents].map(row => liveUsage(row, window));
+    return {sessions: rows.length, active_ms: activeMs(rows.flatMap(row => turnIntervals(row, window))),
+      agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
+      average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
+      input, tokens: usage.reduce((sum, b) => sum + b[3] + b[6], 0), cached_share: input ? cached / input : null,
+      cost: usage.reduce((sum, b) => sum + (typeof b[8] === "number" && Number.isFinite(b[8]) ? b[8] : 0), 0),
+      unpriced: usage.some(b => b[8] === null), aborted: turns.filter(t => t.status === "aborted").length,
+      interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
+      live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
+        turns: turns.filter(t => t.status === "running").length, tokens: usageRunning.reduce((sum, value) => sum + value.tokens, 0),
+        cost: data.meta.costs.available ? usageRunning.reduce((sum, value) => sum + value.costs, 0) : 0, aborted: 0}};
+  }
+  function calendar(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now);
+    if (!window) return [];
+    let first = window.from;
+    if (!Number.isFinite(first)) {
+      const activity = [...rows, ...agents].flatMap(row => [...row.turns.filter(t => inWindow(t.start_ms, window)).map(t => t.start_ms),
+        ...windowBuckets(row, window).map(b => b[0] * 900000)]);
+      first = activity.length ? activity.reduce((a, b) => Math.min(a, b)) : now;
+      first = addLocalDays(localDayStart(first), -mondayIndex(first));
+    }
+    const days = new Map();
+    for (let day = localDayStart(first); day < window.to; day = addLocalDays(day, 1)) {
+      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false});
+    }
+    for (const row of rows) {
+      const starts = new Set(row.turns.filter(t => inWindow(t.start_ms, window)).map(t => localDayKey(t.start_ms)));
+      for (const day of starts) if (days.has(day)) days.get(day).sessions++;
+    }
+    for (const [start, end] of mergedIntervals(rows.flatMap(row => turnIntervals(row, window)))) {
+      for (const part of splitByLocalDay(start, end)) if (days.has(part.day)) days.get(part.day).active_ms += part.ms;
+    }
+    for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
+      const cell = days.get(localDayKey(bucket[0] * 900000));
+      if (!cell) continue;
+      cell.tokens += bucket[3] + bucket[6];
+      if (bucket[8] === null) cell.unpriced = true;
+      else cell.cost += bucket[8];
+    }
+    return [...days.values()];
+  }
+  function hourWeekday(sessions, state, now) {
+    const {window, rows} = scope(sessions, state, now), cells = Array.from({length: 7}, () => Array(24).fill(0));
+    for (const row of rows) for (const turn of row.turns) if (inWindow(turn.start_ms, window)) cells[mondayIndex(turn.start_ms)][localHour(turn.start_ms)]++;
+    return cells;
+  }
+  function workspaces(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now), items = new Map();
+    for (const row of [...rows, ...agents]) {
+      if (!items.has(row.workspace)) items.set(row.workspace, {key: row.workspace, active_ms: 0, tokens: 0});
+      items.get(row.workspace).tokens += windowBuckets(row, window).reduce((sum, b) => sum + b[3] + b[6], 0);
+    }
+    for (const [key, item] of items) item.active_ms = activeMs(rows.filter(row => row.workspace === key).flatMap(row => turnIntervals(row, window)));
+    return [...items.values()].sort((a, b) => b.active_ms - a.active_ms || String(a.key).localeCompare(String(b.key)));
+  }
+  function models(sessions, state, now) {
+    const {window, rows, agents} = scope(sessions, state, now), items = new Map();
+    for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
+      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false});
+      const item = items.get(bucket[1]);
+      item.tokens += bucket[3] + bucket[6];
+      if (bucket[8] === null) item.unpriced = true;
+      else item.cost += bucket[8];
+    }
+    return [...items.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
+  }
+  function notable(sessions, state, now) {
+    const days = calendar(sessions, state, now), {rows} = scope(sessions, state, now);
+    const bestDay = metric => days.reduce((best, cell) => cell[metric] > (best ? best[metric] : 0) ? cell : best, null);
+    let fanout = null, streak = null, run = null;
+    for (const row of rows) {
+      const count = descendants(row, data.subagents, state).length;
+      if (count > (fanout ? fanout.count : 0)) fanout = {id: row.id, count};
+    }
+    for (const cell of days) {
+      if (!cell.sessions) {run = null; continue;}
+      run = run ? {...run, to: cell.day, count: run.count + 1} : {from: cell.day, to: cell.day, count: 1};
+      if (!streak || run.count > streak.count) streak = run;
+    }
+    return {busiest: bestDay("sessions"), active: bestDay("active_ms"), fanout, streak};
+  }
+  const newest = (a, b) => Number(!validMs(a.start_ms)) - Number(!validMs(b.start_ms)) || (b.start_ms || 0) - (a.start_ms || 0) || a.id.localeCompare(b.id);
+  function recent(sessions, state, now) {return scope(sessions, state, now).rows.sort(newest).slice(0, 5);}
+  const aggregates = {kpis, calendar, hourWeekday, workspaces, models, notable, recent};
+  // --- format
+  function localStamp(ms) {
+    if (!validMs(ms)) return "unknown";
+    const d = new Date(ms);
+    return localDayKey(ms) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  const format = {localStamp};
+  // --- dom
+  function el(tag, props, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props || {})) {
+      if (key === "text") node.textContent = value;
+      else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2).toLowerCase(), value);
+      else if (value === null || value === undefined) continue;
+      else node.setAttribute(key, value);
+    }
+    node.append(...children);
+    return node;
+  }
+  function mountTopbar() {
+    controls.search = el("input", {type: "search", placeholder: "Search titles and requests", "aria-label": "Search titles and requests", oninput: () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => writeState({...currentState, q: controls.search.value}, {replace: true}), 200);
+    }});
+    controls.periods = periods.map(period => el("button", {type: "button", text: period.toUpperCase(), onclick: () => {
+      const patch = {p: period};
+      if (period === "custom" && (!currentState.from || !currentState.to)) {
+        patch.from = localDayKey(periodWindow("90d", data.meta.generated_at_ms).from);
+        patch.to = localDayKey(data.meta.generated_at_ms);
+      }
+      act(patch);
+    }}));
+    controls.from = el("input", {type: "date", "aria-label": "From date", onchange: () => act({from: controls.from.value})});
+    controls.to = el("input", {type: "date", "aria-label": "To date", onchange: () => act({to: controls.to.value})});
+    controls.custom = el("div", {class: "custom-dates"}, el("label", {text: "from "}, controls.from), el("label", {text: "to "}, controls.to));
+    controls.archive = el("button", {type: "button", onclick: () => act({a: currentState.a === "1" ? "0" : "1"})});
+    controls.breadcrumb = el("nav", {class: "breadcrumb", "aria-label": "Breadcrumb"});
+    controls.chips = el("div", {class: "filter-chips"});
+    const catalog = data.meta.catalog;
+    const priceText = catalog.fetched_at_ms === null ? "prices unavailable" : "prices " + catalog.source_host + " " + localStamp(catalog.fetched_at_ms);
+    document.getElementById("colophon-topbar").replaceChildren(
+      el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
+      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + data.meta.counts.logs + " logs · " + priceText}),
+      el("div", {class: "controls"}, controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive), controls.chips);
+  }
+  function renderTopbar() {
+    controls.search.value = currentState.q || "";
+    controls.periods.forEach((button, index) => button.setAttribute("aria-pressed", String(periods[index] === currentState.p)));
+    controls.custom.hidden = currentState.p !== "custom";
+    controls.from.value = currentState.from || "";
+    controls.to.value = currentState.to || "";
+    controls.archive.textContent = "archived: " + (currentState.a === "1" ? "shown" : "hidden");
+    controls.archive.setAttribute("aria-pressed", String(currentState.a === "1"));
+    controls.breadcrumb.replaceChildren(el("button", {type: "button", text: "overview", onclick: () => act({v: "overview", s: undefined})}),
+      el("span", {text: "/"}), el("button", {type: "button", text: "sessions", onclick: () => act({v: "list", s: undefined})}));
+    if (currentState.v === "session") controls.breadcrumb.append(el("span", {text: "/ session"}));
+    const labels = {day: "day", how: "weekday/hour", ws: "workspace", sub: "subfolder", model: "model", st: "status"};
+    controls.chips.replaceChildren(...Object.entries(labels).filter(([key]) => currentState[key]).map(([key, label]) =>
+      el("button", {class: "fchip", type: "button", text: label + ": " + currentState[key] + " ×", "aria-label": "Remove " + label + " filter", onclick: () => act({[key]: undefined})})));
+  }
+  const lineDiagnosticCategories = new Set(["malformed_lines", "truncated_lines", "recovered_lines"]);
+  function diagnosticCount(key, value) {
+    if (lineDiagnosticCategories.has(key)) return value.total;
+    if (key === "unknown_record_types") return Object.values(value).reduce((sum, count) => sum + count, 0);
+    if (Array.isArray(value)) return value.length;
+    if (typeof value === "number") return value;
+    if (typeof value === "boolean") return Number(value);
+    return 0;
+  }
+  function diagnosticItems(key, value) {
+    if (lineDiagnosticCategories.has(key)) return value.files;
+    if (key === "unknown_record_types") return Object.entries(value).map(([type, count]) => type + ": " + count);
+    return Array.isArray(value) ? value : [value];
+  }
+  function diagnosticText(value) {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object") return Object.entries(value).map(([key, entry]) => key + ": " + (Array.isArray(entry) ? entry.join(", ") : String(entry))).join(" · ");
+    return String(value);
+  }
+  function renderFooter() {
+    const diagnostic = data.diagnostics;
+    const rows = Object.entries(diagnostic).filter(([key, value]) => key !== "page_size_bytes" && diagnosticCount(key, value) > 0).map(([key, value]) => {
+      const items = diagnosticItems(key, value);
+      const row = el("details", {"data-diagnostic": key},
+        el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(key, value)}),
+        el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
+      if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
+      if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
+      if (key === "page_size_over_limit") row.append(el("p", {text: "page size: " + diagnostic.page_size_bytes + " bytes"}));
+      return row;
+    });
+    document.getElementById("colophon-footer").replaceChildren(el("p", {text: "API-equivalent estimate (not billed)"}),
+      ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
+  }
+  // --- views/overview
+  let calendarMetric = "sessions", workspaceMetric = "active_ms", expandedWorkspaces = false;
+  const countText = value => new Intl.NumberFormat(undefined, {maximumFractionDigits: 1, notation: value >= 10000 ? "compact" : "standard"}).format(value);
+  const durationText = value => value === null ? "unknown" : value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : value >= 60000 ? (value / 60000).toFixed(1) + "m" : (value / 1000).toFixed(1) + "s";
+  const costText = value => "$" + value.toFixed(2);
+  const metricText = (key, value) => ["active_ms", "agent_ms"].includes(key) ? durationText(value) : key === "cost" ? costText(value) : countText(value);
+  function drill(patch) {act({v: "list", s: undefined, ...patch});}
+  function panel(name, ...children) {return el("section", {class: "overview-panel"}, el("h2", {class: "section-label", text: "// " + name}), ...children);}
+  function levels(values) {
+    const positive = values.filter(value => value > 0).sort((a, b) => a - b);
+    const cuts = [.25, .5, .75].map(q => positive[Math.ceil(positive.length * q) - 1]);
+    return values.map(value => value <= 0 ? 0 : 1 + cuts.filter(cut => value > cut).length);
+  }
+  function renderKpis(now) {
+    const totals = kpis(data.sessions, currentState, now), window = periodWindow(currentState.p, now, currentState);
+    const previous = previousWindow(currentState.p, window, now);
+    const prior = previous ? kpis(data.sessions, {...currentState, _window: previous}, now) : null;
+    const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
+    const sorts = {sessions: "newest", active_ms: "longest", agent_ms: "subtime", turns: "newest", tokens: "tokens", cost: "cost", aborted: "newest"};
+    return el("div", {class: "kpis"}, ...Object.entries(labels).map(([key, label]) => {
+      const value = key === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(key, totals[key]) + (key === "cost" && totals.unpriced ? " + unpriced" : "");
+      const open = () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})});
+      const tile = el("article", {class: "kpi" + (key === "aborted" ? " warning" : ""), "data-kpi": key,
+        onclick: event => {if (!event.target.closest("button")) open();}},
+        el("button", {type: "button", class: "kpi-main", onclick: () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})})},
+          el("span", {class: "kpi-label", text: label}), el("span", {class: "kpi-value", "data-value": totals[key], text: value})));
+      if (key === "turns") tile.append(el("p", {class: "kpi-sub", text: "avg " + durationText(totals.average_ms)}));
+      if (key === "tokens") tile.append(el("p", {class: "kpi-sub", text: totals.cached_share === null ? "cached input: unknown" : (totals.cached_share * 100).toFixed(1) + "% cached input"}));
+      if (key === "cost") tile.append(el("p", {class: "kpi-sub", text: "API-equivalent estimate (not billed)"}));
+      if (key === "aborted") tile.append(el("div", {class: "kpi-sub"},
+        el("button", {type: "button", class: "status-link", "data-status": "interrupted", text: totals.interrupted + " interrupted", onclick: () => drill({st: "interrupted", sort: "newest"})}),
+        el("span", {text: " · "}), el("button", {type: "button", class: "status-link", "data-status": "abandoned", text: totals.abandoned + " abandoned", onclick: () => drill({st: "abandoned", sort: "newest"})})));
+      if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
+      if (prior && (key !== "cost" || data.meta.costs.available)) {
+        const delta = totals[key] - prior[key];
+        tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " vs prior " + currentState.p.toUpperCase()}));
+      }
+      return tile;
+    }));
+  }
+  function renderCalendar(now) {
+    const days = calendar(data.sessions, currentState, now), ramp = levels(days.map(day => day[calendarMetric]));
+    const toggle = el("div", {class: "metric-toggle"}, ...[["sessions", "sessions"], ["active_ms", "active time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Calendar " + label, "aria-pressed": key === calendarMetric, onclick: () => {calendarMetric = key; render();}})));
+    const grid = el("div", {class: "calendar-grid"});
+    const offset = days.length ? mondayIndex(parseDay(days[0].day)) : 0;
+    for (let n = 0; n < offset; n++) grid.append(el("span", {class: "heat-cell blank"}));
+    days.forEach((day, n) => {
+      const value = calendarMetric === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(calendarMetric, day[calendarMetric]) + (calendarMetric === "cost" && day.unpriced ? " + unpriced" : "");
+      grid.append(el("button", {type: "button", class: "heat-cell", "data-day": day.day, "data-value": day[calendarMetric], "data-level": ramp[n],
+        title: day.day + " · " + value, "aria-label": day.day + " · " + value, onclick: () => drill({day: day.day})}));
+    });
+    const viewport = el("div", {class: "calendar-viewport"}, grid);
+    const result = panel("calendar", el("div", {class: "panel-head"}, toggle), viewport,
+      el("div", {class: "heat-legend"}, el("span", {text: days.length ? days[0].day + " — " + days[days.length - 1].day : "No activity"}),
+        el("span", {text: "less"}), ...Array.from({length: 5}, (_, n) => el("span", {class: "heat-cell", "data-level": n})), el("span", {text: "more"})));
+    if (calendarMetric === "cost") result.append(el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
+    return result;
+  }
+  function fitCalendar() {
+    const viewport = document.querySelector(".calendar-viewport"), grid = document.querySelector(".calendar-grid");
+    if (!viewport || !grid) return;
+    const weeks = Math.ceil(grid.children.length / 7), width = viewport.clientWidth;
+    const size = Math.max(9, Math.min(13, weeks ? (width + 3) / weeks - 3 : 13));
+    grid.style.setProperty("--cell-size", size + "px");
+    if (weeks * (size + 3) - 3 > width) {
+      viewport.setAttribute("data-scroll-region", "calendar");
+      viewport.scrollLeft = viewport.scrollWidth;
+    } else viewport.removeAttribute("data-scroll-region");
+  }
+  function renderHours(now) {
+    const cells = hourWeekday(data.sessions, currentState, now), ramp = levels(cells.flat()), grid = el("div", {class: "hour-grid"});
+    grid.append(el("span", {class: "axis"}));
+    for (let hour = 0; hour < 24; hour++) grid.append(el("span", {class: "axis", text: hour % 3 === 0 ? hour : ""}));
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((day, index) => {
+      grid.append(el("span", {class: "axis", text: day}));
+      cells[index].forEach((value, hour) => grid.append(el("button", {class: "heat-cell", type: "button", "data-how": index + "-" + hour,
+        "data-level": ramp[index * 24 + hour], title: day + " " + hour + ":00 · " + value + " turns", "aria-label": day + " " + hour + ":00 · " + value + " turns",
+        onclick: () => drill({how: index + "-" + hour})})));
+    });
+    return panel("hour × weekday", grid);
+  }
+  const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
+  function renderWorkspaces(now) {
+    const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
+    const maximum = rows.length ? rows[0][workspaceMetric] : 0;
+    const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
+      ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
+        el("span", {class: "bar-label", text: workspaceName(row.key), title: workspaceName(row.key)}),
+        el("span", {class: "bar-track"}, el("span", {class: "bar-fill", style: "width:" + (maximum ? row[workspaceMetric] / maximum * 100 : 0) + "%"})),
+        el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
+    if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
+    return result;
+  }
+  function rateTooltip(model, now) {
+    if (!data.meta.costs.available) return "costs unavailable";
+    const {window, rows, agents} = scope(data.sessions, currentState, now), refs = new Map();
+    let unpriced = false, unknown = false;
+    for (const row of [...rows, ...agents]) {
+      const buckets = windowBuckets(row, window).filter(bucket => bucket[1] === model);
+      if (!buckets.length) continue;
+      unpriced ||= buckets.some(bucket => bucket[8] === null);
+      const recorded = row.own_usage.priced_by;
+      if (!recorded.length) unknown = true;
+      for (const ref of recorded) {
+        const [key, index, role] = ref, pricing = data.models[key];
+        const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
+        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
+        const label = override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "";
+        const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
+        refs.set(JSON.stringify(ref), label + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
+      }
+    }
+    return ["Recorded rate periods in matching sessions (all dates)", ...refs.values(),
+      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : [])].join("\n");
+  }
+  function renderModels(now) {
+    return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
+      el("span", {class: "model-name", text: row.model, title: row.model}), el("span", {text: countText(row.tokens)}),
+      el("span", {class: row.unpriced ? "warning" : "", text: !data.meta.costs.available ? "costs unavailable" : costText(row.cost) + (row.unpriced ? " + unpriced" : "")}))),
+      el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
+  }
+  function renderNotable(now) {
+    const items = notable(data.sessions, currentState, now);
+    const entry = (key, label, text, patch) => el("button", {class: "notable-row", type: "button", "data-notable": key, onclick: () => drill(patch)},
+      el("span", {text: label}), el("span", {class: "notable-value", text}));
+    return panel("notable",
+      ...(items.busiest ? [entry("busiest", "busiest day", items.busiest.day + " · " + items.busiest.sessions + " sessions", {day: items.busiest.day})] : []),
+      ...(items.active ? [entry("active", "longest active day", items.active.day + " · " + durationText(items.active.active_ms), {day: items.active.day, sort: "longest"})] : []),
+      ...(items.fanout ? [entry("fanout", "biggest subagent fan-out", items.fanout.count + " subagents", {v: "session", s: items.fanout.id})] : []),
+      ...(items.streak ? [entry("streak", "longest streak", items.streak.count + " days · " + items.streak.from + " — " + items.streak.to, {p: "custom", from: items.streak.from, to: items.streak.to, day: undefined})] : []));
+  }
+  function renderRecent(now) {
+    const result = panel("recent sessions");
+    result.classList.add("recent-panel");
+    const list = el("div", {"data-recent": ""});
+    for (const row of recent(data.sessions, currentState, now)) {
+      const own = activeMs(turnIntervals(row, periodWindow(currentState.p, now, currentState))), agents = descendants(row, data.subagents, currentState).length;
+      list.append(el("div", {class: "recent-row", "data-session-id": row.id,
+        onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
+        el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
+        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
+        el("span", {class: "recent-workspace", text: workspaceName(row.workspace), title: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents", title: durationText(own) + " · " + agents + " subagents"})));
+    }
+    result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
+    return result;
+  }
+  function renderOverview() {
+    const now = data.meta.generated_at_ms;
+    return [renderKpis(now), el("div", {class: "overview-grid"}, renderCalendar(now), renderWorkspaces(now), renderHours(now), renderModels(now), renderNotable(now), renderRecent(now))];
+  }
+  // --- views/list
+  const wholeWindow = {from: -Infinity, to: Infinity};
+  const quantity = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const usageTokens = usage => evidenceSum([usage.input, usage.output]);
+  const tokenText = usage => {const tokens = usageTokens(usage); return tokens === null ? "unknown" : countText(tokens);};
+  const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
+  const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
+  function flagsLine(row) {
+    return el("div", {class: "row-flags"}, ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
+      ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
+  }
+  function listFigures(row) {
+    const window = periodWindow(currentState.p, data.meta.generated_at_ms, currentState), children = descendants(row, data.subagents, currentState);
+    const buckets = [row, ...children].flatMap(item => windowBuckets(item, window));
+    return {active: activeMs(turnIntervals(row, window)), agents: children.length,
+      subtime: children.reduce((sum, child) => sum + activeMs(turnIntervals(child, window)), 0),
+      tokens: buckets.reduce((sum, bucket) => sum + bucket[3] + bucket[6], 0),
+      cost: data.meta.costs.available ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      unpriced: buckets.some(bucket => bucket[8] === null)};
+  }
+  function renderSessionList(rows) {
+    const figures = new Map(rows.map(row => [row.id, listFigures(row)]));
+    const newest = (a, b) => (validMs(b.start_ms) ? b.start_ms : -Infinity) - (validMs(a.start_ms) ? a.start_ms : -Infinity) || a.id.localeCompare(b.id);
+    const ranked = [...rows].sort((a, b) => {
+      const key = {longest: "active", subtime: "subtime", tokens: "tokens", cost: "cost"}[currentState.sort];
+      return key ? (figures.get(b.id)[key] ?? -Infinity) - (figures.get(a.id)[key] ?? -Infinity) || newest(a, b) : newest(a, b);
+    });
+    const result = el("section", {class: "session-list", "data-session-list": ""},
+      el("div", {class: "list-sort", "aria-label": "Sort sessions"}, ...[["newest", "newest"], ["longest", "longest"], ["subtime", "subagent time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, text]) =>
+        el("button", {type: "button", text, "aria-pressed": currentState.sort === key, onclick: () => act({sort: key})}))));
+    let previousDay;
+    for (const row of ranked) {
+      const day = localDayKey(row.start_ms), figuresForRow = figures.get(row.id);
+      if (currentState.sort === "newest" && day !== previousDay) {
+        const date = validMs(row.start_ms) ? new Date(row.start_ms) : null;
+        const label = date ? ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][date.getDay()] + " " +
+          ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][date.getMonth()] + " " + date.getDate() : "UNKNOWN DAY";
+        result.append(el("h3", {class: "day-header", "data-day-header": day || "unknown", text: label}));
+        previousDay = day;
+      }
+      const open = () => act({v: "session", s: row.id});
+      const figuresText = currentState.sort === "tokens" ? countText(figuresForRow.tokens) + " tokens" : currentState.sort === "cost" ?
+        (figuresForRow.cost === null ? "costs unavailable" : costText(figuresForRow.cost) + (figuresForRow.unpriced ? " + unpriced" : "")) :
+        currentState.sort === "subtime" ? durationText(figuresForRow.subtime) + " agent" : null;
+      result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id,
+        role: "button", tabindex: "0", "aria-label": "Open session " + row.title,
+        onkeydown: event => {if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) {event.preventDefault(); open();}},
+        onclick: event => {if (!event.target.closest("button")) open();}},
+        el("span", {class: "list-time", text: timeOnly(row.start_ms)}),
+        el("div", {class: "list-main"}, el("button", {type: "button", class: "session-title", title: row.title_full, text: row.title, onclick: open}),
+          el("p", {class: "list-workspace", text: workspaceLine(row), title: workspaceLine(row)}), flagsLine(row)),
+        el("div", {class: "list-metrics", "data-active-ms": figuresForRow.active, "data-tokens": figuresForRow.tokens, "data-cost": figuresForRow.cost,
+          title: currentState.sort === "cost" ? "API-equivalent estimate (not billed)" : undefined},
+          el("span", {text: durationText(figuresForRow.active)}), el("span", {class: "list-subcount", text: figuresForRow.agents + " sub"}),
+          ...(figuresText ? [el("span", {text: figuresText})] : []))));
+    }
+    if (!ranked.length) result.append(el("p", {class: "empty-state", text: "No sessions match the active filters"}));
+    return result;
+  }
+  // --- views/reader
+  function ownActive(row) {
+    if (row.flags.includes("history_unresolved")) return null;
+    const eligible = row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status));
+    if (eligible.some(turn => !validMs(turn.start_ms) || !validMs(turn.end_ms) || turn.end_ms < turn.start_ms || !quantity(turn.duration_ms))) return null;
+    return activeMs(turnIntervals(row, wholeWindow));
+  }
+  function readerUsage(rows) {
+    const tokens = rows.map(row => usageTokens(row.own_usage)), costs = rows.map(row => row.own_usage.cost_usd);
+    return {tokens: evidenceSum(tokens), cost: evidenceSum(costs, true),
+      unpriced: rows.some(row => row.own_usage.unpriced_tokens > 0)};
+  }
+  function usageCostText(usage) {
+    if (!data.meta.costs.available) return "costs unavailable";
+    return (quantity(usage.cost_usd) ? costText(usage.cost_usd) : "unknown") + (usage.unpriced_tokens > 0 ? " + unpriced" : "");
+  }
+  function usageRateTooltip(usages) {
+    if (!data.meta.costs.available) return "costs unavailable · API-equivalent estimate (not billed)";
+    const refs = new Map();
+    let unknown = false;
+    for (const usage of usages) {
+      if (usageTokens(usage) > 0 && !usage.priced_by.length) unknown = true;
+      for (const ref of usage.priced_by) {
+        const [key, index, role] = ref, pricing = data.models[key];
+        const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
+        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
+        const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
+        refs.set(JSON.stringify(ref), (override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "") + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
+      }
+    }
+    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : [])].join("\n");
+  }
+  function expandableText(text, label = "more") {
+    const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
+    const button = el("button", {type: "button", class: "text-expander", text: label, "aria-expanded": "false", onclick: () => {
+      const expanded = paragraph.classList.toggle("expanded");
+      button.textContent = expanded ? "less" : label;
+      button.setAttribute("aria-expanded", String(expanded));
+    }});
+    return el("div", {"data-expandable-text": ""}, paragraph, button);
+  }
+  function renderRequest(request) {
+    const tags = [];
+    if (request.kind === "voice") tags.push("voice request");
+    if (request.kind === "answer") tags.push("answer");
+    if (request.images) tags.push("+ " + request.images + " images");
+    if (request.time_unreliable) tags.push("uncertain timing");
+    return el("div", {class: "request", "data-request": ""}, ...(tags.length ? [el("div", {class: "request-meta", text: tags.join(" · ")})] : []), expandableText(request.text));
+  }
+  function renderTools(tools) {
+    const chips = [];
+    for (const [key, label] of [["shell", "shell"], ["file_edits", "file edits"], ["web", "web"], ["image", "image"]]) {
+      if (tools[key]) chips.push(el("span", {class: "tool-chip", text: label + " " + tools[key]}));
+    }
+    if (tools.shell_failed) chips.push(el("span", {class: "tool-chip warning", "data-tool-failure": "", text: tools.shell_failed + " failed"}));
+    for (const [name, count] of [...Object.entries(tools.mcp), ...Object.entries(tools.other)]) if (count) chips.push(el("span", {class: "tool-chip", text: name + " " + count}));
+    return el("div", {class: "tool-chips", "data-tools": ""}, ...(chips.length ? chips : [el("span", {class: "reader-meta", text: "none recorded"})]));
+  }
+  function renderAnswer(answer) {
+    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text, "expand"));
+  }
+  function renderSubagentRow(child, matched, interaction = false) {
+    const mini = el("div", {class: "mini-card", "data-mini-card": "", hidden: ""},
+      el("p", {class: "reader-meta", text: localStamp(child.start_ms) + " — " + localStamp(child.end_ms) + " · active " + durationText(ownActive(child))}),
+      renderTools(child.tools), el("p", {class: "reader-meta", text: tokenText(child.own_usage) + " tokens · " + usageCostText(child.own_usage), title: usageRateTooltip([child.own_usage])}));
+    const answers = child.turns.map(turn => turn.final_answer).filter(Boolean);
+    if (answers.length) mini.append(el("h4", {class: "section-label", text: "// final answer"}), renderAnswer(answers[answers.length - 1]));
+    const marker = el("span", {text: "▸", "aria-hidden": "true"});
+    const button = el("button", {type: "button", class: "subagent-toggle", "aria-label": "Expand " + child.label, "aria-expanded": "false",
+      text: (interaction ? "also used: " : "") + child.label + (child.nickname ? " · " + child.nickname : ""), onclick: () => {
+        mini.hidden = !mini.hidden; marker.textContent = mini.hidden ? "▸" : "▾";
+        button.setAttribute("aria-expanded", String(!mini.hidden)); fitReader();
+      }});
+    return el("div", {class: "subagent-row" + (matched.has(child.id) ? " matched" : ""), "data-subagent-id": child.id}, marker,
+      el("div", {}, button, ...(child.forked ? [el("span", {class: "tag", text: "forked"})] : [])),
+      el("span", {class: "subagent-metrics", text: timeOnly(child.start_ms) + " · " + durationText(ownActive(child)) + " · " + tokenText(child.own_usage) + " tokens"}), mini);
+  }
+  function renderTurn(turn, matched, visibleChildren) {
+    const before = turn.requests.filter(request => request.before_turn), requests = turn.requests.filter(request => !request.before_turn);
+    const asked = el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "YOU ASKED · " + requests.length}));
+    if (before.length) asked.append(el("div", {class: "before-turn", "data-before-turn": ""}, el("span", {class: "request-meta", text: "before this turn"}), ...before.map(renderRequest)));
+    asked.append(...requests.slice(0, 2).map(renderRequest));
+    if (requests.length > 2) {
+      const extra = el("div", {hidden: ""}, ...requests.slice(2).map(renderRequest));
+      const toggle = el("button", {type: "button", class: "followup-toggle", text: "+ " + (requests.length - 2) + " follow-ups sent while it worked", "aria-expanded": "false", onclick: () => {
+        extra.hidden = !extra.hidden; toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
+      }});
+      asked.append(toggle, extra);
+    }
+    const card = el("article", {class: "turn-card", "data-turn-card": turn.id},
+      el("div", {class: "turn-header", "data-turn-header": ""}, el("span", {class: "turn-number", text: "turn " + turn.n}),
+        el("span", {text: timeOnly(turn.start_ms) + " — " + timeOnly(turn.end_ms)}), el("span", {text: durationText(quantity(turn.duration_ms) ? turn.duration_ms : null)}),
+        el("span", {text: "first token " + durationText(quantity(turn.ttft_ms) ? turn.ttft_ms : null)}),
+        el("span", {text: tokenText(turn.usage) + " tokens"}),
+        el("span", {"data-turn-cost": "", text: usageCostText(turn.usage), title: usageRateTooltip([turn.usage])}),
+        el("span", {class: turn.status === "running" ? "live" : turn.status === "completed" ? "" : "warning", text: turn.status}),
+        ...turn.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag.replace(/_/g, " ")}))), asked,
+      el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "IT USED"}), renderTools(turn.tools)));
+    const spawned = [...new Set(turn.spawned)].filter(id => visibleChildren.has(id)), used = [...new Set(turn.used)].filter(id => visibleChildren.has(id) && !spawned.includes(id));
+    if (spawned.length || used.length) card.append(el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "SUBAGENTS · " + spawned.length}),
+      ...spawned.map(id => renderSubagentRow(visibleChildren.get(id), matched)), ...used.map(id => renderSubagentRow(visibleChildren.get(id), matched, true))));
+    if (turn.final_answer) card.append(el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "FINAL ANSWER"}), renderAnswer(turn.final_answer)));
+    return card;
+  }
+  function renderTimeline(row, children, matched) {
+    const timeline = el("section", {class: "mini-timeline", "data-timeline": "", "aria-label": "Session timeline"});
+    if (!validMs(row.start_ms) || !validMs(row.end_ms) || row.end_ms < row.start_ms) {
+      timeline.append(el("p", {class: "reader-meta", text: "timeline unavailable: unknown session span"})); return timeline;
+    }
+    const span = row.end_ms - row.start_ms, positioned = new Set(row.turns.flatMap(turn => [...turn.spawned, ...turn.used]));
+    const labels = el("div", {class: "timeline-labels"});
+    const lane = (blocks, child = null) => {
+      const track = el("div", {class: "timeline-track"}, el("span", {class: "timeline-idle", ...(child ? {} : {"data-timeline-idle": ""})}));
+      let hasBlock = false;
+      for (const item of blocks) {
+        if (!validMs(item.start_ms) || !validMs(item.end_ms) || item.end_ms < item.start_ms || item.end_ms < row.start_ms || item.start_ms > row.end_ms) continue;
+        const left = span ? (Math.max(row.start_ms, item.start_ms) - row.start_ms) / span * 100 : 0;
+        const width = span ? (Math.min(row.end_ms, item.end_ms) - Math.max(row.start_ms, item.start_ms)) / span * 100 : 0;
+        const label = child ? child.label + (child.forked ? " · forked" : "") : "turn " + item.n;
+        const block = el("span", {class: "timeline-block" + (child ? " sub" : "") + (child && child.link_method === "inferred" ? " inferred" : ""),
+          title: label + " · " + localStamp(item.start_ms) + " — " + localStamp(item.end_ms), style: "left:" + left + "%;width:" + width + "%",
+          ...(child ? {"data-timeline-subagent": child.id} : {"data-timeline-turn": item.id})});
+        track.append(block);
+        hasBlock = true;
+        const text = el("span", {class: "timeline-label", "data-timeline-label": "", "data-label-kind": child ? "subagent" : "turn", "data-left": left, title: label},
+          el("span", {text: child ? child.label : label}), ...(child && child.forked ? [el("span", {class: "tag", text: "forked"})] : []));
+        text._block = block;
+        labels.append(text);
+      }
+      const result = el("div", {class: "timeline-lane" + (child && matched.has(child.id) ? " matched" : ""), "data-timeline-lane": child ? child.id : row.id,
+        ...(child && !positioned.has(child.id) ? {"data-subagent-id": child.id} : {})}, track);
+      if (child && !hasBlock) result.setAttribute("title", child.label + " · timing unknown or outside session span");
+      return result;
+    };
+    timeline.append(lane(row.turns), ...children.map(child => lane([child], child)), labels,
+      el("div", {class: "timeline-ticks"}, ...Array.from({length: 5}, (_, index) => el("span", {"data-timeline-tick": "", style: "left:" + index * 25 + "%", text: timeOnly(row.start_ms + span * index / 4)}))));
+    return timeline;
+  }
+  function fitReader() {
+    for (const labels of document.querySelectorAll(".timeline-labels")) {
+      const occupied = [[], []], width = labels.getBoundingClientRect().width;
+      for (const label of labels.querySelectorAll("[data-timeline-label]")) {
+        label.hidden = false; label.removeAttribute("data-timeline-label-row");
+        label._block.removeAttribute("data-tooltip-only");
+        const labelWidth = label.getBoundingClientRect().width, left = Math.max(0, Math.min(width - labelWidth, Number(label.dataset.left) * width / 100));
+        let placed = false;
+        for (let line = 0; line < 2; line++) {
+          if (labelWidth > width || occupied[line].some(([a, b]) => left < b + 4 && left + labelWidth + 4 > a)) continue;
+          label.style.left = left + "px"; label.style.top = line * 10 + "px";
+          label.setAttribute("data-timeline-label-row", line); occupied[line].push([left, left + labelWidth]); placed = true; break;
+        }
+        if (!placed) {label.hidden = true; label._block.setAttribute("data-tooltip-only", "");}
+      }
+    }
+    for (const wrap of document.querySelectorAll("[data-expandable-text]")) {
+      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("button");
+      if (paragraph.getBoundingClientRect().width) button.hidden = !paragraph.classList.contains("expanded") && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+    }
+  }
+  function renderReader(row) {
+    const children = descendants(row, data.subagents, currentState), visibleChildren = new Map(children.map(child => [child.id, child]));
+    const matched = matchSession(row, currentState, data.subagents).matchedSubagents;
+    const full = readerUsage([row, ...children]), own = readerUsage([row]), agent = readerUsage(children), unresolved = row.flags.includes("history_unresolved");
+    const reader = el("section", {class: "reader", "data-reader": row.id}, el("button", {type: "button", class: "reader-back", text: "← sessions", onclick: () => act({v: "list", s: undefined})}));
+    const title = el("button", {type: "button", class: "collapsed-title", title: row.title_full, "aria-label": "Expand full title", "aria-expanded": "false", text: row.title, onclick: () => {
+      const expanded = title.getAttribute("aria-expanded") !== "true";
+      title.className = expanded ? "expanded-title" : "collapsed-title"; title.textContent = expanded ? row.title_full : row.title; title.setAttribute("aria-expanded", String(expanded));
+    }});
+    const header = el("div", {class: "reader-header", "data-reader-header": ""}, el("h1", {class: "reader-title"}, title),
+      el("p", {class: "reader-meta reader-workspace", text: workspaceLine(row)}),
+      el("p", {class: "reader-meta", text: (row.branch || "branch unknown") + " · " + (row.originator || "originator unknown")}),
+      el("p", {class: "reader-meta", "data-time-range": "", text: localStamp(row.start_ms) + " — " + localStamp(row.end_ms),
+        title: quantity(row.user_span_ms) ? "user-request span: " + durationText(row.user_span_ms) : undefined}),
+      el("p", {class: "reader-meta", text: row.id.slice(0, 8) + "…" + row.id.slice(-8), title: row.id}), flagsLine(row));
+    if (row.forked_from) {
+      const parents = [...data.sessions, ...Object.values(data.subagents)].filter(parent => parent.id === row.forked_from);
+      const titles = new Set(parents.filter(parent => typeof parent.title === "string" && parent.title.trim()).map(parent => parent.title));
+      const parentTitle = titles.size === 1 ? titles.values().next().value : row.forked_from;
+      header.append(el("button", {type: "button", class: "fork-link", text: "forked from " + parentTitle, onclick: () => act({v: "session", s: row.forked_from})}));
+    }
+    const copyArea = el("div", {class: "copy-status", "aria-live": "polite"});
+    const copy = async text => {
+      try {
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") throw new Error("Clipboard unavailable");
+        await navigator.clipboard.writeText(text); copyArea.replaceChildren(el("span", {text: "copied"})); copyArea.removeAttribute("data-copy-fallback");
+      } catch (_) {
+        const field = el("input", {type: "text", readonly: "", value: text, "aria-label": "Text to copy"});
+        copyArea.setAttribute("data-copy-fallback", ""); copyArea.replaceChildren(field, el("span", {text: "press ⌘C"})); field.focus(); field.select();
+      }
+    };
+    const lifecycle = row.archived ? "archived" : "live";
+    const isSubagent = !row.kind || row.kind === "orphan";
+    const supports = action => action[lifecycle] && (!isSubagent || action.subagent);
+    header.append(el("div", {class: "reader-buttons"},
+      ...(supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+        onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
+      ...(supports(data.meta.links.continue_in_cli) ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
+      el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}), el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})), copyArea);
+    const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
+      el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
+    const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms ? row.end_ms - row.start_ms : null;
+    const agentActive = children.map(ownActive), agentMs = agentActive.every(quantity) ? agentActive.reduce((a, b) => a + b, 0) : null;
+    reader.append(header, el("div", {class: "reader-stats"},
+      stat("active", "active time", ownActive(row), unresolved ? "withheld" : durationText(ownActive(row)), "yours"),
+      stat("span", "span", span, unresolved ? "withheld" : durationText(span), "idle " + durationText(quantity(row.idle_ms) ? row.idle_ms : null)),
+      stat("turns", "turns", unresolved ? null : row.turns.length, unresolved ? "withheld" : countText(row.turns.length), "your turns"),
+      stat("subagents", "subagents", children.length, countText(children.length), durationText(agentMs) + " agent time"),
+      stat("tokens", "tokens", full.tokens, full.tokens === null ? "unknown" : countText(full.tokens), "total (yours + subagents) · " + (own.tokens === null ? "unknown" : countText(own.tokens)) + " yours + " + (agent.tokens === null ? "unknown" : countText(agent.tokens)) + " subagents"),
+      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}),
+        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
+    if (unresolved) reader.append(el("p", {class: "reader-note", text: "history boundary unresolved — turn metrics withheld"}));
+    else reader.append(renderTimeline(row, children, matched), ...row.turns.map(turn => renderTurn(turn, matched, visibleChildren)));
+    if (Object.entries(row.outside_usage).some(([key, value]) => !["cost_usd", "priced_by"].includes(key) && quantity(value) && value > 0)) reader.append(el("p", {
+      class: "outside-usage", "data-outside-usage": "", text: "tokens outside displayed turns: " + tokenText(row.outside_usage), title: usageRateTooltip([row.outside_usage])}));
+    return reader;
+  }
+  function render() {
+    renderTopbar();
+    const rows = scope(data.sessions, currentState, data.meta.generated_at_ms).rows;
+    const app = document.getElementById("colophon-app");
+    if (!data.sessions.length) {
+      app.replaceChildren(el("p", {class: "empty-state", text: "No Codex sessions found in " + data.meta.codex_home}));
+    } else if (currentState.v === "overview") {
+      app.replaceChildren(...renderOverview());
+      fitCalendar();
+    } else {
+      const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
+      const visible = selected && !(currentState.a === "0" && selected.archived);
+      app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}),
+        el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderReader(selected)] : [])));
+      fitReader();
+      document.fonts.ready.then(fitReader);
+    }
+  }
+  // --- boot
+  document.addEventListener("DOMContentLoaded", () => {
+    data = JSON.parse(document.getElementById("colophon-data").textContent);
+    for (const weight of [300, 400, 500]) document.fonts.load(weight + " 12px 'Martian Mono'");
+    mountTopbar();
+    renderFooter();
+    const restore = () => {
+      clearTimeout(searchTimer);
+      writeState(readState(), {replace: true});
+    };
+    window.addEventListener("popstate", restore);
+    window.addEventListener("hashchange", restore);
+    window.addEventListener("resize", () => {fitCalendar(); fitReader();});
+    window.__colophonTest = {time, filters, aggregates, format, levels, state: {readState, writeState}, heatColors};
+    restore();
+  });
+})();

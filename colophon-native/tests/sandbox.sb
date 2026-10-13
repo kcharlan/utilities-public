@@ -1,0 +1,23 @@
+(version 1)
+(allow default)
+; Only temporary scratch data may be written by tests.
+(deny file-write*)
+(allow file-write* (subpath "/private/tmp") (subpath "/tmp")
+    (literal "/dev/null"))
+(deny file-write*
+    (subpath (param "PROJECT_DIR"))
+    (subpath (string-append (param "REAL_HOME") "/.codex"))
+    (subpath (string-append (param "REAL_HOME") "/.colophon"))
+    (subpath (string-append (param "REAL_HOME") "/Library/Scripts"))
+    (subpath (string-append (param "REAL_HOME") "/.local/bin"))
+    (subpath (string-append (param "REAL_HOME") "/bin"))
+    (subpath "/private/tmp/colophon-native-canary"))
+(deny file-read* file-write*
+    (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-native"))
+    (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-c-experiment"))
+    (subpath (string-append (param "REAL_HOME") "/source/utilities-public/colophon")))
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network* (local unix-socket) (remote unix-socket))

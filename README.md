@@ -60,6 +60,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `coding` – Curated coding orchestration reference assets. Contains `task_orch/` (legacy task orchestration scaffold, deprecated in favor of Cognitive Switchyard) and `design_orch/` (design-document packetization and implementation loop extracted from Git Fleet).
 - `cognitive_switchyard` – Local-first task orchestration engine with multi-phase pipeline (intake, planning, resolution, execution, verification, auto-fix), parallel worker dispatch, git worktree isolation, streaming phase logs, and a real-time React monitoring dashboard. Pluggable runner packs make it workload-agnostic.
 - `colophon` – Local, read-only Codex session explorer that compiles activity, token usage and dated API-equivalent cost estimates into a private offline page.
+- `colophon-native` – Independently maintained macOS C17 [Codex session explorer](colophon-native/README.md), with embedded offline-page assets and standalone native/CLI/browser validation.
 - `data_format_converter` – A dual-interface utility for analyzing and converting text data formats (JSON, XML, YAML, TOON, TOML) with LLM token count analysis.
 - `div_conv` – Privacy-safe standalone converter for supported Fidelity dividend and Vanguard activity CSV exports, using local-only account/security mappings to produce cooked CSV and QIF output.
 - `dloc` – Daily Lines of Code utility that parses git history to report insertions, deletions, and net changes by date.

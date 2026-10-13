@@ -1,0 +1,163 @@
+
+{
+  "gpt-5": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5-codex": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5-mini": {
+    "inputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2.5e-8
+  },
+  "gpt-5-nano": {
+    "inputCostPerToken": 5e-8,
+    "outputCostPerToken": 4e-7,
+    "cacheReadInputCostPerToken": 5e-9
+  },
+  "gpt-5-pro": {
+    "inputCostPerToken": 1.5e-5,
+    "outputCostPerToken": 1.2e-4
+  },
+  "gpt-5.1": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex-max": {
+    "inputCostPerToken": 1.25e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1.25e-7
+  },
+  "gpt-5.1-codex-mini": {
+    "inputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2.5e-8
+  },
+  "gpt-5.2": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.2-codex": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.2-pro": {
+    "inputCostPerToken": 2.1e-5,
+    "outputCostPerToken": 1.68e-4
+  },
+  "gpt-5.3-codex": {
+    "inputCostPerToken": 1.75e-6,
+    "outputCostPerToken": 1.4e-5,
+    "cacheReadInputCostPerToken": 1.75e-7
+  },
+  "gpt-5.3-codex-spark": {
+    "inputCostPerToken": 0,
+    "outputCostPerToken": 0,
+    "cacheReadInputCostPerToken": 0,
+    "displayLabel": "Research Preview"
+  },
+  "gpt-5.4": {
+    "inputCostPerToken": 2.5e-6,
+    "outputCostPerToken": 1.5e-5,
+    "cacheReadInputCostPerToken": 2.5e-7,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 5e-6,
+    "outputCostPerTokenAboveThreshold": 2.25e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 5e-7
+  },
+  "gpt-5.4-mini": {
+    "inputCostPerToken": 7.5e-7,
+    "outputCostPerToken": 4.5e-6,
+    "cacheReadInputCostPerToken": 7.5e-8
+  },
+  "gpt-5.4-nano": {
+    "inputCostPerToken": 2e-7,
+    "outputCostPerToken": 1.25e-6,
+    "cacheReadInputCostPerToken": 2e-8
+  },
+  "gpt-5.4-pro": {
+    "inputCostPerToken": 3e-5,
+    "outputCostPerToken": 1.8e-4
+  },
+  "gpt-5.5": {
+    "inputCostPerToken": 5e-6,
+    "outputCostPerToken": 3e-5,
+    "cacheReadInputCostPerToken": 5e-7,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 1e-5,
+    "outputCostPerTokenAboveThreshold": 4.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 1e-6
+  },
+  "gpt-5.5-pro": {
+    "inputCostPerToken": 3e-5,
+    "outputCostPerToken": 1.8e-4
+  },
+  "gpt-6-astra": {
+    "inputCostPerToken": 1e-5,
+    "outputCostPerToken": 5e-5,
+    "cacheReadInputCostPerToken": 1e-6,
+    "cacheWriteInputCostPerToken": 1.25e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 2e-5,
+    "outputCostPerTokenAboveThreshold": 7.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 2e-6,
+    "cacheWriteInputCostPerTokenAboveThreshold": 2.5e-5
+  },
+  "gpt-5.6-sol": {
+    "inputCostPerToken": 4e-6,
+    "cacheReadInputCostPerToken": 4e-7,
+    "cacheWriteInputCostPerToken": 5e-6,
+    "outputCostPerToken": 2e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 8e-6,
+    "cacheReadInputCostPerTokenAboveThreshold": 8e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 1e-5,
+    "outputCostPerTokenAboveThreshold": 3e-5
+  },
+  "gpt-5.6-terra": {
+    "inputCostPerToken": 2e-6,
+    "cacheReadInputCostPerToken": 2e-7,
+    "cacheWriteInputCostPerToken": 2.5e-6,
+    "outputCostPerToken": 1.2e-5,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-6,
+    "cacheReadInputCostPerTokenAboveThreshold": 4e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-6,
+    "outputCostPerTokenAboveThreshold": 1.8e-5
+  },
+  "gpt-5.6-luna": {
+    "inputCostPerToken": 2e-7,
+    "cacheReadInputCostPerToken": 2e-8,
+    "cacheWriteInputCostPerToken": 2.5e-7,
+    "outputCostPerToken": 1.2e-6,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-7,
+    "cacheReadInputCostPerTokenAboveThreshold": 4e-8,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-7,
+    "outputCostPerTokenAboveThreshold": 1.8e-6
+  },
+  "gpt-5.6-cyber": {
+    "inputCostPerToken": 1.25e-5,
+    "outputCostPerToken": 7.5e-5,
+    "cacheReadInputCostPerToken": 1.25e-6,
+    "cacheWriteInputCostPerToken": 1.5625e-5
+  },
+  "gpt-5.5-cyber": {
+    "inputCostPerToken": 1.25e-5,
+    "outputCostPerToken": 7.5e-5,
+    "cacheReadInputCostPerToken": 1.25e-6
+  }
+}

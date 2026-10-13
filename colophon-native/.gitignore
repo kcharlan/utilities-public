@@ -1,0 +1,9 @@
+/build/
+/colophon
+/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+# Public embedded-asset manifest; override the root packaging-artifact rule.
+!/assets/MANIFEST
