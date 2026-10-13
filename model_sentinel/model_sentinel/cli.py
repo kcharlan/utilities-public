@@ -21,7 +21,7 @@ from .config import (
     validate_selected_providers,
 )
 from .conditional_pricing import ComparisonIdentity
-from .credentials import refresh_credentials
+from .credentials import CredentialError, redact_credential_values, refresh_credentials, resolve_credentials
 from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, NormalizedModel, ProviderScanResult
 from .normalize import normalize_models
@@ -52,7 +52,7 @@ from .reporting import (
     render_scan_report,
 )
 from .storage import Store
-from .time_utils import local_today, now_utc
+from .time_utils import local_today, now_utc, to_local_human
 
 
 COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse", "credentials"}
@@ -382,6 +382,26 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
         database.close_all()
 
 
+def _emit_credential_error(*, message: str, args: argparse.Namespace,
+                           loaded: LoadedConfig, logger: logging.Logger) -> int:
+    logger.error(message)
+    report_path = _determine_error_report_path(args=args, loaded=loaded, generated_at=_now().isoformat())
+    _emit_output(message, output_path=report_path if args.output else None)
+    if report_path and not args.output:
+        report_path.write_text(message, encoding="utf-8")
+    if _should_notify_for_errors(args=args, loaded=loaded):
+        send_notification(
+            title="Model Sentinel: credential error",
+            message=f"Report: {report_path or 'stdout only'}",
+            report_path=report_path,
+            open_target=loaded.settings.notify_open_target,
+            terminal_notifier_path=loaded.settings.terminal_notifier_path,
+            sound_name=loaded.settings.notify_sound,
+            runtime_home=loaded.settings.runtime_home,
+        )
+    return 2
+
+
 def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.Logger) -> int:
     logger.info(
         "Runtime build: %s executable=%s",
@@ -389,25 +409,22 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
         runtime_entrypoint(),
     )
     selected = validate_selected_providers(loaded.providers, provider_id=args.provider)
-    missing = missing_credentials(selected, os.environ)
+    try:
+        snapshot = resolve_credentials(loaded.settings, selected,
+                                       runtime_paths=loaded.runtime_paths, environ=os.environ)
+    except CredentialError as exc:
+        return _emit_credential_error(message=str(exc), args=args, loaded=loaded, logger=logger)
+    if snapshot.invalid_keys:
+        return _emit_credential_error(
+            message="Invalid required credentials: " + ", ".join(sorted(snapshot.invalid_keys)),
+            args=args, loaded=loaded, logger=logger,
+        )
+    missing = missing_credentials(selected, snapshot.values)
     if missing:
-        message = "Missing required credential environment variables: " + ", ".join(sorted(missing))
-        logger.error(message)
-        report_path = _determine_error_report_path(args=args, loaded=loaded, generated_at=_now().isoformat())
-        _emit_output(message, output_path=report_path if args.output else None)
-        if report_path and not args.output:
-            report_path.write_text(message, encoding="utf-8")
-        if _should_notify_for_errors(args=args, loaded=loaded):
-            send_notification(
-                title="Model Sentinel: credential error",
-                message=f"Report: {report_path or 'stdout only'}",
-                report_path=report_path,
-                open_target=loaded.settings.notify_open_target,
-                terminal_notifier_path=loaded.settings.terminal_notifier_path,
-                sound_name=loaded.settings.notify_sound,
-                runtime_home=loaded.settings.runtime_home,
-            )
-        return 2
+        prefix = ("Missing required credential environment variables: " if snapshot.source == "environment"
+                  else "Missing required cached credentials: ")
+        return _emit_credential_error(message=prefix + ", ".join(sorted(missing)),
+                                      args=args, loaded=loaded, logger=logger)
 
     generated_at = _now().isoformat()
     provider_results: list[ProviderScanResult] = []
@@ -443,7 +460,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
         try:
             raw_models = fetch_raw_models(
                 provider,
-                os.environ[provider.credential_env_var],
+                snapshot.values[provider.credential_env_var],
                 profile,
             )
             normalized_models = normalize_models(
@@ -525,6 +542,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                     )
                 )
         except (ProviderFetchError, ValueError) as exc:
+            message = redact_credential_values(str(exc), snapshot.values)
             completed = _now()
             scrape_id = store.create_scrape(
                 provider_id=provider.provider_id,
@@ -535,7 +553,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 baseline_scrape_id=baseline.scrape_id if isinstance(baseline, BaselineInfo) else None,
                 saved_snapshot=False,
                 model_count=0,
-                error_message=str(exc),
+                error_message=message,
             )
             result = ProviderScanResult(
                 provider_id=provider.provider_id,
@@ -550,10 +568,10 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 removed=(),
                 changed=(),
                 profile=profile,
-                error_message=str(exc),
+                error_message=message,
             )
             provider_results.append(result)
-            logger.error("%s failed: %s", provider.provider_id, exc)
+            logger.error("%s failed: %s", provider.provider_id, message)
 
     report_path = _determine_report_path(args=args, loaded=loaded, provider_results=provider_results, generated_at=generated_at)
     detail_policy = _report_detail_policy(args=args, loaded=loaded)
@@ -614,7 +632,8 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
 
     _maybe_notify(args=args, loaded=loaded, provider_results=provider_results, report_path=html_report_path or report_path)
 
-    _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger)
+    _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger,
+                         protected_paths=((loaded.settings.credential_file,) if loaded.settings.credential_file else ()))
 
     return 1 if any(result.status == "error" for result in provider_results) else 0
 
@@ -723,7 +742,16 @@ def run_providers(*, args: argparse.Namespace, loaded) -> int:
     store = Store(loaded.runtime_paths.database_path)
     store.initialize()
     provider_rows = []
+    source_error = None
+    snapshot = None
+    try:
+        snapshot = resolve_credentials(loaded.settings, loaded.providers,
+                                       runtime_paths=loaded.runtime_paths, environ=os.environ)
+    except CredentialError as exc:
+        source_error = str(exc)
     for provider in loaded.providers:
+        invalid = snapshot is not None and provider.credential_env_var in snapshot.invalid_keys
+        present = snapshot is not None and provider.credential_env_var in snapshot.values
         provider_rows.append(
             {
                 "provider_id": provider.provider_id,
@@ -733,8 +761,11 @@ def run_providers(*, args: argparse.Namespace, loaded) -> int:
                 "base_url": provider.base_url,
                 "models_path": provider.models_path,
                 "credential_env_var": provider.credential_env_var,
-                "credential_present": bool(os.environ.get(provider.credential_env_var, "").strip()),
-                "last_successful_scan": store.get_latest_successful_scrape_time(provider.provider_id) or "none",
+                "credential_present": present,
+                "credential_source": loaded.settings.credential_source,
+                "credential_status": "error" if source_error or invalid else "present" if present else "missing",
+                "credential_error": source_error or ("Invalid credential value: " + provider.credential_env_var if invalid else None),
+                "last_successful_scan": store.get_latest_successful_scrape_time(provider.provider_id),
             }
         )
     report = render_providers_report(format_name=args.format, provider_rows=provider_rows)
@@ -865,18 +896,29 @@ def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
         )
 
     selected = tuple(provider for provider in loaded.providers if provider.enabled)
-    missing = missing_credentials(selected, os.environ)
-    if missing:
+    snapshot = None
+    try:
+        snapshot = resolve_credentials(loaded.settings, selected,
+                                       runtime_paths=loaded.runtime_paths, environ=os.environ)
+        if snapshot.invalid_keys:
+            raise CredentialError("Invalid required credentials: " + ", ".join(sorted(snapshot.invalid_keys)))
+        missing = missing_credentials(selected, snapshot.values)
+        if missing:
+            prefix = "Missing required env vars: " if snapshot.source == "environment" else "Missing required cached credentials: "
+            raise CredentialError(prefix + ", ".join(sorted(missing)))
+        checks.append({"check": "credentials", "status": "ok", "detail": "All required credentials are present"})
+    except CredentialError as exc:
         status_code = 1
-        checks.append(
-            {
-                "check": "credentials",
-                "status": "error",
-                "detail": "Missing required env vars: " + ", ".join(sorted(missing)),
-            }
-        )
-    else:
-        checks.append({"check": "credentials", "status": "ok", "detail": "All required credential env vars are present"})
+        checks.append({"check": "credentials", "status": "error", "detail": str(exc)})
+    checks.append({"check": "credential_source", "status": "ok", "detail": loaded.settings.credential_source})
+    if loaded.settings.credential_source == "file":
+        checks.append({"check": "credential_cache", "status": "ok" if snapshot else "error",
+                       "detail": f"{loaded.settings.credential_file}; required parent/file modes: 0700/0600"})
+    if snapshot and snapshot.updated_at:
+        age = (_now() - snapshot.updated_at).total_seconds()
+        checks.append({"check": "credential_cache_age", "status": "warn" if age < 0 else "ok",
+                       "detail": f"Cache last updated: {to_local_human(snapshot.updated_at)}; " +
+                       ("modification time is in the future" if age < 0 else f"age: {int(age)} seconds")})
     try:
         loaded.runtime_paths.ensure_directories()
         store = Store(loaded.runtime_paths.database_path)
@@ -1010,14 +1052,18 @@ def _notifications_enabled(*, args: argparse.Namespace, loaded) -> bool:
     return enabled
 
 
-def _cleanup_old_reports(report_dir: Path, retention_days: int, logger: logging.Logger) -> None:
+def _cleanup_old_reports(report_dir: Path, retention_days: int, logger: logging.Logger,
+                         *, protected_paths: tuple[Path, ...] = ()) -> None:
     if retention_days <= 0:
         return
     if not report_dir.is_dir():
         return
     cutoff = datetime.now().astimezone() - timedelta(days=retention_days)
     removed = 0
+    protected = {path.parent.resolve() / path.name for path in protected_paths}
     for path in report_dir.iterdir():
+        if path.parent.resolve() / path.name in protected:
+            continue
         if not path.is_file():
             continue
         if path.suffix not in {".txt", ".html", ".json", ".md"}:

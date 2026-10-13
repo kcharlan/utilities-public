@@ -51,6 +51,43 @@ from model_sentinel.storage import (
 from model_sentinel.conditional_pricing import StoredComparisonIdentity
 
 
+@pytest.mark.parametrize("format_name", ["json", "text", "markdown"])
+@pytest.mark.parametrize("status,present,error", [
+    ("present", True, None),
+    ("missing", False, None),
+    ("error", False, "Unable to open credential cache safely."),
+])
+def test_provider_diagnostics_render_source_status_error_and_no_prior_scan(
+    format_name, status, present, error,
+):
+    row = {
+        "provider_id": "synthetic_enabled",
+        "label": "Synthetic Provider",
+        "kind": "openrouter",
+        "enabled": True,
+        "base_url": "http://127.0.0.1:1",
+        "models_path": "/models",
+        "credential_env_var": "SYNTHETIC_ENABLED_KEY",
+        "credential_present": present,
+        "credential_source": "file",
+        "credential_status": status,
+        "credential_error": error,
+        "last_successful_scan": None,
+    }
+    result = reporting.render_providers_report(format_name=format_name, provider_rows=[row])
+    if format_name == "json":
+        rendered = json.loads(result)[0]
+        assert rendered["credential_present"] is present
+        assert rendered["credential_source"] == "file"
+        assert rendered["credential_status"] == status
+        assert rendered["credential_error"] == error
+        assert rendered["last_successful_scan"] is None
+    else:
+        assert "file" in result and status in result
+        assert (error or "none") in result
+        assert "none" in result
+
+
 _INHERITED_PRICE_PROFILE = replace(
     OPENROUTER_PROFILE,
     price_path_rules={},

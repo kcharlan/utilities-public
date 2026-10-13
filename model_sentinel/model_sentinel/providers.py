@@ -34,14 +34,14 @@ def fetch_raw_models(
         with urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
+        exc.close()
         raise ProviderFetchError(
-            f"{provider.label} request failed with HTTP {exc.code}: {details.strip() or exc.reason}"
-        ) from exc
-    except URLError as exc:
-        raise ProviderFetchError(f"{provider.label} request failed: {exc.reason}") from exc
-    except json.JSONDecodeError as exc:
-        raise ProviderFetchError(f"{provider.label} returned invalid JSON") from exc
+            f"{provider.label} request failed with HTTP {exc.code}"
+        ) from None
+    except (URLError, OSError):
+        raise ProviderFetchError(f"{provider.label} request failed: network error") from None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ProviderFetchError(f"{provider.label} returned invalid JSON") from None
     return extract_model_list(provider, payload, profile)
 
 
