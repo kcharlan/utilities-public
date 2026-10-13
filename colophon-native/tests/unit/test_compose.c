@@ -15,6 +15,10 @@ TEST(compose_borrows_immutable_cached_stream_and_priority_until_destroy) {
   ASSERT_EQ(ERR_OK, intern_init(&intern).code);
   UsageRecord usage = {
       .line = 3,
+      .response_id = {.kind = JS_STRING, .value.s = STR_LIT("synthetic-response")},
+      .ts = {.kind = JS_STRING, .value.s = STR_LIT("2030-01-02T12:00:00Z")},
+      .thread_usage = {.input = {.kind = JS_INT, .value.i = 7},
+                       .output = {.kind = JS_INT, .value.i = 2}},
       .thread_id = {.kind = JS_STRING, .value.s = STR_LIT("synthetic")},
       .turn_id = {.kind = JS_STRING, .value.s = STR_LIT("synthetic-turn")},
       .input = {.kind = JS_INT, .value.i = 7},
@@ -97,6 +101,11 @@ TEST(compose_unit_alignment_for_different_identifier_lengths) {
     identifier[length] = 0;
     Str id = {identifier, (uint32_t)length};
     UsageRecord usage = {.line = 1,
+                         .response_id = {.kind = JS_STRING, .value.s = STR_LIT("synthetic-response")},
+                         .ts = {.kind = JS_STRING, .value.s = STR_LIT("2030-01-02T12:00:00Z")},
+                         .thread_usage = {.input = {.kind = JS_INT, .value.i = 1},
+                                          .output = {.kind = JS_INT, .value.i = 0}},
+                         .output = {.kind = JS_INT, .value.i = 0},
                          .thread_id = {.kind = JS_STRING, .value.s = id},
                          .input = {.kind = JS_INT, .value.i = 1}};
     LogRecord raw = {

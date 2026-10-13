@@ -46,6 +46,8 @@ Err record_parse(const DiscoveredLog *snapshot, Intern *identifiers,
                  const ReaderCallbacks *raw_owner, LogRecord *out);
 void record_destroy(LogRecord *record);
 yyjson_val *record_get(yyjson_val *obj, const char *key);
+/* First nonempty string turn_id/turnId/id in payload, then payload.info. */
+yyjson_val *record_turn_id(yyjson_val *payload);
 Str record_string(yyjson_val *value);
 Str record_trim(Str value, bool right);
 bool record_prefix(Str value, const char *prefix);

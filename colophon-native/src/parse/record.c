@@ -17,6 +17,16 @@
 yyjson_val *record_get(yyjson_val *obj, const char *key) {
     return obj_get_last(obj, (Str){key, (uint32_t)strlen(key)});
 }
+yyjson_val *record_turn_id(yyjson_val *payload) {
+    const char *keys[] = {"turn_id", "turnId", "id"};
+    yyjson_val *info = record_get(payload, "info");
+    for (size_t i = 0; i < 6; i++) {
+        yyjson_val *value = record_get(i < 3 ? payload : info, keys[i % 3]);
+        if (yyjson_is_str(value) && yyjson_get_len(value))
+            return value;
+    }
+    return NULL;
+}
 Str record_string(yyjson_val *value) {
     return yyjson_is_str(value) ? (Str){yyjson_get_str(value), (uint32_t)yyjson_get_len(value)}
                                 : (Str){0};
@@ -178,6 +188,10 @@ MaybeMs record_event_time(yyjson_val *root, yyjson_val *payload, Str *source) {
 static Err session_meta(LogRecord *out, yyjson_val *root, yyjson_val *payload, MaybeMs at,
                         SessionMeta *meta) {
     *meta = (SessionMeta){0};
+    Err request_error = record_intern(out, record_string(record_get(payload, "session_id")),
+                                     &meta->request_session_id);
+    if (request_error.code)
+        return request_error;
     yyjson_val *candidates[] = {record_get(payload, "id"),         record_get(root, "id"),
                                 record_get(payload, "session_id"), record_get(payload, "sessionId"),
                                 record_get(root, "session_id"),    record_get(root, "sessionId")};
@@ -370,13 +384,16 @@ static Err decoded_callback(void *context, const ReaderRecord *record) {
                            .rec = fact.rec,
                            .at_ms = fact.at_ms,
                            .timestamp_unix_ms = fact.wrapper_ms};
-        const char *ids[] = {"response_id", "thread_id", "turn_id", "root_turn_id"};
-        JScalar *fields[] = {&row.response_id, &row.thread_id, &row.turn_id, &row.root_turn_id};
+        const char *ids[] = {"response_id", "thread_id", "session_id", "root_turn_id"};
+        JScalar *fields[] = {&row.response_id, &row.thread_id, &row.session_id, &row.root_turn_id};
         for (size_t i = 0; i < 4; i++) {
             err = record_scalar(out, record_get(record->payload, ids[i]), ids[i], fields[i]);
             if (err.code)
                 return err;
         }
+        err = record_scalar(out, record_turn_id(record->payload), "usage.turn", &row.turn_id);
+        if (err.code)
+            return err;
         err = record_scalar(out, record_get(record->record, "timestamp"), "usage.ts", &row.ts);
         if (err.code)
             return err;
@@ -393,6 +410,18 @@ static Err decoded_callback(void *context, const ReaderRecord *record) {
             err = record_scalar(out, record_get(usage, tokens[i]), tokens[i], values[i]);
             if (err.code)
                 return err;
+        }
+        const char *total_keys[] = {"thread_token_usage", "turn_token_usage"};
+        UsageScalars *totals[] = {&row.thread_usage, &row.turn_usage};
+        for (size_t i = 0; i < 2; i++) {
+            yyjson_val *total = record_get(record->payload, total_keys[i]);
+            const char *keys[] = {"input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"};
+            JScalar *fields[] = {&totals[i]->input, &totals[i]->cached_input, &totals[i]->output, &totals[i]->reasoning};
+            for (size_t j = 0; j < 4; j++) {
+                err = record_scalar(out, record_get(total, keys[j]), keys[j], fields[j]);
+                if (err.code)
+                    return err;
+            }
         }
         err = record_append(&out->arena, (void **)&out->usage_records, &out->usage_count,
                             &parse->usage_capacity, sizeof row, &row);

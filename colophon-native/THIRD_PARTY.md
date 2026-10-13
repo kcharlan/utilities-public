@@ -9,7 +9,7 @@ not assert a new license for Kevin's application.
 | Martian Mono | 1.1.0, static standard-width Light/Regular/Medium subsets embedded in `assets/font.css`; full [OFL 1.1](assets/OFL.txt), also embedded with the CSS. |
 | Unicode normalization/casing | Unicode 16.0.0 committed `src/gen/unicode_nfc.c`/`.h`; full preserved [Unicode License V3](licenses/UNICODE.txt). |
 | Unicode pricing properties | Unicode 17.0.0 Numeric, Extend/SpacingMark/ZWJ and Prepend compressed ranges in `assets/pricing_*_ranges.txt`; same [Unicode notice](licenses/UNICODE.txt). |
-| CodexBar token/pricing rules | Adapted from [CodexBar](https://github.com/steipete/CodexBar) at `3bbf6bc48`; long-context thresholds follow `v0.74.1` (commit `7c08c0ae7`). MIT, © 2026 Peter Steinberger; full [notice](licenses/CodexBar-MIT.txt). |
+| CodexBar token/pricing rules | Adapted from [CodexBar](https://github.com/steipete/CodexBar) at `3bbf6bc48`; long-context thresholds and request-ledger validation/ownership/turn fallback follow `v0.74.1` (commit `7c08c0ae7`). MIT, © 2026 Peter Steinberger; full [notice](licenses/CodexBar-MIT.txt). |
 | models.dev catalog rates/public seeds | Public [models.dev](https://models.dev/) data, MIT; full [notice](licenses/models.dev-MIT.txt). |
 
 The CodexBar/models.dev attribution follows the maintained public Python

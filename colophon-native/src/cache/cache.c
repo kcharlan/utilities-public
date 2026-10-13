@@ -17,7 +17,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-static const char format[] = "native:1:1";
+static const char format[] = "native:1:2";
 static char *join(const char *dir, const char *name) {
     size_t n = strlen(dir) + strlen(name) + 2;
     char *p = malloc(n);

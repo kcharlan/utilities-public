@@ -33,7 +33,7 @@ typedef struct {
     PyNum value;
 } MaybeNum;
 typedef struct {
-    Str id, forked_from_id;
+    Str id, request_session_id, forked_from_id;
     MaybeMs created_at_ms;
     bool is_subagent;
     JScalar timestamp_raw, cwd, originator, cli_version, parent_thread_id, depth;
@@ -92,10 +92,15 @@ typedef struct {
     Str child_id, turn_key;
 } ReceiverLink;
 typedef struct {
+    JScalar input, cached_input, output, reasoning;
+} UsageScalars;
+typedef struct {
     uint64_t line, rec;
     JScalar response_id, thread_id, turn_id, root_turn_id, ts;
     MaybeMs at_ms, timestamp_unix_ms;
     JScalar input, cached_input, cache_read_input, cache_write, output, reasoning;
+    JScalar session_id;
+    UsageScalars thread_usage, turn_usage;
 } UsageRecord;
 typedef struct {
     Arena arena;         /* Owns every retained scalar/text/array except run intern IDs. */

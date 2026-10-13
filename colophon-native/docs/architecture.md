@@ -72,3 +72,25 @@ Remaining differences from `v0.74.1`:
 Python Colophon's existing 200,000 catalog fallback can append conflicting
 entries to a shared runtime ledger. Use a separate `COLOPHON_HOME` for the
 Python launcher, or retire it; this change does not migrate private ledgers.
+
+Request-ledger acceptance follows CodexBar `v0.74.1`: require a nonempty
+trimmed string thread id matching the NFC session identity. An optional
+session id must be a nonempty trimmed string matching the file's trimmed
+`session_meta.payload.session_id`, or the session identity when absent/blank.
+Foreign ownership is silently skipped. Require a nonempty trimmed response
+id, a valid timestamp, integral nonnegative input/output counts, and a thread
+total covering input, cached input and output. Optional cached/reasoning counts
+default to zero only when absent; reject other types, fractions, nonfinite
+values, values whose double representation reaches 2^63, cached > input,
+reasoning > output, and input + output overflow. Invalid owned records produce
+one aggregate `usage_record_rejected` event. Valid responses deduplicate by NFC
+trimmed response id. Keep a turn total only when valid and covering usage.
+Ledger cached input uses `cached_input_tokens` only; snapshot rows retain their
+existing cache-read alias rule.
+
+Turn identifiers select the first nonempty string `turn_id`, `turnId`, `id`
+from payload, then info. A ledger without an explicit turn takes the latest
+preceding `task_started` turn in the same file, then the latest nonempty
+`turn_context` turn. A started event without a turn clears the started fallback;
+blank or truncated contexts leave the active context unchanged. Native cache
+format `native:1:2` retains request session ids, ledger totals and context turns.

@@ -1,5 +1,6 @@
 #include "compose.h"
 #include "model.h"
+#include "request_ledger.h"
 #include "parse/record.h"
 #include "util/events.h"
 #include "util/pynum.h"
@@ -95,9 +96,6 @@ static OptionalTokens number(JScalar v) {
 static __int128 positive(JScalar v) {
   OptionalTokens n = number(v);
   return n.present && n.value > 0 ? n.value : 0;
-}
-static Str identifier(JScalar v) {
-  return v.kind == JS_STRING && v.value.s.n ? v.value.s : (Str){0};
 }
 static Err append(Corpus *c, SessionModel *s, const Omap *display,
                   const Omap *priority, Omap *normalizations, UsageUnit u) {
@@ -435,9 +433,30 @@ done:
   omap_destroy(&groups);
   return error;
 }
+/* Latest started turn and active context strictly before this record.
+ * A started observation without a turn clears currentTurnID; truncated
+ * contexts carry no turn and preserve activeTurnID. */
+static void turns_before(const LogRecord *r, uint64_t line, Str *started, Str *context) {
+  *started = *context = (Str){0};
+  for (size_t i = 0; i < r->token_stream.count; i++) {
+    const TokenObservation *o = &r->token_stream.observations[i];
+    if (o->line >= line)
+      break;
+    if (o->tag == TOKEN_S)
+      *started = o->turn_id;
+    else if (o->tag == TOKEN_C && o->turn_id.n)
+      *context = o->turn_id;
+  }
+}
+static Str request_turn_at(const LogRecord *r, uint64_t line) {
+  Str started, context;
+  turns_before(r, line, &started, &context);
+  return started.n ? started : context;
+}
 Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   compose_destroy(c);
   size_t count = c->skipped_count;
+  size_t rejected = 0;
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
     if (s->record_count > SIZE_MAX - count)
@@ -505,6 +524,12 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
     }
     for (size_t file = 0; file < s->record_count; file++) {
       const LogRecord *r = s->records[file];
+      Str request_session = token_model_trim(r->meta.request_session_id);
+      if (!request_session.n)
+        request_session = s->id;
+      error = canon(&c->usage_arena, request_session, &request_session);
+      if (error.code)
+        goto session_done;
       AccountingResult *result = omap_get(&by_path, r->key.path);
       if (result->unresolved)
         s->flags |= F_FORK_BASELINE;
@@ -523,17 +548,20 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
         goto session_done;
       for (size_t i = 0; i < r->usage_count; i++) {
         const UsageRecord *u = ordered[i];
-        if (u->thread_id.kind != JS_STRING)
-          continue;
-        Str thread;
-        error = canon(&c->usage_arena, u->thread_id.value.s, &thread);
+        LedgerRecord ledger;
+        LedgerVerdict verdict;
+        error = ledger_record_accept(&c->usage_arena, u, session, request_session, &ledger, &verdict);
         if (error.code)
           goto session_done;
-        if (!str_equal(thread, session))
+        if (verdict == LEDGER_FOREIGN)
           continue;
-        if (u->response_id.kind == JS_STRING && u->response_id.value.s.n) {
+        if (verdict == LEDGER_INVALID) {
+          rejected++;
+          continue;
+        }
+        {
           Str response;
-          error = canon(&c->usage_arena, u->response_id.value.s, &response);
+          error = canon(&c->usage_arena, ledger.response_id, &response);
           if (error.code)
             goto session_done;
           if (omap_get(&responses, response))
@@ -542,7 +570,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
           if (error.code)
             goto session_done;
         }
-        Str turn = identifier(u->turn_id), turn_key = {0};
+        Str turn = ledger.turn_id.n ? ledger.turn_id : request_turn_at(r, u->line), turn_key = {0};
         if (turn.p) {
           error = canon(&c->usage_arena, turn, &turn_key);
           if (error.code)
@@ -553,29 +581,17 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
           if (error.code)
             goto session_done;
         }
-        OptionalTokens reasoning = number(u->reasoning);
-        __int128 output = positive(u->output);
-        if (reasoning.present) {
-          if (reasoning.value < 0)
-            reasoning.value = 0;
-          if (reasoning.value > output)
-            reasoning.value = output;
-        }
-        __int128 cached = positive(u->cached_input),
-                 read = positive(u->cache_read_input);
-        if (read > cached)
-          cached = read;
         UsageUnit unit = {.file = file,
                           .line = u->line,
                           .turn_id = turn,
                           .at_ms = u->at_ms,
-                          .timestamp_ms = u->timestamp_unix_ms,
+                          .timestamp_ms = ledger.timestamp_ms,
                           .model_raw = model_at(r, result, u->line),
-                          .input = positive(u->input),
-                          .cached = cached,
+                          .input = ledger.usage.input,
+                          .cached = ledger.usage.cached,
                           .cache_write = positive(u->cache_write),
-                          .output = output,
-                          .reasoning = reasoning,
+                          .output = ledger.usage.output,
+                          .reasoning = {ledger.has_reasoning, ledger.usage.reasoning},
                           .source = STR_LIT("record")};
         error = append(c, s, &display, &indexes, &normalizations, unit);
         if (error.code)
@@ -645,6 +661,8 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
     if (error.code)
       goto done;
   }
+  if (rejected)
+    event_note("usage_record_rejected", "compose.token_usage_record", rejected);
   for (unsigned char code = 4; code < 7; code++) {
     bool found = false;
     for (size_t i = 0; i < c->diagnostic_order_count; i++)

@@ -29,7 +29,7 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 130
+`make test` runs the stable-sort guard, ten asset digests, all 143
 C units, 20 collected CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
@@ -72,3 +72,9 @@ in every existing curated-history row, not only in the resolver or a new dated
 row; dated lookup otherwise keeps earlier usage incorrectly priced. Validate
 raw tier keys/types and rate underflow in both catalog tier locations before
 sanitization, and decode the complete array even after finding a matching tier.
+
+Ledger lesson: snapshots and request-ledger records have different numeric
+contracts. Validate required request fields and covering totals before response
+deduplication; a malformed record must not consume a later valid response id.
+Keep the raw per-file request-session ownership separately from thread identity,
+and share nonempty turn-alias selection across ledger and token-stream parsing.

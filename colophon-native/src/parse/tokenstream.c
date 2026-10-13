@@ -533,6 +533,7 @@ Err tokenstream_decoded(void *context, const ReaderRawLine *line, const JsonRead
         Str values[] = {string(payload,"model",true),string(payload,"model_name",true),string(info,"model",true),string(info,"model_name",true)};
         err = model_state(s,values,&obs.model_state);
         if (!err.code) err = retain(s,string(root,"timestamp",false),&obs.timestamp);
+        if (!err.code) err = retain(s,record_string(record_turn_id(payload)),&obs.turn_id);
     } else if (str_equal(kind,STR_LIT("inter_agent_communication_metadata"))) {
         obs.tag = TOKEN_I; obs.trigger = yyjson_is_true(typed(payload,"trigger_turn",YYJSON_TYPE_BOOL));
     } else if (str_equal(kind,STR_LIT("event_msg"))) {
@@ -540,11 +541,7 @@ Err tokenstream_decoded(void *context, const ReaderRawLine *line, const JsonRead
         if (str_equal(type,STR_LIT("task_started"))) obs.tag = TOKEN_S;
         else if (str_equal(type,STR_LIT("token_count"))) obs.tag = TOKEN_T;
         else return ERR_SUCCESS;
-        const char *ids[] = {"turn_id","turnId","id"};
-        for (size_t i = 0; i < 6; i++) {
-            Str id = string(i < 3 ? payload : info,ids[i%3],false);
-            if (id.p) { err = retain(s,id,&obs.turn_id); break; }
-        }
+        err = retain(s,record_string(record_turn_id(payload)),&obs.turn_id);
         if (!err.code && obs.tag == TOKEN_T) {
             Str values[] = {string(info,"model",true),string(info,"model_name",true),string(payload,"model",true),string(root,"model",true)};
             TokenModel model = {0};
