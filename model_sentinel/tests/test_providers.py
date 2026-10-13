@@ -9,10 +9,26 @@ import pytest
 from model_sentinel import providers
 from model_sentinel.config import load_config
 from model_sentinel.provider_profiles import resolve_profile
-from tests.credential_fixtures import write_credential_config
+from tests.credential_fixtures import (
+    synthetic_protocol_response, synthetic_provider_server, write_credential_config,
+)
 
 
 SECRET = 'SYNTHETIC_NOT_A_REAL_SECRET_"\\echo'
+
+
+@pytest.mark.parametrize("failure", ["malformed_status", "truncated_body"])
+def test_provider_protocol_error_suppresses_actual_upstream_echo(tmp_path, monkeypatch, failure):
+    home = write_credential_config(tmp_path)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(home))
+    response = synthetic_protocol_response(failure, SECRET)
+    with synthetic_provider_server(home, raw_response=response) as authorizations:
+        provider = load_config(tmp_path).providers[0]
+        with pytest.raises(providers.ProviderFetchError) as caught:
+            providers.fetch_raw_models(provider, SECRET, resolve_profile(provider.kind))
+    assert authorizations == [f"Bearer {SECRET}"]
+    assert "network error" in str(caught.value)
+    assert "SYNTHETIC_NOT_A_REAL_SECRET" not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize("encoding", [str, json.dumps, quote])

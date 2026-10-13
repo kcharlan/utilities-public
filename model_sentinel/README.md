@@ -251,6 +251,10 @@ cache destination must be different files, including when hardlinked.
 The cache is **plaintext at rest**. File permissions limit access but do not
 encrypt it. Use file mode only if that tradeoff fits your local security needs.
 
+The refresh input must be owned by the current user, have exactly mode `0600`,
+and be a regular file or FIFO. Final symlinks are rejected. These source rules
+are separate from the cache's private-parent and regular-file requirements.
+
 The refresh input is UTF-8 assignment text, bounded to 65,536 bytes, using one
 `KEY=VALUE` per line. Blank lines and full-line `#` comments are allowed. Names
 must be identifiers (`[A-Za-z_][A-Za-z0-9_]*`), with no duplicate names. Values
@@ -291,7 +295,8 @@ read the mount or initiate a refresh. A mounted refresh may prompt through
 1Password itself; there is no automatic desktop launch or login retry.
 
 Refresh manually after rotating credentials. There is no automatic expiry or
-refresh hook/job. `providers` and `healthcheck` report **cache last updated**
+refresh hook/job. `providers` reports credential source/status, presence/errors,
+and last successful scan. `healthcheck` reports **cache last updated** and age
 from the file modification time, not provider validity or proof that every
 retained key was re-extracted. A future timestamp warns instead of showing a
 negative age; missing disabled-provider keys do not fail healthcheck. Refresh
@@ -448,8 +453,9 @@ are not required to browse saved history.
 ./model-sentinel providers
 ```
 
-This lists configured providers, credential source/status, and cache last
-updated when file mode is selected; credential values are never reported.
+This lists configured providers, credential source/status, presence/errors,
+and last successful scan; credential values are never reported. Use `healthcheck`
+for cache last updated and age when file mode is selected.
 
 ### Validate Runtime Readiness
 

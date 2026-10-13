@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ssl
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -38,7 +39,7 @@ def fetch_raw_models(
         raise ProviderFetchError(
             f"{provider.label} request failed with HTTP {exc.code}"
         ) from None
-    except (URLError, OSError):
+    except (URLError, OSError, HTTPException):
         raise ProviderFetchError(f"{provider.label} request failed: network error") from None
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise ProviderFetchError(f"{provider.label} returned invalid JSON") from None

@@ -11,7 +11,9 @@ from urllib.parse import quote
 import pytest
 
 from model_sentinel import cli, credentials, providers
-from tests.credential_fixtures import write_credential_config
+from tests.credential_fixtures import (
+    synthetic_protocol_response, synthetic_provider_server, write_credential_config,
+)
 
 
 def seed_cache(home, text):
@@ -19,6 +21,47 @@ def seed_cache(home, text):
     path.write_text(text)
     path.chmod(0o600)
     return path
+
+
+@pytest.mark.parametrize("failure", ["malformed_status", "truncated_body"])
+@pytest.mark.parametrize("encoding", [str, json.dumps, quote])
+def test_scan_protocol_error_persists_safe_failure_and_preserves_cache(tmp_path, failure, encoding):
+    home = write_credential_config(tmp_path)
+    secret = 'SYNTHETIC_NOT_A_REAL_SECRET_"\\protocol_echo'
+    environment = {**os.environ, "MODEL_SENTINEL_HOME": str(home), "SYNTHETIC_ENABLED_KEY": secret}
+    command = [sys.executable, "-m", "model_sentinel"]
+    refresh = subprocess.run(
+        command + ["credentials", "refresh", "--from-environment"],
+        env=environment, capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert refresh.returncode == 0, refresh.stderr
+    cache = home / "credentials.env"
+    before = cache.read_bytes(), cache.stat().st_mtime_ns
+    report = home / "reports" / "synthetic_protocol_failure.txt"
+    response = synthetic_protocol_response(failure, encoding(secret))
+    with synthetic_provider_server(home, raw_response=response) as authorizations:
+        result = subprocess.run(
+            command + ["scan", "--save", "--no-notify", "--output", str(report)],
+            env=environment, capture_output=True, text=True, timeout=30, check=False,
+        )
+    assert authorizations == [f"Bearer {secret}"]
+    assert result.returncode == 1
+    assert "Traceback" not in result.stdout + result.stderr
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        rows = db.execute(
+            "SELECT provider_id, status, saved_snapshot, error_message FROM scrapes"
+        ).fetchall()
+        persisted = "\n".join(db.iterdump())
+    assert len(rows) == 1
+    assert rows[0][:3] == ("synthetic_enabled", "error", 0)
+    assert "network error" in rows[0][3]
+    visible = (
+        result.stdout + result.stderr + persisted + report.read_text()
+        + (home / "logs" / "model_sentinel.log").read_text()
+    )
+    for sentinel in (secret, json.dumps(secret), quote(secret), "SYNTHETIC_NOT_A_REAL_SECRET", "Traceback"):
+        assert sentinel not in visible
+    assert (cache.read_bytes(), cache.stat().st_mtime_ns) == before
 
 
 @pytest.mark.parametrize("provider_id", [None, "synthetic_disabled"])

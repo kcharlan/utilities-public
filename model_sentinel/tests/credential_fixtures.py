@@ -40,13 +40,17 @@ def write_credential_config(root: Path, *, source: str = "file") -> Path:
 
 
 @contextmanager
-def synthetic_provider_server(runtime_home: Path):
+def synthetic_provider_server(runtime_home: Path, *, raw_response: bytes | None = None):
     """Serve invented models on loopback and record the actual bearer headers."""
     authorizations: list[str | None] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             authorizations.append(self.headers.get("Authorization"))
+            if raw_response is not None:
+                self.wfile.write(raw_response)
+                self.close_connection = True
+                return
             payload = json.dumps({"data": [{"id": "synthetic-not-a-real-model"}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -72,6 +76,20 @@ def synthetic_provider_server(runtime_home: Path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def synthetic_protocol_response(failure: str, echo: str) -> bytes:
+    """Produce actual malformed status or truncated body bytes for loopback tests."""
+    body = echo.encode("ascii")
+    if failure == "malformed_status":
+        return body + b"\r\n\r\n"
+    if failure == "truncated_body":
+        return (
+            b"HTTP/1.1 200 OK\r\nContent-Length: "
+            + str(len(body) + 100).encode("ascii")
+            + b"\r\nConnection: close\r\n\r\n" + body
+        )
+    raise ValueError(f"Unknown synthetic protocol failure: {failure}")
 
 
 def assert_synthetic_saved_snapshot(runtime_home: Path) -> None:
