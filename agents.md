@@ -50,6 +50,12 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `.venv/bin/python -m pytest -q` from `colophon/` (unit, CLI, browser and scaling tests; no skips).
   - After launcher header edits: `uv run --no-python-downloads --script tools/check_uv_headers.py` from the repository root.
   - Local acceptance requires explicit approval for real data; outputs are private and never committed. Run `colophon/tests/perf/measure_throughput.py`, `colophon/tests/parity/compare_codexbar.py`, and after curated pricing changes `colophon/tests/parity/check_upstream_tables.py` with `colophon/.venv/bin/python` from the repository root; follow the project README for arguments and the guarded native oracle.
+- `colophon-native` (from `colophon-native/`; see its README and `docs/development.md`):
+  - `make` (release build; `SQLITE_PREFIX` selects an existing Homebrew SQLite prefix).
+  - `make test` (all retained C units, standalone synthetic CLI/integration, Chromium browser cases, stable-sort and asset guards).
+  - `make sanitize` (same categories with ASan/UBSan), `make tsan` (retained C units with TSan).
+  - `make check-assets` and `make check-sort` (local guards); individual categories: `make test-unit`, `make test-cli`, `make test-browser`.
+  - Use this project's own Python 3.14 `.venv` and cached Chromium. Dependency/browser downloads require approval. Test fixtures and evidence stay outside the public checkout; wrappers sandbox real runtime/source access. Original native parity/performance tools and their `private/` workflow are not included.
 - `data_format_converter`:
   - `.venv/bin/python -m pytest`
   - Browser suite: `npm ci`, `npx playwright install chromium`, then `npm run test:browser`.
