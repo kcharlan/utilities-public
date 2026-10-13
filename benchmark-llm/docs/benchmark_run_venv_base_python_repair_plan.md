@@ -1,6 +1,6 @@
 # Benchmark-run venv base-interpreter repair plan
 
-Status: decisions locked 2026-10-12 (see "Decisions"); implemented 2026-10-12 on branch fix/benchmark-llm-base-python. Submitted for review as a pull request from that branch.
+Status: decisions locked 2026-10-12 (see "Decisions"); implemented 2026-10-12 and merged as kcharlan/utilities-public#33 (squash commit `dfdca32`); a follow-up review fix is on branch `fix/benchmark-llm-base-python-review`.
 
 Terminology: outside the "Branch and checkout" section, "worktree" always
 means a git worktree that
@@ -483,3 +483,95 @@ Run all commands from `benchmark-llm/`.
   benchmark step rebuilds them (Decision 2; Task 3 covers both bundled
   examples).
 - Other monorepo projects.
+
+## Follow-up: PR #33 review (2026-10-12)
+
+A review of PR #33 (merged as `dfdca32`) found that the shipped tests did not
+pin most of the new branches, and that `venv --clear` in the validation steps
+is unsafe when the model leaves `.venv` as a symlink.
+
+### Whole-part revert results (never recorded before)
+
+Each part of the fix was reverted in turn at `dfdca32` and the suite run:
+
+| Mutant | Part reverted | Failures |
+|---|---|---|
+| M01 | resolver | 10 failed |
+| M11 | CLI | 7 failed |
+| M19 | example scripts | 3 failed |
+| M20 | example scripts | 2 failed |
+| M21 | example scripts | 1 failed |
+| M22 | `--clear` | 2 failed |
+| M23 | `--clear` | 1 failed |
+
+### Surviving mutants at `dfdca32`
+
+16 of 31 targeted mutants survived the suite: M03, M06, M07, M10, M12, M13,
+M14, M15, M16, M24, M25, X1, X2, X3, X4, X5. The M-1 hazard: `--clear` empties
+the directory a model-created `.venv` symlink points to (the link target, not
+just the link), and no test executed the example scripts, so nothing caught it.
+
+### Owner decisions (all option A)
+
+- D1: validation steps run `rm -rf -- .venv`, then create the venv without
+  `--clear`. This replaces the `--clear` mechanism of locked Decision 4 and
+  keeps its intent (a model-created `.venv` is rebuilt from the stable base).
+- D2: document only the gap for venvs the model creates in a kept worktree;
+  no code change.
+- D3: an empty `BENCH_BASE_PYTHON=` counts as unset and the resolver is used.
+- D4: interpreter paths under a full `X.Y.Z` versioned directory (uv, pyenv)
+  produce a warning, never a refusal, through one shared helper.
+
+### Deviations from the fix plan made during execution
+
+1. The static guard in `tests/test_base_python.py` also splits commands on a
+   bare `&` and on `|&` (without splitting redirections such as `2>&1`). Task
+   review found that `"$BENCH_BASE_PYTHON" -c x & python3 -m venv .venv`
+   bypassed the guard.
+2. The README sentence saying a prompt-batch `llm_judge` command receives the
+   full environment was not added: `benchmark_llm/prompt_batch.py` passes the
+   judge the filtered `build_model_command_env` environment.
+
+### Mutation results on the fix branch
+
+The 24 mutants from the fix plan were swept when the suite had 151 tests,
+and every one was killed, failing every test it was required to fail. Q1 and Q2
+were added after the final review (suite then 157 tests) and were also killed.
+Paths are relative to `benchmark-llm/`; test names omit the file prefix
+(`tests/test_base_python.py`, `tests/test_repo_task.py`,
+`tests/test_example_venv_scripts.py`).
+
+| ID | File | Edit | Failures | Failing tests |
+|---|---|---|---|---|
+| M03 | benchmark_llm/util.py | Cellar check also requires the candidate not be executable | 2 | test_b_production_cellar_home_with_interpreter_maps_to_opt; test_cellar_executable_outside_venv_maps_to_opt |
+| M06 | benchmark_llm/util.py | `partition("=")` becomes `rpartition("=")` in the `home` parser | 1 | test_home_value_may_contain_equals |
+| M07 | benchmark_llm/util.py | drop `UnicodeDecodeError` from the `pyvenv.cfg` read handler | 1 | test_non_utf8_pyvenv_cfg_falls_back |
+| M10 | benchmark_llm/util.py | `home` parser keeps the last match instead of the first | 1 | test_first_home_line_wins |
+| X2 | benchmark_llm/util.py | resolver accepts a `home` candidate without checking it is executable | 2 | test_home_without_interpreter_falls_back; test_not_in_venv_without_base_executable_does_not_claim_venv |
+| X3 | benchmark_llm/util.py | Cellar mapping also requires `prefix != base_prefix` | 1 | test_cellar_executable_outside_venv_maps_to_opt |
+| X4 | benchmark_llm/util.py | drop the `prefix != base_prefix` condition on the missing-base-executable branch | 1 | test_not_in_venv_without_base_executable_does_not_claim_venv |
+| N5 | benchmark_llm/util.py | versioned-directory warning helper returns `None` | 3 | test_versioned_non_homebrew_home_warns[uv]; test_versioned_non_homebrew_home_warns[pyenv]; test_base_python_risky_override_warns_and_passes_through[versioned] |
+| M12 | benchmark_llm/cli.py | override check no longer rejects relative paths | 1 | test_base_python_override_rejects_each_invalid_shape[relative-existing] |
+| M13 | benchmark_llm/cli.py | override check accepts any file, executable or not | 1 | test_base_python_override_rejects_each_invalid_shape[not-executable] |
+| X5 | benchmark_llm/cli.py | override check accepts any path that passes `os.access` (directories too) | 1 | test_base_python_override_rejects_each_invalid_shape[directory] |
+| M14 | benchmark_llm/cli.py | resolver-branch warning is no longer written | 1 | test_base_python_resolver_warning_is_reported_and_run_continues |
+| M15 | benchmark_llm/cli.py | resolver-branch warning aborts the run (`return False`) | 1 | test_base_python_resolver_warning_is_reported_and_run_continues |
+| M16 | benchmark_llm/cli.py | override branch writes an unconditional warning | 5 | test_base_python_override_passes_through[plain]; [symlink]; test_base_python_risky_override_warns_and_passes_through[cellar]; [versioned]; [venv] |
+| X1 | benchmark_llm/cli.py | Cellar override skips the helper and the venv-override branch is widened | 1 | test_base_python_risky_override_warns_and_passes_through[cellar] |
+| N8 | benchmark_llm/cli.py | `if override:` becomes `if "BENCH_BASE_PYTHON" in env:` | 1 | test_base_python_empty_override_uses_resolver |
+| M24 | examples/cron-eval/scripts/prepare.sh | cron `prepare.sh` creation line gains `|| python3 -m venv .venv` | 1 | test_example_scripts_create_venvs_only_from_bench_base_python |
+| M25 | examples/policy-engine/scripts/run_checks.sh | policy `run_checks.sh` gains a bare `python3 -m venv .venv` split over two lines | 8 | test_example_scripts_create_venvs_only_from_bench_base_python; test_validate_rebuild_never_touches_what_model_venv_points_to[dir-symlink-policy], [dangling-symlink-policy], [regular-file-policy], [dir-with-nested-symlink-policy]; test_validate_rebuild_replaces_model_created_venv[policy]; test_policy_validate_installs_tools_then_requirements_then_validates[no-reqs], [reqs] |
+| N1 | examples/policy-engine/scripts/run_checks.sh | policy `run_checks.sh` goes back to `-m venv --clear .venv` with no `rm` | 8 | test_example_scripts_use_exact_base_python_venv_lines; the four test_validate_rebuild_never_touches_what_model_venv_points_to[...-policy] cases; test_validate_rebuild_replaces_model_created_venv[policy]; test_policy_validate_installs_tools_then_requirements_then_validates[no-reqs], [reqs] |
+| N2 | examples/cron-eval/scripts/run_checks.sh | cron `run_checks.sh` goes back to `-m venv --clear .venv` with no `rm` | 6 | test_example_scripts_use_exact_base_python_venv_lines; the four test_validate_rebuild_never_touches_what_model_venv_points_to[...-cron] cases; test_validate_rebuild_replaces_model_created_venv[cron] |
+| N3 | examples/policy-engine/scripts/run_checks.sh | policy `rm -rf -- .venv` moves above the `BENCH_BASE_PYTHON` check | 2 | test_example_scripts_use_exact_base_python_venv_lines; test_validate_without_base_python_keeps_workspace_venv[policy] |
+| N4 | examples/cron-eval/scripts/run_checks.sh | cron `run_checks.sh` loses `rm -rf -- .venv` | 5 | test_example_scripts_use_exact_base_python_venv_lines; test_validate_rebuild_never_touches_what_model_venv_points_to[dir-symlink-cron], [dangling-symlink-cron], [regular-file-cron]; test_validate_rebuild_replaces_model_created_venv[cron] |
+| N6 | tests/test_base_python.py | guard no longer joins backslash continuations | 1 | test_venv_creation_guard_flags_bypass_forms[continuation] |
+| N7 | tests/test_base_python.py | guard no longer splits a line into commands | 3 | test_venv_creation_guard_flags_bypass_forms[same-line-or], [background-amp], [pipe-amp] |
+| Q1 | examples/policy-engine/scripts/run_checks.sh | `"$BENCH_WORKSPACE"` unquoted in the `run_validation.py` call | 2 | test_policy_validate_installs_tools_then_requirements_then_validates[no-reqs], [reqs] |
+| Q2 | examples/cron-eval/scripts/run_checks.sh | `"$BENCH_WORKSPACE"` unquoted in the `run_checks.py` call | 1 | test_cron_validate_runs_checks_with_each_path_as_one_argument |
+
+Note: `test_validate_rebuild_never_touches_what_model_venv_points_to[dir-with-nested-symlink-cron]`
+still passes under N4 (the `rm` deleted): that case guards the `rm`-versus-`--clear`
+distinction (killed by N1 and N2), not the presence of `rm`.
+
+Final suite on the fix branch: 157 passed, 0 skipped, 0 failed.

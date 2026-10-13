@@ -92,6 +92,10 @@ requirements. Pinning the harness-owned tools keeps repeated benchmark runs
 comparable; target requirements remain part of the repository under test.
 The validation step rebuilds the workspace `.venv` from scratch with the
 interpreter in `BENCH_BASE_PYTHON`, replacing any `.venv` the model created.
+It removes whatever the model left at `.venv`, including a symlink, without following it.
+Because the rebuild discards packages the model installed, a solution that depends on a
+package not in its `requirements.txt` (other than pytest and PyYAML) fails validation;
+scores for such solutions are not comparable with runs made before 2026-10-12.
 This keeps the venv independent of the runtime's own venv and of versioned
 Homebrew paths; the variable is set by `bench run` and is not visible to the model.
 
