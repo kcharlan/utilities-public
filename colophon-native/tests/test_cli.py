@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from helpers import SESSION, REQUEST, extract_payload
+from helpers import SESSION, REQUEST, extract_payload, row, usage
 from browser_errors import guard_browser_errors
 
 def mode(path):
@@ -198,3 +198,18 @@ def test_local_asset_checker_rejects_corruption_and_missing_asset(tmp_path):
     assert result.returncode != 0 and "page.js" in result.stderr
     asset.write_bytes(original)
     assert subprocess.run(command, capture_output=True).returncode == 0
+
+def test_long_context_threshold_prices_250k_request_at_standard_rates(native):
+    turn = "synthetic-long-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-6.1-sol", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(250_000, 0, 1_000), "total_token_usage": usage(250_000, 0, 1_000)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    cost = native.payload()["sessions"][0]["own_usage"]["cost_usd"]
+    # 250,000 × $2/M + 1,000 × $10/M; the 200K threshold would give 1.015.
+    assert cost == pytest.approx(0.51)

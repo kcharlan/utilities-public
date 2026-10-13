@@ -1,7 +1,7 @@
 # Standalone validation
 
-Run `make test` for all 116 retained C units, fresh synthetic CLI and integration
-checks (19 collected cases), two Chromium browser cases, and local
+Run `make test` for all 130 C units, fresh synthetic CLI and integration
+checks (20 collected cases), two Chromium browser cases, and local
 asset/stable-sort guards (ten asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.

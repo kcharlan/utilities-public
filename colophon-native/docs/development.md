@@ -29,8 +29,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 116 retained
-C units, 19 collected CLI/integration cases and two Chromium cases.
+`make test` runs the stable-sort guard, ten asset digests, all 130
+C units, 20 collected CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
@@ -66,3 +66,9 @@ maintainer actions requiring provenance review and the full suite; they are
 not build steps or part of a private-state migration. No font generator or
 historical pricing updater is shipped here. Preserve [notices](../THIRD_PARTY.md)
 and the asset manifest when deliberately updating embedded inputs.
+
+Pricing lesson: an incorrectly seeded long-context threshold must be corrected
+in every existing curated-history row, not only in the resolver or a new dated
+row; dated lookup otherwise keeps earlier usage incorrectly priced. Validate
+raw tier keys/types and rate underflow in both catalog tier locations before
+sanitization, and decode the complete array even after finding a matching tier.

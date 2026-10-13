@@ -40,6 +40,20 @@ static bool decode_rates(yyjson_val *v,double *rates,uint8_t *present,const char
     }
     return true;
 }
+/* v0.74.1 ModelsDevContextOver200KCost.tier: absent/null, else {type:String,size:Int}. */
+static bool decode_tier(yyjson_val *v,const char *prefix,bool *present,Str *type,int64_t *size) {
+    *present=false;
+    if(!v||yyjson_is_null(v))return true;
+    char site[256];snprintf(site,sizeof site,"%s.tier.size",prefix);
+    yyjson_val *kind=get(v,"type");PyNum number;
+    if(!yyjson_is_obj(v)||!yyjson_is_str(kind)||!json_number(get(v,"size"),site,&number)||!pynum_context_int(number))return false;
+    *present=true;*type=string(kind);*size=number.is_float?(int64_t)number.f:number.i;return true;
+}
+static bool same_rates(const double *a,uint8_t ap,const double *b,uint8_t bp) {
+    if(ap!=bp)return false;
+    for(size_t i=0;i<4;i++)if((ap&(1u<<i))&&a[i]!=b[i])return false;
+    return true;
+}
 static bool decode_model(yyjson_val *v,CatalogModel *out,const char *prefix) {
     *out=(CatalogModel){0};
     if(!yyjson_is_obj(v)||!yyjson_is_str(get(v,"id"))||!nullable_string(get(v,"name")))return false;
@@ -61,6 +75,26 @@ static bool decode_model(yyjson_val *v,CatalogModel *out,const char *prefix) {
         snprintf(site,sizeof site,"%s.cost.context_over_200k",prefix);
         if(!yyjson_is_obj(extended)||!decode_rates(extended,out->extended,&out->extended_present,site))return false;
         out->has_extended=true;
+    }
+    bool extended_tier=false;
+    if(out->has_extended) {
+        Str ignored;int64_t unused;
+        if(!decode_tier(get(extended,"tier"),site,&extended_tier,&ignored,&unused))return false;
+    }
+    yyjson_val *tiers=get(cost,"tiers");
+    if(tiers&&!yyjson_is_null(tiers)) {
+        if(!yyjson_is_arr(tiers))return false;
+        size_t i,max;yyjson_val *tier;
+        yyjson_arr_foreach(tiers,i,max,tier) {
+            char tier_site[256];snprintf(tier_site,sizeof tier_site,"%s.cost.tiers[%zu]",prefix,i);
+            double rates[4]={0};uint8_t present=0;bool has_tier;Str type;int64_t size;
+            if(!yyjson_is_obj(tier)||!decode_rates(tier,rates,&present,tier_site)||
+               !decode_tier(get(tier,"tier"),tier_site,&has_tier,&type,&size))return false;
+            if(!out->has_context_tier&&out->has_extended&&!extended_tier&&has_tier&&size>0&&
+               str_equal(type,STR_LIT("context"))&&same_rates(rates,present,out->extended,out->extended_present)) {
+                out->has_context_tier=true;out->context_tier_size=size;
+            }
+        }
     }
     out->model_id=string(get(v,"id"));return true;
 }
@@ -237,7 +271,10 @@ Err resolve_rates(Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found) {
         const CatalogModel *m=lookup.model;
         if(m->has_extended) {
             memcpy(extended,m->extended,sizeof extended);ep=m->extended_present;
-            if(!threshold){threshold=true;out->threshold=200000;}
+            /* Catalog context tier precedes the documented bundled threshold. */
+            if(m->has_context_tier)out->threshold=m->context_tier_size;
+            else if(!threshold)out->threshold=200000;
+            threshold=true;
             for(size_t i=1;i<3;i++)if(!(ep&(1u<<i))) {
                 extended[i]=(m->present&(1u<<i))?m->rates[i]:(ep&1)?extended[0]:m->rates[0];
                 ep|=(uint8_t)(1u<<i);
@@ -331,21 +368,32 @@ static bool keys_valid(yyjson_val *v) {
     while((key=yyjson_obj_iter_next(&it)))if(!str_utf8_scalar_valid(string(key)))return false;
     return true;
 }
+/* Reject raw nonzero rate lexemes that binary conversion would erase. */
+static bool raw_rates_valid(yyjson_val *block) {
+    if(!keys_valid(block))return false;
+    const char *rates[]={"input","output","cache_read","cache_write"};
+    for(size_t i=0;i<4;i++) {
+        yyjson_val *leaf=get(block,rates[i]);
+        if(!yyjson_is_raw(leaf))continue;
+        Str lexeme={yyjson_get_raw(leaf),(uint32_t)yyjson_get_len(leaf)};
+        if(json_number_is_integer(lexeme)||strtod(lexeme.p,NULL)!=0)continue;
+        for(size_t j=0;j<lexeme.n&&lexeme.p[j]!='e'&&lexeme.p[j]!='E';j++)if(lexeme.p[j]>='1'&&lexeme.p[j]<='9')return false;
+    }
+    return true;
+}
+static bool raw_tier_valid(yyjson_val *block) {
+    yyjson_val *tier=get(block,"tier"),*type=get(tier,"type");
+    return keys_valid(tier)&&(!yyjson_is_str(type)||str_utf8_scalar_valid(string(type)));
+}
 static bool raw_model_valid(yyjson_val *model) {
     if(!yyjson_is_obj(model)||!keys_valid(model))return false;
     const char *fields[]={"id","name"};
     for(size_t i=0;i<2;i++){yyjson_val *leaf=get(model,fields[i]);if(yyjson_is_str(leaf)&&!str_utf8_scalar_valid(string(leaf)))return false;}
     if(!keys_valid(get(model,"limit")))return false;
     yyjson_val *cost=get(model,"cost"),*extended=get(cost,"context_over_200k");
-    if(!keys_valid(cost)||!keys_valid(extended))return false;
-    yyjson_val *blocks[]={cost,extended};const char *rates[]={"input","output","cache_read","cache_write"};
-    for(size_t b=0;b<2;b++)for(size_t i=0;i<4;i++) {
-        yyjson_val *leaf=get(blocks[b],rates[i]);
-        if(!yyjson_is_raw(leaf))continue;
-        Str lexeme={yyjson_get_raw(leaf),(uint32_t)yyjson_get_len(leaf)};
-        if(json_number_is_integer(lexeme)||strtod(lexeme.p,NULL)!=0)continue;
-        for(size_t j=0;j<lexeme.n&&lexeme.p[j]!='e'&&lexeme.p[j]!='E';j++)if(lexeme.p[j]>='1'&&lexeme.p[j]<='9')return false;
-    }
+    if(!raw_rates_valid(cost)||!raw_rates_valid(extended)||!raw_tier_valid(extended))return false;
+    yyjson_val *tiers=get(cost,"tiers");size_t i,max;yyjson_val *tier;
+    yyjson_arr_foreach(tiers,i,max,tier)if(!raw_rates_valid(tier)||!raw_tier_valid(tier))return false;
     return true;
 }
 static yyjson_mut_val *mut_get(yyjson_mut_val *v,const char *key) {return yyjson_mut_obj_get(v,key);}

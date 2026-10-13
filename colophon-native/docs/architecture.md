@@ -35,3 +35,40 @@ The fresh test harness independently checks synthetic behavior and retained
 C units. The original captured-corpus parity/performance machinery is not
 part of this project. See [development](development.md) for its validation
 boundary and [third-party notices](../THIRD_PARTY.md) for provenance.
+
+## Usage accounting rules
+
+Long-context thresholds follow CodexBar `v0.74.1` (commit `7c08c0ae7`).
+For a catalog model with `context_over_200k`, select the first positive
+`context` tier whose rate presence and values match that lane. A non-null
+`tier` on the lane itself prevents a match. Fall back to the documented
+bundled threshold, then 200,000. Without that lane (or without a catalog
+model), retain the bundled threshold. Decode every tier strictly, including
+entries after a match; malformed tiers reject the model. Corrected curated
+history uses 272,000 in existing entries so earlier usage is repriced rather
+than receiving only a newly dated catalog correction.
+
+Remaining differences from `v0.74.1`:
+
+- Bundled threshold lookup uses the normalized requested model; upstream uses
+  the normalized catalog id (`ModelsDevPricing.swift` L246–247 and
+  `CostUsagePricing.swift` L65–67). Targets normally agree; native retains one
+  bundled-row lookup.
+- Ledger-record model selection remains native `model_at` in
+  `src/price/compose.c`; upstream `handleRequestLedger` selects differently
+  (`CostUsageScanner.swift` L4332–4336). This is outside this alignment's scope.
+- Native has no ledger running-counted-total overflow guard; upstream does
+  (`CostUsageScanner.swift` L4290–4297). This is outside this alignment's scope
+  and separate from per-request numeric validation.
+- Native does not port `rememberMirroredLegacyPricingKey`
+  (`CostUsageScanner.swift` L4355), `ledgerLegacyPricingKeys` (L361, L4141), or
+  `CostUsageScanner+TurnPerformance.swift`. Changed logs reparse from the
+  beginning; incremental and turn-performance machinery is outside scope.
+- Existing adaptations retain the [Explicit adaptations and approved
+  differences table](../../colophon/docs/token_rules.md#explicit-adaptations-and-approved-differences),
+  except where a later alignment rule replaces an item. The per-turn primary
+  rule in Spec §15 difference 1 remains until request pairing is aligned.
+
+Python Colophon's existing 200,000 catalog fallback can append conflicting
+entries to a shared runtime ledger. Use a separate `COLOPHON_HOME` for the
+Python launcher, or retire it; this change does not migrate private ledgers.
