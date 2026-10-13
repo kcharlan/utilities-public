@@ -10,6 +10,8 @@
 #include <math.h>
 #include "cli/summary.h"
 #include "util/json_number.h"
+#include "gen/assets.h"
+
 TEST(shared_normalization_memo_preserves_raw_key_identity_and_durable_values) {
     Arena arena={0};Omap memo={0};Str first,repeat,alias;
     ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&arena,&memo,STR_LIT("gpt-5.6"),&first).code);
@@ -143,4 +145,108 @@ TEST(price_wide_non_power_totals_keep_source_halfway_rounding) {
         0x1.0c6f7a0b5ed8fp+43,0x1.0c6f7a0b5ed8fp+43};
     for(size_t i=0;i<6;i++)ASSERT_EQ(expected[i],cost_usd(&entry,((__int128)1<<63)+offsets[i],19,37));
     ASSERT_EQ(0x1.0c6f7a0b5ed8fp+45,cost_usd(&entry,((__int128)1<<65)+12345,19,37));
+}
+
+static PriceEntry resolve_with_catalog(const char *catalog, const char *model, bool *found) {
+    JsonRead read=json_read((Str){catalog,(uint32_t)strlen(catalog)},BYTES,JSON_CONSTANTS_REJECT,"test.price.tier");
+    ASSERT_TRUE(read.status==JSON_OK);
+    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
+    PriceEntry rates;ASSERT_EQ(ERR_OK,resolve_rates((Str){model,(uint32_t)strlen(model)},&index,&rates,found).code);
+    models_dev_destroy(&index);json_read_free(&read);return rates;
+}
+#define SYNTHETIC_LONG "\"context_over_200k\":{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5}"
+#define SYNTHETIC_COST "\"input\":2,\"output\":10,\"cache_read\":0.1,\"cache_write\":2.5"
+TEST(catalog_context_tier_sets_threshold_when_not_bundled) {
+    bool found=false;
+    PriceEntry rates=resolve_with_catalog("{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST "," SYNTHETIC_LONG
+        ",\"tiers\":[{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}}]}}}}}","gpt-synthetic-tier",&found);
+    ASSERT_TRUE(found);ASSERT_TRUE(rates.has_extended);ASSERT_EQ(272000,rates.threshold);
+}
+TEST(catalog_tier_rate_mismatch_uses_bundled_then_200000) {
+    bool found=false;
+    const char *mismatch="{\"openai\":{\"models\":{\"%s\":{\"id\":\"%s\",\"cost\":{" SYNTHETIC_COST "," SYNTHETIC_LONG
+        ",\"tiers\":[{\"input\":5,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":300000}}]}}}}}";
+    char catalog[1024];
+    snprintf(catalog,sizeof catalog,mismatch,"gpt-synthetic-tier","gpt-synthetic-tier");
+    ASSERT_EQ(200000,resolve_with_catalog(catalog,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
+    snprintf(catalog,sizeof catalog,mismatch,"gpt-6.1-sol","gpt-6.1-sol");
+    ASSERT_EQ(272000,resolve_with_catalog(catalog,"gpt-6.1-sol",&found).threshold);ASSERT_TRUE(found);
+}
+TEST(catalog_matching_tier_precedes_bundled_threshold) {
+    bool found=false;
+    PriceEntry rates=resolve_with_catalog("{\"openai\":{\"models\":{\"gpt-5.4\":{\"id\":\"gpt-5.4\",\"cost\":{\"input\":2.5,\"output\":15,\"cache_read\":0.25,"
+        "\"context_over_200k\":{\"input\":5,\"output\":22.5,\"cache_read\":0.5},"
+        "\"tiers\":[{\"input\":5,\"output\":22.5,\"cache_read\":0.5,\"tier\":{\"type\":\"context\",\"size\":300000}}]}}}}}","gpt-5.4",&found);
+    ASSERT_TRUE(found);ASSERT_EQ(300000,rates.threshold);
+}
+TEST(catalog_malformed_tiers_reject_model) {
+    const char *bad[]={
+        "{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"tiers\":\"synthetic\"}}}}}",
+        "{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"tiers\":[{\"tier\":{\"type\":\"context\",\"size\":\"272000\"}}]}}}}}",
+        "{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"tiers\":[{\"tier\":{\"size\":272000}}]}}}}}",
+        "{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"tiers\":[{\"input\":\"4\"}]}}}}}"};
+    for(size_t i=0;i<sizeof bad/sizeof *bad;i++) {
+        JsonRead read=json_read((Str){bad[i],(uint32_t)strlen(bad[i])},BYTES,JSON_CONSTANTS_REJECT,"test.price.bad_tier");
+        ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
+        CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("gpt-synthetic-tier"),&lookup).code);
+        ASSERT_TRUE(lookup.model==NULL);models_dev_destroy(&index);json_read_free(&read);
+    }
+}
+TEST(curated_seed_has_no_200000_long_context_threshold) {
+    JsonRead read=json_read((Str){(const char *)cp_asset_curated_price_history,(uint32_t)cp_asset_curated_price_history_len},STR,JSON_CONSTANTS_REJECT,"test.price.seed");
+    ASSERT_TRUE(read.status==JSON_OK);
+    yyjson_val *entries=yyjson_obj_get(yyjson_doc_get_root(read.doc),"entries");size_t idx,max;yyjson_val *entry;
+    yyjson_arr_foreach(entries,idx,max,entry) {
+        yyjson_val *lc=yyjson_obj_get(entry,"long_context");PyNum threshold;
+        /* json_read keeps numbers raw (YYJSON_READ_NUMBER_AS_RAW); decode through json_number. */
+        if(yyjson_is_obj(lc)){ASSERT_TRUE(json_number(yyjson_obj_get(lc,"threshold"),"test.price.seed",&threshold));
+            ASSERT_FALSE(threshold.is_float);ASSERT_EQ(272000,threshold.i);}
+    }
+    json_read_free(&read);
+}
+TEST(bundled_new_models_resolve_offline_with_272000_threshold) {
+    const char *models[]={"gpt-6.1-sol","gpt-6-sol","gpt-6-luna","gpt-5.4-pro","gpt-5.5-pro"};
+    for(size_t i=0;i<sizeof models/sizeof *models;i++){PriceEntry rates;bool found=false;
+        ASSERT_EQ(ERR_OK,resolve_rates((Str){models[i],(uint32_t)strlen(models[i])},NULL,&rates,&found).code);
+        ASSERT_TRUE(found);ASSERT_TRUE(rates.has_extended);ASSERT_EQ(272000,rates.threshold);}
+}
+
+/* Real raw decoder coverage: dropping tier validation would admit corrupt models. */
+static void assert_raw_tier_rejected(const char *cost) {
+    char raw[2048];snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{\"input\":2,\"output\":10,%s}}}}}",cost);
+    yyjson_doc *catalog=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){raw,(uint32_t)strlen(raw)},&catalog).code);
+    ASSERT_TRUE(catalog!=NULL);ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(catalog),&index).code);
+    yyjson_doc_free(catalog);CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("gpt-synthetic-tier"),&lookup).code);
+    ASSERT_TRUE(lookup.model==NULL);models_dev_destroy(&index);
+}
+TEST(catalog_raw_tier_rate_keys_reject_invalid_unicode) {
+    assert_raw_tier_rejected("\"tiers\":[{\"\\ud800\":0}]");
+}
+TEST(catalog_raw_context_tier_keys_reject_invalid_unicode) {
+    assert_raw_tier_rejected("\"tiers\":[{\"tier\":{\"type\":\"context\",\"size\":272000,\"\\ud800\":0}}]");
+}
+TEST(catalog_raw_context_tier_type_rejects_invalid_unicode) {
+    assert_raw_tier_rejected("\"tiers\":[{\"tier\":{\"type\":\"\\ud800\",\"size\":272000}}]");
+}
+TEST(catalog_raw_tier_rates_reject_nonzero_underflow) {
+    assert_raw_tier_rejected("\"tiers\":[{\"input\":1e-999}]");
+}
+TEST(catalog_raw_extended_tier_keys_reject_invalid_unicode) {
+    assert_raw_tier_rejected("\"context_over_200k\":{\"tier\":{\"type\":\"context\",\"size\":272000,\"\\ud800\":0}}");
+}
+TEST(catalog_raw_extended_tier_type_rejects_invalid_unicode) {
+    assert_raw_tier_rejected("\"context_over_200k\":{\"tier\":{\"type\":\"\\ud800\",\"size\":272000}}");
+}
+TEST(catalog_tiers_validate_every_element_after_first_match) {
+    assert_raw_tier_rejected(SYNTHETIC_LONG ",\"tiers\":[{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}},null]");
+}
+TEST(catalog_context_tier_first_match_presence_and_extended_tier_rules) {
+    const char *tiers="\"tiers\":[{\"input\":4,\"output\":15,\"cache_read\":0.2,\"tier\":{\"type\":\"context\",\"size\":300000}},"
+        "{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}},"
+        "{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":400000}}]";
+    char raw[2048];bool found=false;
+    snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST "," SYNTHETIC_LONG ",%s}}}}}",tiers);
+    ASSERT_EQ(272000,resolve_with_catalog(raw,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
+    snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"context_over_200k\":{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}},%s}}}}}",tiers);
+    ASSERT_EQ(200000,resolve_with_catalog(raw,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
 }

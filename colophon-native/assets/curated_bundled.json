@@ -90,7 +90,10 @@
   },
   "gpt-5.4-pro": {
     "inputCostPerToken": 3e-5,
-    "outputCostPerToken": 1.8e-4
+    "outputCostPerToken": 1.8e-4,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 6e-5,
+    "outputCostPerTokenAboveThreshold": 2.7e-4
   },
   "gpt-5.5": {
     "inputCostPerToken": 5e-6,
@@ -103,7 +106,10 @@
   },
   "gpt-5.5-pro": {
     "inputCostPerToken": 3e-5,
-    "outputCostPerToken": 1.8e-4
+    "outputCostPerToken": 1.8e-4,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 6e-5,
+    "outputCostPerTokenAboveThreshold": 2.7e-4
   },
   "gpt-6-astra": {
     "inputCostPerToken": 1e-5,
@@ -115,6 +121,39 @@
     "outputCostPerTokenAboveThreshold": 7.5e-5,
     "cacheReadInputCostPerTokenAboveThreshold": 2e-6,
     "cacheWriteInputCostPerTokenAboveThreshold": 2.5e-5
+  },
+  "gpt-6.1-sol": {
+    "inputCostPerToken": 2e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 1e-7,
+    "cacheWriteInputCostPerToken": 2.5e-6,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-6,
+    "outputCostPerTokenAboveThreshold": 1.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 2e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-6
+  },
+  "gpt-6-sol": {
+    "inputCostPerToken": 2e-6,
+    "outputCostPerToken": 1e-5,
+    "cacheReadInputCostPerToken": 2e-7,
+    "cacheWriteInputCostPerToken": 2.5e-6,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 4e-6,
+    "outputCostPerTokenAboveThreshold": 1.5e-5,
+    "cacheReadInputCostPerTokenAboveThreshold": 4e-7,
+    "cacheWriteInputCostPerTokenAboveThreshold": 5e-6
+  },
+  "gpt-6-luna": {
+    "inputCostPerToken": 1e-7,
+    "outputCostPerToken": 5e-7,
+    "cacheReadInputCostPerToken": 1e-8,
+    "cacheWriteInputCostPerToken": 1.25e-7,
+    "thresholdTokens": 272000,
+    "inputCostPerTokenAboveThreshold": 2e-7,
+    "outputCostPerTokenAboveThreshold": 7.5e-7,
+    "cacheReadInputCostPerTokenAboveThreshold": 2e-8,
+    "cacheWriteInputCostPerTokenAboveThreshold": 2.5e-7
   },
   "gpt-5.6-sol": {
     "inputCostPerToken": 4e-6,

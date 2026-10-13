@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from helpers import SESSION, REQUEST, extract_payload
+from helpers import SESSION, REQUEST, extract_payload, row, usage
 from browser_errors import guard_browser_errors
 
 def mode(path):
@@ -198,3 +198,69 @@ def test_local_asset_checker_rejects_corruption_and_missing_asset(tmp_path):
     assert result.returncode != 0 and "page.js" in result.stderr
     asset.write_bytes(original)
     assert subprocess.run(command, capture_output=True).returncode == 0
+
+def test_long_context_threshold_prices_250k_request_at_standard_rates(native):
+    turn = "synthetic-long-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-6.1-sol", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(250_000, 0, 1_000), "total_token_usage": usage(250_000, 0, 1_000)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    cost = native.payload()["sessions"][0]["own_usage"]["cost_usd"]
+    # 250,000 × $2/M + 1,000 × $10/M; the 200K threshold would give 1.015.
+    assert cost == pytest.approx(0.51)
+
+def test_thread_settings_priority_applies_fast_multiplier(native):
+    turn = "synthetic-fast-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-6-astra", "turn_id": turn}, 1),
+        row("event_msg", {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1_000, 0, 100), "total_token_usage": usage(1_000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    session = native.payload()["sessions"][0]
+    # Standard cost is 0.015; the curated Astra priority multiplier is 2.
+    assert session["own_usage"]["cost_usd"] == pytest.approx(0.03)
+    assert any(bucket[2] == "priority" for bucket in session["buckets"])
+
+def test_ledger_mirror_counts_once_and_snapshot_only_request_counts(native):
+    turn = "synthetic-ledger-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "session_id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-5", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 1),
+        row("token_usage_record", {"thread_id": SESSION, "session_id": SESSION, "response_id": "synthetic-response-1",
+            "turn_id": turn, "usage": usage(100, 40, 10), "thread_token_usage": usage(100, 40, 10)}, 3),
+        row("event_msg", {"type": "token_count", "info": {"last_token_usage": usage(100, 40, 10),
+            "total_token_usage": usage(100, 40, 10)}}, 3, ".200"),
+        row("event_msg", {"type": "token_count", "info": {"last_token_usage": usage(50, 0, 5),
+            "total_token_usage": usage(150, 40, 15)}}, 9),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    own = native.payload()["sessions"][0]["own_usage"]
+    assert (own["input"], own["cached_input"], own["output"]) == (150, 40, 15)
+
+def test_ledger_mirror_earlier_near_owns_before_later_exact(native):
+    turn = "synthetic-chronological-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "session_id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 1),
+        row("token_usage_record", {"thread_id": SESSION, "session_id": SESSION,
+            "response_id": "synthetic-chronological-response", "turn_id": turn,
+            "usage": usage(100, 0, 10), "thread_token_usage": usage(100, 0, 10)}, 2),
+        row("event_msg", {"type": "token_count", "info": {"last_token_usage": usage(100, 0, 10)}}, 3),
+        row("event_msg", {"type": "token_count", "info": {"last_token_usage": usage(100, 0, 10)}}, 2),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    own = native.payload()["sessions"][0]["own_usage"]
+    assert (own["input"], own["cached_input"], own["output"]) == (100, 0, 10)

@@ -95,6 +95,8 @@ static Err row(Parser *p, const TokenObservation *o, Str ts, Str model,
                      .turn_id = turn,
                      .timestamp = ts,
                      .model_raw = model,
+                     .raw_last = o->last,
+                     .raw_total = o->total,
                      .bare = bare};
   TRY(normalize_codex_model_memo(&p->r->arena,&p->normalizations,model,&r.model));
   int64_t dayms;

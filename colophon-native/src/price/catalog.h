@@ -9,6 +9,8 @@ typedef struct {
     double rates[4], extended[4];
     uint8_t present, extended_present;
     bool has_extended;
+    bool has_context_tier;
+    int64_t context_tier_size;
 } CatalogModel;
 typedef struct { Arena arena; Omap models, normalized, lookups, normalizations; } ModelsDevIndex;
 typedef struct { const CatalogModel *model; Str identity; } CatalogLookup;

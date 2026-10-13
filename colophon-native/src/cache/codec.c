@@ -299,6 +299,7 @@ static void record(Wire *w, LogRecord *r) {
     S(r->status);
     B(r->has_meta);
     ID(r->meta.id);
+    ID(r->meta.request_session_id);
     ID(r->meta.forked_from_id);
     MS(r->meta.created_at_ms);
     B(r->meta.is_subagent);
@@ -449,6 +450,7 @@ static void record(Wire *w, LogRecord *r) {
         U(v->rec);
         RAW(v->response_id);
         RAW(v->thread_id);
+        RAW(v->session_id);
         RAW(v->turn_id);
         RAW(v->root_turn_id);
         RAW(v->ts);
@@ -460,6 +462,14 @@ static void record(Wire *w, LogRecord *r) {
         RAW(v->cache_write);
         RAW(v->output);
         RAW(v->reasoning);
+        RAW(v->thread_usage.input);
+        RAW(v->thread_usage.cached_input);
+        RAW(v->thread_usage.output);
+        RAW(v->thread_usage.reasoning);
+        RAW(v->turn_usage.input);
+        RAW(v->turn_usage.cached_input);
+        RAW(v->turn_usage.output);
+        RAW(v->turn_usage.reasoning);
     }
     TokenStream *t = &r->token_stream;
     B(t->has_prepass);
@@ -470,7 +480,7 @@ static void record(Wire *w, LogRecord *r) {
     for (size_t i = 0; i < t->count && !w->error.code; i++) {
         TokenObservation *v = &t->observations[i];
         int tag = v->tag;
-        enumeration(w, &tag, TOKEN_XC);
+        enumeration(w, &tag, TOKEN_P);
         if (w->reading)
             v->tag = (TokenTag)tag;
         U(v->line);
@@ -486,6 +496,7 @@ static void record(Wire *w, LogRecord *r) {
             v->model_state.kind = kind;
         ID(v->model_state.model);
         B(v->trigger);
+        B(v->priority);
         totals(w, &v->last);
         totals(w, &v->total);
     }

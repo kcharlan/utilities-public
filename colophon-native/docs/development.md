@@ -29,8 +29,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 116 retained
-C units, 19 collected CLI/integration cases and two Chromium cases.
+`make test` runs the stable-sort guard, ten asset digests, all 176
+C units, 23 collected CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
@@ -66,3 +66,32 @@ maintainer actions requiring provenance review and the full suite; they are
 not build steps or part of a private-state migration. No font generator or
 historical pricing updater is shipped here. Preserve [notices](../THIRD_PARTY.md)
 and the asset manifest when deliberately updating embedded inputs.
+
+Pricing lesson: an incorrectly seeded long-context threshold must be corrected
+in every existing curated-history row, not only in the resolver or a new dated
+row; dated lookup otherwise keeps earlier usage incorrectly priced. Validate
+raw tier keys/types and rate underflow in both catalog tier locations before
+sanitization, and decode the complete array even after finding a matching tier.
+
+Ledger lesson: snapshots and request-ledger records have different numeric
+contracts. Validate required request fields and covering totals before response
+deduplication; a malformed record must not consume a later valid response id.
+Keep the raw per-file request-session ownership separately from thread identity,
+and share nonempty turn-alias selection across ledger and token-stream parsing.
+
+Request pairing must consume events chronologically: a whole-file exact pass
+can reserve a request away from its earlier near mirror and double-count usage.
+Keep exact indexes restricted to observed counterparts, file-local replay
+separate from session-wide counting, and two-pass mirror aliases independent of
+copy order. Guard regressions must cover record aliases, paired-snapshot aliases
+and observation keys without last usage independently.
+An already-owned repeated snapshot must preserve a different response's pending
+mirror; otherwise it consumes that request's pairing slot and leaves its real
+snapshot counted again. Keep response ownership canonical and share its key
+builder with cross-copy aliases.
+
+Priority lesson: a final per-turn priority flag loses the state at earlier rows
+when the same turn resumes under different settings. Keep file-local start
+history indexed by turn and line, and pass it to both compose passes. Settings
+changes take effect at the next start; turnless starts and rows share the empty
+id. Preserve trace/sticky evidence independently from the thread setting.

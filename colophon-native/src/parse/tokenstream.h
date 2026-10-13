@@ -15,7 +15,7 @@ typedef struct {
     bool is_subagent;
     TokenInteger history_start_ordinal;
 } TokenMeta;
-typedef enum { TOKEN_M, TOKEN_C, TOKEN_I, TOKEN_S, TOKEN_T, TOKEN_B, TOKEN_XM, TOKEN_XC } TokenTag;
+typedef enum { TOKEN_M, TOKEN_C, TOKEN_I, TOKEN_S, TOKEN_T, TOKEN_B, TOKEN_XM, TOKEN_XC, TOKEN_P } TokenTag;
 typedef struct {
     TokenTag tag;
     uint64_t line, uidx;
@@ -24,6 +24,7 @@ typedef struct {
     Str timestamp, model, turn_id;
     TokenModel model_state;
     bool trigger;
+    bool priority;
     TokenTotals last, total;
 } TokenObservation;
 typedef struct {

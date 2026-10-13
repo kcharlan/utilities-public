@@ -8,6 +8,25 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+TEST(codec_round_trips_thread_priority_observation) {
+    Intern ids = {0};
+    ASSERT_EQ(ERR_OK, intern_init(&ids).code);
+    TokenObservation observation = {.tag = TOKEN_P, .line = 2, .priority = true};
+    LogRecord raw = {.key = {.path = STR_LIT("/synthetic/priority-cache")},
+                     .token_stream = {.observations = &observation, .count = 1}};
+    unsigned char *bytes = NULL;
+    size_t length = 0;
+    ASSERT_EQ(ERR_OK, codec_encode(&raw, &bytes, &length).code);
+    LogRecord decoded = {0};
+    ASSERT_EQ(ERR_OK, codec_decode(bytes, length, &raw.key, raw.reader.tail_sha256, &ids, &decoded).code);
+    ASSERT_EQ(1, decoded.token_stream.count);
+    ASSERT_EQ(TOKEN_P, decoded.token_stream.observations[0].tag);
+    ASSERT_TRUE(decoded.token_stream.observations[0].priority);
+    free(bytes);
+    record_destroy(&decoded);
+    intern_destroy(&ids);
+}
+
 TEST(codec_encode_failure_returns_no_partial_wire) {
     LogRecord record = {.key = {.path = STR_LIT("/synthetic/invalid")},
                         .meta = {.cwd = {.kind = (JKind)255}}};
@@ -206,5 +225,43 @@ TEST(codec_large_strings_and_invalid_wtf8_body) {
     record_destroy(&result);
     free(bytes);
     free(text);
+    intern_destroy(&ids);
+}
+
+TEST(codec_round_trips_ledger_session_totals_and_context_turn) {
+    Intern ids;
+    ASSERT_EQ(ERR_OK, intern_init(&ids).code);
+    UsageRecord usage = {.session_id = {.kind = JS_STRING, .value.s = STR_LIT("synthetic-root")},
+                         .thread_usage = {{.kind = JS_INT, .value.i = 31}, {.kind = JS_INT, .value.i = 7},
+                                          {.kind = JS_INT, .value.i = 11}, {.kind = JS_INT, .value.i = 3}},
+                         .turn_usage = {{.kind = JS_FLOAT, .value.f = 17.0}, {.kind = JS_INT, .value.i = 5},
+                                        {.kind = JS_INT, .value.i = 9}, {.kind = JS_INT, .value.i = 2}}};
+    TokenObservation context = {.tag = TOKEN_C, .turn_id = STR_LIT("synthetic-context")};
+    LogRecord raw = {.key = {.path = STR_LIT("/synthetic/ledger-cache")},
+                     .meta = {.request_session_id = STR_LIT("synthetic-root")},
+                     .usage_records = &usage, .usage_count = 1,
+                     .token_stream = {.observations = &context, .count = 1}};
+    unsigned char *before = NULL, *after = NULL;
+    size_t n = 0, m = 0;
+    ASSERT_EQ(ERR_OK, codec_encode(&raw, &before, &n).code);
+    LogRecord decoded = {0};
+    ASSERT_EQ(ERR_OK, codec_decode(before, n, &raw.key, raw.reader.tail_sha256, &ids, &decoded).code);
+    ASSERT_TRUE(str_equal(decoded.meta.request_session_id, STR_LIT("synthetic-root")));
+    ASSERT_TRUE(str_equal(decoded.usage_records[0].session_id.value.s, STR_LIT("synthetic-root")));
+    ASSERT_EQ(31, decoded.usage_records[0].thread_usage.input.value.i);
+    ASSERT_EQ(7, decoded.usage_records[0].thread_usage.cached_input.value.i);
+    ASSERT_EQ(11, decoded.usage_records[0].thread_usage.output.value.i);
+    ASSERT_EQ(3, decoded.usage_records[0].thread_usage.reasoning.value.i);
+    ASSERT_EQ(JS_FLOAT, decoded.usage_records[0].turn_usage.input.kind);
+    ASSERT_EQ(17.0, decoded.usage_records[0].turn_usage.input.value.f);
+    ASSERT_EQ(5, decoded.usage_records[0].turn_usage.cached_input.value.i);
+    ASSERT_EQ(9, decoded.usage_records[0].turn_usage.output.value.i);
+    ASSERT_EQ(2, decoded.usage_records[0].turn_usage.reasoning.value.i);
+    ASSERT_TRUE(str_equal(decoded.token_stream.observations[0].turn_id, STR_LIT("synthetic-context")));
+    ASSERT_EQ(ERR_OK, codec_encode(&decoded, &after, &m).code);
+    ASSERT_EQ(n, m);
+    ASSERT_EQ(0, memcmp(before, after, n));
+    free(before); free(after);
+    record_destroy(&decoded);
     intern_destroy(&ids);
 }
