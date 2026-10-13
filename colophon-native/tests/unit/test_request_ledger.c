@@ -256,3 +256,302 @@ TEST(ledger_truncated_context_keeps_previous_active_turn) {
     ASSERT_TRUE(str_equal(only_session(&f)->units[0].turn_id, STR_LIT("synthetic-context")));
     ledger_fixture_destroy(&f); free(large);
 }
+/* Output is one tenth of input on both usage and totals, so counter advances can be exact. */
+static PairSide snap(const char *turn, int64_t in, int64_t total_in, const char *ts, int64_t ms) {
+  return (PairSide){.turn = turn ? (Str){turn, (uint32_t)strlen(turn)} : (Str){0}, .usage = {in, 0, in / 10, 0},
+                    .has_total = true, .total = {total_in, 0, total_in / 10, 0}, .timestamp = {ts, (uint32_t)strlen(ts)},
+                    .ms = {true, ms}};
+}
+static PairSide ledger(const char *turn, int64_t in, int64_t total_in, const char *ts, int64_t ms, bool replay) {
+  PairSide side = snap(turn, in, total_in, ts, ms);
+  side.replay = replay;
+  return side;
+}
+static bool pair_one(PairSide s, PairSide l, bool snapshot_first, bool boundary_between) {
+  PairEvent events[3];
+  size_t n = 0;
+  PairEvent se = {PAIR_SNAPSHOT, snapshot_first ? 1 : 3, 0}, le = {PAIR_LEDGER, snapshot_first ? 3 : 1, 0};
+  events[n++] = snapshot_first ? se : le;
+  if (boundary_between) events[n++] = (PairEvent){PAIR_BOUNDARY, 2, 0};
+  events[n++] = snapshot_first ? le : se;
+  bool matched = false;
+  ASSERT_EQ(ERR_OK, request_pair_file(&s, 1, &l, 1, events, n, &matched).code);
+  return matched;
+}
+TEST(pairing_matches_adjacent_snapshot_either_order) {
+  ASSERT_TRUE(pair_one(snap("t", 100, 900, "a", 1000), ledger("t", 100, 100, "b", 1300, false), false, false));
+  ASSERT_TRUE(pair_one(snap("t", 100, 900, "a", 1300), ledger("t", 100, 100, "b", 1000, false), true, false));
+}
+TEST(pairing_rejects_other_turn_other_usage_or_boundary) {
+  ASSERT_FALSE(pair_one(snap("t", 100, 900, "a", 1000), ledger("u", 100, 100, "b", 1300, false), false, false));
+  ASSERT_FALSE(pair_one(snap("t", 101, 900, "a", 1000), ledger("t", 100, 100, "b", 1300, false), false, false));
+  ASSERT_FALSE(pair_one(snap("t", 100, 900, "a", 1000), ledger("t", 100, 100, "b", 1300, false), false, true));
+}
+TEST(pairing_counter_alias_matches_without_time_or_turn) {
+  ASSERT_TRUE(pair_one(snap(NULL, 100, 400, "a", 1000), ledger(NULL, 100, 400, "b", 90000, false), false, false));
+  ASSERT_FALSE(pair_one(snap(NULL, 100, 900, "a", 1000), ledger(NULL, 100, 400, "b", 1100, false), false, false));
+}
+TEST(pairing_near_match_ignores_reasoning_but_alias_does_not) {
+  PairSide l = ledger("t", 100, 100, "b", 1300, false);
+  l.usage.reasoning = 5;
+  ASSERT_TRUE(pair_one(snap("t", 100, 900, "a", 1000), l, false, false));
+  PairSide aliased = ledger(NULL, 100, 400, "b", 90000, false);
+  aliased.usage.reasoning = 5;
+  ASSERT_FALSE(pair_one(snap(NULL, 100, 400, "a", 1000), aliased, false, false));
+}
+TEST(pairing_matches_near_pair_despite_counter_offset) {
+  ASSERT_TRUE(pair_one(snap("t", 100, 100, "a", 5000), ledger("t", 100, 7100, "b", 1000, false), false, false));
+  ASSERT_FALSE(pair_one(snap("t", 100, 100, "a", 6001), ledger("t", 100, 7100, "b", 1000, false), false, false));
+}
+TEST(pairing_replay_needs_alias_or_same_time) {
+  ASSERT_FALSE(pair_one(snap("t", 100, 900, "a", 1000), ledger("t", 100, 100, "b", 1300, true), false, false));
+  ASSERT_TRUE(pair_one(snap("t", 100, 900, "same", 1000), ledger("t", 100, 100, "same", 1000, true), false, false));
+}
+TEST(pairing_intervening_later_side_blocks_near_match) {
+  /* S0 sets the snapshot counter at 100; a boundary separates it from the record. S1 then
+   * advances the counter by 300 for a 100-token request (intervening) or by exactly 100 (control). */
+  const int64_t later_totals[2] = {400, 200};
+  const bool expected[2] = {false, true};
+  for (size_t i = 0; i < 2; i++) {
+    PairSide snaps[2] = {snap("t", 100, 100, "a", 0), snap("t", 100, later_totals[i], "c", 1300)};
+    PairSide led = ledger("t", 100, 7000, "b", 1000, false);
+    PairEvent events[4] = {{PAIR_SNAPSHOT, 1, 0}, {PAIR_BOUNDARY, 2, 0}, {PAIR_LEDGER, 3, 0}, {PAIR_SNAPSHOT, 4, 1}};
+    bool matched[2];
+    ASSERT_EQ(ERR_OK, request_pair_file(snaps, 2, &led, 1, events, 4, matched).code);
+    ASSERT_FALSE(matched[0]);
+    ASSERT_EQ(expected[i], matched[1]);
+  }
+}
+TEST(pairing_delayed_exact_advances_pair_outside_window) {
+  /* Ledger counters sit 1000 above snapshot counters, so only the delayed exact rule can pair S1. */
+  PairSide snaps[2] = {snap("t", 50, 50, "a", 0), snap("t", 100, 150, "d", 40000)};
+  PairSide leds[2] = {ledger("t", 50, 1050, "b", 0, false), ledger("t", 100, 1150, "c", 1000, false)};
+  PairEvent events[4] = {{PAIR_LEDGER, 1, 0}, {PAIR_SNAPSHOT, 2, 0}, {PAIR_LEDGER, 3, 1}, {PAIR_SNAPSHOT, 4, 1}};
+  bool matched[2];
+  ASSERT_EQ(ERR_OK, request_pair_file(snaps, 2, leds, 2, events, 4, matched).code);
+  ASSERT_TRUE(matched[0]);
+  ASSERT_TRUE(matched[1]);
+}
+TEST(pairing_claims_one_snapshot_per_record) {
+  PairSide snaps[2] = {snap("t", 100, 900, "a", 1100), snap("t", 100, 1000, "c", 1200)};
+  PairSide led = ledger("t", 100, 100, "b", 1000, false);
+  PairEvent events[3] = {{PAIR_LEDGER, 1, 0}, {PAIR_SNAPSHOT, 2, 0}, {PAIR_SNAPSHOT, 3, 1}};
+  bool matched[2];
+  ASSERT_EQ(ERR_OK, request_pair_file(snaps, 2, &led, 1, events, 3, matched).code);
+  ASSERT_TRUE(matched[0]);
+  ASSERT_FALSE(matched[1]);
+}
+TEST(pairing_earlier_near_claim_survives_later_exact_candidate) {
+  PairSide snaps[2] = {snap("synthetic-turn", 100, 0, "03", 3000), snap("synthetic-turn", 100, 0, "02", 2000)};
+  snaps[0].has_total = snaps[1].has_total = false;
+  PairSide led = ledger("synthetic-turn", 100, 100, "02", 2000, false);
+  PairEvent events[3] = {{PAIR_LEDGER, 1, 0}, {PAIR_SNAPSHOT, 2, 0}, {PAIR_SNAPSHOT, 3, 1}};
+  bool matched[2];
+  ASSERT_EQ(ERR_OK, request_pair_file(snaps, 2, &led, 1, events, 3, matched).code);
+  ASSERT_TRUE(matched[0]);
+  ASSERT_FALSE(matched[1]);
+}
+TEST(pairing_owned_repeat_preserves_other_pending_response) {
+  PairSide ss[] = {snap("synthetic-turn",100,0,"03",3000), snap("synthetic-turn",100,0,"03",3000),
+                  snap("synthetic-turn",100,0,"05",5000)};
+  for (size_t i=0;i<3;i++) ss[i].has_total = false;
+  PairSide ls[] = {ledger("synthetic-turn",100,100,"02",2000,false),
+                  ledger("synthetic-turn",100,200,"04",4000,false)};
+  ls[0].response_id = STR_LIT("synthetic-r1"); ls[1].response_id = STR_LIT("synthetic-r2");
+  PairEvent events[] = {{PAIR_LEDGER,1,0},{PAIR_SNAPSHOT,2,0},{PAIR_LEDGER,3,1},
+                        {PAIR_SNAPSHOT,4,1},{PAIR_SNAPSHOT,5,2}};
+  bool matched[3];
+  ASSERT_EQ(ERR_OK,request_pair_file(ss,3,ls,2,events,5,matched).code);
+  ASSERT_TRUE(matched[0]); ASSERT_FALSE(matched[1]); ASSERT_TRUE(matched[2]);
+}
+TEST(pairing_replay_does_not_borrow_original_owned_near_alias) {
+  PairSide ss[] = {snap("synthetic-turn",100,0,"03",3000), snap("synthetic-turn",100,0,"03",3000)};
+  ss[0].has_total = ss[1].has_total = false;
+  PairSide ls[] = {ledger("synthetic-turn",100,100,"02",2000,false),
+                  ledger("synthetic-turn",100,100,"04",4000,true)};
+  ls[0].response_id = ls[1].response_id = STR_LIT("synthetic-r1");
+  PairEvent events[] = {{PAIR_LEDGER,1,0},{PAIR_SNAPSHOT,2,0},{PAIR_LEDGER,3,1},{PAIR_SNAPSHOT,4,1}};
+  bool matched[2];
+  ASSERT_EQ(ERR_OK,request_pair_file(ss,2,ls,2,events,4,matched).code);
+  ASSERT_TRUE(matched[0]);
+  ASSERT_FALSE(matched[1]);
+}
+TEST(pairing_exact_crosses_boundaries_in_both_orders) {
+  PairSide s = snap("synthetic-turn", 100, 100, "same", 1000);
+  PairSide l = ledger("synthetic-turn", 100, 100, "same", 1000, false);
+  ASSERT_TRUE(pair_one(s, l, true, true));
+  ASSERT_TRUE(pair_one(s, l, false, true));
+  s.total.input = 400; s.total.output = 40;
+  l.has_turn_total = true; l.turn_total = s.total;
+  ASSERT_TRUE(pair_one(s, l, true, true));
+  ASSERT_TRUE(pair_one(s, l, false, true));
+  l.has_turn_total = false;
+  ASSERT_FALSE(pair_one(s, l, true, true));
+  s.has_total = false;
+  ASSERT_TRUE(pair_one(s, l, true, true));
+}
+TEST(pairing_later_ledger_advance_blocks_near_and_restart_resets_it) {
+  for (int restart = 0; restart < 2; restart++) {
+    PairSide s = snap("synthetic-turn", 100, 900, "b", 1000);
+    PairSide ls[2] = {ledger("synthetic-turn", 50, 50, "a", 0, false),
+                     ledger("synthetic-turn", 100, 400, "c", 1300, false)};
+    PairEvent events[] = {{PAIR_LEDGER,1,0}, {restart ? PAIR_RESTART : PAIR_BOUNDARY,2,0},
+                          {PAIR_SNAPSHOT,3,0}, {PAIR_LEDGER,4,1}};
+    bool matched;
+    ASSERT_EQ(ERR_OK, request_pair_file(&s,1,ls,2,events,4,&matched).code);
+    ASSERT_EQ(restart != 0, matched);
+  }
+}
+TEST(pairing_restart_resets_snapshot_advance) {
+  for (int restart = 0; restart < 2; restart++) {
+    PairSide ss[2] = {snap("synthetic-turn",100,100,"a",0), snap("synthetic-turn",100,400,"c",1300)};
+    PairSide l = ledger("synthetic-turn",100,7000,"b",1000,false);
+    PairEvent events[] = {{PAIR_SNAPSHOT,1,0}, {restart ? PAIR_RESTART : PAIR_BOUNDARY,2,0},
+                          {PAIR_LEDGER,3,0}, {PAIR_SNAPSHOT,4,1}};
+    bool matched[2];
+    ASSERT_EQ(ERR_OK, request_pair_file(ss,2,&l,1,events,4,matched).code);
+    ASSERT_FALSE(matched[0]);
+    ASSERT_EQ(restart != 0, matched[1]);
+  }
+}
+TEST(pairing_replay_keeps_original_ledger_counter_history) {
+  PairSide s = snap("synthetic-turn",100,900,"d",2000);
+  PairSide ls[] = {ledger("synthetic-turn",50,50,"a",0,false),
+                  ledger("synthetic-turn",50,5000,"b",500,true),
+                  ledger("synthetic-turn",100,400,"e",2300,false)};
+  PairEvent events[] = {{PAIR_LEDGER,1,0},{PAIR_LEDGER,2,1},{PAIR_BOUNDARY,3,0},
+                        {PAIR_SNAPSHOT,4,0},{PAIR_LEDGER,5,2}};
+  bool matched;
+  ASSERT_EQ(ERR_OK, request_pair_file(&s,1,ls,3,events,5,&matched).code);
+  ASSERT_FALSE(matched);
+}
+#define COUNT_LAST(ts, last) "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:" ts "Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":" last "}}}"
+TEST(compose_earlier_near_claim_suppresses_later_exact_candidate) {
+  const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100,0,10), USAGE(100,0,10)),
+      COUNT_LAST("03", USAGE(100,0,10)), COUNT_LAST("02", USAGE(100,0,10)), NULL};
+  const char *const *files[] = {lines};
+  LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+  SessionModel *s = only_session(&f);
+  ASSERT_EQ(1, s->unit_count);
+  ASSERT_TRUE(str_equal(s->units[0].source, STR_LIT("record")));
+  ASSERT_EQ(100, s->own_usage->input);
+  ASSERT_EQ(0, s->own_usage->cached);
+  ASSERT_EQ(10, s->own_usage->output);
+  ledger_fixture_destroy(&f);
+}
+TEST(compose_owned_repeat_preserves_other_pending_response) {
+  const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100,0,10), USAGE(100,0,10)),
+      COUNT_LAST("03", USAGE(100,0,10)),
+      LEDGER("04", "synthetic-ledger", "", "\"response_id\":\"synthetic-r2\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100,0,10), USAGE(200,0,20)),
+      COUNT_LAST("03", USAGE(100,0,10)), COUNT_LAST("05", USAGE(100,0,10)), NULL};
+  const char *const *files[] = {lines};
+  LedgerFixture f; ledger_fixture(&f,files,1,NULL);
+  SessionModel *s = only_session(&f);
+  ASSERT_EQ(2,s->unit_count);
+  ASSERT_EQ(2,record_units(s));
+  ASSERT_EQ(200,s->own_usage->input);
+  ASSERT_EQ(0,s->own_usage->cached);
+  ASSERT_EQ(20,s->own_usage->output);
+  ledger_fixture_destroy(&f);
+}
+TEST(compose_counts_snapshot_only_request_in_ledgered_turn) {
+  const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 40, 10), USAGE(100, 40, 10)),
+      COUNT("03", USAGE(100, 40, 10), USAGE(100, 40, 10)),
+      COUNT("09", USAGE(50, 0, 5), USAGE(150, 40, 15)), NULL};
+  const char *const *files[] = {lines};
+  LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+  SessionModel *s = only_session(&f);
+  ASSERT_EQ(2, s->unit_count);           /* the record, plus the snapshot-only request */
+  ASSERT_EQ(150, s->own_usage->input);
+  ASSERT_EQ(15, s->own_usage->output);
+  ledger_fixture_destroy(&f);
+}
+TEST(compose_turn_context_breaks_adjacent_pair) {
+  /* Thread total differs from the snapshot total, so only the near rule could pair them. */
+  const char *paired[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 0, 10), USAGE(7100, 0, 710)),
+      COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *separated[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 0, 10), USAGE(7100, 0, 710)),
+      CONTEXT("02", "synthetic-turn"), COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *const *first[] = {paired}, *const *second[] = {separated};
+  LedgerFixture f; ledger_fixture(&f, first, 1, NULL);
+  ASSERT_EQ(1, only_session(&f)->unit_count);
+  ledger_fixture_destroy(&f);
+  ledger_fixture(&f, second, 1, NULL);
+  ASSERT_EQ(2, only_session(&f)->unit_count);
+  ledger_fixture_destroy(&f);
+}
+TEST(compose_mirror_in_one_copy_suppresses_other_copy_both_orders) {
+  const char *with_record[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 0, 10), USAGE(100, 0, 10)),
+      COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *snapshot_only[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *const *files[] = {with_record, snapshot_only};
+  const long orders[2][2] = {{1700000000L, 1700000100L}, {1700000100L, 1700000000L}};
+  for (size_t i = 0; i < 2; i++) {
+    LedgerFixture f; ledger_fixture(&f, files, 2, orders[i]);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(1, s->unit_count);
+    ASSERT_TRUE(str_equal(s->units[0].source, STR_LIT("record")));
+    ledger_fixture_destroy(&f);
+  }
+}
+#define COUNT_TOTAL(ts, total) "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:" ts "Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":" total "}}}"
+TEST(compose_observation_key_suppresses_diverged_copy_snapshot) {
+  /* Snapshots without last_token_usage. Copy A pairs its snapshot (total 100 at :03) with the record.
+   * Copy B saw an extra snapshot first, so its :03 snapshot has delta 40, not 100: its snapshot key
+   * differs, but its observation key (turn, no usage, total, timestamp) matches A's. Upstream drops it
+   * (reconcileCodexRequestMirrors over requestMirrorKeys) and keeps B's unmatched first snapshot. */
+  const char *paired[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 0, 10), USAGE(100, 0, 10)),
+      COUNT_TOTAL("03", USAGE(100, 0, 10)), NULL};
+  const char *diverged[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      COUNT_TOTAL("02", USAGE(60, 0, 6)), COUNT_TOTAL("03", USAGE(100, 0, 10)), NULL};
+  const char *const *files[] = {paired, diverged};
+  const long orders[2][2] = {{1700000000L, 1700000100L}, {1700000100L, 1700000000L}};
+  for (size_t i = 0; i < 2; i++) {
+    LedgerFixture f; ledger_fixture(&f, files, 2, orders[i]);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);   /* the record, plus copy B's first snapshot */
+    for (size_t u = 0; u < s->unit_count; u++) ASSERT_TRUE(s->units[u].input != 40);
+    ledger_fixture_destroy(&f);
+  }
+}
+TEST(compose_record_keys_suppress_same_time_snapshot_in_other_copy) {
+  /* One copy has only the record; the other has only a snapshot carrying the record's exact key
+   * (same turn, usage, thread total and timestamp text). Upstream's alias set drops that snapshot. */
+  const char *record_only[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      LEDGER("02", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "\"turn_id\":\"synthetic-turn\",", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *snapshot_only[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("01", "synthetic-turn"),
+      COUNT("02", USAGE(100, 0, 10), USAGE(100, 0, 10)), NULL};
+  const char *const *files[] = {record_only, snapshot_only};
+  const long orders[2][2] = {{1700000000L, 1700000100L}, {1700000100L, 1700000000L}};
+  for (size_t i = 0; i < 2; i++) {
+    LedgerFixture f; ledger_fixture(&f, files, 2, orders[i]);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(1, s->unit_count);
+    ASSERT_TRUE(str_equal(s->units[0].source, STR_LIT("record")));
+    ledger_fixture_destroy(&f);
+  }
+}
+TEST(compose_replay_is_file_local_counting_is_session_wide) {
+  const char *first[] = {META("synthetic-ledger","synthetic-ledger"), STARTED("01","synthetic-turn"),
+      LEDGER("02","synthetic-ledger","","\"response_id\":\"synthetic-r1\",","\"turn_id\":\"synthetic-turn\",",USAGE(100,0,10),USAGE(7000,0,700)),
+      COUNT("03",USAGE(100,0,10),USAGE(100,0,10)), NULL};
+  const char *second[] = {META("synthetic-ledger","synthetic-ledger"), STARTED("01","synthetic-turn"),
+      LEDGER("02","synthetic-ledger","","\"response_id\":\"synthetic-r1\",","\"turn_id\":\"synthetic-turn\",",USAGE(100,0,10),USAGE(7000,0,700)),
+      COUNT("04",USAGE(100,0,10),USAGE(100,0,10)), NULL};
+  const char *const *files[] = {first,second};
+  const long orders[2][2] = {{1700000000L,1700000100L},{1700000100L,1700000000L}};
+  for (size_t i=0;i<2;i++) {
+    LedgerFixture f; ledger_fixture(&f,files,2,orders[i]);
+    ASSERT_EQ(1,only_session(&f)->unit_count);
+    ASSERT_EQ(100,only_session(&f)->own_usage->input);
+    ledger_fixture_destroy(&f);
+  }
+}

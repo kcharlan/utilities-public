@@ -453,6 +453,18 @@ static Str request_turn_at(const LogRecord *r, uint64_t line) {
   turns_before(r, line, &started, &context);
   return started.n ? started : context;
 }
+typedef struct {
+  bool *matched;
+  Str *keys, *observations;
+} FileMirrors;
+static RequestTotals raw_totals(TokenTotals t) {
+  return (RequestTotals){t.input, t.cached, t.output, t.has_reasoning ? t.reasoning : 0};
+}
+static int pair_event_order(const void *left, const void *right, void *context) {
+  (void)context;
+  uint64_t a = ((const PairEvent *)left)->line, b = ((const PairEvent *)right)->line;
+  return (a > b) - (a < b);
+}
 Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   compose_destroy(c);
   size_t count = c->skipped_count;
@@ -508,7 +520,10 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   }
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
-    Omap display = {0}, responses = {0}, primary = {0}, seen = {0};
+    Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
+    FileMirrors *files = NULL;
+    error = alloc(&c->usage_arena, s->record_count, sizeof *files, _Alignof(FileMirrors), (void **)&files);
+    if (error.code) goto session_done;
     Str session;
     error = canon(&c->usage_arena, s->id, &session);
     if (error.code)
@@ -523,6 +538,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
         goto session_done;
     }
     for (size_t file = 0; file < s->record_count; file++) {
+      omap_destroy(&file_responses);
       const LogRecord *r = s->records[file];
       Str request_session = token_model_trim(r->meta.request_session_id);
       if (!request_session.n)
@@ -535,6 +551,28 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
         s->flags |= F_FORK_BASELINE;
       for (size_t i = 0; i < result->row_count; i++)
         result->rows[i].file = (int64_t)file;
+      PairSide *ledgers = NULL, *snapshots = NULL;
+      PairEvent *events = NULL;
+      size_t *snapshot_rows = NULL;
+      bool *matched = NULL;
+      size_t event_count = 0, ledger_count = 0, snapshot_count = 0;
+      if (r->usage_count > SIZE_MAX - result->row_count ||
+          r->usage_count + result->row_count > SIZE_MAX - r->token_stream.count) {
+        error = err_make(ERR_NOMEM, "request event count overflow"); goto session_done;
+      }
+#define PAIR_ALLOC(n, ptr, type) do { \
+  error = alloc(&c->usage_arena, (n), sizeof(type), _Alignof(type), (void **)&(ptr)); \
+  if (error.code) goto session_done; \
+} while (0)
+      PAIR_ALLOC(r->usage_count, ledgers, PairSide);
+      PAIR_ALLOC(result->row_count, snapshots, PairSide);
+      PAIR_ALLOC(result->row_count, snapshot_rows, size_t);
+      PAIR_ALLOC(result->row_count, matched, bool);
+      PAIR_ALLOC(r->usage_count + result->row_count + r->token_stream.count, events, PairEvent);
+      PAIR_ALLOC(result->row_count, files[file].matched, bool);
+      PAIR_ALLOC(result->row_count, files[file].keys, Str);
+      PAIR_ALLOC(result->row_count, files[file].observations, Str);
+#undef PAIR_ALLOC
       const UsageRecord **ordered = NULL;
       error = alloc(&c->usage_arena, r->usage_count, sizeof *ordered,
                     _Alignof(UsageRecord *), (void **)&ordered);
@@ -559,28 +597,36 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
           rejected++;
           continue;
         }
-        {
-          Str response;
-          error = canon(&c->usage_arena, ledger.response_id, &response);
-          if (error.code)
-            goto session_done;
-          if (omap_get(&responses, response))
-            continue;
-          error = omap_put(&responses, response, (void *)1);
-          if (error.code)
-            goto session_done;
-        }
         Str turn = ledger.turn_id.n ? ledger.turn_id : request_turn_at(r, u->line), turn_key = {0};
         if (turn.p) {
           error = canon(&c->usage_arena, turn, &turn_key);
           if (error.code)
             goto session_done;
         }
-        if (turn.p) {
-          error = omap_put(&primary, turn_key, (void *)1);
-          if (error.code)
-            goto session_done;
+        Str response;
+        error = canon(&c->usage_arena, ledger.response_id, &response);
+        if (error.code) goto session_done;
+        PairSide side = {.turn = turn_key, .usage = ledger.usage, .has_total = true,
+                         .total = ledger.thread_total, .has_turn_total = ledger.has_turn_total,
+                         .turn_total = ledger.turn_total, .timestamp = ledger.timestamp, .ms = ledger.timestamp_ms,
+                         .replay = omap_get(&file_responses, response) != NULL, .response_id = response};
+        if (!side.replay) {
+          error = omap_put(&file_responses, response, (void *)1);
+          if (error.code) goto session_done;
         }
+        ledgers[ledger_count] = side;
+        events[event_count++] = (PairEvent){PAIR_LEDGER, u->line, ledger_count++};
+        /* Each accepted record aliases its thread, absent and optional turn total. */
+        if (!result->unresolved) {
+          Str keys[3]; size_t key_count;
+          error = request_record_mirror_keys(&c->usage_arena, session, &side, keys, &key_count);
+          for (size_t k = 0; k < key_count && !error.code; k++)
+            error = omap_put(&mirrored, keys[k], (void *)1);
+        }
+        if (error.code) goto session_done;
+        if (omap_get(&responses, response)) continue;
+        error = omap_put(&responses, response, (void *)1);
+        if (error.code) goto session_done;
         UsageUnit unit = {.file = file,
                           .line = u->line,
                           .turn_id = turn,
@@ -597,6 +643,54 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
         if (error.code)
           goto session_done;
       }
+      for (size_t i = 0; i < result->row_count; i++) {
+        AccountingRow *row = &result->rows[i];
+        if (row->bare) {
+          events[event_count++] = (PairEvent){PAIR_BOUNDARY, row->line, 0}; continue;
+        }
+        Str turn = row->turn_id;
+        if (!turn.n) { Str started; turns_before(r, row->line, &started, &turn); }
+        PairSide side = {.usage = raw_totals(row->raw_last.present ? row->raw_last : row->tokens),
+                         .has_total = row->raw_total.present, .total = raw_totals(row->raw_total),
+                         .timestamp = row->timestamp, .ms = row->timestamp_ms,
+                         .observation_key = !row->raw_last.present};
+        error = canon(&c->usage_arena, turn, &side.turn);
+        if (!error.code) error = request_mirror_key(&c->usage_arena, session, &side, true, &files[file].keys[i]);
+        if (!error.code && !row->raw_last.present)
+          error = request_mirror_key(&c->usage_arena, session, &side, false, &files[file].observations[i]);
+        if (error.code) goto session_done;
+        snapshots[snapshot_count] = side;
+        snapshot_rows[snapshot_count] = i;
+        events[event_count++] = (PairEvent){PAIR_SNAPSHOT, row->line, snapshot_count++};
+      }
+      bool leaf_seen = false;
+      for (size_t i = 0; i < r->token_stream.count; i++) {
+        const TokenObservation *o = &r->token_stream.observations[i];
+        if (o->tag == TOKEN_S || o->tag == TOKEN_C || o->tag == TOKEN_XC)
+          events[event_count++] = (PairEvent){PAIR_BOUNDARY, o->line, 0};
+        else if (o->tag == TOKEN_M) {
+          Str id;
+          error = canon(&c->usage_arena, o->meta.session_id, &id);
+          if (error.code) goto session_done;
+          if (str_equal(id, session)) {
+            if (leaf_seen) events[event_count++] = (PairEvent){PAIR_RESTART, o->line, 0};
+            leaf_seen = true;
+          }
+        }
+      }
+      error = stable_sort(events, event_count, sizeof *events, pair_event_order, NULL);
+      if (!error.code) error = request_pair_file(snapshots, snapshot_count, ledgers, ledger_count, events, event_count, matched);
+      if (error.code) goto session_done;
+      for (size_t k = 0; k < snapshot_count; k++) {
+        if (!matched[k]) continue;
+        size_t i = snapshot_rows[k];
+        files[file].matched[i] = true;
+        if (result->unresolved) continue;
+        error = omap_put(&mirrored, files[file].keys[i], (void *)1);
+        if (!error.code && files[file].observations[i].n)
+          error = omap_put(&mirrored, files[file].observations[i], (void *)1);
+        if (error.code) goto session_done;
+      }
     }
     if (s->flags & F_FORK_BASELINE) {
       error = strings(&c->usage_arena, &c->fork_baselines, s->id);
@@ -608,14 +702,10 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
       AccountingResult *result = omap_get(&by_path, s->records[file]->key.path);
       for (size_t i = 0; i < result->row_count; i++) {
         AccountingRow *row = &result->rows[i];
-        Str turn_key = {0}, key;
-        if (row->turn_id.p) {
-          error = canon(&c->usage_arena, row->turn_id, &turn_key);
-          if (error.code)
-            break;
-          if (omap_get(&primary, turn_key))
-            continue;
-        }
+        Str key;
+        if (!row->bare && (files[file].matched[i] || omap_get(&mirrored, files[file].keys[i]) ||
+                           (files[file].observations[i].n && omap_get(&mirrored, files[file].observations[i]))))
+          continue;
         error = compose_row_key(&c->usage_arena, result->session_id,
                                 s->records[file]->key.path, row, &key);
         if (error.code)
@@ -656,7 +746,8 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
       error = compose_aggregate_session(c, s);
     omap_destroy(&display);
     omap_destroy(&responses);
-    omap_destroy(&primary);
+    omap_destroy(&mirrored);
+    omap_destroy(&file_responses);
     omap_destroy(&seen);
     if (error.code)
       goto done;

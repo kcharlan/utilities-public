@@ -12,6 +12,7 @@ typedef struct {
   MaybeMs timestamp_ms;
   char day[11];
   TokenTotals tokens;
+  TokenTotals raw_last, raw_total;
   bool bare;
 } AccountingRow;
 typedef struct {

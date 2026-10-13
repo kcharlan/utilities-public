@@ -66,8 +66,8 @@ Remaining differences from `v0.74.1`:
   beginning; incremental and turn-performance machinery is outside scope.
 - Existing adaptations retain the [Explicit adaptations and approved
   differences table](../../colophon/docs/token_rules.md#explicit-adaptations-and-approved-differences),
-  except where a later alignment rule replaces an item. The per-turn primary
-  rule in Spec §15 difference 1 remains until request pairing is aligned.
+  except where a later alignment rule replaces an item. Per-request mirror
+  pairing below replaces the per-turn primary rule in Spec §15 difference 1.
 
 Python Colophon's existing 200,000 catalog fallback can append conflicting
 entries to a shared runtime ledger. Use a separate `COLOPHON_HOME` for the
@@ -94,3 +94,58 @@ preceding `task_started` turn in the same file, then the latest nonempty
 `turn_context` turn. A started event without a turn clears the started fallback;
 blank or truncated contexts leave the active context unchanged. Native cache
 format `native:1:2` retains request session ids, ledger totals and context turns.
+
+Snapshots are excluded per request, rather than for every request in a ledgered
+turn. Pair accepted ledger records with row-producing `token_count` snapshots
+chronologically. Each record claims at most one snapshot. Exact matching uses
+the canonical mirror turn, usage including reasoning, timestamp text, and an
+absent snapshot total or one matching the ledger thread/turn total. It can cross
+boundaries against already observed counterparts. Future exact candidates never
+reserve a ledger away from an earlier accepted adjacent match.
+An already-owned snapshot for another response preserves the current pending
+record instead of claiming it. Ownership uses canonical response identities
+and shared mirror-key generation; repeated aliases do not become new partners
+(`beginLegacyObservation`, `CostUsageScanner.swift` L428–445).
+
+Adjacent counter aliases use equal turn/usage and thread total; timestamp
+aliases use equal turn/usage and timestamp text. Near matches require a nonempty
+equal turn, equal input/cached/output (ignoring reasoning), an original record,
+timestamps within 5,000 ms and no intervening advance on the later side. Delayed
+matches require a snapshot after the record in line order and time, with exact
+counter advances on both sides. Advances compare each side's totals against
+the preceding total of its own kind: equal to usage is exact, any component
+exceeding usage is intervening, otherwise bounded; missing totals/history are
+unknown. Every task start, context (including truncation), bare row and repeated
+same-session metadata clears adjacency. Repeated metadata resets both histories.
+Ledger counter history advances only on originals. Replay detection is per file;
+response counting remains session-wide across copies.
+
+A session-wide alias set collects paired snapshot keys and every accepted
+record's thread-total, absent-total and valid turn-total keys, including replay
+records. Snapshot keys use session, mirror turn, usage including reasoning,
+total and timestamp text. Snapshots without last usage also contribute an
+observation key with empty usage fields. Either key suppresses mirrored rows
+across copies in both scan orders. Unresolved fork baselines contribute no
+session aliases. Existing identical-row de-duplication remains in place.
+
+Deliberate pairing differences from CodexBar `v0.74.1`:
+
+- Only snapshots producing accounting rows participate. Other snapshots leave
+  pending pairs intact; upstream handles them in `handleTokenCount`
+  (`CostUsageScanner.swift` L4603–4632, L4812–4813) and
+  `beginLegacyObservation` (L428–437).
+- Snapshot history advances when unpaired at observation time or paired with
+  the immediately pending original record, rather than all upstream
+  `rememberLegacyCounter` conditions (L4633, L4704).
+- A repeated response in the same file pairs only exactly or by counter/time
+  alias; upstream's replay handling is in `handleRequestLedger` (L4253–4263).
+- Record model selection, running-total overflow and retained mirror pricing
+  remain the separate out-of-scope differences listed above. In particular,
+  native keeps alias keys for records upstream's running-total guard may reject
+  (L4290–4299); it does not port retained legacy pricing or turn performance.
+
+Cross-copy aliases follow `reconcileCodexRequestMirrors` in
+`CostUsageScanner+RequestIdentity.swift` L58–112. Chronological pairing follows
+`beginLegacyObservation`, `handleRequestLedger` and `handleTokenCount`; the
+implementation deliberately corrects the proposed whole-file exact reservation
+algorithm, which could double-count an earlier near mirror.

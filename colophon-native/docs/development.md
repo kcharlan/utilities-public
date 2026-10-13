@@ -29,8 +29,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 143
-C units, 20 collected CLI/integration cases and two Chromium cases.
+`make test` runs the stable-sort guard, ten asset digests, all 167
+C units, 22 collected CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
@@ -78,3 +78,14 @@ contracts. Validate required request fields and covering totals before response
 deduplication; a malformed record must not consume a later valid response id.
 Keep the raw per-file request-session ownership separately from thread identity,
 and share nonempty turn-alias selection across ledger and token-stream parsing.
+
+Request pairing must consume events chronologically: a whole-file exact pass
+can reserve a request away from its earlier near mirror and double-count usage.
+Keep exact indexes restricted to observed counterparts, file-local replay
+separate from session-wide counting, and two-pass mirror aliases independent of
+copy order. Guard regressions must cover record aliases, paired-snapshot aliases
+and observation keys without last usage independently.
+An already-owned repeated snapshot must preserve a different response's pending
+mirror; otherwise it consumes that request's pairing slot and leaves its real
+snapshot counted again. Keep response ownership canonical and share its key
+builder with cross-copy aliases.
