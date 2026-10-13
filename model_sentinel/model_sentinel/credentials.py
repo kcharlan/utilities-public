@@ -37,6 +37,11 @@ def _canonical_entry(path: Path) -> Path:
 
 def validate_credential_cache_location(settings: Settings, runtime_paths: RuntimePaths) -> None:
     """Reject destinations that could publish credentials or replace runtime files."""
+    _validated_cache_path(settings, runtime_paths)
+
+
+def _validated_cache_path(settings: Settings, runtime_paths: RuntimePaths) -> Path:
+    """Return the exact canonical entry checked by the placement policy."""
     if settings.credential_file is None:
         raise CredentialError("Credential cache location is not configured.")
     try:
@@ -63,6 +68,7 @@ def validate_credential_cache_location(settings: Settings, runtime_paths: Runtim
             raise CredentialError("Unsafe credential cache location.")
         if any(os.path.lexists(parent / ".git") for parent in (path.parent, *path.parent.parents)):
             raise CredentialError("Unsafe credential cache location inside a Git checkout.")
+        return path
     except (OSError, RuntimeError, ValueError):
         raise CredentialError("Unable to validate credential cache location.") from None
 
@@ -115,8 +121,7 @@ def resolve_credentials(
     if settings.credential_source == "environment":
         available = environ
     elif settings.credential_source == "file":
-        validate_credential_cache_location(settings, runtime_paths)
-        path = _canonical_entry(settings.credential_file)
+        path = _validated_cache_path(settings, runtime_paths)
         parent_fd = None
         file_fd = None
         try:

@@ -165,6 +165,41 @@ def test_cache_parent_alias_rechecks_canonical_report_location(config, tmp_path)
         credentials.validate_credential_cache_location(replace(config.settings, credential_file=alias / "credentials.txt"), config.runtime_paths)
 
 
+@pytest.mark.parametrize("forbidden_location", ["reports", "git"])
+def test_cache_alias_switch_cannot_change_validated_destination(config, tmp_path, monkeypatch, forbidden_location):
+    safe_parent = tmp_path / "synthetic_safe_parent"
+    safe_parent.mkdir(mode=0o700)
+    if forbidden_location == "reports":
+        forbidden_parent = config.runtime_paths.report_dir
+    else:
+        forbidden_parent = tmp_path / "synthetic_git_checkout"
+    forbidden_parent.mkdir(mode=0o700)
+    if forbidden_location == "git":
+        (forbidden_parent / ".git").write_text("synthetic git marker")
+    forbidden_cache = forbidden_parent / "credentials.txt"
+    forbidden_cache.write_text(f"{KEY}='{SECRET}'\n")
+    forbidden_cache.chmod(0o600)
+    alias = tmp_path / "synthetic_switching_alias"
+    alias.symlink_to(safe_parent, target_is_directory=True)
+    configured_path = alias / "credentials.txt"
+    real_canonical_entry = credentials._canonical_entry
+    switched = False
+    def switch_alias_after_canonicalization(path):
+        nonlocal switched
+        canonical = real_canonical_entry(path)
+        if path == configured_path and not switched:
+            alias.unlink()
+            alias.symlink_to(forbidden_parent, target_is_directory=True)
+            switched = True
+        return canonical
+    monkeypatch.setattr(credentials, "_canonical_entry", switch_alias_after_canonicalization)
+    # The checked private parent has no cache. Reading a cache from the new
+    # forbidden target would turn this expected safe failure into success.
+    with pytest.raises(credentials.CredentialError):
+        resolve(config, settings=replace(config.settings, credential_file=configured_path))
+    assert switched
+
+
 def test_unselected_invalid_values_do_not_block_valid_selected_key(config):
     seed(config, f"{KEY}='{SECRET}'\nSYNTHETIC_DISABLED_KEY='op://SYNTHETIC_NOT_A_REAL_SECRET/key'\n".encode())
     enabled = next(provider for provider in config.providers if provider.enabled)
