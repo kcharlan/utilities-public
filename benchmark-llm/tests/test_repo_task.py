@@ -346,39 +346,43 @@ def test_repo_task_requires_output_dir_before_starting_any_model(
     assert "output_dir" in stderr.getvalue()
 
 
+def _run_bench_capturing(
+    tmp_path: Path, monkeypatch, environ: dict[str, str]
+) -> tuple[int, list[dict[str, str]], str]:
+    benchmark_dir = tmp_path / "bench"
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        f"type: repo_task\noutput_dir: {tmp_path / 'results'}\n",
+    )
+    captured: list[dict[str, str]] = []
+
+    def fake_run_repo_task(*, environ: dict[str, str], **_: object) -> Path:
+        captured.append(dict(environ))
+        return tmp_path / "results" / "fake-run"
+
+    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
+    stderr = io.StringIO()
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={"BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"), **environ},
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+    return exit_code, captured, stderr.getvalue()
+
+
+def _warning_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith("[bench] warning:")]
+
+
 def _capture_repo_task_environ(
     tmp_path: Path,
     monkeypatch,
     environ: dict[str, str],
 ) -> dict[str, str]:
-    benchmark_dir = tmp_path / "bench"
-    _write_text(
-        benchmark_dir / "bench.yaml",
-        "\n".join(
-            [
-                "type: repo_task",
-                f"output_dir: {tmp_path / 'results'}",
-            ]
-        )
-        + "\n",
-    )
-    captured: dict[str, str] = {}
-
-    def fake_run_repo_task(*, environ: dict[str, str], **_: object) -> Path:
-        captured.update(environ)
-        return tmp_path / "results" / "fake-run"
-
-    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
-
-    exit_code = main(
-        ["run", str(benchmark_dir), "-m", "demo-model"],
-        environ={"BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"), **environ},
-        stdout=io.StringIO(),
-        stderr=io.StringIO(),
-    )
-
+    exit_code, captured, _stderr = _run_bench_capturing(tmp_path, monkeypatch, environ)
     assert exit_code == 0
-    return captured
+    return captured[0]
 
 
 def test_repo_task_seeds_absent_path_from_platform_default(tmp_path: Path, monkeypatch) -> None:
@@ -1496,17 +1500,24 @@ def test_base_python_defaults_to_resolver(tmp_path: Path, monkeypatch) -> None:
     assert captured["BENCH_BASE_PYTHON"] == expected
 
 
-def test_base_python_override_passes_through(tmp_path: Path, monkeypatch) -> None:
-    override = tmp_path / "synthetic-bin" / "python3.99"
-    _write_text(override, "#!/bin/sh\nexit 0\n")
-    os.chmod(override, 0o755)
+@pytest.mark.parametrize("shape", ["plain", "symlink"])
+def test_base_python_override_passes_through(tmp_path: Path, monkeypatch, shape: str) -> None:
+    target = tmp_path / "synthetic-bin" / "python3.99"
+    _write_text(target, "#!/bin/sh\nexit 0\n")
+    os.chmod(target, 0o755)
+    override = target
+    if shape == "symlink":
+        override = tmp_path / "links" / "python3.99"
+        override.parent.mkdir()
+        override.symlink_to(target)
 
-    captured = _capture_repo_task_environ(
+    exit_code, captured, stderr = _run_bench_capturing(
         tmp_path, monkeypatch, {"BENCH_BASE_PYTHON": str(override)}
     )
 
-    assert captured["BENCH_BASE_PYTHON"] == str(override)
-
+    assert exit_code == 0
+    assert captured[0]["BENCH_BASE_PYTHON"] == str(override)
+    assert _warning_lines(stderr) == []
 
 @pytest.mark.parametrize(
     "bad_override",
@@ -1546,6 +1557,77 @@ def test_base_python_invalid_override_rejected(
     assert exit_code == 1
     assert called is False
     assert "BENCH_BASE_PYTHON" in stderr.getvalue()
+
+
+@pytest.mark.parametrize("shape", ["relative-existing", "not-executable", "directory"])
+def test_base_python_override_rejects_each_invalid_shape(
+    tmp_path: Path, monkeypatch, shape: str
+) -> None:
+    if shape == "relative-existing":
+        monkeypatch.chdir(tmp_path)
+        _write_text(tmp_path / "rel" / "python3.99", "#!/bin/sh\nexit 0\n")
+        os.chmod(tmp_path / "rel" / "python3.99", 0o755)
+        value = "rel/python3.99"
+        assert Path(value).is_file() and os.access(value, os.X_OK)
+    elif shape == "not-executable":
+        target = tmp_path / "plain" / "python3.99"
+        _write_text(target, "#!/bin/sh\nexit 0\n")
+        os.chmod(target, 0o644)
+        value = str(target)
+        assert Path(value).is_file() and not os.access(value, os.X_OK)
+    else:
+        target = tmp_path / "a-directory"
+        target.mkdir()
+        value = str(target)
+        assert os.access(value, os.X_OK) and not Path(value).is_file()
+
+    exit_code, captured, stderr = _run_bench_capturing(
+        tmp_path, monkeypatch, {"BENCH_BASE_PYTHON": value}
+    )
+
+    assert exit_code == 1
+    assert captured == []
+    assert stderr == f"BENCH_BASE_PYTHON must be an absolute path to an executable file: {value}\n"
+
+
+def test_base_python_resolver_warning_is_reported_and_run_continues(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fallback = "/synthetic/fallback/bin/python3.99"
+    warning = "[bench] warning: synthetic fallback warning"
+    monkeypatch.setattr(cli_module, "resolve_base_python", lambda **_: (fallback, warning))
+
+    exit_code, captured, stderr = _run_bench_capturing(tmp_path, monkeypatch, {})
+
+    assert exit_code == 0
+    assert [env["BENCH_BASE_PYTHON"] for env in captured] == [fallback]
+    assert _warning_lines(stderr) == [warning]
+
+
+def test_base_python_stable_resolver_result_prints_no_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stable = "/synthetic/stable/bin/python3.99"
+    monkeypatch.setattr(cli_module, "resolve_base_python", lambda **_: (stable, None))
+
+    exit_code, captured, stderr = _run_bench_capturing(tmp_path, monkeypatch, {})
+
+    assert exit_code == 0
+    assert [env["BENCH_BASE_PYTHON"] for env in captured] == [stable]
+    assert _warning_lines(stderr) == []
+
+
+def test_base_python_empty_override_uses_resolver(tmp_path: Path, monkeypatch) -> None:
+    stable = "/synthetic/stable/bin/python3.99"
+    monkeypatch.setattr(cli_module, "resolve_base_python", lambda **_: (stable, None))
+
+    exit_code, captured, stderr = _run_bench_capturing(
+        tmp_path, monkeypatch, {"BENCH_BASE_PYTHON": ""}
+    )
+
+    assert exit_code == 0
+    assert [env["BENCH_BASE_PYTHON"] for env in captured] == [stable]
+    assert "must be an absolute path" not in stderr
 
 
 def test_repo_task_venv_created_in_step_uses_stable_base_python(tmp_path: Path) -> None:
@@ -1611,7 +1693,7 @@ def test_repo_task_venv_created_in_step_uses_stable_base_python(tmp_path: Path) 
                 "import sys",
                 "from pathlib import Path",
                 "value = os.environ.get('BENCH_BASE_PYTHON', '')",
-                "pattern = r'/opt/homebrew/(bin/python3|opt/python@3\\.\\d+/bin/python3\\.\\d+)'",
+                "pattern = r'/opt/homebrew/opt/python@3\\.\\d+/bin/python3\\.\\d+'",
                 "if not re.fullmatch(pattern, value) or (Path(value).parent.parent / 'pyvenv.cfg').exists():",
                 f"    Path({str(refused_path)!r}).write_text(f'refused BENCH_BASE_PYTHON={{value!r}}', encoding='utf-8')",
                 "    sys.exit(3)",
@@ -1659,12 +1741,16 @@ def test_repo_task_venv_created_in_step_uses_stable_base_python(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "relative",
-    ["Cellar/python@3.99/x/bin/python3.99", "v/bin/python3.99"],
-    ids=["cellar", "venv"],
+    ("relative", "phrase"),
+    [
+        ("Cellar/python@3.99/x/bin/python3.99", "is a versioned Homebrew Cellar path"),
+        ("pyenv/versions/3.99.1/bin/python3.99", "is under a versioned directory (3.99.1)"),
+        ("v/bin/python3.99", "lives in a venv"),
+    ],
+    ids=["cellar", "versioned", "venv"],
 )
 def test_base_python_risky_override_warns_and_passes_through(
-    tmp_path: Path, monkeypatch, relative: str
+    tmp_path: Path, monkeypatch, relative: str, phrase: str
 ) -> None:
     override = tmp_path / relative
     _write_text(override, "#!/bin/sh\nexit 0\n")
@@ -1672,33 +1758,16 @@ def test_base_python_risky_override_warns_and_passes_through(
     if relative.startswith("v/"):
         _write_text(tmp_path / "v" / "pyvenv.cfg", "home = /synthetic/bin\n")
 
-    benchmark_dir = tmp_path / "bench"
-    _write_text(
-        benchmark_dir / "bench.yaml",
-        f"type: repo_task\noutput_dir: {tmp_path / 'results'}\n",
-    )
-    captured: dict[str, str] = {}
-
-    def fake_run_repo_task(*, environ: dict[str, str], **_: object) -> Path:
-        captured.update(environ)
-        return tmp_path / "results" / "fake-run"
-
-    stderr = io.StringIO()
-    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
-    exit_code = main(
-        ["run", str(benchmark_dir), "-m", "demo-model"],
-        environ={
-            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
-            "BENCH_BASE_PYTHON": str(override),
-        },
-        stdout=io.StringIO(),
-        stderr=stderr,
+    exit_code, captured, stderr = _run_bench_capturing(
+        tmp_path, monkeypatch, {"BENCH_BASE_PYTHON": str(override)}
     )
 
     assert exit_code == 0
-    assert captured["BENCH_BASE_PYTHON"] == str(override)
-    warnings = [l for l in stderr.getvalue().splitlines() if l.startswith("[bench] warning:")]
-    assert any(str(override) in l for l in warnings), stderr.getvalue()
+    assert captured[0]["BENCH_BASE_PYTHON"] == str(override)
+    warnings = _warning_lines(stderr)
+    assert len(warnings) == 1, stderr
+    assert str(override) in warnings[0]
+    assert phrase in warnings[0]
 
 
 def test_repo_task_model_step_never_receives_bench_base_python(tmp_path: Path) -> None:

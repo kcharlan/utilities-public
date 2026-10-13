@@ -155,19 +155,22 @@ The benchmark package handles:
 That interpreter lives inside the runtime's own venv. A venv created from a venv interpreter records the underlying versioned Homebrew Cellar path as its base, so it breaks when Homebrew upgrades or removes that version. To avoid this, `bench run` also exports `BENCH_BASE_PYTHON` to non-model steps: a stable interpreter path derived without resolving symlinks (for Homebrew, the `/opt/homebrew/opt/<formula>/bin/pythonX.Y` form rather than the Cellar path). Benchmark scripts that create a workspace venv must use it:
 
 ```bash
-"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv --clear .venv
+: "${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}"
+rm -rf -- .venv
+"$BENCH_BASE_PYTHON" -m venv .venv
 ```
 
-`--clear` is needed wherever a model step may already have created `.venv`: it discards that venv, which may be pinned, and rebuilds it from the stable base. Both bundled examples do this in their validation step (both `policy-engine` and `cron-eval` rebuild `.venv` with `--clear` at the start of validation; `policy-engine` then reinstalls its tools).
+Rebuild `.venv` this way wherever a model step may already have created it: removing it discards a venv that may be pinned. Use `rm -rf -- .venv`, not `venv --clear`: when `.venv` is a symlink, `--clear` empties the directory the link points to before it fails, while `rm` removes only the link. Check the variable first, as above, so a missing variable cannot delete `.venv` and then fail. Both bundled examples rebuild `.venv` this way at the start of validation; `policy-engine` then reinstalls its tools. To create a venv only when it is missing (as `cron-eval`'s prepare step does), skip the `rm` and use `"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv .venv`.
 
-Model-visible steps (model invocation and similar) do not receive `BENCH_BASE_PYTHON`; the runtime strips framework variables there so the benchmark cannot signal an evaluation context.
+Model-visible steps do not receive `BENCH_BASE_PYTHON`. Repo-task executor steps and prompt-batch executors get an environment built by `build_model_command_env`, which keeps only an allowlist of variables, so the benchmark cannot signal an evaluation context. A plugin benchmark receives the full environment, including `BENCH_BASE_PYTHON`, and must build its model command environment the same way, as `examples/orchestrator-model-eval` does.
 
-To choose the interpreter yourself, set `BENCH_BASE_PYTHON` to an absolute path of an executable file before `bench run`. A relative path, a missing file, or a non-executable file prints `BENCH_BASE_PYTHON must be an absolute path to an executable file: <value>` to `stderr` and exits `1`. An override that contains `/Cellar/` or lives in a venv (a `pyvenv.cfg` beside its `bin/` directory) is accepted, but prints a `[bench] warning:` line to `stderr` because venvs created from it can still break. If no stable interpreter can be found, the runtime warns on `stderr`, falls back to the best interpreter it has, and continues the run.
+To choose the interpreter yourself, set `BENCH_BASE_PYTHON` to an absolute path of an executable file before `bench run`. A relative path, a missing file, or a non-executable file prints `BENCH_BASE_PYTHON must be an absolute path to an executable file: <value>` to `stderr` and exits `1`. An empty `BENCH_BASE_PYTHON=` counts as unset. An override that is a Homebrew Cellar path, sits under a directory named for a full `X.Y.Z` version (for example a uv-managed or pyenv Python), or lives in a venv (a `pyvenv.cfg` beside its `bin/` directory) is accepted, but prints one `[bench] warning:` line to `stderr`, because venvs created from it can break later. The resolver warns the same way when the interpreter it finds is versioned. If no stable interpreter can be found, the runtime warns on `stderr`, falls back to the best interpreter it has, and continues the run.
 
 Limitations:
 
 - Model-visible steps also run with the runtime interpreter first on `PATH`, so a venv a model creates with bare `python3 -m venv` is pinned, and stays pinned unless a later non-model step rebuilds it as above.
 - Scripts that ignore the contract (for example, `python3 -m venv` in a step) still create pinned venvs.
+- Failed and retried repo-task attempts keep their worktree for debugging (under `~/.benchmark_llm/worktrees/` by default). When an attempt stops before its validation step rebuilds `.venv`, a `.venv` the model created there stays pinned. Do not reuse such a venv; remove it or rebuild it from a stable interpreter.
 
 For model-execution steps, the runtime intentionally scrubs framework and test harness environment variables before invoking the executor. Use neutral task-oriented inputs such as `MODEL_ID`, `TASK_PROMPT_TEXT`, `TASK_PROMPT_PATH`, and `WORKSPACE_ROOT` inside model runner scripts.
 

@@ -3,7 +3,11 @@ set -euo pipefail
 
 cd "$BENCH_WORKSPACE"
 
-"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv --clear .venv
+# Rebuild from the stable base. rm removes a .venv symlink without following it;
+# the venv module's clear option would empty the symlink's target instead.
+: "${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}"
+rm -rf -- .venv
+"$BENCH_BASE_PYTHON" -m venv .venv
 source .venv/bin/activate
 python -m pip install pytest==9.1.1 PyYAML==6.0.3
 if [ -f requirements.txt ]; then

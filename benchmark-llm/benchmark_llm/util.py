@@ -138,6 +138,30 @@ def _is_executable_file(path: Path) -> bool:
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
+_VERSIONED_DIR = re.compile(r"\d+\.\d+\.\d+")
+
+
+def unstable_python_warning(label: str, path: str) -> str | None:
+    """Return a one-line warning if venvs created from `path` may break later, else None.
+
+    A Homebrew Cellar path, or a path under a directory named for a full X.Y.Z
+    version (uv-managed, pyenv, asdf), belongs to one installed version.
+    """
+    if "/Cellar/" in path:
+        reason = "is a versioned Homebrew Cellar path"
+    else:
+        versioned = next(
+            (part for part in Path(path).parent.parts if _VERSIONED_DIR.search(part)), None
+        )
+        if versioned is None:
+            return None
+        reason = f"is under a versioned directory ({versioned})"
+    return (
+        f"[bench] warning: {label} {path} {reason}; "
+        "venvs created from it may break when that version is upgraded or removed."
+    )
+
+
 def resolve_base_python(
     *,
     executable: str,
@@ -148,7 +172,7 @@ def resolve_base_python(
 ) -> tuple[str, str | None]:
     """Return (interpreter_path, warning_or_None) for creating durable venvs.
 
-    Prefers a stable (non-Homebrew-Cellar) interpreter path. Symlinks are never
+    Prefers a stable (non-Cellar, unversioned) interpreter path. Symlinks are never
     resolved: resolving them is what pins venvs to a versioned Cellar path.
     """
     exe_name = f"python{version[0]}.{version[1]}"
@@ -165,12 +189,7 @@ def resolve_base_python(
         if _is_executable_file(opt):
             candidate = opt
     if candidate is not None and _is_executable_file(candidate):
-        if "/Cellar/" not in str(candidate):
-            return str(candidate), None
-        return str(candidate), (
-            f"[bench] warning: base Python {candidate} is a versioned Homebrew Cellar path; "
-            "venvs created from it will break when Homebrew upgrades or removes that version."
-        )
+        return str(candidate), unstable_python_warning("base Python", str(candidate))
     fallback = base_executable or executable
     if base_executable is None and prefix != base_prefix:
         return fallback, (
