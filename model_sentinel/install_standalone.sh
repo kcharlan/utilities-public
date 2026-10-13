@@ -216,11 +216,19 @@ Runtime home:
 Next steps:
   1. Review $RUNTIME_HOME/providers.env
   2. Review $RUNTIME_HOME/settings.env
-  3. If your credentials come from a sourced shell file, either:
+  3. For file mode, configure the credential settings and manually run:
+     "$TARGET_PATH" credentials refresh
+     Or after loading your existing secrets shell:
+     "$TARGET_PATH" credentials refresh --from-environment
+     In environment mode, if credentials come from a sourced shell file, either:
      - source that file before running $TARGET_PATH, or
      - put the bootstrap lines in $RUNTIME_HOME/launchd.env for scheduled runs
   4. Run: "$TARGET_PATH" healthcheck
   5. Run: "$TARGET_PATH" scan --save
+
+File-mode scans read only the private cache, never the refresh mount.
+Refresh manually after rotation. The cache is plaintext at rest (0700 parent, 0600 file).
+Existing configs/bootstrap files are preserved; review obsolete bootstrap lines manually.
 
 After repository updates, rebuild this point-in-time copy or verify it with:
   "$SCRIPT_DIR/install_standalone.sh" --check "$TARGET_PATH"

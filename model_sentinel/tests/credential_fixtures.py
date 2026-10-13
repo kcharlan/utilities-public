@@ -1,5 +1,10 @@
 """Shared synthetic credential configuration in pytest's external temp roots."""
 from pathlib import Path
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import sqlite3
+import threading
 
 
 def write_credential_config(root: Path, *, source: str = "file") -> Path:
@@ -32,3 +37,49 @@ def write_credential_config(root: Path, *, source: str = "file") -> Path:
         )
     (runtime_home / "providers.env").write_text("\n".join(definitions) + "\n", encoding="utf-8")
     return runtime_home
+
+
+@contextmanager
+def synthetic_provider_server(runtime_home: Path):
+    """Serve invented models on loopback and record the actual bearer headers."""
+    authorizations: list[str | None] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            authorizations.append(self.headers.get("Authorization"))
+            payload = json.dumps({"data": [{"id": "synthetic-not-a-real-model"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    settings = runtime_home / "providers.env"
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace(
+            "http://127.0.0.1:1", f"http://127.0.0.1:{server.server_port}"
+        ), encoding="utf-8",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield authorizations
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def assert_synthetic_saved_snapshot(runtime_home: Path) -> None:
+    """Check persistence, not just successful execution or database creation."""
+    with sqlite3.connect(runtime_home / "model_sentinel.db") as db:
+        assert db.execute(
+            "SELECT provider_id, status, saved_snapshot, model_count FROM scrapes"
+        ).fetchall() == [("synthetic_enabled", "success", 1, 1)]
+        assert db.execute(
+            "SELECT provider_id, provider_model_id FROM snapshot_models"
+        ).fetchall() == [("synthetic_enabled", "synthetic-not-a-real-model")]

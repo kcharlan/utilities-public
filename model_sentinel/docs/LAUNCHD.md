@@ -57,7 +57,15 @@ invocation.
 
 `~/.model_sentinel/launchd.env` is sourced by the launchd runner with `bash`.
 
-Use it for either:
+For persistent file mode, configure the credential source and paths in
+`settings.env` and refresh manually before scheduled scans. See the
+[credential settings and input grammar](../README.md#persistent-file-credentials).
+The runner needs only nonsecret exports such as `PATH`; it reads the private
+static cache and never opens a 1Password mount or refreshes credentials.
+
+`launchd.env` is executable Bash, unlike the assignment-only credential cache
+or refresh input. Do not use it as the refresh input. In the default environment
+mode, use it for either:
 
 - direct exports like `export OPENROUTER_AI_CREDS=...`
 - a `source /path/to/your/secrets.sh` line that loads your existing secrets bootstrap
@@ -74,6 +82,22 @@ Recommended:
 ```bash
 chmod 600 ~/.model_sentinel/launchd.env
 ```
+
+When switching to file mode, manually remove only the obsolete credential
+bootstrap/direct credential exports, preserving unrelated exports such as
+`PATH`. Setup and standalone installation preserve existing file contents;
+reseeding does not remove or repair bootstrap lines. Review the files yourself.
+`launchd.env` is sourced on every run, so editing it needs no reload. Changing
+the runtime installer's schedule or generated command requires rerunning it.
+
+After credential rotation, run `model-sentinel credentials refresh` manually
+from an authorized session, or optionally run
+`model-sentinel credentials refresh --from-environment` after your existing
+secrets shell loads the values. No shell-file edits or automatic refresh hooks
+are needed. A failed refresh keeps the previous cache, and scheduled scans
+remain independent of the refresh source. The cache has a `0700` immediate
+parent and `0600` file mode but remains plaintext at rest. Cache last updated
+describes the cache file's age, not provider validity or each retained key's age.
 
 The generated runner seeds a Homebrew-friendly default `PATH` before sourcing
 `launchd.env`:
@@ -183,7 +207,7 @@ That removes the LaunchAgent from `~/Library/LaunchAgents/` but keeps the runtim
 - A customized standalone target remains independent of the checkout at run
   time, but repository updates do not update that target. Rebuild it with
   `install_standalone.sh` and verify it with `install_standalone.sh --check`.
-- If credentials are missing in `launchd.env`, the run will fail just like a manual invocation.
+- Missing or invalid selected credentials cause the run to fail just like a manual invocation, whether supplied by the environment or private cache.
 - Notifications behave the same as manual runs.
 - Click-to-open notifications require `terminal-notifier`.
 - If `terminal-notifier` is installed in a nonstandard location, set `MODEL_SENTINEL_TERMINAL_NOTIFIER_PATH` in `~/.model_sentinel/settings.env`.

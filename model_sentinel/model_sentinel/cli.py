@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
             f"  {invocation} history --provider openrouter --model list chatgpt\n"
             "      Filter the saved model list by partial match on model ID or display name.\n\n"
             f"  {invocation} providers\n"
-            "      Show configured providers and whether their credential env vars are present.\n\n"
+            "      Show configured providers and credential status from the configured source.\n\n"
             f"  {invocation} credentials refresh\n"
             "      Explicitly refresh the private provider credential cache.\n\n"
             f"  {invocation} healthcheck\n"

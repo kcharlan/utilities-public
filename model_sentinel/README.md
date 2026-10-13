@@ -19,6 +19,7 @@ The CLI is implemented and includes:
   Catalog views
 - `providers` config inspection
 - `healthcheck` runtime/config validation
+- explicit `credentials refresh` acquisition into a private persistent cache
 - text, JSON, and Markdown output for scan, history, provider, and healthcheck
   reports; the cross-provider `changes` command supports text and JSON
 - smart report formatting: field-type-aware rendering, profile-aware price
@@ -108,13 +109,18 @@ The standalone removes the repo dependency for normal execution. The
 repo-provided `launchd` installer is separate and embeds the checkout path when
 it is seeded; see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
 
-The standalone install does not remove the requirement that provider
-credentials exist in the process environment. If your credentials come from a
-sourced secrets script, you still need either:
+The standalone supports both environment credentials and a private persistent
+credential file. In the default environment mode, credentials from a sourced
+secrets script still need either:
 
 - a shell session that already sourced that file
 - a small wrapper script that sources it and then execs the standalone command
 - or `~/.model_sentinel/launchd.env` for LaunchAgent runs
+
+In file mode, explicitly refresh the cache first; subsequent scans need neither
+the secrets shell nor the refresh mount. Installation preserves existing config
+and bootstrap files. It does not migrate settings or remove old bootstrap lines;
+review those files manually when changing credential modes.
 
 ## Configuration
 
@@ -168,7 +174,7 @@ After running setup:
 
 1. review and edit `~/.model_sentinel/providers.env`
 2. review and edit `~/.model_sentinel/settings.env`
-3. start the secrets shell so the required credential env vars are present
+3. export the required credential env vars, or configure and refresh file credentials below
 4. run `./model-sentinel healthcheck`
 5. create the first baseline with `./model-sentinel scan --save`
 
@@ -205,20 +211,91 @@ schema mixes per-token token rates with media prices in other units. Abacus
 therefore uses the generic fallback profile until its authenticated payload is
 validated and a dedicated field-rule registry is added.
 
-## Required Credential Environment Variables
+## Provider Credentials
 
 The initial providers expect:
 
 - `OPENROUTER_AI_CREDS`
 - `ABACUS_AI_CREDS`
 
-Before a scan, Model Sentinel validates the selected providers' credential
-environment variables and halts before any network request if one is missing.
+Each provider's `API_KEY_ENV` names its credential in either source mode.
+Before a scan, Model Sentinel validates the selected providers' credentials
+and halts before any network request if one is missing or invalid.
 `healthcheck` reports missing credentials for enabled providers. The local
 `providers`, `history`, and `changes` queries do not require provider
 credentials.
 
-In your workflow that means the secrets shell alias must already have been invoked before running the utility or any automation around it.
+The default `environment` mode reads the calling process environment, so load
+your secrets shell before manual runs or supply credentials in the scheduled
+runner's environment. It remains supported without a cache.
+
+### Persistent File Credentials
+
+Configure these four settings in the runtime home's `settings.env`:
+
+| Setting | Default / meaning |
+| --- | --- |
+| `MODEL_SENTINEL_CREDENTIAL_SOURCE` | `environment`; choose `environment` or `file` |
+| `MODEL_SENTINEL_CREDENTIAL_FILE` | `credentials.env`; persistent cache destination, must not be blank |
+| `MODEL_SENTINEL_CREDENTIAL_REFRESH_FILE` | blank; static input file or 1Password mounted pipe used only by explicit refresh |
+| `MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS` | `5`; positive finite seconds bounding reader communication, not the entire refresh operation |
+
+Paths expand `~`; relative paths resolve under the runtime home. Keep the cache
+outside every Git checkout. Its immediate parent must be private (`0700`) and
+the regular, nonsymlink cache file must be `0600`. Refresh creates or secures
+the runtime home to `0700` and publishes the cache with mode `0600`. An alternate
+cache parent must already exist with mode `0700`; unsafe caches are rejected.
+The refresh input and
+cache destination must be different files, including when hardlinked.
+
+The cache is **plaintext at rest**. File permissions limit access but do not
+encrypt it. Use file mode only if that tradeoff fits your local security needs.
+
+The refresh input is UTF-8 assignment text, bounded to 65,536 bytes, using one
+`KEY=VALUE` per line. Blank lines and full-line `#` comments are allowed. Names
+must be identifiers (`[A-Za-z_][A-Za-z0-9_]*`), with no duplicate names. Values
+may be unquoted or single/double quoted strings with Python-style escapes.
+Whitespace around assignments is ignored; quoted value whitespace is retained.
+No `export`, `source`, multiline strings, continuations, shell expansion, or
+command execution occurs. Shell-looking text is literal. Required values must
+be nonempty printable ASCII, not whitespace-only or unresolved
+`op://` references. A malformed input or failed refresh preserves the old cache.
+
+For a mounted refresh source, set its path and run manually:
+
+```bash
+./model-sentinel credentials refresh
+./model-sentinel credentials refresh --provider synthetic_disabled
+```
+
+Replace the synthetic provider ID with one configured in `providers.env`.
+Default refresh selects enabled providers; explicit selection can include a
+disabled provider. Only configured credential names are stored. A selected
+refresh replaces selected values, retains unselected configured cached values,
+and drops names no longer referenced by any configured provider. Rename an
+`API_KEY_ENV` only with a matching provider config edit and refresh. Renaming a
+mount changes the refresh setting, not the stable cache destination.
+
+Alternatively, after your existing secrets shell has loaded credentials, run
+this optional human step:
+
+```bash
+./model-sentinel credentials refresh --from-environment
+```
+
+This needs no refresh path and launches no shell. Refresh works while source
+mode is still `environment`, so populate and check the cache before switching
+to `file`. Then run `healthcheck` and `scan --save`. File mode uses the cache
+exclusively and does not merge inherited environment credentials. Scans never
+read the mount or initiate a refresh. A mounted refresh may prompt through
+1Password itself; there is no automatic desktop launch or login retry.
+
+Refresh manually after rotating credentials. There is no automatic expiry or
+refresh hook/job. `providers` and `healthcheck` report **cache last updated**
+from the file modification time, not provider validity or proof that every
+retained key was re-extracted. A future timestamp warns instead of showing a
+negative age; missing disabled-provider keys do not fail healthcheck. Refresh
+returns `0` on success and `2` on safe errors; healthcheck retains `0`/`1`.
 
 ## Commands
 
@@ -371,7 +448,8 @@ are not required to browse saved history.
 ./model-sentinel providers
 ```
 
-This lists configured providers and useful status fields, including whether each credential env var is currently present.
+This lists configured providers, credential source/status, and cache last
+updated when file mode is selected; credential values are never reported.
 
 ### Validate Runtime Readiness
 
@@ -385,7 +463,7 @@ This validates:
 - `~/.model_sentinel/providers.env`
 - `~/.model_sentinel/settings.env`
 - all provider definitions
-- credential env vars for enabled providers
+- credentials for enabled providers from the selected source
 - runtime directories
 - SQLite readiness
 
@@ -405,6 +483,8 @@ Built-in help is intended to be complete:
 ./model-sentinel browse --help
 ./model-sentinel providers --help
 ./model-sentinel healthcheck --help
+./model-sentinel credentials --help
+./model-sentinel credentials refresh --help
 ```
 
 ## Report Formatting
@@ -584,11 +664,12 @@ That creates or preserves:
 
 Then:
 
-1. edit `~/.model_sentinel/launchd.env` to source your secrets bootstrap or export the required credential env vars
+1. choose environment credentials in `~/.model_sentinel/launchd.env`, or configure file mode in `settings.env` and explicitly refresh the private cache; keep unrelated exports in `launchd.env`
 2. edit `~/.model_sentinel/install_launchd.sh` if you want to change the schedule or command
 3. run `~/.model_sentinel/install_launchd.sh install`
 
-From then on, rerun the runtime-home installer after edits to reload the LaunchAgent.
+Rerun the runtime-home installer after schedule or command edits to reload the
+LaunchAgent. Edits to `launchd.env` take effect on the next run without reload.
 
 If your secrets bootstrap changes `PATH`, make sure `python3` still resolves to the interpreter you use for manual runs. In this environment that meant exporting `/opt/homebrew/bin` before sourcing the secrets file.
 
