@@ -13,6 +13,7 @@ from .__init__ import __version__
 from .build_info import format_build_info, runtime_entrypoint
 from .config import (
     ConfigError,
+    LoadedConfig,
     default_runtime_home,
     describe_duplicate_labels,
     load_config,
@@ -20,6 +21,7 @@ from .config import (
     validate_selected_providers,
 )
 from .conditional_pricing import ComparisonIdentity
+from .credentials import refresh_credentials
 from .diffing import compare_models
 from .models import BaselineInfo, ModelDelta, NormalizedModel, ProviderScanResult
 from .normalize import normalize_models
@@ -53,7 +55,7 @@ from .storage import Store
 from .time_utils import local_today, now_utc
 
 
-COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse"}
+COMMANDS = {"scan", "history", "changes", "providers", "healthcheck", "browse", "credentials"}
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_config(project_root)
     except ConfigError as exc:
         parser.exit(status=2, message=f"{exc}\n")
+
+    if args.command == "credentials":
+        return run_credentials_refresh(args=args, loaded=loaded)
 
     if args.command == "browse":
         try:
@@ -150,6 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
             "      Filter the saved model list by partial match on model ID or display name.\n\n"
             f"  {invocation} providers\n"
             "      Show configured providers and whether their credential env vars are present.\n\n"
+            f"  {invocation} credentials refresh\n"
+            "      Explicitly refresh the private provider credential cache.\n\n"
             f"  {invocation} healthcheck\n"
             "      Validate config, credentials, and runtime readiness.\n\n"
             f"  {invocation} changes --since 2026-03-01\n"
@@ -173,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"{invocation} {__version__} {format_build_info(full_hash=True)}",
     )
     subparsers = parser.add_subparsers(dest="command", required=False)
+
+    credentials_parser = subparsers.add_parser("credentials", help="Manage persistent provider credentials.")
+    credential_commands = credentials_parser.add_subparsers(dest="credentials_command", required=True)
+    refresh_parser = credential_commands.add_parser(
+        "refresh", help="Explicitly refresh the private credential cache.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(f"examples:\n  {invocation} credentials refresh\n"
+                f"  {invocation} credentials refresh --provider synthetic_disabled\n"
+                f"  {invocation} credentials refresh --from-environment\n"),
+    )
+    refresh_parser.add_argument("--provider", help="refresh one configured provider, including disabled providers")
+    refresh_parser.add_argument("--from-environment", action="store_true", help="read inherited credentials instead of the refresh mount")
 
     scan_parser = subparsers.add_parser(
         "scan",
@@ -287,6 +306,23 @@ def build_parser() -> argparse.ArgumentParser:
     healthcheck_parser.add_argument("--format", choices=("text", "json", "markdown"), default="text")
 
     return parser
+
+
+def run_credentials_refresh(*, args: argparse.Namespace, loaded: LoadedConfig) -> int:
+    try:
+        snapshot = refresh_credentials(
+            loaded.settings, loaded.providers, runtime_paths=loaded.runtime_paths,
+            provider_id=args.provider, from_environment=args.from_environment, environ=os.environ,
+        )
+    except ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    selected = validate_selected_providers(loaded.providers, provider_id=args.provider)
+    source = "environment" if args.from_environment else "refresh mount"
+    print(f"Destination: {snapshot.path}\nSource: {source}\n"
+          f"Providers: {', '.join(provider.provider_id for provider in selected)}\n"
+          f"Credential count: {len(snapshot.values)}")
+    return 0
 
 
 def run_browse_command(*, args: argparse.Namespace, loaded) -> int:

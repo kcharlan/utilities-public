@@ -20,6 +20,326 @@ OTHER = "SYNTHETIC_NOT_A_REAL_SECRET_disabled"
 KEY = "SYNTHETIC_ENABLED_KEY"
 
 
+def refresh(config, *, settings=None, providers=None, provider_id=None, values=None, from_environment=True):
+    return credentials.refresh_credentials(
+        settings or config.settings, config.providers if providers is None else providers,
+        runtime_paths=config.runtime_paths, provider_id=provider_id,
+        from_environment=from_environment, environ=values if values is not None else {KEY: SECRET},
+    )
+
+
+def test_refresh_populates_rotates_filters_and_preserves_disabled(config):
+    snapshot = refresh(config, values={KEY: SECRET, "UNRELATED_KEY": OTHER, "SYNTHETIC_DISABLED_KEY": OTHER})
+    assert snapshot.values == {KEY: SECRET}
+    path = snapshot.path
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert abs(snapshot.updated_at.timestamp() - path.stat().st_mtime) <= 0.000001
+    assert resolve(config).values == {KEY: SECRET}
+    refresh(config, provider_id="synthetic_disabled", values={"SYNTHETIC_DISABLED_KEY": OTHER})
+    refresh(config, values={KEY: SECRET + "_rotated"})
+    assert resolve(config).values == {KEY: SECRET + "_rotated", "SYNTHETIC_DISABLED_KEY": OTHER}
+    assert "UNRELATED_KEY" not in path.read_text()
+
+
+def test_refresh_provider_rename_removal_and_shared_key(config):
+    refresh(config)
+    refresh(config, provider_id="synthetic_disabled", values={"SYNTHETIC_DISABLED_KEY": OTHER})
+    enabled = next(p for p in config.providers if p.enabled)
+    renamed = replace(enabled, credential_env_var="SYNTHETIC_RENAMED_KEY")
+    refresh(config, providers=(renamed,), values={"SYNTHETIC_RENAMED_KEY": SECRET})
+    assert resolve(config, providers=(renamed,)).values == {"SYNTHETIC_RENAMED_KEY": SECRET}
+    assert "SYNTHETIC_DISABLED_KEY" not in config.settings.credential_file.read_text()
+    assert KEY not in config.settings.credential_file.read_text()
+    shared = replace(renamed, provider_id="synthetic_shared", enabled=True)
+    assert refresh(config, providers=(renamed, shared), values={"SYNTHETIC_RENAMED_KEY": OTHER}).values == {"SYNTHETIC_RENAMED_KEY": OTHER}
+
+
+@pytest.mark.parametrize("suffix", ["'", '"', "\\", "=", "#", "$", " '\\=#$\" "])
+def test_refresh_values_round_trip(config, suffix):
+    refresh(config, values={KEY: SECRET + suffix})
+    assert resolve(config).values == {KEY: SECRET + suffix}
+
+
+def test_refresh_from_environment_ignores_nonexistent_mount(config):
+    settings = replace(config.settings, credential_source="environment", credential_refresh_file=config.runtime_paths.runtime_home / "absent_mount")
+    assert refresh(config, settings=settings).values == {KEY: SECRET}
+
+
+def test_refresh_reads_mount_and_drops_unreferenced_cache_keys(config):
+    seed(config, f"{KEY}='{SECRET}'\nUNREFERENCED_KEY='{OTHER}'\n".encode())
+    source = config.runtime_paths.runtime_home / "synthetic_mount"
+    source.write_text(f"{KEY}={OTHER!r}\nUNRELATED_KEY={SECRET!r}\n")
+    source.chmod(0o600)
+    result = refresh(config, settings=replace(config.settings, credential_refresh_file=source), from_environment=False)
+    assert result.values == {KEY: OTHER}
+    assert resolve(config).values == {KEY: OTHER}
+    assert "UNREFERENCED" not in result.path.read_text()
+
+
+def test_refresh_rejects_invalid_retained_credential(config):
+    path = seed(config, f"{KEY}={SECRET!r}\nSYNTHETIC_DISABLED_KEY='op://SYNTHETIC_NOT_A_REAL_SECRET/item/key'\n".encode())
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    with pytest.raises(credentials.CredentialError, match="retained"):
+        refresh(config)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("kind", ["missing", "shared", "symlink", "git"])
+def test_refresh_custom_parent_is_never_created_or_hardened(config, tmp_path, kind):
+    parent = tmp_path / "custom_parent"
+    if kind != "missing":
+        parent.mkdir(mode=0o755 if kind == "shared" else 0o700)
+    if kind == "git":
+        (parent / ".git").write_text("synthetic Git marker")
+    path = parent / "synthetic_credentials.env"
+    if kind == "symlink":
+        target = parent / "synthetic_target"
+        target.write_text("SYNTHETIC_NOT_A_REAL_SECRET untouched")
+        path.symlink_to(target)
+    before_mode = parent.stat().st_mode if parent.exists() else None
+    with pytest.raises(credentials.CredentialError):
+        refresh(config, settings=replace(config.settings, credential_file=path))
+    assert (parent.stat().st_mode if parent.exists() else None) == before_mode
+    if kind == "symlink":
+        assert target.read_text() == "SYNTHETIC_NOT_A_REAL_SECRET untouched"
+    else:
+        assert not path.exists()
+
+
+def test_refresh_creates_and_hardens_only_runtime_parent(config):
+    parent = config.runtime_paths.runtime_home
+    parent.chmod(0o755)
+    unrelated = parent / "synthetic_unrelated"
+    unrelated.mkdir(mode=0o755)
+    refresh(config)
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(unrelated.stat().st_mode) == 0o755
+    missing = parent.parent / "synthetic_missing_runtime"
+    settings = replace(config.settings, runtime_home=missing, credential_file=missing / "credentials.env")
+    runtime_paths = replace(config.runtime_paths, runtime_home=missing)
+    result = credentials.refresh_credentials(settings, config.providers, runtime_paths=runtime_paths, provider_id=None, from_environment=True, environ={KEY: SECRET})
+    assert result.values == {KEY: SECRET}
+    assert stat.S_IMODE(missing.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "mode"])
+def test_refresh_rejects_unsafe_sibling_lock(config, kind):
+    path = seed(config)
+    lock = path.parent / (path.name + ".lock")
+    if kind == "symlink":
+        lock.symlink_to(path)
+    elif kind == "fifo":
+        os.mkfifo(lock, 0o600)
+    else:
+        lock.write_text("SYNTHETIC_NOT_A_REAL_SECRET unsafe lock")
+        lock.chmod(0o644)
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    with pytest.raises(credentials.CredentialError):
+        refresh(config)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_refresh_publishes_validated_canonical_path_after_alias_changes(config, tmp_path, monkeypatch):
+    safe = tmp_path / "safe"
+    safe.mkdir(mode=0o700)
+    reports = config.runtime_paths.report_dir
+    reports.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(safe, target_is_directory=True)
+    settings = replace(config.settings, credential_file=alias / "credentials.txt")
+    original_guard = credentials._validated_cache_path
+    def retarget(settings, paths):
+        validated = original_guard(settings, paths)
+        alias.unlink()
+        alias.symlink_to(reports, target_is_directory=True)
+        return validated
+    monkeypatch.setattr(credentials, "_validated_cache_path", retarget)
+    result = refresh(config, settings=settings)
+    assert result.path == safe / "credentials.txt"
+    assert not (reports / "credentials.txt").exists()
+    assert not (reports / "credentials.txt.lock").exists()
+
+
+def test_refresh_releases_lock_after_failed_write_and_handles_short_writes(config, monkeypatch):
+    seed(config)
+    real_write = os.write
+    def failed_write(*args, **kwargs):
+        raise OSError("SYNTHETIC_NOT_A_REAL_SECRET write failure")
+    with monkeypatch.context() as fault:
+        fault.setattr(os, "write", failed_write)
+        with pytest.raises(credentials.CredentialError):
+            refresh(config, values={KEY: OTHER})
+    with monkeypatch.context() as short:
+        short.setattr(os, "write", lambda fd, data: real_write(fd, data[:7]))
+        refresh(config, values={KEY: OTHER})
+    assert resolve(config).values == {KEY: OTHER}
+
+
+def test_refresh_committed_cache_is_successful_despite_cleanup_close_error(config, monkeypatch):
+    real_close, real_replace = os.close, os.replace
+    committed = False
+    def replace_and_mark(*args, **kwargs):
+        nonlocal committed
+        real_replace(*args, **kwargs)
+        committed = True
+    def close_then_error(fd):
+        real_close(fd)
+        if committed:
+            raise OSError("SYNTHETIC_NOT_A_REAL_SECRET cleanup failure")
+    with monkeypatch.context() as fault:
+        fault.setattr(os, "replace", replace_and_mark)
+        fault.setattr(os, "close", close_then_error)
+        snapshot = refresh(config, values={KEY: OTHER})
+    assert snapshot.values == {KEY: OTHER}
+    assert resolve(config).values == {KEY: OTHER}
+
+
+@pytest.mark.parametrize("providers,provider_id", [(None, "unknown_synthetic"), ((), None)])
+def test_refresh_selection_failure_precedes_acquisition(config, monkeypatch, providers, provider_id):
+    def forbidden(*args, **kwargs):
+        pytest.fail("acquired before selection validation")
+    monkeypatch.setattr(credentials, "read_refresh_values", forbidden)
+    with pytest.raises(credentials.ConfigError):
+        refresh(config, providers=providers, provider_id=provider_id, from_environment=False)
+    assert not config.settings.credential_file.exists()
+
+
+def test_refresh_then_report_dir_change_rejects_resolution(config, tmp_path):
+    parent = tmp_path / "private_cache"
+    parent.mkdir(mode=0o700)
+    path = parent / "credentials.txt"
+    settings_path = config.runtime_paths.settings_env
+    settings_path.write_text(settings_path.read_text() + f"\nMODEL_SENTINEL_CREDENTIAL_FILE={path}\n")
+    original = load_config(config.project_root)
+    refresh(original)
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    settings_path.write_text(settings_path.read_text() + f"\nMODEL_SENTINEL_REPORT_DIR={parent}\n")
+    changed = load_config(config.project_root)
+    with pytest.raises(credentials.CredentialError, match="location"):
+        resolve(changed)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("target", ["providers.env", "settings.env", "model_sentinel.sqlite3", "launchd.env", "install_launchd.sh", "run_model_sentinel_launchd.sh", "local.model_sentinel.scan.plist", "reports/credentials.txt", "logs/credentials.txt", "debug/credentials.txt"])
+def test_refresh_rejects_reserved_config_and_report_paths(config, target):
+    path = config.runtime_paths.runtime_home / target
+    path.parent.mkdir(exist_ok=True, mode=0o700)
+    if target == "model_sentinel.sqlite3":
+        path = config.runtime_paths.database_path
+    before = path.read_bytes() if path.exists() else None
+    with pytest.raises(credentials.CredentialError, match="location"):
+        refresh(config, settings=replace(config.settings, credential_file=path))
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+@pytest.mark.parametrize("failure", ["missing_key", "invalid_key", "absent_source", "timeout", "malformed_cache", "unsafe_cache", "same_path", "same_inode", "oversized", "write", "fsync", "replace", "interrupt"])
+def test_refresh_failures_preserve_cache(config, monkeypatch, failure):
+    path = seed(config)
+    settings = config.settings
+    values = {KEY: OTHER}
+    from_environment = True
+    error = credentials.CredentialError
+    if failure == "missing_key":
+        values = {}
+    elif failure == "invalid_key":
+        values = {KEY: "op://SYNTHETIC_NOT_A_REAL_SECRET/item/key"}
+    elif failure in {"absent_source", "timeout"}:
+        source = path.parent / "synthetic_mount"
+        if failure == "timeout":
+            os.mkfifo(source, 0o600)
+        settings = replace(settings, credential_refresh_file=source, credential_refresh_timeout_seconds=0.05)
+        from_environment = False
+    elif failure == "malformed_cache":
+        path.write_text("SYNTHETIC_NOT_A_REAL_SECRET invalid assignments\n")
+    elif failure == "unsafe_cache":
+        path.chmod(0o644)
+        settings = replace(settings, credential_source="environment")
+    elif failure in {"same_path", "same_inode"}:
+        source = path
+        if failure == "same_inode":
+            source = path.parent / "synthetic_hardlink"
+            os.link(path, source)
+        settings = replace(settings, credential_refresh_file=source)
+        from_environment = False
+    elif failure == "oversized":
+        values = {KEY: SECRET + "x" * 65536}
+    elif failure in {"write", "fsync", "replace", "interrupt"}:
+        def fail(*args, **kwargs):
+            if failure == "interrupt":
+                raise KeyboardInterrupt
+            raise OSError("SYNTHETIC_NOT_A_REAL_SECRET must not escape")
+        monkeypatch.setattr(os, "replace" if failure == "interrupt" else failure, fail)
+        if failure == "interrupt":
+            error = KeyboardInterrupt
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    with pytest.raises(error) as raised:
+        refresh(config, settings=settings, values=values, from_environment=from_environment)
+    assert SECRET not in str(raised.value)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+
+
+def test_refresh_serializes_writers_without_losing_updates(config, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+    def acquired(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return {KEY: SECRET}
+    monkeypatch.setattr(credentials, "read_refresh_values", acquired)
+    settings = replace(config.settings, credential_refresh_file=config.runtime_paths.runtime_home / "synthetic_mount")
+    def first():
+        try:
+            refresh(config, settings=settings, from_environment=False)
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=first)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(credentials.CredentialError, match="already running"):
+            refresh(config, provider_id="synthetic_disabled", values={"SYNTHETIC_DISABLED_KEY": OTHER})
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive() and not errors
+    refresh(config, provider_id="synthetic_disabled", values={"SYNTHETIC_DISABLED_KEY": OTHER})
+    assert resolve(config).values == {KEY: SECRET, "SYNTHETIC_DISABLED_KEY": OTHER}
+    path = config.settings.credential_file
+    assert (path.parent / (path.name + ".lock")).stat().st_mode & 0o777 == 0o600
+
+
+def test_refresh_readers_observe_complete_old_or_new_cache(config, monkeypatch):
+    seed(config)
+    ready, release = threading.Event(), threading.Event()
+    real_replace = os.replace
+    errors = []
+    def held_replace(*args, **kwargs):
+        ready.set()
+        assert release.wait(5)
+        return real_replace(*args, **kwargs)
+    monkeypatch.setattr(os, "replace", held_replace)
+    def writer():
+        try:
+            refresh(config, values={KEY: OTHER})
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=writer)
+    worker.start()
+    try:
+        assert ready.wait(5)
+        for _ in range(20):
+            assert resolve(config).values == {KEY: SECRET}
+        release.set()
+        while worker.is_alive():
+            assert resolve(config).values in ({KEY: SECRET}, {KEY: OTHER})
+    finally:
+        release.set()
+        worker.join(5)
+    assert not errors
+    assert resolve(config).values == {KEY: OTHER}
+
+
 @pytest.fixture
 def config(tmp_path, monkeypatch):
     home = write_credential_config(tmp_path)
