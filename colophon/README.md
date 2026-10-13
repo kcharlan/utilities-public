@@ -1,5 +1,11 @@
 # Colophon
 
+The maintained `~/Library/Scripts/colophon` deployment now uses
+[Colophon Native](../colophon-native/README.md). This Python implementation
+remains available in source; do not copy its launcher over the native command
+through the fleet deployment workflow. See the
+[deployment guide](../docs/local_deployment_sync.md#native-colophon-deployment).
+
 ## Name
 
 A colophon records who made a book, when, where and how. Colophon applies that

@@ -90,7 +90,6 @@ AUDIT_STATUS=
 
 typeset -a COPY_MAPPINGS=(
   'abacus usage/de-abacus.py|de-abacus.py'
-  'colophon/colophon|colophon'
   'div_conv/div_conv|div_conv'
   'dloc/dloc|dloc'
   'docker/docker-disk-compact/docker-disk-compact.zsh|docker-disk-compact.zsh'
@@ -234,6 +233,12 @@ new_fixture() {
     "$FIXTURE_HOME/.config" \
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon_native.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
+  local native_input
+  for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h; do
+    write_synthetic_file "$FIXTURE_REPO/colophon-native/$native_input" "native $native_input"
+    chmod 644 "$FIXTURE_REPO/colophon-native/$native_input"
+  done
 
   local mapping source_relative deployed_name source_file deployed_file
   for mapping in "${COPY_MAPPINGS[@]}"; do
@@ -303,6 +308,7 @@ new_fixture() {
   git -C "$FIXTURE_REPO" config user.email "audit-tester@example.invalid"
   git -C "$FIXTURE_REPO" add .
   git -C "$FIXTURE_REPO" commit -qm "synthetic passing baseline"
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/native-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   local tracked_file
   for project in "${HOME_PROJECTS[@]}"; do
@@ -1527,5 +1533,35 @@ test_timeline_deployment() {
   assert_contains "$AUDIT_STDERR" 'ai-model-timeline.html source is pending deletion'
 }
 test_timeline_deployment
+
+test_native_colophon_deployment() {
+  new_fixture
+  run_audit
+  assert_status 0 "$AUDIT_STATUS" 'native passing baseline'
+  assert_contains "$AUDIT_STDOUT" 'OK: colophon native deployment'
+  print 'synthetic binary drift' >> "$FIXTURE_SCRIPTS/colophon"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'native binary drift'
+  assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
+
+  new_fixture
+  print 'synthetic source drift' >> "$FIXTURE_REPO/colophon-native/src/main.c"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'native source drift'
+  assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
+
+  new_fixture
+  rm -- "$FIXTURE_SCRIPTS/.colophon-native.json"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'native receipt missing'
+  assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
+
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached colophon-native/src/main.c
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'native source removed from index'
+  assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
+}
+test_native_colophon_deployment
 
 print -- "check_local_deployments tests: PASS"

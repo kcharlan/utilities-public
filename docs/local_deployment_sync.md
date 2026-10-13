@@ -203,11 +203,70 @@ Run the isolated installer lifecycle tests with:
 node --test tools/tests/deploy_ai_model_timeline.test.mjs
 ```
 
+## Native Colophon deployment
+
+`~/Library/Scripts/colophon` is a generated macOS executable built from
+`colophon-native/`, replacing the Python direct-copy mapping. The Python project
+remains available as source, but the fleet audit no longer compares its launcher
+to this installed command. Runtime defaults remain `~/.codex` and `~/.colophon`;
+deployment does not read or migrate session data or editable runtime state.
+
+Validate with the native project's full suite and the root deployment suites,
+then stage the reviewed native build inputs. From the repository root:
+
+```sh
+node tools/deploy_colophon_native.mjs --dry-run
+node tools/deploy_colophon_native.mjs
+node tools/deploy_colophon_native.mjs --audit
+zsh tools/check_local_deployments.zsh
+```
+
+The installer requires regular stage-zero tracked build inputs whose working
+bytes and modes match the index. It builds an explicitly selected release in
+fresh temporary space using local sources/assets, Apple clang and installed
+SQLite; no venv, dependency installation or existing build binary is copied.
+The scripts destination defaults to `~/Library/Scripts`, with
+`UTILITIES_SCRIPTS_DIR` or `--scripts-dir DIR` overrides. `--repo DIR` selects
+another checkout. Destinations inside the repository or through user-created
+directory links are refused. Dry-run validates without building or writing.
+
+Before replacement, the previous command and optional native receipt are saved
+under `~/.utilities-deploy-backups/colophon-native/copy-*/`, with directory mode
+0700 and backup files 0600. Backup metadata records prior bytes and command mode.
+The candidate is checked as a native executable, atomically installed at mode
+0755, and exercised directly with `--version` and `--help`. If activation or
+receipt publication fails, the old command and receipt are restored. Backups are
+retained; no other commands or runtime state are changed.
+
+The private mode-0600 `~/Library/Scripts/.colophon-native.json` receipt binds the
+installed binary digest/mode to a fingerprint of all admitted tracked native
+build inputs. The read-only audit uses the fleet's existing validated index
+snapshot, checks current source and installed bytes/modes against that receipt,
+and never rebuilds or executes the installed command. It verifies consistency,
+not reproducibility across compiler/SDK upgrades or cryptographic authenticity.
+
+Roll back with the exact backup directory printed by the installer:
+
+```sh
+node tools/deploy_colophon_native.mjs --rollback /path/to/colophon-native/copy-backup
+```
+
+Rollback validates the complete backup before replacement and backs up the
+current command first. It restores the prior command mode and receipt, including
+a previous Python launcher without a native receipt. The audit reports drift
+until the native version matching current source is deployed again.
+
+Installer lifecycle and fleet integration fixtures use invented data:
+
+```sh
+node --test tools/tests/deploy_colophon_native.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+zsh tools/tests/test_check_local_deployments.zsh
+```
+
 ## `~/Library/Scripts`
 
 These files are direct copies of tracked source and should remain byte-for-byte identical:
 
-- `colophon` <- `colophon/colophon`
 - `de-abacus.py` <- `abacus usage/de-abacus.py`
 - `div_conv` <- `div_conv/div_conv`
 - `dloc` <- `dloc/dloc`
