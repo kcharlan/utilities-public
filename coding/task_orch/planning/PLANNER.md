@@ -53,8 +53,8 @@ separate worker agent (cc-sonnet, lower reasoning) will execute.
 
 ## Plan format
 
-Every plan must follow the project's implementation plan conventions (see
-global CLAUDE.md). Additionally, add this metadata header:
+Every plan must follow the implementation plan conventions (see "Implementation
+plans" in `~/.claude/shared/core.md`). Additionally, add this metadata header:
 
 ```
 ---
