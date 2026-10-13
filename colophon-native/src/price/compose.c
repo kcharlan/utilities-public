@@ -97,8 +97,40 @@ static __int128 positive(JScalar v) {
   OptionalTokens n = number(v);
   return n.present && n.value > 0 ? n.value : 0;
 }
+typedef struct { uint64_t line; bool on; } PriorityStart;
+typedef struct { PriorityStart *items; size_t count, capacity; } PriorityStarts;
+/* CodexBar v0.74.1 processFastLine: settings persist until replaced; each
+ * task_started records priority for its turn id (empty when absent). */
+static Err thread_priority_starts(Arena *a, const LogRecord *r, Omap *out) {
+  bool on = false;
+  for (size_t i = 0; i < r->token_stream.count; i++) {
+    const TokenObservation *o = &r->token_stream.observations[i];
+    if (o->tag == TOKEN_P) { on = o->priority; continue; }
+    if (o->tag != TOKEN_S) continue;
+    Str key = STR_LIT("");
+    if (o->turn_id.n) TRY(canon(a, o->turn_id, &key));
+    PriorityStarts *starts = omap_get(out, key);
+    if (!starts) {
+      TRY(alloc(a, 1, sizeof *starts, _Alignof(PriorityStarts), (void **)&starts));
+      TRY(omap_put(out, key, starts));
+    }
+    PriorityStart start = {o->line, on};
+    TRY(record_append(a, (void **)&starts->items, &starts->count,
+                      &starts->capacity, sizeof start, &start));
+  }
+  return ERR_SUCCESS;
+}
+/* priorityTurnIDs.contains(turnID ?? "") when each row is appended. */
+static bool thread_priority_at(const Omap *by_turn, Str key, uint64_t line) {
+  const PriorityStarts *starts = omap_get(by_turn, key);
+  bool on = false;
+  for (size_t i = 0; starts && i < starts->count && starts->items[i].line < line; i++)
+    on = starts->items[i].on;
+  return on;
+}
 static Err append(Corpus *c, SessionModel *s, const Omap *display,
-                  const Omap *priority, Omap *normalizations, UsageUnit u) {
+                  const Omap *priority, const Omap *thread_priority,
+                  Omap *normalizations, UsageUnit u) {
   Str identity = {0};
   if (u.turn_id.p)
     TRY(canon(&c->usage_arena, u.turn_id, &identity));
@@ -116,6 +148,8 @@ static Err append(Corpus *c, SessionModel *s, const Omap *display,
   u.priority = u.turn_id.p ? omap_get(priority, identity) : NULL;
   u.priority_fields = u.priority ? PRIORITY_FULL : 0;
   u.priority_tier = u.priority != NULL;
+  if (!u.priority && thread_priority_at(thread_priority, identity.n ? identity : STR_LIT(""), u.line))
+    u.priority_tier = true;
   TRY(normalize_codex_model_memo(&c->usage_arena,normalizations,u.model_raw,&u.model));
   if (s->unit_count == s->unit_capacity) {
     size_t capacity = s->unit_capacity ? s->unit_capacity * 2 : 8;
@@ -522,7 +556,11 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
     SessionModel *s = p->value;
     Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
     FileMirrors *files = NULL;
+    Omap *thread_priority = NULL;
     error = alloc(&c->usage_arena, s->record_count, sizeof *files, _Alignof(FileMirrors), (void **)&files);
+    if (error.code) goto session_done;
+    error = alloc(&c->usage_arena, s->record_count, sizeof *thread_priority,
+                  _Alignof(Omap), (void **)&thread_priority);
     if (error.code) goto session_done;
     Str session;
     error = canon(&c->usage_arena, s->id, &session);
@@ -540,6 +578,8 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
     for (size_t file = 0; file < s->record_count; file++) {
       omap_destroy(&file_responses);
       const LogRecord *r = s->records[file];
+      error = thread_priority_starts(&c->usage_arena, r, &thread_priority[file]);
+      if (error.code) goto session_done;
       Str request_session = token_model_trim(r->meta.request_session_id);
       if (!request_session.n)
         request_session = s->id;
@@ -639,7 +679,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
                           .output = ledger.usage.output,
                           .reasoning = {ledger.has_reasoning, ledger.usage.reasoning},
                           .source = STR_LIT("record")};
-        error = append(c, s, &display, &indexes, &normalizations, unit);
+        error = append(c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
         if (error.code)
           goto session_done;
       }
@@ -727,7 +767,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
             .output = row->tokens.output,
             .reasoning = {row->tokens.has_reasoning, row->tokens.reasoning},
             .source = row->bare ? STR_LIT("bare") : STR_LIT("token_count")};
-        error = append(c, s, &display, &indexes, &normalizations, unit);
+        error = append(c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
         if (error.code)
           break;
       }
@@ -742,6 +782,9 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
         goto session_done;
     }
   session_done:
+    if (thread_priority)
+      for (size_t file = 0; file < s->record_count; file++)
+        omap_destroy(&thread_priority[file]);
     if (!error.code)
       error = compose_aggregate_session(c, s);
     omap_destroy(&display);

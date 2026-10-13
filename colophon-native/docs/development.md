@@ -29,8 +29,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 167
-C units, 22 collected CLI/integration cases and two Chromium cases.
+`make test` runs the stable-sort guard, ten asset digests, all 176
+C units, 23 collected CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
@@ -89,3 +89,9 @@ An already-owned repeated snapshot must preserve a different response's pending
 mirror; otherwise it consumes that request's pairing slot and leaves its real
 snapshot counted again. Keep response ownership canonical and share its key
 builder with cross-copy aliases.
+
+Priority lesson: a final per-turn priority flag loses the state at earlier rows
+when the same turn resumes under different settings. Keep file-local start
+history indexed by turn and line, and pass it to both compose passes. Settings
+changes take effect at the next start; turnless starts and rows share the empty
+id. Preserve trace/sticky evidence independently from the thread setting.

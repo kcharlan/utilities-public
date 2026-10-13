@@ -1,7 +1,7 @@
 # Standalone validation
 
-Run `make test` for all 167 C units, fresh synthetic CLI and integration
-checks (22 collected cases), two Chromium browser cases, and local
+Run `make test` for all 176 C units, fresh synthetic CLI and integration
+checks (23 collected cases), two Chromium browser cases, and local
 asset/stable-sort guards (ten asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.
@@ -14,6 +14,10 @@ session-wide response counts, and cross-copy paired/record/observation aliases.
 Already-owned repeated snapshots preserve another response's pending partner.
 The CLI cases verify mirrored requests count once while unmatched snapshots in
 the same turn remain counted, including later exact duplicates without totals.
+Thread-settings tests cover trimmed tiers, invalid/missing tiers and timestamps,
+cache round trips, persistence and same-turn resumes, turnless starts, ledger
+rows and file-local bare rows. The CLI checks the resulting Fast multiplier cost
+and priority bucket.
 
 Individual categories are `make test-unit`, `make test-cli` and
 `make test-browser`; `make check-sort` runs the stable-sort guard. See

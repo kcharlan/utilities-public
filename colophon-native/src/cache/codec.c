@@ -480,7 +480,7 @@ static void record(Wire *w, LogRecord *r) {
     for (size_t i = 0; i < t->count && !w->error.code; i++) {
         TokenObservation *v = &t->observations[i];
         int tag = v->tag;
-        enumeration(w, &tag, TOKEN_XC);
+        enumeration(w, &tag, TOKEN_P);
         if (w->reading)
             v->tag = (TokenTag)tag;
         U(v->line);
@@ -496,6 +496,7 @@ static void record(Wire *w, LogRecord *r) {
             v->model_state.kind = kind;
         ID(v->model_state.model);
         B(v->trigger);
+        B(v->priority);
         totals(w, &v->last);
         totals(w, &v->total);
     }

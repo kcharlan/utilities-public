@@ -69,6 +69,118 @@ static SessionModel *only_session(LedgerFixture *f) {
 /* LEDGER(time, thread, session_id field (with trailing comma or empty), response field, turn field, usage, thread total) */
 #define LEDGER(ts, thread, sid, resp, turn, use, total) "{\"type\":\"token_usage_record\",\"timestamp\":\"2030-01-02T12:00:" ts "Z\",\"payload\":{\"thread_id\":\"" thread "\"," sid resp turn "\"usage\":" use ",\"thread_token_usage\":" total "}}"
 #define COUNT(ts, last, total) "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:" ts "Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":" last ",\"total_token_usage\":" total "}}}"
+#define SETTINGS(sec, tier) "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:" sec "Z\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"service_tier\":\"" tier "\"}}}"
+#define STARTED_NO_TURN(sec) "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:" sec "Z\",\"payload\":{\"type\":\"task_started\"}}"
+
+TEST(tokenstream_records_thread_settings_priority) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", " priority "), SETTINGS("02", "default"), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    const TokenStream *t = &f.records[0].token_stream;
+    size_t seen = 0;
+    for (size_t i = 0; i < t->count; i++)
+        if (t->observations[i].tag == TOKEN_P) ASSERT_EQ(seen++ == 0, t->observations[i].priority);
+    ASSERT_EQ(2, seen);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_marks_turns_started_under_priority_setting) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED("02", "synthetic-fast"),
+        COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), SETTINGS("04", "default"), STARTED("05", "synthetic-standard"),
+        COUNT("06", USAGE(50, 0, 5), USAGE(150, 0, 15)), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);
+    ASSERT_TRUE(s->units[0].priority_tier && s->units[0].priority == NULL);
+    ASSERT_FALSE(s->units[1].priority_tier);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_priority_follows_latest_start_of_same_turn) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED("02", "synthetic-turn"),
+        COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), SETTINGS("04", "default"), STARTED("05", "synthetic-turn"),
+        COUNT("06", USAGE(50, 0, 5), USAGE(150, 0, 15)), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);
+    ASSERT_TRUE(s->units[0].priority_tier);
+    ASSERT_FALSE(s->units[1].priority_tier);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_turnless_rows_follow_turnless_start) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED_NO_TURN("02"),
+        COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), SETTINGS("04", "default"), STARTED_NO_TURN("05"),
+        COUNT("06", USAGE(50, 0, 5), USAGE(150, 0, 15)), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);
+    ASSERT_TRUE(s->units[0].priority_tier);
+    ASSERT_FALSE(s->units[1].priority_tier);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_priority_setting_persists_and_changes_only_at_start) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED("02", "synthetic-turn"),
+        COUNT("03", USAGE(100, 0, 10), USAGE(100, 0, 10)), STARTED("04", "synthetic-turn"),
+        SETTINGS("05", "default"), COUNT("06", USAGE(50, 0, 5), USAGE(150, 0, 15)),
+        STARTED("07", "synthetic-turn"), COUNT("08", USAGE(25, 0, 2), USAGE(175, 0, 17)), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(3, s->unit_count);
+    ASSERT_TRUE(s->units[0].priority_tier);
+    ASSERT_TRUE(s->units[1].priority_tier);
+    ASSERT_FALSE(s->units[2].priority_tier);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_priority_record_resume_is_line_sensitive) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED("02", "synthetic-turn"),
+        LEDGER("03", "synthetic-ledger", "", "\"response_id\":\"synthetic-r1\",", "", USAGE(100, 0, 10), USAGE(100, 0, 10)),
+        SETTINGS("04", "default"), STARTED("05", "synthetic-turn"),
+        LEDGER("06", "synthetic-ledger", "", "\"response_id\":\"synthetic-r2\",", "", USAGE(50, 0, 5), USAGE(150, 0, 15)), NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);
+    ASSERT_TRUE(str_equal(s->units[0].source, STR_LIT("record")));
+    ASSERT_TRUE(str_equal(s->units[1].source, STR_LIT("record")));
+    ASSERT_TRUE(s->units[0].priority_tier && s->units[0].priority == NULL);
+    ASSERT_FALSE(s->units[1].priority_tier);
+    ledger_fixture_destroy(&f);
+}
+TEST(compose_priority_bare_rows_use_file_local_start_history) {
+    const char *fast[] = {META("synthetic-ledger", "synthetic-ledger"), SETTINGS("01", "priority"), STARTED("02", "synthetic-turn"),
+        "{\"timestamp\":\"2030-01-02T12:00:03Z\",\"usage\":" USAGE(100, 0, 10) "}", NULL};
+    const char *normal[] = {META("synthetic-ledger", "synthetic-ledger"), STARTED("02", "synthetic-turn"),
+        "{\"timestamp\":\"2030-01-02T12:00:04Z\",\"usage\":" USAGE(50, 0, 5) "}", NULL};
+    const char *const *files[] = {fast, normal};
+    LedgerFixture f; ledger_fixture(&f, files, 2, NULL);
+    SessionModel *s = only_session(&f);
+    ASSERT_EQ(2, s->unit_count);
+    for (size_t i = 0; i < s->unit_count; i++) {
+        ASSERT_TRUE(str_equal(s->units[i].source, STR_LIT("bare")));
+        ASSERT_EQ(s->units[i].input == 100, s->units[i].priority_tier);
+    }
+    ledger_fixture_destroy(&f);
+}
+TEST(tokenstream_thread_priority_requires_string_tier_and_valid_timestamp) {
+    const char *lines[] = {META("synthetic-ledger", "synthetic-ledger"),
+        SETTINGS("01", "Priority"),
+        "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:02Z\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"service_tier\":true}}}",
+        "{\"type\":\"event_msg\",\"timestamp\":\"2030-01-02T12:00:03Z\",\"payload\":{\"type\":\"thread_settings_applied\"}}",
+        "{\"type\":\"event_msg\",\"timestamp\":\"synthetic-invalid\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"service_tier\":\"priority\"}}}", NULL};
+    const char *const *files[] = {lines};
+    LedgerFixture f; ledger_fixture(&f, files, 1, NULL);
+    size_t seen = 0;
+    for (size_t i = 0; i < f.records[0].token_stream.count; i++) {
+        const TokenObservation *o = &f.records[0].token_stream.observations[i];
+        if (o->tag != TOKEN_P) continue;
+        seen++;
+        ASSERT_FALSE(o->priority);
+    }
+    ASSERT_EQ(3, seen);
+    ledger_fixture_destroy(&f);
+}
 
 static size_t record_units(SessionModel *s) {
     size_t n = 0;

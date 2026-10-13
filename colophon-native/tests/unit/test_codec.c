@@ -8,6 +8,25 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+TEST(codec_round_trips_thread_priority_observation) {
+    Intern ids = {0};
+    ASSERT_EQ(ERR_OK, intern_init(&ids).code);
+    TokenObservation observation = {.tag = TOKEN_P, .line = 2, .priority = true};
+    LogRecord raw = {.key = {.path = STR_LIT("/synthetic/priority-cache")},
+                     .token_stream = {.observations = &observation, .count = 1}};
+    unsigned char *bytes = NULL;
+    size_t length = 0;
+    ASSERT_EQ(ERR_OK, codec_encode(&raw, &bytes, &length).code);
+    LogRecord decoded = {0};
+    ASSERT_EQ(ERR_OK, codec_decode(bytes, length, &raw.key, raw.reader.tail_sha256, &ids, &decoded).code);
+    ASSERT_EQ(1, decoded.token_stream.count);
+    ASSERT_EQ(TOKEN_P, decoded.token_stream.observations[0].tag);
+    ASSERT_TRUE(decoded.token_stream.observations[0].priority);
+    free(bytes);
+    record_destroy(&decoded);
+    intern_destroy(&ids);
+}
+
 TEST(codec_encode_failure_returns_no_partial_wire) {
     LogRecord record = {.key = {.path = STR_LIT("/synthetic/invalid")},
                         .meta = {.cwd = {.kind = (JKind)255}}};

@@ -93,7 +93,8 @@ from payload, then info. A ledger without an explicit turn takes the latest
 preceding `task_started` turn in the same file, then the latest nonempty
 `turn_context` turn. A started event without a turn clears the started fallback;
 blank or truncated contexts leave the active context unchanged. Native cache
-format `native:1:2` retains request session ids, ledger totals and context turns.
+format `native:1:3` retains request session ids, ledger totals, context turns and
+thread-priority observations.
 
 Snapshots are excluded per request, rather than for every request in a ledgered
 turn. Pair accepted ledger records with row-producing `token_count` snapshots
@@ -149,3 +150,15 @@ Cross-copy aliases follow `reconcileCodexRequestMirrors` in
 `beginLegacyObservation`, `handleRequestLedger` and `handleTokenCount`; the
 implementation deliberately corrects the proposed whole-file exact reservation
 algorithm, which could double-count an earlier near mirror.
+
+Thread-settings priority follows CodexBar `v0.74.1`
+(`CostUsageScanner.swift` L3778–3784, L4900–4912, L4404–4421). A valid-timestamp
+`thread_settings_applied` event enables thread priority only when its trimmed
+string `thread_settings.service_tier` equals `priority`; missing, non-string or
+other values disable it. The setting persists until replaced, including across
+resumes. Each `task_started` records the setting for its turn, using the empty
+id when absent. Every appended record, snapshot or bare usage unit checks the
+latest preceding start for its turn in the same file. Resuming the same turn
+under a different setting changes later rows without changing earlier rows.
+Turnless units check the empty id. Trace-database and sticky priority evidence
+still apply; thread settings supply the priority tier without a trace entry.

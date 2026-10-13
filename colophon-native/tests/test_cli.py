@@ -214,6 +214,23 @@ def test_long_context_threshold_prices_250k_request_at_standard_rates(native):
     # 250,000 × $2/M + 1,000 × $10/M; the 200K threshold would give 1.015.
     assert cost == pytest.approx(0.51)
 
+def test_thread_settings_priority_applies_fast_multiplier(native):
+    turn = "synthetic-fast-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-6-astra", "turn_id": turn}, 1),
+        row("event_msg", {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1_000, 0, 100), "total_token_usage": usage(1_000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    session = native.payload()["sessions"][0]
+    # Standard cost is 0.015; the curated Astra priority multiplier is 2.
+    assert session["own_usage"]["cost_usd"] == pytest.approx(0.03)
+    assert any(bucket[2] == "priority" for bucket in session["buckets"])
+
 def test_ledger_mirror_counts_once_and_snapshot_only_request_counts(native):
     turn = "synthetic-ledger-turn"
     native.write_session([
