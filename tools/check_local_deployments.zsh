@@ -129,7 +129,6 @@ compare_bytes() {
 copy_mappings=(
   'Calculation tools/ai-model-timeline.html|calculators/ai-model-timeline.html'
   'abacus usage/de-abacus.py|de-abacus.py'
-  'colophon/colophon|colophon'
   'div_conv/div_conv|div_conv'
   'dloc/dloc|dloc'
   'docker/docker-disk-compact/docker-disk-compact.zsh|docker-disk-compact.zsh'
@@ -287,6 +286,9 @@ audited_scopes=(
   "${direct_source_paths[@]}"
   model_sentinel/__main__.py
   model_sentinel/model_sentinel
+  colophon-native
+  tools/deploy_colophon_native.mjs
+  tools/deployment_files.mjs
   ':(glob)**/.gitignore'
   "${all_projects[@]}"
 )
@@ -604,6 +606,41 @@ else
     stale_counts[$project]=0
     stale_history_operational_errors[$project]=1
   done
+fi
+
+native_source_ok=true
+native_inventory="$AUDIT_TMP/native-source-inventory"
+: > "$native_inventory"
+if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
+  native_source_ok=false
+fi
+for native_required in colophon-native/Makefile tools/deploy_colophon_native.mjs tools/deployment_files.mjs; do
+  if [[ -z "${index_membership[$native_required]-}" ||
+        -n "${source_state_invalid[$native_required]-}" ]]; then
+    native_source_ok=false
+  fi
+done
+for native_path in "${invalid_index_paths[@]}" "${pending_deletion_paths[@]}"; do
+  if [[ "$native_path" == colophon-native/* || "$native_path" == tools/deploy_colophon_native.mjs || "$native_path" == tools/deployment_files.mjs ]]; then
+    native_source_ok=false
+  fi
+done
+for native_path in "${index_paths[@]}"; do
+  if [[ "$native_path" == colophon-native/* ]]; then
+    [[ -z "${source_state_invalid[$native_path]-}" ]] || native_source_ok=false
+    printf '%s\t%s\0' "${index_modes[$native_path]}" "$native_path" >> "$native_inventory"
+  fi
+done
+if [[ "$native_source_ok" != true ]]; then
+  report_failure "colophon native source inventory unverified"
+elif node "$REPO_ROOT/tools/deploy_colophon_native.mjs" --audit --repo "$REPO_ROOT" --scripts-dir "$SCRIPTS_DIR" --source-inventory "$native_inventory" > "$AUDIT_TMP/native.stdout" 2> "$AUDIT_TMP/native.stderr"; then
+  if [[ ! -s "$AUDIT_TMP/native.stderr" && "$(stat -f '%z' "$AUDIT_TMP/native.stdout")" == 31 && "$(cat "$AUDIT_TMP/native.stdout")" == 'OK: colophon native deployment' ]]; then
+    print -- 'OK: colophon native deployment'
+  else
+    report_failure "colophon native child protocol unverified"
+  fi
+else
+  report_failure "colophon native deployment unverified (source, binary or receipt drift)"
 fi
 
 for mapping in "${copy_mappings[@]}"; do

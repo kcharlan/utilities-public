@@ -22,6 +22,14 @@ needed, for example `make SQLITE_PREFIX=/usr/local/opt/sqlite`. The release
 links SQLite, libcurl, pthreads and CoreFoundation. Building and running it
 requires no Python, uv, npm or font generator.
 
+For the maintained macOS installation, use
+`node ../tools/deploy_colophon_native.mjs --dry-run` and then
+`node ../tools/deploy_colophon_native.mjs` after validation. This builds and
+deploys the native executable as `~/Library/Scripts/colophon`, with private
+backups and a read-only source/binary receipt audit. See the
+[deployment guide](../docs/local_deployment_sync.md#native-colophon-deployment)
+for prerequisites, fleet validation and rollback.
+
 Run against a chosen existing source and private output directory; replace
 these placeholder paths before running:
 

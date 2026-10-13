@@ -5,26 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
+import {regular, inspectAncestors, externalDirectory} from './deployment_files.mjs';
 
 const relative = 'Calculation tools/ai-model-timeline.html';
 const filename = 'ai-model-timeline.html';
-function regular(file) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Expected a regular non-symlink file');
-  return stat;
-}
-function inspectAncestors(directory) {
-  for (let current = directory;; current = path.dirname(current)) {
-    let stat;
-    try { stat = fs.lstatSync(current); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (stat) {
-      // macOS exposes these standard system aliases to /private; user-created links remain refused.
-      const systemAlias = process.platform === 'darwin' && ['/var', '/tmp'].includes(current) && fs.statSync(current).isDirectory();
-      if ((!stat.isDirectory() || stat.isSymbolicLink()) && !systemAlias) throw new Error('Directory path contains a symlink or non-directory');
-    }
-    if (current === path.dirname(current)) break;
-  }
-}
 function deploy() {
   let repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   let webroot = path.resolve(process.env.UTILITIES_WEBROOT_DIR || path.join(os.homedir(), 'webroot'));
@@ -42,11 +26,7 @@ function deploy() {
     } else throw new Error('Unknown or incomplete argument');
   }
   repo = fs.realpathSync(repo);
-  inspectAncestors(webroot);
-  let existingRoot = webroot;
-  while (!fs.existsSync(existingRoot)) existingRoot = path.dirname(existingRoot);
-  webroot = path.join(fs.realpathSync(existingRoot), path.relative(existingRoot, webroot));
-  if (webroot === repo || webroot.startsWith(repo + path.sep)) throw new Error('Webroot must be outside the repository');
+  webroot = externalDirectory(webroot, repo);
   const source = path.join(repo, relative), stat = regular(source);
   const index = execFileSync('git', ['-C', repo, 'ls-files', '--stage', '-z', '--', relative], {encoding: 'utf8'});
   if (!/^100644 [0-9a-f]+ 0\tCalculation tools\/ai-model-timeline\.html\0$/.test(index)) {
