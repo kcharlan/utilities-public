@@ -14,6 +14,9 @@ import zipfile
 from pathlib import Path
 
 from tests.browse_fixtures import build_fixture_db
+from tests.credential_fixtures import (
+    assert_synthetic_saved_snapshot, synthetic_provider_server, write_credential_config,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +31,10 @@ def _copy_installer_project(tmp_path: Path) -> Path:
         "providers.env.template",
         "settings.env.template",
         "launchd.env.template",
+        "setup.sh",
+        "setup_launchd.sh",
+        "install_launchd.template.sh",
+        "model-sentinel",
     ):
         shutil.copy2(PROJECT_ROOT / name, project / name)
     shutil.copytree(
@@ -44,6 +51,93 @@ def _installer_env(tmp_path: Path) -> dict[str, str]:
     env["MODEL_SENTINEL_HOME"] = str(tmp_path / "synthetic-runtime-home")
     env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
     return env
+
+
+def _run_command(command: list[str], env: dict[str, str], cwd: Path):
+    return subprocess.run(
+        command, env=env, cwd=cwd, text=True, capture_output=True,
+        check=False, timeout=15,
+    )
+
+
+def test_installed_credentials_refresh_and_scan_without_checkout(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+    # Exclusion checks need artifacts present in the external synthetic source.
+    for relative in ("credentials.env", "synthetic-keys.env", "tests/test_synthetic.py",
+                     "docs/synthetic-plan.md"):
+        excluded = project / relative
+        excluded.parent.mkdir(parents=True, exist_ok=True)
+        excluded.write_text("# SYNTHETIC_NOT_A_REAL_SECRET_excluded_artifact\n")
+    assert _run_installer(project, env, str(target)).returncode == 0
+    # Freshness, version and all credential help levels need no configuration.
+    env["MODEL_SENTINEL_HOME"] = str(tmp_path / "nonexistent-synthetic-home")
+    assert _run_installer(project, env, "--check", str(target)).returncode == 0
+    for args in (["--version"], ["--help"], ["credentials", "--help"],
+                 ["credentials", "refresh", "--help"]):
+        result = _run_command([str(target), *args], env, tmp_path)
+        assert result.returncode == 0, result.stderr
+    assert not Path(env["MODEL_SENTINEL_HOME"]).exists()
+    with zipfile.ZipFile(target) as archive:
+        names = archive.namelist()
+        assert "model_sentinel/credentials.py" in names
+        assert not any(name.startswith(("tests/", "docs/", ".superpowers/"))
+                       or name.endswith(".env") for name in names)
+        assert all(b"SYNTHETIC_NOT_A_REAL_SECRET" not in archive.read(name)
+                   for name in names if not name.endswith("/"))
+    shutil.rmtree(project)
+    home = write_credential_config(tmp_path)
+    env["MODEL_SENTINEL_HOME"] = str(home)
+    env["SYNTHETIC_ENABLED_KEY"] = "SYNTHETIC_NOT_A_REAL_SECRET_wrong_inherited"
+    mount = tmp_path / "synthetic-refresh-fifo"
+    os.mkfifo(mount, 0o600)
+    settings = home / "settings.env"
+    settings.write_text(settings.read_text() + f"\nMODEL_SENTINEL_CREDENTIAL_REFRESH_FILE={mount}\n")
+    writer = subprocess.Popen([
+        "/bin/sh", "-c",
+        'printf "%s\\n" "SYNTHETIC_ENABLED_KEY=SYNTHETIC_NOT_A_REAL_SECRET_fifo" > "$1"',
+        "synthetic-writer", str(mount),
+    ])
+    try:
+        refreshed = _run_command([str(target), "credentials", "refresh"], env, tmp_path)
+        assert refreshed.returncode == 0, refreshed.stderr
+        assert writer.wait(timeout=5) == 0
+    finally:
+        if writer.poll() is None:
+            writer.kill()
+            writer.wait(timeout=5)
+    mount.unlink()
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    assert stat.S_IMODE((home / "credentials.env").stat().st_mode) == 0o600
+    with synthetic_provider_server(home) as authorizations:
+        health = _run_command([str(target), "healthcheck"], env, tmp_path)
+        assert health.returncode == 0, health.stdout + health.stderr
+        scanned = _run_command([str(target), "scan", "--save", "--no-notify"], env, tmp_path)
+        assert scanned.returncode == 0, scanned.stdout + scanned.stderr
+        assert authorizations == ["Bearer SYNTHETIC_NOT_A_REAL_SECRET_fifo"]
+    assert_synthetic_saved_snapshot(home)
+    assert "SYNTHETIC_NOT_A_REAL_SECRET" not in refreshed.stdout + health.stdout + scanned.stdout
+
+
+def test_reseeding_preserves_operator_configuration_and_bootstrap(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    home = write_credential_config(tmp_path)
+    env["MODEL_SENTINEL_HOME"] = str(home)
+    (home / "launchd.env").write_text(
+        'export SYNTHETIC_OPERATOR_SETTING="synthetic-preserve"\n'
+        'source "$HOME/synthetic-nonexistent-bootstrap.sh"\n'
+    )
+    (home / "install_launchd.sh").write_text("#!/bin/bash\n# synthetic operator schedule\n")
+    original = {path.name: path.read_bytes() for path in home.iterdir()}
+    for script in ("setup.sh", "setup_launchd.sh"):
+        result = _run_command(["/bin/bash", str(project / script)], env, tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert {name: (home / name).read_bytes() for name in original} == original
+    installed = _run_installer(project, env, str(tmp_path / "synthetic-bin/model-sentinel"))
+    assert installed.returncode == 0, installed.stderr
+    assert {name: (home / name).read_bytes() for name in original} == original
 
 
 def _run_installer(

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +48,10 @@ class Settings:
     notify_sound: str | None
     terminal_notifier_path: Path | None
     runtime_home: Path
+    credential_source: str = "environment"
+    credential_file: Path | None = None
+    credential_refresh_file: Path | None = None
+    credential_refresh_timeout_seconds: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -284,6 +289,25 @@ def load_settings(path: Path, *, runtime_home: Path) -> Settings:
         raise ConfigError("MODEL_SENTINEL_NOTIFY_OPEN_TARGET must be one of file or folder")
     notify_sound = _parse_optional_sound_name(raw.get("MODEL_SENTINEL_NOTIFY_SOUND", "default"))
     terminal_notifier_path = _parse_optional_path(raw.get("MODEL_SENTINEL_TERMINAL_NOTIFIER_PATH", ""))
+    credential_source = raw.get("MODEL_SENTINEL_CREDENTIAL_SOURCE", "environment").strip().lower()
+    if credential_source not in {"environment", "file"}:
+        raise ConfigError("MODEL_SENTINEL_CREDENTIAL_SOURCE must be environment or file")
+    cache_raw = raw.get("MODEL_SENTINEL_CREDENTIAL_FILE", "credentials.env").strip()
+    if not cache_raw:
+        raise ConfigError("MODEL_SENTINEL_CREDENTIAL_FILE must not be blank")
+    credential_file = _resolve_credential_path(cache_raw, base_dir=runtime_home)
+    refresh_raw = raw.get("MODEL_SENTINEL_CREDENTIAL_REFRESH_FILE", "").strip()
+    credential_refresh_file = (
+        _resolve_credential_path(refresh_raw, base_dir=runtime_home) if refresh_raw else None
+    )
+    try:
+        credential_refresh_timeout_seconds = float(
+            raw.get("MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS", "5.0")
+        )
+    except ValueError:
+        raise ConfigError("MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS must be finite and > 0") from None
+    if not math.isfinite(credential_refresh_timeout_seconds) or credential_refresh_timeout_seconds <= 0:
+        raise ConfigError("MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS must be finite and > 0")
     return Settings(
         log_max_bytes=log_max_bytes,
         log_keep_files=log_keep_files,
@@ -299,6 +323,10 @@ def load_settings(path: Path, *, runtime_home: Path) -> Settings:
         notify_sound=notify_sound,
         terminal_notifier_path=terminal_notifier_path,
         runtime_home=runtime_home,
+        credential_source=credential_source,
+        credential_file=credential_file,
+        credential_refresh_file=credential_refresh_file,
+        credential_refresh_timeout_seconds=credential_refresh_timeout_seconds,
     )
 
 
@@ -320,7 +348,7 @@ def validate_selected_providers(
 
 def missing_credentials(
     providers: tuple[ProviderConfig, ...],
-    environ: dict[str, str] | os._Environ[str],
+    environ: Mapping[str, str],
 ) -> list[str]:
     missing: list[str] = []
     for provider in providers:
@@ -379,6 +407,14 @@ def _resolve_path(value: str, *, base_dir: Path) -> Path:
     if not path.is_absolute():
         path = (base_dir / path).resolve()
     return path
+
+
+def _resolve_credential_path(value: str, *, base_dir: Path) -> Path:
+    """Normalize the parent while preserving the final entry for secure acquisition."""
+    path = Path(os.path.expanduser(value))
+    if not path.is_absolute():
+        path = base_dir / path
+    return path.parent.resolve() / path.name
 
 
 def _parse_optional_sound_name(value: str) -> str | None:

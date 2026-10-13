@@ -260,3 +260,80 @@ def test_distinct_provider_labels_still_load(tmp_path: Path, monkeypatch) -> Non
     loaded = load_config(tmp_path)
 
     assert [provider.label for provider in loaded.providers] == ["Abacus.AI", "OpenRouter"]
+
+
+def test_credential_settings_defaults_preserve_environment_mode(tmp_path: Path) -> None:
+    from model_sentinel.config import load_settings
+
+    runtime_home = _write_config_files(tmp_path)
+    settings = load_settings(runtime_home / "settings.env", runtime_home=runtime_home)
+    assert settings.credential_source == "environment"
+    assert settings.credential_file == runtime_home / "credentials.env"
+    assert settings.credential_refresh_file is None
+    assert settings.credential_refresh_timeout_seconds == 5.0
+
+
+def test_credential_paths_expand_home_without_following_final_symlink(tmp_path: Path, monkeypatch) -> None:
+    from model_sentinel.config import load_settings
+
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = tmp_path / "synthetic_target"
+    target.mkdir()
+    (tmp_path / "synthetic_parent").symlink_to(target, target_is_directory=True)
+    (target / "cache.env").symlink_to(tmp_path / "synthetic_cache_target")
+    (target / "mount.env").symlink_to(tmp_path / "synthetic_mount_target")
+    settings_path = runtime_home / "settings.env"
+    with settings_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "MODEL_SENTINEL_CREDENTIAL_FILE=~/synthetic_parent/cache.env\n"
+            "MODEL_SENTINEL_CREDENTIAL_REFRESH_FILE=~/synthetic_parent/mount.env\n"
+            "MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS=0.25\n"
+        )
+    settings = load_settings(settings_path, runtime_home=runtime_home)
+    assert settings.credential_file == target / "cache.env"
+    assert settings.credential_refresh_file == target / "mount.env"
+    assert settings.credential_refresh_timeout_seconds == 0.25
+
+
+@pytest.mark.parametrize("source", ["environment", "file"])
+def test_loading_config_never_opens_credential_paths(tmp_path: Path, monkeypatch, source: str) -> None:
+    from tests.credential_fixtures import write_credential_config
+    from model_sentinel.config import load_settings
+
+    runtime_home = write_credential_config(tmp_path, source=source)
+    cache = runtime_home / "cache.env"
+    mount = runtime_home / "mount.env"
+    cache.write_text("SYNTHETIC_NOT_A_REAL_SECRET", encoding="utf-8")
+    mount.write_text("SYNTHETIC_NOT_A_REAL_SECRET", encoding="utf-8")
+    settings_path = runtime_home / "settings.env"
+    with settings_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"MODEL_SENTINEL_CREDENTIAL_FILE={cache}\nMODEL_SENTINEL_CREDENTIAL_REFRESH_FILE={mount}\n")
+    original_open = Path.open
+
+    def guarded_open(path, *args, **kwargs):
+        if path in {cache, mount}:
+            raise AssertionError("config loading opened a credential file")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    settings = load_settings(settings_path, runtime_home=runtime_home)
+    assert settings.credential_file == cache
+    assert settings.credential_refresh_file == mount
+
+
+@pytest.mark.parametrize("name,value", [
+    ("SOURCE", "unknown"), ("SOURCE", ""), ("FILE", ""), ("FILE", "   "),
+    ("REFRESH_TIMEOUT_SECONDS", "0"), ("REFRESH_TIMEOUT_SECONDS", "-1"),
+    ("REFRESH_TIMEOUT_SECONDS", "NaN"), ("REFRESH_TIMEOUT_SECONDS", "inf"),
+    ("REFRESH_TIMEOUT_SECONDS", "-inf"), ("REFRESH_TIMEOUT_SECONDS", "invalid"),
+])
+def test_invalid_credential_settings_are_rejected(tmp_path: Path, name: str, value: str) -> None:
+    from model_sentinel.config import load_settings
+
+    runtime_home = _write_config_files(tmp_path)
+    settings_path = runtime_home / "settings.env"
+    with settings_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"MODEL_SENTINEL_CREDENTIAL_{name}={value}\n")
+    with pytest.raises(ConfigError, match=f"MODEL_SENTINEL_CREDENTIAL_{name}"):
+        load_settings(settings_path, runtime_home=runtime_home)

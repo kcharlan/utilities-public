@@ -3065,14 +3065,15 @@ def render_providers_report(
         return json.dumps(normalized_rows, indent=2, sort_keys=True)
     if format_name == "markdown":
         lines = [
-            "| Provider ID | Label | Kind | Enabled | Base URL | Models Path | Credential Env | Present | Last Successful Scan |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Provider ID | Label | Kind | Enabled | Base URL | Models Path | Credential Env | Present | Source | Status | Credential Error | Last Successful Scan |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in provider_rows:
             lines.append(
                 f"| {row['provider_id']} | {row['label']} | {row['kind']} | {row['enabled']} | "
                 f"{row['base_url']} | {row['models_path']} | {row['credential_env_var']} | "
-                f"{row['credential_present']} | {to_local_iso(row['last_successful_scan']) or 'none'} |"
+                f"{row['credential_present']} | {row['credential_source']} | {row['credential_status']} | "
+                f"{row['credential_error'] or 'none'} | {to_local_iso(row['last_successful_scan']) or 'none'} |"
             )
         return "\n".join(lines)
     lines = []
@@ -3086,6 +3087,9 @@ def render_providers_report(
                 f"  models_path: {row['models_path']}",
                 f"  credential_env_var: {row['credential_env_var']}",
                 f"  credential_present: {row['credential_present']}",
+                f"  credential_source: {row['credential_source']}",
+                f"  credential_status: {row['credential_status']}",
+                f"  credential_error: {row['credential_error'] or 'none'}",
                 f"  last_successful_scan: {to_local_iso(row['last_successful_scan']) or 'none'}",
                 "",
             ]

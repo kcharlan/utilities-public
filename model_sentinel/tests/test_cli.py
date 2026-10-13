@@ -134,6 +134,8 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
                 "Settings",
                 (),
                 {
+                    "credential_source": "environment",
+                    "credential_file": None,
                     "notify_default": False,
                     "notify_on": "never",
                     "report_retention_days": 30,
@@ -749,6 +751,8 @@ def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypa
                     "Settings",
                     (),
                     {
+                        "credential_source": "environment",
+                        "credential_file": None,
                         "notify_default": False,
                         "notify_on": "never",
                         "notify_open_target": "file",

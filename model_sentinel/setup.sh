@@ -40,12 +40,16 @@ Review and edit these files before running scans:
 Remaining setup steps:
   1. Review the enabled providers and credential env var names in providers.env.
   2. Review runtime settings in settings.env, especially log rotation, notifications, and report output.
-  3. Start the secrets shell or otherwise export the required credential env vars before running the tool.
+  3. Use environment credentials, or configure file mode and explicitly refresh its private cache:
+     ./model-sentinel credentials refresh
+     Alternatively, after loading your existing secrets shell: ./model-sentinel credentials refresh --from-environment
   4. Run ./model-sentinel healthcheck
   5. Create the first saved baseline with ./model-sentinel scan --save
 
 Optional automation setup:
   - Run ./setup_launchd.sh to seed launchd support files into $RUNTIME_HOME
 
-The tool will halt if enabled providers are missing their credential environment variables.
+File-mode scans read only the cache; refresh manually after rotation.
+Existing config files are preserved; review settings and bootstrap lines yourself.
+The tool halts if selected providers lack valid credentials from the configured source.
 EOF
