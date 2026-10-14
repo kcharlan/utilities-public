@@ -1644,4 +1644,21 @@ test_storage_monitor_deployment() {
 }
 test_storage_monitor_deployment
 
+test_native_required_installers() {
+  local mapping installer label
+  for mapping in \
+    'tools/deploy_colophon.mjs|colophon native' \
+    'tools/deploy_storage_monitor.mjs|storage_monitor'; do
+    new_fixture
+    installer="${mapping%%|*}"
+    label="${mapping#*|}"
+    git -C "$FIXTURE_REPO" rm -q --cached "$installer"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" "$label installer removed from index"
+    assert_contains "$AUDIT_STDERR" "$label source inventory unverified"
+    assert_not_contains "$AUDIT_STDOUT" "OK: $label deployment"
+  done
+}
+test_native_required_installers
+
 print -- "check_local_deployments tests: PASS"
