@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {sourceInventory} from '../deploy_colophon_native.mjs';
+import {sourceInventory} from '../deploy_colophon.mjs';
 const [repo, home] = process.argv.slice(2);
 const sourceHash = sourceInventory(repo).sourceHash;
 const scripts = path.join(home, 'Library/Scripts');

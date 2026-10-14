@@ -28,7 +28,7 @@ Prior project decisions loaded from PKM:
 - Entry 243: consequence-based rounding; taxes and displayed tax rates round up, gross is exact cents, net is exact gross minus rounded tax.
 - Entry 152: implementation uses a normal `codex/` feature branch in this checkout. Do not create a worktree unless the user specifically requests one.
 
-Read `tax2/README.md` and its documentation chain, including `tax2/docs/Usage.md`, `tax2/docs/multi_state_design.md`, the spec, `colophon/colophon`'s page/file helpers, vendor provenance, `tools/testkit.py`, and root `docs/local_deployment_sync.md`. Keep the existing tax limitations and multi-state invariants unless the spec or approved amendment explicitly changes them. The HTML visual reference remains unchanged.
+Read `tax2/README.md` and its documentation chain, including `tax2/docs/Usage.md`, `tax2/docs/multi_state_design.md`, the spec, `tax2/taxkit/config.py` (`runtime_home`, `ensure_runtime_home`, `atomic_write_bytes`) and `tax2/taxkit/page.py` (`render_page`), plus Colophon's native built-page shape reference in `colophon/src/out/page.c`, `colophon/src/util/atomic.c` and `colophon/docs/runtime.md`, vendor provenance, `tools/testkit.py`, and root `docs/local_deployment_sync.md`. Keep the existing tax limitations and multi-state invariants unless the spec or approved amendment explicitly changes them. The HTML visual reference remains unchanged.
 
 ### 1.1 Approved amendment and read-only evidence
 
