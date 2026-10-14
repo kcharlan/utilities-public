@@ -2,10 +2,53 @@
 #include "runner.h"
 #include "parse/reader.h"
 #include "scan/logname.h"
+#include "scan/discover.h"
+#include "corpus/titles.h"
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+static void touch(const char *root, const char *relative) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s", root, relative);
+    for (char *p = path + strlen(root) + 1; *p; p++)
+        if (*p == '/') { *p = 0; (void)mkdir(path, 0700); *p = '/'; }
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    ASSERT_TRUE(fd >= 0);
+    ASSERT_EQ(0, close(fd));
+}
+
+TEST(discovery_accepts_zstd_logs_and_prefers_plain_sibling) {
+    char root[1024];
+    snprintf(root, sizeof root, "%s/synthetic-codex-XXXXXX", getenv("COLOPHON_HOME"));
+    ASSERT_TRUE(mkdtemp(root));
+    touch(root, "sessions/2026/01/02/rollout-pair.jsonl");
+    touch(root, "sessions/2026/01/02/rollout-pair.jsonl.zst");
+    touch(root, "sessions/2026/01/02/rollout-only.jsonl.zst");
+    touch(root, "sessions/2026/01/02/rollout-upper.JSONL.ZST");
+    touch(root, "sessions/2026/01/02/rollout-other.json.zst");
+    touch(root, "archived_sessions/rollout-archived.jsonl.zst");
+    Discovery d = {0};
+    ASSERT_EQ(ERR_OK, discover_logs(root, &d).code);
+    const char *expected[] = {"rollout-only.jsonl.zst", "rollout-pair.jsonl", "rollout-upper.JSONL.ZST", "rollout-archived.jsonl.zst"};
+    ASSERT_EQ(4u, d.count);
+    for (size_t i = 0; i < d.count; i++) {
+        ASSERT_STREQ(expected[i], strrchr(d.logs[i].path.p, '/') + 1);
+        ASSERT_EQ(i == 3, d.logs[i].archived);
+    }
+    discovery_destroy(&d);
+}
+
+TEST(title_stem_strips_whole_compressed_log_suffix) {
+    Str plain = title_path_name(STR_LIT("/c/rollout-2026-01-02T12-00-00-00000000-0000-4000-8000-000000000001.jsonl"), true);
+    Str zstd = title_path_name(STR_LIT("/c/rollout-2026-01-02T12-00-00-00000000-0000-4000-8000-000000000001.jsonl.zst"), true);
+    ASSERT_TRUE(str_equal(plain, zstd));
+    ASSERT_TRUE(str_equal(STR_LIT("archive.tar"), title_path_name(STR_LIT("/c/archive.tar.zst"), true)));
+    ASSERT_TRUE(str_equal(STR_LIT("rollout-a.jsonl.zst"), title_path_name(STR_LIT("/c/rollout-a.jsonl.zst"), false)));
+}
 
 typedef struct { unsigned char *p; size_t n, cap; } Bytes;
 static void put(Bytes *b, const void *p, size_t n) {

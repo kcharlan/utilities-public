@@ -1,4 +1,5 @@
 #include "discover.h"
+#include "logname.h"
 #include "resource.h"
 #include "gen/assets.h"
 #include "util/fileio.h"
@@ -135,18 +136,6 @@ static bool package(const char *path) {
 #endif
 }
 
-static bool jsonl(const char *path) {
-    const char *name = basename_of(path), *suffix = strrchr(name, '.');
-    /* pathlib treats an initial dot as part of the basename. */
-    if (!suffix || suffix == name || strlen(suffix) != 6) return false;
-    for (size_t i = 0; i < 6; i++) {
-        char c = suffix[i];
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        if (c != ".jsonl"[i]) return false;
-    }
-    return true;
-}
-
 static bool directory(const char *path) {
     struct stat st;
     return !stat(path, &st) && S_ISDIR(st.st_mode);
@@ -180,7 +169,8 @@ static Err visible_logs(const char *parent, Paths *candidates) {
     Paths entries = {0};
     Err err = children(parent, &entries);
     for (size_t i = 0; !err.code && i < entries.count; i++)
-        if (!hidden(entries.items[i]) && jsonl(entries.items[i]))
+        if (!hidden(entries.items[i]) &&
+            log_name_format((Str){entries.items[i], (uint32_t)strlen(entries.items[i])}) != LOG_NAME_OTHER)
             err = paths_add(candidates, entries.items[i]);
     paths_destroy(&entries);
     return err;
@@ -226,7 +216,8 @@ static Err legacy(const char *root, Paths *candidates) {
             if (hidden(path)) continue;
             bool is_dir = directory(path);
             if (is_dir && p == 0 && partition_year(path)) continue;
-            if (jsonl(path)) err = paths_add(candidates, path);
+            if (log_name_format((Str){path, (uint32_t)strlen(path)}) != LOG_NAME_OTHER)
+                err = paths_add(candidates, path);
             struct stat st;
             if (!err.code && is_dir && !package(path) && !lstat(path, &st) && !S_ISLNK(st.st_mode))
                 err = paths_add(&pending, path);
@@ -268,7 +259,17 @@ Err discover_logs(const char *home, Discovery *out) {
         if (!err.code) err = partitions(root, &candidates);
         if (!err.code) err = legacy(root, &candidates);
         if (!err.code) err = stable_sort(candidates.items, candidates.count, sizeof(char *), path_compare, NULL);
+        Omap plain = {0};
         for (size_t i = 0; !err.code && i < candidates.count; i++) {
+            Str spelling = {candidates.items[i], (uint32_t)strlen(candidates.items[i])};
+            if (log_name_format(spelling) == LOG_NAME_PLAIN) err = omap_put(&plain, spelling, (void *)1);
+        }
+        for (size_t i = 0; !err.code && i < candidates.count; i++) {
+            Str spelling = {candidates.items[i], (uint32_t)strlen(candidates.items[i])};
+            /* Codex writes NAME.jsonl.zst beside NAME.jsonl and removes the plain
+             * log later; until then the plain copy may still be growing. */
+            if (log_name_format(spelling) == LOG_NAME_ZSTD &&
+                omap_get(&plain, (Str){spelling.p, spelling.n - 4})) continue;
             char *key = NULL;
             err = file_codex_path_key(candidates.items[i], &key);
             if (err.code) break;
@@ -303,6 +304,7 @@ Err discover_logs(const char *home, Discovery *out) {
             }
             ((DiscoveredLog *)out->logs)[out->count++] = log;
         }
+        omap_destroy(&plain);
         free(root);
         paths_destroy(&candidates);
     }
