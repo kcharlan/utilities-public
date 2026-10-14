@@ -1,10 +1,19 @@
 # Lessons learned
 
-These maintained lessons were extracted from historical Python Colophon at
-`38d6998eb223f690fc9dc0bde0ba528fcf784449`. Git history retains the complete
-original notes and retired test names; those tests are historical evidence,
-not available native acceptance commands.
+These maintained lessons include knowledge from historical Python Colophon at
+`38d6998eb223f690fc9dc0bde0ba528fcf784449` and later native work. Git history
+retains the complete original notes and retired test names; those tests are
+historical evidence, not available native acceptance commands.
 
+- Codex compresses finished rollouts to `.jsonl.zst` and later deletes the
+  plain originals. A discovery suffix filter can silently omit months of
+  usage; agreement with CodexBar does not prove totals are complete. Compare
+  discovered log counts against `*.jsonl*` on disk, accounting for siblings.
+- Streaming zstd reports zero when a frame is complete and flushed. At the
+  frozen input boundary, stop on that result even if the output buffer is
+  full: another empty-input decode starts expecting a new frame and can
+  falsely report a valid log as truncated. Keep a regression for exact
+  output-buffer-sized expansion as well as partial output and damaged frames.
 - Read-only SQLite uses normal coordination and bounded busy timeouts; it
   can create or update WAL shared-memory side files. Do not promise absolute
   source-write exclusion or substitute immutable mode without changing the contract.

@@ -1,9 +1,10 @@
 # Colophon
 
-A macOS C17 application that compiles local Codex sessions, token usage and
-dated API-equivalent cost estimates into a private, self-contained offline
-HTML page. The canonical source project at `colophon/` embeds its page
-assets, fonts and public rate seeds in the executable.
+A macOS C17 application that compiles local Codex `.jsonl` and compressed
+`.jsonl.zst` sessions, token usage and dated API-equivalent cost estimates
+into a private, self-contained offline HTML page. The canonical source
+project at `colophon/` embeds its page assets, fonts, public rate seeds and
+vendored zstd 1.5.7 decoder in the executable.
 
 Build prerequisites are Apple's clang/Command Line Tools, make, Perl,
 ripgrep (for the development sort guard), and Homebrew SQLite. Install

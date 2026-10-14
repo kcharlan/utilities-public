@@ -1,12 +1,19 @@
 # Standalone validation
 
-Run `make test` for all 176 C units, fresh synthetic CLI and integration
+Run `make test` for all 186 C units, fresh synthetic CLI and integration
 checks, two Chromium browser cases, and local
 asset/stable-sort guards (ten asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.
 These checks are independent acceptance checks, not captured-corpus parity or
 performance evidence from the source project.
+
+Compressed-log cases cover the pinned zstd decoder, concatenated frames,
+large declared windows, exact output-buffer boundaries, empty files,
+unterminated lines and unreadable corrupt/truncated/trailing data. Discovery
+prefers a plain sibling and preserves compressed filename UUID/title
+fallbacks. CLI cases cover active/archived compressed logs, cold/warm/rebuild
+cache behavior, input preservation and nonfatal skipped-file diagnostics.
 
 Request-ledger cases cover chronological near-before-exact ownership, exact
 matching across boundaries, counter/history/restart rules, file-local replay,
