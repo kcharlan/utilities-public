@@ -18,7 +18,7 @@ typedef struct {
 } ReaderRecord;
 typedef struct {
     void *context;
-    Err (*chunk)(void *context); /* Before each borrowed 1 MiB read. */
+    Err (*chunk)(void *context); /* Before each plain read or zstd decode step. */
     Err (*raw_line)(void *context, const ReaderRawLine *line);
     Err (*record)(void *context, const ReaderRecord *record);
     /* Original full-line decode, before object filtering/suffix recovery. The
@@ -44,7 +44,10 @@ typedef struct {
  * expires on return; retain only copied facts, never raw JSON. Both indices start
  * at 0, rec advances only for objects. payload is NULL for nonobject payloads.
  * Callback Err aborts immediately unchanged; IO/allocation failures propagate.
- * On error the result is partial and must not be cached as a successful parse. */
+ * On error the result is partial and must not be cached as a successful parse.
+ * Paths classified LOG_NAME_ZSTD are stream-decoded; the fingerprint and frozen
+ * size remain those of the on-disk compressed bytes. Malformed, truncated or
+ * trailing compressed data is ERR_IO; a zero-byte file is an empty log. */
 Err reader_read_log(const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out);
 Err reader_read_fd(int fd, const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out);
 /* Shared frozen-size tail fingerprint. Borrows fd; pread never changes offset. */
