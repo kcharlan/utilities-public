@@ -65,13 +65,13 @@ Remaining differences from `v0.74.1`:
   `CostUsageScanner+TurnPerformance.swift`. Changed logs reparse from the
   beginning; incremental and turn-performance machinery is outside scope.
 - Existing adaptations retain the [Explicit adaptations and approved
-  differences table](../../colophon/docs/token_rules.md#explicit-adaptations-and-approved-differences),
+  differences table](token_rules.md#explicit-adaptations-and-approved-differences),
   except where a later alignment rule replaces an item. Per-request mirror
   pairing below replaces the per-turn primary rule in Spec §15 difference 1.
 
-Python Colophon's existing 200,000 catalog fallback can append conflicting
-entries to a shared runtime ledger. Use a separate `COLOPHON_HOME` for the
-Python launcher, or retire it; this change does not migrate private ledgers.
+Prior Python releases used a 200,000 catalog fallback that could append
+conflicting entries to a shared ledger. Use separate runtime homes when
+running historical releases; retirement does not migrate private ledgers.
 
 Request-ledger acceptance follows CodexBar `v0.74.1`: require a nonempty
 trimmed string thread id matching the NFC session identity. An optional

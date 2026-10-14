@@ -425,7 +425,7 @@ Python rules forbid.
   Task 3. Reword it so it stays true. Those scripts still need a bench run
   context and should not be run directly.
 - Create `benchmark-llm/docs/LESSONS_LEARNED.md`, matching the format of
-  `colophon/docs/LESSONS_LEARNED.md`. Record the lesson: never create a venv
+  `colophon-native/docs/LESSONS_LEARNED.md`. Record the lesson: never create a venv
   from a venv interpreter, `sys._base_executable` is the resolved Cellar path,
   and benchmark steps get `BENCH_BASE_PYTHON`.
 - Add a PKM knowledge entry for project `utilities-public` (id 6) recording the

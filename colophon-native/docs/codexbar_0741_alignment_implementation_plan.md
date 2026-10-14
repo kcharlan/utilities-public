@@ -1,5 +1,10 @@
 # CodexBar 0.74.1 Usage Alignment Implementation Plan
 
+Historical implementation plan, retained as provenance at cutover baseline
+`38d6998eb223f690fc9dc0bde0ba528fcf784449`. Its original commands and acceptance
+instructions are not new authorization. Current rules and retained decision
+identifiers live in [token rules](token_rules.md) and [architecture](architecture.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make native Colophon count and price Codex usage the way CodexBar v0.74.1 does: long-context thresholds, request-ledger validation, per-request pairing of ledger records with `token_count` snapshots, and thread-settings priority.
@@ -46,7 +51,7 @@ Tasks 2–4 therefore matter for logs unlike the recent ones (resumed, copied an
 
 This is the single list of known differences between native Colophon and v0.74.1 that remain after this plan. Upstream code this plan did not examine may add others. Acceptance against CodexBar therefore explains each gap by an entry here, or investigates it.
 
-Each entry names the task whose documentation step records it in `docs/architecture.md`. Each entry states Colophon's behaviour, and cites its source (upstream code, or Python Colophon's table) rather than restating it.
+Each entry names the historical task whose documentation step records it in `docs/architecture.md`. Current inherited decisions are retained locally in [token rules](token_rules.md), with their historical identifiers.
 
 - **Bundled-row keying.** See the "Bundled-row keying" note in Task 1. *Recorded by Task 1.*
 - **Ledger-record model** (out of scope). Colophon prices a ledger record with the model that `model_at` in `src/price/compose.c` selects. Upstream's selection is `handleRequestLedger` in `CostUsageScanner.swift` L4332–4336. *Recorded by Task 1.*
@@ -57,7 +62,7 @@ Each entry names the task whose documentation step records it in `docs/architect
   - turn-performance state (`CostUsageScanner+TurnPerformance.swift`).
 
   Colophon reparses changed logs from the start. *Recorded by Task 1.*
-- **Existing adaptations and approved differences.** Native Colophon ports Python Colophon. It carries every row of the "Explicit adaptations and approved differences" table in `colophon/docs/token_rules.md` (L92–108), except where a later entry in this list replaces a row. Record this as a reference to that table, not a copy of it. *Recorded by Task 1.*
+- **Existing adaptations and approved differences.** Native Colophon inherits the historical Python decisions now retained in the [local adaptation table](token_rules.md#explicit-adaptations-and-approved-differences), except where later alignment rules replace a row. *Recorded by Task 1.*
 - **Per-turn primary record rule replaced.** Per-request pairing replaces that table's "Spec §15 difference 1" row. *Recorded by Task 3.*
 - **Task 3's deliberate deviations.** See "Deliberate deviations" in Task 3. *Recorded by Task 3.*
 
@@ -78,7 +83,7 @@ Each entry names the task whose documentation step records it in `docs/architect
   - Task 4 sets `"native:1:3"`: thread-priority observations.
   - `AccountingRow` and compose state are rebuilt every run and are not cached.
 - **Assets.** Every edit to `assets/*.json` updates that file's SHA-256 in `assets/MANIFEST` (`shasum -a 256 assets/<file>`). `make check-assets` must pass, printing its "local asset digests verified" line.
-- **Shared ledger with Python Colophon.** Python and native Colophon share `~/.colophon/price-history.json` by default. After Task 1 the Python launcher still resolves a 200,000 threshold, and could record such catalog entries into the shared ledger. Run it only with a separate `COLOPHON_HOME`, or retire it.
+- **Compatibility with prior releases.** Historical Python releases used the same default ledger and a 200,000 catalog fallback. Keep separate runtime homes when running them; retirement does not migrate private state. Shared-home commands must be sequential and concurrent ledger edits remain unsafe.
 - **Working directories.**
   - Run every `make` target from `colophon-native/`.
   - Run every `git` command against this repository from its root; the paths in those commands carry the `colophon-native/` prefix.
@@ -150,7 +155,7 @@ Each entry names the task whose documentation step records it in `docs/architect
   - Any violation rejects the whole catalog model, as a malformed `context_over_200k` does today.
   - A `tier` inside `context_over_200k` is decoded by the same rule.
 
-This supersedes the decision recorded in Python Colophon's `colophon/docs/token_rules.md` (L299–304), which ignores `tiers` and says: "Revisit only when the pinned upstream implementation changes."
+This supersedes the historical rule ignoring catalog `tiers`; its disposition is retained in [token rules](token_rules.md). Current matching-tier behavior is documented in architecture.
 
 - [ ] **Step 0: Create the branch** (from the repository root)
 

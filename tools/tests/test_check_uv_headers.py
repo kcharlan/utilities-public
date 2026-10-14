@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 UTILITIES_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(UTILITIES_ROOT))
 
@@ -18,6 +20,24 @@ from tools.check_uv_headers import (
     normalize_distribution,
     parse_requirements_file,
 )
+import tools.check_uv_headers as guard
+
+
+def test_retired_python_colophon_has_no_launcher_or_manifest_policy() -> None:
+    assert "colophon/colophon" not in LAUNCHERS
+    assert "colophon/colophon" not in DEPENDENCY_MANIFESTS
+
+
+def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypatch, capsys) -> None:
+    launcher = tmp_path / "synthetic_probe"
+    launcher.write_text(guard.CANONICAL_SHEBANG + "\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [launcher])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+
+    assert guard.discover_launchers() == {"synthetic_probe"}
+    assert guard.main() == 1
+    assert "uv launcher is not registered in LAUNCHERS" in capsys.readouterr().out
 
 
 def test_requirement_normalization_handles_extras_versions_and_case() -> None:
@@ -95,8 +115,11 @@ def test_reverse_manifest_check_rejects_unapproved_extras() -> None:
 
 def test_every_launcher_has_a_clean_dependency_manifest_policy() -> None:
     assert set(DEPENDENCY_MANIFESTS) == set(LAUNCHERS)
-    for launcher in LAUNCHERS:
-        assert check_dependency_manifest(launcher) == []
+
+
+@pytest.mark.parametrize("launcher", LAUNCHERS)
+def test_each_remaining_launcher_manifest_is_checked(launcher: str) -> None:
+    assert check_dependency_manifest(launcher) == []
 
 
 def test_git_file_listing_excludes_ignored_environment_trees() -> None:

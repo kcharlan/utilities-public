@@ -28,16 +28,13 @@ plans, documentation or runtime code.
 - **The current UI in `tax2/tax2`:** the `HTML_TEMPLATE` string, lines
   475–1879. §6.1 lists the behaviours to keep; inspect the code for exact
   wording and styling.
-- **`colophon/colophon`, the built-page reference.** Use these functions:
-  - `runtime_home`, `ensure_runtime_home` and `atomic_write_bytes`;
-  - `render_page`, which serializes JSON and then replaces each `<` with the
-    six-character JSON escape (backslash followed by `u003c`);
-  - `write_page`;
-  - `webbrowser.open(output.resolve().as_uri())`, where `resolve()` is needed
-    for relative `--output` paths.
-
-  Follow Colophon for shape, not stack: it uses plain JavaScript, while Tax2
-  uses Preact + htm (§5).
+- **Tax2's current Python page/file helpers:** `tax2/taxkit/config.py`
+  provides `runtime_home`, `ensure_runtime_home` and `atomic_write_bytes`;
+  `tax2/taxkit/page.py` provides `render_page`, which escapes `<` as the
+  six-character JSON escape (backslash followed by `u003c`). Inspect these
+  current implementations for Python examples. Colophon remains the built-page
+  shape reference, implemented in C under `colophon-native/`; follow it for
+  shape, not stack, since Tax2 uses Preact + htm (§5).
 - **`model_sentinel/model_sentinel/browse/assets/vendor/`:** the vendored
   Preact, hooks and htm files and `VERSIONS.md`.
 - **`tools/testkit.py`:** `guard_browser_errors`, `load_launcher`,

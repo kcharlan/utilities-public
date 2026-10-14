@@ -30,10 +30,10 @@ files older than one hour are cleaned from the runtime home.
 | `workspaces.example.json` | Synthetic template, never read as configuration. |
 | `native-events.jsonl`, `native-events.jsonl.1` | Best-effort native event log and rotated predecessor. |
 
-Python and native share the ledger, catalog, priority memory, aliases and
-default page when using the same home. Their parse caches are separate.
+Prior Python releases used the same ledger, catalog, priority memory, aliases
+and default page. Native retains compatibility and a separate parse cache.
 Select a different native home for independent state; the application does
-not migrate existing private state. Shared-home use should be sequential.
+not migrate existing private state. Commands sharing a home must run sequentially.
 Ledger recording checks for edits before replacement, but a concurrent edit
 after the check can still be overwritten. There is no ledger lock spanning
 the read/check/replace operation.

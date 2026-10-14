@@ -40,16 +40,18 @@ COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --c
 ```
 
 Without overrides, the source is `~/.codex` and the runtime home is
-`~/.colophon`. Python and native Colophon share editable runtime files by
-default; native uses its own `cache-native/`. Use a separately selected
-`COLOPHON_HOME` for independent state. When sharing a home, run the two
-implementations sequentially and avoid editing the ledger during a run:
+`~/.colophon`. Runtime files remain compatible with prior Python releases;
+native uses its own `cache-native/`. Use a separately selected `COLOPHON_HOME`
+for independent state. If an older release shares this home, run commands
+sequentially and avoid editing the ledger during a run:
 the existing ledger read/replace race is not a cross-process transaction.
 No private state is migrated automatically.
 
 [Runtime behavior](docs/runtime.md) covers flags, permissions, source SQLite
 coordination, privacy and current limitations. [Architecture](docs/architecture.md)
-describes the modules. [Development](docs/development.md) and the
+describes the modules. [Accounting decisions](docs/token_rules.md) and
+[lessons learned](docs/LESSONS_LEARNED.md) retain applicable historical knowledge.
+[Development](docs/development.md) and the
 [tests README](tests/README.md) describe standalone validation:
 
 ```sh
