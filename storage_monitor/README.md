@@ -82,7 +82,7 @@ Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) t
 - Completed scans can be compared in the Growth tab after at least two scans.
 - The dashboard follows the OS light/dark preference until manually overridden; the override is stored in browser local storage.
 
-The roughly 35-second full-scan figure shown during development was measured on one machine. Actual time depends on directory count, storage performance, permissions, and concurrent disk activity.
+Full-scan time depends on directory count, storage performance, permissions, and concurrent disk activity.
 
 ### Cleanup intelligence
 
@@ -104,7 +104,7 @@ Review every proposed action before running it. Estimates are approximate, APFS 
 
 ## Runtime State
 
-Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_HOME` to use another directory. `STORAGE_MONITOR_SCAN_WORKERS` controls the parallel walk size and is clamped to 1–16 workers (default: 8).
+Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_HOME` to use another directory. `STORAGE_MONITOR_SCAN_WORKERS` controls the parallel walk size and is clamped to 1–16 workers (default: 4).
 
 - `storage_monitor.db` — the active volume index, cached drill-down data, up to 30 scan-run records, and compact directory history for up to 60 scans. Obsolete index rows are pruned after a successful scan; SQLite is vacuumed when reclaimable database space exceeds 100 MiB.
 - `latest_scan.json` — the most recent completed or refreshed report.
