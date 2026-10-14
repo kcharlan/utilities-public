@@ -142,7 +142,6 @@ copy_mappings=(
   'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
   'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
   'routerview/routerview|routerview'
-  'storage_monitor/storage_monitor|storage_monitor'
   'trim_last/trim_last|trim_last'
   'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
   'worktree-helper/worktree|worktree'
@@ -288,6 +287,8 @@ audited_scopes=(
   model_sentinel/model_sentinel
   colophon
   tools/deploy_colophon.mjs
+  storage_monitor
+  tools/deploy_storage_monitor.mjs
   tools/deployment_files.mjs
   ':(glob)**/.gitignore'
   "${all_projects[@]}"
@@ -641,6 +642,41 @@ elif node "$REPO_ROOT/tools/deploy_colophon.mjs" --audit --repo "$REPO_ROOT" --s
   fi
 else
   report_failure "colophon native deployment unverified (source, binary or receipt drift)"
+fi
+
+storage_source_ok=true
+storage_inventory="$AUDIT_TMP/storage-monitor-source-inventory"
+: > "$storage_inventory"
+if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
+  storage_source_ok=false
+fi
+for storage_required in storage_monitor/storage_monitor storage_monitor/native/Makefile tools/deploy_storage_monitor.mjs tools/deployment_files.mjs; do
+  if [[ -z "${index_membership[$storage_required]-}" ||
+        -n "${source_state_invalid[$storage_required]-}" ]]; then
+    storage_source_ok=false
+  fi
+done
+for storage_path in "${invalid_index_paths[@]}" "${pending_deletion_paths[@]}"; do
+  if [[ "$storage_path" == storage_monitor/* || "$storage_path" == tools/deploy_storage_monitor.mjs || "$storage_path" == tools/deployment_files.mjs ]]; then
+    storage_source_ok=false
+  fi
+done
+for storage_path in "${index_paths[@]}"; do
+  if [[ "$storage_path" == storage_monitor/* ]]; then
+    [[ -z "${source_state_invalid[$storage_path]-}" ]] || storage_source_ok=false
+    printf '%s\t%s\0' "${index_modes[$storage_path]}" "$storage_path" >> "$storage_inventory"
+  fi
+done
+if [[ "$storage_source_ok" != true ]]; then
+  report_failure "storage_monitor source inventory unverified"
+elif node "$REPO_ROOT/tools/deploy_storage_monitor.mjs" --audit --repo "$REPO_ROOT" --scripts-dir "$SCRIPTS_DIR" --source-inventory "$storage_inventory" > "$AUDIT_TMP/storage.stdout" 2> "$AUDIT_TMP/storage.stderr"; then
+  if [[ ! -s "$AUDIT_TMP/storage.stderr" && "$(stat -f '%z' "$AUDIT_TMP/storage.stdout")" == 31 && "$(cat "$AUDIT_TMP/storage.stdout")" == 'OK: storage_monitor deployment' ]]; then
+    print -- 'OK: storage_monitor deployment'
+  else
+    report_failure "storage_monitor child protocol unverified"
+  fi
+else
+  report_failure "storage_monitor deployment unverified (source, launcher, walker or receipt drift)"
 fi
 
 for mapping in "${copy_mappings[@]}"; do

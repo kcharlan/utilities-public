@@ -278,6 +278,67 @@ node --test tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_tim
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
+## Storage Monitor deployment
+
+Storage Monitor installs a Python launcher and its native macOS walker as a
+single deployment in `~/Library/Scripts`. The application never compiles the
+walker at runtime. After validating and staging the reviewed launcher and native
+build inputs, run from the repository root:
+
+```sh
+node tools/deploy_storage_monitor.mjs --dry-run
+node tools/deploy_storage_monitor.mjs
+node tools/deploy_storage_monitor.mjs --audit
+zsh tools/check_local_deployments.zsh
+```
+
+The installer needs Node.js. Building requires macOS, `make`, and Apple clang
+from the Xcode Command Line Tools (`xcode-select --install`). It builds from
+regular stage-zero tracked inputs whose bytes and modes match the index, in
+fresh temporary space. `--repo DIR` selects another checkout; the destination
+defaults to `~/Library/Scripts`, with `UTILITIES_SCRIPTS_DIR` or
+`--scripts-dir DIR` overrides. Destinations inside the repository or through
+user-created directory links are refused. Dry-run reports required work without
+building or writing.
+
+The walker rebuilds when its receipt is missing or invalid, native inputs
+change, the binary is missing or has drifted, or its version/protocol check
+fails. Launcher-only changes update the launcher without rebuilding a current
+walker. Use `--rebuild` to force a rebuild, including after a compiler or SDK
+upgrade: the receipt does not track compiler versions.
+
+The mode-0600 `.storage_monitor.json` receipt binds native source, launcher and
+walker digests to installed modes, walker version and protocol. The read-only
+fleet audit supplies its validated Git-index snapshot and checks source and
+installed artifacts against this receipt without compiling or executing the
+installed commands. It checks consistency rather than reproducibility across
+toolchain changes or cryptographic authenticity.
+
+Before replacement, the previous launcher, walker and receipt are saved under
+`~/.utilities-deploy-backups/storage_monitor/copy-*/`, in a mode-0700 directory
+with mode-0600 backup files and metadata recording original modes and digests.
+Activation failure restores the previous files. Backups are retained. Roll back
+using the exact backup directory printed by the installer:
+
+```sh
+node tools/deploy_storage_monitor.mjs --rollback /path/to/storage_monitor/copy-backup
+```
+
+Rollback validates the backup and saves the current deployment before restoring
+the prior bytes, modes and receipt. Runtime state under `~/.storage_monitor/`
+is preserved. Migrating from the former direct-copy launcher needs an explicit
+deployment to install the walker and publish its receipt; a repository update
+alone leaves the fleet audit reporting deployment drift. Rollback can restore
+that original direct copy without a walker or receipt, in which case the audit
+continues reporting drift until the reviewed native deployment is installed.
+
+Synthetic installer and fleet fixtures run with:
+
+```sh
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+zsh tools/tests/test_check_local_deployments.zsh
+```
+
 ## `~/Library/Scripts`
 
 These files are direct copies of tracked source and should remain byte-for-byte identical:
@@ -296,7 +357,6 @@ These files are direct copies of tracked source and should remain byte-for-byte 
 - `moneydance_rotate_backups.sh` <- `moneydance backup rotation/moneydance_rotate_backups.sh`
 - `router_log_analyze.py` <- `router-log-analyzer/router_log_analyze.py`
 - `routerview` <- `routerview/routerview`
-- `storage_monitor` <- `storage_monitor/storage_monitor`
 - `trim_last` <- `trim_last/trim_last`
 - `usage-monthly-csv` <- `usage-monthly-csv/usage-monthly-csv`
 - `worktree` <- `worktree-helper/worktree`

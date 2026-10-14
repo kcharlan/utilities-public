@@ -103,7 +103,6 @@ typeset -a COPY_MAPPINGS=(
   'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
   'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
   'routerview/routerview|routerview'
-  'storage_monitor/storage_monitor|storage_monitor'
   'trim_last/trim_last|trim_last'
   'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
   'worktree-helper/worktree|worktree'
@@ -233,12 +232,18 @@ new_fixture() {
     "$FIXTURE_HOME/.config" \
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
-  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
     chmod 644 "$FIXTURE_REPO/colophon/$native_input"
   done
+
+  write_synthetic_file "$FIXTURE_REPO/storage_monitor/storage_monitor" $'invented launcher\nWALKER_PROTOCOL = 1'
+  chmod 755 "$FIXTURE_REPO/storage_monitor/storage_monitor"
+  write_synthetic_file "$FIXTURE_REPO/storage_monitor/native/Makefile" 'invented native makefile'
+  write_synthetic_file "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c" $'invented native source\n#define SMW_PROTOCOL 1'
+  chmod 644 "$FIXTURE_REPO/storage_monitor/native/Makefile" "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c"
 
   local mapping source_relative deployed_name source_file deployed_file
   for mapping in "${COPY_MAPPINGS[@]}"; do
@@ -309,6 +314,7 @@ new_fixture() {
   git -C "$FIXTURE_REPO" add .
   git -C "$FIXTURE_REPO" commit -qm "synthetic passing baseline"
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/native-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/storage-monitor-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   local tracked_file
   for project in "${HOME_PROJECTS[@]}"; do
@@ -1584,5 +1590,58 @@ test_native_colophon_deployment() {
   assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
 }
 test_native_colophon_deployment
+
+test_storage_monitor_deployment() {
+  new_fixture
+  local before="$FIXTURE_ROOT/storage-before.snapshot"
+  local after="$FIXTURE_ROOT/storage-after.snapshot"
+  snapshot_fixture "$before"
+  run_audit
+  snapshot_fixture "$after"
+  assert_status 0 "$AUDIT_STATUS" 'storage monitor passing baseline'
+  assert_contains "$AUDIT_STDOUT" 'OK: storage_monitor deployment'
+  assert_fixture_unchanged "$before" "$after"
+
+  local target
+  for target in storage_monitor_walk storage_monitor; do
+    new_fixture
+    print 'synthetic artifact drift' >> "$FIXTURE_SCRIPTS/$target"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" "storage monitor $target drift"
+    assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
+  done
+
+  new_fixture
+  print 'synthetic native source drift' >> "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'storage monitor native source drift'
+  assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
+
+  new_fixture
+  rm -- "$FIXTURE_SCRIPTS/.storage_monitor.json"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'storage monitor receipt missing'
+  assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
+
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached storage_monitor/native/src/storage_monitor_walk.c
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'storage monitor native source removed from index'
+  assert_contains "$AUDIT_STDERR" 'storage_monitor source inventory unverified'
+
+  local response
+  for response in \
+    "process.stdout.write('OK: storage_monitor deployment')" \
+    "process.stdout.write('OK: storage_monitor deployment\\n\\n')" \
+    "console.log('OK: storage_monitor deployment'); console.error('synthetic warning')"; do
+    new_fixture
+    print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_storage_monitor.mjs"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'storage monitor malformed child success'
+    assert_contains "$AUDIT_STDERR" 'storage_monitor child protocol unverified'
+    assert_not_contains "$AUDIT_STDOUT" 'OK: storage_monitor deployment'
+  done
+}
+test_storage_monitor_deployment
 
 print -- "check_local_deployments tests: PASS"
