@@ -53,6 +53,13 @@ function renderConnectionStatus(status, configError = null) {
   }
 }
 
+function renderCaptureState({ captureEnabled, captureCount = 0 } = {}) {
+  const toggle = $("captureToggle");
+  if (!toggle) return;
+  toggle.dataset.enabled = String(!!captureEnabled);
+  toggle.textContent = `Capture: ${captureEnabled ? "On" : "Off"} (${captureCount})`;
+}
+
 function showCheckingStatus() {
   const panel = $("status");
   const label = $("statusLabel");
@@ -146,7 +153,7 @@ function renderStatus(data){
       const color = d.decision === "counted" ? "#080" : "#666";
       row.innerHTML = `
         <div style="color:${color}"><b>${d.decision}</b> ${fmt(d.ts)}</div>
-        <div style="color:#444; word-break:break-all;">${d.host}${d.path}</div>
+        <div style="color:#444; word-break:break-all;">${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}</div>
         ${d.reason ? `<div style="color:#999 italic">${d.reason}</div>` : ""}
       `;
       frag.appendChild(row);
@@ -187,6 +194,7 @@ async function refresh({ showChecking = true } = {}){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
+    renderCaptureState(resp);
   } catch (e){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
@@ -224,6 +232,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setNotice("Exporting diagnostics…");
     try {
       const resp = await sendMessageWithTimeout({ cmd: "get_status" }, 3000);
+      const cap = await sendMessageWithTimeout({ cmd: "get_capture" }, 10000);
       const data = {
         collectorStatus: resp.collectorStatus || null,
         collectorUrl: resp.collectorUrl || null,
@@ -231,7 +240,9 @@ document.addEventListener("DOMContentLoaded", () => {
         pending: resp.pending || {},
         seq: resp.seq,
         client_id: resp.client_id,
-        debug: resp.debug || []
+        debug: resp.debug || [],
+        captureEnabled: cap.captureEnabled,
+        capture: cap.capture || []
       };
       const json = JSON.stringify(data, null, 2);
       
@@ -274,6 +285,27 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e){
       setNotice(`Push failed: ${e.message}`, "error");
     }
+  });
+
+  bind("captureToggle", "click", async () => {
+    const turnOn = $("captureToggle")?.dataset.enabled !== "true";
+    try {
+      await sendMessageWithTimeout({ cmd: "set_capture", enabled: turnOn }, 2000);
+      setNotice(`Full capture turned ${turnOn ? "on" : "off"}.`, "success");
+    } catch (e) {
+      setNotice(`Capture toggle failed: ${e.message}`, "error");
+    }
+    refresh({ showChecking: false });
+  });
+
+  bind("clearCapture", "click", async () => {
+    try {
+      await sendMessageWithTimeout({ cmd: "clear_capture" }, 2000);
+      setNotice("Capture cleared.", "success");
+    } catch (e) {
+      setNotice(`Clear capture failed: ${e.message}`, "error");
+    }
+    refresh({ showChecking: false });
   });
 
   bind("reload", "click", () => {

@@ -7,7 +7,8 @@ function loadPopupStatusRenderer() {
   const elements = {
     status: { dataset: {} },
     statusLabel: { textContent: "" },
-    statusDetail: { textContent: "" }
+    statusDetail: { textContent: "" },
+    captureToggle: { textContent: "", dataset: {} }
   };
   const document = {
     addEventListener() {},
@@ -71,4 +72,16 @@ test("renders configuration and checking states without relying on color", () =>
   context.showCheckingStatus();
   assert.equal(elements.status.dataset.state, "checking");
   assert.equal(elements.statusLabel.textContent, "Checking…");
+});
+
+test("shows whether full capture is on and how much it holds", () => {
+  const { context, elements } = loadPopupStatusRenderer();
+
+  context.renderCaptureState({ captureEnabled: true, captureCount: 42 });
+  assert.equal(elements.captureToggle.textContent, "Capture: On (42)");
+  assert.equal(elements.captureToggle.dataset.enabled, "true");
+
+  context.renderCaptureState({ captureEnabled: false, captureCount: 0 });
+  assert.equal(elements.captureToggle.textContent, "Capture: Off (0)");
+  assert.equal(elements.captureToggle.dataset.enabled, "false");
 });
