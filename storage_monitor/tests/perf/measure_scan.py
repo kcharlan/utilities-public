@@ -17,8 +17,10 @@ import time
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.testkit import load_launcher
+from destination_guard import reject_repository_destinations
 
 
 PHASE_NAMES = (
@@ -54,9 +56,7 @@ def main():
         parser.error("--runs must be positive")
     runtime_home = args.runtime_home.expanduser().resolve()
     output = args.output.expanduser().resolve()
-    for destination in (runtime_home, output):
-        if destination.is_relative_to(REPOSITORY_ROOT):
-            parser.error("--runtime-home and --output must resolve outside the repository")
+    reject_repository_destinations(parser, REPOSITORY_ROOT, runtime_home, output)
 
     os.environ["STORAGE_MONITOR_HOME"] = str(runtime_home)
     launcher = load_launcher(args.launcher)

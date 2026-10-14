@@ -14,8 +14,10 @@ import tempfile
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.testkit import load_launcher
+from destination_guard import reject_repository_destinations
 
 
 def snapshot(module, root):
@@ -47,13 +49,7 @@ def main():
     parser.add_argument("--show-paths", action="store_true")
     args = parser.parse_args()
     output = args.output.expanduser().resolve()
-    # Reject outputs inside this worktree or the primary checkout.
-    primary = Path(subprocess.check_output(
-        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        cwd=REPOSITORY_ROOT, text=True,
-    ).strip()).parent
-    if any(output.is_relative_to(repository) for repository in (REPOSITORY_ROOT, primary)):
-        parser.error("--output must resolve outside the repository")
+    reject_repository_destinations(parser, REPOSITORY_ROOT, output)
     root = args.root.expanduser().resolve()
     source = subprocess.check_output(
         ["git", "show", f"{args.baseline_ref}:storage_monitor/storage_monitor"],

@@ -166,9 +166,11 @@ zsh tools/tests/test_check_local_deployments.zsh
 uv run --no-python-downloads --script tools/check_uv_headers.py
 ```
 
-Runtime smoke checks:
+Return to `storage_monitor/` for the remaining runtime smoke and performance
+commands:
 
 ```zsh
+cd storage_monitor
 make -C native
 UV_PYTHON_DOWNLOADS=never ./storage_monitor --help
 UTILITIES_TESTING=1 STORAGE_MONITOR_HOME="$(mktemp -d)" UV_PYTHON_DOWNLOADS=never ./storage_monitor --no-browser --port 8473
@@ -180,7 +182,8 @@ isolated runtime directory. Request `/api/state` on the selected port until
 
 Real-disk performance and historical-walker parity checks require owner
 approval. Keep runtime homes, JSON outputs, and any path diagnostics outside
-every public checkout. From this directory, the tools accept:
+every public checkout. Both tools check Git's registered worktree inventory and
+refuse to run if it cannot be read. From this directory, the tools accept:
 
 ```zsh
 .venv/bin/python tests/perf/measure_scan.py --help
