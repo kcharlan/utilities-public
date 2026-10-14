@@ -2,12 +2,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {regular, inspectAncestors, externalDirectory} from './deployment_files.mjs';
+import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
+  parseStagedListing, normalizeEntries, hashInventory} from './deployment_files.mjs';
 
-const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const buildInput = name => name === 'colophon/Makefile' ||
   /^colophon\/(src|assets|vendor\/yyjson)\//.test(name) || name === 'colophon/tools/embed.pl';
 
@@ -15,38 +14,17 @@ export const buildInput = name => name === 'colophon/Makefile' ||
 export function sourceInventory(repo, snapshot, requireStaged = false) {
   let entries;
   if (snapshot) {
-    entries = fs.readFileSync(snapshot, 'utf8').split('\0').filter(Boolean).map(record => {
-      const [mode, name, ...extra] = record.split('\t');
-      if (extra.length || !['100644', '100755'].includes(mode)) throw new Error('Invalid native source inventory');
-      return {mode, name};
-    });
+    entries = parseIndexSnapshot(snapshot);
   } else {
     const raw = execFileSync('git', ['-C', repo, 'ls-files', '--stage', '--sparse', '-z', '--', 'colophon'], {encoding: 'utf8'});
-    entries = raw.split('\0').filter(Boolean).map(record => {
-      const match = /^(100644|100755) ([a-f0-9]+) 0\t(.+)$/.exec(record);
-      if (!match) throw new Error('Native project must have only regular stage-zero tracked files');
-      return {mode: match[1], oid: match[2], name: match[3]};
-    });
+    entries = parseStagedListing(raw);
   }
-  entries = entries.filter(e => buildInput(e.name)).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  entries = normalizeEntries(entries.filter(e => buildInput(e.name)));
   const names = new Set(entries.map(e => e.name));
-  if (names.size !== entries.length) throw new Error('Duplicate native input');
   for (const required of ['Makefile', 'src/main.c', 'assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h']) {
     if (!names.has('colophon/' + required)) throw new Error('Required native build input missing: ' + required);
   }
-  const hash = crypto.createHash('sha256');
-  for (const entry of entries) {
-    if (entry.name.split('/').some(part => part === '..' || part === '.')) throw new Error('Invalid native input path');
-    const file = path.join(repo, entry.name), stat = regular(file), bytes = fs.readFileSync(file);
-    const mode = stat.mode & 0o7777;
-    if (mode !== (entry.mode === '100755' ? 0o755 : 0o644)) throw new Error('Native source mode differs from index');
-    if (requireStaged && !bytes.equals(execFileSync('git', ['-C', repo, 'show', ':' + entry.name]))) {
-      throw new Error('Native working bytes differ from Git index; validate and stage first');
-    }
-    hash.update(entry.name + '\0' + mode.toString(8) + '\0' + sha(bytes) + '\0');
-    entry.bytes = bytes; entry.permissions = mode;
-  }
-  return {entries, sourceHash: hash.digest('hex')};
+  return hashInventory(repo, entries, requireStaged);
 }
 function receiptPath(scripts) { return path.join(scripts, '.colophon-native.json'); }
 function readReceipt(file) {
@@ -62,7 +40,6 @@ function diagnostic(binary) {
   if (version !== 'colophon 0.1.0') throw new Error('Native version activation check failed');
   execFileSync(binary, ['--help'], {stdio: 'pipe', timeout: 10000});
 }
-function exists(file) { try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 function backup(scripts, home, repo) {
   const target = path.join(scripts, 'colophon'), receipt = receiptPath(scripts);
   const root = externalDirectory(path.join(home, '.utilities-deploy-backups/colophon-native'), repo);
@@ -97,18 +74,10 @@ function readBackup(directory) {
 }
 function restore(value, scripts) {
   const target = path.join(scripts, 'colophon'), receipt = receiptPath(scripts);
-  if (value.binary) atomicFile(target, value.binary, value.mode);
+  if (value.binary) atomicFile(target, value.binary, value.mode, '.colophon-stage-');
   else if (exists(target)) fs.unlinkSync(target);
-  if (value.receipt) atomicFile(receipt, value.receipt, 0o600);
+  if (value.receipt) atomicFile(receipt, value.receipt, 0o600, '.colophon-stage-');
   else if (exists(receipt)) fs.unlinkSync(receipt);
-}
-function atomicFile(target, bytes, mode) {
-  const staging = fs.mkdtempSync(path.join(path.dirname(target), '.colophon-stage-'));
-  try {
-    const candidate = path.join(staging, 'candidate'); fs.writeFileSync(candidate, bytes, {mode}); fs.chmodSync(candidate, mode);
-    if (!fs.readFileSync(candidate).equals(bytes) || (regular(candidate).mode & 0o7777) !== mode) throw new Error('Native staged bytes/mode mismatch');
-    fs.renameSync(candidate, target);
-  } finally { fs.rmSync(staging, {recursive: true, force: true}); }
 }
 export function main(argv = process.argv.slice(2)) {
   let repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -152,8 +121,8 @@ export function main(argv = process.argv.slice(2)) {
     fs.mkdirSync(scripts, {recursive: true, mode: 0o755});
     const saved = backup(scripts, os.homedir(), repo);
     try {
-      atomicFile(target, bytes, 0o755); diagnostic(target);
-      atomicFile(receipt, Buffer.from(JSON.stringify({schema: 1, sourceHash: inventory.sourceHash, binaryHash: sha(bytes), mode: 0o755}) + '\n'), 0o600);
+      atomicFile(target, bytes, 0o755, '.colophon-stage-'); diagnostic(target);
+      atomicFile(receipt, Buffer.from(JSON.stringify({schema: 1, sourceHash: inventory.sourceHash, binaryHash: sha(bytes), mode: 0o755}) + '\n'), 0o600, '.colophon-stage-');
     } catch (error) { restore(readBackup(saved), scripts); throw error; }
     console.log('Native Colophon deployed; rollback backup: ' + saved);
   } finally { fs.rmSync(scratch, {recursive: true, force: true}); }
