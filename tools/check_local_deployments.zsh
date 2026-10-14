@@ -142,7 +142,6 @@ copy_mappings=(
   'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
   'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
   'routerview/routerview|routerview'
-  'storage_monitor/storage_monitor|storage_monitor'
   'trim_last/trim_last|trim_last'
   'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
   'worktree-helper/worktree|worktree'
@@ -288,6 +287,8 @@ audited_scopes=(
   model_sentinel/model_sentinel
   colophon
   tools/deploy_colophon.mjs
+  storage_monitor
+  tools/deploy_storage_monitor.mjs
   tools/deployment_files.mjs
   ':(glob)**/.gitignore'
   "${all_projects[@]}"
@@ -608,40 +609,59 @@ else
   done
 fi
 
-native_source_ok=true
-native_inventory="$AUDIT_TMP/native-source-inventory"
-: > "$native_inventory"
-if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
-  native_source_ok=false
-fi
-for native_required in colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs; do
-  if [[ -z "${index_membership[$native_required]-}" ||
-        -n "${source_state_invalid[$native_required]-}" ]]; then
-    native_source_ok=false
+audit_native_deployment() {
+  local scope="$1" installer="$2" inventory="$AUDIT_TMP/$3"
+  local output="$AUDIT_TMP/$4" label="$5" drift_message="$6"
+  shift 6
+  local -a required_inputs=("$@")
+  local -A required_membership
+  local source_ok=true source_path required
+  local success="OK: $label deployment"
+  : > "$inventory"
+  if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
+    source_ok=false
   fi
-done
-for native_path in "${invalid_index_paths[@]}" "${pending_deletion_paths[@]}"; do
-  if [[ "$native_path" == colophon/* || "$native_path" == tools/deploy_colophon.mjs || "$native_path" == tools/deployment_files.mjs ]]; then
-    native_source_ok=false
-  fi
-done
-for native_path in "${index_paths[@]}"; do
-  if [[ "$native_path" == colophon/* ]]; then
-    [[ -z "${source_state_invalid[$native_path]-}" ]] || native_source_ok=false
-    printf '%s\t%s\0' "${index_modes[$native_path]}" "$native_path" >> "$native_inventory"
-  fi
-done
-if [[ "$native_source_ok" != true ]]; then
-  report_failure "colophon native source inventory unverified"
-elif node "$REPO_ROOT/tools/deploy_colophon.mjs" --audit --repo "$REPO_ROOT" --scripts-dir "$SCRIPTS_DIR" --source-inventory "$native_inventory" > "$AUDIT_TMP/native.stdout" 2> "$AUDIT_TMP/native.stderr"; then
-  if [[ ! -s "$AUDIT_TMP/native.stderr" && "$(stat -f '%z' "$AUDIT_TMP/native.stdout")" == 31 && "$(cat "$AUDIT_TMP/native.stdout")" == 'OK: colophon native deployment' ]]; then
-    print -- 'OK: colophon native deployment'
+  for required in "${required_inputs[@]}"; do
+    required_membership[$required]=1
+    if [[ -z "${index_membership[$required]-}" ||
+          -n "${source_state_invalid[$required]-}" ]]; then
+      source_ok=false
+    fi
+  done
+  for source_path in "${invalid_index_paths[@]}" "${pending_deletion_paths[@]}"; do
+    if [[ "$source_path" == "$scope"/* || -n "${required_membership[$source_path]-}" ]]; then
+      source_ok=false
+    fi
+  done
+  for source_path in "${index_paths[@]}"; do
+    if [[ "$source_path" == "$scope"/* ]]; then
+      [[ -z "${source_state_invalid[$source_path]-}" ]] || source_ok=false
+      printf '%s\t%s\0' "${index_modes[$source_path]}" "$source_path" >> "$inventory"
+    fi
+  done
+  if [[ "$source_ok" != true ]]; then
+    report_failure "$label source inventory unverified"
+  elif node "$REPO_ROOT/$installer" --audit --repo "$REPO_ROOT" --scripts-dir "$SCRIPTS_DIR" --source-inventory "$inventory" > "$output.stdout" 2> "$output.stderr"; then
+    if [[ ! -s "$output.stderr" && "$(stat -f '%z' "$output.stdout")" == 31 && "$(cat "$output.stdout")" == "$success" ]]; then
+      print -- "$success"
+    else
+      report_failure "$label child protocol unverified"
+    fi
   else
-    report_failure "colophon native child protocol unverified"
+    report_failure "$drift_message"
   fi
-else
-  report_failure "colophon native deployment unverified (source, binary or receipt drift)"
-fi
+}
+
+audit_native_deployment colophon tools/deploy_colophon.mjs \
+  native-source-inventory native 'colophon native' \
+  'colophon native deployment unverified (source, binary or receipt drift)' \
+  colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs
+
+audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \
+  storage-monitor-source-inventory storage storage_monitor \
+  'storage_monitor deployment unverified (source, launcher, walker or receipt drift)' \
+  storage_monitor/storage_monitor storage_monitor/native/Makefile \
+  tools/deploy_storage_monitor.mjs tools/deployment_files.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"

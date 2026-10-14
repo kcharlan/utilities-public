@@ -2,7 +2,13 @@
 
 Storage Monitor is a local-first macOS disk-usage and cleanup console. It indexes the writable APFS Data volume, inventories local Time Machine snapshots, and surfaces large files and cleanup candidates in a React dashboard. Scan data and action logs remain on the Mac.
 
-The application is a single executable Python file:
+The application pairs a single executable Python launcher with a native C
+`getattrlistbulk` walker. The walker indexes the volume; the launcher owns scan
+orchestration, SQLite persistence, provider probes, and the dashboard. The
+launcher refuses to start if the walker is missing or speaks a different
+protocol. The running application never compiles anything.
+
+The launcher provides:
 
 - a uv-managed FastAPI backend;
 - a localhost-only web server;
@@ -13,22 +19,38 @@ The application is a single executable Python file:
 
 - macOS with APFS, `diskutil`, and `tmutil`
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
+- Xcode Command Line Tools (`xcode-select --install`), providing Apple clang and `make` to build `storage_monitor_walk`
+- Node.js, for `tools/deploy_storage_monitor.mjs`
 - a browser with network access to load React, Babel, Tailwind CSS, and Lucide from their CDNs
 
-## Quick Start
+## Build and Deploy
 
-From this directory, run:
+For development, build the walker explicitly, then run from this directory:
 
 ```zsh
-./storage_monitor
+make -C native
+UV_PYTHON_DOWNLOADS=never ./storage_monitor
 ```
 
-Or symlink it into your `PATH`:
+The launcher finds `native/build/storage_monitor_walk`. Symlinking the repository
+launcher into your `PATH` still works after this build:
 
 ```zsh
 ln -s "$(pwd)/storage_monitor" /usr/local/bin/storage_monitor
-storage_monitor
+UV_PYTHON_DOWNLOADS=never storage_monitor
 ```
+
+For installed use, validate and stage the reviewed launcher and native build
+inputs, then preview and deploy the launcher and walker together:
+
+```zsh
+node ../tools/deploy_storage_monitor.mjs --dry-run
+node ../tools/deploy_storage_monitor.mjs
+node ../tools/deploy_storage_monitor.mjs --audit
+```
+
+See [deployment details](../docs/local_deployment_sync.md#storage-monitor-deployment)
+for receipts, rebuilds, backups, rollback, and fleet audits.
 
 On first run, uv resolves FastAPI and uvicorn into its shared cache, so that invocation may briefly use the network. Storage Monitor then:
 
@@ -65,7 +87,7 @@ cleanliness.
 Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) to choose a different preferred port:
 
 ```zsh
-./storage_monitor --no-browser --port 8500
+UV_PYTHON_DOWNLOADS=never ./storage_monitor --no-browser --port 8500
 ```
 
 ## Current Capabilities
@@ -82,7 +104,7 @@ Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) t
 - Completed scans can be compared in the Growth tab after at least two scans.
 - The dashboard follows the OS light/dark preference until manually overridden; the override is stored in browser local storage.
 
-The roughly 35-second full-scan figure shown during development was measured on one machine. Actual time depends on directory count, storage performance, permissions, and concurrent disk activity.
+Full-scan time depends on directory count, storage performance, permissions, and concurrent disk activity.
 
 ### Cleanup intelligence
 
@@ -104,7 +126,7 @@ Review every proposed action before running it. Estimates are approximate, APFS 
 
 ## Runtime State
 
-Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_HOME` to use another directory. `STORAGE_MONITOR_SCAN_WORKERS` controls the parallel walk size and is clamped to 1–16 workers (default: 8).
+Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_HOME` to use another directory. `STORAGE_MONITOR_SCAN_WORKERS` controls the parallel walk size and is clamped to 1–16 workers (default: 8). `STORAGE_MONITOR_WALKER` overrides the helper path; otherwise the launcher finds the helper beside an installed launcher or under `native/build` in a development checkout.
 
 - `storage_monitor.db` — the active volume index, cached drill-down data, up to 30 scan-run records, and compact directory history for up to 60 scans. Obsolete index rows are pruned after a successful scan; SQLite is vacuumed when reclaimable database space exceeds 100 MiB.
 - `latest_scan.json` — the most recent completed or refreshed report.
@@ -125,11 +147,52 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-Runtime smoke checks:
+The complete suite includes unit, native protocol, integration, and Chromium
+browser tests, with no skips. By default it builds the walker into a temporary
+directory. Run the complete suite against both sanitizer builds as well:
 
 ```zsh
-./storage_monitor --help
-UTILITIES_TESTING=1 STORAGE_MONITOR_HOME="$(mktemp -d)" ./storage_monitor --no-browser --port 8473
+make -C native sanitize tsan
+STORAGE_MONITOR_WALKER="$PWD/native/build/sanitize/storage_monitor_walk" .venv/bin/python -m pytest -q
+STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/python -m pytest -q
 ```
 
-The second command starts the server and an automatic scan in an isolated runtime directory; stop it with `Ctrl-C`.
+From the repository root, run the deployment and fleet fixture suites:
+
+```zsh
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/check_static_deployments.test.mjs
+zsh tools/tests/test_check_local_deployments.zsh
+uv run --no-python-downloads --script tools/check_uv_headers.py
+```
+
+Return to `storage_monitor/` for the remaining runtime smoke and performance
+commands:
+
+```zsh
+cd storage_monitor
+make -C native
+UV_PYTHON_DOWNLOADS=never ./storage_monitor --help
+UTILITIES_TESTING=1 STORAGE_MONITOR_HOME="$(mktemp -d)" UV_PYTHON_DOWNLOADS=never ./storage_monitor --no-browser --port 8473
+```
+
+The final command starts the server and an automatic scan in an
+isolated runtime directory. Request `/api/state` on the selected port until
+`scan_status.phase` is `idle` with no error, then stop it with `Ctrl-C`.
+
+Real-disk performance and historical-walker parity checks require owner
+approval. Keep runtime homes, JSON outputs, and any path diagnostics outside
+every public checkout. Both tools check Git's registered worktree inventory and
+refuse to run if it cannot be read. From this directory, the tools accept:
+
+```zsh
+.venv/bin/python tests/perf/measure_scan.py --help
+.venv/bin/python tests/parity/compare_walkers.py --help
+.venv/bin/python tests/perf/measure_scan.py --runtime-home /private/output/runtime --output /private/output/performance.json --runs 3
+.venv/bin/python tests/parity/compare_walkers.py --baseline-ref BASELINE_REF --root /private/input --output /private/output/parity.json
+```
+
+Replace the illustrative private paths and `BASELINE_REF` with approved local
+destinations and the historical Python-walker revision. Performance phase times
+overlap and must not be summed; compare whole-scan and walker durations under
+comparable permissions, cache state, and background disk activity.
