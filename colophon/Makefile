@@ -4,10 +4,15 @@ RELEASE_BIN ?= colophon
 SQLITE_PREFIX ?= /opt/homebrew/opt/sqlite
 OPTFLAGS ?= -O2
 override CFLAGS += -std=c17 $(OPTFLAGS) -g -Wall -Wextra -Wpedantic -Werror -fno-fast-math -ffp-contract=off
-override CPPFLAGS += -Isrc -Ivendor/yyjson -I$(SQLITE_PREFIX)/include
+override CPPFLAGS += -Isrc -Ivendor/yyjson -Ivendor/zstd -I$(SQLITE_PREFIX)/include
 override LDLIBS += -lpthread -lcurl -framework CoreFoundation -L$(SQLITE_PREFIX)/lib -lsqlite3
 
-SOURCES := $(shell find src -name '*.c' ! -path 'src/testing/*' | LC_ALL=C sort) vendor/yyjson/yyjson.c $(BUILD)/gen/assets.c
+ZSTD_SOURCES := vendor/zstd/common/debug.c vendor/zstd/common/entropy_common.c \
+                vendor/zstd/common/error_private.c vendor/zstd/common/fse_decompress.c \
+                vendor/zstd/common/xxhash.c vendor/zstd/common/zstd_common.c \
+                vendor/zstd/decompress/huf_decompress.c vendor/zstd/decompress/zstd_ddict.c \
+                vendor/zstd/decompress/zstd_decompress.c vendor/zstd/decompress/zstd_decompress_block.c
+SOURCES := $(shell find src -name '*.c' ! -path 'src/testing/*' | LC_ALL=C sort) vendor/yyjson/yyjson.c $(ZSTD_SOURCES) $(BUILD)/gen/assets.c
 UNIT_SUPPORT := src/testing/hooks.c src/testing/cache_faults.c src/testing/codec_roundtrip.c src/testing/phase_times.c
 UNIT_SOURCES := $(filter-out src/main.c,$(SOURCES)) $(wildcard tests/unit/*.c) $(UNIT_SUPPORT)
 RELEASE_OBJECTS := $(patsubst %.c,$(BUILD)/release/%.o,$(SOURCES))
@@ -38,6 +43,10 @@ $(BUILD)/release/%.o: %.c
 $(BUILD)/unit/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) -Itests/unit $(CFLAGS) -DCOLOPHON_TESTING -MMD -MP -c $< -o $@
+
+# Upstream libzstd.mk namespaces xxhash; assembly and legacy formats stay off.
+ZSTD_CPPFLAGS := -DXXH_NAMESPACE=ZSTD_ -DZSTD_DISABLE_ASM=1 -DZSTD_LEGACY_SUPPORT=0
+$(BUILD)/release/vendor/zstd/%.o $(BUILD)/unit/vendor/zstd/%.o: override CPPFLAGS += $(ZSTD_CPPFLAGS)
 
 test-unit: $(BUILD)/unit-tests
 	@tests/run-unit.sh "$(REAL_HOME)" "$(CURDIR)/$(BUILD)/unit-tests"

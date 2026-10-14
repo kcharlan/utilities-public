@@ -235,7 +235,7 @@ new_fixture() {
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   local native_input
-  for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h; do
+  for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
     chmod 644 "$FIXTURE_REPO/colophon/$native_input"
   done
