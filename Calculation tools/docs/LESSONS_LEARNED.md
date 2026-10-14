@@ -9,3 +9,7 @@
 - **A full-width editor can live inside the table scroller.** `100cqw` sizes the editor to the scroll container while a sticky row keeps it visible during horizontal scrolling.
 - **Replacing rows removes keyboard focus.** Before a rerender, set one-shot `pendingFocus` for the editor opener or a stable fallback; restore it after the new DOM is in place.
 - **Markup is part of the test contract.** `tests/drawdown_sales.test.js` asserts exact tax-label/input markup, the `inputs` array, the Gross sold header, the table scroll wrapper, the stats count, and pin field attributes. `tests/drawdown_dates.test.js` asserts the date stamp. `tests/drawdown.browser.spec.js` exercises the pin field chain, chart series paths, and editor, status, and table selectors. Inspect those locations before changing markup.
+
+## AI model timeline
+
+- **Date updates can expose SVG hit-testing bugs.** Extending the latest date changes D3's tick positions. The October 13 update aligned a desktop grid line with the October 12 Meta dots; the axis is painted after the dots and intercepted real clicks. Keep the decorative axis transparent to pointer events, and retain browser hit-testing and natural-click coverage rather than forcing clicks through overlays.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Model Release Timeline — Jan 2024 to Oct 12, 2026</title>
+<title>AI Model Release Timeline — Jan 2024 to Oct 13, 2026</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
   :root{
@@ -57,6 +57,7 @@
   .lane-bg-even{fill:#ffffff; opacity:0.025;}
   .grid line{stroke:#21262d;}
   .grid-year line{stroke:#3d444d;}
+  .axis{pointer-events:none;}
   .axis text{fill:var(--muted); font-size:11px;}
   .axis path,.axis line{stroke:var(--border);}
   .dot{cursor:pointer; stroke:#0d1117; stroke-width:1;}
@@ -133,7 +134,7 @@
 <body>
 <header>
   <h1>AI Model Release Timeline</h1>
-  <div class="sub"><span data-release-count>466</span> notable model releases from <span data-lab-count>83</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>October 12, 2026</span> · checked October 12, 2026 · press ? for controls and shortcuts</div>
+  <div class="sub"><span data-release-count>472</span> notable model releases from <span data-lab-count>85</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>October 13, 2026</span> · checked October 14, 2026 · press ? for controls and shortcuts</div>
 </header>
 <div class="chrome">
   <div class="toolbar">
@@ -203,21 +204,21 @@
 <p class="scope-note" hidden>The findings below describe the full dataset (<span data-earliest-month></span> – <span data-latest-date></span>), not the current range or filters.</p>
 <section class="findings">
   <h2>What the data says: release-timing patterns</h2>
-  <p>Descriptive analysis of all <span data-release-count>466</span> dated release events through October 12, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
+  <p>Descriptive analysis of all <span data-release-count>472</span> dated release events through October 13, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
   <h3>1. Does Moonshot follow Anthropic by 6–8 weeks?</h3>
   <div class="verdict"><b>No consistent 6–8 week pattern.</b> For Moonshot's 9 major releases with a prior Anthropic major, the lags are 14, 90, 50, 31, 38, 64, 4, 16, 10 days. Only 1 of 9 falls in the 42–56 day window. The median is 31 days. These dates alone do not establish whether either lab responds to the other.</div>
   <h3>2. Google's timing relative to OpenAI</h3>
-  <p>Across 14 Google major releases with a prior OpenAI major, the median lag is <b>15.5 days</b> (mean 25.0). Gemini 1.5 Pro and Sora were announced on the same day, February 15, 2024; Gemini 2.5 Pro and GPT-4o image generation were also same-day events, March 25, 2025. Astra arrived after Gemini 3.8 Flash, so it does not change that earlier release's follower lag.</p>
+  <p>Across 15 Google major releases with a prior OpenAI major, the median lag is <b>7 days</b> (mean 23.7). Gemini 1.5 Pro and Sora were announced on the same day, February 15, 2024; Gemini 2.5 Pro and GPT-4o image generation were also same-day events, March 25, 2025. Astra arrived after Gemini 3.8 Flash, so it does not change that earlier release's follower lag.</p>
   <h3>3. Cross-lab release clusters</h3>
-  <p>There are <b>329 same-day cross-lab release pairs</b> and 1399 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
-  <p>Recent releases include Muse Wonder (October 12), Muse Wonder Full (October 12), MISSINGNO. (October 10).</p>
+  <p>There are <b>340 same-day cross-lab release pairs</b> and 1426 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
+  <p>Recent releases include Drama 3 (October 13), Gemini 4 Argon (general availability) (October 13), Gemini 4 Argon Cyber Permissive (allowlisted GA) (October 13), LFM2.5-24B-A2B / Base (October 13), Natura-1 (research announcement) (October 13), GLM-Legal (beta announcement) (October 12), Muse Wonder (October 12), Muse Wonder Full (October 12).</p>
   <h3>4. Release cadence</h3>
   <table><tr><th>Lab</th><th>All releases (median gap)</th><th>Major releases (median gap)</th></tr>
-    <tr><td>Google</td><td>9 days</td><td>56 days</td></tr>
+    <tr><td>Google</td><td>7 days</td><td>52 days</td></tr>
     <tr><td>OpenAI</td><td>14 days</td><td>55 days</td></tr>
     <tr><td>Alibaba (Qwen)</td><td>11 days</td><td>48 days</td></tr>
     <tr><td>DeepSeek</td><td>42 days</td><td>64 days</td></tr>
-    <tr><td>Z.ai (Zhipu)</td><td>53.5 days</td><td>66 days</td></tr>
+    <tr><td>Z.ai (Zhipu)</td><td>51 days</td><td>66 days</td></tr>
     <tr><td>Anthropic</td><td>39.5 days</td><td>55 days</td></tr>
     <tr><td>Moonshot</td><td>55.5 days</td><td>82.5 days</td></tr>
     <tr><td>MiniMax</td><td>60 days</td><td>78 days</td></tr>
@@ -226,13 +227,13 @@
   </table>
   <p>Gaps include same-day events. Open-weight releases are a separate tier and are excluded from “major” even when they are a lab's flagship; compare these cadence figures with that classification in mind.</p>
   <h3>5. Weekday distribution</h3>
-  <p>Sunday: 14 · Monday: 79 · Tuesday: 94 · Wednesday: 97 · Thursday: 119 · Friday: 53 · Saturday: 10. These describe the selected release events, not all industry launches.</p>
+  <p>Sunday: 14 · Monday: 80 · Tuesday: 99 · Wednesday: 97 · Thursday: 119 · Friday: 53 · Saturday: 10. These describe the selected release events, not all industry launches.</p>
   <h3>6. Release volume</h3>
-  <p>Releases per year: 88 (2024) → 134 (2025) → 244 (2026). The final year is partial, through October 12, 2026.</p>
-  <p>Largest monthly totals: 2026-09: 93 · 2026-10: 37 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15 · 2024-12: 14.</p>
+  <p>Releases per year: 88 (2024) → 134 (2025) → 250 (2026). The final year is partial, through October 13, 2026.</p>
+  <p>Largest monthly totals: 2026-09: 93 · 2026-10: 43 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15 · 2024-12: 14.</p>
   <h3>7. Interpretation and limits</h3>
   <p>Release timing alone does not demonstrate competitive response or causation. These descriptive counts do not test statistical significance. Shared launch calendars, selection of notable releases, and multiple related models announced together can all produce apparent timing patterns.</p>
-  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked October 12, 2026.</p>
+  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked October 14, 2026.</p>
 </section>
 
 <script id="timeline-core">
@@ -475,6 +476,54 @@
 </script>
 <script>
 const DATA = [
+  {
+    "model": "Drama 3",
+    "lab": "Fish Audio",
+    "date": "2026-10-13",
+    "tier": "specialty",
+    "note": "Expressive text-to-speech model with natural-language emotion and delivery directions across 83 languages. Available through Fish Audio's web/mobile apps and API, with public weights under the Fish Audio Community License; interactive editing and audio inpainting remain invite-only.",
+    "source": "https://beta.fish.audio/blog/fish-audio-drama-3/"
+  },
+  {
+    "model": "Gemini 4 Argon (general availability)",
+    "lab": "Google",
+    "date": "2026-10-13",
+    "tier": "flagship",
+    "note": "Public launch of gemini-4-argon for complex coding, agents, and professional work through the Gemini API and Google Cloud. Also available to Pro/Ultra subscribers in Gemini and Search, and Ultra subscribers in Antigravity. Separate from the September 30 Fairwind restricted preview.",
+    "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/"
+  },
+  {
+    "model": "Gemini 4 Argon Cyber Permissive (allowlisted GA)",
+    "lab": "Google",
+    "date": "2026-10-13",
+    "tier": "specialty",
+    "note": "Defensive cybersecurity variant, gemini-4-argon-cyber-permissive, for vulnerability discovery, reverse engineering, exploit verification, and patch generation. Generally available on Google Cloud behind a separate Fairwind allowlist, including through CodeMender; not public unrestricted access.",
+    "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon"
+  },
+  {
+    "model": "LFM2.5-24B-A2B / Base",
+    "lab": "Liquid AI",
+    "date": "2026-10-13",
+    "tier": "open-weights",
+    "note": "24B MoE family with 2B active parameters and 131K context for fast on-device agents. Base and post-trained reasoning weights released on Hugging Face; the reasoning model also has hosted Playground and API access. Distinct from the February LFM2-24B-A2B release.",
+    "source": "https://www.liquid.ai/blog/lfm2-5-24b-a2b"
+  },
+  {
+    "model": "Natura-1 (research announcement)",
+    "lab": "Nature Will",
+    "date": "2026-10-13",
+    "tier": "specialty",
+    "note": "Announced 50B MoE physical foundation model trained on language, images, video, and action for zero-shot dexterous hand control and sustained robot workflows. Public research demonstrations; public weights, API, and external user access were not established by the launch materials.",
+    "source": "https://www.prnewswire.com/news-releases/physical-ai-lab-nature-will-unveils-natura-1-as-first-general-foundational-model-for-the-physical-world-302906608.html"
+  },
+  {
+    "model": "GLM-Legal (beta announcement)",
+    "lab": "Z.ai (Zhipu)",
+    "date": "2026-10-12",
+    "tier": "specialty",
+    "note": "Legal-work adaptation of GLM-5.3-Flash with specialized mid-training and post-training for contract review, evidence analysis, and compliance. Beta/API access is by application; the announcement says AutoClaw integration is coming soon, rather than already generally available.",
+    "source": "https://z.ai/blog/glm-legal"
+  },
   {
     "model": "Muse Wonder",
     "lab": "Meta",

@@ -1,0 +1,71 @@
+{
+  "checked": "2026-10-14",
+  "latestRelease": "2026-10-13",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_12.json",
+  "preservedHistoricalRows": 466,
+  "additions": [
+    {
+      "model": "Drama 3",
+      "lab": "Fish Audio",
+      "date": "2026-10-13",
+      "tier": "specialty",
+      "note": "Expressive text-to-speech model with natural-language emotion and delivery directions across 83 languages. Available through Fish Audio's web/mobile apps and API, with public weights under the Fish Audio Community License; interactive editing and audio inpainting remain invite-only.",
+      "source": "https://beta.fish.audio/blog/fish-audio-drama-3/"
+    },
+    {
+      "model": "Gemini 4 Argon (general availability)",
+      "lab": "Google",
+      "date": "2026-10-13",
+      "tier": "flagship",
+      "note": "Public launch of gemini-4-argon for complex coding, agents, and professional work through the Gemini API and Google Cloud. Also available to Pro/Ultra subscribers in Gemini and Search, and Ultra subscribers in Antigravity. Separate from the September 30 Fairwind restricted preview.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/"
+    },
+    {
+      "model": "Gemini 4 Argon Cyber Permissive (allowlisted GA)",
+      "lab": "Google",
+      "date": "2026-10-13",
+      "tier": "specialty",
+      "note": "Defensive cybersecurity variant, gemini-4-argon-cyber-permissive, for vulnerability discovery, reverse engineering, exploit verification, and patch generation. Generally available on Google Cloud behind a separate Fairwind allowlist, including through CodeMender; not public unrestricted access.",
+      "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon"
+    },
+    {
+      "model": "LFM2.5-24B-A2B / Base",
+      "lab": "Liquid AI",
+      "date": "2026-10-13",
+      "tier": "open-weights",
+      "note": "24B MoE family with 2B active parameters and 131K context for fast on-device agents. Base and post-trained reasoning weights released on Hugging Face; the reasoning model also has hosted Playground and API access. Distinct from the February LFM2-24B-A2B release.",
+      "source": "https://www.liquid.ai/blog/lfm2-5-24b-a2b"
+    },
+    {
+      "model": "Natura-1 (research announcement)",
+      "lab": "Nature Will",
+      "date": "2026-10-13",
+      "tier": "specialty",
+      "note": "Announced 50B MoE physical foundation model trained on language, images, video, and action for zero-shot dexterous hand control and sustained robot workflows. Public research demonstrations; public weights, API, and external user access were not established by the launch materials.",
+      "source": "https://www.prnewswire.com/news-releases/physical-ai-lab-nature-will-unveils-natura-1-as-first-general-foundational-model-for-the-physical-world-302906608.html"
+    },
+    {
+      "model": "GLM-Legal (beta announcement)",
+      "lab": "Z.ai (Zhipu)",
+      "date": "2026-10-12",
+      "tier": "specialty",
+      "note": "Legal-work adaptation of GLM-5.3-Flash with specialized mid-training and post-training for contract review, evidence analysis, and compliance. Beta/API access is by application; the announcement says AutoClaw integration is coming soon, rather than already generally available.",
+      "source": "https://z.ai/blog/glm-legal"
+    }
+  ],
+  "corrections": [],
+  "coverage": [
+    {"lab":"Google","sourceURLs":["https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/","https://ai.google.dev/gemini-api/docs/changelog","https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon","https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"],"result":"October 13 public Argon launch and separately allowlisted Cyber Permissive GA verified; September 30 restricted preview preserved."},
+    {"lab":"Liquid AI","sourceURLs":["https://www.liquid.ai/blog/lfm2-5-24b-a2b","https://huggingface.co/blog/LiquidAI/lfm25-24b-a2b"],"result":"October 13 base and reasoning weights verified, grouped as one family release."},
+    {"lab":"Nature Will","sourceURLs":["https://www.naturewill.com/blog/natura-1","https://www.prnewswire.com/news-releases/physical-ai-lab-nature-will-unveils-natura-1-as-first-general-foundational-model-for-the-physical-world-302906608.html"],"result":"October 13 announcement date verified by the company's own press release; recorded as a research announcement without claiming external availability."},
+    {"lab":"Z.ai (Zhipu)","sourceURLs":["https://z.ai/blog/glm-legal","https://z.ai/consultation/legal","https://autoclaw.z.ai/blog/"],"result":"October 12 beta announcement and API application page verified; October 13 AutoClaw repost does not create a second launch."},
+    {"lab":"Fish Audio","sourceURLs":["https://beta.fish.audio/blog/fish-audio-drama-3/","https://vercel.com/changelog"],"result":"October 13 web, mobile, API, and open-weight Drama 3 launch verified in the vendor's announcement."},
+    {"lab":"OpenAI / Anthropic / distribution checks","sourceURLs":["https://developers.openai.com/api/docs/changelog","https://www.anthropic.com/news","https://vercel.com/changelog"],"result":"No additional October 12-14 OpenAI or Anthropic model launch verified in these checked primary indexes. Vercel surfaced Drama 3 and a later Microsoft image-model distribution listing. Date-filtered discovery searches also checked major existing labs; this is a curated update, not a complete registry."}
+  ],
+  "exclusions": [
+    {"candidate":"MAI-Image-2.6 / MAI-Image-2.6-Flash October 13 Gateway listing","reason":"Later distribution of models available through Microsoft Foundry by September 4; outside this update window.","sources":["https://vercel.com/changelog/mai-image-2-6-and-mai-image-2-6-flash-now-available-on-ai-gateway","https://microsoft.ai/news/pushing-the-quality-cost-frontier-with-mai-image-2-6/"]},
+    {"candidate":"GLM-5.3-Flash October 14 AutoClaw article","reason":"Later explanation of the already-recorded August model, not a distinct checkpoint or availability event.","sources":["https://autoclaw.z.ai/blog/model/glm-5.3-flash"]},
+    {"candidate":"LFM2-24B-A2B","reason":"February model; the October 13 release is LFM2.5-24B-A2B.","sources":["https://www.liquid.ai/blog/lfm2-24b-a2b-from-cloud-to-ai-pc"]},
+    {"candidate":"October 14 releases","reason":"No additional dated launch verified as of the October 14 check; latest confirmed event remains October 13.","sources":["https://ai.google.dev/gemini-api/docs/changelog","https://www.anthropic.com/news","https://developers.openai.com/api/docs/changelog"]}
+  ]
+}

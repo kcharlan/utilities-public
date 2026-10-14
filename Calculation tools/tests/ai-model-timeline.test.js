@@ -36,22 +36,44 @@ function loadCore() {
 
 const data = extractData();
 
-test('Meta Wonder models anchor the latest range and appear in the dated report', () => {
+test('Meta Wonder models remain in the current month and appear in the dated report', () => {
   const core = loadCore();
   const bounds = {earliest:'2024-01-10', latest:data.reduce((max, row) => row.date > max ? row.date : max, '')};
-  assert.equal(bounds.latest, '2026-10-12');
-  const meta = data.filter(row => row.lab === 'Meta' && row.date === bounds.latest);
+  assert.equal(bounds.latest, '2026-10-13');
+  const meta = data.filter(row => row.lab === 'Meta' && row.date === '2026-10-12');
   assert.deepEqual(meta.map(row => row.model).sort(), ['Muse Wonder', 'Muse Wonder Full']);
   for (const row of meta) {
     assert.equal(row.source, 'https://research.meta.ai/blog/muse-wonder');
     assert.equal(row.tier, 'flagship');
   }
   const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
-  assert.equal(range.end, '2026-10-12');
+  assert.equal(range.end, '2026-10-13');
   const report = core.formatReportText(core.groupByMonth(meta, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['meta']});
   assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder Full · flagship/);
   assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder · flagship/);
+});
+
+test('October 13 Argon launch is distinct from its restricted preview and cyber variant', () => {
+  const argon = data.filter(row => row.model.startsWith('Gemini 4 Argon'));
+  assert.equal(argon.length, 3);
+  const ga = argon.find(row => row.model === 'Gemini 4 Argon (general availability)');
+  assert.equal(ga?.date, '2026-10-13');
+  assert.equal(ga?.tier, 'flagship');
+  assert.match(ga?.note || '', /Public launch.*gemini-4-argon/);
+  assert.match(ga?.note || '', /Separate from the September 30/);
+  const cyber = argon.find(row => row.model.includes('Cyber Permissive'));
+  assert.equal(cyber?.date, '2026-10-13');
+  assert.equal(cyber?.tier, 'specialty');
+  assert.match(cyber?.note || '', /separate Fairwind allowlist/);
+  assert.equal(argon.find(row => row.model === 'Gemini 4 Argon')?.date, '2026-09-30');
+  const core = loadCore();
+  const bounds = {earliest:'2024-01-10', latest:'2026-10-13'};
+  const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
+  const report = core.formatReportText(core.groupByMonth([ga, cyber], 'desc', () => 0),
+    {range, tiers:new Set(allTiers), allTiers, terms:['argon']});
+  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon \(general availability\) · flagship/);
+  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon Cyber Permissive \(allowlisted GA\) · specialty/);
 });
 
 const requiredReleases = [
@@ -237,12 +259,12 @@ test('has valid, unique release records and secure source URLs', () => {
 test('static header metadata and initial chart domain cover the dataset', () => {
   const latest = data.reduce((max, row) => row.date > max ? row.date : max, '');
   const labs = new Set(data.map(row => row.lab));
-  assert.equal(latest, '2026-10-12');
+  assert.equal(latest, '2026-10-13');
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
-  assert.match(html, /<span data-latest-date>October 12, 2026<\/span>/);
-  assert.equal((html.match(/· checked October 12, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked October 12, 2026/g) || []).length, 1);
+  assert.match(html, /<span data-latest-date>October 13, 2026<\/span>/);
+  assert.equal((html.match(/· checked October 14, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked October 14, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -378,14 +400,14 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 466);
-  assert.equal(new Set(data.map(row => row.lab)).size, 83);
-  assert.equal(stats.sameDay, 329);
-  assert.equal(stats.withinTwo, 1399);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 244});
-  assert.deepEqual(stats.weekdays, {'0':14, '1':79, '2':94, '3':97, '4':119, '5':53, '6':10});
+  assert.equal(stats.total, 472);
+  assert.equal(new Set(data.map(row => row.lab)).size, 85);
+  assert.equal(stats.sameDay, 340);
+  assert.equal(stats.withinTwo, 1426);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 250});
+  assert.deepEqual(stats.weekdays, {'0':14, '1':80, '2':99, '3':97, '4':119, '5':53, '6':10});
   assert.equal(stats.cadence.OpenAI.major, 55);
-  assert.equal(stats.cadence.Google.major, 56);
+  assert.equal(stats.cadence.Google.major, 52);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
 });
@@ -409,9 +431,11 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Recent releases include Muse Wonder \(October 12\)/);
+  assert.match(summary, /Gemini 4 Argon \(general availability\) \(October 13\)/);
+  assert.match(summary, /Drama 3 \(October 13\)/);
+  assert.match(summary, /Muse Wonder \(October 12\)/);
   assert.match(summary, /Muse Wonder Full \(October 12\)/);
-  assert.match(summary, /MISSINGNO\. \(October 10\)/);
+  assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
   assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
 });
 
@@ -461,8 +485,27 @@ test('October 12 evidence manifest exactly accounts for all additions and correc
     assert.deepEqual(original.find(row => key(row) === key(change.before)), change.before);
   }
   const expected = original.map(row => manifest.corrections.find(change => key(change.before) === key(row))?.after || row).concat(manifest.additions);
+  assert.equal(expected.length, 466);
+  for (const row of expected) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row);
+});
+
+test('October 14 evidence manifest exactly accounts for new events and preserves the October 12 dataset', () => {
+  const original = require('./fixtures/ai-model-timeline-2026-10-08.json');
+  const previous = require('../docs/ai_model_timeline_update_sources_2026_10_12.json');
+  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_14.json');
+  const key = row => [row.model, row.lab, row.date].join('\u0000');
+  const baseline = original.map(row => previous.corrections.find(change => key(change.before) === key(row))?.after || row).concat(previous.additions);
+  assert.equal(manifest.checked, '2026-10-14');
+  assert.equal(manifest.latestRelease, '2026-10-13');
+  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_12.json');
+  assert.equal(manifest.preservedHistoricalRows, baseline.length);
+  assert.equal(manifest.additions.length, 6);
+  assert.deepEqual(manifest.corrections, []);
+  const expected = baseline.concat(manifest.additions);
   assert.equal(data.length, expected.length);
   for (const row of expected) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row);
+  assert.match(data.find(row => row.model === 'Natura-1 (research announcement)')?.note || '', /external user access were not established/);
+  assert.match(data.find(row => row.model === 'GLM-Legal (beta announcement)')?.note || '', /access is by application/);
 });
 
 test('same-day labels stay beside their dots and clear the date axis', () => {
