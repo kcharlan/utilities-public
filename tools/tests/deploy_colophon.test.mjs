@@ -5,8 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {buildInput} from '../deploy_colophon.mjs';
 
 const script = fileURLToPath(new URL('../deploy_colophon.mjs', import.meta.url));
+test('native build inputs include vendored zstd and exclude unrelated vendor trees', () => {
+  assert.equal(buildInput('colophon/vendor/zstd/common/xxhash.c'), true);
+  assert.equal(buildInput('colophon/vendor/zstd/VERSION'), true);
+  assert.equal(buildInput('colophon/vendor/other/x.c'), false);
+});
 function fixture(t, root = 'colophon') {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'synthetic-native-deploy-'));
   t.after(() => fs.rmSync(base, {recursive: true, force: true}));
@@ -22,7 +28,7 @@ function fixture(t, root = 'colophon') {
     git('add', '.');
   }
   write('Makefile', 'all: colophon\ncolophon: src/main.c\n\tclang -o colophon src/main.c\n');
-  for (const name of ['assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h']) write(name, 'synthetic unused build input\n');
+  for (const name of ['assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h', 'vendor/zstd/zstd.h', 'vendor/zstd/decompress/zstd_decompress.c']) write(name, 'synthetic unused build input\n');
   git('init', '-q'); git('config', 'user.name', 'Synthetic Tester'); git('config', 'user.email', 'tester@example.invalid');
   release('first'); git('commit', '-qm', 'synthetic baseline');
   const runWith = (installer, ...args) => spawnSync(process.execPath, [fs.realpathSync(installer), '--repo', repo, '--scripts-dir', scripts, ...args], {

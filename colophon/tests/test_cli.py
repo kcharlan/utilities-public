@@ -11,6 +11,66 @@ import pytest
 from helpers import SESSION, REQUEST, extract_payload, row, usage
 from browser_errors import guard_browser_errors
 
+UUID = "00000000-0000-4000-8000-00000000c0de"
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_zstd_log_counts_like_plain_across_cold_warm_rebuild(native, archived):
+    source = native.write_zstd_session(native.session_rows(), archived=archived)
+    before = source.read_bytes()
+    for args, count in [((), "1 parsed, 0 cached"), ((), "0 parsed, 1 cached"), (("--rebuild",), "1 parsed, 0 cached")]:
+        result = native.build(*args)
+        assert result.returncode == 0, result.stderr
+        assert count in result.stdout
+        payload = native.payload()
+        session = assert_session(payload)
+        assert session["archived"] is archived
+        assert session["log_path"].endswith(".jsonl.zst")
+        assert session["own_usage"]["input"] == 120 and session["own_usage"]["output"] == 30
+        assert payload["diagnostics"]["skipped_files"] == []
+        assert source.read_bytes() == before
+        private_runtime(native)
+
+def test_plain_and_zstd_copies_of_one_log_count_once(native):
+    native.session()
+    native.write_zstd_session(native.session_rows(), name="rollout-synthetic.jsonl.zst")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["meta"]["counts"]["logs"] == 1
+    assert assert_session(payload)["log_path"].endswith("rollout-synthetic.jsonl")
+
+def test_truncated_and_corrupt_zstd_logs_are_skipped_not_fatal(native):
+    native.session()
+    good = native.write_zstd_session(native.session_rows(), name="rollout-cut.jsonl.zst")
+    good.write_bytes(good.read_bytes()[:-3])
+    (good.parent / "rollout-junk.jsonl.zst").write_bytes(b"synthetic junk, not zstd\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert_session(payload)
+    skipped = payload["diagnostics"]["skipped_files"]
+    assert sorted(p["path"].rsplit("/", 1)[1] for p in skipped) == ["rollout-cut.jsonl.zst", "rollout-junk.jsonl.zst"]
+    assert all(p["reason"] == "unreadable" for p in skipped)
+    assert "skipped_files" in result.stderr
+
+def test_zstd_log_with_large_declared_window_decodes(native):
+    native.write_zstd_session(native.session_rows(), window_log=28)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert_session(native.payload())
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".jsonl.zst"])
+def test_log_without_session_meta_takes_filename_uuid(native, suffix):
+    rows = [r for r in native.session_rows() if r["type"] != "session_meta"]
+    name = f"rollout-2026-01-02T12-00-00-{UUID}{suffix}"
+    if suffix == ".jsonl":
+        native.write_session(rows, name=name)
+    else:
+        native.write_zstd_session(rows, name=name)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == [UUID]
+
 def mode(path):
     return stat.S_IMODE(path.stat().st_mode)
 

@@ -1,4 +1,5 @@
 #include "titles.h"
+#include "scan/logname.h"
 #include <string.h>
 Str title_candidate_text(TitleCandidate candidate) {
   return !candidate.is_bytes && candidate.json.kind == JS_STRING
@@ -18,6 +19,8 @@ Str title_path_name(Str path, bool stem) {
     if (n && !(n == 1 && path.p[start] == '.'))
       result = (Str){path.p + start, (uint32_t)n};
   }
+  if (stem && log_name_format(result) == LOG_NAME_ZSTD)
+    result.n -= 4; /* NAME.jsonl.zst stems like NAME.jsonl. */
   if (stem)
     for (size_t i = result.n; i > 1; i--)
       if (result.p[i - 1] == '.') {

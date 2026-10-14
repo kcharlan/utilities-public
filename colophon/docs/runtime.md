@@ -38,9 +38,17 @@ Ledger recording checks for edits before replacement, but a concurrent edit
 after the check can still be overwritten. There is no ledger lock spanning
 the read/check/replace operation.
 
-Codex JSONL inputs are read, not edited. Metadata and priority trace SQLite
-databases are opened read-only with normal SQLite coordination. Metadata
-uses a 1,000 ms busy timeout; priority tracing uses 250 ms. This is not
+Codex `.jsonl` and `.jsonl.zst` inputs are read, not edited. Compressed logs
+are stream-decoded in memory, never decompressed to disk. When a directory
+contains both `NAME.jsonl` and `NAME.jsonl.zst`, only the plain copy counts,
+because it may still be growing. Corrupt, truncated or still-being-written
+compressed frames appear in `skipped_files` with reason `unreadable`, while
+the remaining logs are counted; a later run retries them. A zero-byte
+compressed file is an empty log.
+
+Metadata and priority trace SQLite databases are opened read-only with
+normal SQLite coordination. Metadata uses a 1,000 ms busy timeout; priority
+tracing uses 250 ms. This is not
 immutable mode: SQLite may create or update
 coordination side files such as WAL shared-memory files when permitted.
 An absolute no-source-writes guarantee would misdescribe this behavior.
@@ -69,6 +77,10 @@ public repository. The page embeds its data, scripts, styles and fonts and
 makes no external requests. Reader actions can copy commands or open native
 Codex links when the recorded support flags permit them; these are user
 actions, not background page requests.
+
+Decoding a single-segment compressed log can allocate a window as large as
+the expanded log. The decoder accepts windows above its default 128 MiB
+limit so larger finished rollouts remain included.
 
 Current limits include quadratic worst-case combining-mark ordering,
 best-effort event recording, and synchronous joined catalog cleanup that can
