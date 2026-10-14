@@ -9,7 +9,7 @@ import {regular, inspectAncestors, externalDirectory} from './deployment_files.m
 
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const buildInput = name => name === 'colophon/Makefile' ||
-  /^colophon\/(src|assets|vendor\/yyjson)\//.test(name) || name === 'colophon/tools/embed.pl';
+  /^colophon\/(src|assets|vendor\/(yyjson|zstd))\//.test(name) || name === 'colophon/tools/embed.pl';
 
 // The audit supplies its validated index snapshot; the installer takes one itself.
 export function sourceInventory(repo, snapshot, requireStaged = false) {
@@ -31,7 +31,7 @@ export function sourceInventory(repo, snapshot, requireStaged = false) {
   entries = entries.filter(e => buildInput(e.name)).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   const names = new Set(entries.map(e => e.name));
   if (names.size !== entries.length) throw new Error('Duplicate native input');
-  for (const required of ['Makefile', 'src/main.c', 'assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h']) {
+  for (const required of ['Makefile', 'src/main.c', 'assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h', 'vendor/zstd/zstd.h', 'vendor/zstd/decompress/zstd_decompress.c']) {
     if (!names.has('colophon/' + required)) throw new Error('Required native build input missing: ' + required);
   }
   const hash = crypto.createHash('sha256');

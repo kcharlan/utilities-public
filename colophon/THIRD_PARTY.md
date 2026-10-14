@@ -6,6 +6,7 @@ not assert a new license for Kevin's application.
 | Component | Version/source and retained notice |
 | --- | --- |
 | yyjson | 0.13.0; [VERSION](vendor/yyjson/VERSION) records exact URLs/digests; full [MIT license](vendor/yyjson/LICENSE). |
+| Zstandard | v1.5.7 decompression sources in `vendor/zstd/`; [VERSION](vendor/zstd/VERSION) records the archive digest and per-file digests; full [BSD license](vendor/zstd/LICENSE) (upstream dual BSD/GPLv2, used under BSD). |
 | Martian Mono | 1.1.0, static standard-width Light/Regular/Medium subsets embedded in `assets/font.css`; full [OFL 1.1](assets/OFL.txt), also embedded with the CSS. |
 | Unicode normalization/casing | Unicode 16.0.0 committed `src/gen/unicode_nfc.c`/`.h`; full preserved [Unicode License V3](licenses/UNICODE.txt). |
 | Unicode pricing properties | Unicode 17.0.0 Numeric, Extend/SpacingMark/ZWJ and Prepend compressed ranges in `assets/pricing_*_ranges.txt`; same [Unicode notice](licenses/UNICODE.txt). |

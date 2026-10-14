@@ -1,6 +1,9 @@
 #define _DARWIN_C_SOURCE
 #include "reader.h"
 #include "classify.h"
+#include "scan/logname.h"
+#include "zstd.h"
+#include "zstd_errors.h"
 #include "util/sha256.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -124,52 +127,123 @@ Err reader_fingerprint(int fd, int64_t size, char output[65]) {
     sha256_hex(tail, (size_t)count, output);
     return ERR_SUCCESS;
 }
-Err reader_read_fd(int fd, const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out) {
+enum { READ_CHUNK = 1024 * 1024 };
+typedef struct {
+    const ReaderCallbacks *callbacks;
+    ReaderResult *out;
+    char *line;
+    size_t length, capacity;
+} LineSplitter;
+
+static Err splitter_feed(LineSplitter *s, const char *chunk, size_t count) {
+    size_t start = 0;
+    while (start < count) {
+        const char *end = memchr(chunk + start, '\n', count - start);
+        size_t piece = end ? (size_t)(end - chunk) - start : count - start;
+        if (piece > UINT32_MAX - s->length) return err_make(ERR_INVALID, "log line exceeds string capacity");
+        if (s->length + piece > s->capacity) {
+            size_t grown = s->capacity ? s->capacity : READ_CHUNK;
+            while (grown < s->length + piece) grown *= 2;
+            char *next = realloc(s->line, grown);
+            if (!next) return err_make(ERR_NOMEM, "log line allocation failed");
+            s->line = next; s->capacity = grown;
+        }
+        if (piece) memcpy(s->line + s->length, chunk + start, piece);
+        s->length += piece;
+        if (end) {
+            Err err = consume_line((Str){s->line ? s->line : "", (uint32_t)s->length}, true, s->callbacks, s->out);
+            s->length = 0;
+            if (err.code) return err;
+        }
+        start += piece + (end != NULL);
+    }
+    return ERR_SUCCESS;
+}
+
+static Err read_plain(int fd, const DiscoveredLog *snapshot, LineSplitter *s, char *chunk) {
     char text[256];
-    Err fingerprint = reader_fingerprint(fd, snapshot->size, out->tail_sha256);
-    if (fingerprint.code) return fingerprint;
-    ssize_t count;
-    const size_t chunk_size = 1024 * 1024;
-    char *chunk = malloc(chunk_size), *line = NULL;
-    size_t length = 0, capacity = 0;
-    Err err = ERR_SUCCESS;
-    if (!chunk) return err_make(ERR_NOMEM, "log read buffer allocation failed");
     int64_t offset = 0;
     while (offset < snapshot->size) {
-        if (callbacks && callbacks->chunk) {
-            err = callbacks->chunk(callbacks->context);
-            if (err.code) break;
+        if (s->callbacks && s->callbacks->chunk) {
+            Err err = s->callbacks->chunk(s->callbacks->context);
+            if (err.code) return err;
         }
-        size_t request = snapshot->size - offset > (int64_t)chunk_size ? chunk_size : (size_t)(snapshot->size - offset);
-        count = read_at(fd, chunk, request, offset);
-        if (count < 0) { err = err_make(ERR_IO, "log stream read failed: %s", err_system(errno,text)); break; }
+        size_t request = snapshot->size - offset > READ_CHUNK ? READ_CHUNK : (size_t)(snapshot->size - offset);
+        ssize_t count = read_at(fd, chunk, request, offset);
+        if (count < 0) return err_make(ERR_IO, "log stream read failed: %s", err_system(errno, text));
         if (!count) break;
         offset += count;
-        size_t start = 0;
-        while (start < (size_t)count) {
-            const char *end = memchr(chunk + start, '\n', (size_t)count - start);
-            size_t piece = end ? (size_t)(end - chunk) - start : (size_t)count - start;
-            if (piece > UINT32_MAX - length) { err = err_make(ERR_INVALID, "log line exceeds string capacity"); break; }
-            if (length + piece > capacity) {
-                size_t grown = capacity ? capacity : chunk_size;
-                while (grown < length + piece) grown *= 2;
-                char *next = realloc(line, grown);
-                if (!next) { err = err_make(ERR_NOMEM, "log line allocation failed"); break; }
-                line = next; capacity = grown;
-            }
-            if (piece) memcpy(line + length, chunk + start, piece);
-            length += piece;
-            if (end) {
-                err = consume_line((Str){line ? line : "", (uint32_t)length}, true, callbacks, out);
-                length = 0;
-                if (err.code) break;
-            }
-            start += piece + (end != NULL);
-        }
-        if (err.code) break;
+        Err err = splitter_feed(s, chunk, (size_t)count);
+        if (err.code) return err;
     }
-    if (!err.code && length) err = consume_line((Str){line, (uint32_t)length}, false, callbacks, out);
-    free(line); free(chunk);
+    return ERR_SUCCESS;
+}
+
+static Err zstd_failure(size_t code, const char *step) {
+    if (ZSTD_getErrorCode(code) == ZSTD_error_memory_allocation)
+        return err_make(ERR_NOMEM, "zstd log %s allocation failed", step);
+    /* ERR_IO lists this one log as unreadable instead of failing the run. */
+    return err_make(ERR_IO, "zstd log %s failed: %s", step, ZSTD_getErrorName(code));
+}
+
+static Err read_zstd(int fd, const DiscoveredLog *snapshot, LineSplitter *s, char *chunk) {
+    char text[256];
+    if (!snapshot->size) return ERR_SUCCESS; /* Created but not yet written: no frames, empty log. */
+    ZSTD_DCtx *dctx = ZSTD_createDCtx();
+    char *decoded = malloc(READ_CHUNK);
+    Err err = ERR_SUCCESS;
+    if (!dctx || !decoded) err = err_make(ERR_NOMEM, "zstd log decoder allocation failed");
+    if (!err.code) {
+        /* Codex writes single-segment frames whose window equals the log size;
+         * the default 128 MiB limit would silently drop larger logs. */
+        ZSTD_bounds bounds = ZSTD_dParam_getBounds(ZSTD_d_windowLogMax);
+        size_t status = ZSTD_isError(bounds.error) ? bounds.error
+                      : ZSTD_DCtx_setParameter(dctx, ZSTD_d_windowLogMax, bounds.upperBound);
+        if (ZSTD_isError(status)) err = zstd_failure(status, "setup");
+    }
+    ZSTD_inBuffer in = {chunk, 0, 0};
+    int64_t offset = 0;
+    size_t remaining = 1; /* Nonzero until the decoder ends a frame and flushes it. */
+    while (!err.code) {
+        if (in.pos == in.size && offset < snapshot->size) {
+            size_t request = snapshot->size - offset > READ_CHUNK ? READ_CHUNK : (size_t)(snapshot->size - offset);
+            ssize_t count = read_at(fd, chunk, request, offset);
+            if (count < 0) { err = err_make(ERR_IO, "log stream read failed: %s", err_system(errno, text)); break; }
+            if (!count) { err = err_make(ERR_IO, "zstd log ends before frozen size"); break; }
+            offset += count;
+            in = (ZSTD_inBuffer){chunk, (size_t)count, 0};
+        }
+        if (s->callbacks && s->callbacks->chunk) {
+            err = s->callbacks->chunk(s->callbacks->context);
+            if (err.code) break;
+        }
+        ZSTD_outBuffer out = {decoded, READ_CHUNK, 0};
+        remaining = ZSTD_decompressStream(dctx, &out, &in);
+        if (ZSTD_isError(remaining)) { err = zstd_failure(remaining, "decode"); break; }
+        err = splitter_feed(s, decoded, out.pos);
+        /* A completed frame is drained even when it exactly fills the output.
+         * Calling again with empty input would start expecting a new frame. */
+        if (!err.code && in.pos == in.size && offset >= snapshot->size &&
+            (!remaining || out.pos < out.size)) break;
+    }
+    if (!err.code && remaining) err = err_make(ERR_IO, "zstd log ends inside a frame");
+    ZSTD_freeDCtx(dctx);
+    free(decoded);
+    return err;
+}
+
+Err reader_read_fd(int fd, const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out) {
+    Err err = reader_fingerprint(fd, snapshot->size, out->tail_sha256);
+    if (err.code) return err;
+    char *chunk = malloc(READ_CHUNK);
+    if (!chunk) return err_make(ERR_NOMEM, "log read buffer allocation failed");
+    LineSplitter splitter = {callbacks, out, NULL, 0, 0};
+    err = log_name_format(snapshot->path) == LOG_NAME_ZSTD ? read_zstd(fd, snapshot, &splitter, chunk)
+                                                           : read_plain(fd, snapshot, &splitter, chunk);
+    if (!err.code && splitter.length)
+        err = consume_line((Str){splitter.line, (uint32_t)splitter.length}, false, callbacks, out);
+    free(splitter.line);
+    free(chunk);
     return err;
 }
 

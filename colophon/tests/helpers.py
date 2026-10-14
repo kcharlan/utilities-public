@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+from compression import zstd
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -82,7 +83,22 @@ class NativeRun:
         path.write_text("".join(json.dumps(value) + "\n" for value in rows))
         return path
 
-    def session(self):
+    def write_zstd_session(self, rows, name="rollout-synthetic.jsonl.zst", archived=False, window_log=None):
+        directory = self.codex / "archived_sessions" if archived else self.codex / "sessions" / "2026" / "01" / "02"
+        directory.mkdir(parents=True, exist_ok=True)
+        data = "".join(json.dumps(value) + "\n" for value in rows).encode()
+        if window_log is None:
+            blob = zstd.compress(data)
+        else:
+            # Streaming without a pledged size keeps the declared window, as large logs need.
+            compressor = zstd.ZstdCompressor(options={zstd.CompressionParameter.window_log: window_log})
+            blob = compressor.compress(data) + compressor.flush()
+        path = directory / name
+        path.write_bytes(blob)
+        return path
+
+    def session_rows(self):
+        """The synthetic rows session() writes, reusable in compressed fixtures."""
         rows = [
             row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli", "thread_name": "Synthetic violet kite"}, 0),
             row("turn_context", {"model": "gpt-5", "turn_id": "synthetic-turn"}, 1),
@@ -92,4 +108,7 @@ class NativeRun:
             row("event_msg", {"type": "agent_message", "phase": "final_answer", "message": "Synthetic kite complete"}, 4),
             row("event_msg", {"type": "task_complete", "turn_id": "synthetic-turn"}, 5),
         ]
-        return self.write_session(rows)
+        return rows
+
+    def session(self):
+        return self.write_session(self.session_rows())
