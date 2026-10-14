@@ -206,18 +206,19 @@ node --test tools/tests/deploy_ai_model_timeline.test.mjs
 ## Native Colophon deployment
 
 `~/Library/Scripts/colophon` is a generated macOS executable built from
-`colophon-native/`, replacing the Python direct-copy mapping. The Python project
-remains available as source, but the fleet audit no longer compares its launcher
-to this installed command. Runtime defaults remain `~/.codex` and `~/.colophon`;
+the canonical [Colophon C17 project](../colophon/README.md) at `colophon/`.
+The Python application is retired; Git history retains its source. The fleet
+audit checks the generated executable and its receipt rather than comparing
+a launcher to the installed command. Runtime defaults remain `~/.codex` and `~/.colophon`;
 deployment does not read or migrate session data or editable runtime state.
 
 Validate with the native project's full suite and the root deployment suites,
 then stage the reviewed native build inputs. From the repository root:
 
 ```sh
-node tools/deploy_colophon_native.mjs --dry-run
-node tools/deploy_colophon_native.mjs
-node tools/deploy_colophon_native.mjs --audit
+node tools/deploy_colophon.mjs --dry-run
+node tools/deploy_colophon.mjs
+node tools/deploy_colophon.mjs --audit
 zsh tools/check_local_deployments.zsh
 ```
 
@@ -245,10 +246,24 @@ snapshot, checks current source and installed bytes/modes against that receipt,
 and never rebuilds or executes the installed command. It verifies consistency,
 not reproducibility across compiler/SDK upgrades or cryptographic authenticity.
 
+The fingerprint includes repository-relative input paths. Moving source from
+the former `colophon-native/` folder to `colophon/` intentionally makes a
+pre-cutover receipt fail the current source audit, even when input bytes are
+unchanged. After full source validation, a separately authorized redeployment
+through `deploy_colophon.mjs` builds from the reviewed canonical inputs and
+publishes a fresh receipt. A repository update alone does not deploy it.
+Never edit the old receipt to suppress drift.
+
+The schema-1 `.colophon-native.json` filename and
+`~/.utilities-deploy-backups/colophon-native/` namespace are retained private
+state compatibility exceptions, not alternate source locations. Existing
+receipts and backups remain usable for rollback; no state is renamed,
+migrated, deleted or automatically pruned.
+
 Roll back with the exact backup directory printed by the installer:
 
 ```sh
-node tools/deploy_colophon_native.mjs --rollback /path/to/colophon-native/copy-backup
+node tools/deploy_colophon.mjs --rollback /path/to/colophon-native/copy-backup
 ```
 
 Rollback validates the complete backup before replacement and backs up the
@@ -259,7 +274,7 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_colophon_native.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 

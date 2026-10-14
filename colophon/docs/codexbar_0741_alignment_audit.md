@@ -1,5 +1,14 @@
 # CodexBar 0.74.1 alignment audit
 
+Historical pre-implementation audit. The four scoped corrections were completed
+before cutover baseline `38d6998eb223f690fc9dc0bde0ba528fcf784449`; the table
+describes the earlier baseline, not current defects. Read the
+[current accounting rules](architecture.md#usage-accounting-rules) and
+[retained adaptations](token_rules.md) for maintained behavior, and
+[development](development.md) for current validation. The
+[historical plan](codexbar_0741_alignment_implementation_plan.md) retains the
+implementation decisions; its private measurements are not new acceptance.
+
 Source review dated 2026-10-13. Native baseline: `eebfc77c505f2042a9df6290c6e0612d2333ae28`. Upstream reference: [CodexBar v0.74.1](https://github.com/steipete/CodexBar/tree/7c08c0ae783b72040b728757eb85a6cfe4fc2443), commit `7c08c0ae783b72040b728757eb85a6cfe4fc2443`. This audit uses public source and synthetic cases only; it does not independently verify private measurements mentioned in the implementation plan.
 
 | Difference | Native baseline | Pinned upstream | Planned correction |
@@ -9,8 +18,13 @@ Source review dated 2026-10-13. Native baseline: `eebfc77c505f2042a9df6290c6e061
 | Snapshot/ledger mirrors | `src/price/compose.c` builds a session-wide `primary` turn map and drops all fallback rows in ledgered turns. This can drop a snapshot-only request or retain an unknown-turn mirror. | `CostUsageScanner.swift` L4146–4351/L4603–4846 pairs exact, adjacent counter/timestamp and near/delayed observations. `CostUsageScanner+RequestIdentity.swift` L58–112 reconciles aliases across copies in either order. | Task 3 replaces per-turn suppression with request pairing and alias reconciliation. Pair ownership must resolve chronologically; whole-file exact pre-reservation can steal an earlier near match. A synthetic ledger → near snapshot → later exact-copy snapshot regression must finish with one request. |
 | Thread-settings priority | The stream omits settings events; compose uses trace-database/sticky priority evidence only. | `CostUsageScanner.swift` L3778–3784/L4900–4912 records settings and the setting at each task start; L4404–4421 applies membership when each usage row is appended. | Task 4 adds cached settings observations and per-line turn-start lookup, combining them with existing trace evidence. Earlier priority rows retain their status when the same turn resumes under default settings. |
 
-The four changes fit the existing native pipeline. Execute 1 → 2 → 3 → 4: Tasks 3 and 4 use the Task 1 CLI helpers, Task 3 consumes Task 2 ledger interfaces, and the ordering preserves distinct cache schema versions. Validate complete unit, CLI, browser and sanitizer categories after executable changes.
+The four changes used the existing native pipeline in order 1 → 2 → 3 → 4:
+Tasks 3 and 4 used the Task 1 CLI helpers, Task 3 consumed Task 2 ledger
+interfaces, and the ordering preserved distinct cache schema versions.
 
 The plan deliberately retains differences: dated pricing and sticky trace memory, all-history scans, deterministic duplicate selection and fork resolution, record model selection and overflow handling, plus documented adaptations to no-row snapshots, snapshot counter history and repeated records. See the plan's remaining-differences list and [existing adaptation table](token_rules.md#explicit-adaptations-and-approved-differences). These limits mean synthetic suite success alone does not certify full CodexBar parity.
 
-Two smaller fidelity details need explicit treatment during implementation: apply raw key/Unicode validation to both array tier objects and `context_over_200k.tier`; and align nonempty ledger/context turn-ID alias selection with upstream `codexTurnID` L5427–5435, or document the remaining difference. No default display-period change is needed to address these accounting rules.
+The implementation also treated two smaller fidelity details: raw key/Unicode
+validation covers both array tier objects and `context_over_200k.tier`, and
+nonempty ledger/context turn-ID alias selection follows upstream `codexTurnID`
+L5427–5435. The default display period did not change.

@@ -10,6 +10,8 @@ Create `.venv` only if absent, using an absolute Homebrew interpreter:
 ```sh
 /opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv
 .venv/bin/python -m pip install --no-index -r requirements-dev.txt
+# Alternatively, reuse uv's available package cache without downloading:
+uv pip install --offline --python .venv/bin/python -r requirements-dev.txt
 ```
 
 Try an available offline wheel source/cache first; `--no-index` does not
@@ -30,20 +32,20 @@ make check-sort
 ```
 
 `make test` runs the stable-sort guard, ten asset digests, all 176
-C units, 23 collected CLI/integration cases and two Chromium cases.
+C units, synthetic CLI/integration cases and two Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
 These are standalone checks, not historical parity coverage or performance
-evidence. The inherited help statement about native parity/performance tools
-and explicit `private/` destinations describes the source project's tooling;
-neither those tools nor their workflow is included here.
+evidence. Help describes these shipped checks; historical native parity/performance
+tools and their private workflow are not included here.
 
 The [tests README](../tests/README.md) describes fixtures and browser guards.
 Wrappers create invented homes/logs under `/tmp`, select the tested release
 through `COLOPHON_BIN`, disable Python bytecode/pytest caches, and deny real
-runtime/project writes and reads/writes of the source native checkouts and
-sibling Python reference. Compilation precedes sandboxed runtime validation.
+runtime/project writes and reads/writes of protected historical checkouts.
+The active source, executable, assets and development dependencies remain
+readable. Compilation precedes sandboxed runtime validation.
 Keep all temporary data, reports and execution evidence outside the public
 checkout; do not introduce real session data even into ignored directories.
 
@@ -52,6 +54,12 @@ C `tmpfile()` followed that location and failed when the strict profile
 allowed only `/tmp` scratch writes. Both wrappers now explicitly select
 their fresh scratch directory as `TMPDIR`. Preserve this setting and the
 sandbox boundary instead of widening writes to system temporary directories.
+
+The pytest wrapper also evaluates the source-write policy under a canonical
+scratch `PROJECT_DIR` and verifies that removing its explicit deny makes the
+regression fail. Separate sandbox invocations avoid macOS's nested-sandbox
+restriction. Policy evaluation leaves real homes and source untouched; all
+mutation profiles and captured output live in trapped scratch directories.
 
 Optional Unicode maintenance uses
 `.venv/bin/python -B tools/gen_unicode.py src/gen` only as a deliberate

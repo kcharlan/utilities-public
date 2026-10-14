@@ -46,7 +46,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
-- `colophon-native` (from `colophon-native/`; see its README and `docs/development.md`):
+- `colophon` (from `colophon/`; see its README and `docs/development.md`):
   - `make` (release build; `SQLITE_PREFIX` selects an existing Homebrew SQLite prefix).
   - `make test` (all retained C units, standalone synthetic CLI/integration, Chromium browser cases, stable-sort and asset guards).
   - `make sanitize` (same categories with ASan/UBSan), `make tsan` (retained C units with TSan).
@@ -66,7 +66,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).
   - Installed browser acceptance requires separate live authorization and uses `http://127.0.0.1:7711/calculators/backtest/index.html`, checking response bytes as well as application behavior. Preserve the shared folder routing.
 - Static deployment/fleet audit tooling:
-  - `node --test tools/tests/deploy_colophon_native.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs` (native installer lifecycle and shared filesystem helpers).
+  - `node --test tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs` (native installer lifecycle and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
@@ -152,7 +152,7 @@ Answer in order and stop at the first match:
    Yes to any → local server. These do not count: page-local state (browser storage, the URL, the clipboard), browser downloads and save dialogs for new files, links that open in a new browser tab, links and copied commands that hand off to another application (never for destructive changes), and general actions the user runs before opening the page (import, rescan, refresh), which become CLI subcommands.
 3. **Built page (default).** Everything else. If the page needs only what the user types or picks with a file picker, make it a static page instead.
 
-**Built page.** A launcher (normally the uv-managed launcher above) gathers data, writes one self-contained HTML file, and opens it from `file://`. `colophon-native/` is the built-page shape reference implemented in C.
+**Built page.** A launcher (normally the uv-managed launcher above) gathers data, writes one self-contained HTML file, and opens it from `file://`. Colophon is the built-page shape reference implemented in C: see [page output](colophon/src/out/page.c), [atomic I/O](colophon/src/util/atomic.c), and [runtime behavior](colophon/docs/runtime.md). For Python helper examples, use Tax2's own `tax2/taxkit/config.py` and `tax2/taxkit/page.py`.
 - Python gathers, validates, and precomputes, including every network request. Logic that depends on interaction in the page lives only in JavaScript; no logic lives in both. If a CLI path also needs that logic, drop the CLI path or use a local server.
 - Security-sensitive logic runs only in Python: at build time, or behind a local server when the user applies it from the page (step 2).
 - Embed data in the page (for example `<script type="application/json">`); never `fetch()` local files. Inline all scripts, styles, and fonts; the page makes no external requests.
@@ -169,7 +169,7 @@ Answer in order and stop at the first match:
 - Use the same vendored front-end stack as built pages, so the UI also works offline; fetch data from `/api/*` instead of embedding it.
 
 **Front-end stack (all three shapes).**
-- Default to Preact with hooks and htm; plain JavaScript is acceptable for small pages. Colophon (`colophon-native/`) predates this default and uses plain JavaScript; follow it for shape, not stack. No JSX, no CDN, and no npm, bundler, or transpile step.
+- Default to Preact with hooks and htm; plain JavaScript is acceptable for small pages. Colophon (`colophon/`) predates this default and uses plain JavaScript; follow it for shape, not stack. No JSX, no CDN, and no npm, bundler, or transpile step.
 - Vendor exact-version UMD or IIFE builds. Built and static pages inline them; a server may serve them from packaged files. Record each file's version, exact source URL, and SHA-256, and keep its license file, as `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` does; include the required license notices in the page.
 - Plain CSS with custom-property color tokens; do not use Tailwind, which needs a runtime compiler or a build step. Use framework-free chart libraries (for example uPlot) or SVG; do not use React-only libraries.
 - Browser tests use Playwright Chromium, open built and static pages from `file://`, and assert that every page, including server pages, makes no external requests. Use `tools/testkit.py`'s `guard_browser_errors` to fail on `pageerror`/`console.error`, and its launcher helpers (`load_launcher`, `run_launcher`, `assert_launcher_help`) for launcher tests.

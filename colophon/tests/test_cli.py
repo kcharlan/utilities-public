@@ -1,4 +1,5 @@
 import json
+import ctypes
 import os
 import stat
 import subprocess
@@ -23,10 +24,54 @@ def test_help_and_version_create_no_runtime(native):
     assert help_result.returncode == 0
     for text in ("--offline", "--codex-home", "cache-native/", "COLOPHON_HOME"):
         assert text in help_result.stdout
+    for text in ("make test", "make sanitize", "make tsan", "make check-assets", "make check-sort"):
+        assert text in help_result.stdout
+    assert "parity and performance tools" not in help_result.stdout
+    assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
     assert version.stdout == "colophon 0.1.0\n"
     assert not native.runtime.exists()
+
+def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
+    project = Path(__file__).resolve().parents[1]
+    binary = Path(os.environ["COLOPHON_BIN"])
+    assert (project / "src/cli/args.c").read_bytes()
+    assert binary.read_bytes()
+    scratch = tmp_path / "synthetic-scratch.txt"
+    scratch.write_text("Synthetic sandbox fixture")
+    assert scratch.read_text() == "Synthetic sandbox fixture"
+
+    # Evaluate nonexistent children: no real runtime/source reads or writes.
+    check = ctypes.CDLL(None).sandbox_check
+    check.restype = ctypes.c_int
+    # sandbox_check is variadic; only its three fixed arguments belong here
+    # (Apple Silicon passes variadic arguments differently).
+    check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    def denied(path):
+        result = check(os.getpid(), b"file-write-create", 1, os.fsencode(path))
+        assert result >= 0, "sandbox policy evaluation failed"
+        return result != 0
+    assert not denied(tmp_path)
+    assert denied(project)
+    assert denied(project / "synthetic-sandbox-nonexistent-child/canary")
+    real_home = Path(os.environ["COLOPHON_TEST_REAL_HOME"])
+    for target in (".codex", ".colophon", "Library/Scripts", ".local/bin", "bin",
+                   "Downloads/colophon-native", "Downloads/colophon-c-experiment"):
+        assert denied(real_home / target), target
+        assert denied(real_home / target / "synthetic-sandbox-nonexistent-child/canary"), target
+
+
+def test_sandbox_source_write_denied():
+    # The wrapper also runs this under an allowlisted scratch PROJECT_DIR,
+    # independently testing the explicit source deny and its mutation control.
+    project = Path(os.environ.get("COLOPHON_TEST_SOURCE_PROBE", Path(__file__).resolve().parents[1]))
+    check = ctypes.CDLL(None).sandbox_check
+    check.restype = ctypes.c_int
+    check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    result = check(os.getpid(), b"file-write-create", 1, os.fsencode(project))
+    assert result >= 0, "sandbox policy evaluation failed"
+    assert result != 0, "PROJECT_DIR write protection missing"
 
 @pytest.mark.parametrize("args,diagnostic", [
     (["--not-synthetic-option"], "unrecognized arguments"),

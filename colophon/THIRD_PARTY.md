@@ -12,14 +12,20 @@ not assert a new license for Kevin's application.
 | CodexBar token/pricing rules | Adapted from [CodexBar](https://github.com/steipete/CodexBar) at `3bbf6bc48`; long-context thresholds and request-ledger validation/ownership/turn fallback, chronological per-request snapshot pairing, cross-copy mirror aliases and thread-settings priority follow `v0.74.1` (commit `7c08c0ae7`), with documented native adaptations. MIT, © 2026 Peter Steinberger; full [notice](licenses/CodexBar-MIT.txt). |
 | models.dev catalog rates/public seeds | Public [models.dev](https://models.dev/) data, MIT; full [notice](licenses/models.dev-MIT.txt). |
 
-The CodexBar/models.dev attribution follows the maintained public Python
-Colophon README and token-rule provenance. Curated rates and historical
+The local [token-rule ledger](docs/token_rules.md) preserves upstream pins,
+approved accounting adaptations and public seed provenance. Current native
+rules and deliberate v0.74.1 differences are recorded in
+[architecture](docs/architecture.md#usage-accounting-rules). These retained
+documents and full notices supply attribution independently of the retired
+Python application. Curated rates and historical
 seeds remain public input data, separate from editable private runtime history.
 The models.dev license was retrieved from its upstream repository at
 [`ab53a58f0694bce3125f033468ec0b69fad87137`](https://raw.githubusercontent.com/anomalyco/models.dev/ab53a58f0694bce3125f033468ec0b69fad87137/LICENSE).
 The CodexBar notice comes from its pinned public source LICENSE. The Unicode
-notice is extracted verbatim from the maintained public Colophon application's
-commented V3 block, excluding surrounding code and property data.
+notice was extracted verbatim from the historical Python Colophon application's
+commented V3 block at repository baseline
+`38d6998eb223f690fc9dc0bde0ba528fcf784449`, excluding surrounding code and
+property data. The complete notice is retained locally in `licenses/UNICODE.txt`.
 
 Unicode pricing-property sources are
 [DerivedNumericType](https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedNumericType.txt)

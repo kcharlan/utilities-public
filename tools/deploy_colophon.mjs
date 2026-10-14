@@ -8,8 +8,8 @@ import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory} from './deployment_files.mjs';
 
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-export const buildInput = name => name === 'colophon-native/Makefile' ||
-  /^colophon-native\/(src|assets|vendor\/yyjson)\//.test(name) || name === 'colophon-native/tools/embed.pl';
+export const buildInput = name => name === 'colophon/Makefile' ||
+  /^colophon\/(src|assets|vendor\/yyjson)\//.test(name) || name === 'colophon/tools/embed.pl';
 
 // The audit supplies its validated index snapshot; the installer takes one itself.
 export function sourceInventory(repo, snapshot, requireStaged = false) {
@@ -21,7 +21,7 @@ export function sourceInventory(repo, snapshot, requireStaged = false) {
       return {mode, name};
     });
   } else {
-    const raw = execFileSync('git', ['-C', repo, 'ls-files', '--stage', '--sparse', '-z', '--', 'colophon-native'], {encoding: 'utf8'});
+    const raw = execFileSync('git', ['-C', repo, 'ls-files', '--stage', '--sparse', '-z', '--', 'colophon'], {encoding: 'utf8'});
     entries = raw.split('\0').filter(Boolean).map(record => {
       const match = /^(100644|100755) ([a-f0-9]+) 0\t(.+)$/.exec(record);
       if (!match) throw new Error('Native project must have only regular stage-zero tracked files');
@@ -32,7 +32,7 @@ export function sourceInventory(repo, snapshot, requireStaged = false) {
   const names = new Set(entries.map(e => e.name));
   if (names.size !== entries.length) throw new Error('Duplicate native input');
   for (const required of ['Makefile', 'src/main.c', 'assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h']) {
-    if (!names.has('colophon-native/' + required)) throw new Error('Required native build input missing: ' + required);
+    if (!names.has('colophon/' + required)) throw new Error('Required native build input missing: ' + required);
   }
   const hash = crypto.createHash('sha256');
   for (const entry of entries) {
@@ -116,7 +116,7 @@ export function main(argv = process.argv.slice(2)) {
   let audit = false, dry = false, snapshot, rollback;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--help') { console.log('Usage: node tools/deploy_colophon_native.mjs [--dry-run | --audit | --rollback BACKUP] [--repo DIR] [--scripts-dir DIR] [--source-inventory FILE]'); return; }
+    if (arg === '--help') { console.log('Usage: node tools/deploy_colophon.mjs [--dry-run | --audit | --rollback BACKUP] [--repo DIR] [--scripts-dir DIR] [--source-inventory FILE]'); return; }
     if (arg === '--audit') audit = true;
     else if (arg === '--dry-run') dry = true;
     else if (['--repo', '--scripts-dir', '--source-inventory', '--rollback'].includes(arg) && argv[i + 1]) {
@@ -144,8 +144,8 @@ export function main(argv = process.argv.slice(2)) {
     }
     // Use fixed release settings; do not inherit testing flags or a user's stale binary.
     const env = {...process.env, CPPFLAGS: '', CFLAGS: '', LDFLAGS: '', MAKEFLAGS: '', MFLAGS: ''};
-    execFileSync('make', ['-C', path.join(scratch, 'colophon-native'), 'BUILD=build', 'RELEASE_BIN=colophon', 'CC=clang', 'OPTFLAGS=-O2', 'CFLAGS=', 'CPPFLAGS=', 'LDFLAGS=', 'all'], {env, stdio: 'pipe', timeout: 300000});
-    const built = path.join(scratch, 'colophon-native/colophon'); regular(built); diagnostic(built);
+    execFileSync('make', ['-C', path.join(scratch, 'colophon'), 'BUILD=build', 'RELEASE_BIN=colophon', 'CC=clang', 'OPTFLAGS=-O2', 'CFLAGS=', 'CPPFLAGS=', 'LDFLAGS=', 'all'], {env, stdio: 'pipe', timeout: 300000});
+    const built = path.join(scratch, 'colophon/colophon'); regular(built); diagnostic(built);
     const bytes = fs.readFileSync(built);
     if (![0xfeedfacf, 0xfeedface, 0xcafebabe, 0xbebafeca].includes(bytes.readUInt32LE(0))) throw new Error('Expected a native Mach-O executable');
     if (sourceInventory(repo, undefined, true).sourceHash !== inventory.sourceHash) throw new Error('Native inputs changed during build');

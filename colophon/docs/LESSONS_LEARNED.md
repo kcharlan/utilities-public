@@ -31,3 +31,12 @@ not available native acceptance commands.
   read/check/replace a cross-process transaction. Run shared-home commands
   sequentially, avoid concurrent ledger edits, and never migrate private state
   automatically.
+- When relocating source into a formerly retired project path, remove only the
+  obsolete read deny; retain the location-independent `PROJECT_DIR` write deny
+  and every real runtime, installed-command and historical-checkout protection.
+  Prove source reads and scratch writes through the wrappers. Test the explicit
+  source deny under canonical allowlisted scratch so the global write deny
+  cannot mask its removal; policy evaluation avoids canary files in real homes.
+  Preserve wrapper traps, scratch `TMPDIR`, browser cache and loopback-only
+  networking. Apple Silicon ctypes calls to variadic `sandbox_check` must declare
+  only its three fixed arguments, and evaluation errors must fail the test.

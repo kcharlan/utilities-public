@@ -233,11 +233,11 @@ new_fixture() {
     "$FIXTURE_HOME/.config" \
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
-  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon_native.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h; do
-    write_synthetic_file "$FIXTURE_REPO/colophon-native/$native_input" "native $native_input"
-    chmod 644 "$FIXTURE_REPO/colophon-native/$native_input"
+    write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
+    chmod 644 "$FIXTURE_REPO/colophon/$native_input"
   done
 
   local mapping source_relative deployed_name source_file deployed_file
@@ -1536,16 +1536,23 @@ test_timeline_deployment
 
 test_native_colophon_deployment() {
   new_fixture
+  local before="$FIXTURE_ROOT/native-before.snapshot"
+  local after="$FIXTURE_ROOT/native-after.snapshot"
+  write_synthetic_file "$FIXTURE_HOME/.utilities-deploy-backups/colophon-native/synthetic-saved/state.json" 'synthetic backup state'
+  write_synthetic_file "$FIXTURE_HOME/.colophon/synthetic-local-state" 'synthetic runtime state'
+  snapshot_fixture "$before"
   run_audit
+  snapshot_fixture "$after"
   assert_status 0 "$AUDIT_STATUS" 'native passing baseline'
   assert_contains "$AUDIT_STDOUT" 'OK: colophon native deployment'
+  assert_fixture_unchanged "$before" "$after"
   print 'synthetic binary drift' >> "$FIXTURE_SCRIPTS/colophon"
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'native binary drift'
   assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
 
   new_fixture
-  print 'synthetic source drift' >> "$FIXTURE_REPO/colophon-native/src/main.c"
+  print 'synthetic source drift' >> "$FIXTURE_REPO/colophon/src/main.c"
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'native source drift'
   assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
@@ -1557,9 +1564,23 @@ test_native_colophon_deployment() {
   assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
 
   new_fixture
-  git -C "$FIXTURE_REPO" rm -q --cached colophon-native/src/main.c
+  git -C "$FIXTURE_REPO" rm -q --cached colophon/src/main.c
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'native source removed from index'
+  assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
+
+  new_fixture
+  git -C "$FIXTURE_REPO" mv colophon colophon-native
+  git -C "$FIXTURE_REPO" commit -qm 'synthetic legacy-only source'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'legacy-only native source is rejected'
+  assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
+  assert_not_contains "$AUDIT_STDOUT" 'OK: colophon native deployment'
+
+  new_fixture
+  rm -- "$FIXTURE_REPO/colophon/assets/MANIFEST"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'missing canonical native input'
   assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
 }
 test_native_colophon_deployment

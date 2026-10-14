@@ -14,8 +14,7 @@
     (subpath "/private/tmp/colophon-native-canary"))
 (deny file-read* file-write*
     (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-native"))
-    (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-c-experiment"))
-    (subpath (string-append (param "REAL_HOME") "/source/utilities-public/colophon")))
+    (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-c-experiment")))
 (deny network*)
 (allow network-bind (local ip "localhost:*"))
 (allow network-inbound (local ip "localhost:*"))

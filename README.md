@@ -5,7 +5,7 @@
 
 Use conspicuously synthetic public fixtures. Keep operational configuration and mutable state in the tool's documented user-home runtime directory. Before every commit, review the complete staged diff and file list specifically for sensitive content.
 
-Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Nineteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
+Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
 The September dependency review is preserved in
 [the audit](docs/dependency_modernization_audit_2026_09_16.md). It is a dated
@@ -59,7 +59,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `Claude_plugin_converter` – Utilities for converting Claude-style plugins (skills and commands) to other CLI formats, currently supporting Gemini CLI.
 - `coding` – Curated coding orchestration reference assets. Contains `task_orch/` (legacy task orchestration scaffold, deprecated in favor of Cognitive Switchyard) and `design_orch/` (design-document packetization and implementation loop extracted from Git Fleet).
 - `cognitive_switchyard` – Local-first task orchestration engine with multi-phase pipeline (intake, planning, resolution, execution, verification, auto-fix), parallel worker dispatch, git worktree isolation, streaming phase logs, and a real-time React monitoring dashboard. Pluggable runner packs make it workload-agnostic.
-- `colophon-native` – Independently maintained macOS C17 [Codex session explorer](colophon-native/README.md), with embedded offline-page assets and standalone native/CLI/browser validation.
+- `colophon` – Independently maintained macOS C17 [Codex session explorer](colophon/README.md), with embedded offline-page assets and standalone native/CLI/browser validation.
 - `data_format_converter` – A dual-interface utility for analyzing and converting text data formats (JSON, XML, YAML, TOON, TOML) with LLM token count analysis.
 - `div_conv` – Privacy-safe standalone converter for supported Fidelity dividend and Vanguard activity CSV exports, using local-only account/security mappings to produce cooked CSV and QIF output.
 - `dloc` – Daily Lines of Code utility that parses git history to report insertions, deletions, and net changes by date.
@@ -107,6 +107,12 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `worktree-helper` – Single-file, standard-library Python utility for managing `git worktree` through a curses TUI or CLI. The documented branch-based create flows work; orphan creation is currently unavailable because of a validation conflict.
 
 The runnable projects listed above include a local README with setup and usage guidance; nested example, test, and reference directories may also carry more narrowly scoped READMEs.
+
+Colophon builds a native executable with embedded offline assets. Its
+[page writer](colophon/src/out/page.c), [atomic file helpers](colophon/src/util/atomic.c)
+and [runtime guide](colophon/docs/runtime.md) illustrate the built-page shape.
+Python function examples belong to Tax2's `tax2/taxkit/config.py` and
+`tax2/taxkit/page.py`; Colophon's compiled command is not a Python module.
 
 ## Preferred Delivery Forms
 
@@ -279,6 +285,6 @@ Do not use the zipapp pattern for:
 
 Many projects in this repo are designed to be standalone local utilities that can be copied or symlinked into `~/Library/Scripts` (or any other location) and keep working without imports from the source tree or mutable sidecar files in the repo. That delivery model means certain logic blocks are intentionally duplicated across projects rather than extracted into a shared module.
 
-Environment management is no longer duplicated: the hand-rolled self-bootstrapping venv pattern (private venv under `~/.toolname/`, `bootstrap_state.json` marker, `os.execv()` re-exec) that formerly appeared in a dozen launchers has been replaced by uv's PEP 723 inline metadata, so there is now a single declarative header per tool and no bootstrap code to keep in sync. The remaining intentional duplication is narrower: tools that serve a local web UI each carry their own `find_free_port()` implementation, and standalone HTML calculators under `Calculation tools/` each embed their own CSS theme variables. Built and static pages (see UI Shapes in `agents.md`) each inline their own exact-version vendored copy of their front-end libraries, recorded (version, source URL, SHA-256, license file) in the manner of `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` and copied byte-for-byte from there when that library and version are already vendored, and built-page launchers each carry their own write-and-open code; Colophon is the built-page shape reference implemented in C under `colophon-native/`.
+Environment management is no longer duplicated: the hand-rolled self-bootstrapping venv pattern (private venv under `~/.toolname/`, `bootstrap_state.json` marker, `os.execv()` re-exec) that formerly appeared in a dozen launchers has been replaced by uv's PEP 723 inline metadata, so there is now a single declarative header per tool and no bootstrap code to keep in sync. The remaining intentional duplication is narrower: tools that serve a local web UI each carry their own `find_free_port()` implementation, and standalone HTML calculators under `Calculation tools/` each embed their own CSS theme variables. Built and static pages (see UI Shapes in `agents.md`) each inline their own exact-version vendored copy of their front-end libraries, recorded (version, source URL, SHA-256, license file) in the manner of `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` and copied byte-for-byte from there when that library and version are already vendored, and built-page launchers each carry their own write-and-open code; Colophon is the built-page shape reference implemented in C under `colophon/`.
 
 This is a deliberate tradeoff: some duplication is the cost of standalone deployability and runtime independence. The canonical launcher guidance lives in `agents.md`, `tools/check_uv_headers.py` enforces the uv-header contract across the fleet, and `model_sentinel` is the reference for the packaged multi-file zipapp form.

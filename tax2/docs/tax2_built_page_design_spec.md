@@ -33,7 +33,8 @@ plans, documentation or runtime code.
   `tax2/taxkit/page.py` provides `render_page`, which escapes `<` as the
   six-character JSON escape (backslash followed by `u003c`). Inspect these
   current implementations for Python examples. Colophon remains the built-page
-  shape reference, implemented in C under `colophon-native/`; follow it for
+  shape reference: `colophon/src/out/page.c`, `colophon/src/util/atomic.c`
+  and `colophon/docs/runtime.md`; follow it for
   shape, not stack, since Tax2 uses Preact + htm (§5).
 - **`model_sentinel/model_sentinel/browse/assets/vendor/`:** the vendored
   Preact, hooks and htm files and `VERSIONS.md`.
@@ -236,8 +237,8 @@ stability; it does not add an adversarial filesystem framework.
 6. Render the page:
    - Serialize the payload as JSON with `ensure_ascii=True` and
      `allow_nan=False`.
-   - Replace each `<` with the backslash-`u003c` escape, as Colophon's
-     `render_page` does.
+   - Replace each `<` with the backslash-`u003c` escape, as Tax2's
+     `render_page` in `taxkit/page.py` does.
    - Inline the vendored scripts, app scripts, CSS, licence notices and the
      payload into the template.
 7. Write the page.

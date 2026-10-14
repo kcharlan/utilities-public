@@ -1,11 +1,14 @@
 # CodexBar 0.74.1 Usage Alignment Implementation Plan
 
-Historical implementation plan, retained as provenance at cutover baseline
-`38d6998eb223f690fc9dc0bde0ba528fcf784449`. Its original commands and acceptance
-instructions are not new authorization. Current rules and retained decision
-identifiers live in [token rules](token_rules.md) and [architecture](architecture.md).
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+Completed historical implementation plan, retained as provenance at cutover
+baseline `38d6998eb223f690fc9dc0bde0ba528fcf784449`. The four scoped source
+changes are already implemented. Original unchecked steps, failing-first
+expectations, branch/commit commands and private acceptance instructions below
+describe that historical workflow; they are not a current task list or new
+authorization. Source paths are updated to the canonical `colophon/` location
+for inspection. Current rules and retained decision identifiers live in
+[token rules](token_rules.md) and [architecture](architecture.md); current
+build/test instructions are in [development](development.md).
 
 **Goal:** Make native Colophon count and price Codex usage the way CodexBar v0.74.1 does: long-context thresholds, request-ledger validation, per-request pairing of ledger records with `token_count` snapshots, and thread-settings priority.
 
@@ -15,7 +18,10 @@ identifiers live in [token rules](token_rules.md) and [architecture](architectur
 
 ## Execution amendments
 
-The authorized execution uses an isolated worktree and local commits, superseding the existing-checkout branch commands below. Tasks run in order 1 → 2 → 3 → 4, which supplies the shared CLI helpers before use and preserves distinct cache schemas.
+The original execution used an isolated worktree and local commits, superseding
+the historical existing-checkout branch commands below. Tasks ran in order
+1 → 2 → 3 → 4, supplying the shared CLI helpers before use and preserving
+distinct cache schemas. This records the earlier authorization only.
 
 Source preflight found these corrections; they supersede conflicting steps below:
 
@@ -85,10 +91,10 @@ Each entry names the historical task whose documentation step records it in `doc
 - **Assets.** Every edit to `assets/*.json` updates that file's SHA-256 in `assets/MANIFEST` (`shasum -a 256 assets/<file>`). `make check-assets` must pass, printing its "local asset digests verified" line.
 - **Compatibility with prior releases.** Historical Python releases used the same default ledger and a 200,000 catalog fallback. Keep separate runtime homes when running them; retirement does not migrate private state. Shared-home commands must be sequential and concurrent ledger edits remain unsafe.
 - **Working directories.**
-  - Run every `make` target from `colophon-native/`.
-  - Run every `git` command against this repository from its root; the paths in those commands carry the `colophon-native/` prefix.
+  - Run every `make` target from `colophon/`.
+  - Run every `git` command against this repository from its root; the paths in those commands carry the `colophon/` prefix.
   - The `git show v0.74.1:…` reads of upstream source run in the CodexBar clone.
-- **Git.**
+- **Historical Git workflow (not current instructions).**
   - Use one feature branch, `colophon-native-codexbar-0741`, created from up-to-date `main` in the existing checkout.
   - Commit only when Kevin has asked for commits.
   - Every commit has an imperative subject and a body.
@@ -157,7 +163,7 @@ Each entry names the historical task whose documentation step records it in `doc
 
 This supersedes the historical rule ignoring catalog `tiers`; its disposition is retained in [token rules](token_rules.md). Current matching-tier behavior is documented in architecture.
 
-- [ ] **Step 0: Create the branch** (from the repository root)
+- [ ] **Historical Step 0: Create the branch** (record only; do not rerun)
 
 ```bash
 git switch main
@@ -413,10 +419,10 @@ Expected: `make check-assets` prints its "local asset digests verified" line; ev
 - [ ] **Step 11: Commit** (only if Kevin asked for commits)
 
 ```bash
-git add colophon-native/src/price/catalog.h colophon-native/src/price/catalog.c \
-  colophon-native/assets/curated_bundled.json colophon-native/assets/curated_price_history.json colophon-native/assets/MANIFEST \
-  colophon-native/tests/unit/test_price.c colophon-native/tests/helpers.py colophon-native/tests/test_cli.py \
-  colophon-native/docs/architecture.md colophon-native/docs/development.md colophon-native/tests/README.md colophon-native/THIRD_PARTY.md
+git add colophon/src/price/catalog.h colophon/src/price/catalog.c \
+  colophon/assets/curated_bundled.json colophon/assets/curated_price_history.json colophon/assets/MANIFEST \
+  colophon/tests/unit/test_price.c colophon/tests/helpers.py colophon/tests/test_cli.py \
+  colophon/docs/architecture.md colophon/docs/development.md colophon/tests/README.md colophon/THIRD_PARTY.md
 git diff --cached --name-only   # must list exactly the files above
 git diff --cached               # review for sensitive data before committing
 git commit -m "Take Codex long-context thresholds from catalog context tiers" -m "Port CodexBar v0.74.1 threshold resolution (matching models.dev context tier, then documented threshold, then 200K), add the v0.74.1 bundled rows, and correct the curated seeds that carried a 200K threshold to 272K so earlier usage is repriced."
@@ -805,11 +811,11 @@ Expected: all pass. The first warm CLI run after the format bump reports every l
 - [ ] **Step 9: Commit** (only if asked; from the repository root)
 
 ```bash
-git add colophon-native/src/model/logrecord.h colophon-native/src/parse/record.c colophon-native/src/parse/tokenstream.c \
-  colophon-native/src/cache/codec.c colophon-native/src/cache/cache.c \
-  colophon-native/src/price/request_ledger.h colophon-native/src/price/request_ledger.c colophon-native/src/price/compose.c \
-  colophon-native/tests/unit/test_request_ledger.c colophon-native/tests/unit/test_codec.c \
-  colophon-native/docs/architecture.md colophon-native/THIRD_PARTY.md colophon-native/docs/development.md colophon-native/tests/README.md
+git add colophon/src/model/logrecord.h colophon/src/parse/record.c colophon/src/parse/tokenstream.c \
+  colophon/src/cache/codec.c colophon/src/cache/cache.c \
+  colophon/src/price/request_ledger.h colophon/src/price/request_ledger.c colophon/src/price/compose.c \
+  colophon/tests/unit/test_request_ledger.c colophon/tests/unit/test_codec.c \
+  colophon/docs/architecture.md colophon/THIRD_PARTY.md colophon/docs/development.md colophon/tests/README.md
 git diff --cached --name-only   # must list exactly the files above
 git diff --cached               # review for sensitive data before committing
 git commit -m "Validate Codex request-ledger records like CodexBar 0.74.1" -m "Accept token_usage_record lines only as CodexBar v0.74.1 does: require a response id, integral usage and a thread total that covers it, and match session_id against the session's own session_meta session_id (the root session for subagents). Records without a turn take the task_started turn, then the turn_context turn. Ledger cached input now comes from cached_input_tokens only. Bump the native cache format to native:1:2."
@@ -1375,10 +1381,10 @@ Expected: all pass.
 - [ ] **Step 10: Commit** (only if asked; from the repository root)
 
 ```bash
-git add colophon-native/src/acct/parser.h colophon-native/src/acct/parser.c \
-  colophon-native/src/price/request_ledger.h colophon-native/src/price/request_ledger.c colophon-native/src/price/compose.c \
-  colophon-native/tests/unit/test_request_ledger.c colophon-native/tests/test_cli.py \
-  colophon-native/docs/architecture.md colophon-native/THIRD_PARTY.md colophon-native/docs/development.md colophon-native/tests/README.md
+git add colophon/src/acct/parser.h colophon/src/acct/parser.c \
+  colophon/src/price/request_ledger.h colophon/src/price/request_ledger.c colophon/src/price/compose.c \
+  colophon/tests/unit/test_request_ledger.c colophon/tests/test_cli.py \
+  colophon/docs/architecture.md colophon/THIRD_PARTY.md colophon/docs/development.md colophon/tests/README.md
 git diff --cached --name-only   # must list exactly the files above
 git diff --cached               # review for sensitive data before committing
 git commit -m "Pair Codex token_count snapshots with their ledger records" -m "Replace the per-turn primary/fallback rule with CodexBar v0.74.1 per-request pairing. A token_count snapshot is dropped only when it mirrors a ledger record by exact key, by counter or timestamp alias, or as an adjacent near or delayed match. Paired-snapshot and ledger keys also suppress the same snapshot in other copies of the session. The deliberate deviations are recorded in docs/architecture.md."
@@ -1594,10 +1600,10 @@ Expected: all pass.
 - [ ] **Step 9: Commit** (only if asked; from the repository root)
 
 ```bash
-git add colophon-native/src/parse/tokenstream.h colophon-native/src/parse/tokenstream.c \
-  colophon-native/src/cache/codec.c colophon-native/src/cache/cache.c colophon-native/src/price/compose.c \
-  colophon-native/tests/unit/test_request_ledger.c colophon-native/tests/unit/test_codec.c colophon-native/tests/test_cli.py \
-  colophon-native/docs/architecture.md colophon-native/THIRD_PARTY.md colophon-native/docs/development.md colophon-native/tests/README.md
+git add colophon/src/parse/tokenstream.h colophon/src/parse/tokenstream.c \
+  colophon/src/cache/codec.c colophon/src/cache/cache.c colophon/src/price/compose.c \
+  colophon/tests/unit/test_request_ledger.c colophon/tests/unit/test_codec.c colophon/tests/test_cli.py \
+  colophon/docs/architecture.md colophon/THIRD_PARTY.md colophon/docs/development.md colophon/tests/README.md
 git diff --cached --name-only   # must list exactly the files above
 git diff --cached               # review for sensitive data before committing
 git commit -m "Mark Codex turns priority from thread settings" -m "Record thread_settings_applied service tiers as token-stream observations, and mark a unit priority when the latest task_started for its turn ran under priority, which is when CodexBar v0.74.1 checks as each row is appended. Trace-database priority evidence still applies. Bump the native cache format to native:1:3."
@@ -1605,9 +1611,13 @@ git commit -m "Mark Codex turns priority from thread settings" -m "Record thread
 
 ---
 
-## Acceptance with real data (manual; needs Kevin's explicit approval each time)
+## Historical real-data acceptance procedure (not current authorization)
 
-The suite proves only synthetic behaviour. After each shipped task, Kevin may authorize the comparison below. Keep every output outside the repository.
+The suite proves only synthetic behaviour. The procedure below records the
+original proposal and does not establish captured-corpus parity or current
+acceptance. Any new real-data comparison or private-ledger change requires
+Kevin's explicit approval; do not execute these steps as part of the source
+cutover. Keep every output outside the repository.
 
 1. **Check the shared ledger first.**
    - Run `jq '[.entries[] | select(.long_context.threshold == 200000) | .model]' ~/.colophon/price-history.json`.

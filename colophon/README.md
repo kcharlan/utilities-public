@@ -1,8 +1,8 @@
-# Colophon Native
+# Colophon
 
 A macOS C17 application that compiles local Codex sessions, token usage and
 dated API-equivalent cost estimates into a private, self-contained offline
-HTML page. This independently maintained native project embeds its page
+HTML page. The canonical source project at `colophon/` embeds its page
 assets, fonts and public rate seeds in the executable.
 
 Build prerequisites are Apple's clang/Command Line Tools, make, Perl,
@@ -20,11 +20,12 @@ make
 The SQLite prefix defaults to `/opt/homebrew/opt/sqlite`. Override it when
 needed, for example `make SQLITE_PREFIX=/usr/local/opt/sqlite`. The release
 links SQLite, libcurl, pthreads and CoreFoundation. Building and running it
-requires no Python, uv, npm or font generator.
+requires no Python, uv, npm or font generator. Python is used only for
+development tests and optional Unicode maintenance.
 
 For the maintained macOS installation, use
-`node ../tools/deploy_colophon_native.mjs --dry-run` and then
-`node ../tools/deploy_colophon_native.mjs` after validation. This builds and
+`node ../tools/deploy_colophon.mjs --dry-run` and then
+`node ../tools/deploy_colophon.mjs` after validation. This builds and
 deploys the native executable as `~/Library/Scripts/colophon`, with private
 backups and a read-only source/binary receipt audit. See the
 [deployment guide](../docs/local_deployment_sync.md#native-colophon-deployment)
@@ -63,10 +64,9 @@ make check-sort
 ```
 
 Individual categories are `make test-unit`, `make test-cli` and
-`make test-browser`. The inherited `--help` statement about development
-acceptance and explicit `private/` destinations refers to the original
-native parity/performance tools. Those tools and that workflow are not
-included here. The listed standalone checks are the available validation;
+`make test-browser`. Help lists these shipped standalone checks. The original
+native parity/performance tools and their private workflow are not included
+here. The listed standalone checks are the available validation;
 they do not reproduce captured-corpus parity or historical performance
 acceptance. Keep temporary fixtures and evidence outside the public checkout.
 
