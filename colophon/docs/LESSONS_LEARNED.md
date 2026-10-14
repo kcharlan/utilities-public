@@ -14,6 +14,10 @@ historical evidence, not available native acceptance commands.
   full: another empty-input decode starts expecting a new frame and can
   falsely report a valid log as truncated. Keep a regression for exact
   output-buffer-sized expansion as well as partial output and damaged frames.
+- EOF before the compressed snapshot's frozen size is unreadable even if the
+  last decoded frame is complete. A file can shrink at a frame boundary after
+  discovery; accepting its prefix silently undercounts and caches an incomplete
+  snapshot. Check the read boundary independently of the decoder's frame state.
 - Read-only SQLite uses normal coordination and bounded busy timeouts; it
   can create or update WAL shared-memory side files. Do not promise absolute
   source-write exclusion or substitute immutable mode without changing the contract.

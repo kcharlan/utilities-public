@@ -209,7 +209,7 @@ static Err read_zstd(int fd, const DiscoveredLog *snapshot, LineSplitter *s, cha
             size_t request = snapshot->size - offset > READ_CHUNK ? READ_CHUNK : (size_t)(snapshot->size - offset);
             ssize_t count = read_at(fd, chunk, request, offset);
             if (count < 0) { err = err_make(ERR_IO, "log stream read failed: %s", err_system(errno, text)); break; }
-            if (!count) break; /* Shorter than the frozen size; the frame check below reports it. */
+            if (!count) { err = err_make(ERR_IO, "zstd log ends before frozen size"); break; }
             offset += count;
             in = (ZSTD_inBuffer){chunk, (size_t)count, 0};
         }

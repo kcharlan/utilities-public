@@ -95,18 +95,23 @@ static Err seen_chunk(void *context) {
     ((Seen *)context)->chunks++;
     return ERR_SUCCESS;
 }
-static Err read_bytes(const char *suffix, const Bytes *b, Seen *seen, ReaderResult *result) {
+static Err read_snapshot_bytes(const char *suffix, const Bytes *b, int64_t frozen_size,
+                               Seen *seen, ReaderResult *result) {
     char path[1024];
     snprintf(path, sizeof path, "%s/synthetic-zstd-XXXXXX%s", getenv("COLOPHON_HOME"), suffix);
     int fd = mkstemps(path, (int)strlen(suffix));
     ASSERT_TRUE(fd >= 0);
     if (b->n) ASSERT_EQ((ssize_t)b->n, write(fd, b->p, b->n));
     ASSERT_EQ(0, close(fd));
-    DiscoveredLog key = {.path = {path, (uint32_t)strlen(path)}, .size = (int64_t)b->n};
+    DiscoveredLog key = {.path = {path, (uint32_t)strlen(path)}, .size = frozen_size};
     ReaderCallbacks callbacks = {.context = seen, .chunk = seen_chunk, .raw_line = seen_line};
     Err e = reader_read_log(&key, &callbacks, result);
     ASSERT_EQ(0, unlink(path));
     return e;
+}
+
+static Err read_bytes(const char *suffix, const Bytes *b, Seen *seen, ReaderResult *result) {
+    return read_snapshot_bytes(suffix, b, (int64_t)b->n, seen, result);
 }
 
 TEST(log_name_format_classifies_plain_and_zstd_suffixes) {
@@ -203,6 +208,22 @@ TEST(zstd_reader_treats_zero_byte_file_as_empty_log) {
     ASSERT_EQ(0u, seen.lines);
     ASSERT_EQ(0u, result.physical_lines);
     reader_result_destroy(&result);
+}
+
+TEST(zstd_reader_rejects_file_shrunk_at_completed_frame_boundary) {
+    Bytes b = {0};
+    raw_frame(&b, "{\"k\":1}\n", 8, false);
+    size_t first_frame_size = b.n;
+    raw_frame(&b, "{\"k\":2}\n", 8, false);
+    int64_t frozen_size = (int64_t)b.n;
+    /* The second discovered frame disappears before the reader opens the log. */
+    b.n = first_frame_size;
+    Seen seen = {0};
+    ReaderResult result = {0};
+    ASSERT_EQ(ERR_IO, read_snapshot_bytes(".jsonl.zst", &b, frozen_size, &seen, &result).code);
+    ASSERT_EQ(1u, seen.lines);
+    reader_result_destroy(&result);
+    free(b.p);
 }
 
 TEST(zstd_reader_keeps_unterminated_final_line_partial) {

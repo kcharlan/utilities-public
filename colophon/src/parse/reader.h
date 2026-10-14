@@ -46,8 +46,9 @@ typedef struct {
  * Callback Err aborts immediately unchanged; IO/allocation failures propagate.
  * On error the result is partial and must not be cached as a successful parse.
  * Paths classified LOG_NAME_ZSTD are stream-decoded; the fingerprint and frozen
- * size remain those of the on-disk compressed bytes. Malformed, truncated or
- * trailing compressed data is ERR_IO; a zero-byte file is an empty log. */
+ * size remain those of the on-disk compressed bytes. Malformed, truncated,
+ * shorter-than-frozen or trailing compressed data is ERR_IO; a zero-byte
+ * snapshot is an empty log. */
 Err reader_read_log(const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out);
 Err reader_read_fd(int fd, const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out);
 /* Shared frozen-size tail fingerprint. Borrows fd; pread never changes offset. */
