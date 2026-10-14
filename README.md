@@ -91,7 +91,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `pdf-split` – Zsh utility that slices large PDFs into size-limited chunks using `qpdf`.
 - `router-log-analyzer` – Standalone NETGEAR and TP-Link Archer router log analyzer with SQLite-backed learning where stable router identity is available, baseline/policy imports, PDF or plain-text parsing, and text/Markdown/HTML/JSON reporting.
 - `routerview` – Self-hosted OpenRouter analytics dashboard for CSV imports, with calendar-aligned comparisons, cumulative cost tracking, saved views, and full export. Replaces the official OpenRouter Activity page without any live integration setup.
-- `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management.
+- `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management. A native `getattrlistbulk` walker (C) indexes the volume; building and deploying it requires Xcode Command Line Tools and Node.js.
 - `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.
 - `tax2` – Private built-page tax calculator with offline browser computation, QIF payments, and Markdown/CSV reference downloads.
 - `time_machine_snapshot_monitor` – Hourly alert-only macOS monitor for Time Machine local snapshots that remain mounted after backup activity stops, with an explicit safe-repair action, bounded logs, and user-level `launchd` installation.
@@ -155,6 +155,8 @@ This pattern is a strong fit when:
 - the embedded asset story is simple enough to keep inside one script
 
 This is the common form for tools like `editdb`, `routerview`, `div_conv`, `docpipe`, `harscope`, `jtree`, `storage_monitor`, and similar local-first utilities.
+
+`storage_monitor` pairs its launcher with a native helper deployed by `tools/deploy_storage_monitor.mjs`, so its machine prerequisites also include Xcode Command Line Tools.
 
 Machine prerequisite: [uv](https://docs.astral.sh/uv/) (`brew install uv`). This launcher form depends on it.
 

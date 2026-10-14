@@ -274,7 +274,7 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
