@@ -515,10 +515,23 @@ def path_parent(path_str: str) -> Optional[str]:
 
 
 def path_depth(root: Path, path_str: str) -> int:
-    try:
-        return len(Path(path_str).relative_to(root).parts)
-    except ValueError:
+    # Exactly two leading slashes form a distinct POSIX anchor.
+    anchor = ""
+    if path_str.startswith("/"):
+        anchor = "//" if path_str.startswith("//") and not path_str.startswith("///") else "/"
+    if anchor != root.anchor:
         return 0
+    root_str = str(root)
+    prefix = root_str if root_str.endswith("/") else root_str + "/"
+    if path_str.startswith(prefix):
+        return sum(1 for part in path_str[len(prefix):].split("/") if part not in ("", "."))
+
+    # Normalize lexical components before matching, keeping '..' untouched.
+    parts = tuple(part for part in path_str.split("/") if part not in ("", "."))
+    root_parts = root.parts[1:] if root.anchor else root.parts
+    if parts[:len(root_parts)] != root_parts:
+        return 0
+    return len(parts) - len(root_parts)
 
 
 def sql_like_prefix(path_str: str) -> str:
