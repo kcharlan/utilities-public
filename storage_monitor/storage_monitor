@@ -22,6 +22,7 @@ import signal
 import socket
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -180,7 +181,7 @@ GROWTH_HISTORY_MAX_DEPTH = 5
 GROWTH_HISTORY_MIN_BYTES = 10 * 1024 * 1024
 GROWTH_HISTORY_MAX_SCANS = 60
 BREAKDOWN_CACHE_TTL_SECONDS = 300  # 5 minutes
-SCAN_WORKER_COUNT = max(1, min(16, int(os.environ.get("STORAGE_MONITOR_SCAN_WORKERS", "4"))))
+SCAN_WORKER_COUNT = max(1, min(16, int(os.environ.get("STORAGE_MONITOR_SCAN_WORKERS", "8"))))
 LARGE_FILE_EXCLUDED_PREFIXES = [str(DATA_VOLUME / "private/var/vm")]
 LARGE_FILE_DESCRIPTION = "Large file found in the volume-wide storage scan."
 CACHE_DISCOVERY_MIN_BYTES = 100 * 1024 * 1024
@@ -1146,6 +1147,70 @@ class WalkResult:
     duration_ms: int
 
 
+WALKER_PROTOCOL = 1
+
+
+class WalkerUnavailable(RuntimeError):
+    pass
+
+
+def _walker_unavailable(detail: str) -> WalkerUnavailable:
+    return WalkerUnavailable(
+        f"Storage Monitor's native walker is missing or incompatible ({detail}). "
+        "Deploy with: node tools/deploy_storage_monitor.mjs  — or, in a development checkout: make -C storage_monitor/native"
+    )
+
+
+def walker_path() -> Path:
+    override = os.environ.get("STORAGE_MONITOR_WALKER")
+    if override is not None:
+        path = Path(override)
+        if path.is_file():
+            return path
+        raise _walker_unavailable("configured helper not found")
+    directory = Path(__file__).resolve().parent
+    for path in (directory / "storage_monitor_walk", directory / "native/build/storage_monitor_walk"):
+        if path.is_file():
+            return path
+    raise _walker_unavailable("helper not found")
+
+
+def check_walker() -> str:
+    try:
+        result = subprocess.run([str(walker_path()), "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise _walker_unavailable(str(exc)) from exc
+    version = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"storage_monitor_walk \S+ protocol " + str(WALKER_PROTOCOL), version):
+        raise _walker_unavailable(f"version check failed: {version[:200]}")
+    return version
+
+
+_FIELDS = {b"D": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
+
+
+def _iter_walker_records(stream):
+    pending = b""
+    fields: List[bytes] = []
+    while True:
+        chunk = stream.read(1 << 20)
+        if not chunk:
+            break
+        pending += chunk
+        parts = pending.split(b"\0")
+        pending = parts.pop()
+        for part in parts:
+            fields.append(part)
+            kind = fields[0]
+            if kind not in _FIELDS:
+                raise RuntimeError(f"storage_monitor_walk protocol error: record type {kind!r}")
+            if len(fields) == _FIELDS[kind] + 1:
+                yield kind, fields[1:]
+                fields = []
+    if pending or fields:
+        raise RuntimeError("storage_monitor_walk protocol error: truncated record stream")
+
+
 def walk_tree(
     root: Path,
     *,
@@ -1155,92 +1220,81 @@ def walk_tree(
     progress_callback: Optional[Callable[[int], None]] = None,
 ) -> WalkResult:
     started = time.time()
-    root_str = str(root)
-    root_stat = os.lstat(root_str)
-    root_dev = root_stat.st_dev
-    excluded = {str(path) for path in (excluded_paths or [])}
-    registered = registered_inodes or set()
+    argv = [str(walker_path()), "walk", "--root", str(root), "--workers", str(workers),
+            "--large-file-bytes", str(LARGE_FILE_THRESHOLD_BYTES), "--progress-every", "2000"]
+    for path in excluded_paths or []:
+        argv.extend(["--exclude", str(path)])
+    if registered_inodes:
+        argv.append("--registered-inodes-stdin")
     dir_local: Dict[str, int] = {}
     hardlinks: List[Tuple[int, int, str, str, int, int]] = []
     large_files: List[Dict[str, Any]] = []
-    counts = {"dirs": 0, "files": 0, "errors": 0, "pending": 1}
-    lock = threading.Lock()
-    done = threading.Event()
-    executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
-
-    def scan_dir(path_str: str, own_bytes: int) -> None:
-        nonlocal executor
-        local_bytes = own_bytes
-        children: List[Tuple[str, int]] = []
-        local_hardlinks: List[Tuple[int, int, str, str, int, int]] = []
-        local_large: List[Dict[str, Any]] = []
-        local_files = 0
-        local_errors = 0
+    summary = None
+    with tempfile.TemporaryFile() as stderr:
+        process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE if registered_inodes else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=stderr, bufsize=0,
+        )
         try:
-            with os.scandir(path_str) as entries:
-                for entry in entries:
-                    try:
-                        stat_result = entry.stat(follow_symlinks=False)
-                    except OSError:
-                        local_errors += 1
-                        continue
-                    if stat_result.st_dev != root_dev:
-                        continue
-                    allocated = int(getattr(stat_result, "st_blocks", 0)) * 512
-                    entry_path = os.path.join(path_str, entry.name)
-                    if entry.is_dir(follow_symlinks=False):
-                        if entry_path not in excluded:
-                            children.append((entry_path, allocated))
-                        continue
-                    local_files += 1
-                    if stat_result.st_nlink > 1 or stat_result.st_ino in registered:
-                        local_hardlinks.append(
-                            (stat_result.st_dev, stat_result.st_ino, entry_path, path_str, allocated, stat_result.st_nlink)
-                        )
-                    else:
-                        local_bytes += allocated
-                    if stat_result.st_size >= LARGE_FILE_THRESHOLD_BYTES:
-                        local_large.append({
-                            "path": entry_path,
-                            "parent_path": path_str,
-                            "name": entry.name,
-                            "apparent_bytes": int(stat_result.st_size),
-                            "allocated_bytes": allocated,
-                        })
-        except OSError:
-            local_errors += 1
-        with lock:
-            dir_local[path_str] = local_bytes
-            hardlinks.extend(local_hardlinks)
-            large_files.extend(local_large)
-            counts["dirs"] += 1
-            counts["files"] += local_files
-            counts["errors"] += local_errors
-            counts["pending"] += len(children)
-            completed = counts["dirs"]
-        assert executor is not None
-        for child_path, child_bytes in children:
-            executor.submit(scan_dir, child_path, child_bytes)
-        with lock:
-            counts["pending"] -= 1
-            if counts["pending"] == 0:
-                done.set()
-        if progress_callback is not None and completed % 2000 == 0:
-            progress_callback(completed)
-
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers))
-    try:
-        executor.submit(scan_dir, root_str, int(getattr(root_stat, "st_blocks", 0)) * 512)
-        done.wait()
-    finally:
-        executor.shutdown(wait=True)
+            if registered_inodes:
+                try:
+                    payload = "\n".join(map(str, sorted(registered_inodes))).encode()
+                    # Raw pipes may accept only part of a large registration list.
+                    remaining = memoryview(payload)
+                    while remaining:
+                        remaining = remaining[process.stdin.write(remaining):]
+                finally:
+                    process.stdin.close()
+            for kind, fields in _iter_walker_records(process.stdout):
+                if summary is not None:
+                    raise RuntimeError("storage_monitor_walk protocol error: record after S")
+                if kind == b"D":
+                    dir_local[os.fsdecode(fields[0])] = int(fields[1])
+                elif kind == b"H":
+                    dev, ino, nlink, alloc, parent, name = fields
+                    parent, name = os.fsdecode(parent), os.fsdecode(name)
+                    hardlinks.append((int(dev), int(ino), os.path.join(parent, name), parent, int(alloc), int(nlink)))
+                elif kind == b"L":
+                    parent, name = os.fsdecode(fields[2]), os.fsdecode(fields[3])
+                    large_files.append({"path": os.path.join(parent, name), "parent_path": parent,
+                                        "name": name, "apparent_bytes": int(fields[0]),
+                                        "allocated_bytes": int(fields[1])})
+                elif kind == b"P":
+                    count = int(fields[0])
+                    if progress_callback is not None:
+                        progress_callback(count)
+                else:
+                    summary = tuple(map(int, fields))
+            status = process.wait()
+            stderr.seek(0)
+            detail = stderr.read(8000).decode(errors="replace")[:2000]
+            if status == 3:
+                match = re.search(r"errno=(\d+)", detail)
+                if match is None:
+                    raise RuntimeError(f"storage_monitor_walk root failure without errno: {detail}")
+                number = int(match.group(1))
+                raise OSError(number, os.strerror(number), str(root))
+            if status or summary is None:
+                raise RuntimeError(f"storage_monitor_walk failed (exit {status}, summary={summary is not None}): {detail}")
+        except BaseException as exc:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if isinstance(exc, (RuntimeError, ValueError)):
+                stderr.seek(0)
+                detail = stderr.read(8000).decode(errors="replace")[:2000]
+                raise RuntimeError(f"{exc}: {detail}") from exc
+            raise
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdin is not None:
+                process.stdin.close()
+            process.stdout.close()
     return WalkResult(
-        dir_local=dir_local,
-        hardlink_candidates=hardlinks,
-        large_files=large_files,
-        dir_count=counts["dirs"],
-        file_count=counts["files"],
-        error_count=counts["errors"],
+        dir_local=dir_local, hardlink_candidates=hardlinks, large_files=large_files,
+        dir_count=summary[0], file_count=summary[1], error_count=summary[2],
         duration_ms=int((time.time() - started) * 1000),
     )
 
@@ -4246,6 +4300,11 @@ def write_pid_file() -> None:
 
 def main() -> None:
     args = parse_args()
+    try:
+        check_walker()
+    except WalkerUnavailable as exc:
+        logger.error("%s", exc)
+        raise SystemExit(2) from exc
     ensure_runtime_dirs()
     kill_prior_instance()
     write_pid_file()
