@@ -1055,14 +1055,21 @@ def indexed_path_bytes(scan_id: int, path: Path) -> Optional[int]:
     return int(row["allocated_bytes"]) if row else None
 
 
-def probe_provider(scan_id: int, slug: str) -> Dict[str, Any]:
+def run_provider_probe(slug: str) -> Optional[Dict[str, Any]]:
     spec = PROVIDER_SPECS[slug]
-    available = shutil.which(spec["binary"]) is not None
+    if shutil.which(spec["binary"]) is None:
+        return None
+    return run_command(spec["probe"], timeout=spec["probe_timeout"])
+
+
+def build_provider_item(scan_id: int, slug: str, probe_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    spec = PROVIDER_SPECS[slug]
+    available = probe_result is not None
     reason = None if available else f"{spec['binary']} is not installed."
     estimate: Optional[int] = None
     duration_ms = 0
     if available:
-        result = run_command(spec["probe"], timeout=spec["probe_timeout"])
+        result = probe_result
         duration_ms = result["duration_ms"]
         if not result["ok"]:
             available = False
@@ -1095,9 +1102,15 @@ def probe_provider(scan_id: int, slug: str) -> Dict[str, Any]:
     }
 
 
-def probe_providers(scan_id: int) -> Dict[str, Any]:
+def probe_provider(scan_id: int, slug: str) -> Dict[str, Any]:
+    return build_provider_item(scan_id, slug, run_provider_probe(slug))
+
+
+def probe_providers(scan_id: int, probe_results: Optional[Dict[str, Optional[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     results = run_parallel_call_map({
-        slug: (lambda slug=slug: probe_provider(scan_id, slug)) for slug in PROVIDER_SPECS
+        slug: (lambda slug=slug: probe_provider(scan_id, slug) if probe_results is None
+               else build_provider_item(scan_id, slug, probe_results[slug]))
+        for slug in PROVIDER_SPECS
     })
     return {"items": [results[slug] for slug in PROVIDER_SPECS], "updated_at": iso_now()}
 
@@ -1696,28 +1709,31 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     for item in snapshots["items"]:
         publish_event("snapshot_found", item)
 
-    with open_db_connection() as connection:
-        row = connection.execute("SELECT COUNT(*) AS count FROM nodes WHERE scan_id = (SELECT id FROM scan_runs WHERE active=1 LIMIT 1)").fetchone()
-        estimate = int(row["count"] or 400000)
-    progress("Volume walk", 0, "Starting volume walk")
-    result = walk_tree(
-        DATA_VOLUME.resolve(), workers=SCAN_WORKER_COUNT, excluded_paths=EXCLUDED_BREAKDOWN_PATHS,
-        progress_callback=lambda count: progress("Volume walk", min(0.95, count / max(1, estimate)), f"{count:,} directories scanned"),
-    )
-    translation = build_walk_translation()
-    attributions, _, changes = resolve_hardlink_ownership(scan_id, result.hardlink_candidates, translation, full_scan=True)
-    for parent, allocated in attributions:
-        result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
-    totals = rollup_subtree_totals(result.dir_local, str(DATA_VOLUME.resolve()))
-    progress("Index persistence", 0, "Persisting volume index")
-    persist_full_walk(scan_id, result, totals, translation, changes)
-    progress("Index persistence", 1, "Volume index persisted")
-    progress("Cleanup intelligence", 0, "Analyzing cleanup opportunities")
-    intelligence = run_parallel_call_map({
-        "providers": lambda: probe_providers(scan_id),
-        "caches": lambda: discover_cache_candidates(scan_id),
-        "installed_ids": collect_installed_bundle_ids,
-    })
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(PROVIDER_SPECS)) as probe_executor:
+        probe_futures = {slug: probe_executor.submit(run_provider_probe, slug) for slug in PROVIDER_SPECS}
+
+        with open_db_connection() as connection:
+            row = connection.execute("SELECT COUNT(*) AS count FROM nodes WHERE scan_id = (SELECT id FROM scan_runs WHERE active=1 LIMIT 1)").fetchone()
+            estimate = int(row["count"] or 400000)
+        progress("Volume walk", 0, "Starting volume walk")
+        result = walk_tree(
+            DATA_VOLUME.resolve(), workers=SCAN_WORKER_COUNT, excluded_paths=EXCLUDED_BREAKDOWN_PATHS,
+            progress_callback=lambda count: progress("Volume walk", min(0.95, count / max(1, estimate)), f"{count:,} directories scanned"),
+        )
+        translation = build_walk_translation()
+        attributions, _, changes = resolve_hardlink_ownership(scan_id, result.hardlink_candidates, translation, full_scan=True)
+        for parent, allocated in attributions:
+            result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
+        totals = rollup_subtree_totals(result.dir_local, str(DATA_VOLUME.resolve()))
+        progress("Index persistence", 0, "Persisting volume index")
+        persist_full_walk(scan_id, result, totals, translation, changes)
+        progress("Index persistence", 1, "Volume index persisted")
+        progress("Cleanup intelligence", 0, "Analyzing cleanup opportunities")
+        intelligence = run_parallel_call_map({
+            "providers": lambda: probe_providers(scan_id, {slug: future.result() for slug, future in probe_futures.items()}),
+            "caches": lambda: discover_cache_candidates(scan_id),
+            "installed_ids": collect_installed_bundle_ids,
+        })
     providers = intelligence["providers"]
     discovered = intelligence["caches"]
     orphans = collect_orphan_candidates(scan_id, intelligence["installed_ids"])
