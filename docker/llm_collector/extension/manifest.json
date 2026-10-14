@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LLM Usage Counter",
-  "version": "0.3.3",
+  "version": "0.5.0",
   "description": "Counts browser POSTs to common LLM endpoints; includes diagnostics; syncs to local collector.",
   "permissions": [
     "storage",
@@ -9,6 +9,7 @@
     "activeTab"
   ],
   "host_permissions": [
+    "<all_urls>",
     "http://127.0.0.1/*",
     "*://api.openai.com/*",
     "*://chat.openai.com/*",

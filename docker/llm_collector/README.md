@@ -11,6 +11,13 @@ token counts, billing records, response captures, or exact cost measurements.
 The collector receives only hostname/count deltas and client sequencing
 metadata; it does not receive prompt or response content.
 
+For diagnosing how a site sends prompts, the extension also keeps a full
+request capture (on by default, switchable in the popup): redacted URLs,
+headers and request bodies, including prompt text, for requests made by LLM
+pages. It stays in browser session memory, is cleared when the browser quits,
+and leaves the browser only through the popup's **Export JSON**. See
+[extension/README.md](extension/README.md#full-request-capture).
+
 This can be useful for understanding relative request activity and usage
 patterns across supported interfaces.
 

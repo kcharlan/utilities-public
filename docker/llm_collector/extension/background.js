@@ -2,6 +2,11 @@
 
 // --- Config ---
 importScripts("collector_status.js");
+importScripts("request_debug.js");
+importScripts("gemini_channel.js");
+importScripts("session_buffer.js");
+importScripts("capture_redact.js");
+importScripts("capture.js");
 
 let CONFIG_LOAD_ERROR = null;
 try {
@@ -26,6 +31,7 @@ const URL_FILTERS = [
   "*://api.openai.com/*",
   "*://*.perplexity.ai/*",
   "*://gemini.google.com/*",
+  "*://geminiweb-pa.clients6.google.com/*",  // Gemini WebChannel; see GEMINI_CHANNEL
   "*://generativelanguage.googleapis.com/*",
   "*://*.googleapis.com/*",
   "*://*.abacus.ai/*",
@@ -162,8 +168,9 @@ const SEQ_KEY       = "llm_seq_v1";       // last successfully applied seq (serv
 const PENDING_KEY   = "llm_pending_v1";   // {host: count} unsent or unacked
 
 // --- Debug buffer for popup ---
-const DEBUG_BUF_MAX = 50;
-const debugBuf = [];
+// Mirrored to chrome.storage.session so it survives the worker stopping when idle.
+const DEBUG_BUF_MAX = 200;
+const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({ key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX });
 function dbgPush(decision, d, u, reason) {
   const rec = {
     ts: Date.now(),
@@ -172,11 +179,11 @@ function dbgPush(decision, d, u, reason) {
     type: d.type || null,
     host: u.hostname,
     path: u.pathname,
+    rpcids: globalThis.LLMRequestDebug.rpcidsFromUrl(u),
     tabId: d.tabId ?? null,
     reason: reason || null
   };
-  debugBuf.push(rec);
-  if (debugBuf.length > DEBUG_BUF_MAX) debugBuf.splice(0, debugBuf.length - DEBUG_BUF_MAX);
+  debugStore.push(rec);
   if (DEBUG) console.log("[LLM-UC]", rec);
 }
 
@@ -231,10 +238,21 @@ async function handshakeSeq() {
 }
 
 // --- Pending ops ---
+// Every read-modify-write of the pending counts goes through one queue, so
+// overlapping updates cannot overwrite each other.
+let pendingQueue = Promise.resolve();
+function updatePending(fn) {
+  const run = pendingQueue.then(async () => {
+    const p = await getPending();
+    fn(p);
+    await setPending(p);
+  });
+  pendingQueue = run.catch(() => {});
+  return run;
+}
+
 async function incrementPending(host, delta = 1) {
-  const p = await getPending();
-  p[host] = (p[host] || 0) + delta;
-  await setPending(p);
+  await updatePending(p => { p[host] = (p[host] || 0) + delta; });
   schedulePush();
 }
 
@@ -268,12 +286,12 @@ async function pushToCollector() {
       await setSeq(rsp.last_seq ?? (seq + 1));
 
       // subtract exactly what we just sent
-      const cur = await getPending();
-      for (const k of Object.keys(snapshot)) {
-        cur[k] = Math.max(0, (cur[k] || 0) - snapshot[k]);
-        if (cur[k] === 0) delete cur[k];
-      }
-      await setPending(cur);
+      await updatePending(cur => {
+        for (const k of Object.keys(snapshot)) {
+          cur[k] = Math.max(0, (cur[k] || 0) - snapshot[k]);
+          if (cur[k] === 0) delete cur[k];
+        }
+      });
       if (DEBUG) console.log("[LLM-UC] add ok; seq advanced; pending reduced:", snapshot);
     } else if (res.status === 409) {
       const j = await res.json().catch(()=>({}));
@@ -291,6 +309,31 @@ async function pushToCollector() {
   }
 }
 
+// --- Gemini WebChannel ---
+// Gemini (seen first with Gemini 4 Argon) sends prompts over a WebChannel
+// session instead of StreamGenerate. One turn makes several posts (handshake,
+// setup, prompt, end of turn, terminate beacon); only the prompt message,
+// protobuf field 2, is a user send. It is credited to gemini.google.com so the
+// count stays in the existing Gemini column.
+const GEMINI_CHANNEL = {
+  host: "geminiweb-pa.clients6.google.com",
+  path: /^\/v1\/processSession$/,
+  creditHost: "gemini.google.com"
+};
+function isGeminiChannel(u) {
+  return u.hostname === GEMINI_CHANNEL.host && GEMINI_CHANNEL.path.test(u.pathname);
+}
+function countGeminiChannel(d, u) {
+  const fields = globalThis.LLMGeminiChannel.messageFields(d.requestBody);
+  const desc = `channel fields=${fields.length ? fields.map(f => f ?? "?").join(",") : "none"}`;
+  const prompts = globalThis.LLMGeminiChannel.promptCount(d.requestBody);
+  if (!prompts) { dbgPush("not-prompt", d, u, desc); return; }
+  if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
+  // Each prompt message is a distinct turn, so the path debounce does not apply.
+  incrementPending(GEMINI_CHANNEL.creditHost, prompts);
+  dbgPush("counted", d, u, `${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+}
+
 // --- Network listener (only count real user sends) ---
 chrome.webRequest.onBeforeRequest.addListener(
   (d) => {
@@ -299,6 +342,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       const u = new URL(d.url);
 
       if (deniedByHost(u)) { dbgPush("host-deny", d, u, "deny rule"); return; }
+      if (isGeminiChannel(u)) { countGeminiChannel(d, u); return; }
       if (!allowedByHost(u)) { dbgPush("not-allowlisted", d, u, "no allow"); return; }
       if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
       if (!passesDebounce(d, u)) { dbgPush("debounced", d, u, `window=${DEDUPE_WINDOW_MS}ms`); return; }
@@ -310,7 +354,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     }
   },
   { urls: URL_FILTERS },
-  []
+  ["requestBody"]   // read only by countGeminiChannel, for each message's first byte
 );
 
 // --- Bootstrap / recovery ---
@@ -324,7 +368,7 @@ chrome.runtime.onStartup?.addListener(() => schedulePush());
 // --- Popup API (optional, keep if your popup uses it) ---
 chrome.runtime.onMessage.addListener((m, s, send) => {
   if (m && m.cmd === "get_status") {
-    Promise.all([getPending(), getSeq(), getClientId()]).then(async ([pending, seq, client_id]) => {
+    Promise.all([getPending(), getSeq(), getClientId(), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([pending, seq, client_id]) => {
       const configError = getConfigError();
       const collectorStatus = configError
         ? {
@@ -345,7 +389,9 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
         serverCounters: collectorStatus.serverCounters || {},
         collectorStatus,
         collectorUrl: COLLECTOR,
-        debug: debugBuf,
+        debug: debugStore.items,
+        captureEnabled: globalThis.LLMCapture.isEnabled(),
+        captureCount: globalThis.LLMCapture.records().length,
         configError
       });
     });
@@ -362,7 +408,19 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
     send({ ok: true });
     return true;
   } else if (m && m.cmd === "clear_pending") {
-    setPending({}).then(() => send({ ok: true }));
+    updatePending(p => { for (const k of Object.keys(p)) delete p[k]; }).then(() => send({ ok: true }));
+    return true;
+  } else if (m && m.cmd === "get_capture") {
+    globalThis.LLMCapture.ready.then(() => send({
+      captureEnabled: globalThis.LLMCapture.isEnabled(),
+      capture: globalThis.LLMCapture.records()
+    }));
+    return true;
+  } else if (m && m.cmd === "set_capture") {
+    globalThis.LLMCapture.setEnabled(m.enabled).then(enabled => send({ ok: true, captureEnabled: enabled }));
+    return true;
+  } else if (m && m.cmd === "clear_capture") {
+    globalThis.LLMCapture.ready.then(() => { globalThis.LLMCapture.clear(); send({ ok: true }); });
     return true;
   }
 });
