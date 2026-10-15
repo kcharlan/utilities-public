@@ -16,6 +16,7 @@ The `default.conf` file configures Nginx to:
 3.  **File Sync & Caching:**
     *   **`sendfile off;`**: Disables `sendfile` to ensure that changes to files in mounted Docker volumes are detected immediately, which is especially important on macOS.
     *   **Dev-Friendly Caching**: Sets `Cache-Control: no-cache` for common static assets (CSS, JS, images, fonts) to force the browser to validate the file with the server on every request, ensuring you always see the latest version during development.
+    * **Calculator exception:** The `^~ /calculators/` prefix serves existing files with `Cache-Control: no-store`, including HTML and JavaScript. It takes precedence over the common asset regex. Its `try_files $uri @dynamic_index` preserves static-first delivery and the shared file-browser fallback for missing calculator paths, including missing asset names. Common missing assets outside this prefix still return 404.
 4.  **Reverse Proxy:** Routes requests to the appropriate backend services:
     * **Dynamic Index:** The root path (`/`) tries to serve `index.html` first,
       falling back to the `index` Node.js service. Other missing paths are sent
@@ -65,3 +66,8 @@ docker compose exec web nginx -t
 ```
 
 This command will execute `nginx -t` inside the running `web` container, which checks the configuration file for syntax errors and then exits.
+
+The [parent guide](../README.md#routing-regression-checks) documents the isolated
+real-Nginx regression command and the separate live response checks. Keep the
+calculator prefix, static-first landing page, file-browser fallback and API
+routes covered when editing this configuration.

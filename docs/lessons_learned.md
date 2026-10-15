@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-15: Preserve calculator cache precedence during webserver updates
+
+The live Nginx configuration had a calculator-specific `no-store` rule absent
+from source. Keep that rule in the maintained configuration: its `^~` prefix
+prevents the common asset regex from replacing calculator JavaScript's cache
+policy. Preserve static-first delivery and the shared dynamic fallback inside
+the prefix. Verify real response headers and routes with an isolated Nginx
+fixture, including missing calculator assets and ordinary asset 404s. Docker
+Desktop bind-mount deletions can propagate asynchronously; observe deletion
+inside the disposable container before testing the missing-landing branch.
+
 ## 2026-10-15: Test temporal conversion policy across every CLI target
 
 TOML and YAML parsers can produce native Python dates and datetimes; TOML also
