@@ -76,6 +76,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
+- Docker update propagation (`docker/propagate-updates.zsh`):
+  - `zsh docker/tests/test_propagate_updates.zsh` (stubbed refresh/deploy suite; no Docker, network or real deployment access).
+  - `docker/propagate-updates.zsh refresh --dry-run` and `deploy --dry-run` are read-only. A real `refresh` changes lockfiles and a real `deploy` rebuilds running stacks; agents need approval for each.
 - `storage_monitor` (from `storage_monitor/`):
   - `.venv/bin/python -m pytest -q` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
   - `make -C native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/native/build/sanitize/storage_monitor_walk" .venv/bin/python -m pytest -q` and `STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/python -m pytest -q` (complete suite against ASan/UBSan and TSan walkers).

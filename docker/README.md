@@ -22,6 +22,47 @@ directory and read its README before starting it.
   state kept outside the public source tree.
 - `webserver/` - Multi-service local web stack (Nginx + FastAPI + Express + index/config UI).
 
+## Propagating Dependency Updates
+
+`propagate-updates.zsh` carries dependency updates from this source tree to the
+deployed copy (`~/docker`) and the stacks running from it, in two phases with a
+commit in between. Run it from anywhere in the repository:
+
+```bash
+docker/propagate-updates.zsh refresh
+docker/propagate-updates.zsh deploy
+```
+
+- `refresh` changes only repository files. It updates the lockfiles within
+  their declared ranges (`npm update --package-lock-only` for
+  `webserver/index` and `webserver/app_node`, `uv pip compile --upgrade` for
+  `webserver/app_py`, `uv lock --upgrade` for `llm_proxy`) and audits them
+  (`npm audit`, `pip-audit`). It then test-builds the images under throwaway
+  `propagate-check-*` Compose project names, removes those images, and runs
+  the webserver Nginx routing test and the `llm_proxy` pytest suite.
+  `package.json`, `pyproject.toml` and exact pins are never edited. Review the
+  printed diff and commit it.
+- `deploy` refuses to run while tracked `docker/` files have uncommitted
+  changes. It copies changed tracked files into `~/docker`, backing up each
+  replaced file under `~/.utilities-deploy-backups/docker-<timestamp>/`, and
+  never deletes or touches local-only files such as `.env`. It then runs the
+  deployed `update.sh` for each selected stack that was running, confirms the
+  stack is running again from `~/docker`, and leaves stopped stacks stopped.
+  `llm_collector` is synchronized only by its own `migrate.sh`; when its
+  deployed copy differs from source, deploy reports that and skips it.
+
+Both phases accept `--stack NAME` (repeatable) and `--dry-run`. The run exits
+non-zero when any stack failed or needs manual action, and prints a summary
+with problems first. `PROPAGATE_DEPLOY_ROOT` and `PROPAGATE_BACKUP_ROOT`
+override the deployed copy and backup locations. A new top-level project must
+be registered in the script's `STACKS` table before deploy will copy it.
+
+The stubbed test suite runs without Docker, the network or real deployments:
+
+```bash
+zsh docker/tests/test_propagate_updates.zsh
+```
+
 ## Local Data and Secrets
 
 This is a public repository. Keep credentials, personal data, and mutable
