@@ -39,3 +39,68 @@ snapshot date 2026-10-04, SHA-256
 The historical snapshot and Python seed generator are not shipped. Committed
 native assets and their manifest remain the build inputs; refreshes require
 deliberate provenance review rather than invoking retired tooling.
+
+## Claude accounting
+
+Claude usage follows CodexBar **v0.74.1**, commit
+[`7c08c0ae783b72040b728757eb85a6cfe4fc2443`](https://github.com/steipete/CodexBar/tree/7c08c0ae783b72040b728757eb85a6cfe4fc2443).
+The authoritative anchors in `Sources/CodexBarCore/Vendored/CostUsage/` are
+`CostUsageScanner+Claude.swift::parseClaudeFileCancellable` (L153–241),
+`claudeOneHourCacheCreationTokens` (L281), `claudeCanonicalRowKey` (L291),
+`shouldReplaceClaudeRow` (L304), `claudeRowWins` (L345), `addClaudeRow`
+(L426), and `claudeTemporalPricing` (L1050–1109).
+`CostUsageFetcher.swift::configureScannerRefresh` (L1820–1823) selects
+`excludeVertexAI`; the native composer preserves that filter, including
+metadata dictionary recursion and its dictionary-only array traversal.
+`CostUsageClaudeJSON.swift::decode` and
+`CostUsageScanner+Timestamp.swift::claudeTimestampAndDayKey` supply the JSON
+and timestamp contracts. Claude uses CoreFoundation's ISO8601 formatter
+for the historical Foundation fallback; Codex's separate timestamp policy
+remains unchanged.
+`src/claude/foundation.c` delegates original-object validity and oversized
+integer coercion to system `NSJSONSerialization`/`NSNumber`. This preserves
+`NSDecimalNumber` rounding and rejection instead of approximating arbitrary
+precision through the Codex numeric parser. Ordinary token values retain the
+native C fast path; the build links the system Foundation/Objective-C runtime.
+
+`src/claude/compose.c` observes original physical lines, with the pinned
+512 KiB ceiling and literal assistant/usage prefilter. Display suffix
+recovery does not manufacture accounting rows. Local cumulative replacement
+precedes cross-file selection; complete, non-sidechain, parent-path rows
+win in that order before ascending original path breaks ties. A winning
+incomplete request is counted but contributes no token unit or bucket.
+Accounting keys use Swift's canonical-equivalent string equality through NFC;
+original row IDs and D7 session/history identities retain their exact strings.
+The original-path tiebreak likewise uses Swift's canonical-equivalent ordering
+without rewriting stored path provenance.
+
+The shared unit mapping is Colophon output design: `input` is fresh input
+plus cache reads plus cache creation, `cached` is cache reads, `cache_write`
+is cache creation, and `cache_write_1h` is the bounded one-hour component.
+Output and optional thinking tokens remain separate. Claude tiers are
+`fast|standard`; buckets retain the nine original entries and append the
+provider. The Codex accounting composer and pricing engine skip Claude.
+Claude units remain unpriced until its independent pricing stage is added;
+unpriced Claude units do not affect Codex totals or availability.
+
+Advisor usage is the secondary-reference extension from **ccusage v20.0.33**,
+commit [`1308c416a7da73b63463f953a51b5ae29fb784a4`](https://github.com/ccusage/ccusage/tree/1308c416a7da73b63463f953a51b5ae29fb784a4):
+`rust/adapters/claude/src/lib.rs::advisor_usages_from_line` (L635–658) and
+advisor-entry construction (L559–568), plus
+`rust/crates/ccusage-core/src/types.rs::TokenUsageRaw`.
+Only structurally valid `advisor_message` iterations with nonempty models
+become entries. Their IDs are `<parent message id>:advisor:<filtered index>`
+when the parent has an ID; unkeyed parents leave advisors unkeyed. Construction
+precedes Claude dedupe. A zero-token parent remains a dropped parent row but
+does not suppress its valid advisor entries. Nested advisor cache creation
+uses ccusage's saturating five-minute/one-hour sum. ccusage's different copy
+preference and sidechain loader rules do not replace CodexBar's winner rules.
+
+Colophon omits CodexBar's day-range restriction. Its added diagnostics count
+rejected physical rows by reason in `claude_rows_dropped`; count all losing
+keyed candidates, including local cumulative replacements, in
+`claude_duplicate_responses.row_count`; and count distinct canonical keys
+with losers in `.key_count`. Unique unkeyed entries are not duplicates.
+`claude_incomplete_requests` counts only winning incomplete rows. All fixture
+identities, prompts and paths are invented and runtime evidence stays in
+test scratch directories outside this public checkout.

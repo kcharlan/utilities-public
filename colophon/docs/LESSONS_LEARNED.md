@@ -1,5 +1,18 @@
 # Lessons learned
 
+- Claude advisor entries must survive a zero-token parent: the parent follows
+  CodexBar's rejection while advisor construction follows ccusage's separate
+  structural rules. Deduplicate constructed advisor IDs before aggregation.
+  Keep serde's duplicate-known-field rejection scoped to advisor envelopes;
+  primary Foundation row decoding retains its different last-value behavior.
+- Wide Claude rows and units need their type's explicit alignment. Extend the
+  shared append primitive with an alignment argument rather than relying on
+  macOS `max_align_t`; test every initial arena offset.
+- Claude historical timestamps use Foundation's ISO8601 fallback. Its
+  normalization and fractional truncation differ from a strict RFC3339 parser;
+  the public CoreFoundation ISO8601 constructor matches the native formatter
+  without changing Codex's approved historical-input omission.
+
 - Track CLI config provenance per source root, including default/XDG roots;
   a process-wide custom root must never leak into Desktop/cswap/subagent rows.
   Resolve same-stem live origins independently of traversal order. Preserve

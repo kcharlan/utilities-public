@@ -11,6 +11,7 @@ not assert a new license for Kevin's application.
 | Unicode normalization/casing | Unicode 16.0.0 committed `src/gen/unicode_nfc.c`/`.h`; full preserved [Unicode License V3](licenses/UNICODE.txt). |
 | Unicode pricing properties | Unicode 17.0.0 Numeric, Extend/SpacingMark/ZWJ and Prepend compressed ranges in `assets/pricing_*_ranges.txt`; same [Unicode notice](licenses/UNICODE.txt). |
 | CodexBar token/pricing rules | Adapted from [CodexBar](https://github.com/steipete/CodexBar) at `3bbf6bc48`; long-context thresholds and request-ledger validation/ownership/turn fallback, chronological per-request snapshot pairing, cross-copy mirror aliases and thread-settings priority follow `v0.74.1` (commit `7c08c0ae7`), with documented native adaptations. MIT, © 2026 Peter Steinberger; full [notice](licenses/CodexBar-MIT.txt). |
+| ccusage Claude advisor entries | Adapted from [ccusage v20.0.33](https://github.com/ccusage/ccusage/tree/1308c416a7da73b63463f953a51b5ae29fb784a4), `rust/adapters/claude/src/lib.rs` and `rust/crates/ccusage-core/src/types.rs`; full [MIT notice](licenses/ccusage-MIT.txt). |
 | models.dev catalog rates/public seeds | Public [models.dev](https://models.dev/) data, MIT; full [notice](licenses/models.dev-MIT.txt). |
 
 The local [token-rule ledger](docs/token_rules.md) preserves upstream pins,

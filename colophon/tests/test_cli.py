@@ -14,6 +14,75 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def test_claude_resumed_usage_buckets_and_provider_isolation(native):
+    native.session()
+    assert native.build("--no-claude").returncode == 0
+    before = native.payload()
+    codex_before = before["sessions"][0]
+    assert codex_before["buckets"][0][:8] == [1963728, "gpt-5", "standard", 120, 20, 0, 30, 5]
+    source = native.claude_session(directory=native.home / ".claude/projects/a")
+    lines = source.read_text().splitlines()
+    assistant = json.loads(lines[-1])
+    assistant["requestId"] = "synthetic-request-kite"
+    assistant["message"]["id"] = "synthetic-message-kite"
+    assistant["message"]["model"] = "synthetic-claude-model"
+    assistant["message"]["usage"] = {
+        "input_tokens": 17, "cache_read_input_tokens": 13,
+        "cache_creation_input_tokens": 11, "output_tokens": 7,
+        "cache_creation": {"ephemeral_1h_input_tokens": 5},
+        "output_tokens_details": {"thinking_tokens": 3}, "speed": "fast",
+    }
+    source.write_text(lines[0] + "\n" + json.dumps(assistant, separators=(",", ":")) + "\n")
+    copy = native.home / ".claude/projects/b/synthetic-claude.jsonl"
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(source.read_bytes())
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    sessions = {s["provider"]: s for s in payload["sessions"]}
+    claude = sessions["claude"]
+    assert claude["own_usage"]["input"] == 41, payload["diagnostics"]["claude_rows_dropped"]
+    assert claude["own_usage"]["cached_input"] == 13
+    assert claude["own_usage"]["cache_write"] == 11
+    assert claude["own_usage"]["output"] == 7
+    assert claude["own_usage"]["reasoning"] == 3
+    assert claude["own_usage"]["cost_usd"] is None
+    assert claude["buckets"][0][2] == "fast"
+    assert claude["buckets"][0][3:8] == [41, 13, 11, 7, 3]
+    assert claude["buckets"][0][9] == "claude"
+    assert sessions["codex"]["own_usage"] == codex_before["own_usage"]
+    assert [b[:9] for b in sessions["codex"]["buckets"]] == [b[:9] for b in codex_before["buckets"]]
+    assert all(b[9] == "codex" for b in sessions["codex"]["buckets"])
+    assert payload["meta"]["costs"] == before["meta"]["costs"]
+    assert payload["diagnostics"]["claude_duplicate_responses"] == {"key_count": 1, "row_count": 1}
+    assert "colophon: codex:" in result.stdout
+    assert "colophon: claude:" in result.stdout
+
+def test_claude_usage_does_not_depend_on_codex_ledger(native):
+    native.session()
+    native.claude_session(rows=[{
+        "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+        "message": {"model": "synthetic-claude-model", "usage": {
+            "input_tokens": 19, "output_tokens": 23}},
+    }])
+    source = native.home / ".claude/projects/synthetic-kite/synthetic-claude.jsonl"
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    native.runtime.mkdir()
+    (native.runtime / "price-history.json").write_text("synthetic-invalid-ledger")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert not payload["meta"]["costs"]["available"]
+    assert not payload["meta"]["sources"]["codex"]["costs"]["available"]
+    assert payload["meta"]["sources"]["claude"]["costs"] == {"available": True, "reason": None}
+    claude, = [s for s in payload["sessions"] if s["provider"] == "claude"]
+    assert claude["own_usage"]["input"] == 19
+    assert claude["own_usage"]["output"] == 23
+    assert claude["own_usage"]["unpriced_tokens"] == 42
+    assert claude["own_usage"]["cost_usd"] is None
+    lines = result.stdout.splitlines()
+    assert any(line.startswith("colophon: claude:") and "42 tokens" in line and "costs unavailable" in line for line in lines)
+
 def test_claude_session_without_codex(native):
     native.codex.rmdir()
     native.claude_session()

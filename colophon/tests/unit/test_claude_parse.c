@@ -62,6 +62,14 @@ TEST(claude_prompt_classification_and_end_kinds) {
   ASSERT_EQ(1, r.reader.unknown_types.size);
   claude_record_destroy(&r);
 }
+TEST(claude_history_aliases_preserve_exact_unicode_strings) {
+  ClaudeRecord r;
+  parse_text("{\"type\":\"user\",\"sessionId\":\"synthetic-séssion\",\"message\":{\"content\":\"Invent a synthetic kite\"}}\n"
+             "{\"type\":\"user\",\"sessionId\":\"synthetic-se\\u0301ssion\",\"message\":{\"content\":\"Invent a synthetic lantern\"}}\n",&r);
+  ASSERT_EQ(2,r.aliases.count);
+  ASSERT_FALSE(str_equal(r.aliases.items[0],r.aliases.items[1]));
+  claude_record_destroy(&r);
+}
 
 TEST(claude_tools_match_results_and_map_servers) {
   ClaudeRecord r = {0};

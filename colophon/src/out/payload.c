@@ -15,10 +15,16 @@ static void line_diagnostic(JsonWriter *w,const FileDiagnostic *d,const ClaudeSc
     if(d)for(size_t i=0;i<d->count;i++){if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->files[i].path);jsonw_raw(w,",\"count\":");jsonw_i64(w,(int64_t)d->files[i].count);jsonw_raw(w,"}");}
     if(c&&!c->disabled)for(size_t i=0;i<=c->count;i++){uint64_t n=i==c->count?(!kind?c->history_malformed:0):lines(&c->records[i],kind);if(!n)continue;if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,i==c->count?c->history_path:c->records[i].key.path);jsonw_raw(w,",\"count\":");jsonw_i64(w,(int64_t)n);jsonw_raw(w,"}");}jsonw_raw(w,"]}");
 }
+static const Omap *claude_map(const ClaudeRecord *r,bool dropped){return dropped?&r->rows_dropped:&r->reader.unknown_types;}
+static void claude_map_json(JsonWriter *w,const ClaudeScan *c,bool dropped){
+    jsonw_raw(w,"{");Omap seen={0};bool first=true;
+    if(c)for(size_t i=0;i<c->count;i++)for(OmapEntry *p=claude_map(&c->records[i],dropped)->first;p;p=p->next){if(omap_get(&seen,p->key))continue;Err e=omap_put(&seen,p->key,(void *)1);if(e.code){w->error=e;break;}__int128 n=0;for(size_t j=0;j<c->count;j++){uint64_t *v=omap_get(claude_map(&c->records[j],dropped),p->key);if(v)n+=*v;}if(!first)jsonw_raw(w,",");first=false;jsonw_string(w,p->key);jsonw_raw(w,":");jsonw_i128(w,n);}omap_destroy(&seen);jsonw_raw(w,"}");
+}
 static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
     jsonw_raw(w,",\"claude_session_id_collisions\":");CorpusStrings empty={0};payload_corpus_strings(w,c?&c->collisions:&empty);
-    jsonw_raw(w,",\"claude_unknown_record_types\":{");Omap seen={0};bool first=true;
-    if(c)for(size_t i=0;i<c->count;i++)for(OmapEntry *p=c->records[i].reader.unknown_types.first;p;p=p->next){if(omap_get(&seen,p->key))continue;Err e=omap_put(&seen,p->key,(void *)1);if(e.code){w->error=e;break;}__int128 n=0;for(size_t j=0;j<c->count;j++){uint64_t *v=omap_get(&c->records[j].reader.unknown_types,p->key);if(v)n+=*v;}if(!first)jsonw_raw(w,",");first=false;jsonw_string(w,p->key);jsonw_raw(w,":");jsonw_i128(w,n);}omap_destroy(&seen);jsonw_raw(w,"}");
+    jsonw_raw(w,",\"claude_unknown_record_types\":");claude_map_json(w,c,false);
+    jsonw_raw(w,",\"claude_rows_dropped\":");claude_map_json(w,c,true);
+    jsonw_raw(w,",\"claude_duplicate_responses\":{\"key_count\":");jsonw_i128(w,c?c->duplicate_keys:0);jsonw_raw(w,",\"row_count\":");jsonw_i128(w,c?c->duplicate_rows:0);jsonw_raw(w,"},\"claude_incomplete_requests\":");jsonw_i128(w,c?c->incomplete_requests:0);
 }
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);

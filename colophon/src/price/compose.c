@@ -350,8 +350,10 @@ static Err finish_cost(UsageSummary *s,const char *site) {
   return stable_sort(s->priced_by,s->priced_count,sizeof *s->priced_by,priced_order,NULL);
 }
 Err compose_refresh_costs(Corpus *corpus,bool available) {
+  bool codex_available=available;
   for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
     SessionModel *s=entry->value;Omap turns={0},buckets={0};Err error=ERR_SUCCESS;
+    available=s->provider==PROVIDER_CLAUDE?true:codex_available;
     reset_cost(s->own_usage,available);reset_cost(s->outside_usage,available);
     for(size_t i=0;i<s->turn_count;i++){reset_cost(s->turns[i].usage,available);error=omap_put(&turns,s->turns[i].id,s->turns[i].usage);if(error.code)goto done;}
     for(size_t i=0;i<s->bucket_count;i++) {
@@ -556,8 +558,6 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
     SessionModel *s = p->value;
     Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
     if (s->provider == PROVIDER_CLAUDE) {
-      error = compose_aggregate_session(c, s);
-      if (error.code) goto done;
       continue;
     }
     FileMirrors *files = NULL;
@@ -855,7 +855,7 @@ void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
     jsonw_raw(w, ",");
     jsonw_string(w, b->model);
     jsonw_raw(w, ",");
-    jsonw_string(w, b->priority ? STR_LIT("priority") : STR_LIT("standard"));
+    jsonw_string(w, b->priority ? (s->provider==PROVIDER_CLAUDE?STR_LIT("fast"):STR_LIT("priority")) : STR_LIT("standard"));
     jsonw_raw(w, ",");
     jsonw_i128(w, b->usage.input);
     jsonw_raw(w, ",");
@@ -866,7 +866,8 @@ void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
     jsonw_i128(w, b->usage.output);
     jsonw_raw(w, ",");
     jsonw_i128(w, b->usage.reasoning);
-    jsonw_raw(w, ",");if(b->usage.has_cost)jsonw_double(w,b->usage.cost_usd);else jsonw_raw(w,"null");jsonw_raw(w,"]");
+    jsonw_raw(w, ",");if(b->usage.has_cost)jsonw_double(w,b->usage.cost_usd);else jsonw_raw(w,"null");
+    jsonw_raw(w,",");jsonw_string(w,s->provider==PROVIDER_CLAUDE?STR_LIT("claude"):STR_LIT("codex"));jsonw_raw(w,"]");
   }
   jsonw_raw(w, "]");
 }

@@ -18,6 +18,8 @@ typedef struct UsageUnit {
   double cost_usd;
   PricePeriod period, priority_period;
   __int128 input, cached, cache_write, output;
+  __int128 cache_write_1h;
+  bool fast;
   OptionalTokens reasoning;
 } UsageUnit;
 typedef struct UsageSummary {

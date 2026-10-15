@@ -140,7 +140,7 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
 Err price_units(Corpus *corpus,const PriceHistory *history,ModelsDevIndex *index,bool available,PricingReport *report) {
     Err e=pricing_report_init(history,report);if(e.code)return e;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
-        SessionModel *session=entry->value;e=price_usage_units(session->units,session->unit_count,history,index,available,report);if(e.code)return e;
+        SessionModel *session=entry->value;if(session->provider!=PROVIDER_CODEX)continue;e=price_usage_units(session->units,session->unit_count,history,index,available,report);if(e.code)return e;
     }
     pricing_report_note_sums(report);return ERR_SUCCESS;
 }

@@ -22,7 +22,9 @@ make
 
 The SQLite prefix defaults to `/opt/homebrew/opt/sqlite`. Override it when
 needed, for example `make SQLITE_PREFIX=/usr/local/opt/sqlite`. The release
-links SQLite, libcurl, pthreads and CoreFoundation. Building and running it
+links SQLite, libcurl, pthreads, CoreFoundation, Foundation and the Objective-C
+runtime. Claude accounting uses the system JSON decoder and number coercion
+through a small C bridge; no external package is added. Building and running it
 requires no Python, uv, npm or font generator. Python is used only for
 development tests and optional Unicode maintenance.
 

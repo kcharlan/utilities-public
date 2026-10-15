@@ -1,6 +1,12 @@
 #ifndef CP_CLAUDE_PARSE_H
 #define CP_CLAUDE_PARSE_H
 #include "corpus/assemble.h"
+#include "price/compose.h"
+typedef struct {
+  UsageUnit unit;
+  Str message_id, request_id, session_id;
+  bool incomplete, sidechain, subagent;
+} ClaudeUsageRow;
 /* Separate record ownership: never masquerades as a Codex LogRecord. */
 typedef struct {
   Arena arena;
@@ -15,6 +21,9 @@ typedef struct {
   CorpusTools *tools;
   size_t turn_count;
   MaybeMs first_ms, last_ms;
+  ClaudeUsageRow *usage_rows;
+  size_t usage_count, usage_capacity;
+  Omap rows_dropped; /* record-arena uint64_t values */
 } ClaudeRecord;
 bool claude_known_type(Str kind);
 Err claude_parse(const DiscoveredLog *key, Str root, Str config,

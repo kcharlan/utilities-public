@@ -50,12 +50,16 @@ Err record_intern(LogRecord *record, Str value, Str *out) {
 }
 Err record_append(Arena *arena, void **data, size_t *count, size_t *capacity, size_t size,
                   const void *value) {
+    return record_append_aligned(arena,data,count,capacity,size,alignof(max_align_t),value);
+}
+Err record_append_aligned(Arena *arena, void **data, size_t *count, size_t *capacity,
+                          size_t size, size_t alignment, const void *value) {
     if (*count == *capacity) {
         size_t next = *capacity ? *capacity * 2 : 8;
         if (next < *capacity || next > SIZE_MAX / size)
             return err_make(ERR_NOMEM, "fact array too large");
         void *grown;
-        Err err = arena_alloc(arena, next * size, alignof(max_align_t), &grown);
+        Err err = arena_alloc(arena, next * size, alignment, &grown);
         if (err.code)
             return err;
         if (*count)

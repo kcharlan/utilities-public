@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "parse.h"
+#include "compose.h"
 #include "corpus/subagents.h"
 #include "corpus/titles.h"
 #include "corpus/turnstatus.h"
@@ -269,6 +270,11 @@ static Err on_record(void *context, const ReaderRecord *row) {
   }
   return ERR_SUCCESS;
 }
+static Err on_raw(void *context, const ReaderRawLine *line) {
+  Parse *p=context;
+  Str turn=p->r->turn_count?p->r->turns[p->r->turn_count-1]->key:(Str){0};
+  return claude_usage_line(p->r,line,turn);
+}
 Err claude_parse(const DiscoveredLog *key, Str root, Str config,
                  ClaudeRecord *out) {
   *out = (ClaudeRecord){.key = *key};
@@ -298,13 +304,15 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
   TRY(copy(&out->arena, id, &out->id));
   Parse p = {.r = out};
   ReaderCallbacks cb = {
-      .context = &p, .known_type = claude_known_type, .record = on_record};
+      .context = &p, .known_type = claude_known_type, .record = on_record,
+      .raw_line = on_raw};
   Err e = reader_read_log(&out->key, &cb, &out->reader);
   finish(&p);
   omap_destroy(&p.shell_ids);
   return e;
 }
 void claude_record_destroy(ClaudeRecord *r) {
+  omap_destroy(&r->rows_dropped);
   for (size_t i = 0; i < r->turn_count; i++) {
     omap_destroy(&r->tools[i].mcp);
     omap_destroy(&r->tools[i].other);

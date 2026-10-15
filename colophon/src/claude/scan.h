@@ -25,6 +25,8 @@ typedef struct {
                            owners. */
   SkippedFile *skipped;
   size_t skipped_count, skipped_capacity;
+  size_t duplicate_keys, duplicate_rows, incomplete_requests;
+  MaybeMs token_data_from_ms;
 } ClaudeScan;
 /* Path selection and history inspection are read-only, before runtime creation.
  */

@@ -4,6 +4,7 @@
 #include "progress.h"
 #include "summary.h"
 #include "claude/scan.h"
+#include "claude/compose.h"
 #include "out/payload.h"
 #include "out/page.h"
 #include "scan/scan.h"
@@ -111,6 +112,7 @@ int cli_run(const Args *args){
     }
     failure=compose_usage(&corpus,&priority);if(failure.code)goto fail;
     failure=price_units(&corpus,&history,catalog.catalog?&index:NULL,ledger.available,&pricing);if(failure.code)goto fail;
+    failure=claude_compose(&claude,&corpus);if(failure.code)goto fail;
     failure=compose_refresh_costs(&corpus,ledger.available);if(failure.code)goto fail;
     if(cp_fault("cache_abort_fail")){failure=err_make(ERR_INVALID,"synthetic injected cache_abort_fail");failure_type="ValueError";goto fail;}
     char *key=NULL;failure=file_codex_path_key(codex,&key);if(failure.code==ERR_OK)failure=file_abbreviate_home(key,&display);free(key);if(failure.code!=ERR_OK)goto fail;

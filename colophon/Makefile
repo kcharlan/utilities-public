@@ -5,7 +5,7 @@ SQLITE_PREFIX ?= /opt/homebrew/opt/sqlite
 OPTFLAGS ?= -O2
 override CFLAGS += -std=c17 $(OPTFLAGS) -g -Wall -Wextra -Wpedantic -Werror -fno-fast-math -ffp-contract=off
 override CPPFLAGS += -Isrc -Ivendor/yyjson -Ivendor/zstd -I$(SQLITE_PREFIX)/include
-override LDLIBS += -lpthread -lcurl -framework CoreFoundation -L$(SQLITE_PREFIX)/lib -lsqlite3
+override LDLIBS += -lpthread -lcurl -framework CoreFoundation -framework Foundation -lobjc -L$(SQLITE_PREFIX)/lib -lsqlite3
 
 ZSTD_SOURCES := vendor/zstd/common/debug.c vendor/zstd/common/entropy_common.c \
                 vendor/zstd/common/error_private.c vendor/zstd/common/fse_decompress.c \

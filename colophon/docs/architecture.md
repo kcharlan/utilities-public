@@ -11,7 +11,7 @@ catalog/priority/pricing → payload/page:
 | --- | --- |
 | `src/parse/`, `src/model/` | Stream JSONL into log records, turns, messages, tools, links and usage observations. |
 | `src/scan/` (including `logname.c`), `src/cache/` | Classify plain/compressed log names, discover logs, reuse or reparse native cache entries, stage and commit cache updates. |
-| `src/claude/` | Inspect source presence read-only, enumerate resolved search roots with provenance/completeness, parse Claude prompts/turns/tools, and insert provider-tagged sessions. |
+| `src/claude/` | Inspect source presence read-only, enumerate resolved search roots with provenance/completeness, parse Claude prompts/turns/tools, and insert provider-tagged sessions. Compose pinned Claude usage/advisor rows through file-local replacement and original-path winner reconciliation; a narrow C bridge delegates Foundation JSON validity and oversized number coercion to the system runtime. |
 | `src/meta/` | Load Codex metadata through read-only SQLite connections. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
