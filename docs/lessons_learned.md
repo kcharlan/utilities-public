@@ -130,3 +130,13 @@ earlier metadata and row writes. Protect metadata, upserts and stale deletion
 with a savepoint; roll back the savepoint on failure and preserve the caller's
 outer transaction. Regress with real SQLite trigger failures, followed by the
 caller's commit, and compare the complete previous snapshot.
+
+Python direct-reference identity needs a distinct path from distribution-name
+normalization. Parse URL authority before separating a VCS revision from its
+path: an SSH user separator is not a revision, and revisions can contain slashes.
+Keep extras and markers as declaration text and reject wildcard pins as concrete
+versions. Filtering direct-reference result rows does not exclude their URLs
+from an auditor that reads the original mixed manifest; filter the actual audit
+input too. Regress the full parse-to-persistence path and inspect synthetic
+auditor input, because parser-only tests miss later identity normalization and
+whole-manifest external work.

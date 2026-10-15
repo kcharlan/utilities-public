@@ -414,3 +414,16 @@ def test_check_note_accumulates_distinct_bounded_failures():
     for reason in ('synthetic; detail', 'another reason', 'synthetic; detail'):
         gd.add_check_note(row, reason)
     assert row['check_note'] == 'synthetic; detail; another reason'
+
+
+def test_direct_reference_makes_no_registry_or_audit_calls(tmp_path, monkeypatch):
+    (tmp_path / 'requirements.txt').write_text('git+https://git.example.invalid/acme/widget.git\n')
+    monkeypatch.setattr(gd, 'TOOLS', {'pip_audit': 'synthetic-pip-audit'})
+    with patch('urllib.request.urlopen') as registry, patch('subprocess.run') as audit:
+        [row] = gd.check_python_deps(tmp_path, gd.parse_deps_for_repo(tmp_path))
+    registry.assert_not_called()
+    audit.assert_not_called()
+    assert row['current_version'] == 'git:default branch'
+    assert row['severity'] == 'unchecked'
+    assert row['outdated_state'] == row['vuln_state'] == 'unchecked'
+    assert row['check_note'] == 'direct VCS/URL reference; not compared with PyPI or audited'

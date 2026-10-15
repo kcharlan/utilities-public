@@ -565,3 +565,64 @@ def test_dependency_identity_normalizes_package_names_only():
     assert git_dashboard.dependency_identity_name({'manager': 'pip', 'name': 'SYNTHETIC_Pkg.Name'}) == 'synthetic-pkg-name'
     assert git_dashboard.dependency_identity_name({'manager': 'npm', 'name': '@Synthetic/Pkg.Name'}) == '@Synthetic/Pkg.Name'
     assert git_dashboard.dependency_identity_name({'manager': 'pip', 'name': 'https://synthetic.invalid/Name.git', 'reference_identity': True}) == 'https://synthetic.invalid/Name.git'
+
+
+@pytest.mark.parametrize("transport", ["https", "ssh"])
+def test_direct_reference_identity_survives_repo_pipeline(tmp_path, transport):
+    import git_dashboard
+    authority = "git@git.example.invalid" if transport == "ssh" else "git.example.invalid"
+    url = f"git+{transport}://{authority}/acme/widget-kit.git@feature/fix"
+    (tmp_path / "requirements.txt").write_text(url + "\n")
+    [row] = git_dashboard.parse_deps_for_repo(tmp_path)
+    assert row["name"] == "git.example.invalid/acme/widget-kit"
+    assert row["current_version"] == "git:feature/fix"
+    assert git_dashboard.dependency_identity_name(row) == row["name"]
+
+
+@pytest.mark.parametrize('text', [
+    'Synthetic_Widget.Name @ git+https://git.example.invalid/acme/repo.git@v1',
+    'git+ssh://git@git.example.invalid/acme/repo.git@v1#egg=Synthetic_Widget.Name',
+])
+def test_named_and_egg_references_normalize_distribution_name(tmp_path, text):
+    (tmp_path / 'requirements.txt').write_text(text + '\n')
+    [row] = parse_requirements_txt(tmp_path / 'requirements.txt')
+    assert row['name'] == 'synthetic-widget-name'
+    assert row['current_version'] == 'git:v1'
+    assert row['declared_spec'] == text
+    assert row['direct_ref'] is True
+    assert row['reference_identity'] is False
+
+
+def test_wheel_reference_uses_wheel_metadata(tmp_path):
+    text = 'https://packages.example.invalid/synthetic_widget-1.2.3-py3-none-any.whl'
+    (tmp_path / 'requirements.txt').write_text(text)
+    [row] = parse_requirements_txt(tmp_path / 'requirements.txt')
+    assert row['name'] == 'synthetic-widget'
+    assert row['current_version'] == '1.2.3'
+    assert row['version'] is None
+    assert row['direct_ref'] is True
+
+
+def test_pep508_extras_markers_wildcards_and_continuations(tmp_path):
+    (tmp_path / 'requirements.txt').write_text(
+        'Synthetic_Widget[extra]==1.2.3 ; python_version < "0" \\\n'
+        ' --hash=sha256:synthetic # comment\n'
+        'synthetic-wild==1.2.*\ninvalid ???\n'
+        'synthetic-range>=1,<3 ; sys_platform == "synthetic"\n')
+    rows = parse_requirements_txt(tmp_path / 'requirements.txt')
+    assert len(rows) == 3
+    assert rows[0]['version'] == '1.2.3'
+    assert rows[0]['declared_spec'] == 'Synthetic_Widget[extra]==1.2.3 ; python_version < "0"'
+    assert rows[1]['version'] is None
+    assert rows[2]['version'] is None
+    (tmp_path / 'pyproject.toml').write_text('[project]\ndependencies = [\'Synthetic_Widget[extra]==1.2.3 ; python_version < "0"\', "synthetic-wild==1.2.*"]\n')
+    pep_rows = parse_pyproject_toml(tmp_path / 'pyproject.toml')
+    assert pep_rows == rows[:2]
+
+
+def test_poetry_declaration_text_is_not_a_mapping(tmp_path):
+    (tmp_path / 'pyproject.toml').write_text('[tool.poetry.dependencies]\nsynthetic = {version = "^1.2", extras = ["example"]}\n')
+    [row] = parse_pyproject_toml(tmp_path / 'pyproject.toml')
+    assert row['version'] == '^1.2'
+    assert isinstance(row['declared_spec'], str)
+    assert '^1.2' in row['declared_spec']

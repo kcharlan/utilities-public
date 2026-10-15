@@ -30,6 +30,7 @@ import argparse
 import sqlite3
 import subprocess
 import tomllib
+import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timezone, timedelta
@@ -1337,16 +1338,71 @@ def detect_dep_files(repo_path: Path) -> list[dict]:
     return results
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) -> list[dict]:
-    """Parse a requirements.txt file and return [{name, version, manager}].
+_VCS_SCHEMES = ("git+", "hg+", "svn+", "bzr+")
+_URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+NOTE_DIRECT_REF = "direct VCS/URL reference; not compared with PyPI or audited"
 
-    Handles:
-    - Comments and blank lines (skip)
-    - -e / --editable (skip)
-    - -r / --requirement includes (one level, circular-safe)
-    - Other flags (-i, --index-url, etc.) (skip)
-    - name==version (exact pin → extract version)
-    - name>=version or unpinned (version = None)
+
+def _direct_reference(name: str | None, url: str, declared: str) -> dict:
+    vcs = next((scheme[:-1] for scheme in _VCS_SCHEMES
+                if url.startswith(scheme)), None)
+    target = url[len(vcs) + 1:] if vcs else url
+    parts = urllib.parse.urlsplit(target)
+    path = parts.path
+    revision = None
+    if vcs and "@" in path:
+        path, _, revision = path.rpartition("@")
+    egg = urllib.parse.parse_qs(parts.fragment).get("egg", [None])[0]
+    if name is None and egg:
+        from packaging.requirements import Requirement
+        name = Requirement(egg).name
+    current = None
+    if name is None and not vcs and path.endswith(".whl"):
+        from packaging.utils import parse_wheel_filename
+        wheel_name, wheel_version, _, _ = parse_wheel_filename(path.rsplit("/", 1)[-1])
+        name, current = str(wheel_name), str(wheel_version)
+    reference_identity = name is None
+    if reference_identity:
+        host = parts.hostname or ""
+        if parts.port:
+            host += f":{parts.port}"
+        name = host + path.removesuffix(".git").rstrip("/")
+    else:
+        name = normalize_dep_name("pip", name)
+    if vcs:
+        current = f"{vcs}:{revision}" if revision else f"{vcs}:default branch"
+    return {
+        "name": name, "manager": "pip", "declared_spec": declared,
+        "version": None, "current_version": current, "direct_ref": True,
+        "reference_identity": reference_identity,
+    }
+
+
+def parse_python_requirement(text: str) -> dict | None:
+    """Parse PEP 508 or pip's bare URL form without evaluating markers."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    text = text.strip()
+    try:
+        if text.startswith(_VCS_SCHEMES) or _URL_RE.match(text):
+            return _direct_reference(None, text, text)
+        requirement = Requirement(text)
+        if requirement.url:
+            return _direct_reference(requirement.name, requirement.url, text)
+        pins = [spec.version for spec in requirement.specifier
+                if spec.operator in ('==', '===') and '*' not in spec.version
+                and _exact_pip_version(spec.version)]
+        version = pins[0] if len(pins) == 1 else None
+        return dict(name=requirement.name, manager='pip', version=version,
+                    declared_spec=text)
+    except (InvalidRequirement, ValueError):
+        return None
+
+
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) -> list[dict]:
+    """Parse PEP 508 declarations and direct URLs with circular-safe includes.
+
+    Join continuations and remove comments/options while preserving extras and
+    markers in declared_spec. Editable/local requirements remain unsupported.
     """
     if _visited is None:
         _visited = set()
@@ -1362,7 +1418,8 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
         return []
 
     deps: list[dict] = []
-    for line in text.splitlines():
+    for line in re.sub(r"\\\r?\n", " ", text).splitlines():
+        line = re.split(r"\s+#", line, maxsplit=1)[0]
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -1380,30 +1437,10 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
             # Other flags: -i, --index-url, -f, --find-links, etc.
             continue
 
-        # Package line: may have extras [extra], env markers ; marker
-        # Strip environment markers
-        pkg_part = line.split(";")[0].strip()
-        # Strip inline comments
-        pkg_part = pkg_part.split(" #")[0].strip()
-
-        # Match: name[extras]  op  version
-        m = re.match(
-            r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)"  # package name
-            r"(\[[^\]]*\])?"                                   # optional extras
-            r"\s*==\s*([^\s,;]+)",                             # == version
-            pkg_part,
-        )
-        if m:
-            deps.append({"name": m.group(1), "version": m.group(4), "manager": "pip"})
-            continue
-
-        # Unpinned or range constraint — just extract the name
-        m2 = re.match(
-            r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?",
-            pkg_part,
-        )
-        if m2:
-            deps.append({"name": m2.group(1), "version": None, "manager": "pip"})
+        requirement_text = re.split(r"\s+--(?:hash|config-settings|global-option|install-option)\b", line, maxsplit=1)[0].strip()
+        dep = parse_python_requirement(requirement_text)
+        if dep is not None:
+            deps.append(dep)
 
     return deps
 
@@ -1430,22 +1467,9 @@ def parse_pyproject_toml(file_path: Path) -> list[dict]:
         for entry in project_deps:
             if not isinstance(entry, str):
                 continue
-            # Strip markers
-            entry = entry.split(";")[0].strip()
-            m = re.match(
-                r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?"
-                r"\s*==\s*([^\s,;]+)",
-                entry,
-            )
-            if m:
-                deps.append({"name": m.group(1), "version": m.group(4), "manager": "pip"})
-            else:
-                m2 = re.match(
-                    r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?",
-                    entry,
-                )
-                if m2:
-                    deps.append({"name": m2.group(1), "version": None, "manager": "pip"})
+            dep = parse_python_requirement(entry)
+            if dep is not None:
+                deps.append(dep)
         return deps
 
     # Poetry fallback
@@ -1458,7 +1482,8 @@ def parse_pyproject_toml(file_path: Path) -> list[dict]:
                 version = val.get("version") or None
             else:
                 version = None
-            deps.append({"name": name, "version": version, "manager": "pip"})
+            declared = val if isinstance(val, str) else json.dumps(val, sort_keys=True)
+            deps.append({"name": name, "version": version, "manager": "pip", "declared_spec": declared})
         return deps
 
     return []
@@ -1783,6 +1808,9 @@ def check_python_outdated(deps: list[dict]) -> list[dict]:
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)  # shallow copy; only add new scalar fields
+        if d.get('direct_ref'):
+            result.append(mark_unchecked(d, NOTE_DIRECT_REF))
+            continue
         if d.get("manager") != "pip" or d.get("version") is None:
             result.append(d)
             continue
@@ -1829,6 +1857,22 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = <first vuln ID>.
     """
+    direct_deps = [mark_unchecked(dict(d), NOTE_DIRECT_REF) for d in deps if d.get('direct_ref')]
+    registry_deps = [d for d in deps if not d.get('direct_ref')]
+    if direct_deps:
+        if not registry_deps:
+            return direct_deps
+        # A mixed requirements file must never send direct URLs to pip-audit.
+        # Keep this private temporary manifest outside the repository checkout.
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix='git-fleet-audit-') as audit_dir:
+            filtered = Path(audit_dir) / 'requirements.txt'
+            filtered.write_text(''.join(
+                (d.get('declared_spec') or f"{d['name']}=={d['version']}") + '\n'
+                for d in registry_deps), encoding='utf-8')
+            checked = check_python_vulns(Path(audit_dir), registry_deps)
+        return checked + direct_deps
+
     pip_audit = TOOLS.get("pip_audit")
     if not pip_audit:
         return deps

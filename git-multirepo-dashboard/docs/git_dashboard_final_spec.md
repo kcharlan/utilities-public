@@ -189,7 +189,8 @@ Within one directory, only the highest-priority manifest for an ecosystem is sel
 
 Parsing is intentionally lightweight:
 
-- Python supports PEP 621, Poetry, exact requirements pins, ranges/unpinned names, extras, markers, and circular-safe requirements includes.
+- Python requirements and PEP 621 declarations share a `packaging.requirements.Requirement` parser. Extras and markers remain in textual `declared_spec`; markers are not evaluated against the scanner's environment. Exact PEP 440 pins become versions; wildcard pins and ranges remain unpinned. Requirements continuations are joined, inline comments and per-requirement options are stripped, and recursive includes remain circular-safe. Poetry retains its supported scalar/table values and stores declaration text as a string.
+- Named direct URLs and legacy `egg` references use normalized distribution identities. Bare wheel URLs derive the name and display version from the wheel filename. Other bare references use host plus path as a fallback identity, preserving its spelling through deduplication. VCS revisions are extracted from the URL path, separately from authority user information; their display is `git:<revision>` (or the corresponding VCS), with `default branch` when absent. Direct references bypass PyPI and pip-audit, retaining unchecked coverage with `direct VCS/URL reference; not compared with PyPI or audited`. Mixed manifests use a private temporary audit input containing only registry declarations. Resolving VCS commits or remote package metadata is outside the scan contract. See [pip VCS support](https://pip.pypa.io/en/stable/topics/vcs-support/) for supported URL forms.
 - Node reads dependencies and devDependencies.
 - Go reads block and single-line requirements.
 - Cargo reads dependencies and dev-dependencies.

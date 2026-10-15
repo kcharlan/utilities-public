@@ -971,3 +971,40 @@ def test_successful_dep_persistence_preserves_caller_transaction(tmp_path, monke
         assert db.execute('SELECT COUNT(*) FROM dependencies').fetchone()[0] == 0
         assert db.execute('SELECT COUNT(*) FROM working_state').fetchone()[0] == 0
         assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'repo-0'
+
+
+def test_direct_reference_persists_identity_and_coverage(tmp_path, monkeypatch):
+    (tmp_path / 'requirements.txt').write_text('git+ssh://git@git.example.invalid/acme/widget-kit.git@feature/fix\n')
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    with patch('urllib.request.urlopen') as registry, patch('subprocess.run') as audit:
+        async def scan():
+            async with aiosqlite.connect(db_path) as db:
+                await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+        run(scan())
+    registry.assert_not_called()
+    audit.assert_not_called()
+    with sqlite3.connect(db_path) as db:
+        row = db.execute('SELECT name,current_version,outdated_state,vuln_state,check_note FROM dependencies').fetchone()
+    assert row == ('git.example.invalid/acme/widget-kit', 'git:feature/fix', 'unchecked', 'unchecked',
+                   'direct VCS/URL reference; not compared with PyPI or audited')
+
+
+def test_mixed_direct_reference_is_absent_from_auditor_input(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    (tmp_path / 'requirements.txt').write_text('synthetic-widget==1.2.3\ngit+https://git.example.invalid/acme/direct.git\n')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    seen = []
+    def audit(command, **kwargs):
+        audit_path = Path(command[command.index('--requirement') + 1])
+        assert not audit_path.is_relative_to(tmp_path)
+        seen.append(audit_path.read_text())
+        return SimpleNamespace(returncode=0, stdout=json.dumps({'dependencies': [{'name': 'synthetic-widget', 'version': '1.2.3', 'vulns': []}]}))
+    with patch.object(git_dashboard, 'check_python_outdated', side_effect=lambda deps: deps), patch('subprocess.run', side_effect=audit):
+        result = git_dashboard.analyze_repo_deps(tmp_path)
+    assert seen == ['synthetic-widget==1.2.3\n']
+    direct = next(d for d in result.enriched if d.get('direct_ref'))
+    assert direct['check_note'] == 'direct VCS/URL reference; not compared with PyPI or audited'
+    assert direct['vuln_state'] == 'unchecked'
