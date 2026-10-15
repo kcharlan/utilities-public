@@ -284,6 +284,7 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
       parent.n -= dirname.n + 1;
       Str session = title_path_name(parent, false);
       TRY(copy(&out->arena, session, &out->parent_session));
+      out->config_dir = (Str){0};
       char *combined;
       TRY(arena_alloc(&out->arena, (size_t)session.n + id.n + 2, 1,
                       (void **)&combined));
@@ -322,9 +323,14 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       TRY(corpus_strings_add(&c->arena, collisions, r->id));
       continue;
     }
-    if (s)
+    if (s) {
+      if (r->config_dir.p && !r->parent_session.p &&
+          (!s->resume_config_dir.p ||
+           str_compare(r->config_dir, s->resume_config_dir) < 0))
+        s->resume_config_dir = r->config_dir;
       continue; /* Same stem copies share one session; rows remain available to
                    the usage composer. */
+    }
     TRY(alloc(&c->arena, 1, sizeof *s, alignof(SessionModel), (void **)&s));
     *s = (SessionModel){.provider = PROVIDER_CLAUDE,
                         .id = r->id,

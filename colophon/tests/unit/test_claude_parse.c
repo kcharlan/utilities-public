@@ -1,6 +1,8 @@
 #define _DARWIN_C_SOURCE
 #include "claude/parse.h"
+#include "claude/scan.h"
 #include "runner.h"
+#include "util/fileio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -208,4 +210,101 @@ TEST(claude_subagent_filename_uses_parent_identity) {
   ASSERT_EQ(0, rmdir(directory));
   *strrchr(directory, '/') = 0;
   ASSERT_EQ(0, rmdir(directory));
+}
+
+TEST(claude_scan_unreadable_stores_are_incomplete) {
+  char root[1024], desktop[1300], swap[1300], listing[1300], child[1400];
+  snprintf(root, sizeof root, "%s/synthetic-completeness-XXXXXX",
+           getenv("COLOPHON_HOME"));
+  ASSERT_TRUE(mkdtemp(root));
+  char *previous_home = strdup(getenv("HOME"));
+  ASSERT_TRUE(previous_home);
+  ASSERT_EQ(0, setenv("HOME", root, 1));
+  snprintf(desktop, sizeof desktop,
+           "%s/Library/Application "
+           "Support/Claude/local-agent-mode-sessions/a/.claude/projects",
+           root);
+  snprintf(swap, sizeof swap,
+           "%s/.claude-swap-backup/sessions/1-synthetic/projects", root);
+  snprintf(listing, sizeof listing,
+           "%s/Library/Application "
+           "Support/Claude/local-agent-mode-sessions/synthetic-listable",
+           root);
+  snprintf(child, sizeof child, "%s/synthetic-child", listing);
+  ASSERT_EQ(ERR_OK, file_mkdir_parents(desktop).code);
+  ASSERT_EQ(ERR_OK, file_mkdir_parents(swap).code);
+  ASSERT_EQ(ERR_OK, file_mkdir_parents(child).code);
+  ASSERT_EQ(0, chmod(desktop, 0));
+  ASSERT_EQ(0, chmod(swap, 0));
+  ASSERT_EQ(0, chmod(listing, 0400));
+  ClaudeScan scan = {0};
+  Args args = {0};
+  ASSERT_EQ(ERR_OK, claude_inspect(&args, &scan).code);
+  ASSERT_EQ(ERR_OK, claude_scan(&scan, NULL).code);
+  bool desktop_incomplete = false, swap_incomplete = false;
+  for (size_t i = 0; i < scan.root_count; i++) {
+    ClaudeRoot *r = &scan.roots[i];
+    if (r->kind == CLAUDE_DESKTOP &&
+        strstr(r->path.p, "local-agent-mode-sessions"))
+      desktop_incomplete = !r->complete;
+    if (r->kind == CLAUDE_SWAP)
+      swap_incomplete = !r->complete;
+  }
+  claude_scan_destroy(&scan);
+  ASSERT_EQ(0, chmod(desktop, 0700));
+  ASSERT_EQ(0, chmod(swap, 0700));
+  ASSERT_EQ(0, chmod(listing, 0700));
+  ASSERT_EQ(ERR_OK, claude_inspect(&args, &scan).code);
+  ASSERT_EQ(ERR_OK, claude_scan(&scan, NULL).code);
+  bool readable_complete = true;
+  for (size_t i = 0; i < scan.root_count; i++)
+    readable_complete &= scan.roots[i].complete;
+  size_t readable_skipped = scan.skipped_count;
+  claude_scan_destroy(&scan);
+  ASSERT_EQ(0, setenv("HOME", previous_home, 1));
+  free(previous_home);
+  ASSERT_TRUE(desktop_incomplete);
+  ASSERT_TRUE(swap_incomplete);
+  ASSERT_TRUE(readable_complete);
+  ASSERT_EQ(0, readable_skipped);
+  /* The outer unit wrapper owns and removes this synthetic fixture tree. */
+}
+
+TEST(claude_scan_locator_child_stat_failure_is_diagnostic_and_incomplete) {
+  char root[1024], child[1300];
+  snprintf(root, sizeof root, "%s/synthetic-stat-failure-XXXXXX",
+           getenv("COLOPHON_HOME"));
+  ASSERT_TRUE(mkdtemp(root));
+  char *previous_home = strdup(getenv("HOME"));
+  ASSERT_TRUE(previous_home);
+  ASSERT_EQ(0, setenv("HOME", root, 1));
+  snprintf(child, sizeof child,
+           "%s/Library/Application "
+           "Support/Claude/local-agent-mode-sessions/synthetic-child",
+           root);
+  ASSERT_EQ(ERR_OK, file_mkdir_parents(child).code);
+  ClaudeScan scan = {0};
+  Args args = {0};
+  ASSERT_EQ(ERR_OK, claude_inspect(&args, &scan).code);
+  char *canonical_child = realpath(child, NULL);
+  ASSERT_TRUE(canonical_child);
+  ASSERT_EQ(0, setenv("COLOPHON_TEST_FAULT", "claude_locator_lstat", 1));
+  Err error = claude_scan(&scan, NULL);
+  ASSERT_EQ(0, unsetenv("COLOPHON_TEST_FAULT"));
+  bool incomplete = false, diagnostic = false;
+  for (size_t i = 0; i < scan.root_count; i++)
+    if (scan.roots[i].kind == CLAUDE_DESKTOP &&
+        strstr(scan.roots[i].path.p, "local-agent-mode-sessions"))
+      incomplete = !scan.roots[i].complete;
+  for (size_t i = 0; i < scan.skipped_count; i++)
+    diagnostic |=
+        str_equal(scan.skipped[i].path,
+                  (Str){canonical_child, (uint32_t)strlen(canonical_child)});
+  claude_scan_destroy(&scan);
+  free(canonical_child);
+  ASSERT_EQ(0, setenv("HOME", previous_home, 1));
+  free(previous_home);
+  ASSERT_EQ(ERR_OK, error.code);
+  ASSERT_TRUE(incomplete);
+  ASSERT_TRUE(diagnostic);
 }

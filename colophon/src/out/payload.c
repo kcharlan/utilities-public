@@ -28,8 +28,8 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
     jsonw_raw(w,",\"cached\":");jsonw_i64(w,(int64_t)in->cached);
-    size_t sessions=0,agents=0;if(in->corpus)for(OmapEntry *q=in->corpus->sessions.first;q;q=q->next){SessionModel *s=q->value;if(str_equal(s->kind,STR_LIT("subagent")))agents++;else sessions++;}
-    jsonw_raw(w,",\"sessions\":");jsonw_i64(w,(int64_t)sessions);jsonw_raw(w,",\"subagents\":");jsonw_i64(w,(int64_t)agents);jsonw_raw(w,",\"orphans\":");jsonw_i64(w,in->corpus?(int64_t)in->corpus->orphaned_subagents.count:0);jsonw_raw(w,"},\"catalog\":{\"status\":");
+    size_t sessions=0,agents=0,orphans=0;if(in->corpus)for(OmapEntry *q=in->corpus->sessions.first;q;q=q->next){SessionModel *s=q->value;if(s->provider!=PROVIDER_CODEX)continue;if(str_equal(s->kind,STR_LIT("subagent")))agents++;else sessions++;if(s->flags&F_ORPHAN)orphans++;}
+    jsonw_raw(w,",\"sessions\":");jsonw_i64(w,(int64_t)sessions);jsonw_raw(w,",\"subagents\":");jsonw_i64(w,(int64_t)agents);jsonw_raw(w,",\"orphans\":");jsonw_i64(w,(int64_t)orphans);jsonw_raw(w,"},\"catalog\":{\"status\":");
     text(w,in->catalog?in->catalog->status:"unavailable");jsonw_raw(w,",\"fetched_at_ms\":");if(in->catalog&&in->catalog->has_fetched_at)jsonw_i64(w,in->catalog->fetched_at_ms);else jsonw_raw(w,"null");jsonw_raw(w,",\"checked_at_ms\":");if(in->catalog&&in->catalog->has_checked_at)jsonw_i64(w,in->catalog->checked_at_ms);else jsonw_raw(w,"null");jsonw_raw(w,",\"source_host\":");
     if(in->source_host)text(w,in->source_host);else jsonw_raw(w,"null");
     jsonw_raw(w,"}");sources(w,in);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"},\"live_quiet_ms\":7200000,"

@@ -117,7 +117,7 @@ int cli_run(const Args *args){
     host=cli_source_host(url);
     tzset();time_t now=time(NULL);struct tm local;char zone[128]="";if(localtime_r(&now,&local))strftime(zone,sizeof zone,"%Z",&local);
     PayloadInputs in={.snapshot_ms=snapshot,.codex_home=display,.source_host=host,.timezone=zone,
-        .logs=scan.count+scan.unreadable_count+claude.logs,.parsed=scan.parsed+claude.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude};
+        .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude};
     CP_PHASE_MARK(4);
     size_t max=0,limit=cp_page_warn_bytes();bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}

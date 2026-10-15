@@ -1,5 +1,13 @@
 # Lessons learned
 
+- Track CLI config provenance per source root, including default/XDG roots;
+  a process-wide custom root must never leak into Desktop/cswap/subagent rows.
+  Resolve same-stem live origins independently of traversal order. Preserve
+  provider-specific legacy counters when adding a second provider.
+- A locator's missing store is an ordinary exclusion; its inaccessible store
+  is incomplete traversal evidence. Hidden-directory filters can conceal
+  unreadable `.claude/projects` descendants unless probes record failures.
+
 - Provider presence must be resolved before runtime creation or cache opening.
   An absent source must not trigger cache recovery or rebuild cleanup: assert
   bytes, modes and recovery names under synthetic homes, rather than exit

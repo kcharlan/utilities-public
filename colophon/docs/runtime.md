@@ -37,6 +37,17 @@ in `claude_session_id_collisions`. Unhandled Claude record types have their
 own `claude_unknown_record_types` diagnostic. Claude reader rows offer no
 Codex continuation or desktop links.
 
+Primary CLI records preserve the resolved config origin for default `.claude`,
+XDG `.config/claude`, environment and explicit config roots. Same-stem live
+copies select the config origin in ascending resolved-path order. Desktop,
+cswap and subagent records have no resume-config provenance. Missing,
+non-directory and excluded symlink locator stores are ordinary exclusions;
+permission and other traversal errors produce `skipped_files` and mark the
+selected search-root scan incomplete.
+
+Legacy `meta.counts` remains Codex-only. Claude log/parse counters are additive
+under `meta.sources.claude`, independently of the legacy counts.
+
 Long flags accept unique prefixes. `--no` is now ambiguous between
 `--no-open` and `--no-claude`; `--claude` is ambiguous between the two Claude
 path flags. `--c` is also ambiguous between Codex and Claude path flags.

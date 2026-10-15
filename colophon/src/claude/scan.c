@@ -2,6 +2,7 @@
 #include "scan.h"
 #include "corpus/subagents.h"
 #include "parse/record.h"
+#include "testing/hooks.h"
 #include "util/fileio.h"
 #include "util/json_number.h"
 #include "util/sort.h"
@@ -42,12 +43,19 @@ static Err path(Arena *a, const char *raw, Str *out) {
   free(absolute);
   return e;
 }
-static Err root(ClaudeScan *s, Str p, ClaudeRootKind kind) {
+static Err root(ClaudeScan *s, Str p, ClaudeRootKind kind, Str config) {
   Str normalized;
   TRY(path(&s->arena, p.p, &normalized));
+  Str resume = {0};
+  if (config.p)
+    TRY(path(&s->arena, config.p, &resume));
   for (size_t i = 0; i < s->root_count; i++)
-    if (str_equal(s->roots[i].path, normalized))
+    if (str_equal(s->roots[i].path, normalized)) {
+      if (resume.p && (!s->roots[i].resume_config_dir.p ||
+                       str_compare(resume, s->roots[i].resume_config_dir) < 0))
+        s->roots[i].resume_config_dir = resume;
       return ERR_SUCCESS;
+    }
   ClaudeRoot *next;
   TRY(arena_alloc(&s->arena, (s->root_count + 1) * sizeof *next,
                   _Alignof(ClaudeRoot), (void **)&next));
@@ -55,8 +63,11 @@ static Err root(ClaudeScan *s, Str p, ClaudeRootKind kind) {
     memcpy(next, s->roots, s->root_count * sizeof *next);
   s->roots = next;
   bool present = readable(normalized.p);
-  next[s->root_count++] = (ClaudeRoot){
-      .path = normalized, .kind = kind, .present = present, .complete = true};
+  next[s->root_count++] = (ClaudeRoot){.path = normalized,
+                                       .resume_config_dir = resume,
+                                       .kind = kind,
+                                       .present = present,
+                                       .complete = true};
   s->present |= present;
   return ERR_SUCCESS;
 }
@@ -104,7 +115,6 @@ Err claude_inspect(const Args *args, ClaudeScan *s) {
   Str config;
   if (custom) {
     TRY(path(&s->arena, selected, &config));
-    s->resume_config_dir = config;
   } else
     TRY(join(&s->arena, home, ".claude", &config));
   s->config_root = config;
@@ -121,20 +131,22 @@ Err claude_inspect(const Args *args, ClaudeScan *s) {
              &s->desktop_dir));
   Str p;
   if (!custom) {
-    TRY(join(&s->arena, home, ".config/claude/projects", &p));
-    TRY(root(s, p, CLAUDE_PROJECTS));
+    Str xdg;
+    TRY(join(&s->arena, home, ".config/claude", &xdg));
+    TRY(join(&s->arena, xdg.p, "projects", &p));
+    TRY(root(s, p, CLAUDE_PROJECTS, xdg));
   }
   TRY(join(&s->arena, config.p, "projects", &p));
-  TRY(root(s, p, CLAUDE_PROJECTS));
+  TRY(root(s, p, CLAUDE_PROJECTS, config));
   if (!custom) {
     const char *names[] = {"local-agent-mode-sessions", "claude-code-sessions"};
     for (size_t i = 0; i < 2; i++) {
       TRY(join(&s->arena, s->desktop_dir.p, names[i], &p));
-      TRY(root(s, p, CLAUDE_DESKTOP));
+      TRY(root(s, p, CLAUDE_DESKTOP, (Str){0}));
     }
   }
   TRY(join(&s->arena, home, ".claude-swap-backup/sessions", &p));
-  TRY(root(s, p, CLAUDE_SWAP));
+  TRY(root(s, p, CLAUDE_SWAP, (Str){0}));
   if (s->disabled) {
     s->present = false;
     return ERR_SUCCESS;
@@ -158,6 +170,29 @@ static Err skipped(ClaudeScan *s, Str p) {
   SkippedFile value = {p, STR_LIT("unreadable")};
   return record_append(&s->arena, (void **)&s->skipped, &s->skipped_count,
                        &s->skipped_capacity, sizeof value, &value);
+}
+static Err traversal_error(ClaudeScan *s, ClaudeRoot *r, Str p) {
+  r->complete = false;
+  return skipped(s, p);
+}
+/* Missing/non-directory candidates and excluded symlinks are normal locator
+ * outcomes. Other stat/access failures make the enclosing scan incomplete. */
+static Err source_directory(ClaudeScan *s, ClaudeRoot *r, Str p, bool follow,
+                            bool *present) {
+  *present = false;
+  struct stat st;
+  int status = follow ? stat(p.p, &st) : lstat(p.p, &st);
+  if (status) {
+    if (errno == ENOENT || errno == ENOTDIR)
+      return ERR_SUCCESS;
+    return traversal_error(s, r, p);
+  }
+  if (!S_ISDIR(st.st_mode))
+    return ERR_SUCCESS;
+  if (access(p.p, R_OK | X_OK))
+    return traversal_error(s, r, p);
+  *present = true;
+  return ERR_SUCCESS;
 }
 typedef struct {
   Str *items;
@@ -251,7 +286,7 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
                          .stat_ok = true,
                          .device = st.st_dev,
                          .inode = st.st_ino};
-    Err e = claude_parse(&key, r->path, s->resume_config_dir, record);
+    Err e = claude_parse(&key, r->path, r->resume_config_dir, record);
     if (e.code) {
       claude_record_destroy(record);
       if (e.code != ERR_IO)
@@ -279,13 +314,15 @@ static Err walk_desktop(ClaudeScan *s, ClaudeRoot *r, Str p, int depth,
   Str config, projects;
   TRY(join(&s->arena, p.p, ".claude", &config));
   TRY(join(&s->arena, config.p, "projects", &projects));
-  struct stat config_stat, projects_stat;
   /* Locator stores are descendants of the selected container, rather than
    * independently selected symlink roots. Preserve D8's lstat boundary. */
-  if (!lstat(config.p, &config_stat) && S_ISDIR(config_stat.st_mode) &&
-      !lstat(projects.p, &projects_stat) && S_ISDIR(projects_stat.st_mode) &&
-      readable(projects.p))
-    TRY(walk_projects(s, r, projects, flag, seen));
+  bool has_config = false, has_projects = false;
+  TRY(source_directory(s, r, config, false, &has_config));
+  if (has_config) {
+    TRY(source_directory(s, r, projects, false, &has_projects));
+    if (has_projects)
+      TRY(walk_projects(s, r, projects, flag, seen));
+  }
   if (depth >= 4)
     return ERR_SUCCESS;
   Children list = {0};
@@ -293,8 +330,13 @@ static Err walk_desktop(ClaudeScan *s, ClaudeRoot *r, Str p, int depth,
   for (size_t i = 0; i < list.count; i++) {
     struct stat st;
     Str child = list.items[i];
-    if (!desktop_skip(child) && !lstat(child.p, &st) && S_ISDIR(st.st_mode) &&
-        !discovery_package(child.p))
+    if (desktop_skip(child))
+      continue;
+    if (cp_fault("claude_locator_lstat") || lstat(child.p, &st)) {
+      TRY(traversal_error(s, r, child));
+      continue;
+    }
+    if (S_ISDIR(st.st_mode) && !discovery_package(child.p))
       TRY(walk_desktop(s, r, child, depth + 1, flag, seen));
   }
   return ERR_SUCCESS;
@@ -323,7 +365,10 @@ Err claude_scan(ClaudeScan *s, volatile sig_atomic_t *flag) {
           continue;
         Str projects, resolved;
         e = join(&s->arena, list.items[j].p, "projects", &projects);
-        if (!e.code && readable(projects.p)) {
+        bool present = false;
+        if (!e.code)
+          e = source_directory(s, r, projects, true, &present);
+        if (!e.code && present) {
           e = path(&s->arena, projects.p, &resolved);
           if (!e.code)
             e = walk_projects(s, r, resolved, flag, &seen);

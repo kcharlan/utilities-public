@@ -32,7 +32,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         }
     }
     if(tokens<INT64_MIN||tokens>INT64_MAX)event_note("int128_payload_sum","summary.tokens",1);
-    printf("colophon: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",sessions,agents,in->logs,in->parsed,in->cached);decimal(stdout,tokens,true);
+    printf("colophon: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",sessions,agents,in->logs+(in->claude?in->claude->logs:0),in->parsed+(in->claude?in->claude->parsed:0),in->cached);decimal(stdout,tokens,true);
     fputs(" tokens · ",stdout);if(available)printf("$%.2f",sum+correction);else fputs("costs unavailable",stdout);
     printf(" est. · page %.2f MB → %s\n",(double)size/(1024*1024),output);
     bool first=true;__int128 unknown=0;for(OmapEntry *e=corpus->unknown_types.first;e;e=e->next)unknown+=*(__int128 *)e->value;

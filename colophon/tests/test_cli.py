@@ -33,13 +33,21 @@ def test_claude_session_without_codex(native):
     assert "no_session_meta" not in session["flags"]
     assert payload["meta"]["sources"]["codex"]["status"] == "absent"
     assert payload["meta"]["sources"]["claude"]["status"] == "ok"
+    assert payload["meta"]["counts"] == {"logs": 0, "parsed": 0, "cached": 0, "sessions": 0, "subagents": 0, "orphans": 0}
+    assert session["resume_config_dir"] == str(native.home / ".claude")
     assert not (native.runtime / "cache-native").exists()
 
 def test_claude_disabled_and_mixed(native):
     native.session()
+    assert native.build("--no-claude").returncode == 0
+    baseline = native.payload()["meta"]["counts"]
     native.claude_session()
     assert native.build().returncode == 0
     assert {s["provider"] for s in native.payload()["sessions"]} == {"codex", "claude"}
+    # The baseline was warm on disk; only parse-cache hit counters change.
+    baseline.update(parsed=0, cached=1)
+    assert native.payload()["meta"]["counts"] == baseline
+    assert native.payload()["meta"]["sources"]["claude"]["logs"] == 1
     result = native.build("--no-claude")
     assert result.returncode == 0, result.stderr
     payload = native.payload()
@@ -102,6 +110,7 @@ def test_claude_symlink_roots_deduplicate_without_nested_descent(native):
     assert [s["id"] for s in payload["sessions"]] == ["synthetic-claude"]
     assert payload["meta"]["sources"]["claude"]["logs"] == 1
     assert payload["meta"]["sources"]["claude"]["roots"].count(str(primary / "projects")) == 1
+    assert payload["sessions"][0]["resume_config_dir"] == str(primary)
 
 def test_claude_explicit_home_matches_environment_selection(native):
     custom = native.root / "synthetic-custom-config"
@@ -118,6 +127,49 @@ def test_claude_explicit_home_matches_environment_selection(native):
     assert explicit["meta"]["sources"]["claude"] == environment["meta"]["sources"]["claude"]
     assert [s["id"] for s in environment["sessions"]] == ["synthetic-claude"]
     assert environment["sessions"][0]["resume_config_dir"] == str(custom)
+
+def test_claude_xdg_default_and_same_stem_provenance_uses_ascending_config(native):
+    native.claude_session(directory=native.home / ".config/claude/projects/synthetic-project")
+    assert native.build().returncode == 0
+    xdg_config = str(native.home / ".config/claude")
+    assert native.payload()["sessions"][0]["resume_config_dir"] == xdg_config
+    native.claude_session()
+    assert native.build().returncode == 0
+    assert len(native.payload()["sessions"]) == 1
+    # .claude sorts before .config/claude despite XDG discovery occurring first.
+    assert native.payload()["sessions"][0]["resume_config_dir"] == str(native.home / ".claude")
+
+def test_claude_custom_config_is_not_assigned_to_swap_desktop_or_subagents(native):
+    custom = native.root / "synthetic-custom-config"
+    native.claude_session(directory=custom / "projects/synthetic-project")
+    native.claude_session("synthetic-swap", directory=native.home / ".claude-swap-backup/sessions/1-synthetic/projects/synthetic-project")
+    native.claude_session("agent-synthetic-child", directory=custom / "projects/synthetic-project/synthetic-claude/subagents")
+    result = native.build("--claude-home", str(custom))
+    assert result.returncode == 0, result.stderr
+    rows = {s["id"]: s for s in native.payload()["sessions"]}
+    assert rows["synthetic-claude"]["resume_config_dir"] == str(custom)
+    assert rows["synthetic-swap"]["resume_config_dir"] is None
+    assert rows["synthetic-claude/agent-synthetic-child"]["resume_config_dir"] is None
+    native.claude_session("synthetic-desktop", directory=native.home / "Library/Application Support/Claude/claude-code-sessions/a/.claude/projects/synthetic-project")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert next(s for s in native.payload()["sessions"] if s["id"] == "synthetic-desktop")["resume_config_dir"] is None
+
+@pytest.mark.parametrize("relative", [
+    "Library/Application Support/Claude/local-agent-mode-sessions/a/.claude/projects",
+    ".claude-swap-backup/sessions/1-synthetic/projects",
+])
+def test_claude_unreadable_locator_and_swap_projects_are_diagnostic(native, relative):
+    blocked = native.home / relative
+    native.claude_session(directory=blocked / "synthetic-project")
+    blocked.chmod(0)
+    try:
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        assert native.payload()["sessions"] == []
+        assert {p["path"] for p in native.payload()["diagnostics"]["skipped_files"]} == {str(blocked)}
+    finally:
+        blocked.chmod(0o700)
 
 def test_claude_desktop_override_and_locator_depth(native):
     desktop = native.root / "synthetic-desktop"

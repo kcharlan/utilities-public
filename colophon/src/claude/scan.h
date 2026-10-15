@@ -6,6 +6,8 @@
 typedef enum { CLAUDE_PROJECTS, CLAUDE_DESKTOP, CLAUDE_SWAP } ClaudeRootKind;
 typedef struct {
   Str path;
+  Str resume_config_dir; /* Known primary CLI config origin; never shared with
+                            locator/swap stores. */
   ClaudeRootKind kind;
   bool present, complete;
 } ClaudeRoot;
@@ -13,7 +15,7 @@ typedef struct {
   Arena arena;
   ClaudeRoot *roots;
   size_t root_count;
-  Str config_root, history_path, desktop_dir, resume_config_dir;
+  Str config_root, history_path, desktop_dir;
   bool disabled, present;
   size_t history_usable, history_malformed;
   ClaudeRecord *records;
