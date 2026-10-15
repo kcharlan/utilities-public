@@ -9,6 +9,8 @@
 - **A full-width editor can live inside the table scroller.** `100cqw` sizes the editor to the scroll container while a sticky row keeps it visible during horizontal scrolling.
 - **Replacing rows removes keyboard focus.** Before a rerender, set one-shot `pendingFocus` for the editor opener or a stable fallback; restore it after the new DOM is in place.
 - **Markup is part of the test contract.** `tests/drawdown_sales.test.js` asserts exact tax-label/input markup, the `inputs` array, the Gross sold header, the table scroll wrapper, the stats count, and pin field attributes. `tests/drawdown_dates.test.js` asserts the date stamp. `tests/drawdown.browser.spec.js` exercises the pin field chain, chart series paths, and editor, status, and table selectors. Inspect those locations before changing markup.
+- **Chromium snaps fractional borders down.** At 1x device pixel ratio a `1.5px` table border computes and paints as `1px`, indistinguishable from the fine row rule. Year-boundary rules use `2px` so they read on every display.
+- **Year-mark controls must not reuse `.toggle`.** The unit buttons call `setPressed(document.querySelectorAll('.toggle button'), …)`, which would clear any other `.toggle` group. Table-action button styles are scoped to `.table-actions > button` so the nested year toggle keeps toggle styling.
 
 ## AI model timeline
 

@@ -29,6 +29,7 @@ function loadDrawdownApi({ document = {}, today = [2026, 6, 30] } = {}) {
     toRoundedCents, formatCents, buildCsvText,
     solveAnnualTarget, evaluateAnnualIncomeCandidate, encloseAnnualIncomeCandidates,
     searchAnnualIncome, intervalArithmetic, annualIncomeContext,
+    yearOfMonth, isYearStart, yearMarkTag, yearBoundaries, chartYearSteps,
   };`, context);
   return context.__api;
 }
