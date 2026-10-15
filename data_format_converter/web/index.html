@@ -629,7 +629,7 @@
             stringify: tomlStringify,
         };
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.1/dist/js-yaml.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js"></script>
     <script>
         // --- Theme Switching Logic ---
         const themeSelect = document.getElementById('theme-select');
@@ -878,16 +878,42 @@
         }
 
         // YAML Converters
+        const yamlLoadSchema = jsyaml.CORE_SCHEMA.withTags(
+            jsyaml.mergeTag, jsyaml.legacyMapTag, jsyaml.timestampTag,
+            jsyaml.binaryTag, jsyaml.omapTag, jsyaml.pairsTag,
+            {
+                ...jsyaml.legacyMapTag,
+                tagName: jsyaml.setTag.tagName,
+                addPair: (container, key, value) => value === null
+                    ? jsyaml.legacyMapTag.addPair(container, key, value)
+                    : 'YAML set values must be null',
+                identify: () => false,
+            },
+            {
+                ...jsyaml.intCoreTag,
+                resolve: (source, isExplicit) => (isExplicit
+                    ? jsyaml.intYaml11Tag : jsyaml.intCoreTag).resolve(source, isExplicit),
+            },
+            {
+                ...jsyaml.floatCoreTag,
+                resolve: (source, isExplicit) => (isExplicit
+                    ? jsyaml.floatYaml11Tag : jsyaml.floatCoreTag).resolve(source, isExplicit),
+            },
+        );
+
         function yamlFromJson(obj) {
             return jsyaml.dump(obj, { sortKeys: false, indent: 2 });
         }
 
         function jsonFromYaml(text) {
-            const parsed = jsyaml.load(text);
-            if (typeof parsed === 'undefined') {
+            const documents = jsyaml.loadAll(text, { schema: yamlLoadSchema });
+            if (!text.trim()) {
                 throw new Error('YAML input cannot be empty.');
             }
-            return parsed;
+            if (documents.length > 1) {
+                throw new Error('YAML input must contain exactly one document.');
+            }
+            return documents.length ? documents[0] : null;
         }
 
         // TOML Converters

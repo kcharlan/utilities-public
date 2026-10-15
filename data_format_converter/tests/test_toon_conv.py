@@ -1,3 +1,5 @@
+from datetime import date, datetime, time
+
 import pytest
 from src.converters.toon_conv import load_toon, dump_toon
 
@@ -43,3 +45,12 @@ def test_load_empty():
     """Tests loading an empty or whitespace string."""
     assert load_toon("") == {}
     assert load_toon(" \n ") == {}
+
+@pytest.mark.parametrize("value", [date(2000, 1, 2), datetime(2000, 1, 2, 3, 4, 5), time(3, 4, 5)])
+def test_dump_temporal_as_iso_string(value):
+    """Temporal values retain their ISO representation instead of becoming null."""
+    assert load_toon(dump_toon({"value": value})) == {"value": value.isoformat()}
+
+def test_load_comment_only_is_empty_object():
+    """A document containing only comment lines has no data."""
+    assert load_toon("# synthetic comment\n# another comment\n") == {}

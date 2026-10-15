@@ -2,8 +2,17 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date, datetime, time, timezone
+from pathlib import Path
 
 import pytest
+
+# Match the standalone CLI's import path while loading its actual dispatch table.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+try:
+    from src.data_convert import SUPPORTED_FORMATS, load_data
+finally:
+    sys.path.pop(0)
 
 try:
     import tomllib  # type: ignore[attr-defined]
@@ -29,6 +38,39 @@ def run_cli(args):
     """Helper function to run the CLI and capture output."""
     command = [sys.executable, CLI_PATH] + args
     return subprocess.run(command, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("source_format", ["toml", "yaml"])
+@pytest.mark.parametrize("target_format", SUPPORTED_FORMATS)
+def test_temporal_cli_matrix(tmp_path, source_format, target_format):
+    sources = {
+        "toml": 'when = 2030-01-02T03:04:05Z\nday = 2030-01-02\nt = 03:04:05\nname = "synthetic"\n',
+        "yaml": 'when: 2030-01-02T03:04:05Z\nday: 2030-01-02\nt: "03:04:05"\nname: synthetic\n',
+    }
+    data = load_data(source_format, sources[source_format])
+    assert data == {"when": datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc), "day": date(2030, 1, 2), "t": time(3, 4, 5) if source_format == "toml" else "03:04:05", "name": "synthetic"}
+    assert {key: type(value) for key, value in data.items()} == {
+        "when": datetime, "day": date, "t": time if source_format == "toml" else str, "name": str,
+    }
+    input_file = tmp_path / f"synthetic.{source_format}"
+    output_file = tmp_path / f"converted.{target_format}"
+    input_file.write_text(sources[source_format], encoding="utf-8")
+    result = run_cli(["--input", str(input_file), "--to", target_format, "--output", str(output_file)])
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    loaded = load_data("json" if target_format == "jsonc" else target_format, output_file.read_text(encoding="utf-8"))
+    if target_format == "xml":
+        assert set(loaded) == {"root"}
+        loaded = loaded["root"]
+    if target_format in ("json", "jsonc", "xml", "toon"):
+        expected = {"when": "2030-01-02T03:04:05+00:00", "day": "2030-01-02", "t": "03:04:05", "name": "synthetic"}
+    else:
+        expected = dict(data)
+        if target_format == "yaml":
+            expected["t"] = "03:04:05"
+    assert loaded == expected
+    assert set(loaded) == {"when", "day", "t", "name"}
+    assert {key: type(value) for key, value in loaded.items()} == {key: type(value) for key, value in expected.items()}
 
 def test_json_to_xml():
     """Tests converting JSON to XML."""
@@ -132,6 +174,23 @@ def test_json_with_null_to_toml_errors():
     assert result.returncode == 4
     assert "TOML does not support null values" in result.stderr
     assert not os.path.exists(output_file)
+
+def test_yaml_binary_to_toon_is_a_structured_error(tmp_path):
+    """Unsupported YAML binary values fail before creating an output file."""
+    input_file = tmp_path / "synthetic.yaml"
+    output_file = tmp_path / "synthetic.toon"
+    input_file.write_text("value: !!binary c3ludGhldGlj\n", encoding="utf-8")
+
+    result = run_cli(["--input", str(input_file), "--to", "toon", "--output", str(output_file)])
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 1
+    error = json.loads(result.stderr)
+    assert error["code"] == "E_4"
+    assert error["message"] == "Failed to convert data to toon."
+    assert "bytes" in error["hint"]
+    assert not output_file.exists()
 
 def test_default_output_filename():
     """Tests the default output filename generation."""

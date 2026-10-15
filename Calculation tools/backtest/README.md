@@ -9,7 +9,7 @@ comparisons stay in page memory. Only the appearance preference is stored in
 ## Setup and build
 
 Use Node.js 24 or newer and npm, matching this project's `engines` contract.
-Cold data setup also needs Python 3.10 or newer available for external venv
+Cold data setup also needs Python 3.11 or newer available for external venv
 creation; the default command is `python3.14` (override with `--python`).
 
 The public checkout contains application/compiler source and invented tests.

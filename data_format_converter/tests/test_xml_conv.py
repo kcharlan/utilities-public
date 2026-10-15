@@ -1,4 +1,5 @@
 import pytest
+from datetime import date, datetime, time, timezone
 from xml.parsers.expat import ExpatError
 from src.converters.xml_conv import load_xml, dump_xml
 
@@ -49,3 +50,20 @@ def test_dump_xml_no_root():
     """Tests that dumping an object without a single root key raises an error."""
     with pytest.raises(ValueError):
         dump_xml({"a": 1, "b": 2})
+
+
+@pytest.mark.parametrize("value", [
+    date(2030, 1, 2), datetime(2030, 1, 2, 3, 4, 5, 123456),
+    datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc), time(3, 4, 5, 123456),
+])
+def test_dump_xml_temporal_as_iso(value):
+    data = {"root": {"value": value, "nested": {"items": [value, value]}, "name": "synthetic"}}
+    expected = {"root": {"value": value.isoformat(), "nested": {"items": [value.isoformat(), value.isoformat()]}, "name": "synthetic"}}
+    loaded = load_xml(dump_xml(data))
+    assert loaded == expected
+    assert type(loaded["root"]["value"]) is str
+
+
+def test_dump_xml_unknown_type_rejected():
+    with pytest.raises(TypeError, match="Unsupported type for XML conversion: <class 'object'>"):
+        dump_xml({"root": {"nested": [object()]}})

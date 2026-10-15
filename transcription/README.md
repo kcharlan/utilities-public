@@ -88,11 +88,77 @@ by `setup.sh`; install the optional file only when those features are needed.
 
 ## Validation
 
-Verify imports and launch the primary UI through the project environment:
+Validate the core graph and, separately, a fresh environment containing both
+requirements files. Use Python 3.12 and keep acceptance audio, logs, model cache,
+and counters outside the checkout. For [counter isolation](#counters-and-local-state),
+run from a fresh scratch directory and set both counter environment variables;
+the working directory also isolates `transcribe.py`'s counters.
+
+From this project directory, retain its absolute path before entering scratch:
 
 ```bash
-venv/bin/python -c 'import pandas, streamlit, whisper; print(pandas.__version__, streamlit.__version__, whisper.__version__)'
-venv/bin/python -m streamlit run app.py --server.headless true
+PROJECT="$PWD"
+S=$(mktemp -d "${TMPDIR:-/tmp}/transcription-acceptance.XXXXXX")
+cd "$S"
+export CUMULATIVE_JSON_PATH="$S/session_backup.json"
+export LIFETIME_TXT_PATH="$S/transcription_odometer.txt"
+"$PROJECT/venv/bin/python" -c 'import pandas, streamlit, whisper; print(pandas.__version__, streamlit.__version__, whisper.__version__)'
+```
+
+Save this AppTest harness as `apptest_acceptance.py` in the scratch directory:
+
+```python
+import sys
+from streamlit.testing.v1 import AppTest
+for script in sys.argv[1:]:
+    at = AppTest.from_file(script, default_timeout=120).run()
+    assert not at.exception, f"{script}: {at.exception}"
+```
+
+Run it against both scripts:
+
+```bash
+"$PROJECT/venv/bin/python" "$S/apptest_acceptance.py" "$PROJECT/app.py" "$PROJECT/transcribe.py"
+```
+
+Smoke-run each entrypoint through the project interpreter, one at a time:
+
+```bash
+"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/app.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
+"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/transcribe.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
+```
+
+For each server, require HTTP 200 from `/` and `/_stcore/health` (body `ok`),
+then terminate it cleanly. Choose an available port when 8501 is occupied.
+Repeat AppTest and smoke checks with each graph's interpreter.
+
+On macOS, generate conspicuously synthetic speech and convert it to mono audio:
+
+```bash
+say -o "$S/synthetic.aiff" 'This is a synthetic transcription acceptance test.'
+ffmpeg -nostdin -y -i "$S/synthetic.aiff" -ac 1 -ar 16000 "$S/synthetic.wav"
+```
+
+With the core graph, load Whisper's `tiny` model with `download_root` pointing
+inside scratch (the first run downloads the model), transcribe the WAV using
+`word_timestamps=True` and `fp16=False`, and assert nonempty text and nonempty
+segment word timings with nonnegative, ordered start/end times. With the optional
+graph, assert positive duration from `librosa.load` and verify the OpenAI client
+surface without sending a request:
+
+```python
+from openai import OpenAI
+with OpenAI(api_key="SYNTHETIC-NOT-A-REAL-KEY") as client:
+    assert callable(client.audio.transcriptions.create)
+```
+
+Finally run `pip check`, retain `pip freeze`, and audit the core and optional
+freezes separately, using each validated environment's interpreter:
+
+```bash
+"$PROJECT/venv/bin/python" -m pip check
+"$PROJECT/venv/bin/python" -m pip freeze > "$S/freeze.txt"
+uvx --no-python-downloads pip-audit --strict --no-deps --disable-pip -r "$S/freeze.txt"
 ```
 
 ## Counters and local state

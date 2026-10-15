@@ -22,7 +22,7 @@ The page has no backend and does not upload pasted data to this repository. It
 does, however, load the following resources from public CDNs:
 
 - the `@iarna/toml` 3.0.0 parser and serializer;
-- `js-yaml` 4.1.1;
+- [`js-yaml` 5.4.3 browser UMD build](https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js);
 - Google Fonts.
 
 Network access is therefore required on first load unless those resources are
@@ -55,6 +55,23 @@ tokenization contract. The page never reads an API key or uploads pasted data.
   is converted to JavaScript number/boolean values when parsed.
 - TOML cannot represent `null`; if any converted value is `null`, the
   structured conversion run reports an error.
+- YAML uses core implicit numbers: binary and separator forms such as `0b101`
+  and `1_000` remain strings. Explicit numeric tags retain legacy parsing,
+  including `!!int 1_000` and `!!float 1_000.5`
+  (`yaml_implicit_legacy_numbers_use_core_strings` and
+  `yaml_explicit_numeric_tags_keep_baseline_values` in
+  [`tests/browser.spec.js`](tests/browser.spec.js)). Merge keys, timestamps,
+  complex keys, binary, sets, ordered mappings, pairs, boolean-looking words,
+  and comment-only documents retain their previous values
+  (`yaml_load_preserves_legacy_collections_and_timestamps`).
+- YAML output retains the tested multiline block style and trailing newlines.
+  The approved v5 compatibility exception adds a terminal `...` document-end
+  marker when the final multiline scalar uses keep chomping (`|+`); a scalar
+  with one trailing newline stays unchanged
+  (`yaml_dump_keeps_baseline_multiline_output`). A string of three spaces may
+  use double rather than single quotes
+  (`yaml_dump_accepts_whitespace_quote_change`). These byte-level exceptions
+  preserve the parsed values.
 - The browser Playwright smoke test covers dependency initialization, one JSON
   conversion, local token-source labels, and the no-OpenAI-request privacy
   contract. The Python tests do not validate the HTML/JavaScript
@@ -73,10 +90,8 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` installs the TOON implementation directly from its GitHub
-repository at audited commit
-`e475c82e9da03dfaf88c0b277dee6b5d17100b13`, so the initial installation
-requires network access.
+The supported Python dependency graph, including the released `toon-format`
+distribution, is declared in [`requirements.txt`](requirements.txt).
 
 ### Usage
 
@@ -122,6 +137,25 @@ Important conversion behavior:
 - The XML serializers interpolate element names and string values directly.
   Use trusted, simple data; they are not hardened XML generators.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
+- JSON (pretty and compact) and XML serialize dates, datetimes, and times as
+  `isoformat()` strings, including nested values
+  ([`test_dump_temporal_as_iso`](tests/test_json_conv.py),
+  [`test_dump_xml_temporal_as_iso`](tests/test_xml_conv.py)).
+- YAML retains native dates and datetimes but serializes times as ISO strings;
+  ordinary strings stay strings
+  ([`test_yaml_temporal_policy`](tests/test_yaml_conv.py)). TOML retains its
+  supported native temporal values and ordinary strings
+  ([`test_toml_temporal_policy`](tests/test_toml_conv.py)). The complete
+  TOML/YAML-to-every-target policy is checked by
+  [`test_temporal_cli_matrix`](tests/test_cli.py); a YAML time-looking string
+  stays a string when converted to TOML.
+- TOON serializes Python dates, datetimes, and times as ISO strings
+  ([`test_dump_temporal_as_iso_string`](tests/test_toon_conv.py)), and treats
+  comment-only input as an empty object
+  ([`test_load_comment_only_is_empty_object`](tests/test_toon_conv.py)).
+- YAML binary values cannot be represented in TOON. Conversion reports a
+  structured error with exit code `4` without creating an output file
+  ([`test_yaml_binary_to_toon_is_a_structured_error`](tests/test_cli.py)).
 - Missing input paths and parse errors use exit code `3`, conversion errors
   use `4`, output-write errors use `5`, and `argparse` usage errors use `2`.
   Handled runtime errors are emitted as one-line JSON on standard error;

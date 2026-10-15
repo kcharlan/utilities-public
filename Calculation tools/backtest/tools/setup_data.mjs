@@ -57,7 +57,7 @@ async function environment({dataHome,sourceRoot,offline,python,run,signal}) {
   const probe=`import json,sys,platform,importlib.metadata as m\nready=True\nfor line in open(${JSON.stringify(path.join(sourceRoot,'data/requirements.lock'))}):\n if '==' in line:\n  name,version=line.strip().split('==')\n  try: ready=ready and m.version(name)==version\n  except m.PackageNotFoundError: ready=False\nif ready:\n import pandas,xlrd\nprint(json.dumps({'version':platform.python_version(),'platform':sys.platform,'machine':platform.machine(),'ready':ready,'isolated':sys.prefix != sys.base_prefix and sys.prefix == ${JSON.stringify(root)}}))`;
   let status=JSON.parse(await run(executable,['-c',probe],{signal}));
   if(status.isolated!==true)fail('Compiler venv must be isolated; prepare a dedicated compiler venv');
-  if(!/^3\.(?:1[0-9]|[2-9][0-9])\.\d+$/.test(status.version))fail('Compiler requires Python 3.10 or newer');
+  if(!/^3\.(?:1[1-9]|[2-9][0-9])\.\d+$/.test(status.version))fail('Compiler requires Python 3.11 or newer');
   if(fresh||!status.ready) {
     if(offline)fail('Offline setup requires installed locked dependencies; run npm run setup:data online');
     await run(executable,['-m','pip','--isolated','install','--index-url','https://pypi.org/simple','-r',path.join(sourceRoot,'data/requirements.lock')],{signal,timeout:900000});

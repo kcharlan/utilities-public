@@ -1,11 +1,9 @@
-# Complete runtime resolution from requirements.txt using public PyPI.
-# Verified on macOS arm64 with Python 3.14.7 on 2026-10-01.
-# pandas 2.3.2 was built from its source distribution in the fresh venv.
+# Complete runtime resolution frozen from a fresh --copies venv on 2026-10-15.
+# Python 3.14.8, macOS arm64; pip --isolated install --index-url
+# https://pypi.org/simple -r data/requirements.txt (wheel installation).
 # This resolution is not a claim of compatibility on untested platforms.
-numpy==2.5.3
-pandas==2.3.2
+numpy==2.5.4
+pandas==3.0.6
 python-dateutil==2.9.0.post0
-pytz==2026.4
 six==1.17.0
-tzdata==2026.4
 xlrd==2.0.2
