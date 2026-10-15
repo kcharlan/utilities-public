@@ -100,7 +100,9 @@ def fail_on_unexpected_browser_errors(page, request):
 def _open_app(page, url):
     """Navigate without CDN-idle heuristics and wait for the mounted shell."""
     page.goto(url, wait_until="domcontentloaded")
-    expect(page.locator("header")).to_be_visible()
+    # DOMContentLoaded precedes the CDN module graph and in-browser JSX compile.
+    # Use the browser action timeout for the mounted-shell readiness assertion.
+    expect(page.locator("header")).to_be_visible(timeout=30000)
 
 
 def _find_free_port():
@@ -143,7 +145,7 @@ def _create_git_repo(parent_dir, name="test_repo"):
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server_context(tmp_path_factory):
     """Start git_dashboard server on a random port with an isolated temp DB.
 
     Uses GIT_DASHBOARD_DB env var to point the server at a throwaway database,
@@ -170,7 +172,7 @@ def server(tmp_path_factory):
         stderr = proc.stderr.read().decode(errors="replace")
         pytest.fail(f"Server failed to start on port {port}.\nstdout: {stdout}\nstderr: {stderr}")
 
-    yield f"http://localhost:{port}"
+    yield {"url": f"http://localhost:{port}", "db_path": db_path}
 
     proc.send_signal(signal.SIGTERM)
     try:
@@ -179,6 +181,154 @@ def server(tmp_path_factory):
         proc.kill()
 
     # Clean up the temp DB (tmp_path_factory handles directory cleanup)
+
+
+@pytest.fixture(scope="module")
+def server(server_context):
+    """Preserve the URL-only fixture used by existing callers."""
+    return server_context['url']
+
+
+@pytest.fixture
+def seeded_coverage(server_context, dependency_report_seed, tmp_path):
+    import sqlite3
+    import uuid
+    repo_id = 'synthetic-' + uuid.uuid4().hex
+    repo_path = _create_git_repo(tmp_path, 'synthetic-coverage')
+    dependency_report_seed['seed'](server_context['db_path'], repo_id, repo_path)
+    yield dict(dependency_report_seed, repo_id=repo_id, **server_context)
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute('PRAGMA foreign_keys = ON')
+        db.execute('DELETE FROM repositories WHERE id=?', (repo_id,))
+
+
+def _open_coverage(page, seeded):
+    _open_app(page, seeded['url'] + '/#/repo/' + seeded['repo_id'] + '/deps')
+    expect(page.get_by_role('button', name='Export JSON')).to_be_visible()
+
+
+def _download_text(page, button):
+    with page.expect_download() as download:
+        page.get_by_role('button', name=button, exact=True).click()
+    return Path(download.value.path()).read_text()
+
+
+def test_deps_tab_reports_partial_coverage(page, seeded_coverage):
+    seeded = seeded_coverage
+    _open_coverage(page, seeded)
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text(f"{seeded['summary']['unchecked']} not checked")
+    expect(page.get_by_test_id('dep-not-checked')).to_contain_text('synthetic-partial-vuln')
+    expect(page.get_by_test_id('dep-not-checked')).to_contain_text('synthetic-partial-major')
+    expect(page.get_by_test_id('dep-not-checked')).to_contain_text('synthetic-partial-outdated')
+    expect(page.get_by_test_id('dep-all')).to_contain_text('evaluated 1.5 (floating)')
+    expect(page.get_by_text('No issues found — all dependencies are up to date.')).to_have_count(0)
+    expect(page.get_by_test_id('dep-all')).to_contain_text('>=1,<2')
+    attention = page.locator('section').filter(has=page.get_by_role('heading', name='Attention Required', exact=True))
+    expect(attention.locator('tbody tr').first.locator('td').first).to_have_text('synthetic-partial-vuln')
+    # Metadata and version must be reloaded after Check Now, not stale parent props.
+    detail_url = f"**/api/repos/{seeded['repo_id']}"
+    detail = page.request.get(seeded['url'] + '/api/repos/' + seeded['repo_id']).json()
+    detail['working_state']['missing_dep_tools'] = [dict(tool='synthetic-refreshed', description='Synthetic refresh')]
+    detail['working_state']['dep_manifests'].append(dict(path='refreshed-empty.txt', kind='requirements', dependencies=0, error=None))
+    status = page.request.get(seeded['url'] + '/api/status').json()
+    status['version'] = 'synthetic-refreshed-version'
+    groups = page.request.get(seeded['url'] + '/api/repos/' + seeded['repo_id'] + '/deps').json()
+    page.route(detail_url, lambda route: route.fulfill(json=detail))
+    page.route('**/api/status', lambda route: route.fulfill(json=status))
+    page.route(f"**/api/repos/{seeded['repo_id']}/scan/deps", lambda route: route.fulfill(json=groups))
+    page.get_by_role('button', name='Check Now', exact=True).click()
+    expect(page.get_by_text('synthetic-refreshed — Synthetic refresh', exact=True)).to_be_visible()
+    report = json.loads(_download_text(page, 'Export JSON'))
+    assert report['git_fleet_version'] == status['version']
+    assert report['manifests'] == detail['working_state']['dep_manifests']
+
+
+def test_markdown_export_includes_coverage_and_inventory(page, seeded_coverage):
+    _open_coverage(page, seeded_coverage)
+    md = _download_text(page, 'Export MD')
+    assert md.startswith('# Dependency Report')
+    for section in ('Attention Required', 'Not Checked', 'All Dependencies', 'Manifests Scanned', 'Scope'):
+        assert '## ' + section in md
+    for row in seeded_coverage['rows']:
+        for field in ('name', 'declared_spec', 'outdated_state', 'vuln_state'):
+            assert row[field] in md
+        if row['check_note']:
+            assert row['check_note'] in md
+    for manifest in seeded_coverage['manifests']:
+        assert manifest['path'] in md
+        if manifest['error']:
+            assert manifest['error'] in md
+    assert f"Not checked: {seeded_coverage['summary']['unchecked']}" in md
+    assert 'Synthetic coverage repository' in md
+    assert '2026-01-02T03:04:05+00:00' in md
+
+
+def test_json_export_obeys_report_contract(page, seeded_coverage):
+    _open_coverage(page, seeded_coverage)
+    report = json.loads(_download_text(page, 'Export JSON'))
+    assert report['format'] == 'git-fleet-dependency-report'
+    assert report['format_version'] == 2
+    assert report['summary'] == seeded_coverage['summary']
+    assert report['manifests'] == seeded_coverage['manifests']
+    assert report['missing_tools'] == seeded_coverage['missing_tools']
+    assert report['repo'] == dict(id=seeded_coverage['repo_id'], name='Synthetic coverage repository')
+    status = page.request.get(seeded_coverage['url'] + '/api/status').json()
+    assert report['git_fleet_version'] == status['version']
+    assert report['scope'] == status['dependency_scope']
+    assert report['generated_at']
+    assert len([r for g in report['groups'] for r in g['packages']]) == len(seeded_coverage['rows'])
+
+
+def test_overlap_lists_manifest_uses_without_duplicate_keys(page, seeded_coverage):
+    messages = []
+    page.on('console', lambda message: messages.append(message.text))
+    _open_app(page, seeded_coverage['url'] + '/#/deps')
+    overlap = page.locator('tr').filter(has=page.get_by_text('synthetic-clean', exact=True))
+    overlap.get_by_text('2 uses in 1 repos', exact=False).click()
+    expect(page.get_by_text('Synthetic coverage repository — requirements.txt — 1.0', exact=True)).to_be_visible()
+    expect(page.get_by_text('Synthetic coverage repository — nested/pyproject.toml — 2.0', exact=True)).to_be_visible()
+    assert not any('same key' in m or 'unique "key"' in m for m in messages)
+
+
+def test_fleet_kpi_displays_unchecked_coverage(page, seeded_coverage):
+    _open_app(page, seeded_coverage['url'])
+    expect(page.get_by_text('Not Checked', exact=True)).to_be_visible()
+    expect(page.get_by_text('Not Checked', exact=True).locator('..').locator('div').first).to_have_text(str(seeded_coverage['summary']['unchecked']))
+    expect(page.locator('[title*="not checked"]').first).to_be_visible()
+    page.locator('nav').get_by_role('link', name='Dependencies', exact=True).click()
+    expect(page).to_have_url(re.compile(r'/#/deps$'))
+    expect(page.get_by_role('heading', name='Per-Repo Health', exact=True)).to_be_visible()
+    expect(page.get_by_text('Not Checked', exact=True).first).to_be_visible()
+    expect(page.get_by_text('Not Checked', exact=True).first.locator('..').locator('div').first).to_have_text(str(seeded_coverage['summary']['unchecked']))
+
+
+def test_empty_inventory_remains_exportable_and_incomplete(page, seeded_coverage):
+    import sqlite3
+    with sqlite3.connect(seeded_coverage['db_path']) as db:
+        db.execute('DELETE FROM dependencies WHERE repo_id=?', (seeded_coverage['repo_id'],))
+    _open_coverage(page, seeded_coverage)
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text('Incomplete coverage')
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text(f"{len(seeded_coverage['manifests'])} manifests")
+    expect(page.get_by_text('No dependencies detected', exact=True)).to_be_visible()
+    report = json.loads(_download_text(page, 'Export JSON'))
+    assert report['summary']['declarations'] == 0
+    assert report['summary']['manifests'] == len(seeded_coverage['manifests'])
+    assert report['manifests'] == seeded_coverage['manifests']
+    assert 'Synthetic read failure' in _download_text(page, 'Export MD')
+
+
+def test_clean_banner_requires_both_checks(page, seeded_coverage):
+    import sqlite3
+    with sqlite3.connect(seeded_coverage['db_path']) as db:
+        db.execute("UPDATE dependencies SET severity='ok',outdated_state='checked',vuln_state='unchecked' WHERE repo_id=?", (seeded_coverage['repo_id'],))
+        db.execute("UPDATE working_state SET dep_check_error=0,missing_dep_tools='[]',dep_manifests='[]' WHERE repo_id=?", (seeded_coverage['repo_id'],))
+    _open_coverage(page, seeded_coverage)
+    expect(page.get_by_text('No issues found — all dependencies are up to date.', exact=True)).to_have_count(0)
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text('Incomplete coverage')
+    with sqlite3.connect(seeded_coverage['db_path']) as db:
+        db.execute("UPDATE dependencies SET vuln_state='checked' WHERE repo_id=?", (seeded_coverage['repo_id'],))
+    page.reload(wait_until='domcontentloaded')
+    expect(page.get_by_text('No issues found — all dependencies are up to date.', exact=True)).to_be_visible()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -4031,16 +4031,17 @@ HTML_TEMPLATE = """\
 
     // DepBadge — compact dep summary pill with coverage dot
     function DepBadge({ dep, missingTools }) {
-      if (!dep) return null;
+      if (!dep && !missingTools?.length) return null;
+      dep = dep || {total: 0};
       const { total, outdated, vulnerable } = dep;
       if (!total && total !== 0) return null;
 
       const hasMissing = missingTools && missingTools.length > 0;
-      // Status dot: green = full coverage, amber = partial (missing tools)
-      const dotColor = hasMissing ? 'var(--status-orange)' : 'var(--status-green)';
-      const dotTitle = hasMissing
-        ? 'Incomplete: ' + missingTools.map(t => t.tool || t).join(', ')
-        : 'Full tool coverage';
+      const incomplete = hasMissing || dep.unchecked > 0;
+      const dotColor = incomplete ? 'var(--status-orange)' : 'var(--status-green)';
+      const dotTitle = incomplete
+        ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
+        : 'All declarations fully checked';
 
       let label = null;
       if (vulnerable > 0) {
@@ -4059,6 +4060,7 @@ HTML_TEMPLATE = """\
           color: 'var(--text-muted)',
         }}>{total} deps</span>;
       }
+      if (!label && hasMissing) label = <span>Missing tools</span>;
       if (!label) return null;
 
       return (
@@ -4286,7 +4288,7 @@ HTML_TEMPLATE = """\
       );
     }
 
-    // KpiRow — row of 6 KPI cards
+    // KpiRow — fleet activity, findings, and independent coverage
     function KpiRow({ kpis }) {
       if (!kpis) return null;
       const dirtyColor = kpis.repos_with_changes > 0 ? 'var(--status-yellow)' : undefined;
@@ -4305,6 +4307,7 @@ HTML_TEMPLATE = """\
           <KpiCard value={locValue} label="Net LOC" tooltip="Net lines of code changed this week (insertions minus deletions, across all repos)" />
           <KpiCard value={kpis.stale_branches ?? 0} label="Stale Branches" color={staleColor} tooltip="Branches with no commits in the last 30 days (across all repos)" />
           <KpiCard value={vulnValue} label="Vuln / Outdated" color={vulnColor} tooltip="Vulnerable dependencies / outdated dependencies (across all repos)" />
+          <KpiCard value={kpis.unchecked_deps ?? 0} label="Not Checked" color={kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip="Declarations with incomplete outdated or vulnerability coverage, including those with findings" />
         </div>
       );
     }
@@ -5091,355 +5094,149 @@ HTML_TEMPLATE = """\
       );
     }
 
-    function DepsTab({ repoId, depCheckError, missingDepTools }) {
+    function fullyChecked(pkg) {
+      return ['checked', 'floating'].includes(pkg.outdated_state) && pkg.vuln_state === 'checked';
+    }
+
+    function summarizeDeps(groups, manifests = []) {
+      const summary = { declarations: 0, manifests: manifests.length, ok: 0, outdated: 0, major: 0, vulnerable: 0, unchecked: 0, fullyChecked: 0 };
+      for (const group of groups) for (const pkg of group.packages) {
+        summary.declarations++;
+        if (['ok', 'outdated', 'major', 'vulnerable'].includes(pkg.severity)) summary[pkg.severity]++;
+        if (fullyChecked(pkg)) summary.fullyChecked++; else summary.unchecked++;
+      }
+      return summary;
+    }
+
+    function currentText(pkg) {
+      if (pkg.current_version) return pkg.current_version;
+      if (pkg.wanted_version && pkg.outdated_state === 'floating') return 'evaluated ' + pkg.wanted_version + ' (floating)';
+      return 'unresolved';
+    }
+
+    function statusText(pkg) {
+      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: pkg.advisory_id || 'vulnerable', unchecked: 'not checked'})[pkg.severity] || 'not checked';
+      return headline + (pkg.severity !== 'unchecked' && !fullyChecked(pkg) ? ' — incomplete coverage' : '');
+    }
+
+    function severityColor(severity) {
+      switch (severity) {
+        case 'ok':         return 'var(--status-green)';
+        case 'outdated':   return 'var(--status-yellow)';
+        case 'major':      return 'var(--status-orange)';
+        case 'vulnerable': return 'var(--status-red)';
+        default:           return 'var(--text-muted)';
+      }
+    }
+
+    function DepsTab({ repoId }) {
       const [managerGroups, setManagerGroups] = useState([]);
+      const [repo, setRepo] = useState(null);
+      const [appStatus, setAppStatus] = useState(null);
       const [loading, setLoading] = useState(true);
       const [scanning, setScanning] = useState(false);
+      const [error, setError] = useState(null);
 
-      function fetchDeps() {
-        setLoading(true);
-        fetch(`/api/repos/${repoId}/deps`)
-          .then(r => r.json())
-          .then(data => {
-            setManagerGroups(Array.isArray(data) ? data : []);
-            setLoading(false);
-          })
-          .catch(() => setLoading(false));
+      async function fetchDeps(scan = false) {
+        setError(null);
+        if (scan) setScanning(true); else setLoading(true);
+        try {
+          const depsResponse = await fetch(scan ? '/api/repos/' + repoId + '/scan/deps' : '/api/repos/' + repoId + '/deps', scan ? { method: 'POST' } : undefined);
+          if (!depsResponse.ok) throw new Error('Dependency request failed: ' + depsResponse.status);
+          const groups = await depsResponse.json();
+          // Fetch persisted metadata after the scan transaction has completed.
+          const responses = await Promise.all([fetch('/api/repos/' + repoId), fetch('/api/status')]);
+          if (responses.some(r => !r.ok)) throw new Error('Coverage metadata request failed');
+          const [detail, status] = await Promise.all(responses.map(r => r.json()));
+          setManagerGroups(Array.isArray(groups) ? groups : []);
+          setRepo(detail);
+          setAppStatus(status);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+          setScanning(false);
+        }
       }
-
       useEffect(() => { fetchDeps(); }, [repoId]);
 
-      function handleCheckNow() {
-        setScanning(true);
-        fetch(`/api/repos/${repoId}/scan/deps`, { method: 'POST' })
-          .then(r => r.json())
-          .then(data => {
-            setManagerGroups(Array.isArray(data) ? data : []);
-            setScanning(false);
-          })
-          .catch(() => setScanning(false));
-      }
+      const ws = repo?.working_state || {};
+      const manifests = ws.dep_manifests || [];
+      const missingTools = ws.missing_dep_tools || [];
+      const summary = summarizeDeps(managerGroups, manifests);
+      const packages = managerGroups.flatMap(group => group.packages.map(pkg => ({...pkg, _manager: group.manager, _label: group.label || group.manager})));
+      const severityOrder = {vulnerable: 0, major: 1, outdated: 2};
+      const issues = packages.filter(pkg => pkg.severity in severityOrder).sort((a, b) =>
+        severityOrder[a.severity] - severityOrder[b.severity] || a.name.localeCompare(b.name));
+      const unchecked = packages.filter(pkg => !fullyChecked(pkg));
+      const incomplete = summary.unchecked > 0 || missingTools.length > 0 || manifests.some(m => m.error) || ws.dep_check_error;
+      const newestScan = packages.map(p => p.checked_at).filter(Boolean).sort().at(-1) || null;
 
-      function severityColor(severity) {
-        switch (severity) {
-          case 'ok':         return 'var(--status-green)';
-          case 'outdated':   return 'var(--status-yellow)';
-          case 'major':      return 'var(--status-orange)';
-          case 'vulnerable': return 'var(--status-red)';
-          default:           return 'var(--text-muted)';
-        }
-      }
-
-      function severityText(pkg) {
-        switch (pkg.severity) {
-          case 'ok':         return 'up to date';
-          case 'outdated':   return 'outdated';
-          case 'major':      return 'major update';
-          case 'vulnerable': return pkg.advisory_id || 'vulnerable';
-          default:           return pkg.severity || '—';
-        }
-      }
-
-      // Collect all packages needing attention (anything not 'ok') across all groups
-      const issuePackages = useMemo(() => {
-        const sevOrder = { vulnerable: 0, major: 1, outdated: 2 };
-        const items = [];
-        for (const group of managerGroups) {
-          for (const pkg of group.packages) {
-            if (pkg.severity && pkg.severity !== 'ok') {
-              items.push({ ...pkg, _manager: group.manager, _label: group.label || group.manager });
-            }
-          }
-        }
-        items.sort((a, b) => {
-          const sa = sevOrder[a.severity] ?? 99;
-          const sb = sevOrder[b.severity] ?? 99;
-          if (sa !== sb) return sa - sb;
-          return a.name.localeCompare(b.name);
-        });
-        return items;
-      }, [managerGroups]);
-
-      // Export helpers
       function downloadBlob(content, filename, mimeType) {
-        const blob = new Blob([content], { type: mimeType });
-        const url = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
         const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       }
-
+      function report() {
+        return {format: 'git-fleet-dependency-report', format_version: 2, generated_at: new Date().toISOString(),
+          git_fleet_version: appStatus?.version, repo: {id: repoId, name: repo?.name}, missing_tools: missingTools,
+          summary, scope: appStatus?.dependency_scope, manifests, groups: managerGroups};
+      }
       function handleExportJSON() {
-        const json = JSON.stringify(managerGroups, null, 2);
-        downloadBlob(json, 'deps-export.json', 'application/json');
+        downloadBlob(JSON.stringify(report(), null, 2), 'deps-export.json', 'application/json');
       }
-
       function handleExportMD() {
-        let md = '# Dependency Report\\n\\n';
-
-        // Issues section
-        if (issuePackages.length > 0) {
-          md += '## Attention Required\\n\\n';
-          md += '| Package | Current | Latest | Status | Source |\\n';
-          md += '|---------|---------|--------|--------|--------|\\n';
-          for (const pkg of issuePackages) {
-            const status = pkg.severity === 'vulnerable'
-              ? (pkg.advisory_id || 'vulnerable')
-              : pkg.severity === 'major' ? 'major update' : 'outdated';
-            md += `| ${pkg.name} | ${pkg.current_version || '—'} | ${pkg.latest_version || '—'} | ${status} | ${pkg._label} |\\n`;
-          }
-          md += '\\n';
-        }
-
-        // All dependencies by group
-        md += '## All Dependencies\\n\\n';
-        for (const group of managerGroups) {
-          md += `### ${group.label || group.manager}\\n\\n`;
-          md += '| Package | Current | Latest | Status |\\n';
-          md += '|---------|---------|--------|--------|\\n';
-          for (const pkg of group.packages) {
-            md += `| ${pkg.name} | ${pkg.current_version || '—'} | ${pkg.latest_version || '—'} | ${severityText(pkg)} |\\n`;
-          }
-          md += '\\n';
-        }
-
+        const data = report();
+        const cell = value => String(value ?? '—').replace(/\\|/g, '\\\\|').replace(/[\\r\\n]+/g, ' ');
+        const table = rows => '| Package | Declared | Version | Latest | Outdated check | Vulnerability check | Status | Source | Reasons |\\n' +
+          '|---|---|---|---|---|---|---|---|---|\\n' + rows.map(p => '| ' + [p.name, p.declared_spec, currentText(p), p.latest_version,
+            p.outdated_state, p.vuln_state, statusText(p), p.source_path, p.check_note].map(cell).join(' | ') + ' |\\n').join('');
+        let md = '# Dependency Report\\n\\nRepository: ' + cell(data.repo.name) + ' (' + cell(repoId) + ')\\n\\n' +
+          'Generated: ' + data.generated_at + '\\n\\nGit Fleet version: ' + data.git_fleet_version + '\\n\\nNewest scan: ' + (newestScan || 'Not scanned') + '\\n\\n' +
+          'Declarations: ' + summary.declarations + '; Manifests: ' + summary.manifests + '; Fully checked: ' + summary.fullyChecked + '; Not checked: ' + summary.unchecked + '\\n\\n' +
+          'Vulnerable: ' + summary.vulnerable + '; Major: ' + summary.major + '; Outdated: ' + summary.outdated + '; Up to date: ' + summary.ok + '\\n\\n' +
+          'Coverage: ' + (incomplete ? 'Incomplete' : 'Complete') + '\\n\\nMissing tools: ' + (missingTools.map(t => cell(t.tool) + ' — ' + cell(t.description)).join('; ') || 'None') + '\\n\\n' +
+          '## Scope\\n\\n' + JSON.stringify(data.scope, null, 2) + '\\n\\n' +
+          '## Attention Required\\n\\n' + table(issues) + '\\n## Not Checked\\n\\n' + table(unchecked) + '\\n## All Dependencies\\n\\n' + table(packages) +
+          '\\n## Manifests Scanned\\n\\n| File | Kind | Declarations | Error |\\n|---|---|---|---|\\n' +
+          manifests.map(m => '| ' + [m.path, m.kind, m.dependencies, m.error].map(cell).join(' | ') + ' |\\n').join('');
         downloadBlob(md, 'deps-export.md', 'text/markdown');
       }
-
-      if (loading) {
-        return <div className="table-empty">Loading…</div>;
+      function dependencyTable(rows) {
+        return <div className="table-container" style={{overflowX: 'auto'}}>
+          <table className="data-table" style={{width: '100%', textAlign: 'left', fontSize: '13px'}}>
+            <thead><tr>{['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => <th key={h} style={{padding: '8px'}}>{h}</th>)}</tr></thead>
+            <tbody>{rows.map(pkg => <tr key={JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}>
+              <td style={{padding: '8px'}}>{pkg.name}</td><td>{pkg.declared_spec || '—'}</td><td>{currentText(pkg)}</td><td>{pkg.latest_version || '—'}</td>
+              <td style={{color: severityColor(pkg.severity)}}>{statusText(pkg)}<br/><small>outdated: {pkg.outdated_state || 'unchecked'}; vulnerability: {pkg.vuln_state || 'unchecked'}</small></td>
+              <td>{pkg._label}<br/>{pkg.check_note}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>;
       }
-
-      if (managerGroups.length === 0) {
-        return (
-          <div className="table-container">
-            <div className="table-empty">No dependencies detected</div>
-          </div>
-        );
-      }
-
-      return (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px' }}>
-            <button
-              className="btn btn-secondary"
-              onClick={handleExportMD}
-              title="Export as Markdown"
-            >
-              Export MD
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleExportJSON}
-              title="Export as JSON"
-            >
-              Export JSON
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleCheckNow}
-              disabled={scanning}
-            >
-              {scanning ? 'Checking…' : 'Check Now'}
-            </button>
-          </div>
-
-          {/* Missing tools notice */}
-          {missingDepTools && missingDepTools.length > 0 && (
-            <div style={{
-              padding: '10px 14px', marginBottom: '16px',
-              fontSize: '13px', fontFamily: 'var(--font-body)',
-              color: 'var(--status-orange)',
-              background: 'var(--status-orange-bg)',
-              borderRadius: '6px',
-              borderLeft: '2px solid var(--status-orange)',
-              lineHeight: '1.5',
-            }}>
-              <span style={{ fontWeight: 600 }}>Incomplete analysis</span>
-              <span style={{ color: 'var(--text-secondary)' }}> — missing tools for this repo:</span>
-              <div style={{ marginTop: '4px' }}>
-                {missingDepTools.map(t => (
-                  <div key={t.tool || t} style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '12px',
-                    color: 'var(--text-secondary)', paddingLeft: '8px',
-                  }}>
-                    <span style={{ color: 'var(--status-orange)' }}>{t.tool || t}</span>
-                    {t.description && <span> — {t.description}</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Attention Required section */}
-          {issuePackages.length > 0 ? (
-            <div style={{ marginBottom: '28px' }}>
-              <div style={{
-                fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-                color: 'var(--status-red)', marginBottom: '8px',
-                textTransform: 'uppercase', letterSpacing: '0.5px',
-              }}>
-                Attention Required
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
-                  color: 'var(--text-secondary)', textTransform: 'none',
-                  marginLeft: '8px',
-                }}>
-                  {issuePackages.length} {issuePackages.length === 1 ? 'issue' : 'issues'}
-                </span>
-              </div>
-              <div className="table-container" style={{
-                borderLeft: '2px solid var(--status-red)',
-              }}>
-                <div className="table-header" style={{ gridTemplateColumns: 'minmax(120px, 1fr) 100px 100px 130px minmax(150px, 2fr)' }}>
-                  <span>Package</span>
-                  <span>Current</span>
-                  <span>Latest</span>
-                  <span>Status</span>
-                  <span>Source</span>
-                </div>
-                {issuePackages.map(pkg => (
-                  <div key={pkg.name + pkg._label} className="table-row"
-                    style={{ gridTemplateColumns: 'minmax(120px, 1fr) 100px 100px 130px minmax(150px, 2fr)' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '14px',
-                      color: 'var(--text-primary)',
-                    }}>
-                      {pkg.name}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                    }}>
-                      {pkg.current_version || '—'}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      fontWeight: (pkg.current_version !== pkg.latest_version) ? 600 : 400,
-                    }}>
-                      {pkg.latest_version || '—'}
-                    </span>
-                    <span style={{
-                      color: severityColor(pkg.severity), fontSize: '13px',
-                      fontFamily: 'var(--font-body)',
-                      fontWeight: pkg.severity === 'vulnerable' ? 600 : 400,
-                    }}>
-                      {severityText(pkg)}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '11px',
-                      color: 'var(--text-muted)',
-                    }}>
-                      {pkg._label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{
-              padding: '12px 16px', marginBottom: '24px',
-              fontSize: '13px', fontFamily: 'var(--font-body)',
-              color: 'var(--status-green)',
-              background: 'var(--status-green-bg)',
-              borderRadius: '6px',
-              borderLeft: '2px solid var(--status-green)',
-            }}>
-              No issues found — all dependencies are up to date.
-            </div>
-          )}
-
-          {/* All Dependencies section */}
-          <div style={{
-            fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-            color: 'var(--text-muted)', marginBottom: '12px',
-            textTransform: 'uppercase', letterSpacing: '0.5px',
-          }}>
-            All Dependencies
-          </div>
-          {managerGroups.map((group, gi) => (
-            <div key={group.label || group.manager + gi} style={{ marginBottom: '24px' }}>
-              <div style={{
-                fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-                color: 'var(--text-muted)', marginBottom: '8px',
-                textTransform: 'uppercase', letterSpacing: '0.5px',
-              }}>
-                {group.label || group.manager}
-                {group.source_path && (
-                  <span style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
-                    color: 'var(--text-secondary)', textTransform: 'none',
-                    marginLeft: '8px',
-                  }}>
-                    {group.source_path}
-                  </span>
-                )}
-              </div>
-              <div className="table-container">
-                <div className="table-header" style={{ gridTemplateColumns: '1fr 100px 100px 160px' }}>
-                  <span>Package</span>
-                  <span>Current</span>
-                  <span>Latest</span>
-                  <span>Status</span>
-                </div>
-                {group.packages.map(pkg => (
-                  <div key={pkg.name} className="table-row"
-                    style={{ gridTemplateColumns: '1fr 100px 100px 160px' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '14px',
-                      color: 'var(--text-primary)',
-                    }}>
-                      {pkg.name}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                    }}>
-                      {pkg.current_version || '—'}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      fontWeight: (pkg.current_version !== pkg.latest_version) ? 600 : 400,
-                    }}>
-                      {pkg.latest_version || '—'}
-                    </span>
-                    <span style={{
-                      color: severityColor(pkg.severity), fontSize: '13px',
-                      fontFamily: 'var(--font-body)',
-                      fontWeight: pkg.severity === 'vulnerable' ? 600 : 400,
-                    }}>
-                      {severityText(pkg)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                fontSize: '13px', fontFamily: 'var(--font-body)',
-                color: 'var(--text-muted)', marginTop: '6px',
-              }}>
-                Last checked: {timeAgo(group.checked_at)}
-                {depCheckError && (
-                  <>
-                    <span style={{
-                      display: 'inline-block', width: '6px', height: '6px',
-                      borderRadius: '50%', background: 'var(--status-orange)',
-                      flexShrink: 0,
-                    }} />
-                    <span style={{ color: 'var(--status-orange)', fontSize: '12px' }}>offline</span>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
+      if (loading) return <div className="table-empty">Loading…</div>;
+      return <div>
+        <div style={{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}>
+          <button className="btn btn-secondary" onClick={handleExportMD} disabled={!repo || !appStatus}>Export MD</button>
+          <button className="btn btn-secondary" onClick={handleExportJSON} disabled={!repo || !appStatus}>Export JSON</button>
+          <button className="btn btn-secondary" onClick={() => fetchDeps(true)} disabled={scanning}>{scanning ? 'Checking…' : 'Check Now'}</button>
         </div>
-      );
+        {error && <div role="alert">{error}</div>}
+        <div data-testid="dep-coverage" style={{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}>
+          {incomplete && <strong>Incomplete coverage — </strong>}{summary.declarations} declarations; {summary.manifests} manifests; {summary.fullyChecked} fully checked; {summary.unchecked} not checked.
+          {missingTools.map(t => <div key={t.tool}>{t.tool} — {t.description}</div>)}
+        </div>
+        {issues.length > 0 && <section><h3>Attention Required</h3>{dependencyTable(issues)}</section>}
+        {unchecked.length > 0 && <section data-testid="dep-not-checked"><h3>Not Checked</h3>{dependencyTable(unchecked)}</section>}
+        {summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+          <div style={{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>}
+        <section data-testid="dep-all"><h3>All Dependencies</h3>{managerGroups.map(group => <div key={JSON.stringify([group.manager, group.source_path])} style={{marginBottom: '16px'}}>
+          <h4>{group.label || group.manager}</h4>{dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}
+        </div>)}{!packages.length && <div>No dependencies detected</div>}</section>
+        <section><h3>Manifests Scanned</h3>{manifests.map(m => <div key={m.path}>{m.path} — {m.kind} — {m.dependencies} declarations{m.error ? ' — ' + m.error : ''}</div>)}</section>
+        <div style={{marginTop: '12px', color: 'var(--text-muted)'}}>Last checked: {newestScan ? timeAgo(newestScan) : 'Not scanned'} · Git Fleet {appStatus?.version}</div>
+      </div>;
     }
 
     function PlaceholderTab({ text }) {
@@ -5507,7 +5304,7 @@ HTML_TEMPLATE = """\
           <SubTabNav active={activeSubTab} onChange={handleSubTabChange} />
           <div className="detail-content">
             {activeSubTab === 'activity'  && <ActivityTab repoId={repoId} />}
-            {activeSubTab === 'deps'      && <DepsTab repoId={repoId} depCheckError={!!(repo.working_state && repo.working_state.dep_check_error)} missingDepTools={(repo.working_state && repo.working_state.missing_dep_tools) || []} />}
+            {activeSubTab === 'deps'      && <DepsTab repoId={repoId} />}
             {activeSubTab === 'branches'  && <BranchesTab repoId={repoId} selectedBranch={selectedBranch} onSelectBranch={handleSelectBranch} />}
             {activeSubTab === 'commits'   && <CommitsTab repoId={repoId} branch={selectedBranch} />}
           </div>
@@ -6034,6 +5831,7 @@ HTML_TEMPLATE = """\
       const totalDeps = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.total || 0), 0);
       const totalOutdated = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.outdated || 0), 0);
       const totalVuln = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.vulnerable || 0), 0);
+      const totalUnchecked = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.unchecked || 0), 0);
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -6042,6 +5840,7 @@ HTML_TEMPLATE = """\
             <KpiCard label="Total Deps" value={loading ? '...' : totalDeps} tooltip="Total dependencies detected across all repos" />
             <KpiCard label="Outdated" value={loading ? '...' : totalOutdated} tooltip="Dependencies with newer versions available (minor or major)" />
             <KpiCard label="Vulnerable" value={loading ? '...' : totalVuln} tooltip="Dependencies with known security vulnerabilities" />
+            <KpiCard label="Not Checked" value={loading ? '...' : totalUnchecked} tooltip="Declarations with incomplete check coverage, including findings" />
             <KpiCard label="Repos w/ Deps" value={loading ? '...' : reposWithDeps.length} tooltip="Repos where at least one dependency manifest was detected" />
           </div>
 
@@ -6056,17 +5855,18 @@ HTML_TEMPLATE = """\
               </div>
             ) : (
               <div className="table-container">
-                <div className="table-header" style={{ gridTemplateColumns: '1fr 100px 100px 100px' }}>
+                <div className="table-header" style={{ gridTemplateColumns: '1fr repeat(4, 100px)' }}>
                   <span>Repo</span>
                   <span>Total</span>
                   <span>Outdated</span>
                   <span>Vulnerable</span>
+                  <span>Not Checked</span>
                 </div>
                 {reposWithDeps.map(r => (
                   <div
                     key={r.id}
                     className="table-row"
-                    style={{ gridTemplateColumns: '1fr 100px 100px 100px', cursor: 'pointer' }}
+                    style={{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }}
                     onClick={() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}
                   >
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>
@@ -6081,6 +5881,7 @@ HTML_TEMPLATE = """\
                     <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
                       {r.dep_summary.vulnerable}
                     </span>
+                    <span style={{color: 'var(--status-orange)'}}>{r.dep_summary.unchecked || 0}</span>
                   </div>
                 ))}
               </div>
@@ -6303,7 +6104,32 @@ async def get_ui():
 @app.get("/api/status")
 async def get_status():
     """Return tool availability and app version for the frontend banner."""
-    return {"tools": TOOLS, "version": VERSION}
+    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope()}
+
+
+def dependency_report_scope() -> dict:
+    """Describe the implemented declaration scan; reuse discovery's runtime limits."""
+    return {
+        "python": "Declaration evaluation, not installed-environment inspection or full dependency resolution. "
+                  "Markers, requires-python and inter-package compatibility are not evaluated. "
+                  "Undeclared transitive Python dependencies are not audited. Exact declared or unique adjacent-lock versions are evaluated; "
+                  "supported PEP 440 constraints select the highest allowed non-yanked release using SpecifierSet.filter prerelease rules. "
+                  "The selection is compared with registry latest even beyond a declaration cap. Unsupported Poetry constraints without concrete versions and ambiguous lock versions remain unchecked. "
+                  "Floating selections are evaluated versions, not installed versions.",
+        "direct_references": "Direct VCS/URL references are not compared with PyPI or audited; "
+                             "remote metadata and VCS commit resolution are excluded.",
+        "discovery": {
+            "max_depth": _DEP_WALK_MAX_DEPTH,
+            "skip_directories": sorted(_DEP_WALK_SKIP),
+            "hidden_directories": "Skipped",
+            "pep723": "Python .py/.pyw and suffixless shebang candidates; metadata only in the leading comment/blank-line prelude. "
+                      "PEP 723 reference grammar; unclosed blocks ignored; duplicate script blocks, malformed TOML and invalid dependencies reported as inventory errors.",
+        },
+        "groups": "Python manifest kinds coexist. Requirements includes retain physical source paths (including external includes). "
+                  "PEP 621 optional dependencies and string dependency-group entries are included; include-group tables and Poetry groups are not expanded. "
+                  "Adjacent uv.lock supplies unique registry versions only, not declarations. "
+                  "Node dependencies/devDependencies, Cargo dependencies/dev-dependencies, Composer require/require-dev (excluding platform entries), Go requirements and conventional Bundler gem declarations are included.",
+    }
 
 
 @app.get("/api/browse")
@@ -6937,16 +6763,18 @@ async def get_fleet(db=Depends(get_db)):
         cursor = await db.execute(
             "SELECT COUNT(*), "
             "SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END) "
+            "SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END) "
             "FROM dependencies WHERE repo_id = ?",
             (repo["id"],),
         )
-        total_deps, outdated_count, vuln_count = await cursor.fetchone()
+        total_deps, outdated_count, vuln_count, unchecked_count = await cursor.fetchone()
         if total_deps and total_deps > 0:
             repo["dep_summary"] = {
                 "total": total_deps,
                 "outdated": (outdated_count or 0),
                 "vulnerable": (vuln_count or 0),
+                "unchecked": (unchecked_count or 0),
             }
         else:
             repo["dep_summary"] = None
@@ -6976,10 +6804,11 @@ async def get_fleet(db=Depends(get_db)):
 
     cursor = await db.execute(
         "SELECT COALESCE(SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), 0), "
-        "COALESCE(SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), 0) "
+        "COALESCE(SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END), 0) "
         "FROM dependencies"
     )
-    vuln_total, outdated_total = await cursor.fetchone()
+    vuln_total, outdated_total, unchecked_total = await cursor.fetchone()
 
     kpis = {
         "total_repos": len(results),
@@ -6990,6 +6819,7 @@ async def get_fleet(db=Depends(get_db)):
         "stale_branches": sum(r.get("stale_branch_count", 0) for r in results),
         "vulnerable_deps": vuln_total,
         "outdated_deps": outdated_total,
+        "unchecked_deps": unchecked_total,
     }
 
     return {

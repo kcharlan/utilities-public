@@ -1026,3 +1026,17 @@ def test_scan_persists_empty_and_failed_manifests(test_app, tmp_path, monkeypatc
     assert inventory['pyproject.toml']['error']
     assert inventory['empty-extra.txt']['dependencies'] == 0
     assert ws['dep_check_error'] is True
+
+
+def test_fleet_coverage_counts_follow_states(test_app, tmp_path, monkeypatch, dependency_report_seed):
+    client, db_path = test_app
+    dependency_report_seed['seed'](db_path, 'synthetic-coverage', tmp_path)
+    monkeypatch.setattr(git_dashboard, 'quick_scan_repo', AsyncMock(return_value=dict(
+        has_uncommitted=False, modified_count=0, untracked_count=0, staged_count=0,
+        current_branch='main', last_commit_hash=None, last_commit_message=None,
+        last_commit_date=None, checked_at='synthetic')))
+    result = client.get('/api/fleet').json()
+    expected = dependency_report_seed['summary']
+    assert result['repos'][0]['dep_summary']['unchecked'] == expected['unchecked']
+    assert result['kpis']['unchecked_deps'] == expected['unchecked']
+    assert result['kpis']['outdated_deps'] == expected['outdated'] + expected['major']

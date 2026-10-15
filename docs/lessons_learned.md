@@ -192,3 +192,14 @@ skips, malformed advisories, duplicate names, version mismatches and status/advi
 contradictions cannot establish clean coverage. Regress matching across manifests
 and limit failures to the affected batch. Synthetic auditor fixtures must use real
 exit semantics and the requested versions so they cannot conceal these errors.
+
+### Git Fleet: findings and coverage are independent report dimensions
+
+A vulnerability or update headline does not prove both health checks ran. Count
+unchecked declarations from the independent check states in SQL and the UI, and
+allow a finding to appear in both Attention Required and Not Checked. Count
+manifest reads from discovery inventory so empty or failed files survive reports.
+Refresh metadata after a scan before publishing the report; stale parent props can
+otherwise pair fresh rows with old missing-tool and inventory information. Browser
+regressions should inspect real downloaded contents and use one shared synthetic
+fixture to compute API, UI and report expectations.

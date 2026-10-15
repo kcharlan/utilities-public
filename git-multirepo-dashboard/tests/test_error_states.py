@@ -459,8 +459,9 @@ def test_detail_remove_update_buttons_ui(client):
     assert "Update Path" in r.text
 
 
-def test_offline_indicator_ui(client):
-    """GET / HTML contains 'offline' in the dep check indicator context."""
+def test_incomplete_coverage_indicator_ui(client):
+    """Incomplete analysis is not necessarily offline: retain coverage and reasons."""
     r = client.get("/")
     assert r.status_code == 200
-    assert "offline" in r.text
+    assert "Incomplete coverage" in r.text
+    assert "pkg.check_note" in r.text

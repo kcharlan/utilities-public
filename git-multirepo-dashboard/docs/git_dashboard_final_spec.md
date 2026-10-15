@@ -156,6 +156,8 @@ Registration is idempotent for an existing absolute path. The path-repair endpoi
 
 Results update `working_state` without erasing error fields created by broader scans. The endpoint then joins stored branches, dependencies, 13-week sparklines, and fleet KPIs into the response.
 
+Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
+
 ### Full history
 
 The history scanner parses `git log --all` with ISO dates and short statistics, aggregates commits and line changes by day, and upserts `daily_stats`. After the initial scan it passes `last_full_scan_at` as the incremental lower bound and updates that timestamp after the scan.
@@ -243,6 +245,8 @@ The local SPA consumes these JSON and streaming endpoints:
 | GET | `/api/analytics/allocation` | Per-repository commit series |
 | GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
 
+`/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package.
+
 ### Dependency overlap response
 
 `GET /api/analytics/dep-overlap` returns `{ "packages": [...] }`. Each entry groups declarations by manager and identity name, includes `count` (declaration uses), `repo_count` (distinct repositories), and `repos[]` with `repo_id`, `name`, `version`, and `source_path`. Groups with fewer than two uses are excluded; results sort by use count descending. `version_spread` uses distinct non-null versions ordered by `packaging.version.Version`, followed by invalid version text in lexical order. Empty version sets produce an empty spread. Expanded rows display each manifest beside its version and use repository ID plus source path as their React key.
@@ -258,6 +262,16 @@ Important interaction contracts:
 - Repository detail preserves the selected branch across Branches and Commits.
 - Dependency findings can be exported entirely in the browser as Markdown or JSON.
 - Missing CDN resources or JavaScript errors are covered by the separate Playwright suite.
+
+`summarizeDeps(groups, manifests)` returns declaration and inventory manifest counts, individual `ok`, `outdated`, `major`, and `vulnerable` severity counts, state-based `unchecked`, and `fullyChecked`. A fully checked declaration has outdated state `checked`/`floating` and vulnerability state `checked`. Inventory counts include empty and failed files, independent of nonempty groups.
+
+The Dependencies tab fetches detail metadata and application status on mount and after Check Now. It displays the declared text, current version or explicitly labeled floating evaluated selection, both check states, headline status and retained reasons. Partially checked findings appear in both Attention Required and Not Checked. An incomplete banner also covers missing tools, manifest errors and persisted analysis errors. The clean banner requires a nonempty declaration set, no findings, complete check states, and complete analysis metadata. Fleet KPIs, per-repository summaries and card coverage titles expose Not Checked independently of findings.
+
+### Downloaded dependency reports
+
+JSON downloads have `{format: "git-fleet-dependency-report", format_version: 2, generated_at, git_fleet_version, repo: {id, name}, missing_tools, summary, scope, manifests, groups}`. Only this downloaded envelope is versioned; the dependency API remains a grouped list. Scope documents Python declaration-evaluation limits, direct-reference exclusions, runtime discovery limits, PEP 723 prelude handling and dependency-group boundaries.
+
+Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp (or Not scanned), coverage, missing tools and Scope. Attention Required, Not Checked and All Dependencies tables retain declared specifications, version displays, both check states, headline statuses, sources and reasons. Manifests Scanned lists inventory paths, kinds, declaration counts and errors. Empty inventories and declaration sets remain exportable.
 
 ## Testing contracts
 

@@ -27,6 +27,51 @@ from tools.testkit import ASGISyncClient  # noqa: E402
 
 
 @pytest.fixture
+def dependency_report_seed():
+    """One conspicuously synthetic declaration/inventory contract for API and browser tests."""
+    import json
+    import sqlite3
+    rows = []
+    for name, severity, outdated, vuln, current, wanted, source, note in [
+        ('synthetic-partial-vuln', 'vulnerable', 'unchecked', 'checked', '1.0', None, 'requirements.txt', 'Synthetic registry unavailable'),
+        ('synthetic-partial-major', 'major', 'checked', 'unchecked', '1.0', None, 'requirements.txt', 'Synthetic audit unavailable'),
+        ('synthetic-partial-outdated', 'outdated', 'checked', 'unchecked', '1.0', None, 'requirements.txt', 'Synthetic audit timeout'),
+        ('synthetic-floating', 'outdated', 'floating', 'checked', None, '1.5', 'nested/pyproject.toml', None),
+        ('synthetic-clean', 'ok', 'checked', 'checked', '1.0', None, 'requirements.txt', None),
+        ('synthetic-direct', 'unchecked', 'unchecked', 'unchecked', 'git:demo', None, 'requirements.txt', git_dashboard.NOTE_DIRECT_REF),
+        ('synthetic-clean', 'ok', 'checked', 'checked', '2.0', None, 'nested/pyproject.toml', None),
+    ]:
+        rows.append(dict(manager='pip', name=name, severity=severity, outdated_state=outdated,
+                         vuln_state=vuln, current_version=current, wanted_version=wanted,
+                         latest_version='2.0', source_path=source, check_note=note,
+                         declared_spec=name + ('>=1,<2' if outdated == 'floating' else '==1.0'),
+                         advisory_id='SYNTHETIC-ADVISORY' if severity == 'vulnerable' else None,
+                         checked_at='2026-01-02T03:04:05+00:00'))
+    manifests = [dict(path=p, kind=k, dependencies=sum(r['source_path'] == p for r in rows), error=e)
+                 for p, k, e in [('requirements.txt', 'requirements', None),
+                                 ('nested/pyproject.toml', 'pyproject', None),
+                                 ('empty.txt', 'requirements', None),
+                                 ('broken.txt', 'requirements', 'Synthetic read failure')]]
+    summary = dict(declarations=len(rows), manifests=len(manifests),
+                   **{s: sum(r['severity'] == s for r in rows) for s in ('ok', 'outdated', 'major', 'vulnerable')})
+    summary['fullyChecked'] = sum(r['outdated_state'] in ('checked', 'floating') and r['vuln_state'] == 'checked' for r in rows)
+    summary['unchecked'] = len(rows) - summary['fullyChecked']
+    missing = [dict(tool='synthetic-audit', description='Synthetic missing audit tool')]
+
+    def seed(db_path, repo_id, path):
+        with sqlite3.connect(db_path) as db:
+            db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                       (repo_id, 'Synthetic coverage repository', str(path), '2026-01-01'))
+            db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,1,?,?)',
+                       (repo_id, json.dumps(missing), json.dumps(manifests)))
+            for row in rows:
+                keys = list(row)
+                db.execute(f"INSERT INTO dependencies (repo_id,{','.join(keys)}) VALUES ({','.join('?' for _ in range(len(keys)+1))})",
+                           [repo_id] + [row[k] for k in keys])
+    return dict(rows=rows, manifests=manifests, summary=summary, missing_tools=missing, seed=seed)
+
+
+@pytest.fixture
 def test_app(tmp_path):
     """(ASGI client, db_path) with an isolated database."""
     db_path = tmp_path / "test.db"

@@ -294,3 +294,15 @@ def test_quick_scan_preserves_coverage_metadata(test_app, tmp_path, monkeypatch)
     assert ws['missing_dep_tools'] == missing
     assert ws['dep_manifests'] == manifests
     assert ws['dep_check_error'] is True
+
+
+def test_dependency_response_exposes_coverage(test_app, tmp_path, dependency_report_seed):
+    client, db_path = test_app
+    dependency_report_seed['seed'](db_path, 'synthetic-coverage', tmp_path)
+    groups = client.get('/api/repos/synthetic-coverage/deps').json()
+    actual = {(r['source_path'], r['name']): r for g in groups for r in g['packages']}
+    for row in dependency_report_seed['rows']:
+        assert actual[(row['source_path'], row['name'])] == {k: v for k, v in row.items() if k != 'manager'}
+    status = client.get('/api/status').json()
+    assert status['dependency_scope']['discovery']['max_depth'] == git_dashboard._DEP_WALK_MAX_DEPTH
+    assert status['dependency_scope']['discovery']['skip_directories'] == sorted(git_dashboard._DEP_WALK_SKIP)

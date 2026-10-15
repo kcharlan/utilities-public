@@ -52,6 +52,8 @@ Git Fleet also requires at least one installed dependency-analysis tool from the
 
 The overview quick-scans up to eight registered repositories concurrently whenever it loads. Cards show the current branch, most recent commit, staged/modified/untracked counts, dependency summary, branch health, and a 13-week activity sparkline. Fleet KPIs summarize repository state, recent commits and line changes, stale branches, and dependency findings.
 
+**Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
+
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry.
 
 ### Full scan
@@ -74,6 +76,10 @@ Each repository has four views:
 - **Commits** — paginated live Git history for all refs or a selected branch.
 
 If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
+
+The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, and reasons. **Not Checked** includes partially checked findings. The clean banner requires every declaration to be fully checked and no missing tools or inventory errors. **Manifests Scanned** includes empty and failed files, independently of dependency groups; exports remain available with an empty declaration set.
+
+Markdown reports contain repository identity, generation time, application version, newest declaration scan timestamp, coverage, missing tools, scope, and the Attention Required, Not Checked, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 2 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
 
 ### Analytics
 
