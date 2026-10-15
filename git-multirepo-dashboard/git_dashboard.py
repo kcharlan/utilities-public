@@ -289,7 +289,9 @@ CREATE TABLE IF NOT EXISTS working_state (
   last_commit_date     TEXT,
   checked_at           TEXT,
   scan_error           TEXT DEFAULT NULL,
-  dep_check_error      BOOLEAN DEFAULT FALSE
+  dep_check_error      BOOLEAN DEFAULT FALSE,
+  missing_dep_tools    TEXT DEFAULT '[]',
+  dep_manifests        TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS scan_log (
@@ -320,6 +322,8 @@ def init_schema(db_path: Path) -> None:
 _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN scan_error TEXT DEFAULT NULL",
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
+    "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
 ]
 
@@ -921,86 +925,69 @@ async def emit_scan_progress(scan_id: int, event: dict) -> None:
         await q.put(event)
 
 
-async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
-    """Detect, parse, and health-check deps for one repo, then persist to DB."""
-    repo_path_obj = Path(repo_path)
+DEP_TOOL_REQUIREMENTS = {
+    "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning")],
+    "npm":      [("npm", "npm", "Node.js dependency checks")],
+    "gomod":    [("go", "go", "Go dependency checks"),
+                 ("govulncheck", "govulncheck", "Go vulnerability scanning")],
+    "cargo":    [("cargo", "cargo", "Rust dependency checks"),
+                 ("cargo_outdated", "cargo-outdated", "Rust outdated checks"),
+                 ("cargo_audit", "cargo-audit", "Rust vulnerability scanning")],
+    "bundler":  [("bundle", "bundle", "Ruby dependency checks"),
+                 ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning")],
+    "composer": [("composer", "composer", "PHP dependency checks")],
+}
 
-    # 1. Parse raw deps from manifest files
-    raw_deps = parse_deps_for_repo(repo_path_obj)
-    if not raw_deps:
-        # Clear any stale deps if the manifest was removed.
-        await db.execute("DELETE FROM dependencies WHERE repo_id = ?", (repo_id,))
-        await db.commit()
-        return
 
-    # Determine which ecosystems this repo actually uses (from parsed deps)
-    detected_managers = {d.get("manager", "") for d in raw_deps}
+@dataclass
+class DepAnalysis:
+    enriched: list[dict]
+    any_error: bool
+    missing_tools: list[dict]
+    manifests: list[dict]
 
-    # Map manager → tools needed for full analysis
-    _MANAGER_TOOL_MAP = {
-        "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning")],
-        "npm":      [("npm", "npm", "Node.js dependency checks")],
-        "gomod":    [("go", "go", "Go dependency checks"),
-                     ("govulncheck", "govulncheck", "Go vulnerability scanning")],
-        "cargo":    [("cargo", "cargo", "Rust dependency checks"),
-                     ("cargo_outdated", "cargo-outdated", "Rust outdated checks"),
-                     ("cargo_audit", "cargo-audit", "Rust vulnerability scanning")],
-        "bundler":  [("bundle", "bundle", "Ruby dependency checks"),
-                     ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning")],
-        "composer": [("composer", "composer", "PHP dependency checks")],
-    }
 
-    for mgr in detected_managers:
-        for tool_key, display_name, description in _MANAGER_TOOL_MAP.get(mgr, []):
-            if not TOOLS.get(tool_key):
-                logger.info(
-                    "Missing %s while scanning %s dependencies for %s (%s)",
-                    display_name,
-                    mgr,
-                    repo_id,
-                    description,
-                )
-
-    # 2. Route through ecosystem health checkers (each operates on the full list;
-    #    only enriches deps matching its ecosystem)
-    enriched = list(raw_deps)
+def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
+    """Run blocking manifest/tool work away from the server event loop."""
+    manifests: list[dict] = []
+    raw = parse_deps_for_repo(repo_path, manifests_out=manifests)
+    managers = {d['manager'] for d in raw} | {m['manager'] for m in manifests}
+    missing = []
+    for manager in sorted(managers):
+        for key, tool, description in DEP_TOOL_REQUIREMENTS.get(manager, []):
+            if not TOOLS.get(key) and not any(m['tool'] == tool for m in missing):
+                missing.append(dict(tool=tool, description=description))
+                logger.info('Missing %s (%s)', tool, description)
+    enriched = raw
     any_error = False
-    try:
-        enriched = check_python_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Python dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_node_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Node dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_go_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Go dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_rust_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Rust dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_ruby_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Ruby dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_php_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("PHP dep check failed for %s: %s", repo_id, exc)
-        any_error = True
+    for manager, checker in (
+        ('pip', check_python_deps), ('npm', check_node_deps),
+        ('gomod', check_go_deps), ('cargo', check_rust_deps),
+        ('bundler', check_ruby_deps), ('composer', check_php_deps),
+    ):
+        try:
+            enriched = checker(repo_path, enriched)
+        except Exception as exc:
+            any_error = True
+            note = tool_failure_note(f'{manager} checker', exc)
+            enriched = [mark_unchecked(dict(d), note) if d.get('manager') == manager else d
+                        for d in enriched]
+    enriched = finalize_dep_health(enriched)
+    any_error |= bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
+                                     for d in enriched)
+    return DepAnalysis(enriched, any_error, missing, manifests)
 
-    # Update dep_check_error in working_state.
+
+async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
+    """Analyze in a worker thread; persist rows and metadata together."""
+    analysis = await asyncio.to_thread(analyze_repo_deps, Path(repo_path))
+    enriched = analysis.enriched
     await db.execute(
-        "INSERT INTO working_state (repo_id, dep_check_error) VALUES (?, ?) "
-        "ON CONFLICT(repo_id) DO UPDATE SET dep_check_error = excluded.dep_check_error",
-        (repo_id, any_error),
+        "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
+        "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
+        "dep_manifests = excluded.dep_manifests",
+        (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(analysis.manifests)),
     )
 
     # 3. Upsert into dependencies table
@@ -1607,7 +1594,7 @@ def parse_composer_json(file_path: Path) -> list[dict]:
     return deps
 
 
-def parse_deps_for_repo(repo_path: Path) -> list[dict]:
+def parse_deps_for_repo(repo_path: Path, *, manifests_out: list[dict] | None = None) -> list[dict]:
     """Detect manifest files in repo_path (including subdirectories) and parse them.
 
     Returns a merged list of {name, version, manager} dicts.
@@ -1643,6 +1630,8 @@ def parse_deps_for_repo(repo_path: Path) -> list[dict]:
         except ValueError:
             rel_dir = str(manifest_dir)
         source = f"{rel_dir}/{filename}" if rel_dir != "." else filename
+        if manifests_out is not None:
+            manifests_out.append(dict(source_path=source, manager=entry['manager']))
         try:
             parsed = parser(file_path)
         except Exception as exc:
@@ -1659,6 +1648,96 @@ def parse_deps_for_repo(repo_path: Path) -> list[dict]:
 
 
 # ── Python dependency health (Packet 13) ──────────────────────────────────────
+
+def _validate_tool_result(proc, tool: str, allowed: tuple[int, ...]) -> None:
+    if proc.returncode not in allowed:
+        detail = (proc.stderr or '').strip()
+        raise ValueError(f'{tool} exited {proc.returncode}: {detail}')
+
+
+def _check_failed(deps: list[dict], tool: str, error, field: str) -> list[dict]:
+    reason = tool_failure_note(tool, error)
+    return [mark_unchecked(dict(d), reason, field) for d in deps]
+
+
+def add_check_note(dep: dict, reason: str) -> dict:
+    """Append distinct incomplete-coverage reasons without multiplying on finalize."""
+    existing = dep.get('check_note') or ''
+    if reason and f'; {reason}; ' not in f'; {existing}; ':
+        existing = f'{existing}; {reason}' if existing else reason
+    dep['check_note'] = existing or None
+    return dep
+
+
+def mark_unchecked(dep: dict, reason: str, field: str | None = None) -> dict:
+    for key in ((field,) if field else ('outdated_state', 'vuln_state')):
+        dep[key] = 'unchecked'
+    add_check_note(dep, reason)
+    dep['severity'] = derive_severity(dep)
+    return dep
+
+
+def tool_failure_note(tool: str, error) -> str:
+    detail = getattr(error, 'stderr', None) or str(error)
+    if isinstance(detail, bytes):
+        detail = detail.decode('utf-8', errors='replace')
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    note = f"{tool}: {(lines[-1] if lines else 'check failed')[:240]}"
+    logger.warning('%s', note)
+    return note
+
+
+def derive_severity(dep: dict) -> str:
+    if dep.get("advisory_id"):
+        return "vulnerable"
+    if (dep.get("outdated_state") in ("checked", "floating")
+            and dep.get("severity") in ("major", "outdated")):
+        return dep["severity"]
+    if "unchecked" in (
+        dep.get("outdated_state", "unchecked"),
+        dep.get("vuln_state", "unchecked"),
+    ):
+        return "unchecked"
+    return "ok"
+
+
+def _exact_pip_version(value: str | None) -> str | None:
+    from packaging.version import InvalidVersion, Version
+    if not value:
+        return None
+    try:
+        Version(value)
+    except InvalidVersion:
+        return None
+    return value
+
+
+def finalize_dep_health(deps: list[dict]) -> list[dict]:
+    result = []
+    now = datetime.now(timezone.utc).isoformat()
+    for dep in deps:
+        d = dict(dep)
+        d.setdefault('declared_spec', d.get('version'))
+        current = (_exact_pip_version(d.get('version')) if d.get('manager') == 'pip'
+                   else d.get('version') if d.get('manager') == 'gomod' else None)
+        d.setdefault('current_version', current)
+        if not d.get('wanted_version'):
+            d['wanted_version'] = d.get('current_version')
+        d.setdefault('latest_version', None)
+        d.setdefault('advisory_id', None)
+        d.setdefault('checked_at', now)
+        for field, valid in (('outdated_state', ('checked', 'floating', 'unchecked')),
+                             ('vuln_state', ('checked', 'unchecked'))):
+            missing_evidence = d.get(field) not in valid
+            if missing_evidence:
+                d[field] = 'unchecked'
+            if missing_evidence or (d[field] == 'unchecked' and not d.get('check_note')):
+                add_check_note(d, f'{field}: no evaluation evidence')
+        d.setdefault('check_note', None)
+        d['severity'] = derive_severity(d)
+        result.append(d)
+    return result
+
 
 def classify_severity(current: str, latest: str) -> str:
     """Compare two PEP 440 version strings and return a severity label.
@@ -1687,8 +1766,8 @@ def check_python_outdated(deps: list[dict]) -> list[dict]:
       - version is None
       - version contains range operators (>=, ~=, <, !=, >, ^)
 
-    On any network or parse error the dep is left with severity="ok" and
-    latest_version=None (fail-open: don't block the rest of the scan).
+    On network or parse error the outdated check is unchecked with a reason and
+    latest_version=None; remaining dependencies are still evaluated.
 
     Returns a new list of dicts (input dicts are copied, not mutated in-place).
     """
@@ -1721,11 +1800,13 @@ def check_python_outdated(deps: list[dict]) -> list[dict]:
                 data = json.loads(resp.read())
             latest_version = data["info"]["version"]
             severity = classify_severity(ver_str, latest_version)
+            d['outdated_state'] = 'checked'
         except Exception as exc:
-            logger.warning("PyPI lookup failed for %s: %s", name, exc)
+            mark_unchecked(d, tool_failure_note('PyPI lookup', exc), 'outdated_state')
 
         d["latest_version"] = latest_version
         d["severity"] = severity
+        d['severity'] = derive_severity(d) if d.get('outdated_state') == 'unchecked' else severity
         result.append(d)
 
     return result
@@ -1736,7 +1817,7 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If pip-audit is not installed (TOOLS["pip_audit"] is None), returns deps unchanged.
     If the repo has no requirements.txt (only pyproject.toml), logs a warning and skips.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
 
     Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = <first vuln ID>.
@@ -1760,10 +1841,12 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'pip-audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('dependencies'), list):
+            raise ValueError('invalid pip-audit result')
     except Exception as exc:
-        logger.warning("pip-audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'pip-audit', exc, 'vuln_state')
 
     # Build lookup: {package_name_lower: first_vuln_id}
     vuln_map: dict[str, str] = {}
@@ -1773,16 +1856,19 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             if vuln_list:
                 vuln_map[entry["name"].lower()] = vuln_list[0]["id"]
     except Exception as exc:
-        logger.warning("pip-audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'pip-audit', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         key = d.get("name", "").lower()
+        if any(normalize_dep_name('pip', e.get('name', '')) == normalize_dep_name('pip', key)
+               and isinstance(e.get('vulns'), list) for e in raw['dependencies']):
+            d['vuln_state'] = 'checked'
         if key in vuln_map:
             d["severity"] = "vulnerable"
             d["advisory_id"] = vuln_map[key]
+            d['vuln_state'] = 'checked'
         result.append(d)
     return result
 
@@ -1808,21 +1894,7 @@ def check_python_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     pip_deps = check_python_outdated(pip_deps)
     pip_deps = check_python_vulns(repo_path, pip_deps)
 
-    # Ensure all required fields are present (fill defaults for skipped/unpinned deps)
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in pip_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(pip_deps) + other_deps
 
 
 # ── Node dependency health (Packet 14) ────────────────────────────────────────
@@ -1849,24 +1921,26 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'npm outdated', (0, 1))
         # npm outdated exits with code 1 when outdated packages exist — this is normal.
         # Only treat as error if stdout is empty/unparseable and returncode is non-zero.
         if not proc.stdout.strip() and proc.returncode != 0:
             logger.warning("npm outdated returned no output for %s (rc=%d)", repo_path, proc.returncode)
-            return deps
+            return _check_failed(deps, 'npm outdated', ValueError('no tool output'), 'outdated_state')
         outdated_map = json.loads(proc.stdout)
+        if not isinstance(outdated_map, dict) or 'error' in outdated_map:
+            raise ValueError('invalid npm outdated result')
     except subprocess.CalledProcessError as exc:
-        logger.warning("npm outdated CalledProcessError for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
     except Exception as exc:
-        logger.warning("npm outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
+            d['outdated_state'] = 'checked'
             info = outdated_map[name]
             d["current_version"] = info.get("current")
             d["wanted_version"] = info.get("wanted")
@@ -1878,9 +1952,9 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             else:
                 d["severity"] = "outdated"
         else:
-            # Not in npm outdated output → up to date
-            d.setdefault("current_version", d.get("version"))
-            d.setdefault("wanted_version", d.get("version"))
+            # Absence is not evidence of a concrete installed version or evaluation.
+            d.setdefault("current_version", None)
+            d.setdefault("wanted_version", None)
             d.setdefault("latest_version", None)
             d["severity"] = "ok"
         d["checked_at"] = now
@@ -1912,14 +1986,15 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         )
         if not proc.stdout.strip():
             logger.warning("npm audit returned no output for %s (rc=%d)", repo_path, proc.returncode)
-            return deps
+            return _check_failed(deps, 'npm audit', ValueError('no tool output'), 'vuln_state')
+        _validate_tool_result(proc, 'npm audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('vulnerabilities'), dict):
+            raise ValueError('invalid npm audit result')
     except subprocess.CalledProcessError as exc:
-        logger.warning("npm audit CalledProcessError for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
     except Exception as exc:
-        logger.warning("npm audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
 
     # Build lookup: {package_name_lower: True} for vulnerable packages
     vuln_names: set[str] = set()
@@ -1927,8 +2002,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         for name in raw.get("vulnerabilities", {}).keys():
             vuln_names.add(name.lower())
     except Exception as exc:
-        logger.warning("npm audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -1937,6 +2011,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if name_lower in vuln_names:
             d["severity"] = "vulnerable"
             d["advisory_id"] = f"npm:{d.get('name', name_lower)}"
+            d['vuln_state'] = 'checked'
         result.append(d)
 
     return result
@@ -1963,21 +2038,7 @@ def check_node_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     npm_deps = check_node_outdated(repo_path, npm_deps)
     npm_deps = check_node_vulns(repo_path, npm_deps)
 
-    # Ensure all required fields are present
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in npm_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(npm_deps) + other_deps
 
 
 # ── Go dependency health (Packet 15) ──────────────────────────────────────────
@@ -2014,7 +2075,7 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     If go is not available (TOOLS["go"] is None), returns deps unchanged.
     Parses NDJSON output (one JSON object per line).
     Strips 'v' prefix from Go versions before calling classify_severity().
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     go = TOOLS.get("go")
     if not go:
@@ -2028,10 +2089,12 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'go list', (0,))
         modules = _parse_go_ndjson(proc.stdout)
+        if not all(isinstance(m, dict) for m in modules):
+            raise ValueError('invalid module result')
     except Exception as exc:
-        logger.warning("go list failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'go list', exc, 'outdated_state')
 
     # Build lookup: {module_path: {"version": str, "update": str|None}}
     mod_map: dict[str, dict] = {}
@@ -2047,6 +2110,7 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         d = dict(dep)
         name = d.get("name", "")
         if name in mod_map:
+            d['outdated_state'] = 'checked'
             info = mod_map[name]
             current = info["version"]
             update_ver = info["update"]
@@ -2082,10 +2146,12 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=300,
         )
+        _validate_tool_result(proc, 'govulncheck', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('Vulns'), list):
+            raise ValueError('invalid govulncheck result')
     except Exception as exc:
-        logger.warning("govulncheck failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
 
     # Build lookup: {module_path: osv_id}
     vuln_map: dict[str, str] = {}
@@ -2097,8 +2163,7 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                 if mod_path:
                     vuln_map[mod_path] = osv_id
     except Exception as exc:
-        logger.warning("govulncheck output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2106,6 +2171,7 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if d.get("name", "") in vuln_map:
             d["severity"] = "vulnerable"
             d["advisory_id"] = vuln_map[d["name"]]
+            d['vuln_state'] = 'checked'
         result.append(d)
     return result
 
@@ -2131,20 +2197,7 @@ def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     go_deps = check_go_outdated(repo_path, go_deps)
     go_deps = check_go_vulns(repo_path, go_deps)
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in go_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(go_deps) + other_deps
 
 
 # ── Rust dependency health (Packet 15) ────────────────────────────────────────
@@ -2154,7 +2207,7 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run cargo outdated --format json and enrich cargo deps with version/severity fields.
 
     If cargo-outdated is not available (TOOLS["cargo_outdated"] is None), returns deps unchanged.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     cargo_outdated = TOOLS.get("cargo_outdated")
     if not cargo_outdated:
@@ -2168,10 +2221,12 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'cargo outdated', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('dependencies'), list):
+            raise ValueError('invalid cargo outdated result')
     except Exception as exc:
-        logger.warning("cargo outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
 
     # Build lookup: {name: {"project": current, "latest": latest}}
     outdated_map: dict[str, dict] = {}
@@ -2184,14 +2239,14 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
                     "latest": entry.get("latest", ""),
                 }
     except Exception as exc:
-        logger.warning("cargo outdated output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
+            d['outdated_state'] = 'checked'
             info = outdated_map[name]
             current = info["project"]
             latest = info["latest"]
@@ -2225,10 +2280,12 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'cargo audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('vulnerabilities'), dict):
+            raise ValueError('invalid cargo audit result')
     except Exception as exc:
-        logger.warning("cargo audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
     # Build lookup: {package_name: rustsec_id}
     vuln_map: dict[str, str] = {}
@@ -2239,8 +2296,7 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             if pkg_name and advisory_id:
                 vuln_map[pkg_name] = advisory_id
     except Exception as exc:
-        logger.warning("cargo audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2248,6 +2304,7 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if d.get("name", "") in vuln_map:
             d["severity"] = "vulnerable"
             d["advisory_id"] = vuln_map[d["name"]]
+            d['vuln_state'] = 'checked'
         result.append(d)
     return result
 
@@ -2273,20 +2330,7 @@ def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     cargo_deps = check_rust_outdated(repo_path, cargo_deps)
     cargo_deps = check_rust_vulns(repo_path, cargo_deps)
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in cargo_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(cargo_deps) + other_deps
 
 
 # ── Ruby dependency health (Packet 15) ────────────────────────────────────────
@@ -2297,7 +2341,7 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If bundle is not available (TOOLS["bundle"] is None), returns deps unchanged.
     Parses line-by-line output: 'gem-name (newest X.Y.Z, installed A.B.C, ...)'.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     bundle = TOOLS.get("bundle")
     if not bundle:
@@ -2311,10 +2355,12 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'bundle outdated', (0, 1))
         stdout = proc.stdout
+        if stdout.strip() and not any(' (newest ' in line for line in stdout.splitlines()):
+            raise ValueError('unrecognized bundle outdated output')
     except Exception as exc:
-        logger.warning("bundle outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundle outdated', exc, 'outdated_state')
 
     # Parse line-by-line: gem-name (newest X.Y.Z, installed A.B.C[, requested ~> A.B])
     _BUNDLE_LINE_RE = re.compile(
@@ -2334,6 +2380,7 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
+            d['outdated_state'] = 'checked'
             info = outdated_map[name]
             current = info["installed"]
             latest = info["newest"]
@@ -2364,10 +2411,12 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'bundler-audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('results'), list):
+            raise ValueError('invalid bundler-audit result')
     except Exception as exc:
-        logger.warning("bundler-audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
     # Build lookup: {gem_name_lower: advisory_id}
     vuln_map: dict[str, str] = {}
@@ -2378,8 +2427,7 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             if gem_name and advisory_id:
                 vuln_map[gem_name.lower()] = advisory_id
     except Exception as exc:
-        logger.warning("bundler-audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2388,6 +2436,7 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if key in vuln_map:
             d["severity"] = "vulnerable"
             d["advisory_id"] = vuln_map[key]
+            d['vuln_state'] = 'checked'
         result.append(d)
     return result
 
@@ -2413,20 +2462,7 @@ def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     ruby_deps = check_ruby_outdated(repo_path, ruby_deps)
     ruby_deps = check_ruby_vulns(repo_path, ruby_deps)
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in ruby_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(ruby_deps) + other_deps
 
 
 # ── PHP dependency health (Packet 15) ─────────────────────────────────────────
@@ -2437,7 +2473,7 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If composer is not available (TOOLS["composer"] is None), returns deps unchanged.
     Skips deps with latest-status == "up-to-date".
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     composer = TOOLS.get("composer")
     if not composer:
@@ -2451,10 +2487,12 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'composer outdated', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('installed'), list):
+            raise ValueError('invalid composer outdated result')
     except Exception as exc:
-        logger.warning("composer outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
 
     # Build lookup: {name: {"version": current, "latest": latest}}
     outdated_map: dict[str, dict] = {}
@@ -2470,14 +2508,14 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
                     "latest": entry.get("latest", ""),
                 }
     except Exception as exc:
-        logger.warning("composer outdated output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
+            d['outdated_state'] = 'checked'
             info = outdated_map[name]
             current = info["version"]
             latest = info["latest"]
@@ -2512,10 +2550,12 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'composer audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get('advisories'), dict):
+            raise ValueError('invalid composer audit result')
     except Exception as exc:
-        logger.warning("composer audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
     # Build lookup: {package_name: advisory_id}
     # composer audit JSON: {"advisories": {"pkg/name": [{"advisoryId": "...", ...}]}}
@@ -2527,8 +2567,7 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                 if advisory_id:
                     vuln_map[pkg_name.lower()] = advisory_id
     except Exception as exc:
-        logger.warning("composer audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2537,6 +2576,7 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if key in vuln_map:
             d["severity"] = "vulnerable"
             d["advisory_id"] = vuln_map[key]
+            d['vuln_state'] = 'checked'
         result.append(d)
     return result
 
@@ -2562,20 +2602,7 @@ def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     php_deps = check_php_outdated(repo_path, php_deps)
     php_deps = check_php_vulns(repo_path, php_deps)
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in php_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(php_deps) + other_deps
 
 
 async def get_default_branch(repo_path: Path) -> str:
@@ -6088,7 +6115,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
     ws_cursor = await db.execute(
         "SELECT repo_id, has_uncommitted, modified_count, untracked_count, "
         "staged_count, current_branch, last_commit_hash, last_commit_message, "
-        "last_commit_date, checked_at, dep_check_error "
+        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests "
         "FROM working_state WHERE repo_id = ?",
         (repo_id,),
     )
@@ -6107,7 +6134,8 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
             "last_commit_date": ws_row[8],
             "checked_at": ws_row[9],
             "dep_check_error": bool(ws_row[10]) if ws_row[10] is not None else False,
-            "missing_dep_tools": [],
+            "missing_dep_tools": json.loads(ws_row[11] or "[]"),
+            "dep_manifests": json.loads(ws_row[12] or "[]"),
         }
 
     return {
@@ -6489,18 +6517,18 @@ async def get_fleet(db=Depends(get_db)):
         ids = [r["id"] for r in results]
         placeholders = ",".join("?" * len(ids))
         ws_cursor = await db.execute(
-            f"SELECT repo_id, scan_error, dep_check_error "
+            f"SELECT repo_id, scan_error, dep_check_error, missing_dep_tools "
             f"FROM working_state WHERE repo_id IN ({placeholders})",
             ids,
         )
         ws_map = {}
         for row in await ws_cursor.fetchall():
-            ws_map[row[0]] = (row[1], bool(row[2]))
+            ws_map[row[0]] = (row[1], bool(row[2]), json.loads(row[3] or "[]"))
         for repo in results:
-            scan_err, dep_err = ws_map.get(repo["id"], (None, False))
+            scan_err, dep_err, missing_tools = ws_map.get(repo["id"], (None, False, []))
             repo["scan_error"] = scan_err
             repo["dep_check_error"] = dep_err
-            repo["missing_dep_tools"] = []
+            repo["missing_dep_tools"] = missing_tools
 
     # Augment with branch counts from branches table (packet 08) and placeholders
     for repo in results:

@@ -90,6 +90,9 @@ One latest quick-scan snapshot per repository:
 - latest commit hash, message, and date
 - check timestamp
 - `scan_error` and `dep_check_error`
+- JSON-text `missing_dep_tools` (tool/description objects) and `dep_manifests` (manifest inventory), returned as parsed arrays by repository detail; fleet returns missing tools
+
+Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in the same transaction, including empty results.
 
 ### `daily_stats`
 
@@ -193,7 +196,11 @@ Parsing is intentionally lightweight:
 - Bundler recognizes conventional `gem` declarations.
 - Composer reads require and require-dev while excluding PHP/platform extensions.
 
-Outdated and vulnerability checks fail open so one external tool or network error does not discard other parsed dependencies. The scanner records a repository-level incomplete-analysis flag. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, and manifest inventory. A checker crash invalidates coverage only for its manager; other managers continue.
+
+Coverage is independent: `outdated_state` is `checked`, `floating`, or `unchecked`; `vuln_state` is `checked` or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Advisory evidence has highest severity precedence, followed by proven major/outdated results; remaining incomplete coverage yields `unchecked`, and complete clean coverage yields `ok`. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
+
+`parse_deps_for_repo` accepts optional keyword-only `manifests_out`, an output list populated with `source_path` and `manager` for each selected manifest, even an empty one. This is the basic inventory interface; parser outcome diagnostics can extend its entries. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
 
 ## HTTP API
 

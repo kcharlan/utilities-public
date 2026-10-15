@@ -69,7 +69,7 @@ Progress is streamed to the browser with server-sent events. Only one fleet scan
 Each repository has four views:
 
 - **Activity** — commit, insertion, and deletion history for 30 days, 90 days, 180 days, one year, or all stored history.
-- **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Results can be rescanned on demand or exported as Markdown or JSON.
+- **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Independent outdated and vulnerability coverage distinguish checked results from unchecked declarations; incomplete checks retain a reason. Missing dependency tools and discovered manifests are stored with the repository detail, including scans with no dependency rows. Results can be rescanned on demand or exported as Markdown or JSON.
 - **Branches** — local branches with default/stale status and live commits-ahead and diff statistics against the default branch.
 - **Commits** — paginated live Git history for all refs or a selected branch.
 

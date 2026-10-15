@@ -289,13 +289,13 @@ def test_check_node_vulns_overrides_outdated(tmp_path):
 
 
 def test_check_node_vulns_subprocess_fails(tmp_path):
-    """Test 14: subprocess raises CalledProcessError — no crash, deps returned unchanged."""
+    """Test 14: subprocess raises CalledProcessError — no crash, coverage marked unchecked."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
     try:
         dep = {**_make_npm_dep("react"), "severity": "ok", "advisory_id": None}
         with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "npm")):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -308,7 +308,7 @@ def test_check_node_vulns_unexpected_json(tmp_path):
         proc = _mock_proc(json.dumps({"metadata": {}, "auditReportVersion": 2}), returncode=0)
         with patch("subprocess.run", return_value=proc):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -322,7 +322,7 @@ def test_check_node_vulns_no_lockfile_fallback(tmp_path):
         proc = _mock_proc("", returncode=1)
         with patch("subprocess.run", return_value=proc):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -452,3 +452,19 @@ def test_check_node_deps_non_npm_deps_unchanged(tmp_path):
         assert "checked_at" in by_name["react"]
     finally:
         gd.TOOLS["npm"] = None
+
+
+def test_unlisted_npm_declaration_is_not_a_concrete_current(tmp_path):
+    with patch.dict(gd.TOOLS, npm='synthetic-tool'), patch('subprocess.run', return_value=_mock_proc('{}')):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic', '^1.0')])[0]
+    assert row['current_version'] is None
+    assert row['outdated_state'] == 'unchecked'
+
+
+def test_tool_failure_logging_is_bounded(tmp_path, caplog):
+    proc = _mock_proc('{}', 97)
+    proc.stderr = 'synthetic ignored first line\n' + 'x' * 400
+    with patch.dict(gd.TOOLS, npm='synthetic-tool'), patch('subprocess.run', return_value=proc):
+        gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic')])
+    assert 'synthetic ignored first line' not in caplog.text
+    assert 'x' * 241 not in caplog.text

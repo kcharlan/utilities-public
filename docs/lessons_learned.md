@@ -111,3 +111,15 @@ validate the remaining header, and reparsing a safe JSON prefix after truncation
 loses long prompts. Consume an entire recognized container before publishing
 any of it. Preserve live sanitation provenance outside serialized records, so
 admission can distinguish a fully inspected prefix from untrusted restored text.
+
+## 2026-10-15: Separate dependency findings from check coverage
+
+An unchanged declaration after a missing or failed tool is not a clean health
+result. Track outdated and vulnerability evidence separately, retain bounded
+failure reasons, and derive display severity after enrichment. Preserve proven
+findings when the other check is incomplete. Do not promote a declared version
+constraint to an installed version. Persist missing tools and manifest inventory
+even when parsing yields no rows, and keep quick scans from overwriting them.
+Run blocking network and package-manager checks in a worker thread so requests
+and scan progress remain responsive. Test that responsiveness with a worker
+blocked on an event released by the server event loop.

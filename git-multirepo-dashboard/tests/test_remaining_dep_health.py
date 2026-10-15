@@ -118,24 +118,24 @@ def test_check_go_outdated_major_update(tmp_path):
 
 # Test 5
 def test_check_go_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["go"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     with patch("subprocess.run", side_effect=Exception("timeout")):
         result = gd.check_go_outdated(tmp_path, [dep])
     assert result[0]["name"] == "github.com/gin-gonic/gin"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 6
 def test_check_go_outdated_invalid_output(tmp_path):
-    """Non-JSON stdout → no crash, deps returned unchanged."""
+    """Non-JSON stdout → no crash, coverage marked unchecked."""
     gd.TOOLS["go"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     with patch("subprocess.run", return_value=_mock_proc("not json at all")):
         result = gd.check_go_outdated(tmp_path, [dep])
     assert result[0]["name"] == "github.com/gin-gonic/gin"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 7
@@ -176,13 +176,13 @@ def test_check_go_vulns_vulnerability_found(tmp_path):
 
 # Test 9
 def test_check_go_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["govulncheck"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_go_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 10
@@ -287,13 +287,13 @@ def test_check_rust_outdated_major_update(tmp_path):
 
 # Test 15
 def test_check_rust_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["cargo_outdated"] = FAKE_TOOL_PATH
     dep = _make_dep("serde", "1.0.190", "cargo")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_rust_outdated(tmp_path, [dep])
     assert result[0]["name"] == "serde"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 16
@@ -335,13 +335,13 @@ def test_check_rust_vulns_vulnerability_found(tmp_path):
 
 # Test 18
 def test_check_rust_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["cargo_audit"] = FAKE_TOOL_PATH
     dep = _make_dep("serde", "1.0.190", "cargo")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_rust_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 19
@@ -432,13 +432,13 @@ def test_check_ruby_outdated_major_update(tmp_path):
 
 # Test 24
 def test_check_ruby_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["bundle"] = FAKE_TOOL_PATH
     dep = _make_dep("rails", "7.0.8", "bundler")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_ruby_outdated(tmp_path, [dep])
     assert result[0]["name"] == "rails"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 25
@@ -483,13 +483,13 @@ def test_check_ruby_vulns_vulnerability_found(tmp_path):
 
 # Test 27
 def test_check_ruby_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["bundler_audit"] = FAKE_TOOL_PATH
     dep = _make_dep("rails", "7.0.8", "bundler")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_ruby_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 28
@@ -595,13 +595,13 @@ def test_check_php_outdated_major_update(tmp_path):
 
 # Test 33
 def test_check_php_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["composer"] = FAKE_TOOL_PATH
     dep = _make_dep("laravel/framework", "10.0.0", "composer")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_php_outdated(tmp_path, [dep])
     assert result[0]["name"] == "laravel/framework"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 34
@@ -633,13 +633,13 @@ def test_check_php_vulns_vulnerability_found(tmp_path):
 
 # Test 35
 def test_check_php_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["composer"] = FAKE_TOOL_PATH
     dep = _make_dep("laravel/framework", "10.0.0", "composer")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_php_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 36
@@ -862,3 +862,29 @@ def test_vuln_overrides_outdated(tmp_path, ecosystem, manager, outdated_fn, vuln
         )
     finally:
         gd.TOOLS[tool_key] = old_val
+
+
+# One contract table drives every subprocess check's failure coverage.
+TOOL_CHECK_CONTRACTS = [
+    ('python', 'pip', 'vulns', 'pip_audit'),
+    ('node', 'npm', 'outdated', 'npm'), ('node', 'npm', 'vulns', 'npm'),
+    ('go', 'gomod', 'outdated', 'go'), ('go', 'gomod', 'vulns', 'govulncheck'),
+    ('rust', 'cargo', 'outdated', 'cargo_outdated'), ('rust', 'cargo', 'vulns', 'cargo_audit'),
+    ('ruby', 'bundler', 'outdated', 'bundle'), ('ruby', 'bundler', 'vulns', 'bundler_audit'),
+    ('php', 'composer', 'outdated', 'composer'), ('php', 'composer', 'vulns', 'composer'),
+]
+
+
+@pytest.mark.parametrize('language,manager,kind,tool', TOOL_CHECK_CONTRACTS)
+@pytest.mark.parametrize('stdout,returncode', [('{}', 97), ('[]', 0)])
+def test_tool_failure_never_establishes_coverage(tmp_path, monkeypatch, language, manager, kind, tool, stdout, returncode):
+    (tmp_path / 'requirements.txt').write_text('synthetic==1.0\n')
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    dep = dict(name='synthetic', manager=manager, version='1.0')
+    with patch('subprocess.run', return_value=_mock_proc(stdout, returncode)):
+        result = getattr(gd, f'check_{language}_{kind}')(tmp_path, [dep])
+    row = gd.finalize_dep_health(result)[0]
+    field = 'vuln_state' if kind == 'vulns' else 'outdated_state'
+    assert row[field] == 'unchecked'
+    assert f'{field}: no evaluation evidence' not in row['check_note']
+    assert row['severity'] == 'unchecked'

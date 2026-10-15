@@ -48,6 +48,8 @@ def _make_dep(name: str, manager: str = "pip", severity: str = "ok",
         "wanted_version": current,
         "latest_version": latest,
         "severity": severity,
+        "outdated_state": "checked",
+        "vuln_state": "checked",
         "advisory_id": advisory_id,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -799,7 +801,7 @@ def test_scan_removes_only_stale_declarations(tmp_path, monkeypatch):
                 declared_spec='==1.0.0', outdated_state='checked',
                 vuln_state='unchecked', check_note='synthetic coverage note')
            for source in ('a/requirements.txt', 'b/requirements.txt')]
-    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path: raw)
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kwargs: raw)
     for checker in ('python', 'node', 'go', 'rust', 'ruby', 'php'):
         monkeypatch.setattr(git_dashboard, f'check_{checker}_deps', lambda path, deps: deps)
 
@@ -820,3 +822,94 @@ def test_scan_removes_only_stale_declarations(tmp_path, monkeypatch):
     run(scan())
     with sqlite3.connect(db_path) as conn:
         assert conn.execute('SELECT source_path, current_version FROM dependencies').fetchall() == [('b/requirements.txt', '2.0')]
+
+
+@pytest.mark.parametrize('manager', git_dashboard.DEP_TOOL_REQUIREMENTS)
+def test_missing_tool_marks_served_state_unchecked(test_app, tmp_path, monkeypatch, manager):
+    client, db_path = test_app
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {})
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kwargs:
+                        [dict(name='synthetic', manager=manager, version='1.0')])
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    with patch('urllib.request.urlopen', side_effect=OSError('synthetic offline')):
+        response = client.post('/api/repos/synthetic/scan/deps')
+    assert response.status_code == 200
+    row = response.json()[0]['packages'][0]
+    assert row['severity'] == 'unchecked'
+    assert row['check_note']
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['dep_check_error'] is True
+    assert ws['missing_dep_tools']
+
+
+def test_crashed_checker_invalidates_its_manager_only(tmp_path, monkeypatch):
+    rows = [dict(_make_dep('synthetic', manager=m), outdated_state='checked', vuln_state='checked')
+            for m in ('pip', 'npm')]
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kw: rows)
+    monkeypatch.setattr(git_dashboard, 'TOOLS', dict(pip_audit='synthetic', npm='synthetic'))
+    monkeypatch.setattr(git_dashboard, 'check_python_deps', lambda path, deps: deps)
+    monkeypatch.setattr(git_dashboard, 'check_node_deps', lambda *args: (_ for _ in ()).throw(ValueError('synthetic crash')))
+    result = git_dashboard.analyze_repo_deps(tmp_path)
+    by_manager = {d['manager']: d for d in result.enriched}
+    assert result.any_error
+    assert by_manager['pip']['severity'] == 'ok'
+    assert by_manager['npm']['severity'] == 'unchecked'
+    assert 'synthetic crash' in by_manager['npm']['check_note']
+
+
+@pytest.mark.parametrize('with_rows', [False, True])
+def test_scan_persists_metadata_without_rows(tmp_path, monkeypatch, with_rows):
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    metadata = [dict(tool='synthetic-tool', description='Synthetic check')]
+    manifests = [dict(source_path='package.json', manager='npm')]
+    rows = [dict(_make_dep('synthetic'), outdated_state='checked', vuln_state='checked')] if with_rows else []
+    analysis = git_dashboard.DepAnalysis(rows, True, metadata, manifests)
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path: analysis)
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+    run(scan())
+    with sqlite3.connect(db_path) as db:
+        row = db.execute('SELECT dep_check_error, missing_dep_tools, dep_manifests FROM working_state').fetchone()
+    import json
+    assert row[0] == 1
+    assert json.loads(row[1]) == metadata
+    assert json.loads(row[2]) == manifests
+
+
+def test_dep_scan_allows_event_loop_progress(tmp_path, monkeypatch):
+    import threading
+    started, release = threading.Event(), threading.Event()
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    def analyze(path):
+        started.set()
+        assert release.wait(2), 'event loop did not run while analyzer blocked'
+        return git_dashboard.DepAnalysis([], False, [], [])
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', analyze)
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            task = asyncio.create_task(git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path)))
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(.01)
+            assert started.is_set()
+            release.set()
+            await task
+    run(scan())
+
+
+def test_scan_persists_missing_tools(test_app, tmp_path, monkeypatch):
+    client, db_path = test_app
+    (tmp_path / 'package.json').write_text('{"dependencies": {}}')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {})
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    assert client.post('/api/repos/synthetic/scan/deps').json() == []
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['missing_dep_tools'] == [dict(tool='npm', description='Node.js dependency checks')]
+    assert ws['dep_manifests'] == [dict(source_path='package.json', manager='npm')]
+    assert ws['dep_check_error'] is True

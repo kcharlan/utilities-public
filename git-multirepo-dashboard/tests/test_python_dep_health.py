@@ -101,7 +101,7 @@ def test_check_python_outdated_network_error():
         result = gd.check_python_outdated([dep])
     r = result[0]
     assert r.get("latest_version") is None
-    assert r.get("severity", "ok") == "ok"
+    assert r["severity"] == gd.derive_severity(r) == "unchecked"
 
 
 def test_check_python_outdated_invalid_json():
@@ -114,7 +114,7 @@ def test_check_python_outdated_invalid_json():
         result = gd.check_python_outdated([dep])
     r = result[0]
     assert r.get("latest_version") is None
-    assert r.get("severity", "ok") == "ok"
+    assert r["severity"] == gd.derive_severity(r) == "unchecked"
 
 
 def test_check_python_outdated_multiple_deps_mixed():
@@ -212,7 +212,7 @@ def test_check_python_vulns_subprocess_fails(tmp_path):
         dep = {"name": "flask", "version": "2.0.0", "manager": "pip", "severity": "ok"}
         with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "pip-audit")):
             result = gd.check_python_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["pip_audit"] = None
 
@@ -230,7 +230,7 @@ def test_check_python_vulns_unexpected_json(tmp_path):
         dep = {"name": "flask", "version": "2.0.0", "manager": "pip", "severity": "ok"}
         with patch("subprocess.run", return_value=mock_result):
             result = gd.check_python_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["pip_audit"] = None
 
@@ -311,7 +311,7 @@ def test_check_python_deps_full_pipeline(tmp_path):
         flask_dep = next(d for d in result if d["name"] == "flask")
         assert requests_dep["severity"] == "vulnerable"
         assert requests_dep["advisory_id"] == "CVE-2024-0001"
-        assert flask_dep["severity"] == "ok"
+        assert flask_dep["severity"] == gd.derive_severity(flask_dep) == "unchecked"
     finally:
         gd.TOOLS["pip_audit"] = None
 
@@ -365,3 +365,52 @@ def test_check_python_deps_range_version_skipped(tmp_path):
     with patch("urllib.request.urlopen") as mock_url:
         result = gd.check_python_deps(tmp_path, [dep])
     mock_url.assert_not_called()
+
+
+def test_derive_severity_coverage_precedence():
+    for outdated in ('checked', 'floating', 'unchecked'):
+        for vuln in ('checked', 'unchecked'):
+            row = dict(outdated_state=outdated, vuln_state=vuln, severity='major')
+            assert gd.derive_severity(dict(row, advisory_id='SYNTHETIC-1')) == 'vulnerable'
+            assert gd.derive_severity(row) == ('major' if outdated != 'unchecked' else 'unchecked')
+            row['severity'] = 'ok'
+            assert gd.derive_severity(row) == ('unchecked' if 'unchecked' in (outdated, vuln) else 'ok')
+
+
+def test_finalize_health_is_idempotent():
+    rows = [dict(name='synthetic', manager='pip', version='1.0'),
+            dict(name='floating', manager='pip', version=None, current_version='direct reference',
+                 outdated_state='floating', vuln_state='checked')]
+    first = gd.finalize_dep_health(rows)
+    assert gd.finalize_dep_health(first) == first
+    assert first[0]['current_version'] == '1.0'
+    assert first[0]['check_note']
+    assert first[1]['current_version'] == 'direct reference'
+    assert first[1]['outdated_state'] == 'floating'
+
+
+def test_finalize_does_not_treat_poetry_constraint_as_current():
+    row = gd.finalize_dep_health([dict(name='synthetic', manager='pip', version='^1.0')])[0]
+    assert row['current_version'] is None
+    assert row['wanted_version'] is None
+    assert row['declared_spec'] == '^1.0'
+    assert row['severity'] == 'unchecked'
+
+
+def test_lookup_failure_has_unchecked_reason():
+    with patch('urllib.request.urlopen', side_effect=OSError('synthetic lookup failed')):
+        row = gd.check_python_deps(__import__('pathlib').Path('/synthetic'),
+                                   [dict(name='synthetic', manager='pip', version='1.0')])[0]
+    assert row['outdated_state'] == 'unchecked'
+    assert 'synthetic lookup failed' in row['check_note']
+    assert row['severity'] == 'unchecked'
+
+
+def test_check_note_accumulates_distinct_bounded_failures():
+    note = gd.tool_failure_note('synthetic-tool', ValueError('ignored first line\n\n' + 'x' * 400))
+    assert 'ignored first line' not in note
+    assert len(note) <= len('synthetic-tool: ') + 240
+    row = {}
+    for reason in ('synthetic; detail', 'another reason', 'synthetic; detail'):
+        gd.add_check_note(row, reason)
+    assert row['check_note'] == 'synthetic; detail; another reason'
