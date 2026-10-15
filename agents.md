@@ -28,6 +28,12 @@ When changing existing code, maintain and extend its existing frameworks:
 - Don't leave TODOs without user approval.
 - Before finalizing, check you haven't removed or disabled existing logging or tests, bypassed existing validation or error handling, or broken existing functionality in adjacent code.
 
+## Release Versions
+- Every release of a versioned project must include a version bump in the same change as the released code. Publishing or deploying changed code with the previous release's version is not allowed.
+- Follow the project's versioning scheme and keep maintained version declarations synchronized. Ask Kevin how to increment the version if the appropriate increment is unclear; the bump is still required before release.
+- Before handoff, verify the source version, deployed version, and runtime or browser-displayed version agree wherever those interfaces expose a version. Include the released version in the completion report.
+- Browser extension releases must bump `manifest.json`'s `version`; verify the deployed manifest and the browser's extension version after loading or reloading it.
+
 ## Testing Scope
 This applies the global test rule (full suite, every category) to a monorepo:
 - For changes affecting executable behavior, build logic, or other areas the tests exercise, run the complete documented suite for every affected independently maintained project. Determine project boundaries from the project's README, runtime, dependencies, and test configuration, not directory depth alone.
