@@ -853,7 +853,7 @@
     };
     const lifecycle = row.archived ? "archived" : "live";
     const isSubagent = !row.kind || row.kind === "orphan";
-    const supports = action => action[lifecycle] && (!isSubagent || action.subagent);
+    const supports = action => row.provider !== "claude" && action[lifecycle] && (!isSubagent || action.subagent);
     header.append(el("div", {class: "reader-buttons"},
       ...(supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),

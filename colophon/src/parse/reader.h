@@ -18,6 +18,7 @@ typedef struct {
 } ReaderRecord;
 typedef struct {
     void *context;
+    bool (*known_type)(Str kind); /* NULL retains the Codex classifier. */
     Err (*chunk)(void *context); /* Before each plain read or zstd decode step. */
     Err (*raw_line)(void *context, const ReaderRawLine *line);
     Err (*record)(void *context, const ReaderRecord *record);

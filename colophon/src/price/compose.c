@@ -555,6 +555,11 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
     Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
+    if (s->provider == PROVIDER_CLAUDE) {
+      error = compose_aggregate_session(c, s);
+      if (error.code) goto done;
+      continue;
+    }
     FileMirrors *files = NULL;
     Omap *thread_priority = NULL;
     error = alloc(&c->usage_arena, s->record_count, sizeof *files, _Alignof(FileMirrors), (void **)&files);

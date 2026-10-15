@@ -1,7 +1,15 @@
 # Standalone validation
 
-Run `make test` for all 187 C units, fresh synthetic CLI and integration
-checks, two Chromium browser cases, and local
+Claude cases cover filename identity/collisions, prompt and tool mapping,
+root selection and symlink exclusions, read-only usable-history presence,
+mixed/disabled providers, and preservation of unopened Codex cache bytes,
+modes and recovery names during ordinary and rebuild runs. The reader
+browser case prevents Claude rows from offering Codex actions. Wrappers
+strip `CLAUDE_CONFIG_DIR`, deny real Claude-owned config/desktop/swap reads
+and writes, and mutation-check each explicit deny under synthetic scratch.
+
+Run `make test` for all retained C units, fresh synthetic CLI and integration
+checks, Chromium browser cases, and local
 asset/stable-sort guards (ten asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.

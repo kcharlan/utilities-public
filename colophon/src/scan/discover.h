@@ -1,5 +1,9 @@
 #ifndef CP_DISCOVER_H
 #define CP_DISCOVER_H
+#include <stdbool.h>
+/* Shared native hidden/package filtering; traversal must still use lstat. */
+bool discovery_hidden(const char *path);
+bool discovery_package(const char *path);
 #include "util/intern.h"
 #include <sys/types.h>
 typedef struct {

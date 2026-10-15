@@ -4,6 +4,22 @@
 #include <stdlib.h>
 #include <string.h>
 static void text(JsonWriter *w,const char *s){jsonw_string(w,(Str){s,(uint32_t)strlen(s)});}
+static void sources(JsonWriter *w,const PayloadInputs *in){
+    const ClaudeScan *c=in->claude;jsonw_raw(w,",\"sources\":{\"codex\":{\"status\":");text(w,in->codex_present?"ok":"absent");jsonw_raw(w,",\"home\":");text(w,in->source_codex_home?in->source_codex_home:in->codex_home);
+    jsonw_raw(w,",\"logs\":");jsonw_i64(w,in->scan?(int64_t)(in->scan->count+in->scan->unreadable_count):0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,in->scan?(int64_t)in->scan->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i64(w,in->scan?(int64_t)in->scan->cached:0);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"}},\"claude\":{\"status\":");text(w,c&&c->disabled?"disabled":c&&c->present?"ok":"absent");jsonw_raw(w,",\"roots\":[");
+    if(c)for(size_t i=0;i<c->root_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,c->roots[i].path);}jsonw_raw(w,"],\"history_path\":");if(c)jsonw_string(w,c->history_path);else jsonw_raw(w,"null");jsonw_raw(w,",\"logs\":");jsonw_i64(w,c?(int64_t)c->logs:0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,c?(int64_t)c->parsed:0);jsonw_raw(w,",\"cached\":0,\"retained\":0,\"history_only\":0,\"token_data_from_ms\":null,\"costs\":{\"available\":true,\"reason\":null}}}");
+}
+static uint64_t lines(const ClaudeRecord *r,int kind){return kind==0?r->reader.malformed:kind==1?r->reader.partial_final_line:r->reader.recovered;}
+static void line_diagnostic(JsonWriter *w,const FileDiagnostic *d,const ClaudeScan *c,int kind){
+    __int128 total=d?d->total:0;if(c&&!c->disabled){if(!kind)total+=c->history_malformed;for(size_t i=0;i<c->count;i++)total+=lines(&c->records[i],kind);}jsonw_raw(w,"{\"total\":");jsonw_i128(w,total);jsonw_raw(w,",\"files\":[");bool first=true;
+    if(d)for(size_t i=0;i<d->count;i++){if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->files[i].path);jsonw_raw(w,",\"count\":");jsonw_i64(w,(int64_t)d->files[i].count);jsonw_raw(w,"}");}
+    if(c&&!c->disabled)for(size_t i=0;i<=c->count;i++){uint64_t n=i==c->count?(!kind?c->history_malformed:0):lines(&c->records[i],kind);if(!n)continue;if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,i==c->count?c->history_path:c->records[i].key.path);jsonw_raw(w,",\"count\":");jsonw_i64(w,(int64_t)n);jsonw_raw(w,"}");}jsonw_raw(w,"]}");
+}
+static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
+    jsonw_raw(w,",\"claude_session_id_collisions\":");CorpusStrings empty={0};payload_corpus_strings(w,c?&c->collisions:&empty);
+    jsonw_raw(w,",\"claude_unknown_record_types\":{");Omap seen={0};bool first=true;
+    if(c)for(size_t i=0;i<c->count;i++)for(OmapEntry *p=c->records[i].reader.unknown_types.first;p;p=p->next){if(omap_get(&seen,p->key))continue;Err e=omap_put(&seen,p->key,(void *)1);if(e.code){w->error=e;break;}__int128 n=0;for(size_t j=0;j<c->count;j++){uint64_t *v=omap_get(&c->records[j].reader.unknown_types,p->key);if(v)n+=*v;}if(!first)jsonw_raw(w,",");first=false;jsonw_string(w,p->key);jsonw_raw(w,":");jsonw_i128(w,n);}omap_destroy(&seen);jsonw_raw(w,"}");
+}
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
@@ -16,9 +32,9 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,",\"sessions\":");jsonw_i64(w,(int64_t)sessions);jsonw_raw(w,",\"subagents\":");jsonw_i64(w,(int64_t)agents);jsonw_raw(w,",\"orphans\":");jsonw_i64(w,in->corpus?(int64_t)in->corpus->orphaned_subagents.count:0);jsonw_raw(w,"},\"catalog\":{\"status\":");
     text(w,in->catalog?in->catalog->status:"unavailable");jsonw_raw(w,",\"fetched_at_ms\":");if(in->catalog&&in->catalog->has_fetched_at)jsonw_i64(w,in->catalog->fetched_at_ms);else jsonw_raw(w,"null");jsonw_raw(w,",\"checked_at_ms\":");if(in->catalog&&in->catalog->has_checked_at)jsonw_i64(w,in->catalog->checked_at_ms);else jsonw_raw(w,"null");jsonw_raw(w,",\"source_host\":");
     if(in->source_host)text(w,in->source_host);else jsonw_raw(w,"null");
-    jsonw_raw(w,"},\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"},\"live_quiet_ms\":7200000,"
+    jsonw_raw(w,"}");sources(w,in);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"},\"live_quiet_ms\":7200000,"
         "\"links\":{\"open_in_codex\":{\"live\":true,\"archived\":false,\"subagent\":true},"
-        "\"continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false}}},"
+        "\"continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false},\"claude_continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false}}},"
         "\"sessions\":");payload_sessions(w,in->corpus,&ids);jsonw_raw(w,",\"subagents\":");payload_subagents(w,in->corpus,&ids);jsonw_raw(w,",\"workspaces\":");payload_workspaces(w,in->corpus);jsonw_raw(w,",\"models\":");
     if(in->pricing)pricing_models_json(w,in->pricing);else jsonw_raw(w,"{}");jsonw_raw(w,",\"diagnostics\":{\"skipped_files\":[");
     bool skipped_first=true;
@@ -29,10 +45,12 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
         if(!skipped_first)jsonw_raw(w,",");skipped_first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,in->scan->unreadable[i].path);
         jsonw_raw(w,",\"reason\":\"unreadable\"}");
     }
-    jsonw_raw(w,"],\"malformed_lines\":");payload_file_diagnostic(w,in->corpus?&in->corpus->malformed:NULL);
-    jsonw_raw(w,",\"truncated_lines\":");payload_file_diagnostic(w,in->corpus?&in->corpus->truncated:NULL);
-    jsonw_raw(w,",\"recovered_lines\":");payload_file_diagnostic(w,in->corpus?&in->corpus->recovered:NULL);
+    if(in->claude)for(size_t i=0;i<in->claude->skipped_count;i++){if(!skipped_first)jsonw_raw(w,",");skipped_first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,in->claude->skipped[i].path);jsonw_raw(w,",\"reason\":\"unreadable\"}");}
+    jsonw_raw(w,"],\"malformed_lines\":");line_diagnostic(w,in->corpus?&in->corpus->malformed:NULL,in->claude,0);
+    jsonw_raw(w,",\"truncated_lines\":");line_diagnostic(w,in->corpus?&in->corpus->truncated:NULL,in->claude,1);
+    jsonw_raw(w,",\"recovered_lines\":");line_diagnostic(w,in->corpus?&in->corpus->recovered:NULL,in->claude,2);
     jsonw_raw(w,",\"unknown_record_types\":");payload_unknown_types(w,in->corpus);
+    claude_diagnostics(w,in->claude);
     jsonw_raw(w,",\"db_threads_without_logs\":");jsonw_i64(w,in->corpus?(int64_t)in->corpus->db_threads_without_logs:0);
     jsonw_raw(w,",\"metadata_errors\":[");if(in->metadata)for(MetadataError *p=in->metadata->errors;p;p=p->next){if(p!=in->metadata->errors)jsonw_raw(w,",");jsonw_string(w,p->text);}jsonw_raw(w,"],"
         "\"orphaned_subagents\":");CorpusStrings empty={0};payload_references(w,&ids,in->corpus?&in->corpus->orphaned_subagents:&empty);jsonw_raw(w,",\"inferred_links\":");payload_references(w,&ids,in->corpus?&in->corpus->inferred_links:&empty);jsonw_raw(w,",\"unresolved_history_boundaries\":");

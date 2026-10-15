@@ -1,5 +1,19 @@
 # Lessons learned
 
+- Provider presence must be resolved before runtime creation or cache opening.
+  An absent source must not trigger cache recovery or rebuild cleanup: assert
+  bytes, modes and recovery names under synthetic homes, rather than exit
+  success alone. Gate provider-specific reader actions when adding rows.
+- The shared JSON reader retains number spellings as raw values. Consume
+  history milliseconds through `json_number`, preserving integer precision;
+  yyjson numeric-type predicates alone silently reject valid history entries.
+- Sandbox mutation probes need existing synthetic ancestor directories so
+  nonexistent-path canonicalization cannot mask removal of a deny rule.
+- On macOS `max_align_t` is not sufficient for `__int128`-bearing native
+  structures. Arena allocations must pass each retained type's `_Alignof`,
+  including tool vectors, session models and wide count-map values. Keep
+  an alignment regression alongside sanitizer coverage.
+
 These maintained lessons include knowledge from historical Python Colophon at
 `38d6998eb223f690fc9dc0bde0ba528fcf784449` and later native work. Git history
 retains the complete original notes and retired test names; those tests are

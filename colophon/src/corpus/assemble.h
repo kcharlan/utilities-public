@@ -61,8 +61,12 @@ typedef struct {
 /* Production descriptors borrow canonical facts. Typed overrides borrow the
  * record arena; each spawn clock corresponds to one raw spawn in order. */
 AssemblyRecord assembly_record(const LogRecord *record);
+typedef enum { PROVIDER_CODEX, PROVIDER_CLAUDE } Provider;
 typedef struct {
   Str id, key, identity, title, title_full, title_source;
+  Provider provider;
+  bool history_only;
+  Str resume_config_dir;
   const LogRecord *record;
   const LogRecord **records;
   size_t record_count, record_capacity;

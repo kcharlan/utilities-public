@@ -1,6 +1,11 @@
 # Runtime behavior
 
 `--codex-home PATH` selects readable Codex data (default `~/.codex`).
+Claude is enabled by default. `--claude-home PATH` overrides
+`CLAUDE_CONFIG_DIR`; a nonempty value is one literal directory, resolved
+relative to the process working directory, without tilde expansion.
+An empty value selects the default `~/.claude` config root. Its
+`history.jsonl` is inspected read-only for usable history entries.
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
@@ -13,6 +18,37 @@ runtime state. Version is currently `colophon 0.1.0`.
 | `--refresh-prices` | Force an unconditional catalog download; conflicts with offline. |
 | `--rebuild` | Reparse every log into a fresh native cache, installed on success. |
 | `--output PATH` | Write the page at this explicit path instead of the runtime default. |
+| `--claude-home PATH` | Select the Claude config root using the environment semantics above. |
+| `--claude-desktop-dir PATH` | Replace `~/Library/Application Support/Claude` for discovery. |
+| `--no-claude` | Disable Claude inputs and reconciliation. |
+
+Default Claude search roots are `~/.config/claude/projects`,
+`~/.claude/projects`, the Desktop `local-agent-mode-sessions` and
+`claude-code-sessions` containers, and `~/.claude-swap-backup/sessions`.
+A nonempty config override suppresses the XDG and Desktop roots while
+keeping the override's `projects` and cswap. Desktop discovery finds
+`.claude/projects` through four directory levels, skipping hidden,
+package and build/output directories. Cswap selects positive numbered
+`NUMBER-NAME/projects` slots. Search-root and slot symlinks are resolved
+and deduplicated; nested symlink directories are not traversed.
+Claude transcripts are read-only. Filename stems define session identities;
+same-stem copies share a session. Codex wins an identity collision, reported
+in `claude_session_id_collisions`. Unhandled Claude record types have their
+own `claude_unknown_record_types` diagnostic. Claude reader rows offer no
+Codex continuation or desktop links.
+
+Long flags accept unique prefixes. `--no` is now ambiguous between
+`--no-open` and `--no-claude`; `--claude` is ambiguous between the two Claude
+path flags. `--c` is also ambiguous between Codex and Claude path flags.
+Use the full flag names when scripting.
+
+Presence is decided before creating the runtime home. A readable source
+directory or a usable Claude history entry is sufficient. With neither,
+exit 1 names the Codex home, Claude roots and history path checked, and
+creates no runtime home. An absent Codex home skips all native parse-cache
+opening, recovery and replacement, including with `--rebuild`. Claude
+history is only inspected for presence in this release; history-only
+session rendering and Claude parse caching/retention are separate work.
 
 The home is created and reapplied with mode 0700; written files are mode
 0600. Page and ordinary state replacements are atomic. Parent directories

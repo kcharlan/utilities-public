@@ -55,6 +55,7 @@ class NativeRun:
         self.home.mkdir()
         self.codex.mkdir()
         self.env = os.environ.copy()
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
         self.env.update(HOME=str(self.home), COLOPHON_HOME=str(self.runtime),
                         TMPDIR=str(root), COLOPHON_PRICING_URL="http://127.0.0.1:9/catalog.json")
         self.binary = Path(os.environ["COLOPHON_BIN"])
@@ -112,3 +113,15 @@ class NativeRun:
 
     def session(self):
         return self.write_session(self.session_rows())
+
+    def claude_session(self, name="synthetic-claude", directory=None, rows=None):
+        directory = directory or self.home / ".claude/projects/synthetic-kite"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (name + ".jsonl")
+        if rows is None:
+            rows = [
+                {"type": "user", "timestamp": "2026-01-02T12:00:00Z", "sessionId": "synthetic-foreign-id", "cwd": "/synthetic/claude-kite", "gitBranch": "synthetic-branch", "message": {"content": "Invent a synthetic Claude kite"}},
+                {"type": "assistant", "timestamp": "2026-01-02T12:00:03Z", "message": {"content": [{"type": "text", "text": "Synthetic Claude kite complete"}], "stop_reason": "end_turn"}},
+            ]
+        path.write_text("".join(json.dumps(value) + "\n" for value in rows))
+        return path

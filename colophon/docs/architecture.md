@@ -11,6 +11,7 @@ catalog/priority/pricing → payload/page:
 | --- | --- |
 | `src/parse/`, `src/model/` | Stream JSONL into log records, turns, messages, tools, links and usage observations. |
 | `src/scan/` (including `logname.c`), `src/cache/` | Classify plain/compressed log names, discover logs, reuse or reparse native cache entries, stage and commit cache updates. |
+| `src/claude/` | Inspect source presence read-only, enumerate resolved search roots with provenance/completeness, parse Claude prompts/turns/tools, and insert provider-tagged sessions. |
 | `src/meta/` | Load Codex metadata through read-only SQLite connections. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
@@ -22,6 +23,19 @@ Catalog work starts before scanning and joins before pricing. The CLI reads
 ledger state and detects edits before appending newly observed rates; this
 does not eliminate the concurrent read/replace race. Rendering precedes
 cache commit. Cleanup joins catalog work before freeing shared resources.
+
+The CLI resolves runtime and provider paths and inspects Claude history
+before runtime initialization. Absent Codex supplies empty scan, metadata
+and priority owners without opening its cache. Claude records have their
+own arenas and never occupy Codex `LogRecord` fields. After Codex subagent
+linking, `claude_corpus_add` checks canonical filename identities before
+insertion; workspace resolution then handles both providers. Exact primary
+record aliases are indexed separately, including collision-skipped records.
+Codex composition explicitly skips Claude records and initializes their
+empty usage summaries. The schema stays 1 with additive provider/source
+fields. Rendering still precedes Codex cache commit; unopened caches are
+safe to destroy. Claude usage, pricing, graph metadata, persistent retention,
+source switching and history-session creation follow in later work.
 
 `tools/embed.pl` embeds `assets/` into build-generated C. Page shell, CSS,
 JavaScript, Martian Mono font subsets and their notice, public curated rate

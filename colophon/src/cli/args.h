@@ -1,7 +1,7 @@
 #ifndef CP_ARGS_H
 #define CP_ARGS_H
 #include <stdbool.h>
-typedef struct { bool no_open,rebuild,offline,refresh_prices; const char *output,*codex_home;
+typedef struct { bool no_open,rebuild,offline,refresh_prices,no_claude; const char *output,*codex_home,*claude_home,*claude_desktop_dir;
 #ifdef COLOPHON_TESTING
     bool phase_times;
 #endif

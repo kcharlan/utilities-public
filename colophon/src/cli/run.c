@@ -3,6 +3,7 @@
 #include "browser.h"
 #include "progress.h"
 #include "summary.h"
+#include "claude/scan.h"
 #include "out/payload.h"
 #include "out/page.h"
 #include "scan/scan.h"
@@ -50,17 +51,18 @@ int cli_run(const Args *args){
     CP_PHASE_START(args->phase_times);
     const char *conflict=args_conflict(args);if(conflict){fprintf(stderr,"colophon: %s\n",conflict);return 2;}
     char *codex=NULL,*home=NULL,*output=NULL,*display=NULL,*host=NULL,*ledger_path=NULL;JsonWriter payload={0},page={0};
-    Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};
+    Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};ClaudeScan claude={0};bool codex_present=false,cache_opened=false;
     CodexMetadata metadata={0};Corpus corpus={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
     CatalogResult catalog={0};CatalogFetch *fetch=NULL;ModelsDevIndex index={0};RuntimeLedger ledger={0};PriceHistory history={0};PricingReport pricing={0};LedgerAppend appended={0};yyjson_doc *recording=NULL,*new_entries=NULL;
     bool home_exists=false,page_failure=false,committed=false,clock_started=false;int result=1;Err failure=ERR_SUCCESS;
     const char *failure_type="OSError";struct sigaction previous,action={0};bool handler=false;
     failure=file_expand_path(args->codex_home,&codex);if(failure.code!=ERR_OK)goto fail;
-    struct stat st;if(stat(codex,&st)||!S_ISDIR(st.st_mode)||access(codex,R_OK|X_OK)){
-        fprintf(stderr,"colophon: Codex home is missing or unreadable: %s\n",codex);goto done;}
+    struct stat st;codex_present=!stat(codex,&st)&&S_ISDIR(st.st_mode)&&!access(codex,R_OK|X_OK);
+    failure=runtime_home(&home);if(failure.code!=ERR_OK)goto fail;
+    failure=claude_inspect(args,&claude);if(failure.code)goto fail;
+    if(!codex_present&&!claude.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s\n",claude.history_path.p,claude.disabled?" (--no-claude)":"");goto done;}
     int64_t snapshot=cp_now_ms();scan_display.tty=progress_tty();
     action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);interrupted=0;handler=sigaction(SIGINT,&action,&previous)==0;
-    failure=runtime_home(&home);if(failure.code!=ERR_OK)goto fail;
     failure=ensure_runtime_home(home);home_exists=!stat(home,&st)&&S_ISDIR(st.st_mode);if(failure.code!=ERR_OK)goto fail;
     failure=templates(home);if(failure.code!=ERR_OK)goto fail;
     ledger_path=join(home,"price-history.json");if(!ledger_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
@@ -71,28 +73,30 @@ int cli_run(const Args *args){
     const char *url=getenv("COLOPHON_PRICING_URL");if(!url)url="https://models.dev/api.json";
     char *catalog_path=join(home,"pricing-cache.json");if(!catalog_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
     failure=catalog_fetch_start(catalog_path,(Str){url,(uint32_t)strlen(url)},args->offline,args->refresh_prices,snapshot,&fetch);free(catalog_path);if(failure.code)goto fail;
-    failure=cache_open(home,args->rebuild,&cache);if(failure.code!=ERR_OK)goto fail;
+    if(codex_present){failure=cache_open(home,args->rebuild,&cache);if(failure.code!=ERR_OK)goto fail;cache_opened=true;}
     clock_started=true;failure=progress_scan_start(&scan_display.start);if(failure.code!=ERR_OK){failure_type="RuntimeError";goto fail;}
     CP_PHASE_MARK(0);
     if(cp_fault("scan")){failure=err_make(ERR_IO,"synthetic injected scan");goto fail;}
-    failure=scan_logs(codex,&cache,&interrupted,progress_update,&scan_display,&scan);progress_close(&scan_display);
+    if(codex_present)failure=scan_logs(codex,&cache,&interrupted,progress_update,&scan_display,&scan);progress_close(&scan_display);
     if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
+    failure=claude_scan(&claude,&interrupted);if(failure.code)goto fail;
     /* scan -> metadata -> corpus -> links -> workspaces -> catalog join. */
     CP_PHASE_MARK(1);
-    failure=metadata_load(codex,&metadata);if(failure.code)goto fail;
+    if(codex_present){failure=metadata_load(codex,&metadata);if(failure.code)goto fail;}
     if(cp_fault("original_error_abort_failure")){failure=err_make(ERR_INVALID,"Synthetic original failure\nsecond line");failure_type="ValueError";goto fail;}
     if(cp_fault("build_corpus")){failure=err_make(ERR_IO,"synthetic injected build_corpus");goto fail;}
     assembly_records=calloc(scan.count?scan.count:1,sizeof *assembly_records);if(!assembly_records){failure=err_make(ERR_NOMEM,"assembly input allocation failed");goto fail;}
     for(size_t i=0;i<scan.count;i++)assembly_records[i]=assembly_record(scan.records[i]);
     failure=corpus_build(assembly_records,scan.count,&metadata,snapshot,&scan.identifiers,&corpus);if(failure.code)goto fail;
     failure=corpus_link_subagents(&corpus,&metadata,snapshot);if(failure.code)goto fail;
+    failure=claude_corpus_add(claude.records,claude.count,snapshot,&corpus,&claude.collisions);if(failure.code)goto fail;
     char *alias_path=join(home,"workspaces.json");if(!alias_path){failure=err_make(ERR_NOMEM,"alias path allocation failed");goto fail;}
     failure=workspace_aliases_load(alias_path,&aliases);free(alias_path);if(failure.code)goto fail;
     failure=corpus_resolve_workspaces(&corpus,&aliases);if(failure.code)goto fail;
     CP_PHASE_MARK(2);
     failure=catalog_fetch_finish(&fetch,&catalog);if(failure.code)goto fail;
     CP_PHASE_MARK(3);
-    failure=priority_load(codex,home,&priority);if(failure.code)goto fail;
+    if(codex_present){failure=priority_load(codex,home,&priority);if(failure.code)goto fail;}
     failure=models_dev_index(catalog.catalog?yyjson_doc_get_root(catalog.catalog):NULL,&index);if(failure.code)goto fail;
     failure=runtime_ledger_load(ledger_path,&ledger);if(failure.code)goto fail;
     failure=runtime_ledger_history(&ledger,NULL,&history);if(failure.code)goto fail;
@@ -113,7 +117,7 @@ int cli_run(const Args *args){
     host=cli_source_host(url);
     tzset();time_t now=time(NULL);struct tm local;char zone[128]="";if(localtime_r(&now,&local))strftime(zone,sizeof zone,"%Z",&local);
     PayloadInputs in={.snapshot_ms=snapshot,.codex_home=display,.source_host=host,.timezone=zone,
-        .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger};
+        .logs=scan.count+scan.unreadable_count+claude.logs,.parsed=scan.parsed+claude.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude};
     CP_PHASE_MARK(4);
     size_t max=0,limit=cp_page_warn_bytes();bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
@@ -125,7 +129,7 @@ int cli_run(const Args *args){
     failure=cp_fault("original_page_failure")?err_make(ERR_IO,"Synthetic page failure"):
         cp_fault("page_replace")?err_make(ERR_IO,"synthetic injected page_replace"):atomic_write(output,page.data,page.length);
     if(failure.code!=ERR_OK){page_failure=true;goto fail;}
-    failure=cache_commit(&cache,&scan.live,&interrupted);committed=cache.committed;
+    if(cache_opened){failure=cache_commit(&cache,&scan.live,&interrupted);committed=cache.committed;}
     if(failure.code!=ERR_OK)goto fail;
     if(interrupted)goto fail;
     if(!args->no_open){bool opened=browser_open(output);if(interrupted)goto fail;
@@ -148,5 +152,5 @@ done:
     corpus_destroy(&corpus);pricing_report_destroy(&pricing);history_destroy(&history);runtime_ledger_destroy(&ledger);models_dev_destroy(&index);catalog_result_destroy(&catalog);ledger_append_destroy(&appended);yyjson_doc_free(recording);yyjson_doc_free(new_entries);priority_destroy(&priority);workspace_aliases_destroy(&aliases);free(assembly_records);metadata_destroy(&metadata);cache_destroy(&cache);scan_destroy(&scan);
     if(clock_started)(void)cp_monotonic_finish();if(home_exists)event_flush(home);
     if(handler)sigaction(SIGINT,&previous,NULL);
-    jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
+    claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
 }

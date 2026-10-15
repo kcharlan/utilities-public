@@ -2,7 +2,9 @@
 
 A macOS C17 application that compiles local Codex `.jsonl` and compressed
 `.jsonl.zst` sessions, token usage and dated API-equivalent cost estimates
-into a private, self-contained offline HTML page. The canonical source
+into a private, self-contained offline HTML page. Claude Code `.jsonl`
+transcripts also supply requests, turns, tools and workspaces; Claude usage
+and pricing are not yet included. The canonical source
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 
@@ -39,9 +41,14 @@ these placeholder paths before running:
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --no-open --codex-home /path/to/codex-home
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --rebuild --no-open --codex-home /path/to/codex-home
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --codex-home /path/to/codex-home --output /path/to/private/report.html
+COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --claude-home /path/to/claude-config
 ```
 
-Without overrides, the source is `~/.codex` and the runtime home is
+Without overrides, sources include `~/.codex`, Claude's config projects,
+Desktop embedded project stores and macOS cswap sessions. `--no-claude`
+disables Claude inspection. Either readable provider is sufficient; usable
+Claude history also permits an empty page when transcript roots are absent.
+History session rendering will be added separately. The runtime home is
 `~/.colophon`. Runtime files remain compatible with prior Python releases;
 native uses its own `cache-native/`. Use a separately selected `COLOPHON_HOME`
 for independent state. If an older release shares this home, run commands

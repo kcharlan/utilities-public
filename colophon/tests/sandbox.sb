@@ -15,6 +15,11 @@
 (deny file-read* file-write*
     (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-native"))
     (subpath (string-append (param "REAL_HOME") "/Downloads/colophon-c-experiment")))
+; Claude-owned sources and config are never real test inputs.
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.claude")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.config/claude")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/Library/Application Support/Claude")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.claude-swap-backup")))
 (deny network*)
 (allow network-bind (local ip "localhost:*"))
 (allow network-inbound (local ip "localhost:*"))

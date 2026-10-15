@@ -20,6 +20,12 @@ rules and deliberate v0.74.1 differences are recorded in
 documents and full notices supply attribution independently of the retired
 Python application. Curated rates and historical
 seeds remain public input data, separate from editable private runtime history.
+
+Claude config-root, Desktop locator and transcript inventory selection follow
+CodexBar `v0.74.1`, commit `7c08c0ae783b72040b728757eb85a6cfe4fc2443`,
+`ClaudeConfigPaths`, `ClaudeDesktopProjectsLocator` and `inventoryClaudeRoots`.
+Colophon enumerates resolved symlink roots and retains search-root provenance.
+The existing full CodexBar MIT notice also covers these adapted rules.
 The models.dev license was retrieved from its upstream repository at
 [`ab53a58f0694bce3125f033468ec0b69fad87137`](https://raw.githubusercontent.com/anomalyco/models.dev/ab53a58f0694bce3125f033468ec0b69fad87137/LICENSE).
 The CodexBar notice comes from its pinned public source LICENSE. The Unicode

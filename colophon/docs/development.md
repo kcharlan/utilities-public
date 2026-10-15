@@ -31,8 +31,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all 187
-C units, synthetic CLI/integration cases and two Chromium cases.
+`make test` runs the stable-sort guard, ten asset digests, all retained
+C units, synthetic CLI/integration cases and Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.

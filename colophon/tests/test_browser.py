@@ -61,3 +61,18 @@ def test_native_page_is_self_contained_and_error_free(page, native_page):
         assert page.locator("#colophon-data").count() == 1
         page.wait_for_timeout(300)
         assert requests == []
+
+def test_claude_reader_never_offers_codex_actions(page, native):
+    native.claude_session()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-session-id="synthetic-claude"]').click()
+        reader = page.locator('[data-reader="synthetic-claude"]')
+        expect(reader).to_be_visible()
+        expect(reader).to_contain_text("Synthetic Claude kite complete")
+        expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
+        assert requests == []
