@@ -156,3 +156,55 @@ test('unsafe sequence and aggregate transitions preserve committed state',async(
   const g=fixture(),e=g.worker(); await e.ready; await e.increment('synthetic-a.invalid',Number.MAX_SAFE_INTEGER);
   await assert.rejects(e.increment('synthetic-b.invalid')); assert.deepEqual(Object.keys(g.state().queued),['synthetic-a.invalid']);
 });
+
+for (const phase of ['acknowledgement', 'baseline']) {
+  for (const failure of ['timeout', 'network', 'malformed']) {
+    test(`${phase} body ${failure} preserves state and classifies retry`, async () => {
+      const legacy = phase === 'baseline';
+      const f = fixture(legacy ? {llm_client_id_v1:'SYNTHETIC_CLIENT',llm_seq_v1:0,llm_pending_v1:{}} : {});
+      const d = f.worker();
+      await d.ready;
+      await f.observe(d, 'synthetic-body.invalid');
+      const push = d.push();
+      await tick();
+      const original = clone(f.state());
+      const request = f.requests[0];
+      let rejectBody;
+      request.resolve({ok:true,status:200,json:() => new Promise((resolve,reject) => { rejectBody = reject; })});
+      await tick(); // Headers have arrived, but body consumption has not finished.
+      if (failure === 'timeout') {
+        request.init.signal.addEventListener('abort', () => rejectBody(Object.assign(new Error('synthetic abort'), {name:'AbortError'})));
+        [...f.timers.values()].find(t => t.ms === 5000).fn();
+      } else rejectBody(failure === 'network' ? new TypeError('synthetic body transport failure') : new SyntaxError('synthetic invalid JSON'));
+      const result = await push;
+      assert.equal(result.ok, false);
+      assert.deepEqual(f.state(), original);
+      f.oracle();
+      const retry = [...f.timers].find(([,timer]) => timer.ms === 1000);
+      assert.equal(!!retry, failure !== 'malformed', 'only timeout/transport errors schedule retries');
+      if (failure === 'malformed') assert.match(result.error, /Invalid collector JSON/);
+      else {
+        assert.match(result.error, failure === 'timeout' ? /timed out/ : /network failure/);
+        const [id,timer] = retry;
+        f.timers.delete(id); timer.fn(); await tick();
+        const settled = d.push();
+        if (legacy) { f.baseline(f.requests[1], 0); await tick(); f.accept(f.requests[2]); }
+        else {
+          assert.equal(f.requests[1].init.body, request.init.body);
+          f.accept(f.requests[1]);
+        }
+        await settled; f.oracle(true);
+      }
+    });
+  }
+}
+
+test('recording failure remains visible after empty and unrelated successful drains', async () => {
+  const f = fixture(), d = f.worker(); await d.ready;
+  f.failWrite(); await assert.rejects(d.increment('synthetic-rejected.invalid'), /write failure/);
+  await d.push();
+  assert.match((await d.status()).deliveryError, /recording.*write failure/i);
+  await f.observe(d, 'synthetic-accepted.invalid'); const push = d.push(); await tick();
+  f.accept(f.requests[0]); await push; f.oracle(true);
+  assert.match((await d.status()).deliveryError, /recording.*write failure/i);
+});

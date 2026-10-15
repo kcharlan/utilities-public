@@ -56,11 +56,26 @@ test("logs channel posts with their message fields but never their content", asy
   assert.deepEqual(decisions, [
     "not-prompt:channel fields=none",
     "not-prompt:channel fields=1",
-    "counted:channel fields=2; credited to gemini.google.com",
     "not-prompt:channel fields=4",
-    "not-prompt:channel fields=none"
+    "not-prompt:channel fields=none",
+    // Count diagnostics are emitted after storage commits, so synchronous
+    // non-prompt decisions from later requests can precede them.
+    "counted:channel fields=2; credited to gemini.google.com"
   ]);
   assert.ok(!JSON.stringify(debug).includes("SYNTHETIC_PROMPT"), "prompt content reached the debug log");
+});
+
+test('counted diagnostic waits for the observation storage callback', async () => {
+  const localControl = {};
+  const bg = loadBackground({config:true,localControl});
+  await bg.status();
+  localControl.deferWrite = true;
+  post(bg,'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+  await tick();
+  assert.ok(!JSON.stringify(bg.consoleRecords).includes('counted'));
+  localControl.deferWrite = false; localControl.flushWrite(); await tick();
+  assert.deepEqual((await bg.status()).debug.map(record => record.decision), ['counted']);
+  bg.dispose();
 });
 
 test("still counts the StreamGenerate endpoint", async () => {
@@ -126,3 +141,26 @@ test('ordinary worker initialization and wake request the guarded drain',async()
   assert.equal(calls.length,1); assert.deepEqual((await bg.status()).pending,{});
   bg.wake(); await tick(); assert.ok(timers.filter(t=>t.ms===250).length>=2); bg.dispose();
 });
+
+for (const kind of ['regular', 'Gemini channel']) {
+  test(`${kind} rejected observation stays visible after empty bootstrap drain`, async () => {
+    const timers = [], localStore = {}, sessionStore = {}, localControl = {};
+    const bg = loadBackground({config:true,localStore,sessionStore,localControl,
+      setTimer(fn,ms) { const timer={fn,ms}; timers.push(timer); return timer; },
+      clearTimer(timer) { timer.cancelled=true; }});
+    await bg.status(); await tick();
+    localControl.failWrite = true;
+    if (kind === 'regular') post(bg,'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+    else post(bg,`${CHANNEL}?SID=SYNTHETIC_SID`,channelBody(PROMPT));
+    await tick();
+    timers.find(timer => timer.ms === 250 && !timer.cancelled).fn(); await tick();
+    const status = await bg.status();
+    assert.deepEqual(status.pending, {});
+    assert.match(status.deliveryError || '', /recording.*write failure/i);
+    assert.deepEqual(status.debug.map(record => record.decision), ['recording-failed']);
+    bg.dispose();
+    const restarted = loadBackground({config:true,localStore,sessionStore});
+    assert.deepEqual((await restarted.status()).debug.map(record => record.decision), ['recording-failed']);
+    restarted.dispose();
+  });
+}

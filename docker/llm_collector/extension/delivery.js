@@ -31,7 +31,7 @@
     return s;
   }
   function createDelivery({storage, fetchImpl = root.fetch, collectorUrl, apiKey, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout}) {
-    let state = null, deliveryError = null, queue = Promise.resolve(), drain = null, retryTimer = null, retryIndex = 0;
+    let state = null, deliveryError = null, recordingError = null, queue = Promise.resolve(), drain = null, retryTimer = null, retryIndex = 0;
     const errorText = e => e?.message || 'Delivery failed';
     function storageCall(method, arg) {
       return new Promise((resolve, reject) => {
@@ -74,14 +74,20 @@
       if (!apiKey) throw Object.assign(new Error('Missing collector configuration'), {retryable:false});
       const controller = new AbortController();
       const timer = setTimer(() => controller.abort(), 5000);
+      const transportFailure = () => Object.assign(new Error(controller.signal.aborted ? 'Collector request timed out' : 'Collector network failure'), {retryable:true});
       try {
         let response;
         try { response = await fetchImpl(`${collectorUrl.replace(/\/$/,'')}${path}`, {
           headers: {'X-API-KEY':apiKey, ...(body ? {'Content-Type':'application/json'} : {})},
           ...(body ? {method:'POST',body:JSON.stringify(body)} : {}), signal:controller.signal
-        }); } catch (e) { throw Object.assign(new Error(controller.signal.aborted ? 'Collector request timed out' : 'Collector network failure'), {retryable:true}); }
+        }); } catch (e) { throw transportFailure(); }
         if (!response.ok) throw Object.assign(new Error(`Collector HTTP ${response.status}`), {retryable:response.status >= 500});
-        try { return await response.json(); } catch { throw new Error('Invalid collector JSON'); }
+        try { return await response.json(); } catch (e) {
+          // Fetch resolves at headers; aborts and stream transport failures can
+          // still happen while consuming the body. Syntax errors do not retry.
+          if (controller.signal.aborted || ['AbortError', 'TypeError', 'NetworkError'].includes(e?.name)) throw transportFailure();
+          throw new Error('Invalid collector JSON');
+        }
       } finally { clearTimer(timer); }
     }
     function retry() {
@@ -128,11 +134,17 @@
     }
     async function increment(host, count = 1) {
       await ready;
-      if (typeof host !== 'string' || !host || integer(count) === 0) throw new Error('Invalid observation');
-      return transaction(s => {
-        const value = integer((Object.hasOwn(s.queued,host) ? s.queued[host] : 0) + count);
-        Object.defineProperty(s.queued,host,{value,enumerable:true,writable:true,configurable:true});
-      });
+      try {
+        if (typeof host !== 'string' || !host || integer(count) === 0) throw new Error('Invalid observation');
+        return await transaction(s => {
+          const value = integer((Object.hasOwn(s.queued,host) ? s.queued[host] : 0) + count);
+          Object.defineProperty(s.queued,host,{value,enumerable:true,writable:true,configurable:true});
+        });
+      } catch (e) {
+        // An unrelated successful delivery cannot recover a rejected record.
+        recordingError = `Observation recording failed: ${errorText(e)}`;
+        throw e;
+      }
     }
     async function clearQueued() {
       await ready;
@@ -140,10 +152,11 @@
     }
     async function status() {
       await ready; await queue;
-      if (!state) return {available:false,client_id:null,seq:null,pending:null,inFlight:null,deliveryError};
+      const error = [recordingError, deliveryError].filter(Boolean).join('; ') || null;
+      if (!state) return {available:false,client_id:null,seq:null,pending:null,inFlight:null,deliveryError:error};
       const pending = copy(state.queued);
       for (const [host,count] of Object.entries(state.inFlight?.deltas || {})) Object.defineProperty(pending,host,{value:integer((Object.hasOwn(pending,host) ? pending[host] : 0) + count),enumerable:true,configurable:true});
-      return {available:true,client_id:state.clientId,seq:state.lastAckSeq,pending,inFlight:copy(state.inFlight),deliveryError};
+      return {available:true,client_id:state.clientId,seq:state.lastAckSeq,pending,inFlight:copy(state.inFlight),deliveryError:error};
     }
     return {ready,increment,push,clearQueued,status};
   }

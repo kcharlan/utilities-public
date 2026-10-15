@@ -16,6 +16,13 @@ between the snapshot and clear and disappear. Test conservation with observation
 identities: accepted and uncertain in-flight sets may overlap after a lost reply,
 so adding their counts is an invalid oracle.
 
+Fetch resolving means headers arrived, not that body consumption succeeded.
+Classify aborts and stream transport failures during JSON reading as retryable,
+while treating malformed JSON as a protocol error. Publish a counted diagnostic
+only after the observation commits. Keep rejected-recording diagnostics in the
+session buffer and distinguish their errors from transient delivery errors;
+an empty or unrelated successful drain cannot restore a rejected observation.
+
 ## 2026-10-15: Sanitize every diagnostic representation
 
 In `docker/llm_collector/extension`, a credential-name regex applied to raw JSON

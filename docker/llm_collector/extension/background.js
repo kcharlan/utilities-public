@@ -205,9 +205,15 @@ function schedulePush() {
   if (pushTimerHandle !== null) clearTimeout(pushTimerHandle);
   pushTimerHandle = setTimeout(() => { pushTimerHandle = null; delivery.push(); }, PUSH_COALESCE_MS);
 }
-async function incrementPending(host, count = 1) {
-  try { await delivery.increment(host, count); schedulePush(); }
-  catch { if (DEBUG) console.log('[LLM-UC] observation recording failed; see delivery status'); }
+async function incrementPending(host, count, details, url, reason = null) {
+  try {
+    await delivery.increment(host, count);
+    dbgPush('counted', details, url, reason);
+    schedulePush();
+  } catch {
+    // Session-backed diagnostics preserve the rejection across worker restart.
+    dbgPush('recording-failed', details, url, 'Observation not recorded; local accounting failed');
+  }
 }
 
 // --- Gemini WebChannel ---
@@ -231,8 +237,7 @@ function countGeminiChannel(d, u) {
   if (!prompts) { dbgPush("not-prompt", d, u, desc); return; }
   if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
   // Each prompt message is a distinct turn, so the path debounce does not apply.
-  incrementPending(GEMINI_CHANNEL.creditHost, prompts);
-  dbgPush("counted", d, u, `${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+  incrementPending(GEMINI_CHANNEL.creditHost, prompts, d, u, `${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
 }
 
 // --- Network listener (only count real user sends) ---
@@ -248,8 +253,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
       if (!passesDebounce(d, u)) { dbgPush("debounced", d, u, `window=${DEDUPE_WINDOW_MS}ms`); return; }
 
-      incrementPending(u.hostname, 1);
-      dbgPush("counted", d, u, null);
+      incrementPending(u.hostname, 1, d, u);
     } catch (e) {
       if (DEBUG) console.log("[LLM-UC] onBeforeRequest error", e);
     }

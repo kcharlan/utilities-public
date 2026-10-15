@@ -78,6 +78,11 @@ The extension's `background.js` script is the core of the extension. It performs
     Pending includes both queued and unacknowledged counts. Failed local reads
     make counts unavailable; failed writes retain the last committed state and
     appear in delivery status.
+    Counted diagnostics are published only after the observation write commits.
+    Rejected observations produce a `recording-failed` diagnostic in the session
+    debug buffer; the worker also retains the recording error in status through
+    unrelated successful drains. A successful delivery cannot recover that
+    rejected observation.
 
 5.  **Idempotent Submissions:** Concurrent pushes join one drain. Each sequence
     identifies a persisted batch whose deltas and timestamp remain unchanged
@@ -86,7 +91,9 @@ The extension's `background.js` script is the core of the extension. It performs
     applied count of zero or the batch sum releases that batch. Sequence gaps
     retain it and expose an error; they never renumber an uncertain submission.
 
-    Requests abort after five seconds. Network and server failures retry after
+    Requests abort after five seconds, including response-body consumption.
+    Body transport failures retry; malformed JSON remains a visible error.
+    Network and server failures retry after
     1, 2, 4, 8, 16, then 30 seconds while the worker stays awake. Initialization,
     startup, installation and **Force Push** request the same drain. Force Push
     confirms the request, while subsequent status reports delivery errors and
