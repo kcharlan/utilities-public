@@ -230,14 +230,33 @@ const GEMINI_CHANNEL = {
 function isGeminiChannel(u) {
   return u.hostname === GEMINI_CHANNEL.host && GEMINI_CHANNEL.path.test(u.pathname);
 }
+let channelAccounting = Promise.resolve();
 function countGeminiChannel(d, u) {
-  const fields = globalThis.LLMGeminiChannel.messageFields(d.requestBody);
+  let messages;
+  try {
+    messages = globalThis.LLMGeminiChannel.describeMessages(d.requestBody);
+    if (messages.length && (u.searchParams.getAll('SID').length !== 1 || !u.searchParams.get('SID'))) throw new Error('channel-invalid');
+  } catch {
+    dbgPush('channel-invalid',d,u,'Invalid channel message identity'); return;
+  }
+  const fields = messages.map(m=>m.field);
   const desc = `channel fields=${fields.length ? fields.map(f => f ?? "?").join(",") : "none"}`;
-  const prompts = globalThis.LLMGeminiChannel.promptCount(d.requestBody);
-  if (!prompts) { dbgPush("not-prompt", d, u, desc); return; }
+  if (!messages.length) { dbgPush("not-prompt", d, u, desc); return; }
   if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
-  // Each prompt message is a distinct turn, so the path debounce does not apply.
-  incrementPending(GEMINI_CHANNEL.creditHost, prompts, d, u, `${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+  // Serialize hashing and recording so status and subsequent requests observe
+  // complete durable transactions, including setup/end message identities.
+  channelAccounting = channelAccounting.then(async () => {
+    try {
+      const channelKey = await delivery.channelKey(u.href,u.searchParams.get('SID'));
+      const count = await delivery.recordChannelMessages({channelKey,host:GEMINI_CHANNEL.creditHost,messages});
+      if (count) {
+        dbgPush('counted',d,u,`${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+        schedulePush();
+      } else dbgPush(messages.some(m=>m.isPrompt) ? 'channel-replay' : 'not-prompt',d,u,desc);
+    } catch {
+      dbgPush('recording-failed',d,u,'Observation not recorded; local accounting failed');
+    }
+  });
 }
 
 // --- Network listener (only count real user sends) ---
@@ -270,7 +289,7 @@ delivery.ready.then(schedulePush);
 // --- Popup API (optional, keep if your popup uses it) ---
 chrome.runtime.onMessage.addListener((m, s, send) => {
   if (m && m.cmd === "get_status") {
-    Promise.all([delivery.status(), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([deliveryStatus]) => {
+    Promise.all([channelAccounting.then(()=>delivery.status()), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([deliveryStatus]) => {
       const configError = getConfigError();
       const collectorStatus = configError
         ? {

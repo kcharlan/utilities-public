@@ -38,8 +38,11 @@ The extension currently supports tracking usage on the following platforms:
     Gemini 4 Argon). One WebChannel turn makes several POSTs (handshake, setup,
     prompt, end of turn, terminate beacon). The extension counts only the prompt
     message, protobuf field 2, by decoding the first byte of each `reqN___data__`
-    form field; the prompt text is never decoded or stored. These counts are
-    credited to `gemini.google.com`.
+    form field; the counting classifier never decodes or stores prompt text.
+    Transport retries count only previously unseen message IDs (`ofs + N`),
+    including sparse or reordered batches. Invalid identities produce a
+    `channel-invalid` diagnostic without counting. These counts are credited to
+    `gemini.google.com`.
 *   **Abacus.ai:** `abacus.ai`
 *   **T3 Chat:** `t3.chat`
 
@@ -68,7 +71,8 @@ The extension's `background.js` script is the core of the extension. It performs
 
 3.  **Usage detection:** Each qualifying, non-debounced POST increments that
     hostname's pending request count by one. Gemini WebChannel prompt messages
-    are classified by message type instead and are not debounced. Updates to
+    are classified by message type and durable transport identity instead and
+    are not debounced. Updates to
     the pending counts are queued so overlapping updates are not lost.
 
 4.  **Data Buffering:** `delivery.js` owns local accounting through a serialized
@@ -83,6 +87,28 @@ The extension's `background.js` script is the core of the extension. It performs
     debug buffer; the worker also retains the recording error in status through
     unrelated successful drains. A successful delivery cannot recover that
     rejected observation.
+
+    Gemini channel history lives in the same local record as queued counts.
+    A generated, persisted salt and SHA-256 of
+    `JSON.stringify([salt, transportOrigin, transportPath, SID])` identify a
+    channel; tab IDs are diagnostic metadata only. Neither the SID nor message
+    payload is kept in accounting. Sorted disjoint inclusive intervals retain
+    all observed message IDs, including setup/end messages, and commit atomically
+    with new prompt counts. The salt and history survive worker suspension,
+    extension disable/reload/update, and browser restart. They are independent
+    of session capture/debug storage and remain after **Clear Pending**.
+
+    History is limited to 1 MiB serialized UTF-8, 4096 channel keys, 128 intervals
+    per channel, and 16384 intervals overall. Adjacent IDs compact into intervals.
+    At a limit, committed identities remain intact and known replays are still
+    recognized without another write. New identities that exceed a limit are
+    refused atomically with a `recording-failed` debug decision and a
+    `channel-history-full` delivery error; no count is published. Stop provider
+    sessions and explicitly decide operational history maintenance before
+    resuming. Restarting the browser or reloading the extension does not clear
+    history or recover refused observations. There is no automatic eviction or
+    history-clearing lifecycle handler. Destructive maintenance requires an
+    explicit operational decision with provider sessions quiescent.
 
 5.  **Idempotent Submissions:** Concurrent pushes join one drain. Each sequence
     identifies a persisted batch whose deltas and timestamp remain unchanged

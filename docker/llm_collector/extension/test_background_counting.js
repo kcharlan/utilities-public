@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const { loadBackground, tick } = require("./background_harness.js");
+const { loadBackground, tick, encodeChannelMessages } = require("./background_harness.js");
 
 const CHANNEL = "https://geminiweb-pa.clients6.google.com/v1/processSession";
 const b64 = bytes => Buffer.from(bytes).toString("base64");
@@ -15,15 +15,15 @@ function post(bg, url, requestBody, tabId = 7) {
     initiator: "https://gemini.google.com", url, requestBody
   });
 }
-const channelBody = (data) => ({ formData: { count: ["1"], ofs: ["0"], req0___data__: [data] } });
+const channelBody = (data, id=0) => ({ formData: { count: ["1"], ofs: [String(id)], req0___data__: [data] } });
 
-// One Gemini turn as captured from the web app: handshake, setup, prompt,
-// end-of-turn message, then the terminate beacon.
+// Synthetic turns follow WireV8: map IDs advance across setup/prompt/end,
+// while RID identifies requests and does not identify transport messages.
 function geminiTurn(bg, rid) {
   post(bg, `${CHANNEL}?VER=8&RID=${rid}&CVER=22&t=1`, { formData: { count: ["1"] } });
-  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 1}&AID=0&t=1`, channelBody(SETUP));
-  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 2}&AID=2&t=1`, channelBody(PROMPT));
-  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 3}&AID=30&t=1`, channelBody(END));
+  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 1}&AID=0&t=1`, channelBody(SETUP,rid));
+  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 2}&AID=2&t=1`, channelBody(PROMPT,rid+1));
+  post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 3}&AID=30&t=1`, channelBody(END,rid+2));
   post(bg, `${CHANNEL}?VER=8&SID=SYNTHETIC_SID&RID=${rid + 4}&TYPE=terminate&t=1`, undefined);
 }
 
@@ -55,12 +55,12 @@ test("logs channel posts with their message fields but never their content", asy
 
   assert.deepEqual(decisions, [
     "not-prompt:channel fields=none",
-    "not-prompt:channel fields=1",
-    "not-prompt:channel fields=4",
     "not-prompt:channel fields=none",
-    // Count diagnostics are emitted after storage commits, so synchronous
-    // non-prompt decisions from later requests can precede them.
-    "counted:channel fields=2; credited to gemini.google.com"
+    "not-prompt:channel fields=1",
+    // Setup and end identities now also commit, preserving their order around
+    // the counted prompt. Empty handshake/termination diagnostics run first.
+    "counted:channel fields=2; credited to gemini.google.com",
+    "not-prompt:channel fields=4"
   ]);
   assert.ok(!JSON.stringify(debug).includes("SYNTHETIC_PROMPT"), "prompt content reached the debug log");
 });
@@ -97,11 +97,11 @@ test("overlapping pushes deliver distinct immutable batches", async () => {
       resolve({ ok: true, status: 200, json: async () => ({ ok: true, last_seq: last, applied }) });
     } }));
   } });
-  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT));
+  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT,1));
   await tick();
   await bg.send({ cmd: 'force_push' });
   await new Promise(r => setTimeout(r, 280));
-  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT));
+  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT,2));
   await tick();
   await bg.send({ cmd: 'force_push' });
   await new Promise(r => setTimeout(r, 280));
@@ -164,3 +164,39 @@ for (const kind of ['regular', 'Gemini channel']) {
     restarted.dispose();
   });
 }
+
+test('channel retry counts only unseen message IDs including the audit replay',async()=>{
+  const localStore={},bg=loadBackground({config:true,localStore});
+  for(const t of [1,2]) post(bg,`${CHANNEL}?SID=SYNTHETIC_SID&RID=7&t=${t}`,channelBody('EgA='));
+  assert.deepEqual(await pending(bg),{'gemini.google.com':1});
+  // Reordered retry: ofs=0, req0 is old, req2 is new, req1 is setup.
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_SID&RID=8`,encodeChannelMessages([{id:2,data:PROMPT},{id:0,data:'EgA='},{id:1,data:SETUP}]));
+  assert.deepEqual(await pending(bg),{'gemini.google.com':2});
+  const serialized=JSON.stringify(localStore.llm_delivery_v2);
+  assert.ok(!serialized.includes('SYNTHETIC_SID')); assert.ok(!serialized.includes(PROMPT));
+  const debug=JSON.stringify((await bg.status()).debug);
+  assert.ok(!debug.includes('SYNTHETIC_SID')); assert.ok(!debug.includes(PROMPT)); bg.dispose();
+});
+
+test('channel identity survives lifecycle with session storage discarded and tabs changed',async()=>{
+  const localStore={}; let bg=loadBackground({config:true,localStore});
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_SID`,channelBody(PROMPT),7);
+  assert.deepEqual(await pending(bg),{'gemini.google.com':1}); bg.dispose();
+  for(const boundary of ['installed','installed','startup']) {
+    // Reload/update and browser restart lose all worker/session memory.
+    bg=loadBackground({config:true,localStore,sessionStore:{}}); bg.wake(boundary);
+    post(bg,`${CHANNEL}?SID=SYNTHETIC_SID&t=2`,channelBody(PROMPT),99);
+    assert.deepEqual(await pending(bg),{'gemini.google.com':1}); bg.dispose();
+  }
+  bg=loadBackground({config:true,localStore});
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_NEW_SESSION`,channelBody(PROMPT),99);
+  assert.deepEqual(await pending(bg),{'gemini.google.com':2}); bg.dispose();
+});
+
+test('invalid channel identity reports channel-invalid and never counts',async()=>{
+  const bg=loadBackground({config:true});
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_SID`,{formData:{ofs:['-1'],req0___data__:[PROMPT]}});
+  post(bg,CHANNEL,channelBody(PROMPT));
+  assert.deepEqual(await pending(bg),{});
+  assert.deepEqual((await bg.status()).debug.map(x=>x.decision),['channel-invalid','channel-invalid']); bg.dispose();
+});

@@ -111,4 +111,16 @@ function loadBackground({ sessionStore = {}, localStore = {}, config = false, fe
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-module.exports = { loadBackground, tick };
+// Synthetic fixture encoder follows Google's WireV8.encodeMessageQueue:
+// https://github.com/google/closure-library/blob/master/closure/goog/labs/net/webchannel/wirev8.js
+// reqN uses mapId-offset, never the queue's array index. Reordering can move
+// offset below the first mapId, with the encoder reserving 100 IDs of space.
+function encodeChannelMessages(queue) {
+  if (!queue.length) return {formData:{count:['0']}};
+  const offset = queue.reduce((base,message) => message.id < base ? Math.max(0,message.id-100) : base,queue[0].id);
+  const formData = {count:[String(queue.length)],ofs:[String(offset)]};
+  for (const message of queue) formData[`req${message.id-offset}___data__`] = [message.data];
+  return {formData};
+}
+
+module.exports = { loadBackground, tick, encodeChannelMessages };

@@ -3,6 +3,8 @@
   'use strict';
   const KEY = 'llm_delivery_v2';
   const LEGACY = ['llm_client_id_v1', 'llm_seq_v1', 'llm_pending_v1'];
+  const HISTORY_LIMITS = {bytes:1024*1024, channels:4096, perChannel:128, intervals:16384};
+  const HISTORY_FULL = 'channel-history-full: retain committed history; stop provider sessions and explicitly decide history maintenance';
   const copy = value => JSON.parse(JSON.stringify(value));
   function integer(value) {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('Unsafe delivery integer');
@@ -28,7 +30,39 @@
       if (!sum(b.deltas)) throw new Error('Empty delivery batch');
     }
     integer(sum(s.queued) + (s.inFlight ? sum(s.inFlight.deltas) : 0));
+    if (typeof s.channelIdentitySalt !== 'string' || !s.channelIdentitySalt) throw new Error('Invalid channel salt');
+    validateHistory(s.channelHistory);
     return s;
+  }
+  function validateHistory(history) {
+    if (!history || typeof history !== 'object' || Array.isArray(history)) throw new Error('Invalid channel history');
+    const entries = Object.entries(history);
+    let total = 0;
+    for (const [key, intervals] of entries) {
+      if (!key || !Array.isArray(intervals) || !intervals.length) throw new Error('Invalid channel history');
+      let previous = -2;
+      for (const interval of intervals) {
+        if (!Array.isArray(interval) || interval.length !== 2) throw new Error('Invalid channel interval');
+        const [lo, hi] = interval; integer(lo); integer(hi);
+        if (lo > hi || lo <= previous + 1) throw new Error('Invalid channel interval');
+        previous = hi;
+      }
+      if (intervals.length > HISTORY_LIMITS.perChannel) throw new Error(HISTORY_FULL);
+      total += intervals.length;
+    }
+    if (entries.length > HISTORY_LIMITS.channels || total > HISTORY_LIMITS.intervals ||
+        new TextEncoder().encode(JSON.stringify(history)).byteLength > HISTORY_LIMITS.bytes) throw new Error(HISTORY_FULL);
+  }
+  function contains(intervals, id) { return intervals.some(([lo,hi]) => lo <= id && id <= hi); }
+  function mergeIds(intervals, ids) {
+    const sorted = [...intervals,...ids.map(id=>[id,id])].sort((a,b)=>a[0]-b[0]);
+    const merged = [];
+    for (const [lo,hi] of sorted) {
+      const previous = merged.at(-1);
+      if (previous && lo <= previous[1] + 1) previous[1] = Math.max(previous[1],hi);
+      else merged.push([lo,hi]);
+    }
+    return merged;
   }
   function createDelivery({storage, fetchImpl = root.fetch, collectorUrl, apiKey, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout}) {
     let state = null, deliveryError = null, recordingError = null, queue = Promise.resolve(), drain = null, retryTimer = null, retryIndex = 0;
@@ -48,6 +82,7 @@
         const candidate = copy(state);
         const result = change(candidate);
         validate(candidate);
+        if (JSON.stringify(candidate) === JSON.stringify(state)) return result;
         await storageCall('set', {[KEY]: candidate});
         state = candidate;
         return result;
@@ -58,12 +93,23 @@
     const ready = (async () => {
       try {
         const data = await storageCall('get', [KEY, ...LEGACY]) || {};
-        if (Object.hasOwn(data, KEY)) state = validate(copy(data[KEY]));
+        if (Object.hasOwn(data, KEY)) {
+          const candidate = copy(data[KEY]);
+          // Additive v2 migration: salt and empty history commit together before
+          // observation. Missing only one field is corrupt, not a new identity.
+          if (!Object.hasOwn(candidate,'channelIdentitySalt') && !Object.hasOwn(candidate,'channelHistory')) {
+            candidate.channelIdentitySalt = root.crypto.randomUUID();
+            candidate.channelHistory = {};
+            validate(candidate);
+            await storageCall('set', {[KEY]:candidate});
+          }
+          state = validate(candidate);
+        }
         else {
           const migrated = LEGACY.some(key => Object.hasOwn(data, key));
           const candidate = validate({version:2, clientId:data[LEGACY[0]] || root.crypto.randomUUID(), lastAckSeq:0,
             baseline:migrated ? {state:'unresolved',legacySeq:integer(data[LEGACY[1]] ?? 0)} : {state:'ready'},
-            queued:data[LEGACY[2]] || {}, inFlight:null});
+            queued:data[LEGACY[2]] || {}, inFlight:null,channelIdentitySalt:root.crypto.randomUUID(),channelHistory:{}});
           await storageCall('set', {[KEY]:candidate});
           state = candidate;
         }
@@ -146,6 +192,39 @@
         throw e;
       }
     }
+    async function channelKey(endpoint, sid) {
+      await ready;
+      if (!state) throw new Error(deliveryError || 'Delivery unavailable');
+      if (typeof sid !== 'string' || !sid) throw new Error('channel-invalid');
+      const url = new URL(endpoint);
+      const bytes = new TextEncoder().encode(JSON.stringify([state.channelIdentitySalt,url.origin,url.pathname,sid]));
+      const hash = await root.crypto.subtle.digest('SHA-256',bytes);
+      return Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
+    }
+    async function recordChannelMessages({channelKey,host,messages}) {
+      await ready;
+      try {
+        if (typeof channelKey !== 'string' || !channelKey || typeof host !== 'string' || !host || !Array.isArray(messages)) throw new Error('channel-invalid');
+        const unique = new Map();
+        for (const message of messages) {
+          integer(message.id);
+          if (typeof message.isPrompt !== 'boolean' || (unique.has(message.id) && unique.get(message.id) !== message.isPrompt)) throw new Error('channel-invalid');
+          unique.set(message.id,message.isPrompt);
+        }
+        return await transaction(s => {
+          const intervals = Object.hasOwn(s.channelHistory,channelKey) ? s.channelHistory[channelKey] : [];
+          const unseen = [...unique].filter(([id]) => !contains(intervals,id));
+          if (!unseen.length) return 0;
+          const count = unseen.filter(([,prompt]) => prompt).length;
+          Object.defineProperty(s.channelHistory,channelKey,{value:mergeIds(intervals,unseen.map(([id])=>id)),enumerable:true,configurable:true,writable:true});
+          if (count) Object.defineProperty(s.queued,host,{value:integer((Object.hasOwn(s.queued,host) ? s.queued[host] : 0)+count),enumerable:true,configurable:true,writable:true});
+          return count;
+        });
+      } catch (e) {
+        recordingError = `Observation recording failed: ${errorText(e)}`;
+        throw e;
+      }
+    }
     async function clearQueued() {
       await ready;
       return transaction(s => { const result = {cleared:sum(s.queued),inFlight:s.inFlight ? sum(s.inFlight.deltas) : 0}; s.queued = {}; return result; });
@@ -158,7 +237,7 @@
       for (const [host,count] of Object.entries(state.inFlight?.deltas || {})) Object.defineProperty(pending,host,{value:integer((Object.hasOwn(pending,host) ? pending[host] : 0) + count),enumerable:true,configurable:true});
       return {available:true,client_id:state.clientId,seq:state.lastAckSeq,pending,inFlight:copy(state.inFlight),deliveryError:error};
     }
-    return {ready,increment,push,clearQueued,status};
+    return {ready,increment,channelKey,recordChannelMessages,push,clearQueued,status};
   }
   root.LLMDelivery = {createDelivery};
 })(globalThis);

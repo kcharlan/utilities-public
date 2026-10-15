@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { test } = require("node:test");
 const vm = require("node:vm");
+const { encodeChannelMessages } = require('./background_harness.js');
 
 const context = vm.createContext({ URLSearchParams, TextDecoder });
 vm.runInContext(readFileSync(require.resolve("./gemini_channel.js"), "utf8"), context);
@@ -46,4 +47,35 @@ test("orders messages by index, not by key order", () => {
   const body = { formData: { req10___data__: [END], req2___data__: [PROMPT] } };
 
   assert.deepEqual(plain(messageFields(body)), [2, 4]);
+});
+
+test('transport IDs use encoder offsets, including reordered sparse retry indexes', () => {
+  // WireV8 restarts encoding when mapId 102 follows 250, choosing ofs=2.
+  const body = encodeChannelMessages([{id:250,data:PROMPT},{id:102,data:END}]);
+  assert.deepEqual(body.formData,{count:['2'],ofs:['2'],req248___data__:[PROMPT],req100___data__:[END]});
+  assert.equal(typeof context.LLMGeminiChannel.describeMessages, 'function');
+  assert.deepEqual(plain(context.LLMGeminiChannel.describeMessages(body)), [
+    {index:100,id:102,field:4,isPrompt:false}, {index:248,id:250,field:2,isPrompt:true}
+  ]);
+});
+
+test('raw chunk boundaries do not affect classification', () => {
+  const text = `count=1&ofs=31&label=文🌈&req0___data__=${encodeURIComponent(PROMPT)}`;
+  const bytes = new TextEncoder().encode(text);
+  for (let split=1; split<bytes.length; split++) {
+    const body = {raw:[{bytes:bytes.slice(0,split).buffer},{bytes:bytes.slice(split).buffer}]};
+    assert.equal(promptCount(body),1,`split ${split}`);
+    assert.deepEqual(plain(context.LLMGeminiChannel.describeMessages(body)),[{index:0,id:31,field:2,isPrompt:true}],`identity split ${split}`);
+  }
+});
+
+test('invalid transport identities are rejected without timing fallback', () => {
+  assert.equal(typeof context.LLMGeminiChannel.describeMessages, 'function');
+  for (const formData of [
+    {ofs:['-1'],req0___data__:[PROMPT]}, {ofs:['1.5'],req0___data__:[PROMPT]},
+    {ofs:['9007199254740991'],req1___data__:[PROMPT]},
+    {ofs:['0'],req9007199254740992___data__:[PROMPT]},
+    {ofs:['0','1'],req0___data__:[PROMPT]}, {req0___data__:[PROMPT]},
+    {ofs:['0'],req0___data__:[PROMPT,PROMPT]}
+  ]) assert.throws(()=>context.LLMGeminiChannel.describeMessages({formData}), /channel-invalid/);
 });

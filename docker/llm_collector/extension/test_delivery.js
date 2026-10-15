@@ -13,7 +13,7 @@ function fixture(store = {}) {
     get(keys, cb) { if (failRead) runtime.lastError = {message:'synthetic read failure'}; cb(clone(store)); delete runtime.lastError; },
     set(obj, cb) { if (failWrite) { failWrite = false; runtime.lastError = {message:'synthetic write failure'}; } else Object.assign(store, clone(obj)); cb(); delete runtime.lastError; }
   };
-  const context = vm.createContext({ crypto, AbortController, chrome: {runtime}, setTimeout, clearTimeout });
+  const context = vm.createContext({ crypto, URL, TextEncoder, AbortController, chrome: {runtime}, setTimeout, clearTimeout });
   vm.runInContext(readFileSync(require.resolve('./delivery.js'), 'utf8'), context);
   function worker() { return context.LLMDelivery.createDelivery({storage, collectorUrl:'https://synthetic.invalid', apiKey:'SYNTHETIC_KEY', now: () => 100,
     setTimer(fn, ms) { const id = ++next; timers.set(id, {fn,ms}); return id; }, clearTimer(id) { timers.delete(id); },
@@ -63,7 +63,7 @@ function fixture(store = {}) {
     last = seq;
     req.resolve({ok:true,status:200,json:async()=>({client_id:'SYNTHETIC_CLIENT',last_seq:seq})});
   }
-  return {worker,store,state,requests,timers,observe,oracle,accept,baseline,clearedIds,failWrite(){failWrite=true;},failRead(){failRead=true;}};
+  return {worker,store,state,requests,timers,observe,oracle,accept,baseline,clearedIds,observedIds,failWrite(){failWrite=true;},failRead(){failRead=true;}};
 }
 
 test('uncertain submission survives new observations and worker restart', async () => {
@@ -75,6 +75,112 @@ test('uncertain submission survives new observations and worker restart', async 
   assert.equal(f.requests[1].init.body, original); f.accept(f.requests[1]); await tick();
   f.oracle(); f.accept(f.requests[2]); await retry; f.oracle(true);
 });
+
+const channelMessage = (id,isPrompt=true) => ({id,isPrompt});
+const channelRecord = (history={}) => ({version:2,clientId:'SYNTHETIC_CLIENT',lastAckSeq:0,baseline:{state:'ready'},queued:{},inFlight:null,channelIdentitySalt:'SYNTHETIC_SALT',channelHistory:history});
+test('channel replay accounting atomically tracks non-prompts and queued observations',async()=>{
+  const f=fixture(),d=f.worker(); await d.ready;
+  assert.equal(typeof d.recordChannelMessages,'function');
+  const key='SYNTHETIC_CHANNEL';
+  const record=messages=>d.recordChannelMessages({channelKey:key,host:'synthetic-a.invalid',messages});
+  assert.equal(await record([channelMessage(0,false),channelMessage(1)]),1);
+  // A setup previously observed cannot become a new prompt through replay.
+  assert.equal(await record([channelMessage(0),channelMessage(1),channelMessage(3)]),1);
+  assert.equal(await record([channelMessage(2,false)]),0);
+  assert.deepEqual(f.state().channelHistory[key],[[0,3]]);
+  assert.equal(f.state().queued['synthetic-a.invalid'],2);
+  // Oracle gives each logical prompt its own host identity so set conservation
+  // remains valid through collector receipts, without adding IDs to the wire.
+  const g=fixture(),e=g.worker(); await e.ready;
+  for(const [id,host] of [[1,'synthetic-a.invalid'],[3,'synthetic-b.invalid']]) {
+    await e.recordChannelMessages({channelKey:key,host,messages:[channelMessage(id)]});
+    g.observedIds.add(host); g.oracle();
+  }
+  const p=e.push(); await tick(); g.accept(g.requests[0],true); await p; g.oracle();
+  const restarted=g.worker(); await restarted.ready;
+  assert.equal(await restarted.recordChannelMessages({channelKey:key,host:'synthetic-a.invalid',messages:[channelMessage(1)]}),0);
+  g.oracle();
+  const retry=restarted.push(); await tick();
+  assert.equal(g.requests[1].init.body,g.requests[0].init.body);
+  g.accept(g.requests[1]); await retry; g.oracle(true);
+  // Clearing queued counts is an explicit discard, never identity eviction.
+  await restarted.recordChannelMessages({channelKey:key,host:'synthetic-c.invalid',messages:[channelMessage(5)]});
+  g.observedIds.add('synthetic-c.invalid'); await restarted.clearQueued();
+  g.clearedIds.add('synthetic-c.invalid'); g.oracle(true);
+  assert.equal(await restarted.recordChannelMessages({channelKey:key,host:'synthetic-c.invalid',messages:[channelMessage(5)]}),0);
+  g.oracle(true);
+  assert.deepEqual(JSON.parse(g.requests[0].init.body).deltas,{'synthetic-a.invalid':1,'synthetic-b.invalid':1});
+});
+
+test('failed channel accounting leaves history and counts retryable',async()=>{
+  const f=fixture(),d=f.worker(); await d.ready;
+  assert.equal(typeof d.recordChannelMessages,'function');
+  const before=clone(f.state()); f.failWrite();
+  const event={channelKey:'SYNTHETIC_CHANNEL',host:'synthetic-a.invalid',messages:[channelMessage(1)]};
+  await assert.rejects(d.recordChannelMessages(event),/write failure/);
+  assert.deepEqual(f.state(),before); assert.deepEqual(clone((await d.status()).pending),{});
+  f.oracle();
+  assert.equal(await d.recordChannelMessages(event),1);
+  f.observedIds.add('synthetic-a.invalid'); f.oracle();
+  assert.equal(await d.recordChannelMessages(event),0);
+  f.oracle();
+  assert.equal(f.state().queued['synthetic-a.invalid'],1);
+  assert.match((await d.status()).deliveryError,/recording.*write failure/i);
+});
+
+test('known channel replays do not require a new persistence write',async()=>{
+  const f=fixture(),d=f.worker(); await d.ready;
+  const event={channelKey:'SYNTHETIC_CHANNEL',host:'synthetic.invalid',messages:[channelMessage(1)]};
+  await d.recordChannelMessages(event); const before=clone(f.state()); f.failWrite();
+  assert.equal(await d.recordChannelMessages(event),0);
+  assert.deepEqual(f.state(),before);
+  // The refused write is still armed: replay performed no storage operation.
+  await assert.rejects(d.increment('synthetic-new.invalid'),/write failure/);
+});
+
+test('channel salt and endpoint identity persist across workers without raw SID',async()=>{
+  const f=fixture(),d=f.worker(); await d.ready;
+  assert.equal(typeof d.channelKey,'function');
+  const endpoint='https://synthetic.invalid/v1/processSession?RID=2&t=1';
+  const key=await d.channelKey(endpoint,'SYNTHETIC_SID');
+  const expected=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([f.state().channelIdentitySalt,'https://synthetic.invalid','/v1/processSession','SYNTHETIC_SID'])))).toString('hex');
+  assert.equal(key,expected); assert.match(key,/^[a-f0-9]{64}$/);
+  const r=f.worker(); await r.ready;
+  assert.equal(await r.channelKey(endpoint,'SYNTHETIC_SID'),key);
+  assert.notEqual(await r.channelKey(endpoint,'SYNTHETIC_REPLACEMENT'),key);
+  assert.notEqual(await r.channelKey('https://synthetic.invalid/v2/processSession','SYNTHETIC_SID'),key);
+  assert.notEqual(await r.channelKey('https://other-synthetic.invalid/v1/processSession','SYNTHETIC_SID'),key);
+  assert.ok(!JSON.stringify(f.store).includes('SYNTHETIC_SID'));
+});
+
+for(const bound of ['channels','per-channel intervals','total intervals','bytes']) {
+  test(`history ${bound} bound refuses new identities and preserves replays`,async()=>{
+    const history={}; let key='SYNTHETIC_CHANNEL',id=2;
+    if(bound==='channels') for(let i=0;i<4096;i++) history[`SYNTHETIC_${i}`]=[[0,0]];
+    if(bound==='per-channel intervals') history[key]=Array.from({length:128},(_,i)=>[i*2,i*2]);
+    if(bound==='total intervals') for(let c=0;c<128;c++) history[`SYNTHETIC_${c}`]=Array.from({length:128},(_,i)=>[i*2,i*2]);
+    if(bound==='bytes') key='SYNTHETIC_'.repeat(110000);
+    const f=fixture({llm_delivery_v2:channelRecord(history)}),d=f.worker(); await d.ready;
+    assert.equal(typeof d.recordChannelMessages,'function');
+    if(bound==='per-channel intervals') id=256;
+    const before=clone(f.state());
+    await assert.rejects(d.recordChannelMessages({channelKey:key,host:'synthetic.invalid',messages:[channelMessage(id)]}),/channel-history-full/);
+    assert.deepEqual(f.state(),before);
+    assert.match((await d.status()).deliveryError,/channel-history-full/);
+    if(bound!=='bytes') {
+      const existing=Object.keys(history)[0];
+      assert.equal(await d.recordChannelMessages({channelKey:existing,host:'synthetic.invalid',messages:[channelMessage(0)]}),0);
+      assert.deepEqual(f.state(),before);
+    }
+    if(bound==='per-channel intervals') {
+      // Filling a hole compacts intervals and admits future identities.
+      await d.recordChannelMessages({channelKey:key,host:'synthetic.invalid',messages:[channelMessage(1,false)]});
+      assert.equal(f.state().channelHistory[key].length,127);
+      await d.recordChannelMessages({channelKey:key,host:'synthetic.invalid',messages:[channelMessage(256)]});
+      assert.equal(f.state().channelHistory[key].length,128);
+    }
+  });
+}
 test('offline legacy reconciliation survives worker restart', async () => {
   const f=fixture({llm_client_id_v1:'SYNTHETIC_CLIENT',llm_seq_v1:9,llm_pending_v1:{}}), d=f.worker(); await d.ready;
   const first=d.push(); await tick(); f.requests[0].reject(new Error('offline')); await first;

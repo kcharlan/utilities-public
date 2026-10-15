@@ -1,5 +1,21 @@
 # Lessons learned
 
+## 2026-10-15: Commit transport history with prompt accounting
+
+In `docker/llm_collector/extension`, counting each Gemini WebChannel POST counts
+transport retries repeatedly. Google's WireV8 encoder identifies messages as
+`ofs + reqN`, where `N` is a relative message ID, not an array position; retry
+reordering can lower the offset and leave sparse indexes. Join raw byte chunks
+before decoding forms so keys, base64 prefixes and UTF-8 sequences remain whole.
+
+Persist salted endpoint/SID hashes and interval history in the delivery owner's
+same transaction as queued counts. Include non-prompt IDs, retain the salt and
+history across extension and browser lifecycle boundaries, and fail closed at
+bounds without eviction. Browser tab IDs and session-storage nonces cannot
+establish durable transport identity. Known replays should need no write.
+Exercise rejected persistence, mixed retries, lost acknowledgements, and explicit
+queued-count clearing with an observation-identity conservation oracle.
+
 ## 2026-10-15: Persist immutable delivery identity before sending
 
 In `docker/llm_collector`, serializing pending-count writes did not serialize
