@@ -1,7 +1,9 @@
 from collections import OrderedDict
+import datetime
 from typing import Any
 
 import yaml
+from .temporal import iso_temporal
 
 
 def load_yaml(text: str) -> Any:
@@ -12,6 +14,8 @@ def load_yaml(text: str) -> Any:
 
 
 def _normalize(obj: Any) -> Any:
+    if isinstance(obj, datetime.time):
+        return iso_temporal(obj)
     if isinstance(obj, OrderedDict):
         return {k: _normalize(v) for k, v in obj.items()}
     if isinstance(obj, dict):

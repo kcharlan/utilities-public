@@ -1,5 +1,6 @@
 import pytest
 import json
+from datetime import date, datetime, time, timezone
 from src.converters.json_conv import load_json, dump_pretty, dump_compact
 
 @pytest.fixture
@@ -41,3 +42,22 @@ def test_dump_pretty(sample_data, sample_data_pretty_string):
 def test_dump_compact(sample_data, sample_data_compact_string):
     """Tests compact printing with sorted keys and no extra whitespace."""
     assert dump_compact(sample_data) == sample_data_compact_string
+
+
+@pytest.mark.parametrize("writer", [dump_pretty, dump_compact])
+@pytest.mark.parametrize("value", [
+    date(2030, 1, 2), datetime(2030, 1, 2, 3, 4, 5, 123456),
+    datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc), time(3, 4, 5, 123456),
+])
+def test_dump_temporal_as_iso(writer, value):
+    data = {"value": value, "nested": {"items": [value, {"day": value}]}, "name": "synthetic"}
+    expected = {"value": value.isoformat(), "nested": {"items": [value.isoformat(), {"day": value.isoformat()}]}, "name": "synthetic"}
+    loaded = load_json(writer(data))
+    assert loaded == expected
+    assert type(loaded["value"]) is str
+
+
+@pytest.mark.parametrize("writer", [dump_pretty, dump_compact])
+def test_dump_unknown_type_rejected(writer):
+    with pytest.raises(TypeError, match="Object of type object is not.*serializable"):
+        writer({"nested": [object()]})

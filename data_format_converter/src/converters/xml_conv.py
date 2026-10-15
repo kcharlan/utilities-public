@@ -1,5 +1,6 @@
 from typing import Any, Dict, List
 import xmltodict
+from .temporal import iso_temporal
 
 def load_xml(text: str) -> Any:
     """
@@ -25,7 +26,10 @@ def _to_xml_recursive(obj: Any) -> str:
     elif obj is None:
         return ""
     else:
-        raise TypeError(f"Unsupported type for XML conversion: {type(obj)}")
+        try:
+            return iso_temporal(obj)
+        except TypeError:
+            raise TypeError(f"Unsupported type for XML conversion: {type(obj)}") from None
     return "".join(parts)
 
 def dump_xml(obj: Any) -> str:

@@ -1,5 +1,28 @@
 # Lessons learned
 
+## 2026-10-15: Test temporal conversion policy across every CLI target
+
+TOML and YAML parsers can produce native Python dates and datetimes; TOML also
+produces native times. JSON and XML writers need explicit ISO serialization,
+while YAML should normalize only times so its native date/datetime types survive.
+Keep TOML's native writer and preserve ordinary strings, including YAML's quoted
+time values. A shared temporal hook must reject unknown objects rather than
+silently stringifying them.
+
+The converter's [test_temporal_cli_matrix](../data_format_converter/tests/test_cli.py)
+loads each source fixture, exercises every actual supported target, and compares
+the complete parsed mapping and value types after unwrapping XML's synthetic
+root. Retain nested direct-writer regressions and
+[test_yaml_temporal_policy](../data_format_converter/tests/test_yaml_conv.py) /
+[test_toml_temporal_policy](../data_format_converter/tests/test_toml_conv.py):
+a substring check cannot detect type loss, dropped fields, or lost marker values.
+
+Measure temporal types separately during dependency upgrades. The TOON baseline
+already preserved dates and datetimes, but converted times and binary values to
+null and rejected comment-only input. Its released writer now preserves times,
+rejects binary through the CLI error path, and accepts comment-only input; keep
+those regressions rather than claiming all temporal behavior changed together.
+
 ## 2026-10-15: Retain reference reconstruction guards in optimized variants
 
 Reversible Skew's optimized transform accepted smaller periodic BWT payloads

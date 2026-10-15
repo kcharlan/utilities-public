@@ -137,6 +137,18 @@ Important conversion behavior:
 - The XML serializers interpolate element names and string values directly.
   Use trusted, simple data; they are not hardened XML generators.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
+- JSON (pretty and compact) and XML serialize dates, datetimes, and times as
+  `isoformat()` strings, including nested values
+  ([`test_dump_temporal_as_iso`](tests/test_json_conv.py),
+  [`test_dump_xml_temporal_as_iso`](tests/test_xml_conv.py)).
+- YAML retains native dates and datetimes but serializes times as ISO strings;
+  ordinary strings stay strings
+  ([`test_yaml_temporal_policy`](tests/test_yaml_conv.py)). TOML retains its
+  supported native temporal values and ordinary strings
+  ([`test_toml_temporal_policy`](tests/test_toml_conv.py)). The complete
+  TOML/YAML-to-every-target policy is checked by
+  [`test_temporal_cli_matrix`](tests/test_cli.py); a YAML time-looking string
+  stays a string when converted to TOML.
 - TOON serializes Python dates, datetimes, and times as ISO strings
   ([`test_dump_temporal_as_iso_string`](tests/test_toon_conv.py)), and treats
   comment-only input as an empty object
