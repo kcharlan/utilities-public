@@ -22,7 +22,7 @@ The page has no backend and does not upload pasted data to this repository. It
 does, however, load the following resources from public CDNs:
 
 - the `@iarna/toml` 3.0.0 parser and serializer;
-- `js-yaml` 4.1.1;
+- [`js-yaml` 5.4.3 browser UMD build](https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js);
 - Google Fonts.
 
 Network access is therefore required on first load unless those resources are
@@ -55,6 +55,23 @@ tokenization contract. The page never reads an API key or uploads pasted data.
   is converted to JavaScript number/boolean values when parsed.
 - TOML cannot represent `null`; if any converted value is `null`, the
   structured conversion run reports an error.
+- YAML uses core implicit numbers: binary and separator forms such as `0b101`
+  and `1_000` remain strings. Explicit numeric tags retain legacy parsing,
+  including `!!int 1_000` and `!!float 1_000.5`
+  (`yaml_implicit_legacy_numbers_use_core_strings` and
+  `yaml_explicit_numeric_tags_keep_baseline_values` in
+  [`tests/browser.spec.js`](tests/browser.spec.js)). Merge keys, timestamps,
+  complex keys, binary, sets, ordered mappings, pairs, boolean-looking words,
+  and comment-only documents retain their previous values
+  (`yaml_load_preserves_legacy_collections_and_timestamps`).
+- YAML output retains the tested multiline block style and trailing newlines.
+  The approved v5 compatibility exception adds a terminal `...` document-end
+  marker when the final multiline scalar uses keep chomping (`|+`); a scalar
+  with one trailing newline stays unchanged
+  (`yaml_dump_keeps_baseline_multiline_output`). A string of three spaces may
+  use double rather than single quotes
+  (`yaml_dump_accepts_whitespace_quote_change`). These byte-level exceptions
+  preserve the parsed values.
 - The browser Playwright smoke test covers dependency initialization, one JSON
   conversion, local token-source labels, and the no-OpenAI-request privacy
   contract. The Python tests do not validate the HTML/JavaScript
