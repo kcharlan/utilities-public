@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-10-15: Verify extension release identity during deployment
+
+The extension repair was deployed with its previous manifest version, so the
+browser still displayed `0.5.0` after a successful reload. Bump the manifest
+version for a released extension change and verify it in both the source and
+deployed manifest before handing off the browser reload. Matching source bytes
+alone does not establish that the displayed release identity was updated.
+
 ## 2026-10-15: Redacted diagnostics still need text-only rendering
 
 In `docker/llm_collector/extension`, decoding paths to redact identifiers also

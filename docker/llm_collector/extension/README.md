@@ -57,6 +57,18 @@ The extension currently supports tracking usage on the following platforms:
 3.  From the `llm_collector` project root, run `./setup.sh` so it generates `extension/config.local.js`.
 4.  Click "Load unpacked" and select this `extension` directory.
 
+## Release and update requirements
+
+Every extension release must bump `version` in `manifest.json` in the same
+change as the released code. Follow the existing versioning scheme; ask the
+owner which increment to use if it is unclear. Releasing changed code under
+the previous version is not permitted.
+
+Before handing off an update, verify that the source and deployed manifests
+declare the new version. Load or reload the extension and verify the browser's
+Extensions page reports that version, then include it in the release report.
+Preserve local configuration and browser accounting state during the update.
+
 ## Configuration
 
 Do not edit `background.js` for local secrets. From the `llm_collector` project root, run `./setup.sh` (or `../setup.sh` from this `extension` directory). It reads `~/.config/llm_collector/secret.env` and generates `config.local.js` with:
