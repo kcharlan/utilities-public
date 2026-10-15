@@ -35,6 +35,15 @@ test('redaction expansion cannot exceed URL and header string budgets', () => {
   assert.equal(r.redactHeaders([{ name: 'Referer', value: 'https://example.invalid/?' + 'sid=a&'.repeat(1000) }])[0].value, '<omitted>');
 });
 
+test('path redaction expansion obeys the output byte budget', () => {
+  const r = context.LLMCaptureRedact;
+  const path = '/' + 'Bearer+a;'.repeat(900);
+  assert.equal(Buffer.byteLength(path), 8101);
+  assert.equal(r.redactPath(path), '<omitted>');
+  assert.equal(r.sanitizeDiagnosticRecord('debug', { path }).path, '<omitted>');
+  assert.equal(r.redactPath('/synthetic/Bearer+a;'), '/synthetic/Bearer+REDACTED;');
+});
+
 test('restored and growing records shed body then oldest detail within 128 KiB', () => {
   const r = context.LLMCaptureRedact;
   const source = { id: 'synthetic-large', body: { text: 'synthetic body' },

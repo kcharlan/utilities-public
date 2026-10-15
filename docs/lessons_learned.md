@@ -19,6 +19,8 @@ oversized singleton and remove additional owners of evicted in-flight records.
 Preserve live redaction provenance rather than reparsing sanitized JSON prefixes
 during every retention pass. Test Unicode, late growth, unread stores, failed
 callbacks, deferred clear, and worker stop/wake with a fresh synthetic profile.
+Check byte limits again after redaction: repeated short token values can expand
+to longer replacement markers, including in standalone restored debug paths.
 
 ## 2026-10-15: Commit transport history with prompt accounting
 

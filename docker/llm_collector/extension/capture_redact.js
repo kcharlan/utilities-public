@@ -95,7 +95,8 @@
       if (byteLength(original) > MAX_URL_HEADER_BYTES) return OMITTED;
       const decoded = decodeURIComponent(original);
       const safe = scrubText(decoded.replace(PATH_IDS, `$1${REDACTED}`));
-      return safe === decoded ? original : safe;
+      const output = safe === decoded ? original : safe;
+      return byteLength(output) > MAX_URL_HEADER_BYTES ? OMITTED : output;
     } catch { return OMITTED; }
   }
 
