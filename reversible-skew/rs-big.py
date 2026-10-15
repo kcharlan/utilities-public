@@ -169,8 +169,11 @@ def transform(infile, outfile, block_size, max_run, verbose=False, whole_file=Fa
             mtf = mtf_encode_jit(last)
             rle = rle_encode_jit(mtf, max_run)
             payload = len(rle) * 2
-            # optional self-validation omitted for speed
-            if payload >= len(block):
+            bad = payload >= len(block)
+            if not bad:
+                rec_block = bwt_inverse(mtf_decode_jit(rle_decode_jit(rle)), primary)
+                bad = rec_block != block
+            if bad:
                 passed += 1
                 if verbose: print(f"Block {total}: RAW (len={len(block)})")
                 fout.write(struct.pack('>I', SENTINEL))
@@ -183,6 +186,7 @@ def transform(infile, outfile, block_size, max_run, verbose=False, whole_file=Fa
                 write_rle(fout, rle)
     pct = (passed/total*100) if total else 0
     print(f"Transform done: {passed}/{total} blocks passthrough ({pct:.1f}%)")
+    return passed, total
 
 
 def inverse(infile, outfile, verbose=False, whole_file=False):
@@ -204,6 +208,31 @@ def inverse(infile, outfile, verbose=False, whole_file=False):
                 data = bwt_inverse(last, primary)
                 fout.write(data)
 
+def selftest():
+    import os, tempfile
+    unit = b"synthetic reversible skew line\n"
+    cases = {
+        "random": os.urandom(1 << 20),
+        "periodic": (unit * ((1 << 20) // len(unit) + 1))[:1 << 20],
+        "varied": b"".join(f"synthetic line {i:06d} value {i * 7 % 1000}\n".encode() for i in range(60000))[:1 << 20],
+    }
+    with tempfile.TemporaryDirectory() as d:
+        for name, data in cases.items():
+            src, enc, dec = (os.path.join(d, f"{name}.{ext}") for ext in ("in", "rsbwt", "out"))
+            with open(src, "wb") as f:
+                f.write(data)
+            passed, total = transform(src, enc, 64 * 1024, 255)
+            if name == "varied" and passed == total:
+                print("SELFTEST FAILED: varied (no block took the transformed path)")
+                sys.exit(1)
+            inverse(enc, dec)
+            with open(dec, "rb") as f:
+                if f.read() != data:
+                    print(f"SELFTEST FAILED: {name}")
+                    sys.exit(1)
+    print("SELFTEST PASSED!")
+
+
 # --- CLI ---
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="High-speed rs-big (Numba-accelerated)")
@@ -223,11 +252,15 @@ if __name__ == '__main__':
     u.add_argument('-w','--whole-file', action='store_true')
     u.add_argument('-v','--verbose', action='store_true')
 
+    subs.add_parser('selftest', help='Round-trip test on random, periodic, and varied data')
+
     args = parser.parse_args()
     if args.cmd == 'transform':
         transform(args.input, args.output,
                   args.block_size, args.rle_max_run,
                   verbose=args.verbose, whole_file=args.whole_file)
-    else:
+    elif args.cmd == 'inverse':
         inverse(args.input, args.output,
                 verbose=args.verbose, whole_file=args.whole_file)
+    else:
+        selftest()

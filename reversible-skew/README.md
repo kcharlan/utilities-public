@@ -14,8 +14,9 @@ block is stored unchanged when its RLE payload would not be smaller.
   provides a `selftest` subcommand.
 - `rs-big.py` — Speed-oriented variant. Numba is required and JIT-compiles the
   MTF/RLE operations. `pydivsufsort` remains optional, but the pure-Python
-  fallback is impractical for large blocks. This variant skips the per-block
-  round-trip check and has no `selftest` subcommand.
+  fallback is impractical for large blocks. It retains the per-block
+  reconstruction guard from `rs.py:transform`, using its JIT decode routines,
+  and provides a `selftest` subcommand for random, periodic, and varied data.
 - `setup.sh` — Deletes and recreates `venv/` with `python3.12`, then installs
   the exact `pydivsufsort` and `numba` releases tracked in `requirements.txt`.
 
@@ -50,8 +51,9 @@ python rs.py transform \
   --verbose
 ```
 
-Use `rs-big.py` in the same way when speed is more important than the
-reference implementation's per-block verification.
+Use `rs-big.py` in the same way for JIT-accelerated MTF/RLE operations. Both
+scripts apply the reconstruction guard in `rs.py:transform` before writing
+a transformed block; a failed comparison stores the original block instead.
 
 Recover the original file:
 
@@ -62,17 +64,24 @@ python rs.py inverse \
   --verbose
 ```
 
-Run the reference implementation's built-in check:
+Run both scripts' built-in checks:
 
 ```bash
 python rs.py selftest
+python rs-big.py selftest
 ```
 
-The self-test generates 1 MiB of random data, transforms it in 64 KiB blocks,
-inverts it, and compares the result byte-for-byte.
+The reference selftest generates 1 MiB of random data, transforms it in
+64 KiB blocks, inverts it, and compares the result byte-for-byte. The optimized
+selftest checks 1 MiB each of random, periodic, and varied synthetic data and
+requires at least one varied block to use the transformed path.
 
-Run that self-test after dependency updates; it is the project's complete
-dependency compatibility check.
+After code or dependency updates, run both selftests and both scripts' `--help`
+commands. Cross-decode random, periodic, and varied synthetic fixtures between
+the scripts and compare each recovered file with its original using `cmp`.
+Also decode a retained valid pre-change synthetic stream with the changed
+script and require byte equality. Keep fixtures and generated streams outside
+the checkout. These checks form the project's complete compatibility validation.
 
 ### Transform options
 

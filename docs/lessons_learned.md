@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-15: Retain reference reconstruction guards in optimized variants
+
+Reversible Skew's optimized transform accepted smaller periodic BWT payloads
+that did not reconstruct the original bytes. Preserve the `rs.py:transform`
+reconstruction guard when accelerating MTF/RLE operations, falling back to raw
+blocks when comparison fails. Random-only tests exercise passthrough and miss
+this failure: retain periodic and varied synthetic regressions, require the
+varied case to take the transformed path, and cross-decode both implementations.
+See [Reversible Skew's guide](../reversible-skew/README.md) for project validation.
+
 ## 2026-10-15: Compose inventory coverage and npm audit evidence across views
 
 Manifest inventory failures are independent of declaration rows. Fleet cards and
