@@ -1,5 +1,9 @@
 # Lessons learned
 
+- Browser screenshots belong under each test's scratch root. Fixed session
+  evidence paths escape wrapper cleanup and let repeat/concurrent runs overwrite
+  reviewed artifacts; assert destination isolation before the screenshot writes.
+
 - Source filtering must cover direct subagent reader hashes as well as the
   session list and descendant collection. Apply one provider predicate, treat
   legacy rows as Codex, and remove opposite-provider reader selections while

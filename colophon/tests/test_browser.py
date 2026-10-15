@@ -6,6 +6,7 @@ import json
 import copy
 import re
 import subprocess
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 @pytest.fixture
@@ -213,7 +214,17 @@ def test_claude_absent_checked_paths(page, native):
         expect(page.locator(".empty-state")).to_contain_text("/synthetic/checked-projects, /synthetic/checked-history.jsonl")
         assert requests == []
 
-def test_source_metric_colors_splits_and_cost_states(page, native):
+def test_source_metric_colors_splits_and_cost_states(page, native, monkeypatch):
+    captures = []
+    original_screenshot = page.screenshot
+    def isolated_screenshot(*args, **kwargs):
+        destination = Path(kwargs["path"])
+        # Check before writing: a regression must not overwrite shared evidence.
+        assert destination.parent == native.root
+        assert destination not in captures
+        captures.append(destination)
+        return original_screenshot(*args, **kwargs)
+    monkeypatch.setattr(page, "screenshot", isolated_screenshot)
     def mutate(payload):
         payload["meta"]["sources"]["codex"]["costs"]["available"] = False
         claude = next(row for row in payload["sessions"] if row["provider"] == "claude")
@@ -250,12 +261,13 @@ def test_source_metric_colors_splits_and_cost_states(page, native):
         expect(page.locator('[data-kpi="cost"]')).to_contain_text("costs unavailable")
         page.get_by_role("button", name="All", exact=True).click()
         page.set_viewport_size({"width": 1440, "height": 1000})
-        page.screenshot(path="/tmp/colophon-claude-sdd.GSBMar/task6-desktop.png", full_page=True)
+        page.screenshot(path=native.root / "task6-desktop.png", full_page=True)
         page.set_viewport_size({"width": 375, "height": 812})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), page.evaluate("[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => [e.className, e.getBoundingClientRect().right])")
         assert page.locator(".hour-grid .axis").evaluate_all("nodes => nodes.every(e => e.getBoundingClientRect().height <= 13)")
         assert page.locator('[data-kpi="cost"] .cost-note').evaluate("e => parseFloat(getComputedStyle(e).fontSize)") == 9
-        page.screenshot(path="/tmp/colophon-claude-sdd.GSBMar/task6-phone.png", full_page=True)
+        page.screenshot(path=native.root / "task6-phone.png", full_page=True)
+        assert len(captures) == 2 and all(path.is_file() for path in captures)
         assert requests == []
 
 def test_native_page_renders_and_filters_synthetic_session(page, native_page):
