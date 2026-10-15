@@ -50,7 +50,7 @@ Runtime paths are resolved once when the module loads:
 | Runtime home | `~/.git_dashboard` | `GIT_DASHBOARD_HOME` |
 | Database | `<runtime-home>/dashboard.db` | `GIT_DASHBOARD_DB` |
 
-The runtime home contains mutable state only. SQLite is initialized idempotently, uses WAL mode, and has small additive migrations for columns introduced after the first schema version.
+The runtime home contains mutable state only. SQLite is initialized idempotently and uses WAL mode. Startup applies additive column migrations followed by the transactional 0.2.0 dependency-key rebuild when needed. The rebuild preserves version values and timestamps, normalizes Python names, coalesces missing or NULL sources to an empty string, and keeps the first row by rowid on a normalized-key collision. Legacy severity and advisory values move into a rescan note; active advisory is cleared and severity/outdated/vulnerability coverage become unchecked. Already migrated rows are unchanged.
 
 ## Startup contracts
 
@@ -111,14 +111,15 @@ The default branch is never presented as stale even if its stored date exceeds t
 
 ### `dependencies`
 
-Dependency health keyed by repository, manager, and package name:
+Dependency declarations keyed by `(repo_id, manager, source_path, name)`:
 
-- current, wanted, and latest versions
-- severity: `ok`, `outdated`, `major`, or `vulnerable`
-- advisory identifier and check timestamp
-- manifest `source_path`
+- non-null manifest `source_path`, defaulting to an empty string
+- declared specification text and current, wanted, and latest versions
+- severity, defaulting to `unchecked`
+- independent `outdated_state` and `vuln_state`, defaulting to `unchecked`
+- active advisory identifier, check note, and check timestamp
 
-Because `source_path` is not part of the primary key and parsing deduplicates by manager/name, repeated declarations of the same package within one repository are represented once.
+Parsing retains the first repeated identity within a manifest and preserves declarations from different manifests. Python package identity lowercases names and replaces runs of hyphens, underscores, and dots with a hyphen. Other manager names and fallback reference identifiers retain their spelling. The dependency API exposes the declared text, row timestamp, and coverage fields alongside the versions and manifest attribution.
 
 ### `scan_log`
 
@@ -181,7 +182,7 @@ Manifest discovery walks through depth three and skips hidden, virtual-environme
 | `Gemfile` | `bundler` |
 | `composer.json` | `composer` |
 
-Within one directory, only the highest-priority manifest for an ecosystem is selected; `pyproject.toml` precedes `requirements.txt`. Manifests in different directories are considered, subject to repository-wide manager/name deduplication.
+Within one directory, only the highest-priority manifest for an ecosystem is selected; `pyproject.toml` precedes `requirements.txt`. Manifests in different directories are considered independently; declaration deduplication is scoped to manager, manifest path, and identity name.
 
 Parsing is intentionally lightweight:
 
@@ -218,7 +219,11 @@ The local SPA consumes these JSON and streaming endpoints:
 | POST | `/api/repos/{id}/scan/deps` | Synchronous single-repository dependency scan |
 | GET | `/api/analytics/heatmap` | Fleet daily commit totals |
 | GET | `/api/analytics/allocation` | Per-repository commit series |
-| GET | `/api/analytics/dep-overlap` | Packages used by at least two repositories |
+| GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
+
+### Dependency overlap response
+
+`GET /api/analytics/dep-overlap` returns `{ "packages": [...] }`. Each entry groups declarations by manager and identity name, includes `count` (declaration uses), `repo_count` (distinct repositories), and `repos[]` with `repo_id`, `name`, `version`, and `source_path`. Groups with fewer than two uses are excluded; results sort by use count descending. `version_spread` uses distinct non-null versions ordered by `packaging.version.Version`, followed by invalid version text in lexical order. Empty version sets produce an empty spread. Expanded rows display each manifest beside its version and use repository ID plus source path as their React key.
 
 ## UI contracts
 

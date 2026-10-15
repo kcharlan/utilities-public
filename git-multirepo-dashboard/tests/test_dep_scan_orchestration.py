@@ -789,3 +789,34 @@ def test_get_fleet_kpis_zero_when_no_deps(test_app_raise):
     kpis = response.json()["kpis"]
     assert kpis["vulnerable_deps"] == 0
     assert kpis["outdated_deps"] == 0
+
+
+def test_scan_removes_only_stale_declarations(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    raw = [dict(_make_dep('synthetic-pkg'), source_path=source,
+                declared_spec='==1.0.0', outdated_state='checked',
+                vuln_state='unchecked', check_note='synthetic coverage note')
+           for source in ('a/requirements.txt', 'b/requirements.txt')]
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path: raw)
+    for checker in ('python', 'node', 'go', 'rust', 'ruby', 'php'):
+        monkeypatch.setattr(git_dashboard, f'check_{checker}_deps', lambda path, deps: deps)
+
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, repo_id, '/synthetic/repo')
+            return await git_dashboard._fetch_repo_deps(repo_id, db)
+    groups = run(scan())
+    package = groups[0]['packages'][0]
+    assert package['declared_spec'] == '==1.0.0'
+    assert package['outdated_state'] == 'checked'
+    assert package['vuln_state'] == 'unchecked'
+    assert package['check_note'] == 'synthetic coverage note'
+    assert package['checked_at'] == raw[0]['checked_at']
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM dependencies').fetchone()[0] == 2
+    raw[:] = [dict(raw[1], current_version='2.0')]
+    run(scan())
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute('SELECT source_path, current_version FROM dependencies').fetchall() == [('b/requirements.txt', '2.0')]

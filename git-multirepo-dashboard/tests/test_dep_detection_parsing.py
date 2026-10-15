@@ -543,3 +543,25 @@ def test_standard_shape(manager, content, filename):
         assert "version" in r
         assert "manager" in r
         assert r["manager"] == manager
+
+
+def test_parse_deps_for_repo_keeps_manifest_identities(tmp_path):
+    for manifest, text in {
+        'requirements.txt': 'SYNTHETIC_Pkg.Name==1.0\nsynthetic-pkg-name==9.0\n',
+        'child/requirements.txt': 'synthetic.pkg_name==2.0\n',
+    }.items():
+        path = tmp_path / manifest
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    deps = parse_deps_for_repo(tmp_path)
+    assert {(d['source_path'], d['name'], d['version']) for d in deps} == {
+        ('requirements.txt', 'synthetic-pkg-name', '1.0'),
+        ('child/requirements.txt', 'synthetic-pkg-name', '2.0'),
+    }
+
+
+def test_dependency_identity_normalizes_package_names_only():
+    import git_dashboard
+    assert git_dashboard.dependency_identity_name({'manager': 'pip', 'name': 'SYNTHETIC_Pkg.Name'}) == 'synthetic-pkg-name'
+    assert git_dashboard.dependency_identity_name({'manager': 'npm', 'name': '@Synthetic/Pkg.Name'}) == '@Synthetic/Pkg.Name'
+    assert git_dashboard.dependency_identity_name({'manager': 'pip', 'name': 'https://synthetic.invalid/Name.git', 'reference_identity': True}) == 'https://synthetic.invalid/Name.git'

@@ -77,7 +77,7 @@ If a registered repository moves, its path can be repaired from the detail view.
 
 ### Analytics
 
-Fleet-wide analytics include a one-year commit heatmap, configurable time-allocation charts, and dependency overlap across repositories.
+Fleet-wide analytics include a one-year commit heatmap, configurable time-allocation charts, and dependency overlap across manifests and repositories. Overlap counts declaration uses separately from distinct repositories and attributes each version to its manifest. Version spreads use semantic version ordering, with non-version text sorted afterward.
 
 ## Dependency discovery
 
@@ -90,7 +90,9 @@ Git Fleet searches the repository root and subdirectories up to three levels dee
 - `Gemfile`
 - `composer.json`
 
-Within one directory, `pyproject.toml` takes precedence over `requirements.txt`. A dependency row records the manifest path that supplied it. The current schema identifies a package by repository, package manager, and package name, so repeated declarations of the same package within one repository are represented once.
+Within one directory, `pyproject.toml` takes precedence over `requirements.txt`. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
+
+Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
 
 ## Command-line options
 

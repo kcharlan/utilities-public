@@ -317,7 +317,7 @@ def test_schema_branches_columns():
 
 
 def test_schema_dependencies_columns():
-    """dependencies table must have the expected columns."""
+    """Declaration-key schema includes declared text and independent check coverage."""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = Path(f.name)
     try:
@@ -330,6 +330,7 @@ def test_schema_dependencies_columns():
             "repo_id", "manager", "name", "current_version",
             "wanted_version", "latest_version", "severity",
             "advisory_id", "checked_at", "source_path",
+            "declared_spec", "outdated_state", "vuln_state", "check_note",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:

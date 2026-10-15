@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -221,6 +221,27 @@ def run_preflight() -> None:
 
 # ── SQLite Schema ─────────────────────────────────────────────────────────────
 
+_DEPENDENCIES_TABLE_SQL = """\
+CREATE TABLE IF NOT EXISTS dependencies (
+  repo_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  manager TEXT NOT NULL,
+  source_path TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  declared_spec TEXT,
+  current_version TEXT,
+  wanted_version TEXT,
+  latest_version TEXT,
+  severity TEXT DEFAULT 'unchecked',
+  advisory_id TEXT,
+  outdated_state TEXT DEFAULT 'unchecked',
+  vuln_state TEXT DEFAULT 'unchecked',
+  check_note TEXT,
+  checked_at TEXT,
+  PRIMARY KEY (repo_id, manager, source_path, name)
+);
+"""
+
+
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
 
@@ -254,19 +275,7 @@ CREATE TABLE IF NOT EXISTS branches (
   PRIMARY KEY (repo_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS dependencies (
-  repo_id          TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  manager          TEXT NOT NULL,
-  name             TEXT NOT NULL,
-  current_version  TEXT,
-  wanted_version   TEXT,
-  latest_version   TEXT,
-  severity         TEXT DEFAULT 'ok',
-  advisory_id      TEXT,
-  checked_at       TEXT,
-  source_path      TEXT DEFAULT '',
-  PRIMARY KEY (repo_id, manager, name)
-);
+""" + _DEPENDENCIES_TABLE_SQL + """
 
 CREATE TABLE IF NOT EXISTS working_state (
   repo_id              TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
@@ -315,8 +324,64 @@ _MIGRATION_SQL = [
 ]
 
 
+def normalize_dep_name(manager: str, name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower() if manager == "pip" else name
+
+
+def dependency_identity_name(dep: dict) -> str:
+    if dep.get("reference_identity"):
+        return dep["name"]
+    return normalize_dep_name(dep["manager"], dep["name"])
+
+
+def _version_sort_key(value: str) -> tuple:
+    from packaging.version import InvalidVersion, Version
+    try:
+        return (0, Version(value), value)
+    except InvalidVersion:
+        return (1, None, value)
+
+
+def _migrate_dependencies_v2(conn: sqlite3.Connection) -> None:
+    """Rebuild the historical package key as a manifest declaration key atomically."""
+    info = conn.execute("PRAGMA table_info(dependencies)").fetchall()
+    key = [r[1] for r in sorted(info, key=lambda r: r[5]) if r[5]]
+    if key == ["repo_id", "manager", "source_path", "name"]:
+        return
+    conn.execute("SAVEPOINT dependencies_v2")
+    try:
+        cursor = conn.execute("SELECT * FROM dependencies ORDER BY rowid")
+        columns = [d[0] for d in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        conn.execute("ALTER TABLE dependencies RENAME TO dependencies_legacy")
+        conn.execute(_DEPENDENCIES_TABLE_SQL)
+        for row in rows:
+            note = (f"Legacy result: severity={row.get('severity')!r}; "
+                    f"advisory={row.get('advisory_id')!r}. "
+                    "Rescan dependencies to establish check coverage.")
+            conn.execute(
+                """INSERT INTO dependencies
+                   (repo_id, manager, source_path, name, current_version,
+                    wanted_version, latest_version, severity, advisory_id,
+                    outdated_state, vuln_state, check_note, checked_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'unchecked', NULL,
+                           'unchecked', 'unchecked', ?, ?)
+                   ON CONFLICT(repo_id, manager, source_path, name) DO NOTHING""",
+                (row["repo_id"], row["manager"], row.get("source_path") or "",
+                 normalize_dep_name(row["manager"], row["name"]),
+                 row.get("current_version"), row.get("wanted_version"),
+                 row.get("latest_version"), note, row.get("checked_at")),
+            )
+        conn.execute("DROP TABLE dependencies_legacy")
+        conn.execute("RELEASE SAVEPOINT dependencies_v2")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT dependencies_v2")
+        conn.execute("RELEASE SAVEPOINT dependencies_v2")
+        raise
+
+
 def run_migrations(db_path: Path) -> None:
-    """Add new columns to working_state (idempotent — safe to run multiple times)."""
+    """Apply additive migrations, then migrate the dependency declaration key."""
     conn = sqlite3.connect(str(db_path))
     try:
         for sql in _MIGRATION_SQL:
@@ -324,6 +389,7 @@ def run_migrations(db_path: Path) -> None:
                 conn.execute(sql)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        _migrate_dependencies_v2(conn)
         conn.commit()
     finally:
         conn.close()
@@ -942,8 +1008,9 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
         await db.execute(
             """INSERT OR REPLACE INTO dependencies
                (repo_id, manager, name, current_version, wanted_version,
-                latest_version, severity, advisory_id, checked_at, source_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                latest_version, severity, advisory_id, checked_at, source_path,
+                declared_spec, outdated_state, vuln_state, check_note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 repo_id,
                 dep.get("manager", ""),
@@ -954,21 +1021,25 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
                 dep.get("severity", "ok"),
                 dep.get("advisory_id"),
                 dep.get("checked_at"),
-                dep.get("source_path", ""),
+                dep.get("source_path") or "",
+                dep.get("declared_spec", dep.get("version")),
+                dep.get("outdated_state", "unchecked"),
+                dep.get("vuln_state", "unchecked"),
+                dep.get("check_note"),
             ),
         )
 
     # 4. Delete stale deps (in DB but no longer in manifest)
-    current_keys = {(dep.get("manager", ""), dep.get("name", "")) for dep in enriched}
+    current_keys = {(dep.get("manager", ""), dep.get("source_path") or "", dep.get("name", "")) for dep in enriched}
     cursor = await db.execute(
-        "SELECT manager, name FROM dependencies WHERE repo_id = ?", (repo_id,)
+        "SELECT manager, source_path, name FROM dependencies WHERE repo_id = ?", (repo_id,)
     )
     db_keys = await cursor.fetchall()
-    for manager, name in db_keys:
-        if (manager, name) not in current_keys:
+    for manager, source_path, name in db_keys:
+        if (manager, source_path, name) not in current_keys:
             await db.execute(
-                "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND name = ?",
-                (repo_id, manager, name),
+                "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND source_path = ? AND name = ?",
+                (repo_id, manager, source_path, name),
             )
 
     await db.commit()
@@ -1558,7 +1629,7 @@ def parse_deps_for_repo(repo_path: Path) -> list[dict]:
     }
 
     all_deps: list[dict] = []
-    seen_dep_keys: set[tuple[str, str]] = set()  # (manager, name) dedup across dirs
+    seen_dep_keys: set[tuple[str, str, str]] = set()
     for entry in manifest_entries:
         filename = entry["file"]
         parser = _parser_map.get(filename)
@@ -1578,7 +1649,8 @@ def parse_deps_for_repo(repo_path: Path) -> list[dict]:
             logger.warning("Error parsing %s in %s: %s", filename, manifest_dir, exc)
             parsed = []
         for dep in parsed:
-            key = (dep.get("manager", ""), dep.get("name", ""))
+            dep["name"] = dependency_identity_name(dep)
+            key = (dep["manager"], source, dep["name"])
             if key not in seen_dep_keys:
                 seen_dep_keys.add(key)
                 dep["source_path"] = source
@@ -5491,7 +5563,7 @@ HTML_TEMPLATE = """\
                           onClick={() => toggleExpanded(key)}
                           style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}
                         >
-                          {isExpanded ? '▾' : '▸'} {pkg.count} repos
+                          {isExpanded ? '▾' : '▸'} {pkg.count} uses in {pkg.repo_count} repos
                         </span>
                       </td>
                       <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -5502,8 +5574,8 @@ HTML_TEMPLATE = """\
                       <tr style={{ borderTop: '1px solid var(--border-default)' }}>
                         <td colSpan={4} style={{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}>
                           {pkg.repos.map(repo => (
-                            <div key={repo.repo_id} style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                              {repo.name} — {repo.version !== null ? repo.version : '(unknown)'}
+                            <div key={JSON.stringify([repo.repo_id, repo.source_path])} style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                              {repo.name} — {repo.source_path} — {repo.version !== null ? repo.version : '(unknown)'}
                             </div>
                           ))}
                         </td>
@@ -6231,7 +6303,8 @@ async def _fetch_repo_deps(repo_id: str, db):
     cursor = await db.execute(
         """
         SELECT manager, name, current_version, wanted_version, latest_version,
-               severity, advisory_id, checked_at, COALESCE(source_path, '')
+               severity, advisory_id, checked_at, source_path,
+               declared_spec, outdated_state, vuln_state, check_note
         FROM dependencies
         WHERE repo_id = ?
         ORDER BY source_path, manager,
@@ -6250,7 +6323,8 @@ async def _fetch_repo_deps(repo_id: str, db):
     result = []
     group_key_index = {}
     for row in rows:
-        mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id, checked_at, source_path = row
+        (mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id,
+         checked_at, source_path, declared_spec, outdated_state, vuln_state, check_note) = row
         # Group by (manager, source_path) so monorepo subdirs show separately
         gkey = (mgr, source_path)
         if gkey not in group_key_index:
@@ -6272,6 +6346,11 @@ async def _fetch_repo_deps(repo_id: str, db):
                 "severity": severity,
                 "advisory_id": advisory_id,
                 "source_path": source_path,
+                "declared_spec": declared_spec,
+                "outdated_state": outdated_state,
+                "vuln_state": vuln_state,
+                "check_note": check_note,
+                "checked_at": checked_at,
             }
         )
     return result
@@ -6354,12 +6433,12 @@ async def get_analytics_allocation(days: int = 90, db=Depends(get_db)):
 
 @app.get("/api/analytics/dep-overlap")
 async def get_analytics_dep_overlap(db=Depends(get_db)):
-    """Return packages shared across 2+ repos, sorted by count descending."""
+    """Return repeated declarations, including multiple manifests in one repo."""
     cursor = await db.execute(
-        "SELECT d.name, d.manager, d.repo_id, r.name as repo_name, d.current_version "
+        "SELECT d.name, d.manager, d.repo_id, r.name as repo_name, d.current_version, d.source_path "
         "FROM dependencies d "
         "JOIN repositories r ON r.id = d.repo_id "
-        "ORDER BY d.name, d.manager, r.name"
+        "ORDER BY d.name, d.manager, r.name, d.source_path"
     )
     rows = await cursor.fetchall()
 
@@ -6371,18 +6450,19 @@ async def get_analytics_dep_overlap(db=Depends(get_db)):
         row_list = list(group)
         if len(row_list) < 2:
             continue
-        versions = [r[4] for r in row_list if r[4] is not None]
-        versions_sorted = sorted(versions) if versions else []
+        versions = {r[4] for r in row_list if r[4] is not None}
+        versions_sorted = sorted(versions, key=_version_sort_key)
         spread = f"{versions_sorted[0]} - {versions_sorted[-1]}" if versions_sorted else ""
         packages.append({
             "name": pkg_name,
             "manager": manager,
             "repos": [
-                {"repo_id": r[2], "name": r[3], "version": r[4]}
+                {"repo_id": r[2], "name": r[3], "version": r[4], "source_path": r[5]}
                 for r in row_list
             ],
             "version_spread": spread,
             "count": len(row_list),
+            "repo_count": len({r[2] for r in row_list}),
         })
 
     packages.sort(key=lambda p: p["count"], reverse=True)

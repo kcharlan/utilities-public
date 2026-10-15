@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-15: Preserve dependency declaration identity across manifests
+
+Git Fleet previously deduplicated and stored dependency rows by repository,
+manager, and package name, losing repeated declarations in nested manifests.
+Include the manifest path in parsing, persistence, stale-row deletion, and
+overlap attribution. Normalize Python names before deciding identity; preserve
+fallback reference identifiers. Test schema migration against historical DDL,
+including SQL NULL sources and normalized-name collisions, and invalidate
+legacy health coverage rather than presenting old results as fresh evidence.
+
 ## 2026-10-15: Verify extension release identity during deployment
 
 The extension repair was deployed with its previous manifest version, so the
