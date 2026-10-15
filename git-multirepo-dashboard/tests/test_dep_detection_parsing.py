@@ -762,3 +762,38 @@ def test_pep723_unclosed_and_unknown_blocks_are_ignored(tmp_path):
 def test_pep723_prelude_allows_indented_comments(tmp_path):
     (tmp_path / 'tool.py').write_text('  # synthetic leading comment\n' + _script())
     assert len(parse_deps_for_repo(tmp_path)) == 1
+
+
+@pytest.mark.parametrize('filename', ['a-extra.py', 'z-extra.py'])
+@pytest.mark.parametrize('content, count, failed', [
+    ('', 0, False),
+    ('synthetic-alpha==1.0\n', 1, False),
+    ('invalid ???\n', 0, True),
+    (None, 0, True),
+])
+def test_included_script_candidate_preserves_requirements_inventory(
+        tmp_path, monkeypatch, filename, content, count, failed):
+    included = tmp_path / filename
+    included.write_text(content or '')
+    (tmp_path / 'requirements.txt').write_text(f'-r {filename}\n')
+    reads = []
+    original = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == included:
+            reads.append(path)
+            if content is None:
+                raise OSError('synthetic include read failure')
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', read_text)
+    manifests = []
+    rows = parse_deps_for_repo(tmp_path, manifests_out=manifests)
+    inventory = {m['path']: m for m in manifests}
+    assert set(inventory) == {'requirements.txt', filename}
+    assert inventory[filename]['kind'] == 'requirements'
+    assert inventory[filename]['dependencies'] == count
+    assert bool(inventory[filename]['error']) is failed
+    assert len(rows) == count
+    assert {row['source_path'] for row in rows} == ({filename} if count else set())
+    assert reads == [included]

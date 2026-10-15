@@ -1382,6 +1382,10 @@ def _find_pep723_block(script: str) -> str | None:
 
 
 def parse_pep723_script(file_path: Path, *, manifests_out: dict | None = None) -> list[dict]:
+    # An explicit requirements include owns its resolved file, even if its
+    # filename also makes it a script candidate. Never reread or replace it.
+    if manifests_out is not None and file_path.resolve() in manifests_out:
+        return []
     record = _manifest_record(manifests_out, file_path, 'pep723')
     try:
         block = _find_pep723_block(file_path.read_text(encoding='utf-8'))
@@ -1755,7 +1759,10 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
                'composer.json': parse_composer_json}
     all_deps = []
     seen = set()
-    for entry in detect_dep_files(repo_path):
+    # Parse explicit manifests/includes before probing script candidates. This
+    # gives arbitrary include filenames stable ownership regardless of walk order.
+    entries = sorted(detect_dep_files(repo_path), key=lambda entry: entry['kind'] == 'pep723')
+    for entry in entries:
         file_path = entry['dir'] / entry['file']
         kind = entry['kind']
         try:

@@ -150,3 +150,9 @@ must record attempted reads, empty files and failures independently of dependenc
 rows. Adjacent locks supply versions only; ambiguous versions must block checker
 entry before any floating resolution can run. PEP 723 extraction needs its greedy
 closing-line grammar, not a first-terminator scan or fixed prelude byte cutoff.
+
+An arbitrary requirements include can also look like a discovered script. Parse
+explicit manifests and their includes before script candidates, and let an existing
+resolved-path inventory record own that file. A harmless metadata probe must never
+replace or remove the include's empty, populated or failed record. Regress both
+filename orders and assert one actual read, not merely one surviving declaration.
