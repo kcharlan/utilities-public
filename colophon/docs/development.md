@@ -75,6 +75,11 @@ not build steps or part of a private-state migration. No font generator or
 historical pricing updater is shipped here. Preserve [notices](../THIRD_PARTY.md)
 and the asset manifest when deliberately updating embedded inputs.
 
+Changes to serialized Codex `LogRecord` or `TokenStream` content require a
+native cache format bump in `src/cache/cache.c`; compose-only accounting rows
+are rebuilt and are not cached. Keep Claude codec versions independent and
+preserve their old decoders and immutable synthetic inputs.
+
 Pricing lesson: an incorrectly seeded long-context threshold must be corrected
 in every existing curated-history row, not only in the resolver or a new dated
 row; dated lookup otherwise keeps earlier usage incorrectly priced. Validate

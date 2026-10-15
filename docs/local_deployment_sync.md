@@ -388,8 +388,6 @@ trees. The read-only deployment audit compares the installed project tree
 byte-for-byte and mode-for-mode and verifies the stable command link target.
 Use the project README for setup, repair, and removal behavior.
 
-`fid_div_conv` and `van_div_conv` are retained local legacy launchers. They were intentionally excluded from the public repository because `div_conv` supersedes them and the old source historically mixed operational mappings with code. Do not copy them back into public source. Remove them only after deciding the legacy rollback path is no longer needed.
-
 ## Top-level home project copies
 
 The maintained runtime/source copies are:
@@ -475,4 +473,4 @@ Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain
 Market Atlas moves the entire prior app into a new private backup container,
 without normalizing the saved tree or promising exact metadata restoration.
 Ordinary move-based recovery preserves the saved contents, including legacy
-symlinks. Restoring a legacy tree also restores its old exposure profile.
+symlinks.

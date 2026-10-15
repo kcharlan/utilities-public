@@ -119,6 +119,8 @@ Important conversion behavior:
   when converting to XML.
 - XML element values load as strings through `xmltodict`; an XML round trip may
   therefore not preserve scalar Python types.
+- The XML serializers interpolate element names and string values directly.
+  Use trusted, simple data; they are not hardened XML generators.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
 - Missing input paths and parse errors use exit code `3`, conversion errors
   use `4`, output-write errors use `5`, and `argparse` usage errors use `2`.
@@ -148,7 +150,12 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-## Design references
+## Maintenance notes
 
-- [Product requirements](docs/LLM_Token_Analyzer_PRD.md)
-- [Technical specification](docs/llm_token_analyzer_technical_spec_v_1.md)
+The browser and CLI have separate conversion implementations. Keep their
+documented boundaries explicit rather than assuming parity, particularly for
+TOON and XML. Browser conversion starts in `handleCalculate` in
+`web/index.html`; each run clears previous counts and comparisons before
+validation, so a failed run cannot leave stale results. The CLI dispatches
+through `load_data` and `dump_data` in `src/data_convert.py` to the modules in
+`src/converters/`.

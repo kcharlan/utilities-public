@@ -84,6 +84,15 @@ Total is the sum of jurisdiction cents; net is gross cents minus that sum and
 may be negative. Rates also round upward. See [Usage](Usage.md) for exact input
 grammar, blur behavior, tax omissions and lookup caveats.
 
+`ceilScaled(value, scale)` is the shared rounding primitive for money and
+percentages. It rejects negative/nonfinite inputs, rounds a scaled value to the
+nearest integer only within the `1e-6` tolerance, and otherwise takes its ceiling.
+This prevents binary floating-point noise from adding a cent to values such as
+`1.1` or `0.07`. A real fraction within that tolerance can be dropped; at scale
+100 the maximum understatement is one millionth of a cent. Larger floating-point
+errors can add a cent. Integer cents are formatted directly for display, CSV
+and QIF; they are not converted back through floating-point `toFixed`.
+
 ## Discovery and missing years
 
 States are discovered at build time from `rules/states/*/`. Numeric years and
@@ -144,3 +153,10 @@ Bundled rules remain unchanged. Georgia 2025's historical federal-like
 deductions are preserved for its fixture, not corrected silently. Pennsylvania
 has only 2026 rules and its local EIT stays disabled until its placeholder rate
 is deliberately edited and the page rebuilt.
+
+`tests/fixtures/parity/python_parity.json` records output from the retired
+Python engine, including its generator revision and interpreter. The adjacent
+`bundled/` and `synthetic/` rules are frozen inputs, independent of current
+bundled-rule corrections. Never regenerate this oracle from the JavaScript
+engine: exact annual values, rounded-up monthly cents, missing-year errors and
+QIF text provide an independent check on the port and its operation order.

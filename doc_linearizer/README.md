@@ -13,7 +13,9 @@ Command-line tool that flattens a multi-page HTML documentation site, such as a 
 - Rewrites links between included HTML pages to point to page anchors in the combined document.
 - Removes common decorative controls and images and exposes hidden usage content before conversion.
 
-See [the design document](docs/linearize_doc_design.md) for the pipeline, supported asset types, and implementation constraints.
+Table conversion favors readable cell text over HTML layout: column spans are
+expanded, but row spans and rich cell markup are not preserved. Internal link
+matching uses literal discovered page paths, without general URL normalization.
 
 ## Dependencies
 
