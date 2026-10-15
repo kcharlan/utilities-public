@@ -120,6 +120,7 @@ install_stubs() {
   write_stub docker '
 if [[ "$1" == compose && "$2" == ls ]]; then cat "$STATE_DIR/compose.json"; exit 0; fi
 if [[ "$1" == ps ]]; then cat "$STATE_DIR/containers.txt"; exit 0; fi
+if [[ "$1" == pull ]]; then exit "${FAKE_PULL_RC:-0}"; fi
 if [[ "$1" == compose && " $* " == *" build "* ]]; then exit "${FAKE_BUILD_RC:-0}"; fi'
   write_stub npm '
 if [[ "$1" == update ]]; then print -- "// refreshed" >> package-lock.json; fi
@@ -267,6 +268,48 @@ test_refresh_runs_each_lock_audit_build_and_suite() {
     fail "refresh changed the deployed copy"
 }
 
+line_of() {
+  local line
+  line="$(grep -Fn -- "$2" "$1" | head -1 | cut -d: -f1)"
+  [[ -n "$line" ]] || fail "expected '$2' in ${1:t}"
+  print -r -- "$line"
+}
+
+# The routing test runs `docker run --pull=never`, and a check build does not
+# leave its base images as named local images, so refresh must pull them first.
+test_refresh_pulls_routing_test_images_before_tests() {
+  new_case refresh_pull
+  run_script refresh --stack webserver
+  assert_status 0
+  local log="$CASE/calls.log"
+  local nginx_pull node_pull routing_test
+  nginx_pull="$(line_of "$log" "docker $REPO :: pull nginx:stable-alpine")"
+  node_pull="$(line_of "$log" "docker $REPO :: pull node:24-alpine")"
+  routing_test="$(line_of "$log" "node $REPO :: --test docker/webserver/tests/nginx-routing.test.mjs")"
+  (( nginx_pull < routing_test && node_pull < routing_test )) ||
+    fail "test images must be pulled before the routing test runs"
+}
+
+test_refresh_pulls_overridden_test_images() {
+  new_case refresh_pull_override
+  NGINX_TEST_IMAGE=synthetic/nginx:fixture NGINX_TEST_NODE_IMAGE=synthetic/node:fixture \
+    run_script refresh --stack webserver
+  assert_status 0
+  assert_contains "$CASE/calls.log" "pull synthetic/nginx:fixture"
+  assert_contains "$CASE/calls.log" "pull synthetic/node:fixture"
+  assert_not_contains "$CASE/calls.log" "pull node:24-alpine"
+  assert_not_contains "$CASE/calls.log" "pull nginx:stable-alpine"
+}
+
+test_refresh_pull_failure_skips_tests() {
+  new_case refresh_pull_fail
+  FAKE_PULL_RC=1 run_script refresh --stack webserver
+  assert_status 1
+  assert_contains "$CASE/out" "FAILED"
+  assert_contains "$CASE/out" "could not pull webserver test images"
+  assert_not_contains "$CASE/calls.log" "node $REPO"
+}
+
 test_refresh_stack_filter() {
   new_case refresh_filter
   run_script refresh --stack llm_proxy
@@ -301,6 +344,7 @@ test_refresh_dry_run_changes_nothing() {
   [[ ! -s "$CASE/calls.log" ]] || fail "dry run invoked tools"
   [[ -z "$(git -C "$REPO" status --porcelain)" ]] || fail "dry run changed the repository"
   assert_contains "$CASE/out" "npm update --package-lock-only"
+  assert_contains "$CASE/out" "would run (in .): docker pull node:24-alpine"
 }
 
 # --- deploy --------------------------------------------------------------

@@ -277,6 +277,26 @@ check_build() {
   return "$rc"
 }
 
+# Images a stack's tests start with `docker run --pull=never`. A check build
+# does not leave its base images as named local images, so refresh pulls these
+# before the tests. Defaults and overrides mirror nginx-routing.test.mjs.
+stack_test_images() {
+  case "$1" in
+    webserver)
+      print -l -- "${NGINX_TEST_IMAGE:-nginx:stable-alpine}" \
+        "${NGINX_TEST_NODE_IMAGE:-node:24-alpine}"
+      ;;
+  esac
+}
+
+pull_test_images() {
+  local image
+  for image in "${(@f)$(stack_test_images "$1")}"; do
+    [[ -n "$image" ]] || continue
+    run_in "$REPO_ROOT" docker pull "$image" || return 1
+  done
+}
+
 run_stack_tests() {
   case "$1" in
     webserver)
@@ -305,6 +325,10 @@ refresh_stack() {
   log "Test-building $stack images"
   if ! check_build "$stack"; then
     STEP_FAILURE="test build failed for $stack"
+    return 1
+  fi
+  if ! pull_test_images "$stack"; then
+    STEP_FAILURE="could not pull $stack test images"
     return 1
   fi
   log "Running $stack tests"
@@ -341,7 +365,7 @@ cmd_refresh() {
   print_summary
   if [[ "$DRY_RUN" != true ]]; then
     print
-    log "Lockfile changes under docker/:"
+    log "Changes under docker/:"
     git -C "$REPO_ROOT" diff --stat=200 -- docker
     print
     log "Review the diff, commit it, then run: docker/$PROG deploy"
