@@ -73,10 +73,8 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` installs the TOON implementation directly from its GitHub
-repository at audited commit
-`e475c82e9da03dfaf88c0b277dee6b5d17100b13`, so the initial installation
-requires network access.
+The supported Python dependency graph, including the released `toon-format`
+distribution, is declared in [`requirements.txt`](requirements.txt).
 
 ### Usage
 
@@ -122,6 +120,13 @@ Important conversion behavior:
 - The XML serializers interpolate element names and string values directly.
   Use trusted, simple data; they are not hardened XML generators.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
+- TOON serializes Python dates, datetimes, and times as ISO strings
+  ([`test_dump_temporal_as_iso_string`](tests/test_toon_conv.py)), and treats
+  comment-only input as an empty object
+  ([`test_load_comment_only_is_empty_object`](tests/test_toon_conv.py)).
+- YAML binary values cannot be represented in TOON. Conversion reports a
+  structured error with exit code `4` without creating an output file
+  ([`test_yaml_binary_to_toon_is_a_structured_error`](tests/test_cli.py)).
 - Missing input paths and parse errors use exit code `3`, conversion errors
   use `4`, output-write errors use `5`, and `argparse` usage errors use `2`.
   Handled runtime errors are emitted as one-line JSON on standard error;

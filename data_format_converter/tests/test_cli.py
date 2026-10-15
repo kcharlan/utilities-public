@@ -133,6 +133,23 @@ def test_json_with_null_to_toml_errors():
     assert "TOML does not support null values" in result.stderr
     assert not os.path.exists(output_file)
 
+def test_yaml_binary_to_toon_is_a_structured_error(tmp_path):
+    """Unsupported YAML binary values fail before creating an output file."""
+    input_file = tmp_path / "synthetic.yaml"
+    output_file = tmp_path / "synthetic.toon"
+    input_file.write_text("value: !!binary c3ludGhldGlj\n", encoding="utf-8")
+
+    result = run_cli(["--input", str(input_file), "--to", "toon", "--output", str(output_file)])
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 1
+    error = json.loads(result.stderr)
+    assert error["code"] == "E_4"
+    assert error["message"] == "Failed to convert data to toon."
+    assert "bytes" in error["hint"]
+    assert not output_file.exists()
+
 def test_default_output_filename():
     """Tests the default output filename generation."""
     input_file = os.path.join(TEST_DATA_DIR, "sample.json")

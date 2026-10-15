@@ -15,7 +15,7 @@ def load_toon(text: str) -> Any:
     Parses a TOON string into a Python object.
     """
     if not _toon_available:
-        raise ToonUnavailable("The 'toon-format' library is not installed from GitHub.")
+        raise ToonUnavailable("The 'toon-format' distribution is not installed.")
     return decode(text)
 
 def dump_toon(obj: Any) -> str:
@@ -23,5 +23,5 @@ def dump_toon(obj: Any) -> str:
     Dumps a Python object to a TOON string.
     """
     if not _toon_available:
-        raise ToonUnavailable("The 'toon-format' library is not installed from GitHub.")
+        raise ToonUnavailable("The 'toon-format' distribution is not installed.")
     return encode(obj)
