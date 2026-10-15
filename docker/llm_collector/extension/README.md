@@ -71,9 +71,35 @@ The extension's `background.js` script is the core of the extension. It performs
     are classified by message type instead and are not debounced. Updates to
     the pending counts are queued so overlapping updates are not lost.
 
-4.  **Data Buffering:** The extension buffers the collected usage data locally and sends it to the collector server in batches. This is to minimize the number of requests sent to the server.
+4.  **Data Buffering:** `delivery.js` owns local accounting through a serialized
+    transaction queue. It persists `llm_delivery_v2` with a stable client ID,
+    acknowledged sequence, baseline marker, queued counts, and one immutable
+    in-flight wire batch. A successful storage callback precedes publication.
+    Pending includes both queued and unacknowledged counts. Failed local reads
+    make counts unavailable; failed writes retain the last committed state and
+    appear in delivery status.
 
-5.  **Idempotent Submissions:** The extension uses a sequence number to ensure that usage data is not counted more than once, even if the request to the collector server is retried.
+5.  **Idempotent Submissions:** Concurrent pushes join one drain. Each sequence
+    identifies a persisted batch whose deltas and timestamp remain unchanged
+    through timeouts, lost acknowledgements and worker restarts. New observations
+    queue separately. Only an acknowledgement with the exact sequence and an
+    applied count of zero or the batch sum releases that batch. Sequence gaps
+    retain it and expose an error; they never renumber an uncertain submission.
+
+    Requests abort after five seconds. Network and server failures retry after
+    1, 2, 4, 8, 16, then 30 seconds while the worker stays awake. Initialization,
+    startup, installation and **Force Push** request the same drain. Force Push
+    confirms the request, while subsequent status reports delivery errors and
+    outstanding counts. **Clear Pending** clears only queued observations and
+    reports any outstanding submission it retained.
+
+    Migration imports the represented legacy client, sequence and pending
+    values without deleting the old keys. It durably marks the baseline as
+    unresolved before recording observations. An authenticated, validated
+    `/client_status` response resolves the sequence and marker together; offline
+    restarts preserve this gate and cannot submit prematurely. This does not
+    reconstruct already lost legacy history. Deploy the collector's receipt-
+    preserving reset contract before using this delivery client.
 
 6.  **Connection diagnostics:** Opening the popup asks the service worker to
     probe authenticated `/counters` with a two-second timeout. The popup checks

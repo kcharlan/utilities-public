@@ -115,12 +115,16 @@ function renderStatus(data){
     }
   }
 
-  const pendingEntries = Object.entries(pending).sort((a,b)=>b[1]-a[1]);
+  const pendingEntries = Object.entries(pending || {}).sort((a,b)=>b[1]-a[1]);
   const pendTitle = document.createElement("div");
   pendTitle.style.marginTop = "10px";
-  pendTitle.innerHTML = "<b>Pending (unsent)</b>";
+  pendTitle.innerHTML = "<b>Pending (queued or unacknowledged)</b>";
   frag.appendChild(pendTitle);
-  if (pendingEntries.length === 0){
+  if (data?.available === false) {
+    const row = document.createElement("div");
+    row.textContent = `Counts unavailable: ${data.deliveryError || 'local delivery storage failed'}`;
+    frag.appendChild(row);
+  } else if (pendingEntries.length === 0){
     const row = document.createElement("div"); row.textContent = "(none)";
     frag.appendChild(row);
   } else {
@@ -130,6 +134,12 @@ function renderStatus(data){
       row.innerHTML = `<span title="${h}">${h}</span><span>${c}</span>`;
       frag.appendChild(row);
     }
+  }
+
+  if (data?.deliveryError && data.available !== false) {
+    const row = document.createElement("div");
+    row.textContent = `Delivery: ${data.deliveryError}`;
+    frag.appendChild(row);
   }
 
   const meta = document.createElement("div");
@@ -220,8 +230,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("reset", "click", async () => {
     setNotice("Clearing pending data…");
     try {
-      await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000);
-      setNotice("Pending data cleared.", "success");
+      const resp = await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000);
+      if (resp.ok !== true) throw new Error(resp.error || "clear rejected");
+      setNotice(resp.inFlight ? `Queued data cleared; outstanding submission (${resp.inFlight}) retained.` : "Queued data cleared.", "success");
     } catch (e) {
       setNotice(`Clear failed: ${e.message}`, "error");
     }
@@ -237,7 +248,10 @@ document.addEventListener("DOMContentLoaded", () => {
         collectorStatus: resp.collectorStatus || null,
         collectorUrl: resp.collectorUrl || null,
         serverCounters: resp.serverCounters || {},
-        pending: resp.pending || {},
+        pending: resp.available === false ? null : (resp.pending || {}),
+        available: resp.available,
+        deliveryError: resp.deliveryError,
+        inFlight: resp.inFlight,
         seq: resp.seq,
         client_id: resp.client_id,
         debug: resp.debug || [],
@@ -279,7 +293,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setNotice("Requesting pending-data push…");
     try {
       const resp = await sendMessageWithTimeout({ cmd: "force_push" }, 2000);
-      if (resp.ok === false) throw new Error(resp.error || "push rejected");
+      if (resp.ok !== true) throw new Error(resp.error || "push rejected");
       setNotice("Push requested.", "success");
       setTimeout(() => refresh({ showChecking: false }), 300); // allow background to POST, then refresh
     } catch (e){

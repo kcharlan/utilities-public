@@ -69,3 +69,60 @@ test("still counts the StreamGenerate endpoint", async () => {
 
   assert.deepEqual(await pending(bg), { "gemini.google.com": 1 });
 });
+
+test("overlapping pushes deliver distinct immutable batches", async () => {
+  const requests = [];
+  let accepted = 0, last = 0;
+  const bg = loadBackground({ config: true, fetchImpl: async (url, init) => {
+    if (!url.endsWith('/add')) return { ok: true, json: async () => ({ client_id: 'synthetic-client', last_seq: 0, counters: {} }) };
+    const batch = JSON.parse(init.body);
+    return new Promise(resolve => requests.push({ batch, finish() {
+      const applied = batch.seq > last ? Object.values(batch.deltas).reduce((a,b) => a+b, 0) : 0;
+      accepted += applied; last = Math.max(last, batch.seq);
+      resolve({ ok: true, status: 200, json: async () => ({ ok: true, last_seq: last, applied }) });
+    } }));
+  } });
+  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT));
+  await tick();
+  await bg.send({ cmd: 'force_push' });
+  await new Promise(r => setTimeout(r, 280));
+  post(bg, `${CHANNEL}?SID=SYNTHETIC_SID`, channelBody(PROMPT));
+  await tick();
+  await bg.send({ cmd: 'force_push' });
+  await new Promise(r => setTimeout(r, 280));
+  requests[0].finish();
+  await tick();
+  for (const request of requests.slice(1)) request.finish();
+  await tick();
+  assert.equal(accepted, 2, 'two observations must reach collector');
+  assert.deepEqual((await bg.status()).pending, {});
+  assert.deepEqual(requests.map(r => [r.batch.seq, r.batch.deltas['gemini.google.com']]), [[1,1],[2,1]]);
+});
+
+test('initialization persists migration before observations and exposes callback failures',async()=>{
+  const localStore={llm_client_id_v1:'SYNTHETIC_CLIENT',llm_seq_v1:5,llm_pending_v1:{}};
+  const localControl={deferWrite:true};
+  const bg=loadBackground({config:true,localStore,localControl});
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_SID`,channelBody(PROMPT)); await tick();
+  assert.equal(localStore.llm_delivery_v2,undefined);
+  localControl.deferWrite=false; localControl.flushWrite(); await tick();
+  assert.equal(localStore.llm_delivery_v2.baseline.state,'unresolved');
+  assert.deepEqual((await bg.status()).pending,{'gemini.google.com':1});
+  localControl.failWrite=true;
+  const clear=await bg.send({cmd:'clear_pending'});
+  assert.equal(clear.ok,false); assert.match(clear.error,/write failure/);
+  assert.deepEqual((await bg.status()).pending,{'gemini.google.com':1}); bg.dispose();
+  const unavailable=loadBackground({config:true,localControl:{failRead:true,failKey:"llm_delivery_v2"}});
+  assert.equal((await unavailable.status()).available,false);
+  assert.equal((await unavailable.send({cmd:'force_push'})).ok,false); unavailable.dispose();
+});
+
+test('ordinary worker initialization and wake request the guarded drain',async()=>{
+  const calls=[]; const timers=[];
+  const bg=loadBackground({config:true,localStore:{llm_delivery_v2:{version:2,clientId:'SYNTHETIC_CLIENT',lastAckSeq:0,baseline:{state:'ready'},queued:{'synthetic.invalid':1},inFlight:null}},
+    setTimer(fn,ms){const timer={fn,ms};timers.push(timer);return timer;},clearTimer(timer){timer.cancelled=true;},
+    fetchImpl:async(url,init)=>{calls.push({url,init});return {ok:true,status:200,json:async()=>({ok:true,last_seq:1,applied:1})};}});
+  await tick(); timers.find(t=>t.ms===250&&!t.cancelled).fn(); await tick();
+  assert.equal(calls.length,1); assert.deepEqual((await bg.status()).pending,{});
+  bg.wake(); await tick(); assert.ok(timers.filter(t=>t.ms===250).length>=2); bg.dispose();
+});

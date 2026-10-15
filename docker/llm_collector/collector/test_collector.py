@@ -2,6 +2,7 @@ import importlib.util
 import json
 import signal
 import uuid
+import threading
 from pathlib import Path
 
 
@@ -84,7 +85,15 @@ def test_add_flow_and_reset_rollup(tmp_path, monkeypatch):
     csv_path = snap_dir / module.CSV_FILENAME
     written_state = json.loads(state_path.read_text())
 
-    assert written_state == {"totals": {}, "daily_totals": {}, "clients": {}}
+    # Reset clears the reporting period, not delivery receipts: a lost reply
+    # retried after reset must not reapply the previous period's batch.
+    assert written_state == {"totals": {}, "daily_totals": {}, "clients": {"client-1": {"last_seq": 1}}}
+    restarted = load_collector(tmp_path, monkeypatch)
+    retry = restarted.app.test_client()
+    assert retry.post("/add", json={"client_id": "client-1", "seq": 1, "deltas": {"chat.openai.com": 5}}).get_json() == {"ok": True, "applied": 0, "last_seq": 1}
+    assert retry.post("/add", json={"client_id": "client-1", "seq": 2, "deltas": {"chat.openai.com": 2}}).get_json() == {"ok": True, "applied": 2, "last_seq": 2}
+    assert retry.get("/counters").get_json() == {"counters": {"chat.openai.com": 2}}
+    # Keep the old module's memory separate from restarted active totals.
     assert client.get("/counters").get_json() == {"counters": {}}
     snapshots = list(snap_dir.glob("snapshot_*.json.bak"))
     assert snapshots
@@ -149,3 +158,77 @@ def test_api_key_is_enforced_when_configured(tmp_path, monkeypatch):
     response = client.get("/counters", headers={"X-API-KEY": "secret-key"})
     assert response.status_code == 200
     assert response.get_json() == {"counters": {}}
+
+
+def test_reset_excludes_concurrent_add_from_snapshot_clear_gap(tmp_path, monkeypatch):
+    module = load_collector(tmp_path, monkeypatch)
+    payload = {"client_id": "SYNTHETIC_CLIENT", "seq": 1, "deltas": {"synthetic.invalid": 1}}
+    assert module.app.test_client().post("/add", json=payload).status_code == 200
+    snapshot_done = threading.Event()
+    add_attempted = threading.Event()
+    add_done = threading.Event()
+    errors = []
+    original = module.snapshot_totals
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.depth = {}
+
+        def __enter__(self):
+            if threading.current_thread().name == "synthetic-add":
+                add_attempted.set()
+            self.lock.acquire()
+            ident = threading.get_ident()
+            self.depth[ident] = self.depth.get(ident, 0) + 1
+            return self
+
+        def __exit__(self, *_):
+            ident = threading.get_ident()
+            self.depth[ident] -= 1
+            self.lock.release()
+
+        def owned(self):
+            return self.depth.get(threading.get_ident(), 0) > 0
+
+    lock = ObservedLock()
+    monkeypatch.setattr(module, "_state_lock", lock)
+
+    def paused_snapshot():
+        result = original()
+        snapshot_done.set()
+        assert add_attempted.wait(2)
+        # Force the original gap deterministically when reset has released its
+        # lock. With exclusion the add has attempted acquisition and is blocked.
+        if not lock.owned():
+            assert add_done.wait(2)
+        return result
+
+    monkeypatch.setattr(module, "snapshot_totals", paused_snapshot)
+    monkeypatch.setattr(module, "perform_rollup", lambda: None)
+
+    def reset():
+        try:
+            assert module.app.test_client().post("/reset").status_code == 200
+        except BaseException as error:
+            errors.append(error)
+
+    def add():
+        try:
+            assert snapshot_done.wait(2)
+            assert module.app.test_client().post("/add", json={**payload, "seq": 2}).status_code == 200
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            add_done.set()
+
+    threads = [threading.Thread(target=reset), threading.Thread(target=add, name="synthetic-add")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(3)
+        assert not thread.is_alive()
+    assert not errors
+    snapshot = json.loads(next(Path(module.SNAP_DIR).glob("snapshot_*.json")).read_text())
+    assert snapshot["totals"].get("synthetic.invalid", 0) + module.STATE["totals"].get("synthetic.invalid", 0) == 2
+    assert module.STATE["clients"]["SYNTHETIC_CLIENT"]["last_seq"] == 2

@@ -2,6 +2,7 @@
 
 // --- Config ---
 importScripts("collector_status.js");
+importScripts("delivery.js");
 importScripts("request_debug.js");
 importScripts("gemini_channel.js");
 importScripts("session_buffer.js");
@@ -162,11 +163,6 @@ function passesDebounce(details, u) {
   return true;
 }
 
-// --- Storage keys ---
-const CLIENT_ID_KEY = "llm_client_id_v1"; // stable per browser profile
-const SEQ_KEY       = "llm_seq_v1";       // last successfully applied seq (server agrees)
-const PENDING_KEY   = "llm_pending_v1";   // {host: count} unsent or unacked
-
 // --- Debug buffer for popup ---
 // Mirrored to chrome.storage.session so it survives the worker stopping when idle.
 const DEBUG_BUF_MAX = 200;
@@ -200,116 +196,18 @@ function getConfigError() {
   return null;
 }
 
-// --- chrome.storage helpers ---
-function getStore(keys) { return new Promise(r => chrome.storage.local.get(keys, v => r(v || {}))); }
-function setStore(obj)  { return new Promise(r => chrome.storage.local.set(obj, r)); }
-
-async function getClientId() {
-  const v = await getStore([CLIENT_ID_KEY]);
-  if (v[CLIENT_ID_KEY]) return v[CLIENT_ID_KEY];
-  const id = crypto.randomUUID();
-  await setStore({ [CLIENT_ID_KEY]: id });
-  return id;
-}
-async function getSeq() {
-  const v = await getStore([SEQ_KEY]);
-  return typeof v[SEQ_KEY] === "number" ? v[SEQ_KEY] : 0;
-}
-async function setSeq(n) { return setStore({ [SEQ_KEY]: n }); }
-async function getPending() {
-  const v = await getStore([PENDING_KEY]);
-  return v[PENDING_KEY] || {};
-}
-async function setPending(obj) { return setStore({ [PENDING_KEY]: obj }); }
-
-// --- Sequence handshake (bootstrap or recovery) ---
-async function handshakeSeq() {
-  if (getConfigError()) return;
-  const clientId = await getClientId();
-  let serverLast = 0;
-  try {
-    const r = await fetch(`${COLLECTOR}/client_status?client_id=${encodeURIComponent(clientId)}`, {
-      headers: { "X-API-KEY": API_KEY }
-    });
-    if (r.ok) {
-      const j = await r.json();
-      serverLast = j.last_seq | 0;
-    }
-  } catch {}
-  await setSeq(serverLast);
-  if (DEBUG) console.log("[LLM-UC] handshake: server last_seq =", serverLast);
-}
-
-// --- Pending ops ---
-// Every read-modify-write of the pending counts goes through one queue, so
-// overlapping updates cannot overwrite each other.
-let pendingQueue = Promise.resolve();
-function updatePending(fn) {
-  const run = pendingQueue.then(async () => {
-    const p = await getPending();
-    fn(p);
-    await setPending(p);
-  });
-  pendingQueue = run.catch(() => {});
-  return run;
-}
-
-async function incrementPending(host, delta = 1) {
-  await updatePending(p => { p[host] = (p[host] || 0) + delta; });
-  schedulePush();
-}
-
-// --- Coalesced push ---
+// Durable delivery owns every accounting write, including migration.
+const delivery = globalThis.LLMDelivery.createDelivery({
+  storage: chrome.storage.local, fetchImpl: fetch, collectorUrl: COLLECTOR, apiKey: API_KEY
+});
 let pushTimerHandle = null;
 function schedulePush() {
-  if (pushTimerHandle) clearTimeout(pushTimerHandle);
-  pushTimerHandle = setTimeout(pushToCollector, PUSH_COALESCE_MS);
+  if (pushTimerHandle !== null) clearTimeout(pushTimerHandle);
+  pushTimerHandle = setTimeout(() => { pushTimerHandle = null; delivery.push(); }, PUSH_COALESCE_MS);
 }
-
-async function pushToCollector() {
-  if (getConfigError()) return;
-  try {
-    const [clientId, seq, pending] = await Promise.all([getClientId(), getSeq(), getPending()]);
-    // Build snapshot of nonzero deltas
-    const snapshot = {};
-    for (const [k, vRaw] of Object.entries(pending || {})) {
-      const v = vRaw | 0;
-      if (v > 0) snapshot[k] = v;
-    }
-    if (Object.keys(snapshot).length === 0) return;
-
-    const res = await fetch(`${COLLECTOR}/add`, {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "X-API-KEY": API_KEY },
-      body: JSON.stringify({ ts: Date.now(), client_id: clientId, seq: seq + 1, deltas: snapshot })
-    });
-
-    if (res.status === 200) {
-      const rsp = await res.json().catch(()=>({}));
-      await setSeq(rsp.last_seq ?? (seq + 1));
-
-      // subtract exactly what we just sent
-      await updatePending(cur => {
-        for (const k of Object.keys(snapshot)) {
-          cur[k] = Math.max(0, (cur[k] || 0) - snapshot[k]);
-          if (cur[k] === 0) delete cur[k];
-        }
-      });
-      if (DEBUG) console.log("[LLM-UC] add ok; seq advanced; pending reduced:", snapshot);
-    } else if (res.status === 409) {
-      const j = await res.json().catch(()=>({}));
-      const expected = j.expected_next | 0;
-      if (expected > 0) {
-        await setSeq(expected - 1);
-        if (DEBUG) console.log("[LLM-UC] out-of-order; aligning seq to", expected - 1, "and retrying");
-        schedulePush();
-      }
-    } else {
-      if (DEBUG) console.log("[LLM-UC] add failed:", res.status);
-    }
-  } catch (e) {
-    if (DEBUG) console.log("[LLM-UC] add error:", e);
-  }
+async function incrementPending(host, count = 1) {
+  try { await delivery.increment(host, count); schedulePush(); }
+  catch { if (DEBUG) console.log('[LLM-UC] observation recording failed; see delivery status'); }
 }
 
 // --- Gemini WebChannel ---
@@ -361,17 +259,14 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 // --- Bootstrap / recovery ---
-chrome.runtime.onInstalled?.addListener(handshakeSeq);
-chrome.runtime.onStartup?.addListener(handshakeSeq);
-
-// Try to drain pending whenever SW wakes
-chrome.runtime.onInstalled?.addListener(() => schedulePush());
-chrome.runtime.onStartup?.addListener(() => schedulePush());
+chrome.runtime.onInstalled?.addListener(schedulePush);
+chrome.runtime.onStartup?.addListener(schedulePush);
+delivery.ready.then(schedulePush);
 
 // --- Popup API (optional, keep if your popup uses it) ---
 chrome.runtime.onMessage.addListener((m, s, send) => {
   if (m && m.cmd === "get_status") {
-    Promise.all([getPending(), getSeq(), getClientId(), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([pending, seq, client_id]) => {
+    Promise.all([delivery.status(), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([deliveryStatus]) => {
       const configError = getConfigError();
       const collectorStatus = configError
         ? {
@@ -386,9 +281,7 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
           });
 
       send({
-        client_id,
-        seq,
-        pending,
+        ...deliveryStatus,
         serverCounters: collectorStatus.serverCounters || {},
         collectorStatus,
         collectorUrl: COLLECTOR,
@@ -407,11 +300,13 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
       send({ ok: false, error: getConfigError() });
       return true;
     }
-    schedulePush();
-    send({ ok: true });
+    delivery.status().then(status => {
+      if (!status.available) send({ok:false,error:status.deliveryError});
+      else { delivery.push(); send({ok:true}); }
+    });
     return true;
   } else if (m && m.cmd === "clear_pending") {
-    updatePending(p => { for (const k of Object.keys(p)) delete p[k]; }).then(() => send({ ok: true }));
+    delivery.clearQueued().then(result => send({ok:true,...result}), error => send({ok:false,error:error.message}));
     return true;
   } else if (m && m.cmd === "get_capture") {
     globalThis.LLMCapture.ready.then(() => send({

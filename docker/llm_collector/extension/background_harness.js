@@ -9,10 +9,24 @@ const WEB_REQUEST_EVENTS = [
   "onBeforeRequest", "onSendHeaders", "onBeforeRedirect", "onCompleted", "onErrorOccurred"
 ];
 
-function storageArea(store) {
+function storageArea(store, control = {}, runtime = {}) {
+  const reads = [], writes = [];
+  function complete(kind, fn, keys = []) {
+    const queue = kind === 'Read' ? reads : writes;
+    const run = () => {
+      if (control['fail' + kind] && (!control.failKey || keys.includes(control.failKey))) {
+        control['fail' + kind] = false;
+        runtime.lastError = { message: `synthetic ${kind.toLowerCase()} failure` };
+        try { fn(false); } finally { delete runtime.lastError; }
+      } else fn(true);
+    };
+    if (control['defer' + kind]) queue.push(run); else run();
+  }
+  control.flushRead = () => reads.shift()?.();
+  control.flushWrite = () => writes.shift()?.();
   return {
-    get(keys, cb) { cb(JSON.parse(JSON.stringify(Object.fromEntries(keys.filter(k => Object.hasOwn(store, k)).map(k => [k, store[k]]))))); },
-    set(obj, cb) { Object.assign(store, JSON.parse(JSON.stringify(obj))); cb && cb(); }
+    get(keys, cb) { complete('Read', () => cb(JSON.parse(JSON.stringify(Object.fromEntries(keys.filter(k => Object.hasOwn(store, k)).map(k => [k, store[k]]))))), keys); },
+    set(obj, cb) { complete('Write', ok => { if (ok) Object.assign(store, JSON.parse(JSON.stringify(obj))); cb && cb(); }); }
   };
 }
 
@@ -30,30 +44,34 @@ function matchPatternToRegExp(pattern) {
 // chrome.storage.session outlives the worker, in-memory state does not.
 // With config: true it loads a synthetic config so counting is active; fetch
 // always fails, so counts stay pending where tests can read them.
-function loadBackground({ sessionStore = {}, localStore = {}, config = false } = {}) {
+function loadBackground({ sessionStore = {}, localStore = {}, config = false, fetchImpl, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, localStorage, localControl = {}, sessionControl = {} } = {}) {
   const consoleRecords = [];
   const listeners = Object.fromEntries(WEB_REQUEST_EVENTS.map(e => [e, []]));
   let onMessage;
-  const event = () => ({ addListener() {} });
+  const lifecycle = {};
+  const event = name => ({ addListener(fn) { (lifecycle[name] ||= []).push(fn); } });
   const webRequest = Object.fromEntries(WEB_REQUEST_EVENTS.map(e => [e, {
     addListener(fn, filter, extra) { listeners[e].push({ fn, filter, extra: extra || [] }); }
   }]));
+  const runtime = {
+    onInstalled: event('installed'), onStartup: event('startup'),
+    onMessage: { addListener(fn) { onMessage = fn; } }
+  };
+  const timers = new Set();
   const chrome = {
     webRequest,
-    runtime: {
-      onInstalled: event(),
-      onStartup: event(),
-      onMessage: { addListener(fn) { onMessage = fn; } }
-    },
-    storage: { local: storageArea(localStore), session: storageArea(sessionStore) }
+    runtime,
+    storage: { local: localStorage || storageArea(localStore, localControl, runtime), session: storageArea(sessionStore, sessionControl, runtime) }
   };
   const context = vm.createContext({
     chrome, URL, URLSearchParams, TextDecoder, TextEncoder, Date, crypto,
-    setTimeout, clearTimeout, AbortController,
-    fetch: async () => { throw new TypeError("synthetic: offline"); },
+    setTimeout: (fn, ms) => { const timer = setTimer(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); timer?.unref?.(); return timer; },
+    clearTimeout: timer => { timers.delete(timer); clearTimer(timer); }, AbortController,
+    fetch: fetchImpl || (async () => { throw new TypeError("synthetic: offline"); }),
     console: { log(...args) { consoleRecords.push(JSON.parse(JSON.stringify(args))); } }
   });
   context.globalThis = context;
+  context.Date = class extends Date { static now() { return now(); } };
   context.importScripts = (file) => {
     if (file === "config.local.js") {
       if (!config) throw new Error("synthetic: no local config");
@@ -68,6 +86,9 @@ function loadBackground({ sessionStore = {}, localStore = {}, config = false } =
   const counting = () => listeners.onBeforeRequest.find(l => !l.filter.urls.includes("<all_urls>"));
 
   return {
+    dispose() { for (const timer of timers) clearTimer(timer); timers.clear(); for (const name of Object.keys(listeners)) listeners[name] = []; },
+    localControl, sessionControl,
+    wake(name = 'startup') { for (const fn of lifecycle[name] || []) fn(); },
     consoleRecords,
     // Whether the counting listener (not full capture) observes this URL.
     filterMatches(url) { return matches(counting(), url); },

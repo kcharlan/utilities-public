@@ -13,7 +13,7 @@ function loadPopupStatusRenderer(background = null) {
     captureToggle: { textContent: "", dataset: {} }
   };
   if (background) {
-    for (const id of ['export', 'notice']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
+    for (const id of ['export', 'notice', 'reset', 'forcePush']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
     elements.captureToggle.addEventListener = (event, fn) => { callbacks['captureToggle:' + event] = fn; };
   }
   const document = {
@@ -143,4 +143,30 @@ test("export retains safely truncated JSON prompts and omits malformed Link cont
   assert.equal(record.body.truncated, true);
   assert.equal(record.responseHeaders[0].value, '<omitted>');
   assert.ok(!text.includes('SYNTHETIC_SID'));
+});
+
+
+test('clear reports retained submission and rejects failed background replies', async () => {
+  let reply = {ok:true,cleared:2,inFlight:1};
+  const popup=loadPopupStatusRenderer({send:async()=>reply});
+  popup.callbacks.DOMContentLoaded();
+  await popup.callbacks['reset:click']();
+  assert.match(popup.elements.notice.textContent,/outstanding submission/i);
+  reply={ok:false,error:'synthetic write failed'};
+  await popup.callbacks['reset:click']();
+  assert.match(popup.elements.notice.textContent,/Clear failed: synthetic write failed/);
+  await popup.callbacks['forcePush:click']();
+  assert.match(popup.elements.notice.textContent,/Push failed/);
+});
+
+test('unavailable delivery renders counts as unavailable', () => {
+  const popup=loadPopupStatusRenderer();
+  const node=()=>({style:{},children:[],appendChild(child){this.children.push(child);}});
+  popup.elements.list=node();
+  popup.context.document.createDocumentFragment=node;
+  popup.context.document.createElement=node;
+  popup.context.renderStatus({available:false,pending:null,deliveryError:'synthetic read failed'});
+  const text=JSON.stringify(popup.elements.list);
+  assert.match(text,/unavailable/i);
+  assert.match(text,/synthetic read failed/);
 });
