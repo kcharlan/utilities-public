@@ -1,15 +1,9 @@
 # Utilities Toolkit
 
 > [!WARNING]
-> **This is a public-facing repository. Never put sensitive data in source code or commit it here.** Do not add secrets, credentials, personal information, financial or brokerage data, health or location data, production/customer data, private exports, real account or security details, or realistic copies of any of those values to code, tests, fixtures, examples, documentation, logs, screenshots, or generated artifacts.
-
-Use conspicuously synthetic public fixtures. Keep operational configuration and mutable state in the tool's documented user-home runtime directory. Before every commit, review the complete staged diff and file list specifically for sensitive content.
+> This repository is public. Never commit sensitive data; use synthetic examples and keep private configuration and runtime data outside the checkout.
 
 Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
-
-The September dependency review is preserved in
-[the audit](docs/dependency_modernization_audit_2026_09_16.md). It is a dated
-reference; project READMEs describe the current dependencies.
 
 ## Flagship Utilities
 
@@ -108,185 +102,19 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 
 The runnable projects listed above include a local README with setup and usage guidance; nested example, test, and reference directories may also carry more narrowly scoped READMEs.
 
-Colophon builds a native executable with embedded offline assets. Its
-[page writer](colophon/src/out/page.c), [atomic file helpers](colophon/src/util/atomic.c)
-and [runtime guide](colophon/docs/runtime.md) illustrate the built-page shape.
-Python function examples belong to Tax2's `tax2/taxkit/config.py` and
-`tax2/taxkit/page.py`; Colophon's compiled command is not a Python module.
+## Development and deployment
 
-## Preferred Delivery Forms
+Each project README describes its setup, runtime, and validation commands.
+Contributor conventions and the rules for choosing a CLI, built page, static
+page, or local server live in [agents.md](agents.md).
 
-This repo does not have a single preferred application form. It has a small number of preferred forms chosen by fit. The forms below cover how a tool is packaged and delivered; for new projects with a browser UI, the UI Shapes rules in `agents.md` decide between a built page, a static page, and a local server.
+Standalone delivery takes several forms: uv-managed scripts for small Python
+tools, a packaged executable for multi-file apps such as
+[Model Sentinel](model_sentinel/README.md), native binaries such as
+[Colophon](colophon/README.md), and self-contained HTML for browser-only apps.
+Some utilities deliberately duplicate small helpers so copied commands remain
+independent of this checkout.
 
-### Installed Utility Updates
-
-Repository source and installed runtime copies are separate release targets. Updating a utility in this repository does not update a copy that a user previously placed on their system.
-
-For any standalone utility installed outside the repository:
-
-1. Complete the utility's full documented validation suite against the repository version.
-2. Only after validation succeeds, copy the finished launcher, executable, or built artifact into the user's chosen executable directory on `PATH`.
-3. Verify the installed artifact directly with its version, help, health-check, or another safe smoke command.
-4. When practical, compare the installed artifact with the validated source or build output so an older copy cannot remain active unnoticed.
-
-The destination is user- and platform-specific. Common choices include `~/.local/bin`, `~/bin`, a user scripts directory, or an administrator-managed executable directory. Project READMEs may show a platform-specific example, but must not treat that example as the only valid installation location.
-
-For the maintained macOS deployment layout, tracked-file synchronization rules, Docker lifecycle checks, rollback procedure, read-only drift audit, and guidance for adding deployments with fixture and acceptance coverage, see [docs/local_deployment_sync.md](docs/local_deployment_sync.md).
-
-Copy-based installs are preferred when the utility must keep working if the repository is moved or removed. Symlinks remain useful during active development, but maintainers must not assume that committing a repository update also deploys it to existing runtime locations.
-
-For Python utilities that a user runs directly, the default question is not "single file or not?" It is:
-
-- does single-file materially help the delivery model?
-- or has it become mostly a maintenance cost?
-
-The main preferred forms are below.
-
-### 1. Single-File Python Launcher
-
-Use this when the delivered tool itself should be a single script that can be copied or symlinked into `~/Library/Scripts` (or similar) and run with zero setup beyond invoking the command.
-
-This pattern is a strong fit when:
-
-- the code is still comfortable to maintain in one file
-- inspectability and ad hoc local edits matter
-- the delivery simplicity is part of the tool's value
-- the app is stable enough that file size is not creating real maintenance drag
-- the embedded asset story is simple enough to keep inside one script
-
-This is the common form for tools like `editdb`, `routerview`, `div_conv`, `docpipe`, `harscope`, `jtree`, `storage_monitor`, and similar local-first utilities.
-
-`storage_monitor` pairs its launcher with a native helper deployed by `tools/deploy_storage_monitor.mjs`, so its machine prerequisites also include Xcode Command Line Tools.
-
-Machine prerequisite: [uv](https://docs.astral.sh/uv/) (`brew install uv`). This launcher form depends on it.
-
-Implementation rules:
-
-- Begin the script with the canonical uv shebang and a PEP 723 inline-metadata block declaring the interpreter and dependencies:
-
-  ```python
-  #!/usr/bin/env -S uv run --script
-  # /// script
-  # requires-python = ">=3.12"
-  # dependencies = [
-  #     "pyyaml",
-  # ]
-  # ///
-  ```
-
-  uv resolves and caches the environment on first run (which may hit the network once); subsequent runs are fast. Stdlib-only tools use `dependencies = []`.
-- Do **not** hand-roll venv bootstrap: no private venv creation, no `bootstrap_state.json` marker, no `os.execv()` re-exec, no pip invocation. uv owns the environment. The fleet drift guard `tools/check_uv_headers.py` enforces this.
-- Resolve a stable runtime home under `~/.toolname/` for *mutable state only*: config, logs, databases, caches, lock files. No venv lives there.
-- Avoid colocated config files next to the script. When legacy configuration contains sensitive or operational values, migrate it manually into the documented user-home runtime directory; do not add one-time migration logic to public source.
-- If the tool has a browser UI, choose its shape (built page, static page, or local server) with the UI Shapes rules in `agents.md`. New tools default to a built page: the launcher writes one self-contained HTML file and opens it, with no server.
-
-Single-file is still the better fit when the single-file form is buying real simplicity. Large by itself is not a sufficient reason to abandon it.
-
-### 2. Multi-File Python App Shipped as a Single Executable Zipapp
-
-Use this when the user-facing delivery should still be one executable command, but the backend has outgrown a single source file and wants proper internal structure.
-
-This pattern is a strong fit when:
-
-- bootstrap, CLI, server, storage, and reporting logic are becoming tangled
-- tests are harder to write because there are poor internal boundaries
-- the code is actively growing rather than stabilizing
-- you still want a single executable artifact that can be copied or symlinked
-- the runtime-home model still makes sense for mutable state
-
-`model_sentinel` is the reference example for this form.
-
-Implementation rules:
-
-- Develop the app as a normal package with multiple modules.
-- Keep a top-level `__main__.py` specifically for the zipapp entrypoint.
-- Do **not** blindly pass the whole project folder into `python -m zipapp`.
-- Build from a staging directory or otherwise package only runtime-required files.
-- Exclude non-runtime content such as:
-  - `tests/`
-  - `docs/`
-  - `__pycache__/`
-  - local venvs
-  - audit notes and maintainer-only helper scripts
-- The archive should contain code and immutable packaged resources, not the full working tree.
-
-Runtime organization rules:
-
-- Keep mutable state outside the archive under `~/.toolname/`:
-  - config
-  - logs
-  - databases
-  - caches
-  - debug output
-  - reports
-- Keep immutable internal resources inside the packaged app when users are not expected to edit them.
-- If assets or templates are meant to be user-editable or need normal filesystem paths, sync them into runtime storage on first run.
-- For synced runtime assets, use a safe update model:
-  - copy on first run
-  - store version/hash metadata
-  - overwrite only when the runtime copy still matches the prior standard version
-  - preserve user-customized copies
-  - provide an explicit reset command for forced refresh
-
-Dependency rules:
-
-- If the app is stdlib-only, the zipapp can run directly. `model_sentinel` is stdlib-only at runtime, so it needs no dependency-management layer.
-- If a future zipapp needs third-party dependencies, embed the dependency specification in the packaged app — do not depend on a repo-local `requirements.txt` being present after the repo is gone — and prefer resolving them through uv rather than a hand-rolled private venv.
-
-Asset rules:
-
-- Prefer packaged immutable resources for fixed HTML/CSS/JS/templates that users should not edit.
-- Prefer runtime-synced copies for templates, prompts, packs, or other resources users are expected to customize locally.
-- Do not copy everything to runtime storage by default. Separate immutable packaged resources from mutable runtime content intentionally.
-
-Install/update rules:
-
-- Build to a temporary path first and move into place atomically.
-- Treat the executable as immutable delivery code and the runtime home as mutable operator state.
-- Upgrades should replace the executable without clobbering user state.
-
-### 3. Browser-First Static App
-
-Some projects are intentionally pure browser apps, usually as one HTML file or a very small static bundle, with no Python runtime and no bootstrap layer.
-
-This is the right form for things like:
-
-- `web_games/multibody_sim`
-- `web_games/gorilla`
-- the calculators under `Calculation tools`
-
-Do not force these into the Python zipapp pattern. If they stay backend-free, plain static delivery is usually the better design. Market Atlas uses Python only for local data setup/maintenance; its built browser runtime needs no Python service.
-
-## Choosing Between the Forms
-
-Use the single-file Python launcher when:
-
-- the single-file form is still helping the delivery model
-- the app is easy enough to maintain in one file
-- inspectability and in-place edits matter more than internal modularity
-
-Use the zipapp form when:
-
-- the single-file form is now mainly hurting maintainability
-- the app wants module boundaries and cleaner tests
-- you still want one executable distribution artifact
-
-Keep a project browser-first and static when:
-
-- there is no meaningful backend
-- no runtime-home/venv model is needed
-- the app is naturally served as plain HTML/CSS/JS
-
-Do not use the zipapp pattern for:
-
-- pure static browser apps
-- Docker stacks and other multi-service deployments
-- very small tools where packaging complexity would add more ceremony than value
-
-## Intentional Code Duplication
-
-Many projects in this repo are designed to be standalone local utilities that can be copied or symlinked into `~/Library/Scripts` (or any other location) and keep working without imports from the source tree or mutable sidecar files in the repo. That delivery model means certain logic blocks are intentionally duplicated across projects rather than extracted into a shared module.
-
-Environment management is no longer duplicated: the hand-rolled self-bootstrapping venv pattern (private venv under `~/.toolname/`, `bootstrap_state.json` marker, `os.execv()` re-exec) that formerly appeared in a dozen launchers has been replaced by uv's PEP 723 inline metadata, so there is now a single declarative header per tool and no bootstrap code to keep in sync. The remaining intentional duplication is narrower: tools that serve a local web UI each carry their own `find_free_port()` implementation, and standalone HTML calculators under `Calculation tools/` each embed their own CSS theme variables. Built and static pages (see UI Shapes in `agents.md`) each inline their own exact-version vendored copy of their front-end libraries, recorded (version, source URL, SHA-256, license file) in the manner of `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` and copied byte-for-byte from there when that library and version are already vendored, and built-page launchers each carry their own write-and-open code; Colophon is the built-page shape reference implemented in C under `colophon/`.
-
-This is a deliberate tradeoff: some duplication is the cost of standalone deployability and runtime independence. The canonical launcher guidance lives in `agents.md`, `tools/check_uv_headers.py` enforces the uv-header contract across the fleet, and `model_sentinel` is the reference for the packaged multi-file zipapp form.
+Repository updates do not update installed copies. See the
+[deployment guide](docs/local_deployment_sync.md) for installation, verification,
+and rollback, and the [maintenance to-do list](docs/todo.md) for open follow-ups.

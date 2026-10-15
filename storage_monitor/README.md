@@ -15,6 +15,27 @@ The launcher provides:
 - an embedded React UI whose browser libraries are loaded from public CDNs; and
 - mutable runtime state under `~/.storage_monitor/` by default.
 
+## Native walker boundary
+
+The C helper owns filesystem enumeration only. Python retains path translation,
+hardlink ownership, rollup, SQLite writes and provider probes so full scans and
+directory refreshes share their accounting rules. Provider probes overlap the
+walk; there is no second Python walker or runtime compilation fallback.
+
+Protocol 1 uses NUL-delimited fields, preserving filenames with tabs, newlines
+and undecodable bytes. `D` reports directory-local allocation; `H` reports
+hardlink candidates; `L` reports large files; `P` reports progress; a final `S`
+reports counts and duration. Python rejects truncated streams, records after
+the summary, nonzero exits and missing summaries before accepting a walk.
+The launcher and helper protocol versions must agree at startup and deployment.
+
+Allocated file bytes use `ATTR_FILE_ALLOCSIZE`, corresponding to `st_blocks *
+512`, rather than data-fork-only allocation; apparent bytes use
+`ATTR_FILE_DATALENGTH`. Opened child directories are checked against the root
+device so a mount encountered inside the tree is skipped. Large-file and
+progress thresholds are supplied by Python as helper arguments. Changes to this
+boundary must preserve the native protocol, hardlink, mount and filename tests.
+
 ## Requirements
 
 - macOS with APFS, `diskutil`, and `tmutil`

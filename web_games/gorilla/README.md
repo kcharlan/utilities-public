@@ -48,13 +48,15 @@ Settings and session statistics are held in memory and reset when the page reloa
 ## Project Layout
 
 - `index.html`: Complete application (game engine, UI, rendering, audio). Intentionally a single-file app.
-- `docs/Gorilla as delivered PRD.md`: Product and design reference for the delivered game.
 
 ## Developer Notes
 
 - **Single-File Architecture:** The entire game engine, UI, and assets exist within `index.html`. This is intentional; do not split into modules.
 - **Tech Stack:** Vanilla JavaScript (ES6+), HTML5 Canvas, CSS3.
 - **State Management:** In-memory `state` and `settings` objects drive game logic; explicit DOM updates keep the controls and HUD in sync.
+- **Physics and collisions:** `requestAnimationFrame` drives fixed-step Euler integration in logical world space. Projectiles can leave the viewport until a termination bound or flight timeout ends the shot. Building impacts remove the projectile without deforming terrain; a hit on a gorilla's rectangular hitbox records a kill and ends the round once the volley resolves. There is no splash damage.
+- **AI:** The AI simulates angle/velocity pairs, then schedules a difficulty-dependent number of deliberately offset ranging shots before using its calculated shot.
+- **Scope:** Multiplayer is local only. The responsive layout has no dedicated touch gestures. Arcade difficulty locks at the first firing.
 
 ## Level Generation Notes
 

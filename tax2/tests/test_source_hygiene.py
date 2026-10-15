@@ -19,11 +19,10 @@ def test_retired_config_key_source_inventory():
     key = "legacy_combined" + "_alias"
     matches = {path.relative_to(PROJECT).as_posix() for path in project_files(PROJECT)
                if key.encode() in path.read_bytes()}
+    # Only the compatibility ignore path and its regression test admit this key.
     assert matches == {
         "taxkit/config.py",
         "tests/test_config.py",
-        "docs/tax2_built_page_design_spec.md",
-        "docs/tax2-built-page-migration-implementation-plan.md",
     }
 
 
