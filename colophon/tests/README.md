@@ -10,7 +10,7 @@ and writes, and mutation-check each explicit deny under synthetic scratch.
 
 Run `make test` for all retained C units, fresh synthetic CLI and integration
 checks, Chromium browser cases, and local
-asset/stable-sort guards (ten asset digests).
+asset/stable-sort guards (twelve asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.
 These checks are independent acceptance checks, not captured-corpus parity or

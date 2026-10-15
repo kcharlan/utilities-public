@@ -31,7 +31,7 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, ten asset digests, all retained
+`make test` runs the stable-sort guard, twelve asset digests, all retained
 C units, synthetic CLI/integration cases and Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.

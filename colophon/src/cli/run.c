@@ -10,6 +10,7 @@
 #include "scan/scan.h"
 #include "corpus/workspaces.h"
 #include "price/compose.h"
+#include "price/claude_cost.h"
 #include "testing/hooks.h"
 #include "testing/phase_times.h"
 #include "util/atomic.h"
@@ -112,7 +113,9 @@ int cli_run(const Args *args){
     }
     failure=compose_usage(&corpus,&priority);if(failure.code)goto fail;
     failure=price_units(&corpus,&history,catalog.catalog?&index:NULL,ledger.available,&pricing);if(failure.code)goto fail;
+    failure=claude_capture_prices(&claude,catalog.catalog?&index:NULL);if(failure.code)goto fail;
     failure=claude_compose(&claude,&corpus);if(failure.code)goto fail;
+    failure=claude_price_units(&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
     failure=compose_refresh_costs(&corpus,ledger.available);if(failure.code)goto fail;
     if(cp_fault("cache_abort_fail")){failure=err_make(ERR_INVALID,"synthetic injected cache_abort_fail");failure_type="ValueError";goto fail;}
     char *key=NULL;failure=file_codex_path_key(codex,&key);if(failure.code==ERR_OK)failure=file_abbreviate_home(key,&display);free(key);if(failure.code!=ERR_OK)goto fail;

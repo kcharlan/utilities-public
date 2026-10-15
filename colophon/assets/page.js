@@ -4,6 +4,20 @@
   // --- data
   let data, currentState, searchTimer;
   const controls = {};
+  const usageProviders = new WeakMap();
+  const providerOf = row => typeof row === "string" ? row : row.provider || "codex";
+  function providerCosts(provider) {return data.meta.sources?.[provider]?.costs || data.meta.costs;}
+  function costAvailability(rows) {
+    const providers = [...new Set(rows.map(providerOf))];
+    if (!providers.length) providers.push(currentState.src === "claude" ? "claude" : "codex");
+    const unavailable = providers.filter(provider => !providerCosts(provider).available);
+    return {any: providers.some(provider => providerCosts(provider).available), complete: !unavailable.length, unavailable};
+  }
+  function scopedCostRows(now, state = currentState) {const scoped = scope(data.sessions, state, now); return [...scoped.rows, ...scoped.agents];}
+  function availableCostText(value, unpriced, rows) {
+    const availability = costAvailability(rows);
+    return availability.any ? costText(value) + (unpriced ? " + unpriced" : "") + availability.unavailable.map(provider => " · " + provider + " costs unavailable").join("") : "costs unavailable";
+  }
   const periods = ["7d", "30d", "90d", "mtd", "all", "custom"];
   const heatColors = () => Array.from({length: 5}, (_, n) =>
     getComputedStyle(document.documentElement).getPropertyValue("--heat-" + n).trim());
@@ -269,7 +283,7 @@
     const running = (list, predicate) => list.flatMap(row => row.turns).filter(turn => turn.status === "running" && predicate(turn)).length;
     const contributesTime = turn => turnIntervals({turns: [turn]}, window).length > 0;
     const ownRunning = running(rows, turn => inWindow(turn.start_ms, window) || contributesTime(turn));
-    const usageRunning = [...rows, ...agents].map(row => liveUsage(row, window));
+    const usageRunning = [...rows, ...agents].map(row => ({...liveUsage(row, window), provider: providerOf(row)}));
     return {sessions: rows.length, active_ms: activeMs(rows.flatMap(row => turnIntervals(row, window))),
       agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
       average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
@@ -279,7 +293,7 @@
       interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
       live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
         turns: turns.filter(t => t.status === "running").length, tokens: usageRunning.reduce((sum, value) => sum + value.tokens, 0),
-        cost: data.meta.costs.available ? usageRunning.reduce((sum, value) => sum + value.costs, 0) : 0, aborted: 0}};
+        cost: usageRunning.filter(value => providerCosts(value.provider).available).reduce((sum, value) => sum + value.costs, 0), aborted: 0}};
   }
   function calendar(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now);
@@ -293,7 +307,7 @@
     }
     const days = new Map();
     for (let day = localDayStart(first); day < window.to; day = addLocalDays(day, 1)) {
-      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false});
+      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false, providers: []});
     }
     for (const row of rows) {
       const starts = new Set(row.turns.filter(t => inWindow(t.start_ms, window)).map(t => localDayKey(t.start_ms)));
@@ -306,6 +320,7 @@
       const cell = days.get(localDayKey(bucket[0] * 900000));
       if (!cell) continue;
       cell.tokens += bucket[3] + bucket[6];
+      if (!cell.providers.includes(providerOf(row))) cell.providers.push(providerOf(row));
       if (bucket[8] === null) cell.unpriced = true;
       else cell.cost += bucket[8];
     }
@@ -328,8 +343,9 @@
   function models(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now), items = new Map();
     for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
-      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false});
+      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false, providers: []});
       const item = items.get(bucket[1]);
+      if (!item.providers.includes(providerOf(row))) item.providers.push(providerOf(row));
       item.tokens += bucket[3] + bucket[6];
       if (bucket[8] === null) item.unpriced = true;
       else item.cost += bucket[8];
@@ -468,7 +484,7 @@
     const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
     const sorts = {sessions: "newest", active_ms: "longest", agent_ms: "subtime", turns: "newest", tokens: "tokens", cost: "cost", aborted: "newest"};
     return el("div", {class: "kpis"}, ...Object.entries(labels).map(([key, label]) => {
-      const value = key === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(key, totals[key]) + (key === "cost" && totals.unpriced ? " + unpriced" : "");
+      const value = key === "cost" ? availableCostText(totals[key], totals.unpriced, scopedCostRows(now)) : metricText(key, totals[key]);
       const open = () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})});
       const tile = el("article", {class: "kpi" + (key === "aborted" ? " warning" : ""), "data-kpi": key,
         onclick: event => {if (!event.target.closest("button")) open();}},
@@ -481,7 +497,7 @@
         el("button", {type: "button", class: "status-link", "data-status": "interrupted", text: totals.interrupted + " interrupted", onclick: () => drill({st: "interrupted", sort: "newest"})}),
         el("span", {text: " · "}), el("button", {type: "button", class: "status-link", "data-status": "abandoned", text: totals.abandoned + " abandoned", onclick: () => drill({st: "abandoned", sort: "newest"})})));
       if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
-      if (prior && (key !== "cost" || data.meta.costs.available)) {
+      if (prior && (key !== "cost" || (costAvailability(scopedCostRows(now)).complete && costAvailability(scopedCostRows(now, {...currentState, _window: previous})).complete))) {
         const delta = totals[key] - prior[key];
         tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " vs prior " + currentState.p.toUpperCase()}));
       }
@@ -496,7 +512,7 @@
     const offset = days.length ? mondayIndex(parseDay(days[0].day)) : 0;
     for (let n = 0; n < offset; n++) grid.append(el("span", {class: "heat-cell blank"}));
     days.forEach((day, n) => {
-      const value = calendarMetric === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(calendarMetric, day[calendarMetric]) + (calendarMetric === "cost" && day.unpriced ? " + unpriced" : "");
+      const value = calendarMetric === "cost" ? availableCostText(day.cost, day.unpriced, day.providers) : metricText(calendarMetric, day[calendarMetric]);
       grid.append(el("button", {type: "button", class: "heat-cell", "data-day": day.day, "data-value": day[calendarMetric], "data-level": ramp[n],
         title: day.day + " · " + value, "aria-label": day.day + " · " + value, onclick: () => drill({day: day.day})}));
     });
@@ -544,8 +560,9 @@
     return result;
   }
   function rateTooltip(model, now) {
-    if (!data.meta.costs.available) return "costs unavailable";
     const {window, rows, agents} = scope(data.sessions, currentState, now), refs = new Map();
+    const matching = [...rows, ...agents].filter(row => windowBuckets(row, window).some(bucket => bucket[1] === model));
+    if (!costAvailability(matching).any) return "costs unavailable";
     let unpriced = false, unknown = false;
     for (const row of [...rows, ...agents]) {
       const buckets = windowBuckets(row, window).filter(bucket => bucket[1] === model);
@@ -556,7 +573,7 @@
       for (const ref of recorded) {
         const [key, index, role] = ref, pricing = data.models[key];
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
-        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
         const label = override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "";
         const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
@@ -564,12 +581,12 @@
       }
     }
     return ["Recorded rate periods in matching sessions (all dates)", ...refs.values(),
-      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : [])].join("\n");
+      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : []), ...costAvailability(matching).unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function renderModels(now) {
     return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
       el("span", {class: "model-name", text: row.model, title: row.model}), el("span", {text: countText(row.tokens)}),
-      el("span", {class: row.unpriced ? "warning" : "", text: !data.meta.costs.available ? "costs unavailable" : costText(row.cost) + (row.unpriced ? " + unpriced" : "")}))),
+      el("span", {class: row.unpriced ? "warning" : "", text: availableCostText(row.cost, row.unpriced, row.providers)}))),
       el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
   }
   function renderNotable(now) {
@@ -618,7 +635,8 @@
     return {active: activeMs(turnIntervals(row, window)), agents: children.length,
       subtime: children.reduce((sum, child) => sum + activeMs(turnIntervals(child, window)), 0),
       tokens: buckets.reduce((sum, bucket) => sum + bucket[3] + bucket[6], 0),
-      cost: data.meta.costs.available ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      cost: costAvailability([row, ...children]).any ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      providers: [row, ...children].map(providerOf),
       unpriced: buckets.some(bucket => bucket[8] === null)};
   }
   function renderSessionList(rows) {
@@ -643,7 +661,7 @@
       }
       const open = () => act({v: "session", s: row.id});
       const figuresText = currentState.sort === "tokens" ? countText(figuresForRow.tokens) + " tokens" : currentState.sort === "cost" ?
-        (figuresForRow.cost === null ? "costs unavailable" : costText(figuresForRow.cost) + (figuresForRow.unpriced ? " + unpriced" : "")) :
+        (figuresForRow.cost === null ? "costs unavailable" : availableCostText(figuresForRow.cost, figuresForRow.unpriced, figuresForRow.providers)) :
         currentState.sort === "subtime" ? durationText(figuresForRow.subtime) + " agent" : null;
       result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id,
         role: "button", tabindex: "0", "aria-label": "Open session " + row.title,
@@ -672,12 +690,13 @@
     return {tokens: evidenceSum(tokens), cost: evidenceSum(costs, true),
       unpriced: rows.some(row => row.own_usage.unpriced_tokens > 0)};
   }
-  function usageCostText(usage) {
-    if (!data.meta.costs.available) return "costs unavailable";
+  function usageCostText(usage, provider = usageProviders.get(usage) || "codex") {
+    if (!providerCosts(provider).available) return "costs unavailable";
     return (quantity(usage.cost_usd) ? costText(usage.cost_usd) : "unknown") + (usage.unpriced_tokens > 0 ? " + unpriced" : "");
   }
   function usageRateTooltip(usages) {
-    if (!data.meta.costs.available) return "costs unavailable · API-equivalent estimate (not billed)";
+    const availability = costAvailability(usages.map(usage => usageProviders.get(usage) || "codex"));
+    if (!availability.any) return "costs unavailable · API-equivalent estimate (not billed)";
     const refs = new Map();
     let unknown = false;
     for (const usage of usages) {
@@ -685,13 +704,13 @@
       for (const ref of usage.priced_by) {
         const [key, index, role] = ref, pricing = data.models[key];
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
-        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
         const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
         refs.set(JSON.stringify(ref), (override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "") + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
       }
     }
-    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : [])].join("\n");
+    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function expandableText(text, label = "more") {
     const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
@@ -869,8 +888,8 @@
       stat("turns", "turns", unresolved ? null : row.turns.length, unresolved ? "withheld" : countText(row.turns.length), "your turns"),
       stat("subagents", "subagents", children.length, countText(children.length), durationText(agentMs) + " agent time"),
       stat("tokens", "tokens", full.tokens, full.tokens === null ? "unknown" : countText(full.tokens), "total (yours + subagents) · " + (own.tokens === null ? "unknown" : countText(own.tokens)) + " yours + " + (agent.tokens === null ? "unknown" : countText(agent.tokens)) + " subagents"),
-      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}),
-        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
+      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}, providerOf(row)),
+        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}, providerOf(row)) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
     if (unresolved) reader.append(el("p", {class: "reader-note", text: "history boundary unresolved — turn metrics withheld"}));
     else reader.append(renderTimeline(row, children, matched), ...row.turns.map(turn => renderTurn(turn, matched, visibleChildren)));
     if (Object.entries(row.outside_usage).some(([key, value]) => !["cost_usd", "priced_by"].includes(key) && quantity(value) && value > 0)) reader.append(el("p", {
@@ -898,6 +917,9 @@
   // --- boot
   document.addEventListener("DOMContentLoaded", () => {
     data = JSON.parse(document.getElementById("colophon-data").textContent);
+    for (const row of [...data.sessions, ...Object.values(data.subagents)]) {
+      for (const usage of [row.own_usage, row.outside_usage, ...row.turns.map(turn => turn.usage)]) if (usage) usageProviders.set(usage, providerOf(row));
+    }
     for (const weight of [300, 400, 500]) document.fonts.load(weight + " 12px 'Martian Mono'");
     mountTopbar();
     renderFooter();

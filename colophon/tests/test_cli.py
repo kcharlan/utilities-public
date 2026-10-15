@@ -14,6 +14,99 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def test_claude_bundled_cost_independent_of_codex_ledger(native):
+    native.session()
+    native.claude_session(rows=[{
+        "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+        "message": {"model": "claude-opus-4-6", "usage": {
+            "input_tokens": 17, "cache_read_input_tokens": 13,
+            "cache_creation_input_tokens": 11, "output_tokens": 7,
+            "cache_creation": {"ephemeral_1h_input_tokens": 5}, "speed": "fast"}},
+    }])
+    source = native.home / ".claude/projects/synthetic-kite/synthetic-claude.jsonl"
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    native.runtime.mkdir()
+    (native.runtime / "price-history.json").write_text("synthetic-invalid-ledger")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    claude, = [s for s in payload["sessions"] if s["provider"] == "claude"]
+    assert claude["own_usage"]["cost_usd"] == pytest.approx((17 * 5e-6 + 13 * .5e-6 + 6 * 6.25e-6 + 5 * 10e-6 + 7 * 25e-6) * 6)
+    assert claude["own_usage"]["priced_by"] == [
+        ["claude:bundled/claude-opus-4-6", 0, "fast"],
+        ["claude:bundled/claude-opus-4-6", 0, "rates"],
+    ]
+    assert not payload["meta"]["costs"]["available"]
+    assert payload["meta"]["sources"]["claude"]["costs"]["available"]
+    codex_line, = [line for line in result.stdout.splitlines() if line.startswith("colophon: codex:")]
+    claude_line, = [line for line in result.stdout.splitlines() if line.startswith("colophon: claude:")]
+    assert "costs unavailable" in codex_line
+    assert "$0.00 est." in claude_line
+
+def test_claude_cost_from_catalog_and_stale_cache_refresh_without_etag(native):
+    catalog = {"openai": {"models": {}}, "anthropic": {"models": {
+        "claude-opus-4-7": {"id": "claude-opus-4-7", "cost": {
+            "input": 11, "cache_read": 7, "cache_write": 13, "output": 17}},
+    }}, "google": {"models": {
+        "synthetic-maple": {"id": "synthetic-maple", "cost": {"input": 19, "output": 31}},
+    }}}
+    calls = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append(self.headers.get("If-None-Match"))
+            body = json.dumps(catalog).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", '"synthetic-fresh-maple"')
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        native.env["COLOPHON_PRICING_URL"] = f"http://127.0.0.1:{server.server_port}/synthetic-maple.json"
+        native.runtime.mkdir()
+        (native.runtime / "pricing-cache.json").write_text(json.dumps({
+            "schema": 1, "url": native.env["COLOPHON_PRICING_URL"],
+            "etag": '"synthetic-stale-maple"', "fetched_at_ms": 1,
+            "catalog": {"openai": {"models": {}}},
+        }))
+        source = native.claude_session(rows=[{
+            "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+            "message": {"model": "claude-opus-4-7", "usage": {
+                "input_tokens": 17, "cache_read_input_tokens": 13,
+                "cache_creation_input_tokens": 11, "output_tokens": 7,
+                "cache_creation": {"ephemeral_1h_input_tokens": 5}, "speed": "fast"}},
+        }, {
+            "type": "assistant", "timestamp": "2001-01-01T00:15:00Z",
+            "message": {"model": "google/synthetic-maple", "usage": {
+                "input_tokens": 19, "output_tokens": 23}},
+        }])
+        source.write_text("".join(json.dumps(json.loads(line), separators=(",", ":")) + "\n" for line in source.read_text().splitlines()))
+        result = native.build(offline=False)
+        assert result.returncode == 0, result.stderr
+        assert calls == [None]
+        payload = native.payload()
+        claude, = payload["sessions"]
+        expected = (17 * 11 + 13 * 7 + 6 * 13 + 5 * 22 + 7 * 17) * 6 / 1e6 + (19 * 19 + 23 * 31) / 1e6
+        assert claude["own_usage"]["cost_usd"] == pytest.approx(expected)
+        assert "claude:anthropic/claude-opus-4-7" in payload["models"]
+        assert "claude:google/synthetic-maple" in payload["models"]
+        assert payload["models"]["claude:anthropic/claude-opus-4-7"]["periods"][0]["fast"] == {"multiplier": 6}
+        assert "anthropic" in json.loads((native.runtime / "pricing-cache.json").read_text())["catalog"]
+        assert "claude: 1 sessions" in result.stdout
+        assert "costs unavailable" not in result.stdout
+        before = claude["own_usage"]
+        assert native.build().returncode == 0
+        assert native.payload()["sessions"][0]["own_usage"] == before
+        assert calls == [None]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
 def test_claude_resumed_usage_buckets_and_provider_isolation(native):
     native.session()
     assert native.build("--no-claude").returncode == 0

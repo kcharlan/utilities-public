@@ -329,21 +329,22 @@ static int priced_order(const void *a,const void *b,void *unused) {
   (void)unused;const PricedBy *x=a,*y=b;int c=str_compare(x->period.model,y->period.model);
   if(c)return c;
   if(x->period.index!=y->period.index)return x->period.index<y->period.index?-1:1;
+  if(x->fast!=y->fast)return x->fast?-1:1;
   return x->priority==y->priority?0:x->priority?-1:1;
 }
 static void reset_cost(UsageSummary *s,bool available) {
   s->has_cost=available;s->cost_usd=0.0;s->unpriced_tokens=0;s->priced_count=0;
 }
-static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool priority) {
+static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool priority,bool fast) {
   if(!period.present)return ERR_SUCCESS;
-  PricedBy value={period,priority};
+  PricedBy value={period,priority,fast};
   for(size_t i=0;i<s->priced_count;i++)if(!priced_order(&s->priced_by[i],&value,NULL))return ERR_SUCCESS;
   return record_append(arena,(void **)&s->priced_by,&s->priced_count,&s->priced_capacity,sizeof value,&value);
 }
 static Err sum_cost(Arena *arena,UsageSummary *s,const UsageUnit *unit,bool available) {
   if(unit->has_cost)s->cost_usd+=unit->cost_usd;
   else {s->has_cost=false;if(available)s->unpriced_tokens+=unit->input+unit->output;}
-  TRY(add_period(arena,s,unit->period,false));return add_period(arena,s,unit->priority_period,true);
+  TRY(add_period(arena,s,unit->period,false,false));TRY(add_period(arena,s,unit->priority_period,true,false));return add_period(arena,s,unit->fast_period,false,true);
 }
 static Err finish_cost(UsageSummary *s,const char *site) {
   if(s->unpriced_tokens<INT64_MIN||s->unpriced_tokens>INT64_MAX)event_note("int128_payload_sum",site,1);
@@ -838,7 +839,7 @@ void compose_summary_json(JsonWriter *w, const UsageSummary *value) {
   jsonw_i128(w, s->reasoning);
   jsonw_raw(w,",\"cost_usd\":");if(s->has_cost)jsonw_double(w,s->cost_usd);else jsonw_raw(w,"null");
   jsonw_raw(w,",\"unpriced_tokens\":");jsonw_i128(w,s->unpriced_tokens);jsonw_raw(w,",\"priced_by\":[");
-  for(size_t i=0;i<s->priced_count;i++){const PricedBy *p=&s->priced_by[i];if(i)jsonw_raw(w,",");jsonw_raw(w,"[");jsonw_string(w,p->period.model);jsonw_raw(w,",");jsonw_i128(w,p->period.index);jsonw_raw(w,",");jsonw_string(w,p->priority?STR_LIT("priority"):STR_LIT("rates"));jsonw_raw(w,"]");}
+  for(size_t i=0;i<s->priced_count;i++){const PricedBy *p=&s->priced_by[i];if(i)jsonw_raw(w,",");jsonw_raw(w,"[");jsonw_string(w,p->period.model);jsonw_raw(w,",");jsonw_i128(w,p->period.index);jsonw_raw(w,",");jsonw_string(w,p->fast?STR_LIT("fast"):p->priority?STR_LIT("priority"):STR_LIT("rates"));jsonw_raw(w,"]");}
   jsonw_raw(w,"]}");
 }
 void compose_buckets_json(JsonWriter *w, const SessionModel *s) {

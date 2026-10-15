@@ -16,15 +16,16 @@ sub content {
     return $bytes;
 }
 my @expected = sort qw(OFL.txt curated_bundled.json curated_price_history.json font.css
+    curated_bundled_claude.json ccusage_fast_multiplier_overrides.json
     page.css page.js page_template.html pricing_extend_ranges.txt
     pricing_numeric_ranges.txt pricing_prepend_ranges.txt);
 my $manifest = decode_json(content("$assets/MANIFEST"));
 die "invalid asset manifest\n" unless ref($manifest) eq 'HASH' && ref($manifest->{assets}) eq 'HASH';
 my @actual = sort keys %{$manifest->{assets}};
-die "manifest must name exactly the ten expected assets\n" unless join('\0', @expected) eq join('\0', @actual);
+die "manifest must name exactly the twelve expected assets\n" unless join('\0', @expected) eq join('\0', @actual);
 for my $name (@expected) {
     my $digest = $manifest->{assets}{$name};
     die "invalid digest: $name\n" unless defined($digest) && !ref($digest) && $digest =~ /\A[0-9a-f]{64}\z/;
     die "digest mismatch: $name\n" unless sha256_hex(content("$assets/$name")) eq $digest;
 }
-print "10 local asset digests verified\n";
+print "12 local asset digests verified\n";

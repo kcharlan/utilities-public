@@ -19,6 +19,7 @@ RELEASE_OBJECTS := $(patsubst %.c,$(BUILD)/release/%.o,$(SOURCES))
 UNIT_OBJECTS := $(patsubst %.c,$(BUILD)/unit/%.o,$(UNIT_SOURCES))
 ASSET_INPUTS := assets/page_template.html assets/font.css assets/page.css assets/page.js \
                 assets/OFL.txt assets/curated_bundled.json assets/curated_price_history.json \
+                assets/curated_bundled_claude.json assets/ccusage_fast_multiplier_overrides.json \
                 assets/pricing_numeric_ranges.txt assets/pricing_extend_ranges.txt \
                 assets/pricing_prepend_ranges.txt assets/MANIFEST
 REAL_HOME := $(HOME)

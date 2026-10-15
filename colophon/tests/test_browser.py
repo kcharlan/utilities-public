@@ -2,6 +2,8 @@ import pytest
 from playwright.sync_api import sync_playwright, expect
 from browser_errors import guard_browser_errors
 from helpers import SESSION, REQUEST
+import json
+from datetime import datetime, timedelta, timezone
 
 @pytest.fixture
 def page():
@@ -75,4 +77,35 @@ def test_claude_reader_never_offers_codex_actions(page, native):
         expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
         expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
         expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
+        assert requests == []
+
+def test_claude_costs_and_tooltips_survive_unavailable_codex(page, native):
+    native.session()
+    source = native.claude_session()
+    records = [json.loads(line) for line in source.read_text().splitlines()]
+    records[-1]["message"]["model"] = "claude-opus-4-6"
+    records[-1]["message"]["usage"] = {"input_tokens": 17, "output_tokens": 7, "speed": "fast"}
+    now = datetime.now(timezone.utc)
+    for index, record in enumerate(records):
+        record["timestamp"] = (now - timedelta(seconds=3-index)).isoformat().replace("+00:00", "Z")
+    records[-1]["message"]["stop_reason"] = None
+    source.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in records))
+    native.runtime.mkdir()
+    (native.runtime / "price-history.json").write_text("synthetic-invalid-ledger")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-session-id="synthetic-claude"]').click()
+        cost = page.locator('[data-reader="synthetic-claude"] [data-reader-stat="cost"]')
+        expect(cost).to_contain_text("$0.00")
+        assert "claude:bundled/claude-opus-4-6" in cost.get_attribute("title")
+        assert "fast" in cost.get_attribute("title")
+        assert "costs unavailable" not in cost.inner_text()
+        page.goto(native.page.as_uri() + "#p=all")
+        expect(page.locator('[data-kpi="cost"]')).to_contain_text("codex costs unavailable")
+        expect(page.locator('[data-kpi="cost"] .live')).to_contain_text("LIVE")
+        model = page.locator('[data-model="claude-opus-4-6"]')
+        expect(model).to_contain_text("$0.00")
+        assert "fast" in model.get_attribute("title")
         assert requests == []

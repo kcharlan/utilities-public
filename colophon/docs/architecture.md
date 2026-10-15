@@ -34,8 +34,19 @@ record aliases are indexed separately, including collision-skipped records.
 Codex composition explicitly skips Claude records and initializes their
 empty usage summaries. The schema stays 1 with additive provider/source
 fields. Rendering still precedes Codex cache commit; unopened caches are
-safe to destroy. Claude usage, pricing, graph metadata, persistent retention,
+safe to destroy. Claude graph metadata, persistent retention,
 source switching and history-session creation follow in later work.
+
+Claude raw rows capture priced nanocosts before winner reconciliation.
+After Codex composition/pricing, `claude_compose` authors Claude units and
+`claude_price_units` prices them independently of the Codex ledger. The
+catalog retains first-party Claude providers and explicit supported routes
+in separate indexes; Codex keeps its existing model lookup and cache.
+`PricingReport` owns transient Claude rate/fast periods and exact-input
+resolution memos. Raw rows own the prior-price facts needed by persistent
+Claude codecs. Provider-aware aggregation refresh and page availability
+keep independently priced costs visible when another provider is unavailable.
+See [token rules](token_rules.md#claude-pricing-and-public-seed-provenance).
 
 `tools/embed.pl` embeds `assets/` into build-generated C. Page shell, CSS,
 JavaScript, Martian Mono font subsets and their notice, public curated rate

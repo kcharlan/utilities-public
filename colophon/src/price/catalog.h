@@ -12,10 +12,11 @@ typedef struct {
     bool has_context_tier;
     int64_t context_tier_size;
 } CatalogModel;
-typedef struct { Arena arena; Omap models, normalized, lookups, normalizations; } ModelsDevIndex;
+typedef struct { Arena arena; Omap models, normalized, lookups, normalizations, claude_providers; } ModelsDevIndex;
 typedef struct { const CatalogModel *model; Str identity; } CatalogLookup;
 Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out);
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out);
+Err claude_catalog_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out);
 /* Interned result is borrowed until index destruction; raw keys remain distinct. */
 Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out);
 void models_dev_destroy(ModelsDevIndex *index);

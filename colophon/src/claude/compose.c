@@ -3,6 +3,7 @@
 #include "foundation.h"
 #include "parse/record.h"
 #include "parse/tokenstream.h"
+#include "price/claude_model.h"
 #include "util/json_number.h"
 #include "util/time.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -551,6 +552,7 @@ static Err authored(Corpus *c, ClaudeScan *scan, const Winner *w) {
   if (!s || s->provider != PROVIDER_CLAUDE)
     return ERR_SUCCESS;
   UsageUnit u = w->row->unit;
+  TRY(normalize_claude_model(&c->usage_arena,u.model_raw,&u.model));
   u.session_id = s->id;
   u.file = (size_t)(w->record - scan->records);
   u.priority_tier =

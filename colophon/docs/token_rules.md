@@ -25,7 +25,7 @@ These adaptations do not establish captured-corpus parity or performance accepta
 | Spec §15 difference 2 | `CostUsagePricing.swift`: `resolvedCodexPricing`, `codexAPIFastMultiplier`, `codexCostUSD` | Dated rates and priority multiplier/cap prevent later changes repricing earlier usage. Untimed units use current resolved rates transiently, without an invented date. |
 | Spec §15 difference 3 / A1 sticky evidence | `CostUsageScanner+CodexPriority.swift`: `resolveCodexPriorityTurns` | Sticky detected-turn memory survives trace pruning; replacement metadata retains first-seen time. Undetected usage older than trace retention and first run stays standard-priced. |
 | Spec §15 difference 4 / A1 trace location | `CostUsageScanner+CodexPriority.swift`: `resolveCodexPriorityTurns` | `logs_2.sqlite` follows `--codex-home`; isolated sources remain isolated. |
-| Spec §15 difference 5 | `ModelsDevPricingTargetResolver.swift`: `targets` | Keep only OpenAI catalog; strip `openai/`, diagnose other provider-qualified models as unpriced. Never read CodexBar settings/cache. |
+| Spec §15 difference 5 (Codex lookup only) | `ModelsDevPricingTargetResolver.swift`: `targets` | Codex keeps only OpenAI catalog lookup; strip `openai/`, diagnose other provider-qualified Codex models as unpriced. The shared catalog also retains Claude's providers, indexed independently. Never read CodexBar settings/cache. |
 | Spec §15 difference 6 | `CostUsageScanner.swift`: `CodexSessionFileIndex`, `remember` | Select duplicate-id parent by newest mtime/ascending path rather than incremental arrival; distinct fallback rows still union. |
 | Spec §15 difference 7 | `CostUsageScanner.swift`: `CodexInheritedTotalsResolver`, `snapshotResolution` | Resolve fork-of-fork chains regardless of order; approved b10 behavior replaces one-level retry. |
 | A1 trace cache machinery | `CostUsageScanner+CodexPriority.swift`: `resolveCodexPriorityTurns`, `boundedCodexPriorityTurns` | All-history cold scans omit memo/cursor anchors and bounded historical windows. Missing DB is silent; unreadable/locked DB retains sticky evidence with diagnostics. |
@@ -81,7 +81,7 @@ is cache creation, and `cache_write_1h` is the bounded one-hour component.
 Output and optional thinking tokens remain separate. Claude tiers are
 `fast|standard`; buckets retain the nine original entries and append the
 provider. The Codex accounting composer and pricing engine skip Claude.
-Claude units remain unpriced until its independent pricing stage is added;
+Claude's independent pricing stage does not consume the Codex ledger;
 unpriced Claude units do not affect Codex totals or availability.
 
 Advisor usage is the secondary-reference extension from **ccusage v20.0.33**,
@@ -105,3 +105,75 @@ with losers in `.key_count`. Unique unkeyed entries are not duplicates.
 `claude_incomplete_requests` counts only winning incomplete rows. All fixture
 identities, prompts and paths are invented and runtime evidence stays in
 test scratch directories outside this public checkout.
+
+## Claude pricing and public seed provenance
+
+`src/price/claude_cost.c` and `claude_model.c` port the same CodexBar
+v0.74.1 pin above: `CostUsagePricing.swift::claude` (L221),
+`claudeFullContextStandardPricingCutoff`/`claudeHistoricalLongContext`
+(L389–416), `normalizeClaudeModel` (L509), `claudeCostUSD` (L712–813),
+and first-party targets/lookup (L937–1049).
+`ModelsDevPricing.swift::ModelsDevModel.pricing` (L233–263) defines catalog
+rate conversion and matching context tiers. `ModelsDevPricingTargetResolver`
+defines explicit Codex-compatible route aliases within Claude lookup.
+
+`assets/curated_bundled_claude.json` transcribes every bundled and historical
+Claude row at that pin (`CostUsagePricing.swift` SHA-256
+`fb196b2de0308f54a72f84aef1099f9b35ae68ddf6356d2805e696eb5055445e`).
+Each array stores USD per token in the order fresh
+input, cached read, five-minute cache creation, output; optional entries
+are threshold, then the four above-threshold rates in the same order.
+The cutoff is exactly `1773360000000` ms. Opus/Sonnet 4.6 with a pricing
+timestamp always use the pinned historical/current branch; other models
+try the catalog before the bundled fallback. A request switches its whole
+context only when fresh input plus cache reads plus cache creation exceeds
+the threshold. Missing long-context components retain the standard rate.
+Missing catalog cache components use standard input. One-hour cache
+creation uses twice the selected fresh-input rate, with its count bounded
+by total cache creation. Public upstream data is a build input, never a
+private runtime ledger.
+
+Fast pricing is the secondary-reference extension from ccusage v20.0.33,
+commit `1308c416a7da73b63463f953a51b5ae29fb784a4`:
+`rust/crates/ccusage-core/src/cost.rs` (L110–115),
+`pricing.rs::SpeedMultiplierOverrides.multiplier_for` (L944–980), and its
+models.dev loader (L1309–1311). The committed
+`assets/ccusage_fast_multiplier_overrides.json` is copied verbatim from
+that pin. Exact keys, family aliases, date suffixes and provider/dotted
+parts resolve before normalized-prefix matching; an unmatched fast model
+uses multiplier 1. Fast applies to the complete Claude request estimate.
+The verbatim override asset SHA-256 is
+`f055ffafcf93bc164a0fe071bb462d17c5d888ddf2314ce876cba12fd1f67c42`.
+Codex retains its separate rate ledger, candidate lookup and priority rules.
+
+Raw complete Claude rows capture an extraction-time nanocost before dedupe,
+including losing copies. Temporal repricing retains a previously priced
+zero and falls back to a stored nanocost if current lookup is unresolved,
+as `claudeTemporalPricing` does. The raw-unit fields
+`claude_price_snapshot`, `claude_cost_priced`, and `claude_cost_nanos` are
+owned by each Claude row and copied to authored units; the separate Claude
+codec must persist them. Incomplete rows have no priced snapshot.
+Current rates and fast policies enter report-owned transient periods under
+`claude:bundled/<model>` or `claude:<provider>/<model>`. `priced_by` roles
+are `rates` and `fast`; Claude periods add `fast.multiplier` and
+`cache_write_1h_multiplier`. Codex period serialization stays unchanged.
+
+The legacy `meta.costs` object and `meta.counts` remain Codex-only.
+`meta.sources.<provider>.costs` describes each engine's availability;
+unknown Claude models remain unpriced while the engine stays available.
+Mixed views show known costs with an unavailable-provider indication and
+withhold comparisons when a provider's subtotal is unavailable. Reader,
+list, model, calendar and live-cost displays use their own providers.
+
+## Beyond the references
+
+The pinned CodexBar implementation is authoritative for Claude counting
+and pricing; ccusage supplies advisor entries (D2) and fast pricing (D4)
+where CodexBar has no handling. Colophon omits the upstream day-range
+limit, retains deleted transcripts, adds history-only activity and
+diagnostics, and enumerates resolved symlink roots (owner-approved
+deviation dated 2026-10-14). Web search requests are outside this pricing
+implementation. For ccusage comparisons, its copy preference, sidechain
+selection and long-context behavior do not replace the primary-reference
+rules; parity is required only where those rules agree. The inherited
+Spec §15 difference 5 above applies solely to Codex model lookup.

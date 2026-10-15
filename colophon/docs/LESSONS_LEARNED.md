@@ -1,5 +1,17 @@
 # Lessons learned
 
+- Claude model normalization's pinned regular expressions use Foundation
+  decimal digits, which differ from the older Codex candidate helper's broad
+  numeric property. Use the system regex with composed-character boundaries;
+  do not change Codex normalization to implement a Claude-only rule. ccusage
+  fast-prefix matching tests its last occurrence only; an earlier valid
+  occurrence must not override a later invalid suffix boundary.
+- Capture prior nanocost facts on every complete raw Claude row before dedupe,
+  including losing copies; pricing only authored winners loses the fallback
+  needed if a later cache replay selects a different winner. Index OpenAI
+  catalog rows once and give Claude independent lookup caches over borrowed
+  immutable rows so provider expansion does not duplicate Codex diagnostics.
+
 - Apply Swift's complete-grapheme matching to every decoded accounting marker,
   including IDs, model prefixes and original path roles. Restrict byte search
   to the pinned raw-line prefilters; a trailing combining mark can otherwise

@@ -17,9 +17,14 @@ typedef struct UsageUnit {
   bool has_cost;
   double cost_usd;
   PricePeriod period, priority_period;
+  PricePeriod fast_period;
   __int128 input, cached, cache_write, output;
   __int128 cache_write_1h;
   bool fast;
+  /* Claude extraction-time estimate. Persist with raw Claude rows so a later
+   * unknown catalog can use the recorded nanocost, including an exact zero. */
+  bool claude_price_snapshot, claude_cost_priced;
+  int64_t claude_cost_nanos;
   OptionalTokens reasoning;
 } UsageUnit;
 typedef struct UsageSummary {
@@ -31,7 +36,7 @@ typedef struct UsageSummary {
   struct PricedBy *priced_by;
   size_t priced_count, priced_capacity;
 } UsageSummary;
-typedef struct PricedBy { PricePeriod period; bool priority; } PricedBy;
+typedef struct PricedBy { PricePeriod period; bool priority, fast; } PricedBy;
 typedef struct UsageBucket {
   MaybeMs bucket;
   Str model;
