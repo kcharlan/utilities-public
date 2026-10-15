@@ -91,6 +91,7 @@ typedef struct {
   SessionMeta meta;
   AssemblyRecord meta_input;
   Str kind, parent_id, agent_path, forked_from, spawn_turn, link_method;
+  Str agent_label;
   Str workspace, subfolder;
   MaybeNum created_at_ms;
   bool has_depth;
@@ -125,6 +126,7 @@ typedef struct {
   FileDiagnostic malformed, truncated, recovered;
   size_t db_threads_without_logs;
   CorpusStrings orphaned_subagents, inferred_links;
+  CorpusStrings claude_orphaned_subagents;
   Omap workspaces;
   bool linked;
   Arena usage_arena;

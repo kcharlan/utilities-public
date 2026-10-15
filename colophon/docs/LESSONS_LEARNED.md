@@ -1,5 +1,10 @@
 # Lessons learned
 
+- Claude subagent tool IDs belong to the actual parent agent transcript,
+  rather than always the root session. Share graph validation and ordering
+  with Codex while keeping record access and orphan diagnostics provider
+  specific. Preserve independently valid sidecar fields even on orphan rows.
+
 - Claude model normalization's pinned regular expressions use Foundation
   decimal digits, which differ from the older Codex candidate helper's broad
   numeric property. Use the system regex with composed-character boundaries;

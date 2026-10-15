@@ -37,6 +37,32 @@ in `claude_session_id_collisions`. Unhandled Claude record types have their
 own `claude_unknown_record_types` diagnostic. Claude reader rows offer no
 Codex continuation or desktop links.
 
+Claude subagents are read from
+`<projects>/<slug>/<session>/subagents/agent-<id>.jsonl`; their identity is
+`<session>/agent-<id>`. An optional neighboring `agent-<id>.meta.json`
+supplies `parentAgentId`, `toolUseId`, `spawnDepth`, `description` and
+`agentType`, each validated independently. Other sidecars, including
+`.prefix.json`, are ignored. Without a sidecar the parent is the session
+and the spawn turn is unknown. Nested agents resolve tool IDs in their
+actual parent agent's transcript. Missing parents and cycles become orphans;
+Claude orphan diagnostics are separate from legacy Codex diagnostics/counts.
+Orphans remain standalone session rows with their usable label, nickname,
+depth and attempted parent identity; their spawn turn requires a resolved
+parent transcript.
+
+Desktop metadata is read from
+`<desktop-dir>/claude-code-sessions/<account>/<org>/local_*.json` and matched
+by `cliSessionId`. These JSON files and subagent sidecars are never edited.
+Metadata provides title, archive state, cwd and creation/activity clocks;
+usable transcript cwd/clocks take precedence over metadata fallbacks. Titles
+prefer Desktop, then the latest custom-title record's candidate, latest
+AI-title record's candidate and first prompt, through the shared display-title
+formatting. An empty, invalid or missing candidate in the latest title record
+clears the prior candidate, allowing fallback to the next title source.
+Malformed Desktop metadata appears in `metadata_errors` with a `claude:` prefix. Desktop entries
+without a transcript or retained record are counted separately. Disabled
+Claude input does not read Desktop metadata.
+
 Primary CLI records preserve the resolved config origin for default `.claude`,
 XDG `.config/claude`, environment and explicit config roots. Same-stem live
 copies select the config origin in ascending resolved-path order. Desktop,

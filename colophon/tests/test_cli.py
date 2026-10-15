@@ -14,6 +14,86 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def test_claude_subagent_links_and_desktop_metadata(native):
+    parent = native.claude_session()
+    with parent.open("a") as stream:
+        stream.write(json.dumps({"type": "custom-title", "customTitle": "Synthetic custom title"}) + "\n")
+        stream.write(json.dumps({"type": "ai-title", "aiTitle": "Synthetic AI title"}) + "\n")
+    child_dir = parent.parent / "synthetic-claude/subagents"
+    child = native.claude_session("agent-synthetic-child", directory=child_dir)
+    native.claude_session("agent-synthetic-nested", directory=child_dir)
+    native.claude_session("agent-synthetic-bare", directory=child_dir)
+    native.claude_session("agent-synthetic-orphan", directory=child_dir)
+    rows = [json.loads(line) for line in child.read_text().splitlines()]
+    rows[1]["message"]["content"].append({"type": "tool_use", "name": "Agent", "id": "synthetic-spawn"})
+    child.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (child_dir / "agent-synthetic-nested.meta.json").write_text(json.dumps({
+        "parentAgentId": "synthetic-child", "toolUseId": "synthetic-spawn",
+        "spawnDepth": 7, "description": "Synthetic nested label", "agentType": "synthetic-worker"}))
+    (child_dir / "agent-synthetic-orphan.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-missing", "description": "Synthetic orphan label", "agentType": "synthetic-orphan-worker", "spawnDepth": 4}))
+    desktop = native.home / "Library/Application Support/Claude/claude-code-sessions/synthetic-account/synthetic-org"
+    desktop.mkdir(parents=True)
+    metadata = desktop / "local_synthetic.json"
+    metadata.write_text(json.dumps({"cliSessionId": "synthetic-claude", "title": "Synthetic desktop title", "isArchived": True, "cwd": 42, "createdAt": False}))
+    (desktop / "local_absent.json").write_text(json.dumps({"cliSessionId": "synthetic-absent"}))
+    (desktop / "local_broken.json").write_text("{")
+    before = metadata.read_bytes()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    session, = [s for s in payload["sessions"] if s["id"] == "synthetic-claude"]
+    assert session["title"] == "Synthetic desktop title"
+    assert session["title_source"] == "desktop"
+    assert session["archived"] is True
+    agents = payload["subagents"]
+    nested = agents["synthetic-claude/agent-synthetic-nested"]
+    assert nested["parent_id"] == "synthetic-claude/agent-synthetic-child"
+    assert nested["spawn_turn"] == "claude-turn-1"
+    assert nested["depth"] == 7
+    assert nested["label"] == "Synthetic nested label"
+    assert nested["nickname"] == "synthetic-worker"
+    assert len(session["children"]) == 2
+    assert agents["synthetic-claude/agent-synthetic-bare"]["spawn_turn"] is None
+    orphan, = [s for s in payload["sessions"] if s["kind"] == "orphan"]
+    assert orphan["parent_id"] == "synthetic-claude/agent-synthetic-missing"
+    assert orphan["label"] == "Synthetic orphan label"
+    assert orphan["nickname"] == "synthetic-orphan-worker"
+    assert orphan["depth"] == 4
+    assert orphan["spawn_turn"] is None
+    assert payload["diagnostics"]["claude_orphaned_subagents"] == ["synthetic-claude/agent-synthetic-orphan"]
+    assert payload["diagnostics"]["orphaned_subagents"] == []
+    assert payload["diagnostics"]["claude_desktop_sessions_without_transcripts"] == 1
+    assert any(value.startswith("claude:") for value in payload["diagnostics"]["metadata_errors"])
+    assert metadata.read_bytes() == before
+
+@pytest.mark.parametrize("variant", ["bare", "nested", "missing", "cycle"])
+def test_claude_subagent_descendant_accounting(native, variant):
+    parent = native.claude_session()
+    directory = parent.parent / "synthetic-claude/subagents"
+    paths = [parent, native.claude_session("agent-synthetic-a", directory=directory),
+             native.claude_session("agent-synthetic-b", directory=directory)]
+    for i, path in enumerate(paths):
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[1]["message"].update({"id": f"synthetic-message-{i}", "model": "synthetic-model",
+                                   "usage": {"input_tokens": 10 + i, "output_tokens": 1}})
+        path.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows))
+    if variant != "bare":
+        (directory / "agent-synthetic-b.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-missing" if variant == "missing" else "synthetic-a"}))
+    if variant == "cycle":
+        (directory / "agent-synthetic-a.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-b"}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    rows = {s["id"]: s for s in payload["sessions"]}
+    rows.update(payload["subagents"])
+    def descendant_input(id):
+        row = rows[id]
+        return row["own_usage"]["input"] + sum(descendant_input(child) for child in row["children"])
+    assert descendant_input("synthetic-claude") == {"bare": 33, "nested": 33, "missing": 21, "cycle": 10}[variant]
+    assert sum(row["own_usage"]["input"] for row in rows.values()) == 33
+    assert len(payload["diagnostics"]["claude_orphaned_subagents"]) == {"bare": 0, "nested": 0, "missing": 1, "cycle": 2}[variant]
+    assert payload["meta"]["counts"] == {"logs": 0, "parsed": 0, "cached": 0, "sessions": 0, "subagents": 0, "orphans": 0}
+
 def test_claude_bundled_cost_independent_of_codex_ledger(native):
     native.session()
     native.claude_session(rows=[{
@@ -308,7 +388,9 @@ def test_claude_custom_config_is_not_assigned_to_swap_desktop_or_subagents(nativ
     native.claude_session("agent-synthetic-child", directory=custom / "projects/synthetic-project/synthetic-claude/subagents")
     result = native.build("--claude-home", str(custom))
     assert result.returncode == 0, result.stderr
-    rows = {s["id"]: s for s in native.payload()["sessions"]}
+    payload = native.payload()
+    rows = {s["id"]: s for s in payload["sessions"]}
+    rows.update(payload["subagents"])
     assert rows["synthetic-claude"]["resume_config_dir"] == str(custom)
     assert rows["synthetic-swap"]["resume_config_dir"] is None
     assert rows["synthetic-claude/agent-synthetic-child"]["resume_config_dir"] is None

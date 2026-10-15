@@ -21,6 +21,9 @@ typedef struct {
   ClaudeRecord *records;
   size_t count, capacity, logs, parsed;
   CorpusStrings collisions;
+  CorpusStrings metadata_errors;
+  struct ClaudeDesktopEntry *desktop_entries;
+  size_t desktop_count, desktop_capacity, desktop_without_transcripts;
   Omap history_aliases; /* Exact alias -> scan-arena CorpusStrings of canonical
                            owners. */
   SkippedFile *skipped;

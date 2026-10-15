@@ -1,6 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "parse.h"
 #include "compose.h"
+#include "metadata.h"
 #include "corpus/subagents.h"
 #include "corpus/titles.h"
 #include "corpus/turnstatus.h"
@@ -125,6 +126,13 @@ static Err on_record(void *context, const ReaderRecord *row) {
   yyjson_val *v = row->record, *message = get(v, "message"),
              *body = get(message, "content");
   Str type = text(get(v, "type"));
+  if (str_equal(type, STR_LIT("custom-title"))) {
+    Str title = text(get(v, "customTitle"));
+    TRY(copy(&r->arena, title, &r->custom_title));
+  } else if (str_equal(type, STR_LIT("ai-title"))) {
+    Str title = text(get(v, "aiTitle"));
+    TRY(copy(&r->arena, title, &r->ai_title));
+  }
   MaybeMs at = {0};
   Str stamp = text(get(v, "timestamp"));
   at.present = time_parse_rfc3339(stamp, "claude.timestamp", &at.value);
@@ -235,6 +243,13 @@ static Err on_record(void *context, const ReaderRecord *row) {
     Str block = text(get(q, "type"));
     if (str_equal(block, STR_LIT("tool_use"))) {
       Str name = text(get(q, "name")), id = text(get(q, "id"));
+      if (metadata_text(id)) {
+        Str owned, *key;
+        TRY(copy(&r->arena, id, &owned));
+        TRY(alloc(&r->arena, 1, sizeof *key, alignof(Str), (void **)&key));
+        *key = t->key;
+        TRY(omap_put(&r->tool_turns, owned, key));
+      }
       CorpusTools *tools = &r->tools[turn];
       if (str_equal(name, STR_LIT("Bash"))) {
         tools->shell++;
@@ -302,6 +317,7 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
     }
   }
   TRY(copy(&out->arena, id, &out->id));
+  TRY(claude_sidecar_load(out));
   Parse p = {.r = out};
   ReaderCallbacks cb = {
       .context = &p, .known_type = claude_known_type, .record = on_record,
@@ -312,6 +328,7 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
   return e;
 }
 void claude_record_destroy(ClaudeRecord *r) {
+  omap_destroy(&r->tool_turns);
   omap_destroy(&r->rows_dropped);
   for (size_t i = 0; i < r->turn_count; i++) {
     omap_destroy(&r->tools[i].mcp);
@@ -348,6 +365,7 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                         .meta = r->meta,
                         .kind = STR_LIT("session"),
                         .is_subagent = r->parent_session.p != NULL,
+                        .has_link = r->parent_session.p != NULL,
                         .resume_config_dir = r->config_dir,
                         .start_ms = r->first_ms,
                         .end_ms = r->last_ms};
@@ -414,6 +432,14 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
     s->title_full = r->turn_count ? r->requests[0].text : r->id;
     s->title_source =
         r->turn_count ? STR_LIT("first_request") : STR_LIT("filename");
+    if (metadata_text(r->ai_title)) {
+      s->title_full = r->ai_title;
+      s->title_source = STR_LIT("ai_title");
+    }
+    if (metadata_text(r->custom_title)) {
+      s->title_full = r->custom_title;
+      s->title_source = STR_LIT("custom_title");
+    }
     TRY(title_display(&c->arena, s->title_full, &s->title));
     if (s->start_ms.present && s->end_ms.present) {
       MaybeNum active;
@@ -425,6 +451,96 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
     TRY(omap_put(&c->sessions, s->id, s));
   }
   return ERR_SUCCESS;
+}
+static Err link_records(ClaudeRecord *records, size_t count, Corpus *c) {
+  Omap identified = {0}, origins = {0};
+  Err e = ERR_SUCCESS;
+  for (size_t i = 0; i < count; i++) {
+    ClaudeRecord *r = &records[i];
+    SessionModel *s = omap_get(&c->sessions, r->id);
+    if (!s || s->provider != PROVIDER_CLAUDE || omap_get(&identified, s->id))
+      continue;
+    e = omap_put(&identified, s->id, s);
+    if (e.code)
+      goto done;
+    e = omap_put(&origins, s->id, r);
+    if (e.code)
+      goto done;
+    if (!s->is_subagent) {
+      s->has_depth = true;
+      s->depth = 0;
+      continue;
+    }
+    s->parent_id = r->parent_session;
+    if (r->parent_agent.p) {
+      char *p;
+      size_t n = r->parent_session.n + r->parent_agent.n + 8;
+      e = arena_alloc(&c->arena, n, 1, (void **)&p);
+      if (e.code)
+        goto done;
+      snprintf(p, n, "%s/agent-%s", r->parent_session.p, r->parent_agent.p);
+      s->parent_id = (Str){p, (uint32_t)strlen(p)};
+    }
+    s->agent_label = r->description;
+    if (r->agent_type.p)
+      s->meta.agent_nickname =
+          (JScalar){.kind = JS_STRING, .value.s = r->agent_type};
+    s->has_depth = r->has_spawn_depth;
+    s->depth = r->spawn_depth;
+    s->kind = STR_LIT("subagent");
+  }
+  e = corpus_graph_break_cycles(&c->arena, &identified);
+  if (e.code)
+    goto done;
+  for (OmapEntry *q = identified.first; q; q = q->next) {
+    SessionModel *s = q->value;
+    if (!s->is_subagent)
+      continue;
+    SessionModel *parent = omap_get(&identified, s->parent_id);
+    if (!parent) {
+      s->kind = STR_LIT("orphan");
+      s->flags |= F_ORPHAN;
+      e = corpus_strings_add(&c->arena, &c->claude_orphaned_subagents, s->id);
+    } else {
+      e = corpus_strings_add(&c->arena, &parent->children, s->id);
+      ClaudeRecord *r = omap_get(&origins, s->id),
+                   *p = omap_get(&origins, parent->id);
+      Str *spawn = r->tool_use_id.p ? omap_get(&p->tool_turns, r->tool_use_id) : NULL;
+      if (spawn) {
+        s->spawn_turn = *spawn;
+        s->link_method = STR_LIT("tool_use");
+        for (size_t j = 0; j < parent->turn_count; j++)
+          if (str_equal(parent->turns[j].id, *spawn)) {
+            if (!e.code)
+              e = corpus_strings_add(&c->arena, &parent->turns[j].spawned, s->id);
+            break;
+          }
+      }
+    }
+    if (e.code)
+      goto done;
+    if (!s->has_depth) {
+      SessionModel *p = s;
+      size_t steps = 0;
+      while (p && !p->has_depth && steps <= identified.size) {
+        steps++;
+        p = omap_get(&identified, p->parent_id);
+      }
+      if (p && p->has_depth) {
+        s->has_depth = true;
+        s->depth = p->depth + steps;
+      }
+    }
+  }
+  for (OmapEntry *q = identified.first; q; q = q->next) {
+    e = corpus_children_order(q->value, &identified);
+    if (e.code)
+      break;
+  }
+done:
+  omap_destroy(&identified);
+  omap_destroy(&origins);
+  return e;
 }
 Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
                       Corpus *c, CorpusStrings *collisions) {
@@ -440,6 +556,8 @@ Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
   }
   if (!e.code)
     e = add_records(records, count, snapshot, c, collisions, &codex_ids);
+  if (!e.code)
+    e = link_records(records, count, c);
   omap_destroy(&codex_ids);
   return e;
 }

@@ -12,6 +12,11 @@ typedef struct {
   Arena arena;
   DiscoveredLog key;
   Str id, search_root, config_dir, parent_session;
+  Str parent_agent, tool_use_id, description, agent_type;
+  Str custom_title, ai_title;
+  bool has_spawn_depth;
+  int64_t spawn_depth;
+  Omap tool_turns; /* record-arena tool_use ID -> turn key */
   SessionMeta meta;
   CorpusStrings aliases;
   ReaderResult reader;

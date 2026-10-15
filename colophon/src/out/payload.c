@@ -57,8 +57,10 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,",\"recovered_lines\":");line_diagnostic(w,in->corpus?&in->corpus->recovered:NULL,in->claude,2);
     jsonw_raw(w,",\"unknown_record_types\":");payload_unknown_types(w,in->corpus);
     claude_diagnostics(w,in->claude);
+    jsonw_raw(w,",\"claude_desktop_sessions_without_transcripts\":");jsonw_i128(w,in->claude?in->claude->desktop_without_transcripts:0);
+    jsonw_raw(w,",\"claude_orphaned_subagents\":");CorpusStrings claude_empty={0};payload_corpus_strings(w,in->corpus?&in->corpus->claude_orphaned_subagents:&claude_empty);
     jsonw_raw(w,",\"db_threads_without_logs\":");jsonw_i64(w,in->corpus?(int64_t)in->corpus->db_threads_without_logs:0);
-    jsonw_raw(w,",\"metadata_errors\":[");if(in->metadata)for(MetadataError *p=in->metadata->errors;p;p=p->next){if(p!=in->metadata->errors)jsonw_raw(w,",");jsonw_string(w,p->text);}jsonw_raw(w,"],"
+    jsonw_raw(w,",\"metadata_errors\":[");bool metadata_first=true;if(in->metadata)for(MetadataError *p=in->metadata->errors;p;p=p->next){if(!metadata_first)jsonw_raw(w,",");metadata_first=false;jsonw_string(w,p->text);}if(in->claude)for(size_t i=0;i<in->claude->metadata_errors.count;i++){if(!metadata_first)jsonw_raw(w,",");metadata_first=false;jsonw_string(w,in->claude->metadata_errors.items[i]);}jsonw_raw(w,"],"
         "\"orphaned_subagents\":");CorpusStrings empty={0};payload_references(w,&ids,in->corpus?&in->corpus->orphaned_subagents:&empty);jsonw_raw(w,",\"inferred_links\":");payload_references(w,&ids,in->corpus?&in->corpus->inferred_links:&empty);jsonw_raw(w,",\"unresolved_history_boundaries\":");
     payload_unresolved_history(w,in->corpus,&ids);
     jsonw_raw(w,",\"fork_baseline_unavailable\":");payload_references(w,&ids,in->corpus?&in->corpus->fork_baselines:&empty);

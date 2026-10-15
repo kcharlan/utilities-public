@@ -4,6 +4,7 @@
 #include "progress.h"
 #include "summary.h"
 #include "claude/scan.h"
+#include "claude/metadata.h"
 #include "claude/compose.h"
 #include "out/payload.h"
 #include "out/page.h"
@@ -91,7 +92,9 @@ int cli_run(const Args *args){
     for(size_t i=0;i<scan.count;i++)assembly_records[i]=assembly_record(scan.records[i]);
     failure=corpus_build(assembly_records,scan.count,&metadata,snapshot,&scan.identifiers,&corpus);if(failure.code)goto fail;
     failure=corpus_link_subagents(&corpus,&metadata,snapshot);if(failure.code)goto fail;
+    failure=claude_metadata_load(&claude);if(failure.code)goto fail;
     failure=claude_corpus_add(claude.records,claude.count,snapshot,&corpus,&claude.collisions);if(failure.code)goto fail;
+    failure=claude_metadata_apply(&claude,&corpus);if(failure.code)goto fail;
     char *alias_path=join(home,"workspaces.json");if(!alias_path){failure=err_make(ERR_NOMEM,"alias path allocation failed");goto fail;}
     failure=workspace_aliases_load(alias_path,&aliases);free(alias_path);if(failure.code)goto fail;
     failure=corpus_resolve_workspaces(&corpus,&aliases);if(failure.code)goto fail;

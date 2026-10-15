@@ -373,7 +373,7 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
     payload_corpus_tools(w, &s->tools);
     jsonw_raw(w, ",\"children\":");
     payload_references(w, ids, &s->children);
-    if (agents) {
+    if (agents || (s->provider == PROVIDER_CLAUDE && s->is_subagent)) {
       jsonw_raw(w, ",\"parent_id\":");
       payload_reference(w, ids, s->parent_id);
       jsonw_raw(w, ",\"depth\":");
@@ -386,6 +386,8 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
       Arena label_arena = {0};
       Str label = {0};
       e = title_humanize(&label_arena, s->agent_path, &label);
+      if (s->provider == PROVIDER_CLAUDE)
+        label = s->agent_label;
       if (e.code)
         w->error = e;
       jsonw_raw(w, ",\"label\":");

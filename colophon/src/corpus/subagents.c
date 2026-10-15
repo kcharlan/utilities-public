@@ -183,6 +183,35 @@ static int child_order(const void *a, const void *b, void *ctx) {
                                    (x->start_ms.value < y->start_ms.value)
                              : 0;
 }
+Err corpus_children_order(SessionModel *s, Omap *by_id) {
+  return stable_sort(s->children.items, s->children.count, sizeof(Str),
+                     child_order, by_id);
+}
+Err corpus_graph_break_cycles(Arena *arena, Omap *identified) {
+  SessionModel **chain;
+  TRY(arena_alloc(arena, (identified->size + 1) * sizeof *chain,
+                  _Alignof(SessionModel *), (void **)&chain));
+  for (OmapEntry *q = identified->first; q; q = q->next) {
+    SessionModel *s = q->value;
+    s->graph_visit = s->graph_position = 0;
+  }
+  size_t visit = 0;
+  for (OmapEntry *q = identified->first; q; q = q->next) {
+    SessionModel *s = q->value;
+    size_t count = 0;
+    visit++;
+    while (s && !s->graph_visit) {
+      s->graph_visit = visit;
+      s->graph_position = count;
+      chain[count++] = s;
+      s = omap_get(identified, s->parent_id);
+    }
+    if (s && s->graph_visit == visit)
+      for (size_t i = s->graph_position; i < count; i++)
+        chain[i]->parent_id = (Str){0};
+  }
+  return ERR_SUCCESS;
+}
 Err corpus_link_subagents(Corpus *c, const CodexMetadata *metadata,
                           int64_t snapshot) {
   c->linked = true;
@@ -237,21 +266,9 @@ Err corpus_link_subagents(Corpus *c, const CodexMetadata *metadata,
     s->parent_id =
         edge && metadata_text(*edge) ? *edge : usable(m->parent_thread_id);
   }
-  size_t visit = 0;
-  for (OmapEntry *q = identified.first; q; q = q->next) {
-    SessionModel *s = q->value;
-    size_t count = 0;
-    visit++;
-    while (s && !s->graph_visit) {
-      s->graph_visit = visit;
-      s->graph_position = count;
-      chain[count++] = s;
-      s = omap_get(&identified, s->parent_id);
-    }
-    if (s && s->graph_visit == visit)
-      for (size_t i = s->graph_position; i < count; i++)
-        chain[i]->parent_id = (Str){0};
-  }
+  e = corpus_graph_break_cycles(&c->arena, &identified);
+  if (e.code)
+    goto done;
   for (OmapEntry *q = c->sessions.first; q; q = q->next) {
     SessionModel *s = q->value;
     if (!s->is_subagent)
@@ -290,8 +307,7 @@ Err corpus_link_subagents(Corpus *c, const CodexMetadata *metadata,
   }
   for (OmapEntry *q = c->sessions.first; q; q = q->next) {
     SessionModel *s = q->value;
-    e = stable_sort(s->children.items, s->children.count, sizeof(Str),
-                    child_order, &by_id);
+    e = corpus_children_order(s, &by_id);
     if (e.code)
       goto done;
     if (!s->is_subagent || (s->flags & F_ORPHAN))
