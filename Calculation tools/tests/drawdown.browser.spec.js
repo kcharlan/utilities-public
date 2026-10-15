@@ -1397,3 +1397,107 @@ test('failed-month end-only adjustment is marked unapplied in yearly table', asy
   await expect(page.locator('#amort-body tr[data-month="1"] .col-notes')).toContainText('unapplied month 1');
   await expect(page.locator('#amort-body tr[data-month="1"] .col-notes')).not.toContainText('adjusted month 1');
 });
+
+test.describe('year marks', () => {
+  // Loaded in October 2026, so month 1 is November 2026 and calendar years differ from relative years.
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date(2026, 9, 15, 12));
+    await page.reload();
+    await expect(page.locator('#today-stamp')).toHaveText('October 2026');
+  });
+
+  const row = (page, month) => page.locator(`#amort-body tr[data-month="${month}"]`);
+  const pressed = page => Promise.all(['relative', 'calendar'].map(mode =>
+    page.locator(`#year-marks-${mode}`).getAttribute('aria-pressed')));
+
+  test('months view marks every 12 months by default with a rule and year tag', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator('#year-marks')).toBeVisible();
+    expect(await pressed(page)).toEqual(['true', 'false']);
+    await expect(row(page, 12)).toHaveClass(/\bis-year-end\b/);
+    await expect(row(page, 13)).toHaveClass(/\bis-year-start\b/);
+    await expect(row(page, 11)).not.toHaveClass(/\bis-year-end\b/);
+    await expect(row(page, 1).locator('.col-date .year-tag')).toHaveText('Y1');
+    await expect(row(page, 13).locator('.col-date .year-tag')).toHaveText('Y2');
+    await expect(page.locator('#amort-body .year-tag')).toHaveCount(10);
+    await expect(row(page, 12).locator('td').nth(4)).toHaveCSS('border-bottom-width', '2px');
+    await expect(row(page, 11).locator('td').nth(4)).toHaveCSS('border-bottom-width', '1px');
+    await expect(page.locator('#chart .chart-year-line')).toHaveCount(9);
+    expect(await page.locator('#chart .chart-year-label').allTextContents())
+      .toEqual(['Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10']);
+    const between = await page.evaluate(() => {
+      const line = document.querySelector('#chart .chart-year-line');
+      return [Number(line.getAttribute('x1')), chartGeometry.xOf(11), chartGeometry.xOf(12)];
+    });
+    expect(between[0]).toBeGreaterThan(between[1]);
+    expect(between[0]).toBeLessThan(between[2]);
+  });
+
+  test('Calendar marks December into January and survives a recalculation', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('#year-marks-calendar').click();
+    expect(await pressed(page)).toEqual(['false', 'true']);
+    await expect(row(page, 2)).toHaveClass(/\bis-year-end\b/);
+    await expect(row(page, 3)).toHaveClass(/\bis-year-start\b/);
+    await expect(row(page, 12)).not.toHaveClass(/\bis-year-end\b/);
+    await expect(row(page, 3).locator('.col-date')).toHaveCSS('font-weight', '600');
+    await expect(page.locator('#amort-body .year-tag')).toHaveCount(0);
+    // The 2027 line sits two months in, beside the $0 axis label, so it is drawn but not labelled.
+    await expect(page.locator('#chart .chart-year-line')).toHaveCount(10);
+    expect((await page.locator('#chart .chart-year-label').allTextContents()).slice(0, 2)).toEqual(['2028', '2029']);
+
+    await page.locator('#expense').fill('5100');
+    await expect.poll(() => page.evaluate(() => sidebarTimers.size)).toBe(0);
+    await expect(row(page, 1).locator('td[data-key="expense"]')).toHaveText('$5,100');
+    expect(await pressed(page)).toEqual(['false', 'true']);
+    await expect(row(page, 2)).toHaveClass(/\bis-year-end\b/);
+  });
+
+  test('Years view hides the selector and charts its own 12-month groups', async ({ page }) => {
+    await page.locator('#year-marks-calendar').click();
+    await page.locator('#unit-years').click();
+    await expect(page.locator('#year-marks')).toBeHidden();
+    await expect(page.locator('#amort-body .year-tag')).toHaveCount(0);
+    await expect(page.locator('#amort-body tr.is-year-end')).toHaveCount(0);
+    expect((await page.locator('#chart .chart-year-label').allTextContents())[0]).toBe('Y2');
+    await page.locator('#unit-months').click();
+    await expect(page.locator('#year-marks')).toBeVisible();
+    expect(await pressed(page)).toEqual(['false', 'true']);
+    await expect(row(page, 3)).toHaveClass(/\bis-year-start\b/);
+  });
+
+  test('long horizons thin chart year lines and keep their labels apart', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => {
+      Object.assign(state.params, { expense: 0, inflation: 0, num_periods: 1200, unit: 'months' });
+      acceptPins([]);
+      rerender();
+    });
+    const geometry = await page.evaluate(() => ({
+      months: lastChartRows.length,
+      innerW: chartGeometry.innerW,
+      lines: document.querySelectorAll('#chart .chart-year-line').length,
+      labels: [...document.querySelectorAll('#chart .chart-year-label')].map(label => {
+        const box = label.getBBox();
+        return [box.x, box.x + box.width, label.textContent];
+      }),
+    }));
+    expect(geometry.months).toBe(1200);
+    expect(geometry.lines).toBeGreaterThan(0);
+    expect(geometry.lines).toBeLessThanOrEqual(Math.ceil(geometry.innerW / 16));
+    expect(geometry.labels.length).toBeGreaterThan(0);
+    for (let i = 1; i < geometry.labels.length; i++) {
+      expect(geometry.labels[i][0]).toBeGreaterThan(geometry.labels[i - 1][1]);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+
+  test('year mark choice is keyboard operable and resets on reload', async ({ page }) => {
+    await page.locator('#year-marks-calendar').focus();
+    await page.keyboard.press('Space');
+    expect(await pressed(page)).toEqual(['false', 'true']);
+    await page.reload();
+    expect(await pressed(page)).toEqual(['true', 'false']);
+    await expect(row(page, 13)).toHaveClass(/\bis-year-start\b/);
+  });
+});

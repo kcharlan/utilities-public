@@ -330,13 +330,13 @@
     margin: 0;
   }
 
-  .toggle, .theme-toggle {
+  .toggle, .theme-toggle, .year-toggle {
     display: flex;
     background: var(--surface);
     border: 1px solid var(--control-border);
     overflow: hidden;
   }
-  .toggle button, .theme-toggle button {
+  .toggle button, .theme-toggle button, .year-toggle button {
     flex: 1;
     padding: 7px 10px;
     background: transparent;
@@ -349,11 +349,12 @@
     text-transform: uppercase;
     transition: background-color 0.15s, color 0.15s;
   }
-  .toggle button:not(.active):not(:disabled):hover, .theme-toggle button:not(.active):not(:disabled):hover {
+  .toggle button:not(.active):not(:disabled):hover, .theme-toggle button:not(.active):not(:disabled):hover,
+  .year-toggle button:not(.active):hover {
     background: var(--surface-raised);
     color: var(--text);
   }
-  .toggle button.active, .theme-toggle button.active {
+  .toggle button.active, .theme-toggle button.active, .year-toggle button.active {
     background: var(--text);
     color: var(--on-strong);
   }
@@ -614,6 +615,16 @@
   .chart-end-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); }
   .chart-end-label--cash { fill: var(--series-cash); }
   .chart-end-label--principal { fill: var(--series-principal); }
+  .chart-year-line { stroke: var(--rule); stroke-width: 1; pointer-events: none; }
+  .chart-year-label {
+    fill: var(--text-subtle);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--fs-2xs);
+    stroke: var(--label-halo);
+    stroke-width: 3px;
+    paint-order: stroke;
+    pointer-events: none;
+  }
   .chart-crosshair { stroke: var(--text-subtle); stroke-width: 1; }
   .chart-hover-dot--cash { fill: var(--series-cash); }
   .chart-hover-dot--principal { fill: var(--series-principal); }
@@ -652,6 +663,8 @@
   }
   .table-head {
     display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
     align-items: baseline;
     justify-content: space-between;
     padding: 14px 0 12px;
@@ -673,7 +686,7 @@
     font-weight: 300;
     font-variation-settings: "opsz" 72, "SOFT" 50, "wght" 300;
   }
-  .table-head-titles { display: flex; flex-direction: column; gap: 3px; }
+  .table-head-titles { display: flex; flex: 1 1 300px; flex-direction: column; gap: 3px; }
   .table-hint {
     font-family: 'Fraunces', serif;
     font-style: italic;
@@ -682,7 +695,7 @@
     letter-spacing: 0.01em;
   }
   .table-hint em { font-style: italic; color: var(--accent-strong); font-weight: 500; }
-  .table-actions { display: flex; gap: 8px; align-items: center; }
+  .table-actions { display: flex; flex-shrink: 0; gap: 8px; align-items: center; }
   .table-actions .pin-count {
     font-family: 'Fraunces', serif;
     font-style: italic;
@@ -690,8 +703,9 @@
     color: var(--accent-strong);
     margin-right: 4px;
   }
-  .table-actions button {
+  .table-actions > button {
     padding: 6px 12px;
+    white-space: nowrap;
     background: var(--surface);
     border: 1px solid var(--control-border);
     font-family: 'Hanken Grotesk', sans-serif;
@@ -702,11 +716,21 @@
     text-transform: uppercase;
     transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
-  .table-actions button:not(:disabled):hover {
+  .table-actions > button:not(:disabled):hover {
     background: var(--text);
     color: var(--on-strong);
     border-color: var(--text);
   }
+  .year-marks { display: flex; align-items: center; gap: 8px; margin-right: 8px; }
+  .year-marks[hidden] { display: none; }
+  .year-marks-label {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .year-toggle button { flex: 0 0 auto; padding: 5px 9px; font-size: var(--fs-2xs); white-space: nowrap; }
 
   .amort {
     width: 100%;
@@ -832,6 +856,22 @@
     font-size: var(--fs-xs);
     font-style: italic;
     letter-spacing: 0.01em;
+  }
+  /* Year marks: an ink rule closes each year and the first month's date is set heavier. */
+  .amort tbody tr.is-year-end td { border-bottom: 2px solid var(--text-muted); }
+  .amort tbody tr.is-year-start .col-date { color: var(--text); font-weight: 600; }
+  .year-tag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 0 4px;
+    font-family: 'Hanken Grotesk', sans-serif;
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+    color: var(--accent-strong);
+    border: 1px solid var(--accent);
   }
   .amort .delta-pos { color: var(--positive); }
   .amort .delta-neg { color: var(--negative); }
@@ -1206,7 +1246,6 @@
 
   @media (max-width: 560px) {
     .sidebar { padding: 20px 16px 28px; }
-    .table-head { flex-wrap: wrap; gap: 12px; }
     .table-actions { width: 100%; flex-wrap: wrap; }
   }
 
@@ -1350,6 +1389,13 @@
           <div class="table-hint">Click <em>+</em> to edit beginning assumptions or ending balances at an exact month. Table amounts show whole dollars; focus a cell for detail.</div>
         </div>
         <div class="table-actions">
+          <div class="year-marks" id="year-marks" role="group" aria-labelledby="year-marks-label">
+            <span class="year-marks-label" id="year-marks-label">Mark years</span>
+            <div class="year-toggle">
+              <button type="button" id="year-marks-relative" data-year-marks="relative" class="active" aria-pressed="true" title="Every 12 months from month 1">12 months</button>
+              <button type="button" id="year-marks-calendar" data-year-marks="calendar" aria-pressed="false" title="Between December and January">Calendar</button>
+            </div>
+          </div>
           <span class="pin-count" id="pin-count"></span>
           <button id="clear-pins">Clear pins</button>
           <button id="export-csv">Export CSV</button>
@@ -1505,6 +1551,7 @@ const state = {
   },
   pins: [], // [{ id, at_month, start: { ... }, end: { ... }, annual_edits? }]
   editing: null, // month being edited (if any)
+  yearMarks: 'relative', // monthly-view year marks: 'relative' or 'calendar'; page memory only
   revision: 0,
   stale: false,
   issues: [],
@@ -2426,6 +2473,35 @@ function dateForMonth(m, anchor = TODAY) {
   return new Date(anchor.getFullYear(), anchor.getMonth() + m, 1);
 }
 
+// Year marks are a view aid for monthly rows. Relative years count 12 months
+// from month 1, matching yearly view; calendar years break December→January.
+function yearOfMonth(month, mode, anchor = TODAY) {
+  return mode === 'calendar' ? dateForMonth(month, anchor).getFullYear() : Math.ceil(month / 12);
+}
+
+function isYearStart(month, mode, anchor = TODAY) {
+  return month === 1 || yearOfMonth(month, mode, anchor) !== yearOfMonth(month - 1, mode, anchor);
+}
+
+function yearMarkTag(month, mode, anchor = TODAY) {
+  const year = yearOfMonth(month, mode, anchor);
+  return mode === 'calendar' ? String(year) : `Y${year}`;
+}
+
+// Indexes of monthly rows that open a new year after the first row.
+function yearBoundaries(rows, mode, anchor = TODAY) {
+  return rows.flatMap((row, index) => index > 0 && isYearStart(row.month, mode, anchor)
+    ? [{ index, year: yearOfMonth(row.month, mode, anchor) }] : []);
+}
+
+// Draws a line every 1, 5, 10, or 20 years and labels a multiple of that step,
+// whichever first leaves room at the chart's pixels per year.
+function chartYearSteps(pxPerYear) {
+  const lineEvery = [1, 5, 10, 20].find(step => step * pxPerYear >= 16) ?? 20;
+  const labelEvery = [1, 5, 10, 20, 40].find(step => step % lineEvery === 0 && step * pxPerYear >= 44) ?? null;
+  return { lineEvery, labelEvery };
+}
+
 function fmtMoney(v, withSign = false) {
   if (!isFinite(v)) return '—';
   const isNeg = v < 0;
@@ -2710,8 +2786,19 @@ function renderChart(rows) {
   ], 14, padT, H - padB);
   const bandPath = `${linePath(floorOf)} L ${xOf(n - 1).toFixed(2)} ${(H - padB).toFixed(2)} L ${xOf(0).toFixed(2)} ${(H - padB).toFixed(2)} Z`;
 
+  // Year lines sit midway between a year's last month and the next year's first.
+  // Yearly view always groups relative years, so its lines follow those groups.
+  const yearMode = p.unit === 'years' ? 'relative' : state.yearMarks;
+  const { lineEvery, labelEvery } = chartYearSteps(n > 1 ? innerW * 12 / (n - 1) : innerW);
+  const yearLines = yearBoundaries(rows, yearMode)
+    .filter(boundary => boundary.year % lineEvery === 0)
+    .map(boundary => ({ ...boundary, x: (xOf(boundary.index - 1) + xOf(boundary.index)) / 2 }));
+  // Labels clear the $0 axis label at the left and the reserve-failure label.
+  const yearLabelFits = x => x >= 48 && (insolvencyX === null || x < insolvencyX - 104 || x > insolvencyX + 24);
+
   svg.innerHTML = `
     ${[0.25, 0.5, 0.75].map(fraction => `<line class="chart-grid" x1="${padL}" y1="${(padT + fraction * innerH).toFixed(2)}" x2="${(padL + innerW).toFixed(2)}" y2="${(padT + fraction * innerH).toFixed(2)}"/>`).join('')}
+    ${yearLines.map(line => `<line class="chart-year-line" x1="${line.x.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${line.x.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>`).join('')}
     <path class="chart-reserve-band" d="${bandPath}"/>
     <path data-series="cash" d="${linePath(r => r.buffer)}"/>
     <path data-series="principal" d="${linePath(r => r.investments)}"/>
@@ -2720,6 +2807,8 @@ function renderChart(rows) {
       <circle class="chart-pin-dot" cx="${x.toFixed(2)}" cy="${(padT + 4).toFixed(2)}" r="3"/>`).join('')}
     ${insolvencyX !== null ? `<line class="chart-failure-line" x1="${insolvencyX.toFixed(2)}" y1="${padT.toFixed(2)}" x2="${insolvencyX.toFixed(2)}" y2="${(H - padB).toFixed(2)}"/>
       <text class="chart-failure-label" x="${(insolvencyX - 4).toFixed(2)}" y="${(H - padB - 4).toFixed(2)}" text-anchor="end">reserve failure</text>` : ''}
+    ${labelEvery === null ? '' : yearLines.filter(line => line.year % labelEvery === 0 && yearLabelFits(line.x)).map(line =>
+      `<text class="chart-year-label" x="${line.x.toFixed(2)}" y="${(H - padB - 4).toFixed(2)}" text-anchor="middle">${yearMarkTag(rows[line.index].month, yearMode)}</text>`).join('')}
     ${endLabels.map(label => `<text class="chart-end-label chart-end-label--${label.key}" x="${(padL + innerW + 8).toFixed(2)}" y="${label.y.toFixed(2)}" dominant-baseline="middle">${W >= 600 ? (label.key === 'cash' ? 'Buffer ' : 'Investments ') : ''}${fmtMoneyCompact(label.value)}</text>`).join('')}
     <g class="chart-hover" visibility="hidden">
       <line class="chart-crosshair" y1="${padT}" y2="${(H - padB).toFixed(2)}"/>
@@ -2803,9 +2892,14 @@ function renderTable(viewRows, baseRows, result) {
     const startKeys = new Set(startPin ? Object.keys(startPin.start) : []);
     const endKeys = new Set(endPin ? Object.keys(endPin.end) : []);
 
+    // Yearly rows are already years, so year marks apply to monthly rows only.
+    const yearStart = unit === 'months' && isYearStart(r.month, state.yearMarks);
+    const yearEnd = unit === 'months' && idx < viewRows.length - 1 && isYearStart(r.month + 1, state.yearMarks);
     const trClasses = [
       isPinned ? 'is-pinned' : '',
       isInsolvent ? 'is-insolvent' : '',
+      yearStart ? 'is-year-start' : '',
+      yearEnd ? 'is-year-end' : '',
     ].filter(Boolean).join(' ');
 
     const deltaClass = r.delta > 0 ? 'delta-pos' : (r.delta < 0 ? 'delta-neg' : '');
@@ -2823,7 +2917,10 @@ function renderTable(viewRows, baseRows, result) {
     if (r.insolvency) notes.push(`<span class="marker-dot insolvency"></span><strong style="color:var(--negative)">reserve cannot be maintained</strong>`);
 
     const periodLabel = unit === 'years' ? `Y ${r.period}` : `${r.month}`;
-    const dateLabel = unit === 'years' ? r.label : fmtDate(r.date, 'months');
+    // A calendar year's first row already reads "Jan YYYY", so only relative years get a tag.
+    const yearTag = yearStart && state.yearMarks === 'relative'
+      ? `<span class="year-tag" title="Year ${yearOfMonth(r.month, 'relative')} begins">${yearMarkTag(r.month, 'relative')}</span>` : '';
+    const dateLabel = unit === 'years' ? r.label : `${fmtDate(r.date, 'months')}${yearTag}`;
 
     html += `
       <tr class="${trClasses}" data-month="${pinMonth}">
@@ -2848,6 +2945,7 @@ function renderTable(viewRows, baseRows, result) {
   }
 
   tbody.innerHTML = html;
+  document.getElementById('year-marks').hidden = unit !== 'months';
 
   // Wire up pin actions
   tbody.querySelectorAll('.pin-action').forEach(el => {
@@ -3831,6 +3929,17 @@ function init() {
     setPressed(document.querySelectorAll('.toggle button'), document.getElementById('unit-years'));
     document.getElementById('periods').value = '10';
     recalc();
+  });
+
+  // Year marks change only the view; redraw the accepted parameters without reading the sidebar.
+  const yearMarkButtons = document.querySelectorAll('.year-toggle button');
+  yearMarkButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      state.yearMarks = button.dataset.yearMarks;
+      setPressed(yearMarkButtons, button);
+      closeCellEditor();
+      rerender();
+    });
   });
 
   // Calc button
