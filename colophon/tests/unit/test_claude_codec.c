@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
 
 static void parsed(ClaudeRecord *r){
   char name[1024];snprintf(name,sizeof name,"%s/synthetic-codec-XXXXXX.jsonl",getenv("TMPDIR"));int fd=mkstemps(name,6);ASSERT_TRUE(fd>=0);
@@ -72,3 +74,44 @@ TEST(claude_codec_aligns_arrays_and_wide_maps_across_string_offsets){
   }
   claude_record_destroy(&r);
 }
+
+/* Recompute the checksum after intentionally changing a well-formed traversal:
+ * these tests must reach the typed map decoder rather than the checksum guard. */
+static void malformed_map(const char *map_name,bool truncate,bool invalid_key){
+  ClaudeRecord r={0};parsed(&r);__int128 count=1;
+  Omap *map=!strcmp(map_name,"mcp")?&r.tools[0].mcp:&r.tools[0].other;
+  ASSERT_EQ(ERR_OK,omap_put(map,STR_LIT("synthetic-invalid-wide-key"),&count).code);
+  unsigned char *bytes=NULL;size_t n=0;ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
+  bytes=realloc(bytes,n+1);ASSERT_TRUE(bytes);bytes[n]=0;
+  char *key=strstr((char *)bytes+71,"\"synthetic-invalid-wide-key\"");ASSERT_TRUE(key);
+  size_t prefix=(size_t)(key-(char *)bytes),old=strlen("\"synthetic-invalid-wide-key\"");
+  if(invalid_key){
+    memcpy(key,"true",4);
+    if(truncate){key[4]=']';n=prefix+5;}
+    else {memmove(key+4,key+old,n-prefix-old);n-=old-4;}
+  }else {key[old]=']';n=prefix+old+1;}
+  sha256_hex(bytes+71,n-71,(char *)bytes+6);bytes[70]='\n';
+  ClaudeRecord decoded={0};ASSERT_EQ(ERR_INVALID,claude_codec_decode(bytes,n,&decoded).code);
+  claude_record_destroy(&decoded);free(bytes);claude_record_destroy(&r);
+}
+TEST(claude_codec_rejects_malformed_mcp_key_with_valid_checksum){malformed_map("mcp",false,true);}
+TEST(claude_codec_rejects_malformed_other_key_with_valid_checksum){malformed_map("other",false,true);}
+TEST(claude_codec_rejects_mcp_traversal_ending_at_invalid_key){malformed_map("mcp",true,true);}
+TEST(claude_codec_rejects_other_traversal_ending_at_invalid_key){malformed_map("other",true,true);}
+static void *readonly_copy(const void *source,size_t n,size_t *span){
+  long page=sysconf(_SC_PAGESIZE);ASSERT_TRUE(page>0);*span=(n+(size_t)page-1)/(size_t)page*(size_t)page;
+  void *copy=mmap(NULL,*span,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);ASSERT_TRUE(copy!=MAP_FAILED);
+  memcpy(copy,source,n);ASSERT_EQ(0,mprotect(copy,*span,PROT_READ));return copy;
+}
+TEST(claude_codec_encoder_accepts_physically_readonly_record_and_usage_rows){
+  ClaudeRecord r={0};parsed(&r);size_t row_span,record_span;
+  ClaudeUsageRow *rows=readonly_copy(r.usage_rows,r.usage_count*sizeof *rows,&row_span);
+  ClaudeRecord copy=r;copy.usage_rows=rows;ClaudeRecord *protected=readonly_copy(&copy,sizeof copy,&record_span);
+  pid_t child=fork();ASSERT_TRUE(child>=0);
+  if(!child){unsigned char *bytes=NULL;size_t n=0;Err e=claude_codec_encode(protected,&bytes,&n);free(bytes);_exit(e.code?1:0);}
+  int status=0;ASSERT_EQ(child,waitpid(child,&status,0));
+  ASSERT_EQ(0,munmap(protected,record_span));ASSERT_EQ(0,munmap(rows,row_span));claude_record_destroy(&r);
+  ASSERT_TRUE(WIFEXITED(status));ASSERT_EQ(0,WEXITSTATUS(status));
+}
+TEST(claude_codec_rejects_mcp_traversal_ending_after_valid_key){malformed_map("mcp",true,false);}
+TEST(claude_codec_rejects_other_traversal_ending_after_valid_key){malformed_map("other",true,false);}

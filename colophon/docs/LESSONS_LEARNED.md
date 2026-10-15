@@ -121,3 +121,8 @@ historical evidence, not available native acceptance commands.
   prefer the installed candidate and replay the original path once without
   deleting the last decodable recovery copy. Refresh live sidecars on cache
   hits, while retained facts preserve their last-known sidecar state.
+- A persistence checksum does not validate the decoded shape. Stop map traversal
+  immediately after a bad key, and make wide-number helpers honor prior errors
+  before touching their value pointer. Exercise malformed maps with recomputed
+  checksums and truncated values. Test const encoders against read-only memory:
+  comparing values alone misses writes that store the same value.

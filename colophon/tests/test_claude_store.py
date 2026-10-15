@@ -308,3 +308,36 @@ def test_claude_unreadable_live_file_does_not_replay_or_destroy_unowned_cache_hi
         assert cached.read_bytes() == before
     finally:
         path.chmod(0o600)
+
+
+def test_claude_valid_checksum_bad_map_cache_reparses_and_retained_diagnoses(tmp_path):
+    import hashlib
+    import json
+    run = NativeRun(tmp_path)
+    rows = [{"type": "user", "message": {"content": "Synthetic map request"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "synthetic-tool", "name": "mcp__syntheticbadmap__lookup"}]}}]
+    source = run.claude_session(rows=rows)
+    source_bytes = source.read_bytes()
+    assert run.build().returncode == 0
+    cached, = store_records(run, "cache-claude")
+    def corrupt_map(path):
+        header, _, body = path.read_bytes().split(b"\n", 2)
+        value = json.loads(body)
+        index = value.index("syntheticbadmap")
+        value[index] = True
+        changed = json.dumps(value, separators=(",", ":")).encode()
+        damaged = header + b"\n" + hashlib.sha256(changed).hexdigest().encode() + b"\n" + changed
+        path.write_bytes(damaged)
+        return damaged
+    corrupt_map(cached)
+    assert run.build().returncode == 0
+    assert run.payload()["meta"]["sources"]["claude"]["parsed"] == 1
+    assert source.read_bytes() == source_bytes
+    source.unlink()
+    assert run.build().returncode == 0
+    retained, = store_records(run, "claude-retained")
+    damaged = corrupt_map(retained)
+    assert run.build().returncode == 0
+    assert str(retained) in run.payload()["diagnostics"]["claude_retained_unreadable"]
+    assert retained.read_bytes() == damaged

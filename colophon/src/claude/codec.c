@@ -41,10 +41,11 @@ static void sint(Wire *w,int64_t *n) {
   else {separator(w);jsonw_i64(&w->json,*n);}
 }
 static void wide(Wire *w,__int128 *n) {
+  if(w->error.code)return;
   unsigned __int128 bits;memcpy(&bits,n,sizeof bits);
   uint64_t lo=(uint64_t)bits,hi=(uint64_t)(bits>>64);
   unsigned_integer(w,&lo);unsigned_integer(w,&hi);
-  if(w->reading){bits=((unsigned __int128)hi<<64)|lo;memcpy(n,&bits,sizeof bits);}
+  if(w->reading&&!w->error.code){bits=((unsigned __int128)hi<<64)|lo;memcpy(n,&bits,sizeof bits);}
 }
 static void boolean(Wire *w,bool *b) {
   if(w->error.code)return;
@@ -64,11 +65,13 @@ static void real(Wire *w,double *n) {
 static void ms(Wire *w,MaybeMs *m){boolean(w,&m->present);if(m->present)sint(w,&m->value);}
 static void num(Wire *w,MaybeNum *m){boolean(w,&m->present);if(m->present){boolean(w,&m->value.is_float);if(m->value.is_float)real(w,&m->value.f);else sint(w,&m->value.i);}}
 static void scalar(Wire *w,JScalar *s){
-  uint64_t kind=s->kind;unsigned_integer(w,&kind);if(kind>JS_OBJECT){invalid(w);return;}s->kind=(JKind)kind;
+  if(w->error.code)return;
+  uint64_t kind=s->kind;unsigned_integer(w,&kind);if(w->error.code)return;
+  if(kind>JS_OBJECT){invalid(w);return;}if(w->reading)s->kind=(JKind)kind;
   boolean(w,&s->empty);
   switch(s->kind){case JS_BOOL:boolean(w,&s->value.b);break;case JS_INT:sint(w,&s->value.i);break;case JS_FLOAT:real(w,&s->value.f);break;case JS_STRING:string(w,&s->value.s);break;default:break;}
 }
-static void count(Wire *w,size_t *n){uint64_t value=*n;unsigned_integer(w,&value);if(value>SIZE_MAX||(w->reading&&value>yyjson_arr_size(w->array)-w->position)){invalid(w);return;}*n=(size_t)value;}
+static void count(Wire *w,size_t *n){if(w->error.code)return;uint64_t value=*n;unsigned_integer(w,&value);if(w->error.code)return;if(value>SIZE_MAX||(w->reading&&value>yyjson_arr_size(w->array)-w->position)){invalid(w);return;}if(w->reading)*n=(size_t)value;}
 /* Apple ARM64 max_align_t is only 8; all decoded types are at most 16.
  * Wide tool counters and UsageUnit need their actual 128-bit alignment. */
 _Static_assert(alignof(CorpusTools)<=alignof(__int128), "CorpusTools alignment");
@@ -86,9 +89,11 @@ static void allocate(Wire *w,void **p,size_t n,size_t element){
 /* Unknown-type values are reader-owned heap values; all other map values are
  * record-arena values. Map nodes/keys retain their usual Omap ownership. */
 static void map(Wire *w,Omap *m,int kind){
+  if(w->error.code)return;
   size_t n=m->size;count(w,&n);OmapEntry *entry=m->first;
   for(size_t i=0;i<n&&!w->error.code;i++){
     Str key=w->reading?(Str){0}:entry->key;string(w,&key);
+    if(w->error.code)return;
     void *value=w->reading?NULL:entry->value;
     size_t bytes=kind==2?sizeof(__int128):kind==3?sizeof(Str):sizeof(uint64_t);
     if(w->reading&&!w->error.code){
@@ -112,7 +117,7 @@ static void map(Wire *w,Omap *m,int kind){
 #define J(v) scalar(w,&(v))
 static void record_v1(Wire *w,ClaudeRecord *r){
   S(r->key.path);I(r->key.size);I(r->key.mtime_ns);B(r->key.archived);B(r->key.stat_ok);
-  uint64_t dev=r->key.device,ino=r->key.inode;U(dev);U(ino);r->key.device=(dev_t)dev;r->key.inode=(ino_t)ino;
+  uint64_t dev=r->key.device,ino=r->key.inode;U(dev);U(ino);if(w->reading&&!w->error.code){r->key.device=(dev_t)dev;r->key.inode=(ino_t)ino;}
   S(r->id);S(r->search_root);S(r->config_dir);S(r->parent_session);
   S(r->parent_agent);S(r->tool_use_id);S(r->description);S(r->agent_type);S(r->custom_title);S(r->ai_title);
   B(r->has_spawn_depth);I(r->spawn_depth);map(w,&r->tool_turns,3);
@@ -142,7 +147,7 @@ static void record_v1(Wire *w,ClaudeRecord *r){
   if(w->reading)r->usage_capacity=r->usage_count;map(w,&r->rows_dropped,0);
 }
 Err claude_codec_encode(const ClaudeRecord *record,unsigned char **out,size_t *length){
-  *out=NULL;*length=0;Wire w={.first=true,.arena=(Arena *)&record->arena};
+  *out=NULL;*length=0;Wire w={.first=true};
   jsonw_raw(&w.json,"[");record_v1(&w,(ClaudeRecord *)record);jsonw_raw(&w.json,"]");
   Err e=w.error.code?w.error:w.json.error;
   if(!e.code){
