@@ -94,7 +94,10 @@ Once the services are running, you can access the web server and APIs:
     application dependencies are reproducible through their checked-in lock
     files. The Python service uses a fully frozen, hashed lock, while both Node
     services use `npm ci`; refresh and audit those locks explicitly before
-    running `update.sh`.
+    running `update.sh`. `docker/propagate-updates.zsh` (see
+    [`docker/README.md`](../README.md#propagating-dependency-updates)) refreshes,
+    audits and test-builds all three locks, then deploys the committed result
+    and runs this script.
     The script pulls current base images, clean-builds the applications,
     recreates the containers, and verifies their health. Ordinary restarts do
     not install packages from the network.

@@ -477,6 +477,8 @@ docker ps
 
 Validate Compose configuration before starting. Rebuild/start only the projects intended to run, probe their health/UI, and return projects that were originally stopped to the stopped state. The local financial and utility web services should publish only on `127.0.0.1`.
 
+`docker/propagate-updates.zsh deploy` applies these rules to `~/docker`: it copies only committed tracked files, backs up replaced files under `~/.utilities-deploy-backups/docker-<timestamp>/`, reruns `update.sh` only for stacks that were running, and verifies they are running again. Its `refresh` phase updates and audits the Docker lockfiles beforehand. See [docker/README.md](../docker/README.md#propagating-dependency-updates).
+
 ## Rollback
 
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
