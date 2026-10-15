@@ -147,6 +147,7 @@ When adjusting routing or the index service, keep these invariants intact:
 * **Static-first landing page:** `location = /` must continue to use `try_files /index.html @dynamic_index;`. Pointing `/` directly at the file browser will expose directory listings even when a curated landing page exists.
 * **`/files` as the browser entry point:** The file browser treats `/files` as an alias for the webroot. Do not create a real `webroot/files` directory or change the alias path without updating the breadcrumb/link builder logic in `index/server.js`.
 * **Fallback ordering matters:** The catch-all `location /` block must keep `try_files $uri @dynamic_index;` so that real assets (like the calculators and bingo app) are served by Nginx, while missing paths fall back to the browser. Reversing the order or adding additional rewrites ahead of this block can break static asset delivery.
+* **Calculator cache policy:** `location ^~ /calculators/` serves existing calculator files first with `Cache-Control: no-store`. The `^~` prefix keeps calculator JavaScript and other assets out of the common asset regex, which uses `no-cache` elsewhere. Missing calculator paths still reach `@dynamic_index`, including missing asset names and the folder route; common missing assets outside this prefix return 404.
 * **Shared volume expectations:** Both Nginx and the index service read from the same `WEBROOT_PATH` mount. The single local `.env` value feeds both services so the browser and Nginx cannot drift to different host directories.
 * **Config persistence:** The `/configure` UI writes to
   `/mnt/config/endpoints.json`, backed by
@@ -214,6 +215,23 @@ To add another backend service (e.g., a Ruby on Rails app, a Go API):
 Simply place your HTML, CSS, JavaScript, images, and other static assets directly into your `webroot` directory. Nginx will serve them, and the `index` service will list them.
 
 ## Troubleshooting
+
+### Routing regression checks
+
+Run `node --test docker/webserver/tests/nginx-routing.test.mjs` from the repository
+root with Docker running and locally available `nginx:stable-alpine` and
+`node:24-alpine` images. The test never pulls images. `NGINX_TEST_IMAGE` and
+`NGINX_TEST_NODE_IMAGE` can select compatible cached images (the Node image must
+provide the `node` executable). It starts real Nginx with this project's config,
+an external synthetic webroot and backend stubs on an isolated Docker network.
+It checks cache headers, static-first delivery, fallback, `/files`, `/configure`
+and both API routes, then removes its containers, network and temporary files.
+It does not mount the live webroot or operational configuration.
+
+After an authorized live update, also run `docker compose exec web nginx -t`
+and verify the actual static, file browser, configuration and API responses
+described above. The fixture checks Nginx routing; it does not replace backend
+or installed-application acceptance.
 
 *   **"Page not found" or Nginx 502 Bad Gateway:**
     *   Check if all Docker containers are running: `docker compose ps`
