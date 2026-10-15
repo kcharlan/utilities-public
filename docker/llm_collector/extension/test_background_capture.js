@@ -163,3 +163,19 @@ test("restored diagnostics are sanitized before publication", async () => {
     assert.ok(!/SYNTHETIC_(?:SID|AT)|SYNTHETICUSERID1234/.test(JSON.stringify(source)));
   }
 });
+
+test("live admission preserves sanitized long JSON prompts and rejects mixed Link containers", async () => {
+  const bg = loadBackground();
+  const base = { requestId: 'synthetic-long', url: 'https://chatgpt.com/synthetic', initiator: 'https://chatgpt.com' };
+  bg.fire('onBeforeRequest', { ...base, method: 'POST', requestBody: { raw: [{ bytes: new TextEncoder().encode(JSON.stringify({
+    sid: 'SYNTHETIC_SID', prompt: 'synthetic prompt '.repeat(1100)
+  })).buffer }] } });
+  bg.fire('onCompleted', { ...base, responseHeaders: [{ name: 'Link',
+    value: '<https://example.invalid/>; rel="next", https://example.invalid/?sid=SYNTHETIC_SID' }] });
+  const [rec] = await capture(bg);
+  assert.equal(rec.body.truncated, true);
+  assert.equal(rec.body.text.length, 16384);
+  assert.ok(rec.body.text.startsWith('{"sid":"REDACTED","prompt":"synthetic prompt '));
+  assert.equal(rec.responseHeaders[0].value, '<omitted>');
+  assert.ok(!JSON.stringify(rec).includes('SYNTHETIC_SID'));
+});

@@ -9,6 +9,9 @@
   const MAX_DEPTH = 32;
   const MAX_VALUES = 10000;
   const MAX_DECODING = 2;
+  // Only this worker's fully inspected body objects can carry a safe prefix.
+  // Session serialization cannot transfer this provenance to restored input.
+  const sanitizedBodyPrefixes = new WeakMap();
   const state = () => ({ visited: 0, active: new Set() });
   function visit(s, depth) {
     if (depth > MAX_DEPTH || ++s.visited > MAX_VALUES) throw new Error("inspection limit");
@@ -123,14 +126,19 @@
       return safe === OMITTED ? OMITTED : match[1] + safe;
     }
     if (/^link$/i.test(name)) {
-      let count = 0;
-      const safe = value.replace(/<([^<>]*)>/g, (_, target) => {
-        count++;
-        const url = urlValue(target, s, depth + 1, layers);
-        if (url === OMITTED) throw new Error("invalid link");
-        return '<' + url + '>';
-      });
-      return count ? scrubText(safe) : OMITTED;
+      // Consume every entry and parameter; a valid first target cannot hide an
+      // unbracketed or otherwise malformed remainder. Quoted commas are data.
+      const entry = /\s*<([^<>\s]*)>((?:\s*;\s*[!#$%&'*+.^_`|~\w-]+(?:\s*=\s*(?:"(?:[^"\\\r\n]|\\.)*"|[!#$%&'*+.^_`|~\w-]+))?)*)\s*(,|$)/y;
+      const parts = [];
+      while (entry.lastIndex < value.length) {
+        const match = entry.exec(value);
+        if (!match) return OMITTED;
+        const url = urlValue(match[1], s, depth + 1, layers);
+        if (url === OMITTED || (match[3] && entry.lastIndex === value.length)) return OMITTED;
+        parts.push('<' + url + '>' + scrubText(match[2]));
+        if (!match[3]) return parts.join(', ');
+      }
+      return OMITTED;
     }
     return inspectText(value, s, depth + 1, layers);
   }
@@ -240,7 +248,9 @@
 
     if (FORM_BODY.test(text)) return { bytes: total, ...redactForm(parseForm(text)) };
     const c = capped(safeText(text));
-    return { bytes: total, text: c.value, ...(c.truncated && { truncated: true }) };
+    const body = { bytes: total, text: c.value, ...(c.truncated && { truncated: true }) };
+    if (c.truncated) sanitizedBodyPrefixes.set(body, c.value);
+    return body;
   }
 
   function sanitizeDiagnosticRecord(kind, record) {
@@ -248,6 +258,8 @@
     try {
       // Walk first: malformed/cyclic or over-budget records never reach consumers.
       const out = walk(record, state(), 0, 0);
+      const safePrefix = sanitizedBodyPrefixes.get(record.body);
+      if (safePrefix !== undefined) out.body.text = safePrefix;
       if (record.body?.formData) out.body = { ...out.body, ...redactForm(record.body.formData) };
       for (const key of ['url', 'initiator']) if (typeof record[key] === 'string') {
         const safe = redactUrl(record[key]);

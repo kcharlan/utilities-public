@@ -122,3 +122,25 @@ test("export removes credentials from capture and debug", async () => {
   await tick();
   assert.equal((await bg.status()).captureEnabled, true);
 });
+
+test("export retains safely truncated JSON prompts and omits malformed Link containers", async () => {
+  const { loadBackground, tick } = require('./background_harness.js');
+  const bg = loadBackground();
+  const popup = loadPopupStatusRenderer(bg);
+  popup.callbacks.DOMContentLoaded();
+  const base = { requestId: 'synthetic-long-export', url: 'https://chatgpt.com/synthetic', initiator: 'https://chatgpt.com' };
+  bg.fire('onBeforeRequest', { ...base, method: 'POST', requestBody: { raw: [{ bytes: new TextEncoder().encode(JSON.stringify({
+    sid: 'SYNTHETIC_SID', prompt: 'synthetic prompt '.repeat(1100)
+  })).buffer }] } });
+  bg.fire('onCompleted', { ...base, responseHeaders: [{ name: 'Link',
+    value: '<https://example.invalid/>; rel="next", https://example.invalid/?sid=SYNTHETIC_SID' }] });
+  await tick();
+  await popup.callbacks['export:click']();
+  const text = await popup.blobs.at(-1).text();
+  const [record] = JSON.parse(text).capture;
+  assert.equal(record.body.text.length, 16384);
+  assert.ok(record.body.text.startsWith('{"sid":"REDACTED","prompt":"synthetic prompt '));
+  assert.equal(record.body.truncated, true);
+  assert.equal(record.responseHeaders[0].value, '<omitted>');
+  assert.ok(!text.includes('SYNTHETIC_SID'));
+});

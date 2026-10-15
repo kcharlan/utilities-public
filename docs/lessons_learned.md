@@ -14,3 +14,9 @@ admission boundary: sanitize before publishing records and rewrite the safe
 representation. Test the complete popup export and console boundary, including
 when capture is off, because testing one capture field cannot establish that the
 same credential is absent from neighboring diagnostic fields.
+
+Review caught two boundary errors: recognizing one valid Link target does not
+validate the remaining header, and reparsing a safe JSON prefix after truncation
+loses long prompts. Consume an entire recognized container before publishing
+any of it. Preserve live sanitation provenance outside serialized records, so
+admission can distinguish a fully inspected prefix from untrusted restored text.

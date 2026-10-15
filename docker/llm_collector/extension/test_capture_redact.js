@@ -203,3 +203,30 @@ test("inspection budgets cover form fields, headers, and decoded query values", 
   const query = Array.from({ length: 10001 }, () => 'data=synthetic').join('&');
   assert.equal(redactUrl('https://example.invalid/?' + query), '<omitted>');
 });
+
+test("Link rejects mixed valid and malformed entries as one container", () => {
+  for (const value of [
+    '<https://example.invalid/>; rel="next", https://example.invalid/?sid=SYNTHETIC_SID',
+    'https://example.invalid/?sid=SYNTHETIC_SID, <https://example.invalid/>',
+    '<https://example.invalid/>; rel="next",',
+    '<https://example.invalid/>; rel="unterminated',
+    '<https://example.invalid/> garbage'
+  ]) {
+    assert.equal(redactHeaders([{ name: 'Link', value }])[0].value, '<omitted>');
+  }
+  assert.equal(redactHeaders([{ name: 'Link', value:
+    '<https://example.invalid/?sid=SYNTHETIC_SID>; rel="next"; title="one, two", </next?at=SYNTHETIC_AT>; rel=prev'
+  }])[0].value, '<https://example.invalid/?sid=REDACTED>; rel="next"; title="one, two", </next?at=REDACTED>; rel=prev');
+});
+
+test("only live sanitized body prefixes retain truncated JSON prompt content", () => {
+  const body = redactBody({ raw: [{ bytes: new TextEncoder().encode(JSON.stringify({
+    sid: 'SYNTHETIC_SID', prompt: 'synthetic prompt '.repeat(1100)
+  })).buffer }] });
+  const admitted = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', { body });
+  assert.equal(admitted.body.text.length, MAX_VALUE_CHARS);
+  assert.ok(admitted.body.text.startsWith('{"sid":"REDACTED","prompt":"synthetic prompt '));
+  assert.ok(!admitted.body.text.includes('SYNTHETIC_SID'));
+  const restored = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', { body: plain(body) });
+  assert.equal(restored.body.text, '<omitted>');
+});

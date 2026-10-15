@@ -107,6 +107,10 @@ including relative targets. Unchanged query values keep their original encoding.
 or console logging. Names stay visible, so the
 capture shows which fields were present. Prompt text in request bodies is kept;
 each body value is cut at 16 KB. Uploaded files are recorded as `<file>`.
+Live JSON bodies are fully sanitized before truncation, so admission preserves
+their safe prefix. Restored truncated JSON has no such provenance and is omitted
+when it cannot be parsed. A malformed entry anywhere in a `Link` header causes
+the entire container to be omitted.
 
 Inspection is limited to 32 structural levels, 10000 visited values, and two
 percent-decoding layers. Malformed JSON-looking content, invalid recognized
