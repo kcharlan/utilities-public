@@ -67,6 +67,10 @@ def _npm_audit_output(vulnerabilities: dict) -> str:
             "name": name,
             "severity": info["severity"],
             "via": [{"source": 1234, "name": name, "title": "Test Vulnerability"}],
+            "nodes": [f"node_modules/{name}"],
+            "range": "*",
+            "isDirect": True,
+            "effects": [],
             "fixAvailable": True,
         }
     return json.dumps({"vulnerabilities": vulns})
@@ -274,6 +278,7 @@ def test_check_node_vulns_no_vulnerabilities(tmp_path):
 def test_check_node_vulns_one_vulnerable_dep(tmp_path):
     """Test 12: npm audit reports one vulnerable dep — severity=vulnerable, advisory_id set."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'lodash': '1.0.0'})
     try:
         dep = {**_make_npm_dep("lodash"), "severity": "ok", "advisory_id": None}
         audit_out = _npm_audit_output({"lodash": {"severity": "high"}})
@@ -290,6 +295,7 @@ def test_check_node_vulns_one_vulnerable_dep(tmp_path):
 def test_check_node_vulns_overrides_outdated(tmp_path):
     """Test 13: vuln overrides prior severity=outdated."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'lodash': '1.0.0'})
     try:
         dep = {**_make_npm_dep("lodash"), "severity": "outdated", "advisory_id": None}
         audit_out = _npm_audit_output({"lodash": {"severity": "critical"}})
@@ -346,6 +352,7 @@ def test_check_node_vulns_no_lockfile_fallback(tmp_path):
 def test_check_node_deps_full_pipeline(tmp_path):
     """Test 17: Full pipeline — outdated + vulnerable dep, correct severities."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'axios': '0.27.0', 'lodash': '4.17.0'})
     try:
         deps = [
             _make_npm_dep("axios", "^0.27.0"),
@@ -564,3 +571,113 @@ def test_node_audit_error_object_is_unchecked(tmp_path, monkeypatch):
         row = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
     assert row['vuln_state'] == 'unchecked'
     assert row['check_note']
+
+
+@pytest.mark.parametrize('vulnerable', [False, True])
+@pytest.mark.parametrize('current', ['1.0.0', '2.0.0'])
+def test_node_audit_requires_displayed_version_match(tmp_path, monkeypatch, vulnerable, current):
+    """Lock-tree results must never certify a different installed current version."""
+    (tmp_path / 'package.json').write_text(json.dumps({
+        'dependencies': {'synthetic-widget': '^1.0.0'}}))
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}} if vulnerable else {}))
+    if vulnerable:
+        audit['vulnerabilities']['synthetic-widget']['nodes'] = ['node_modules/synthetic-widget']
+    outdated = _npm_outdated_output({'synthetic-widget': dict(current=current, wanted=current, latest=current)})
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', side_effect=[_mock_proc(outdated), _mock_proc(json.dumps(audit), int(vulnerable))]):
+        row = gd.check_node_deps(tmp_path, gd.parse_package_json(tmp_path / 'package.json'))[0]
+    assert row['current_version'] == current
+    assert row['outdated_state'] == 'checked'
+    if current == '2.0.0':
+        assert row['vuln_state'] == 'unchecked'
+        assert 'version' in row['check_note'] and '1.0.0' in row['check_note'] and '2.0.0' in row['check_note']
+        assert row['severity'] == 'unchecked'
+        assert row['advisory_id'] is None
+    else:
+        assert row['vuln_state'] == 'checked'
+        assert row['severity'] == ('vulnerable' if vulnerable else 'ok')
+
+
+def test_node_audit_same_name_nested_finding_does_not_taint_direct_node(tmp_path, monkeypatch):
+    """npm aggregates same-name nodes; only an affected direct node is our finding."""
+    _write_npm_lock(tmp_path, {'synthetic-widget': '2.0.0', 'synthetic-parent': '1.0.0'})
+    lock_path = tmp_path / 'package-lock.json'
+    lock = json.loads(lock_path.read_text())
+    lock['packages']['node_modules/synthetic-parent/node_modules/synthetic-widget'] = {'version': '1.0.0'}
+    lock_path.write_text(json.dumps(lock))
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    audit['vulnerabilities']['synthetic-widget']['nodes'] = ['node_modules/synthetic-parent/node_modules/synthetic-widget']
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    dep = dict(_make_npm_dep('synthetic-widget'), current_version='2.0.0', latest_version='2.0.0',
+               outdated_state='checked', severity='ok')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.finalize_dep_health(gd.check_node_vulns(tmp_path, [dep]))[0]
+    assert row['vuln_state'] == 'checked'
+    assert row['severity'] == 'ok'
+    assert row['advisory_id'] is None
+
+
+@pytest.mark.parametrize('nodes', [None, [], 'node_modules/synthetic-widget', [42]])
+def test_node_audit_missing_node_evidence_is_unchecked(tmp_path, monkeypatch, nodes):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    audit['vulnerabilities']['synthetic-widget']['nodes'] = nodes
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.check_node_vulns(tmp_path, [dict(_make_npm_dep('synthetic-widget'), current_version='1.0.0')])[0]
+    assert row['vuln_state'] == 'unchecked'
+    assert not row.get('advisory_id')
+
+
+@pytest.mark.parametrize('vulnerable', [False, True])
+def test_node_audit_requires_concrete_lock_evidence(tmp_path, monkeypatch, vulnerable):
+    """Neither absent current nor absent audit version can certify coverage."""
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    audit = _npm_audit_output({'synthetic-widget': {'severity': 'high'}} if vulnerable else {})
+    with patch('subprocess.run', return_value=_mock_proc(audit, int(vulnerable))):
+        row = gd.finalize_dep_health(gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')]))[0]
+    assert row['current_version'] is None
+    assert row['vuln_state'] == 'unchecked'
+    assert 'lock evidence' in row['check_note']
+    assert row['advisory_id'] is None
+    assert row['severity'] == 'unchecked'
+
+
+@pytest.mark.parametrize('layout', [1, 2, 3])
+def test_node_shrinkwrap_precedes_package_lock_for_current_and_audit(tmp_path, monkeypatch, layout):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    shrinkwrap = dict(lockfileVersion=layout)
+    if layout == 1:
+        shrinkwrap['dependencies'] = {'synthetic-widget': {'version': '2.0.0'}}
+    else:
+        shrinkwrap['packages'] = {'node_modules/synthetic-widget': {'version': '2.0.0'}}
+    (tmp_path / 'npm-shrinkwrap.json').write_text(json.dumps(shrinkwrap))
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    def run(cmd, **kwargs):
+        if cmd[1] == 'outdated':
+            return _mock_proc('{}')
+        if cmd[1] == 'view':
+            return _mock_proc('"2.0.0"')
+        assert cmd[1] == 'audit'
+        return _mock_proc(_npm_audit_output({}))
+    with patch('subprocess.run', side_effect=run):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['current_version'] == '2.0.0'
+    assert row['outdated_state'] == row['vuln_state'] == 'checked'
+    assert row['severity'] == 'ok'
+
+
+@pytest.mark.parametrize('shrinkwrap', ['{', '{"lockfileVersion":99}', '{"lockfileVersion":3,"packages":[]}'])
+def test_node_invalid_selected_shrinkwrap_never_uses_package_lock(tmp_path, monkeypatch, shrinkwrap):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    (tmp_path / 'npm-shrinkwrap.json').write_text(shrinkwrap)
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    output = _npm_outdated_output({'synthetic-widget': dict(current='1.0.0', wanted='1.0.0', latest='1.0.0')})
+    with patch('subprocess.run', side_effect=[_mock_proc(output), _mock_proc(_npm_audit_output({}))]):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['current_version'] == '1.0.0'
+    assert row['outdated_state'] == 'checked'
+    assert row['vuln_state'] == 'unchecked'
+    assert 'lock evidence' in row['check_note']
+    assert row['severity'] == 'unchecked'

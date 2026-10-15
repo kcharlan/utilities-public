@@ -302,6 +302,38 @@ def test_fleet_kpi_displays_unchecked_coverage(page, seeded_coverage):
     expect(page.get_by_text('Not Checked', exact=True).first.locator('..').locator('div').first).to_have_text(str(seeded_coverage['summary']['unchecked']))
 
 
+@pytest.mark.parametrize('clean_row', [False, True])
+@pytest.mark.parametrize('failure', ['inventory', 'missing_tool'])
+def test_fleet_retains_repository_coverage_without_unchecked_rows(page, seeded_coverage, clean_row, failure):
+    """Repository analysis failures survive zero rows and fully checked declarations."""
+    import sqlite3
+    seeded = seeded_coverage
+    with sqlite3.connect(seeded['db_path']) as db:
+        db.execute('DELETE FROM dependencies WHERE repo_id=?', (seeded['repo_id'],))
+        if clean_row:
+            db.execute("INSERT INTO dependencies (repo_id,name,manager,source_path,declared_spec,current_version,latest_version,severity,outdated_state,vuln_state) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (seeded['repo_id'], 'synthetic-clean-widget', 'npm', 'package.json', '^1.0.0', '1.0.0', '1.0.0', 'ok', 'checked', 'checked'))
+        tools = [] if failure == 'inventory' else [dict(tool='synthetic-auditor', description='Synthetic absent tool')]
+        manifests = [dict(path='synthetic-broken.toml', kind='pyproject', dependencies=0, error='Synthetic parse failure')] if failure == 'inventory' else []
+        db.execute('UPDATE working_state SET dep_check_error=?,missing_dep_tools=?,dep_manifests=? WHERE repo_id=?',
+                   (int(failure == 'inventory'), json.dumps(tools), json.dumps(manifests), seeded['repo_id']))
+    _open_app(page, seeded['url'])
+    card = page.locator('.project-card').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
+    expect(card.locator('[title*="Incomplete coverage"]')).to_be_visible()
+    expect(card.locator('[title="All declarations fully checked"]')).to_have_count(0)
+    if failure == 'inventory':
+        expect(card.locator('[title*="analysis error"]')).to_be_visible()
+    else:
+        expect(card.locator('[title*="synthetic-auditor"]')).to_be_visible()
+    page.locator('nav').get_by_role('link', name='Dependencies', exact=True).click()
+    row = page.locator('.table-row').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
+    expect(row).to_be_visible()
+    expect(row.locator('[title*="Incomplete coverage"]')).to_be_visible()
+    expect(row.locator('span').last).to_have_text('0')
+    expect(page.get_by_text('Not Checked', exact=True).first.locator('..').locator('div').first).to_have_text('0')
+    expect(page.get_by_text('No dependencies detected. Run a Full Scan to discover dependencies in your repos.')).to_have_count(0)
+
+
 def test_empty_inventory_remains_exportable_and_incomplete(page, seeded_coverage):
     import sqlite3
     with sqlite3.connect(seeded_coverage['db_path']) as db:

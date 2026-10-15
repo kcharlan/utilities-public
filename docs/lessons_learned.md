@@ -1,5 +1,21 @@
 # Lessons learned
 
+## 2026-10-15: Compose inventory coverage and npm audit evidence across views
+
+Manifest inventory failures are independent of declaration rows. Fleet cards and
+per-repository summaries must consume persisted analysis errors and missing tools
+even for empty results or fully checked rows, while declaration KPIs continue to
+count only actual row states. Exercise both cases through the rendered browser.
+
+npm outdated can report installed versions while audit evaluates the virtual
+lock tree. Reuse lock-version evidence, require a concrete matching evaluated
+version, and match the audit's affected node location before applying a finding.
+A same-name nested vulnerable node does not implicate the direct declaration.
+Mocks must include real affected-node evidence rather than validating name-only
+attribution; retain valid current/outdated evidence when audit versions differ.
+Select npm-shrinkwrap before package-lock in the same parser; invalid selected
+shrinkwrap evidence must not silently certify a different fallback lock tree.
+
 ## 2026-10-15: Attribute package-manager checks to declaring projects and evaluated versions
 
 A manifest path is part of a dependency declaration's identity and also selects

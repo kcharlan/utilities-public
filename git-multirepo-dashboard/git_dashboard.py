@@ -2175,9 +2175,12 @@ def _tool_version(value) -> str | None:
 
 
 def _npm_lock_versions(manifest_dir: Path) -> dict[str, str]:
-    """Read direct node_modules entries from package-lock v1, v2 and v3."""
+    """Read direct v1–v3 lock entries, honoring npm's shrinkwrap precedence."""
     try:
-        raw = json.loads((manifest_dir / 'package-lock.json').read_text())
+        lock = manifest_dir / 'npm-shrinkwrap.json'
+        if not lock.exists():
+            lock = manifest_dir / 'package-lock.json'
+        raw = json.loads(lock.read_text())
         if not isinstance(raw, dict):
             return {}
         layout = raw.get('lockfileVersion', 1)
@@ -2369,6 +2372,8 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             if (not isinstance(entry, dict) or entry.get('name') != name
                     or not isinstance(entry.get('severity'), str)
                     or not isinstance(entry.get('via'), list) or not entry['via']
+                    or not isinstance(entry.get('nodes'), list) or not entry['nodes']
+                    or not all(isinstance(node, str) and node for node in entry['nodes'])
                     or not all(isinstance(via, (str, dict)) and via for via in entry['via'])):
                 raise ValueError('invalid npm audit vulnerability row')
         if proc.returncode == 1 and not raw['vulnerabilities']:
@@ -2378,27 +2383,26 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     except Exception as exc:
         return _check_failed(deps, 'npm audit', exc, 'vuln_state')
 
-    # Build lookup: {package_name_lower: True} for vulnerable packages
-    vuln_names: set[str] = set()
-    try:
-        for name in raw.get("vulnerabilities", {}).keys():
-            vuln_names.add(name.lower())
-    except Exception as exc:
-        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
-
+    # npm audits the virtual lock tree, while outdated may describe node_modules.
+    # Reuse direct lock evidence and match the finding's affected node location.
     versions = _npm_lock_versions(repo_path)
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
-        name_lower = d.get("name", "").lower()
-        if name_lower in vuln_names:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = f"npm:{d.get('name', name_lower)}"
-            d['vuln_state'] = 'checked'
-        elif d.get('name') in versions:
-            d['vuln_state'] = 'checked'
-        else:
+        name = d.get('name', '')
+        audited_version = versions.get(name)
+        current = d.get('current_version')
+        if not audited_version:
             mark_unchecked(d, 'npm audit: declaration absent from audited lock evidence', 'vuln_state')
+        elif current and current != audited_version:
+            mark_unchecked(d, f'npm audit: audited lock version {audited_version} does not match current version {current}', 'vuln_state')
+        else:
+            if not current:
+                d['current_version'] = audited_version
+            d['vuln_state'] = 'checked'
+            finding = raw['vulnerabilities'].get(name)
+            if finding and f'node_modules/{name}' in finding['nodes']:
+                d.update(severity='vulnerable', advisory_id=f'npm:{name}')
         result.append(d)
 
     return result
@@ -4030,17 +4034,17 @@ HTML_TEMPLATE = """\
     }
 
     // DepBadge — compact dep summary pill with coverage dot
-    function DepBadge({ dep, missingTools }) {
-      if (!dep && !missingTools?.length) return null;
+    function DepBadge({ dep, missingTools, analysisError }) {
+      if (!dep && !missingTools?.length && !analysisError) return null;
       dep = dep || {total: 0};
       const { total, outdated, vulnerable } = dep;
       if (!total && total !== 0) return null;
 
       const hasMissing = missingTools && missingTools.length > 0;
-      const incomplete = hasMissing || dep.unchecked > 0;
+      const incomplete = analysisError || hasMissing || dep.unchecked > 0;
       const dotColor = incomplete ? 'var(--status-orange)' : 'var(--status-green)';
       const dotTitle = incomplete
-        ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
+        ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (analysisError ? '; analysis error — see repository dependencies' : '') + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
         : 'All declarations fully checked';
 
       let label = null;
@@ -4061,6 +4065,7 @@ HTML_TEMPLATE = """\
         }}>{total} deps</span>;
       }
       if (!label && hasMissing) label = <span>Missing tools</span>;
+      if (!label && analysisError) label = <span>Analysis error</span>;
       if (!label) return null;
 
       return (
@@ -4073,6 +4078,7 @@ HTML_TEMPLATE = """\
             }}
           />
           {label}
+          {total > 0 && analysisError && <span style={{color: 'var(--status-orange)'}}>Analysis error</span>}
         </span>
       );
     }
@@ -4251,7 +4257,7 @@ HTML_TEMPLATE = """\
             }}>
               {repo.branch_count || 0}br
             </span>
-            <DepBadge dep={repo.dep_summary} missingTools={repo.missing_dep_tools} />
+            <DepBadge dep={repo.dep_summary} missingTools={repo.missing_dep_tools} analysisError={repo.dep_check_error} />
           </div>
 
           <SparklineOverlay sparkline={repo.sparkline} visible={hovered} />
@@ -5828,6 +5834,7 @@ HTML_TEMPLATE = """\
       };
 
       const reposWithDeps = repos.filter(r => r.dep_summary && r.dep_summary.total > 0);
+      const reposWithCoverage = repos.filter(r => r.dep_summary?.total > 0 || r.dep_check_error || r.missing_dep_tools?.length);
       const totalDeps = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.total || 0), 0);
       const totalOutdated = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.outdated || 0), 0);
       const totalVuln = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.vulnerable || 0), 0);
@@ -5849,7 +5856,7 @@ HTML_TEMPLATE = """\
             <h2 style={sectionHeaderStyle}>Per-Repo Health</h2>
             {loading ? (
               <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>
-            ) : reposWithDeps.length === 0 ? (
+            ) : reposWithCoverage.length === 0 ? (
               <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
                 No dependencies detected. Run a Full Scan to discover dependencies in your repos.
               </div>
@@ -5862,7 +5869,7 @@ HTML_TEMPLATE = """\
                   <span>Vulnerable</span>
                   <span>Not Checked</span>
                 </div>
-                {reposWithDeps.map(r => (
+                {reposWithCoverage.map(r => (
                   <div
                     key={r.id}
                     className="table-row"
@@ -5870,18 +5877,19 @@ HTML_TEMPLATE = """\
                     onClick={() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}
                   >
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>
-                      {r.name}
+                      <span>{r.name}</span>
+                      <span style={{display: 'block', fontSize: '11px'}}><DepBadge dep={r.dep_summary} missingTools={r.missing_dep_tools} analysisError={r.dep_check_error} /></span>
                     </span>
                     <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                      {r.dep_summary.total}
+                      {r.dep_summary?.total || 0}
                     </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>
-                      {r.dep_summary.outdated}
+                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>
+                      {r.dep_summary?.outdated || 0}
                     </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
-                      {r.dep_summary.vulnerable}
+                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
+                      {r.dep_summary?.vulnerable || 0}
                     </span>
-                    <span style={{color: 'var(--status-orange)'}}>{r.dep_summary.unchecked || 0}</span>
+                    <span style={{color: 'var(--status-orange)'}}>{r.dep_summary?.unchecked || 0}</span>
                   </div>
                 ))}
               </div>
