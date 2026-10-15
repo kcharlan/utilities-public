@@ -35,6 +35,11 @@ TEST(claude_codec_round_trips_all_record_facts_and_raw_price_snapshots){
   ASSERT_TRUE(str_equal(r.parent_agent,decoded.parent_agent));ASSERT_TRUE(str_equal(r.tool_use_id,decoded.tool_use_id));ASSERT_TRUE(str_equal(r.description,decoded.description));ASSERT_TRUE(str_equal(r.agent_type,decoded.agent_type));
   ASSERT_TRUE(str_equal(r.custom_title,decoded.custom_title));ASSERT_TRUE(str_equal(r.ai_title,decoded.ai_title));ASSERT_EQ(3,decoded.spawn_depth);ASSERT_TRUE(decoded.has_spawn_depth);
   ASSERT_EQ(1,decoded.turn_count);ASSERT_TRUE(str_equal(r.requests[0].text,decoded.requests[0].text));ASSERT_TRUE(str_equal(r.requests[0].kind,decoded.requests[0].kind));ASSERT_TRUE(str_equal(r.answers[0],decoded.answers[0]));
+  ASSERT_TRUE(decoded.reader_facts); ASSERT_EQ(1, decoded.tool_count);
+  ASSERT_TRUE(decoded.tool_facts[0].identified);
+  ASSERT_TRUE(str_equal(decoded.tool_facts[0].id, STR_LIT("synthetic-tool")));
+  ASSERT_TRUE(str_equal(decoded.tool_facts[0].name, STR_LIT("mcp__synthetic__lookup")));
+  ASSERT_EQ(r.answer_ms[0].value, decoded.answer_ms[0].value);
   ASSERT_TRUE(str_equal(r.turns[0]->end_kind,decoded.turns[0]->end_kind));ASSERT_EQ(r.turns[0]->start_ms.value,decoded.turns[0]->start_ms.value);ASSERT_EQ(r.tools[0].shell,decoded.tools[0].shell);
   ASSERT_EQ(1,decoded.tools[0].mcp.size);ASSERT_EQ(1,decoded.tool_turns.size);ASSERT_TRUE(str_equal(*(Str *)omap_get(&decoded.tool_turns,STR_LIT("synthetic-tool")),r.turns[0]->key));
   ASSERT_EQ(r.rows_dropped.size,decoded.rows_dropped.size);ASSERT_EQ(1,decoded.reader.unknown_types.size);ASSERT_STREQ(r.reader.tail_sha256,decoded.reader.tail_sha256);
@@ -57,6 +62,7 @@ TEST(claude_codec_immutable_v1_fixture_is_decoded_from_scratch){
   char path[1024];snprintf(path,sizeof path,"%s/synthetic-v1-XXXXXX.rec",getenv("TMPDIR"));int fd=mkstemps(path,4);ASSERT_TRUE(fd>=0);ASSERT_EQ(n,(size_t)write(fd,bytes,n));ASSERT_EQ(0,close(fd));free(bytes);bytes=NULL;
   ASSERT_EQ(ERR_OK,file_read_all(path,&bytes,&n).code);ClaudeRecord r={0};ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code);
   ASSERT_TRUE(str_equal(r.id,STR_LIT("synthetic-session")));ASSERT_TRUE(str_equal(r.search_root,STR_LIT("/synthetic/config/projects")));ASSERT_TRUE(str_equal(r.config_dir,STR_LIT("/synthetic/config")));
+  ASSERT_FALSE(r.reader_facts);
   ASSERT_EQ(2,r.aliases.count);ASSERT_TRUE(str_equal(r.aliases.items[0],STR_LIT(" synthetic-alias ")));ASSERT_TRUE(str_equal(r.aliases.items[1],STR_LIT("synthetic-e\xcc\x81")));
   ASSERT_EQ(2,r.usage_count);ASSERT_TRUE(r.usage_rows[0].unit.claude_price_snapshot);ASSERT_TRUE(r.usage_rows[0].unit.claude_cost_priced);ASSERT_EQ(0,r.usage_rows[0].unit.claude_cost_nanos);ASSERT_TRUE(r.usage_rows[1].unit.claude_price_snapshot);ASSERT_TRUE(r.usage_rows[1].unit.claude_cost_priced);ASSERT_EQ(19,r.usage_rows[1].unit.claude_cost_nanos);
   ASSERT_EQ(r.usage_rows[0].unit.input,r.usage_rows[1].unit.input);ASSERT_TRUE(str_equal(r.usage_rows[0].message_id,r.usage_rows[1].message_id));

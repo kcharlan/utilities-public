@@ -1,4 +1,6 @@
 """Synthetic Claude cache/store lifecycle acceptance."""
+import json
+import pytest
 from helpers import NativeRun
 
 
@@ -341,3 +343,195 @@ def test_claude_valid_checksum_bad_map_cache_reparses_and_retained_diagnoses(tmp
     assert run.build().returncode == 0
     assert str(retained) in run.payload()["diagnostics"]["claude_retained_unreadable"]
     assert retained.read_bytes() == damaged
+def synthetic_rows():
+    return [
+        {'type': 'user', 'timestamp': '2026-01-02T12:00:00Z', 'cwd': '/synthetic/review-kite', 'sessionId': 'synthetic-review-session', 'message': {'content': 'First synthetic prompt'}},
+        {'type': 'assistant', 'timestamp': '2026-01-02T12:00:01Z', 'requestId': 'synthetic-request-first', 'sessionId': 'synthetic-review-session', 'message': {'id': 'synthetic-message-first', 'model': 'claude-sonnet-4-5', 'content': [{'type': 'text', 'text': 'First synthetic answer'}], 'stop_reason': 'end_turn', 'usage': {'input_tokens': 10, 'output_tokens': 2}}},
+        {'type': 'user', 'timestamp': '2026-01-02T12:01:00Z', 'cwd': '/synthetic/review-kite', 'sessionId': 'synthetic-review-session', 'message': {'content': 'Second synthetic prompt'}},
+        {'type': 'assistant', 'timestamp': '2026-01-02T12:01:01Z', 'requestId': 'synthetic-request-second', 'sessionId': 'synthetic-review-session', 'message': {'id': 'synthetic-message-second', 'model': 'claude-sonnet-4-5', 'content': [{'type': 'text', 'text': 'Second synthetic answer'}], 'stop_reason': 'end_turn', 'usage': {'input_tokens': 20, 'output_tokens': 4}}},
+    ]
+
+
+def write(run, name, rows):
+    source = run.home / '.claude/projects' / name / 'synthetic-review-session.jsonl'
+    source.parent.mkdir(parents=True)
+    source.write_text(''.join(json.dumps(r, separators=(',', ':'))+'\n' for r in rows))
+    return source
+
+
+@pytest.mark.parametrize('partial', [False, True])
+@pytest.mark.parametrize('retained', [False, True])
+def test_same_stem_later_copy_preserves_new_turns(tmp_path, partial, retained):
+    run = NativeRun(tmp_path)
+    rows = synthetic_rows()
+    old = write(run, 'a-old-copy', rows[:2])
+    write(run, 'b-current-copy', rows[2:] if partial else rows)
+    for step, args in enumerate([(), (), ('--rebuild',)]):
+        if step == 1 and retained: old.unlink()
+        result = run.build(*args)
+        assert result.returncode == 0, result.stderr
+        session, = run.payload()['sessions']
+        assert session['own_usage']['input'] == 30
+        assert len(session['turns']) == 2, session
+        assert session['end_ms'] == 1767355261000
+        assert session['outside_usage']['input'] == 0
+        for turn, label, tokens in zip(session['turns'], ['First', 'Second'], [10, 20]):
+            assert turn['requests'][0]['text'] == f'{label} synthetic prompt'
+            assert turn['final_answer']['text'] == f'{label} synthetic answer'
+            assert turn['usage']['input'] == tokens
+
+
+def test_same_stem_uuid_identity_tools_answers_and_spawn(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = synthetic_rows()
+    rows[0]['uuid'] = 'synthetic-prompt-one'
+    rows[2]['uuid'] = 'synthetic-prompt-two'
+    # Identical text and clock must not merge conflicting UUIDs.
+    rows[2]['timestamp'] = rows[0]['timestamp']
+    rows[2]['message'] = rows[0]['message'].copy()
+    mirrored = {'type': 'tool_use', 'id': 'synthetic-shared-tool', 'name': 'Bash'}
+    first = {'type': 'tool_use', 'id': 'synthetic-first-tool', 'name': 'Bash'}
+    second = {'type': 'tool_use', 'id': 'synthetic-second-tool', 'name': 'Bash'}
+    rows[1]['message']['content'].extend([mirrored, first])
+    write(run, 'a-old-copy', rows[:2])
+    import copy
+    later = copy.deepcopy(rows)
+    later[1]['message']['content'] = [mirrored, second]
+    later[1]['timestamp'] = '2026-01-02T12:00:02Z'
+    later[1]['message']['usage']['input_tokens'] = 99
+    write(run, 'b-current-copy', later)
+    child = run.claude_session('agent-synthetic-child', directory=run.home / '.claude/projects/a-old-copy/synthetic-review-session/subagents')
+    child.with_suffix('.meta.json').write_text(json.dumps({'toolUseId': 'synthetic-second-tool'}))
+    for args in [(), (), ('--rebuild',)]:
+        result = run.build(*args)
+        assert result.returncode == 0, result.stderr
+        session, = run.payload()['sessions']
+        assert len(session['turns']) == 2
+        assert session['turns'][0]['tools']['shell'] == 3
+        assert session['turns'][0]['final_answer']['text'] == 'First synthetic answer'
+        assert session['turns'][0]['end_ms'] == 1767355202000
+        assert session['turns'][0]['usage']['input'] == 10  # D3 still prefers the earlier copy.
+        agent = run.payload()['subagents']['synthetic-review-session/agent-synthetic-child']
+        assert agent['spawn_turn'] == session['turns'][0]['id']
+
+
+def test_same_stem_repeated_uuidless_prompts_keep_occurrences(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = synthetic_rows()
+    rows[2]['timestamp'] = rows[0]['timestamp']
+    rows[2]['message'] = rows[0]['message'].copy()
+    write(run, 'a-old-copy', rows)
+    write(run, 'b-current-copy', rows)
+    for args in [(), (), ('--rebuild',)]:
+        assert run.build(*args).returncode == 0
+        session, = run.payload()['sessions']
+        assert len(session['turns']) == 2
+        assert [t['usage']['input'] for t in session['turns']] == [10, 20]
+
+
+def test_same_stem_promptless_winner_uses_duplicate_response_turn(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = synthetic_rows()
+    write(run, 'a-assistant-only', rows[1:2])
+    write(run, 'b-complete', rows)
+    for args in [(), (), ('--rebuild',)]:
+        result = run.build(*args)
+        assert result.returncode == 0, result.stderr
+        session, = run.payload()['sessions']
+        assert session['own_usage']['input'] == 30
+        assert session['outside_usage']['input'] == 0
+        assert [t['usage']['input'] for t in session['turns']] == [10, 20]
+
+
+def test_distinct_stems_cannot_donate_response_display_turn(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = synthetic_rows()
+    write(run, 'a-assistant-only', rows[1:2])
+    other = write(run, 'b-complete', rows[:2])
+    other.rename(other.with_name('synthetic-other-session.jsonl'))
+    for args in [(), (), ('--rebuild',)]:
+        result = run.build(*args)
+        assert result.returncode == 0, result.stderr
+        sessions = {s['id']: s for s in run.payload()['sessions']}
+        winner = sessions['synthetic-review-session']
+        assert winner['outside_usage']['input'] == 10
+        assert winner['own_usage']['input'] == 10
+        assert sessions['synthetic-other-session']['turns'][0]['usage']['input'] == 0
+
+
+def test_warm_claude_summary_reports_cache_hits(tmp_path):
+    run = NativeRun(tmp_path)
+    write(run, 'synthetic-copy', synthetic_rows())
+    for args, parsed, cached in [((), 1, 0), ((), 0, 1), (("--rebuild",), 1, 0)]:
+        result = run.build(*args)
+        assert result.returncode == 0, result.stderr
+        source = run.payload()['meta']['sources']['claude']
+        assert (source['parsed'], source['cached']) == (parsed, cached)
+        line = next(line for line in result.stdout.splitlines() if line.startswith('colophon: claude:'))
+        assert f'{parsed} parsed, {cached} cached' in line, line
+
+
+@pytest.mark.parametrize("selection", ["default", "explicit", "environment", "config-chain", "project-chain"])
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_deleted_resolved_symlink_root_is_retained(tmp_path, selection, rebuild):
+    import shutil
+    run = NativeRun(tmp_path)
+    target = tmp_path / 'synthetic-linked-projects'
+    source = target / 'synthetic-project/synthetic-review-session.jsonl'
+    source.parent.mkdir(parents=True)
+    source.write_text(''.join(json.dumps(r, separators=(',', ':'))+'\n' for r in synthetic_rows()))
+    config = run.home / '.claude'
+    config.mkdir()
+    (config / 'projects').symlink_to('../../synthetic-linked-projects', target_is_directory=True)
+    if selection == 'project-chain':
+        (config / 'projects').unlink()
+        (run.home / 'synthetic-link').symlink_to('../synthetic-linked-projects', target_is_directory=True)
+        (config / 'projects').symlink_to('../synthetic-link', target_is_directory=True)
+    args = []
+    if selection == 'explicit': args = ['--claude-home', str(config)]
+    if selection == 'environment': run.env['CLAUDE_CONFIG_DIR'] = str(config)
+    if selection == 'config-chain':
+        link = run.home / 'synthetic-config-link'
+        link.symlink_to('.claude', target_is_directory=True)
+        args = ['--claude-home', str(link)]
+    assert run.build(*args).returncode == 0
+    before, = run.payload()['sessions']
+    assert before['own_usage']['input'] == 30
+    shutil.rmtree(target)
+    run.codex.rmdir()  # provisional retained facts establish Claude-only presence
+    result = run.build(*args, *(['--rebuild'] if rebuild else []))
+    assert result.returncode == 0, result.stderr
+    assert len(run.payload()['sessions']) == 1, run.payload()['diagnostics']
+    retained, = run.payload()['sessions']
+    assert 'transcript_deleted' in retained['flags']
+    assert retained['own_usage'] == before['own_usage']
+
+
+@pytest.mark.parametrize('mode', ['excluded', 'disabled', 'retargeted', 'permission'])
+def test_dangling_symlink_root_requires_selected_unchanged_accessible_locator(tmp_path, mode):
+    import shutil
+    run = NativeRun(tmp_path)
+    target = tmp_path / 'synthetic-target'
+    run.claude_session(directory=target / 'synthetic-project')
+    config = run.home / '.claude'
+    config.mkdir()
+    link = config / 'projects'
+    link.symlink_to(target, target_is_directory=True)
+    assert run.build().returncode == 0
+    saved = {p: p.read_bytes() for p in store_records(run, 'cache-claude')}
+    shutil.rmtree(target)
+    args = []
+    if mode == 'excluded': args = ['--claude-home', str(run.home / 'synthetic-excluded')]
+    if mode == 'disabled': args = ['--no-claude']
+    if mode == 'retargeted':
+        link.unlink()
+        link.symlink_to(tmp_path / 'synthetic-different-target', target_is_directory=True)
+    if mode == 'permission': config.chmod(0)
+    try:
+        result = run.build('--rebuild', *args)
+        assert result.returncode == 0, result.stderr
+        assert run.payload()['sessions'] == []
+        assert not store_records(run, 'claude-retained')
+        assert {p: p.read_bytes() for p in store_records(run, 'cache-claude')} == saved
+    finally:
+        config.chmod(0o700)

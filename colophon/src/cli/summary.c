@@ -35,7 +35,7 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
     if(tokens<INT64_MIN||tokens>INT64_MAX)event_note("int128_payload_sum","summary.tokens",1);
     size_t logs=provider==PROVIDER_CODEX?in->logs:in->claude?in->claude->logs:0;
     size_t parsed=provider==PROVIDER_CODEX?in->parsed:in->claude?in->claude->parsed:0;
-    size_t cached=provider==PROVIDER_CODEX?in->cached:0;
+    size_t cached=provider==PROVIDER_CODEX?in->cached:in->claude?in->claude->cached:0;
     printf("colophon: %s: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",provider==PROVIDER_CODEX?"codex":"claude",sessions,agents,logs,parsed,cached);decimal(stdout,tokens,true);
     fputs(" tokens · ",stdout);if(!units)fputs("no priced usage",stdout);else if(available)printf("$%.2f est.",sum+correction);else fputs("costs unavailable",stdout);
     fputc('\n',stdout);

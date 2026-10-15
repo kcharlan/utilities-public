@@ -2,10 +2,14 @@
 #include "parse.h"
 #include "compose.h"
 #include "metadata.h"
+#include "reconcile.h"
+#include "parse/record.h"
+#include "out/jsonw.h"
 #include "corpus/subagents.h"
 #include "corpus/titles.h"
 #include "corpus/turnstatus.h"
 #include "util/time.h"
+#include "testing/hooks.h"
 #include <stdalign.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,6 +124,25 @@ static Err count(Arena *a, Omap *m, Str key) {
   *v = 1;
   return omap_put(m, key, v);
 }
+Err claude_tool_count(Arena *a, CorpusTools *tools, Str name, bool failed) {
+  if (str_equal(name, STR_LIT("Bash"))) {
+    tools->shell++;
+    tools->shell_failed += failed;
+  } else if (str_equal(name, STR_LIT("Edit")) || str_equal(name, STR_LIT("Write")) ||
+             str_equal(name, STR_LIT("MultiEdit")) || str_equal(name, STR_LIT("NotebookEdit")))
+    tools->file_edits++;
+  else if (str_equal(name, STR_LIT("WebFetch")) || str_equal(name, STR_LIT("WebSearch")))
+    tools->web++;
+  else if (prefix(name, "mcp__")) {
+    Str server = {name.p + 5, name.n - 5};
+    const char *end = memmem(server.p, server.n, "__", 2);
+    if (end && end > server.p) {
+      server.n = (uint32_t)(end - server.p);
+      TRY(count(a, &tools->mcp, server));
+    } else TRY(count(a, &tools->other, name));
+  } else TRY(count(a, &tools->other, name));
+  return ERR_SUCCESS;
+}
 static Err on_record(void *context, const ReaderRecord *row) {
   Parse *p = context;
   ClaudeRecord *r = p->r;
@@ -202,22 +225,27 @@ static Err on_record(void *context, const ReaderRecord *row) {
       GROW(turns, TurnFact *);
       GROW(requests, Request);
       GROW(answers, Str);
+      GROW(answer_ms, MaybeMs);
       GROW(tools, CorpusTools);
       p->capacity = n;
 #undef GROW
     }
-    size_t i = r->turn_count++;
+    size_t i = r->turn_count;
     TurnFact *t;
+    if (cp_fault("claude_turn_alloc"))
+      return err_make(ERR_NOMEM, "Claude turn allocation failed");
     TRY(alloc(&r->arena, 1, sizeof *t, alignof(TurnFact), (void **)&t));
-    r->turns[i] = t;
     char id[48];
     int n = snprintf(id, sizeof id, "claude-turn-%zu", i + 1);
     TRY(copy(&r->arena, (Str){id, (uint32_t)n}, &t->key));
+    TRY(copy(&r->arena, text(get(v, "uuid")), &t->turn_id));
     t->start_ms = at;
     t->has_start_rec = true;
     t->start_rec = row->rec;
     r->requests[i] =
         (Request){.at_ms = at, .text = request, .kind = kind, .images = images};
+    r->turns[i] = t;
+    r->turn_count++;
   }
   if (!r->turn_count)
     return ERR_SUCCESS;
@@ -234,8 +262,10 @@ static Err on_record(void *context, const ReaderRecord *row) {
     uint64_t ignored;
     Str answer;
     TRY(content(&r->arena, body, &answer, &ignored));
-    if (answer.n)
+    if (answer.n) {
       r->answers[turn] = answer;
+      r->answer_ms[turn] = at;
+    }
   }
   size_t i, max;
   yyjson_val *q;
@@ -250,35 +280,49 @@ static Err on_record(void *context, const ReaderRecord *row) {
         *key = t->key;
         TRY(omap_put(&r->tool_turns, owned, key));
       }
-      CorpusTools *tools = &r->tools[turn];
+      ClaudeToolFact fact = {.turn = t->key, .identified = metadata_text(id)};
+      TRY(copy(&r->arena, name, &fact.name));
+      if (fact.identified) TRY(copy(&r->arena, id, &fact.id));
+      else {
+        /* Anonymous blocks match by record identity, or timestamp/name/block
+         * occurrence when the source supplies no identity. */
+        Str event = text(get(v, "uuid"));
+        if (!event.n) event = text(get(message, "id"));
+        JsonWriter w = {0};
+        jsonw_raw(&w, "["); jsonw_string(&w, event.n ? event : stamp);
+        jsonw_raw(&w, ","); jsonw_string(&w, name);
+        jsonw_raw(&w, ","); jsonw_i64(&w, (int64_t)i); jsonw_raw(&w, "]");
+        if (!event.n && !w.error.code) {
+          size_t occurrence = 0, base = w.length;
+          for (size_t k = 0; k < r->tool_count; k++) {
+            const ClaudeToolFact *old = &r->tool_facts[k];
+            if (!old->identified && str_equal(old->turn, t->key) &&
+                old->id.n > base && !memcmp(old->id.p, w.data, base) && old->id.p[base] == ':')
+              occurrence++;
+          }
+          jsonw_raw(&w, ":"); jsonw_i64(&w, (int64_t)occurrence);
+        }
+        Err e = w.error;
+        if (!e.code) e = copy(&r->arena, (Str){w.data, (uint32_t)w.length}, &fact.id);
+        jsonw_free(&w); TRY(e);
+      }
+      TRY(record_append(&r->arena, (void **)&r->tool_facts, &r->tool_count,
+                        &r->tool_capacity, sizeof fact, &fact));
+      TRY(claude_tool_count(&r->arena, &r->tools[turn], name, false));
       if (str_equal(name, STR_LIT("Bash"))) {
-        tools->shell++;
         if (id.n)
           TRY(omap_put(&p->shell_ids, id, (void *)(uintptr_t)(turn + 1)));
-      } else if (str_equal(name, STR_LIT("Edit")) ||
-                 str_equal(name, STR_LIT("Write")) ||
-                 str_equal(name, STR_LIT("MultiEdit")) ||
-                 str_equal(name, STR_LIT("NotebookEdit")))
-        tools->file_edits++;
-      else if (str_equal(name, STR_LIT("WebFetch")) ||
-               str_equal(name, STR_LIT("WebSearch")))
-        tools->web++;
-      else if (prefix(name, "mcp__")) {
-        Str server = {name.p + 5, name.n - 5};
-        const char *end = memmem(server.p, server.n, "__", 2);
-        if (end && end > server.p) {
-          server.n = (uint32_t)(end - server.p);
-          TRY(count(&r->arena, &tools->mcp, server));
-        } else
-          TRY(count(&r->arena, &tools->other, name));
-      } else
-        TRY(count(&r->arena, &tools->other, name));
+      }
     } else if (str_equal(block, STR_LIT("tool_result")) &&
                yyjson_is_true(get(q, "is_error"))) {
       size_t owner = (size_t)(uintptr_t)omap_get(&p->shell_ids,
                                                  text(get(q, "tool_use_id")));
       if (owner) {
         r->tools[owner - 1].shell_failed++;
+        Str failed_id = text(get(q, "tool_use_id"));
+        for (size_t k = 0; k < r->tool_count; k++)
+          if (r->tool_facts[k].identified && str_equal(r->tool_facts[k].id, failed_id))
+            r->tool_facts[k].failed = true;
         TRY(omap_put(&p->shell_ids, text(get(q, "tool_use_id")), NULL));
       }
     }
@@ -292,7 +336,7 @@ static Err on_raw(void *context, const ReaderRawLine *line) {
 }
 Err claude_parse(const DiscoveredLog *key, Str root, Str config,
                  ClaudeRecord *out) {
-  *out = (ClaudeRecord){.key = *key};
+  *out = (ClaudeRecord){.key = *key, .reader_facts = true};
   TRY(copy(&out->arena, key->path, &out->key.path));
   TRY(copy(&out->arena, root, &out->search_root));
   TRY(copy(&out->arena, config, &out->config_dir));
@@ -323,12 +367,14 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
       .context = &p, .known_type = claude_known_type, .record = on_record,
       .raw_line = on_raw};
   Err e = reader_read_log(&out->key, &cb, &out->reader);
-  finish(&p);
+  if (!e.code)
+    finish(&p);
   omap_destroy(&p.shell_ids);
   return e;
 }
 void claude_record_destroy(ClaudeRecord *r) {
   omap_destroy(&r->tool_turns);
+  omap_destroy(&r->canonical_turns);
   omap_destroy(&r->rows_dropped);
   for (size_t i = 0; r->tools && i < r->turn_count; i++) {
     omap_destroy(&r->tools[i].mcp);
@@ -339,13 +385,12 @@ void claude_record_destroy(ClaudeRecord *r) {
   *r = (ClaudeRecord){0};
 }
 static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
-                       Corpus *c, CorpusStrings *collisions,
+                       Corpus *c,
                        const Omap *codex_ids) {
   for (size_t i = 0; i < count; i++) {
     ClaudeRecord *r = &records[i];
     SessionModel *s = omap_get(&c->sessions, r->id);
     if (omap_get(codex_ids, r->id) || (s && s->provider == PROVIDER_CODEX)) {
-      TRY(corpus_strings_add(&c->arena, collisions, r->id));
       continue;
     }
     if (s) {
@@ -547,6 +592,8 @@ done:
 Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
                       Corpus *c, CorpusStrings *collisions) {
   Omap codex_ids = {0};
+  ClaudeRecord *views = NULL;
+  size_t view_count = 0;
   Err e = ERR_SUCCESS;
   for (OmapEntry *q = c->sessions.first; q; q = q->next) {
     SessionModel *s = q->value;
@@ -556,10 +603,13 @@ Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
     if (e.code)
       break;
   }
-  if (!e.code)
-    e = add_records(records, count, snapshot, c, collisions, &codex_ids);
-  if (!e.code)
-    e = link_records(records, count, c);
+  for (size_t i = 0; i < count && !e.code; i++)
+    if (omap_get(&codex_ids, records[i].id))
+      e = corpus_strings_add(&c->arena, collisions, records[i].id);
+  if (!e.code) e = claude_reader_reconcile(records, count, c, &views, &view_count);
+  if (!e.code) e = add_records(views, view_count, snapshot, c, &codex_ids);
+  if (!e.code) e = link_records(views, view_count, c);
+  claude_reader_views_destroy(views, view_count);
   omap_destroy(&codex_ids);
   return e;
 }

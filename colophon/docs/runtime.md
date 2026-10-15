@@ -127,9 +127,8 @@ Presence is decided before creating the runtime home. A readable source
 directory or a usable Claude history entry is sufficient. With neither,
 exit 1 names the Codex home, Claude roots and history path checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
-opening, recovery and replacement, including with `--rebuild`. Claude
-history is only inspected for presence in this release; history-only
-session rendering is separate work. Decodable retained records and eligible
+opening, recovery and replacement, including with `--rebuild`. Eligible Claude
+history entries render history-only sessions. Decodable retained records and eligible
 provisional deletion candidates also establish presence (see below).
 
 The home is created and reapplied with mode 0700; written files are mode
@@ -144,7 +143,7 @@ files older than one hour are cleaned from the runtime home.
 | `cache-claude/` | Claude parse records, grouped by resolved search root. |
 | `claude-retained/` | Claude facts retained after proved source deletion; no automatic age limit. |
 | `price-history.json` | Editable user ledger, created with schema 1 and empty entries. |
-| `pricing-cache.json` | OpenAI catalog, URL, ETag and successful fetch timestamp. |
+| `pricing-cache.json` | Shared multi-provider catalog, URL, ETag and successful fetch timestamp. |
 | `priority-turns.json` | Sticky detected priority-turn metadata and first-seen times. |
 | `workspaces.json` | Optional workspace aliases. |
 | `workspaces.example.json` | Synthetic template, never read as configuration. |
@@ -217,11 +216,31 @@ memory acceptance is claimed.
 `claude-retained/<root-key>/` contains records whose source transcripts were
 positively proved deleted. Keys are SHA-256 names from the resolved search-root
 and original transcript paths. Files are private (0600), directories 0700.
-The Claude CLCD1 codec is independent of the Codex native cache. It preserves
+The Claude CLCD2 codec is independent of the Codex native cache. It preserves
 exact aliases, original paths, config/resume origin, prompts, turns, tools,
 sidecar facts and every raw usage row, including extraction-time cost snapshots
 for duplicate losers. Earlier codec versions keep their decoders and immutable
 synthetic test inputs.
+
+Same-stem copies share a reader assembled from their available turns. Prompt
+UUIDs identify turns; conflicting UUIDs stay distinct. When UUIDs are unavailable,
+the fallback matches exact prompt time, text, kind, image count and occurrence
+within each copy. Identical partial prompts without UUIDs cannot always be
+distinguished. The latest known turn clock/status and latest nonempty answer
+are selected independently; equal-clock conflicts keep the first discovered
+fact (a terminal status wins an equal-clock open status). Identified tool calls
+are unioned by tool ID within each canonical turn, with failures preserved.
+Anonymous tools use record identity or timestamp, name and block occurrence.
+Accounting copy precedence and ascending live resume-config selection remain
+independent of reader reconciliation.
+An identical accounting response may supply a missing display turn from another
+copy of the same canonical session; different session stems never donate turns.
+
+CLCD1 retained records remain readable. Their aggregate tool counts use a
+per-category maximum across copies because older facts cannot distinguish
+mirrored calls from complementary calls; their answer ordering uses the turn's
+last known clock. Live CLCD1 cache records reparse to obtain richer identities.
+Runtime turn mappings never replace the original stored turn keys or usage rows.
 
 Existing stores and history are inspected read-only before runtime creation.
 Decodable retained records and eligible provisional deletion candidates establish

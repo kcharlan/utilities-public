@@ -7,6 +7,10 @@ typedef struct {
   Str message_id, request_id, session_id;
   bool incomplete, sidechain, subagent;
 } ClaudeUsageRow;
+typedef struct {
+  Str turn, id, name;
+  bool identified, failed;
+} ClaudeToolFact;
 /* Separate record ownership: never masquerades as a Codex LogRecord. */
 typedef struct {
   Arena arena;
@@ -18,19 +22,26 @@ typedef struct {
   bool has_spawn_depth;
   int64_t spawn_depth;
   Omap tool_turns; /* record-arena tool_use ID -> turn key */
+  Omap canonical_turns; /* Runtime only: local key -> corpus-owned display key. */
   SessionMeta meta;
   CorpusStrings aliases;
   ReaderResult reader;
   TurnFact **turns;
   Request *requests;
   Str *answers;
+  MaybeMs *answer_ms;
   CorpusTools *tools;
   size_t turn_count;
+  bool reader_facts; /* CLCD2 tool identities and answer clocks are available. */
+  size_t reader_copies; /* Temporary reader view only; never persisted. */
+  ClaudeToolFact *tool_facts;
+  size_t tool_count, tool_capacity;
   MaybeMs first_ms, last_ms;
   ClaudeUsageRow *usage_rows;
   size_t usage_count, usage_capacity;
   Omap rows_dropped; /* record-arena uint64_t values */
 } ClaudeRecord;
+Err claude_tool_count(Arena *arena, CorpusTools *tools, Str name, bool failed);
 bool claude_known_type(Str kind);
 Err claude_parse(const DiscoveredLog *key, Str root, Str config,
                  ClaudeRecord *out);

@@ -1,5 +1,17 @@
 # Lessons learned
 
+- Same-stem source copies need independent reader reconciliation: accounting
+  winners do not identify the most complete transcript. Preserve prompt UUIDs,
+  identified tools and answer clocks, then map file-local turn keys into a
+  canonical reader without changing stored usage facts or resume precedence.
+  Legacy aggregate facts cannot prove distinct tool identities; retain their
+  counts conservatively and reparse live old caches for richer facts.
+- A selected symlink locator can survive its target. Resolve its existing link
+  chain when the target is missing so stored provenance still matches, while
+  retaining positive ENOENT/readable-ancestor proof and permission exclusions.
+- Publish parser turns only after their required allocations and initialization
+  succeed; a reader error must not finalize partially initialized state.
+
 - History collision checks must index Codex public session IDs as well as map
   keys: a filename-fallback row can have a different internal key. Preserve
   primary aliases from collision-skipped transcripts and resolve exact canonical

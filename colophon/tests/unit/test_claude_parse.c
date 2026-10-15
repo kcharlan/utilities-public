@@ -2,6 +2,7 @@
 #include "claude/parse.h"
 #include "claude/scan.h"
 #include "runner.h"
+#include "testing/hooks.h"
 #include "util/fileio.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,26 @@ static void parse_text(const char *bytes, ClaudeRecord *out) {
   ASSERT_EQ(
       ERR_OK,
       claude_parse(&key, STR_LIT("/synthetic/projects"), (Str){0}, out).code);
+  ASSERT_EQ(0, unlink(path));
+}
+TEST(claude_turn_allocation_failure_is_unpublished_and_safe) {
+  const char *bytes = "{\"type\":\"user\",\"message\":{\"content\":\"Synthetic first\"}}\n"
+      "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n"
+      "{\"type\":\"user\",\"message\":{\"content\":\"Synthetic second\"}}\n";
+  char path[1024];
+  snprintf(path, sizeof path, "%s/synthetic-allocation.jsonl", getenv("TMPDIR"));
+  FILE *f = fopen(path, "w"); ASSERT_TRUE(f);
+  ASSERT_TRUE(fputs(bytes, f) >= 0); ASSERT_EQ(0, fclose(f));
+  DiscoveredLog key = {.path = {path, (uint32_t)strlen(path)}, .size = (int64_t)strlen(bytes)};
+  for (size_t n = 1; n <= 2; n++) {
+    char fault[64]; snprintf(fault, sizeof fault, "claude_turn_alloc:%zu", n);
+    ASSERT_EQ(0, setenv("COLOPHON_TEST_FAULT", fault, 1));
+    ClaudeRecord r = {0}; Err e = claude_parse(&key, STR_LIT("/synthetic/projects"), (Str){0}, &r);
+    ASSERT_EQ(0, unsetenv("COLOPHON_TEST_FAULT")); (void)cp_fault("reset");
+    ASSERT_EQ(ERR_NOMEM, e.code); ASSERT_EQ(n - 1, r.turn_count);
+    if (r.turn_count) ASSERT_TRUE(str_equal(r.turns[0]->end_kind, STR_LIT("completed")));
+    claude_record_destroy(&r);
+  }
   ASSERT_EQ(0, unlink(path));
 }
 TEST(claude_prompt_classification_and_end_kinds) {
@@ -69,6 +90,44 @@ TEST(claude_history_aliases_preserve_exact_unicode_strings) {
   ASSERT_EQ(2,r.aliases.count);
   ASSERT_FALSE(str_equal(r.aliases.items[0],r.aliases.items[1]));
   claude_record_destroy(&r);
+}
+TEST(claude_legacy_copy_reader_fallback_preserves_counts_and_raw_facts) {
+  const char *rows = "{\"type\":\"user\",\"message\":{\"content\":\"Synthetic legacy prompt\"}}\n"
+      "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-tool\",\"name\":\"Bash\"}]}}\n";
+  ClaudeRecord records[2] = {0};
+  parse_text(rows, &records[0]); parse_text(rows, &records[1]);
+  for (size_t i = 0; i < 2; i++) {
+    records[i].id = STR_LIT("synthetic-legacy-session");
+    records[i].reader_facts = false;
+  }
+  records[1].tools[0].shell = 2;
+  records[0].answers[0] = STR_LIT("Synthetic earlier legacy answer");
+  records[1].answers[0] = STR_LIT("Synthetic later legacy answer");
+  records[0].answer_ms[0] = records[1].answer_ms[0] = (MaybeMs){0};
+  records[0].turns[0]->last_ms = (MaybeMs){true, 1000};
+  records[1].turns[0]->last_ms = (MaybeMs){true, 2000};
+  Corpus c = {0}; CorpusStrings collisions = {0};
+  ASSERT_EQ(ERR_OK, claude_corpus_add(records, 2, 0, &c, &collisions).code);
+  SessionModel *s = omap_get(&c.sessions, records[0].id);
+  ASSERT_EQ(1, s->turn_count); ASSERT_EQ(2, s->tools.shell);
+  ASSERT_TRUE(str_equal(s->turns[0].final_answer, records[1].answers[0]));
+  ASSERT_TRUE(str_equal(records[0].turns[0]->key, STR_LIT("claude-turn-1")));
+  ASSERT_EQ(1, records[0].tools[0].shell); ASSERT_EQ(2, records[1].tools[0].shell);
+  ASSERT_EQ(1, records[0].canonical_turns.size);
+  corpus_destroy(&c);
+  claude_record_destroy(&records[0]); claude_record_destroy(&records[1]);
+}
+TEST(claude_anonymous_repeated_tools_survive_reader_reconciliation) {
+  ClaudeRecord r[2]={0};
+  const char *rows="{\"type\":\"user\",\"message\":{\"content\":\"Synthetic anonymous tools\"}}\n"
+      "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}\n"
+      "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}\n";
+  parse_text(rows,&r[0]);parse_text(rows,&r[1]); r[1].id=r[0].id;
+  Corpus c={0}; CorpusStrings collisions={0};
+  ASSERT_EQ(ERR_OK,claude_corpus_add(r,2,0,&c,&collisions).code);
+  SessionModel *s=omap_get(&c.sessions,r[0].id);
+  ASSERT_EQ(2,s->tools.shell);
+  corpus_destroy(&c); claude_record_destroy(&r[0]);claude_record_destroy(&r[1]);
 }
 
 TEST(claude_tools_match_results_and_map_servers) {

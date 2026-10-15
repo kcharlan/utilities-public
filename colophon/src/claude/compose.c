@@ -533,6 +533,7 @@ typedef struct {
   Str key;
   size_t copies;
   Str path_order; /* Swift comparison key; original provenance stays intact. */
+  Str display_turn; /* Available same-owner reader fact, independent of D3. */
 } Winner;
 static bool wins(const Winner *candidate, const Winner *old) {
   if (candidate->row->incomplete != old->row->incomplete)
@@ -552,6 +553,7 @@ static Err authored(Corpus *c, ClaudeScan *scan, const Winner *w) {
   if (!s || s->provider != PROVIDER_CLAUDE)
     return ERR_SUCCESS;
   UsageUnit u = w->row->unit;
+  u.display_turn = w->display_turn;
   TRY(normalize_claude_model(&c->usage_arena,u.model_raw,&u.model));
   u.session_id = s->id;
   u.file = (size_t)(w->record - scan->records);
@@ -593,7 +595,9 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
       e = row_key(&arena, row, &key);
       if (e.code)
         break;
-      Winner candidate = {row, r, key, 1, path_order};
+      Str *canonical = omap_get(&r->canonical_turns, row->unit.display_turn);
+      Winner candidate = {row, r, key, 1, path_order,
+                          canonical ? *canonical : row->unit.display_turn};
       if (!key.p) {
         e = authored(c, scan, &candidate);
         if (e.code)
@@ -603,8 +607,10 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
       Winner *old = omap_get(&local, key);
       if (old) {
         old->copies++;
-        if (!row->incomplete || old->row->incomplete)
+        if (!row->incomplete || old->row->incomplete) {
           old->row = row;
+          if (candidate.display_turn.p) old->display_turn = candidate.display_turn;
+        } else if (!old->display_turn.p) old->display_turn = candidate.display_turn;
       } else {
         e = arena_alloc(&arena, sizeof *old, _Alignof(Winner), (void **)&old);
         if (e.code)
@@ -620,8 +626,13 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
         Winner *candidate = p->value, *old = omap_get(&global, p->key);
         if (old) {
           size_t copies = old->copies + candidate->copies;
-          if (wins(candidate, old))
+          bool same_owner = str_equal(candidate->record->id, old->record->id);
+          Str previous = old->display_turn;
+          if (wins(candidate, old)) {
             *old = *candidate;
+            if (same_owner && !old->display_turn.p) old->display_turn = previous;
+          } else if (same_owner && !old->display_turn.p)
+            old->display_turn = candidate->display_turn;
           old->copies = copies;
         } else {
           e = omap_put(&global, p->key, candidate);

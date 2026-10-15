@@ -86,7 +86,7 @@ Err claude_store_get(ClaudeStore *store,const DiscoveredLog *key,ClaudeRecord *o
   *out=(ClaudeRecord){0};*hit=false;if(!store||store->rebuild)return ERR_SUCCESS;
   for(size_t i=0;i<store->count;i++){
     ClaudeStored *entry=&store->entries[i];ClaudeRecord *r=&entry->record;
-    if(entry->retained||!str_equal(r->key.path,key->path)||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
+    if(entry->retained||!r->reader_facts||!str_equal(r->key.path,key->path)||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
     int fd=open(key->path.p,O_RDONLY);if(fd<0)return io("fingerprint open");
     char tail[65];Err e=reader_fingerprint(fd,key->size,tail);close(fd);if(e.code)return e;
     if(memcmp(tail,r->reader.tail_sha256,65))continue;

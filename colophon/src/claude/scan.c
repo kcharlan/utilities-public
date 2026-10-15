@@ -36,12 +36,63 @@ static bool readable(const char *p) {
   struct stat st;
   return !stat(p, &st) && S_ISDIR(st.st_mode) && !access(p, R_OK | X_OK);
 }
+/* Root locators may remain symlinks after their target is removed. Resolve
+ * existing links/ancestors even then, without traversing any discovered child.
+ * Permission errors and link loops deliberately retain the lexical identity. */
+static Err missing_root(const char *raw, unsigned links, char **out) {
+  char resolved[PATH_MAX];
+  if (realpath(raw, resolved)) {
+    *out = strdup(resolved);
+    return *out ? ERR_SUCCESS : err_make(ERR_NOMEM, "Claude root allocation failed");
+  }
+  if (errno != ENOENT || links >= 40 || !strcmp(raw, "/"))
+    return file_codex_path_key(raw, out);
+  struct stat st;
+  if (!lstat(raw, &st) && S_ISLNK(st.st_mode)) {
+    char target[PATH_MAX];
+    ssize_t n = readlink(raw, target, sizeof target - 1);
+    if (n < 0 || (size_t)n >= sizeof target - 1)
+      return file_codex_path_key(raw, out);
+    target[n] = 0;
+    char joined[PATH_MAX];
+    const char *slash = strrchr(raw, '/');
+    int used = target[0] == '/' ? snprintf(joined, sizeof joined, "%s", target)
+        : snprintf(joined, sizeof joined, "%.*s/%s", (int)(slash - raw), raw, target);
+    if (used < 0 || (size_t)used >= sizeof joined)
+      return file_codex_path_key(raw, out);
+    char *normalized = NULL;
+    TRY(file_codex_path_key(joined, &normalized));
+    Err e = missing_root(normalized, links + 1, out);
+    free(normalized);
+    return e;
+  }
+  char *parent = strdup(raw);
+  if (!parent) return err_make(ERR_NOMEM, "Claude root allocation failed");
+  char *slash = strrchr(parent, '/');
+  char *name = slash + 1;
+  char *base = NULL;
+  if (slash == parent) base = strdup("/");
+  else {
+    *slash = 0;
+    Err e = missing_root(parent, links, &base);
+    if (e.code) { free(parent); return e; }
+  }
+  if (!base) { free(parent); return err_make(ERR_NOMEM, "Claude root allocation failed"); }
+  size_t size = strlen(base) + strlen(name) + 2;
+  char *joined = malloc(size);
+  if (!joined) { free(base); free(parent); return err_make(ERR_NOMEM, "Claude root allocation failed"); }
+  snprintf(joined, size, "%s/%s", base, name);
+  Err e = file_codex_path_key(joined, out);
+  free(joined); free(base); free(parent);
+  return e;
+}
 static Err path(Arena *a, const char *raw, Str *out) {
   char *absolute = NULL;
   TRY(file_codex_path_key(raw, &absolute));
-  char resolved[PATH_MAX];
-  Err e =
-      str_copy(a, str(realpath(absolute, resolved) ? resolved : absolute), out);
+  char *resolved = NULL;
+  Err e = missing_root(absolute, 0, &resolved);
+  if (!e.code) e = str_copy(a, str(resolved), out);
+  free(resolved);
   free(absolute);
   return e;
 }

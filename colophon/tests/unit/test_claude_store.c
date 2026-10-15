@@ -136,6 +136,30 @@ TEST(claude_store_fingerprint_error_initializes_output_ownership){
   ASSERT_EQ(ERR_IO,e.code);ASSERT_FALSE(hit);ASSERT_TRUE(output.arena.head==NULL);ASSERT_TRUE(output.tools==NULL);ASSERT_EQ(0,output.turn_count);
   claude_record_destroy(&output);close_snapshot(&s,&store);
 }
+TEST(claude_store_legacy_live_records_reparse_without_losing_retained_facts){
+  Fixture f; fixture(&f); seed(&f);
+  char path[1600]; installed(&f,f.one,path);
+  size_t n; char *bytes=read_bytes(path,&n); ClaudeRecord r={0};
+  ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); free(bytes);
+  r.reader_facts=false;
+  unsigned char *old=NULL; size_t old_n=0;
+  ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&old,&old_n).code);
+  FILE *file=fopen(path,"wb"); ASSERT_TRUE(file);
+  ASSERT_EQ(old_n,fwrite(old,1,old_n,file)); ASSERT_EQ(0,fclose(file));
+  claude_record_destroy(&r);
+  ClaudeScan s={0}; ClaudeStore store={0}; snapshot(&f,false,&s,&store);
+  ASSERT_EQ(1,s.parsed); ASSERT_EQ(1,s.cached);
+  close_snapshot(&s,&store);
+  ASSERT_EQ(0,unlink(f.one)); snapshot(&f,false,&s,&store);
+  ASSERT_EQ(1,s.retained);
+  bool found=false;
+  for(size_t i=0;i<s.count;i++)if(str_equal(s.records[i].key.path,str(f.one))){
+    found=true; ASSERT_EQ(1,s.records[i].turn_count); ASSERT_FALSE(s.records[i].reader_facts);
+  }
+  ASSERT_TRUE(found); ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);
+  ASSERT_TRUE(recovery_bytes(&f,f.one,(const char *)old,old_n));
+  close_snapshot(&s,&store); free(old);
+}
 TEST(claude_store_newly_corrupt_retained_copy_is_not_removed_at_live_commit){
   Fixture f;fixture(&f);seed(&f);ASSERT_EQ(0,unlink(f.one));ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);close_snapshot(&s,&store);
   char root[69],key[69],retained[1600];cache_entry_name(str(f.root),root);root[64]=0;cache_entry_name(str(f.one),key);snprintf(retained,sizeof retained,"%s/claude-retained/%s/%s",f.runtime,root,key);

@@ -9,7 +9,8 @@
 /* One ordered traversal defines encoder and decoder, as in cache/codec.c.
  * An independent JSON-array wire preserves integer widths and nullable strings;
  * no pointer, struct padding, borrowed arena or composed pricing is persisted.
- * CLCD1 + SHA-256 protects the complete immutable version-1 body. */
+ * CLCD2 appends reader identities to the immutable CLCD1 body; both versions
+ * retain SHA-256 protection and CLCD1 remains decodable for retained history. */
 typedef struct {
   bool reading, first;
   yyjson_val *array;
@@ -146,26 +147,43 @@ static void record_v1(Wire *w,ClaudeRecord *r){
   }
   if(w->reading)r->usage_capacity=r->usage_count;map(w,&r->rows_dropped,0);
 }
+static void record_v2(Wire *w, ClaudeRecord *r) {
+  B(r->reader_facts);
+  allocate(w, (void **)&r->answer_ms, r->turn_count, sizeof *r->answer_ms);
+  for (size_t i = 0; i < r->turn_count && !w->error.code; i++) {
+    MaybeMs absent = {0};
+    ms(w, r->answer_ms ? &r->answer_ms[i] : &absent);
+  }
+  count(w, &r->tool_count);
+  allocate(w, (void **)&r->tool_facts, r->tool_count, sizeof *r->tool_facts);
+  for (size_t i = 0; i < r->tool_count && !w->error.code; i++) {
+    ClaudeToolFact *t = &r->tool_facts[i];
+    S(t->turn); S(t->id); S(t->name); B(t->identified); B(t->failed);
+    if (w->reading && (!t->turn.p || !t->id.p)) invalid(w);
+  }
+  if (w->reading) r->tool_capacity = r->tool_count;
+}
 Err claude_codec_encode(const ClaudeRecord *record,unsigned char **out,size_t *length){
   *out=NULL;*length=0;Wire w={.first=true};
-  jsonw_raw(&w.json,"[");record_v1(&w,(ClaudeRecord *)record);jsonw_raw(&w.json,"]");
+  jsonw_raw(&w.json,"[");record_v1(&w,(ClaudeRecord *)record);record_v2(&w,(ClaudeRecord *)record);jsonw_raw(&w.json,"]");
   Err e=w.error.code?w.error:w.json.error;
   if(!e.code){
     if(w.json.length>SIZE_MAX-71)e=err_make(ERR_NOMEM,"Claude codec too large");
     else {*out=malloc(w.json.length+71);if(!*out)e=err_make(ERR_NOMEM,"Claude codec allocation failed");}
-    if(!e.code){memcpy(*out,"CLCD1\n",6);sha256_hex(w.json.data,w.json.length,(char *)*out+6);(*out)[70]='\n';memcpy(*out+71,w.json.data,w.json.length);*length=w.json.length+71;}
+    if(!e.code){memcpy(*out,"CLCD2\n",6);sha256_hex(w.json.data,w.json.length,(char *)*out+6);(*out)[70]='\n';memcpy(*out+71,w.json.data,w.json.length);*length=w.json.length+71;}
   }
   jsonw_free(&w.json);return e;
 }
 Err claude_codec_decode(const void *bytes,size_t length,ClaudeRecord *out){
   *out=(ClaudeRecord){0};const unsigned char *data=bytes;
-  if(length<73||memcmp(data,"CLCD1\n",6)||data[70]!='\n')return err_make(ERR_INVALID,"invalid Claude codec version");
+  if(length<73||(memcmp(data,"CLCD1\n",6)&&memcmp(data,"CLCD2\n",6))||data[70]!='\n')return err_make(ERR_INVALID,"invalid Claude codec version");
   char digest[65];sha256_hex(data+71,length-71,digest);
   if(memcmp(digest,data+6,64))return err_make(ERR_INVALID,"invalid Claude codec checksum");
   yyjson_doc *doc=yyjson_read((const char *)data+71,length-71,0);
   if(!doc)return err_make(ERR_INVALID,"invalid Claude codec JSON");
   Wire w={.reading=true,.array=yyjson_doc_get_root(doc),.arena=&out->arena};
   if(!yyjson_is_arr(w.array))invalid(&w);else record_v1(&w,out);
+  if (!w.error.code && data[4] == '2') record_v2(&w, out);
   if(!w.error.code&&(w.position!=yyjson_arr_size(w.array)||!out->key.path.p||!out->id.p||!out->search_root.p))invalid(&w);
   yyjson_doc_free(doc);if(w.error.code)claude_record_destroy(out);return w.error;
 }
