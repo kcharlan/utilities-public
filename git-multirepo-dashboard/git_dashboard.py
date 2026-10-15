@@ -982,54 +982,61 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
     """Analyze in a worker thread; persist rows and metadata together."""
     analysis = await asyncio.to_thread(analyze_repo_deps, Path(repo_path))
     enriched = analysis.enriched
-    await db.execute(
-        "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests) "
-        "VALUES (?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
-        "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
-        "dep_manifests = excluded.dep_manifests",
-        (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(analysis.manifests)),
-    )
-
-    # 3. Upsert into dependencies table
-    for dep in enriched:
+    await db.execute('SAVEPOINT dep_scan_snapshot')
+    try:
         await db.execute(
-            """INSERT OR REPLACE INTO dependencies
-               (repo_id, manager, name, current_version, wanted_version,
-                latest_version, severity, advisory_id, checked_at, source_path,
-                declared_spec, outdated_state, vuln_state, check_note)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                repo_id,
-                dep.get("manager", ""),
-                dep.get("name", ""),
-                dep.get("current_version"),
-                dep.get("wanted_version"),
-                dep.get("latest_version"),
-                dep.get("severity", "ok"),
-                dep.get("advisory_id"),
-                dep.get("checked_at"),
-                dep.get("source_path") or "",
-                dep.get("declared_spec", dep.get("version")),
-                dep.get("outdated_state", "unchecked"),
-                dep.get("vuln_state", "unchecked"),
-                dep.get("check_note"),
-            ),
+            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
+            "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
+            "dep_manifests = excluded.dep_manifests",
+            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(analysis.manifests)),
         )
 
-    # 4. Delete stale deps (in DB but no longer in manifest)
-    current_keys = {(dep.get("manager", ""), dep.get("source_path") or "", dep.get("name", "")) for dep in enriched}
-    cursor = await db.execute(
-        "SELECT manager, source_path, name FROM dependencies WHERE repo_id = ?", (repo_id,)
-    )
-    db_keys = await cursor.fetchall()
-    for manager, source_path, name in db_keys:
-        if (manager, source_path, name) not in current_keys:
+        # 3. Upsert into dependencies table
+        for dep in enriched:
             await db.execute(
-                "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND source_path = ? AND name = ?",
-                (repo_id, manager, source_path, name),
+                """INSERT OR REPLACE INTO dependencies
+                   (repo_id, manager, name, current_version, wanted_version,
+                    latest_version, severity, advisory_id, checked_at, source_path,
+                    declared_spec, outdated_state, vuln_state, check_note)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    repo_id,
+                    dep.get("manager", ""),
+                    dep.get("name", ""),
+                    dep.get("current_version"),
+                    dep.get("wanted_version"),
+                    dep.get("latest_version"),
+                    dep.get("severity", "ok"),
+                    dep.get("advisory_id"),
+                    dep.get("checked_at"),
+                    dep.get("source_path") or "",
+                    dep.get("declared_spec", dep.get("version")),
+                    dep.get("outdated_state", "unchecked"),
+                    dep.get("vuln_state", "unchecked"),
+                    dep.get("check_note"),
+                ),
             )
 
-    await db.commit()
+        # 4. Delete stale deps (in DB but no longer in manifest)
+        current_keys = {(dep.get("manager", ""), dep.get("source_path") or "", dep.get("name", "")) for dep in enriched}
+        cursor = await db.execute(
+            "SELECT manager, source_path, name FROM dependencies WHERE repo_id = ?", (repo_id,)
+        )
+        db_keys = await cursor.fetchall()
+        for manager, source_path, name in db_keys:
+            if (manager, source_path, name) not in current_keys:
+                await db.execute(
+                    "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND source_path = ? AND name = ?",
+                    (repo_id, manager, source_path, name),
+                )
+
+    except BaseException:
+        await db.execute('ROLLBACK TO SAVEPOINT dep_scan_snapshot')
+        await db.execute('RELEASE SAVEPOINT dep_scan_snapshot')
+        raise
+    else:
+        await db.execute('RELEASE SAVEPOINT dep_scan_snapshot')
 
 
 async def run_fleet_scan(scan_id: int, scan_type: str) -> None:

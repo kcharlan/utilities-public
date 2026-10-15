@@ -913,3 +913,61 @@ def test_scan_persists_missing_tools(test_app, tmp_path, monkeypatch):
     assert ws['missing_dep_tools'] == [dict(tool='npm', description='Node.js dependency checks')]
     assert ws['dep_manifests'] == [dict(source_path='package.json', manager='npm')]
     assert ws['dep_check_error'] is True
+
+
+@pytest.mark.parametrize('failure_stage', ['later_row', 'stale_delete'])
+def test_failed_persistence_restores_snapshot_after_caller_commit(tmp_path, monkeypatch, failure_stage):
+    import json
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    with sqlite3.connect(db_path) as db:
+        db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,0,?,?)',
+                   (repo_id, json.dumps([dict(tool='synthetic-old', description='Synthetic old check')]),
+                    json.dumps([dict(source_path='old.json', manager='npm')])))
+        for name in ('synthetic-existing', 'synthetic-stale'):
+            db.execute('INSERT INTO dependencies (repo_id,manager,name,current_version) VALUES (?,\'npm\',?,\'1.0\')', (repo_id, name))
+        old_metadata = db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall()
+        old_rows = db.execute('SELECT * FROM dependencies ORDER BY name').fetchall()
+        if failure_stage == 'later_row':
+            db.execute("CREATE TRIGGER synthetic_failure BEFORE INSERT ON dependencies WHEN NEW.name = 'synthetic-failing' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+        else:
+            db.execute("CREATE TRIGGER synthetic_failure BEFORE DELETE ON dependencies WHEN OLD.name = 'synthetic-stale' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+    rows = [_make_dep('synthetic-existing', 'npm', current='2.0')]
+    if failure_stage == 'later_row':
+        rows.append(_make_dep('synthetic-failing', 'npm'))
+    analysis = git_dashboard.DepAnalysis(rows, True,
+        [dict(tool='synthetic-new', description='Synthetic new check')],
+        [dict(source_path='new.json', manager='npm')])
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path: analysis)
+
+    async def scan_and_commit_as_caller():
+        async with aiosqlite.connect(db_path) as db:
+            # Caller-owned work must survive the scan's rollback.
+            await db.execute("UPDATE repositories SET name = 'synthetic-caller-change' WHERE id = ?", (repo_id,))
+            with pytest.raises(sqlite3.IntegrityError, match='synthetic write failure'):
+                await git_dashboard.run_dep_scan_for_repo(db, repo_id, str(tmp_path))
+            await db.commit()
+    run(scan_and_commit_as_caller())
+    with sqlite3.connect(db_path) as db:
+        assert db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall() == old_metadata
+        assert db.execute('SELECT * FROM dependencies ORDER BY name').fetchall() == old_rows
+        assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'synthetic-caller-change'
+
+
+def test_successful_dep_persistence_preserves_caller_transaction(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path:
+                        git_dashboard.DepAnalysis([_make_dep('synthetic')], False, [], []))
+    async def scan_then_caller_rollback():
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute("UPDATE repositories SET name = 'synthetic-caller-change' WHERE id = ?", (repo_id,))
+            await git_dashboard.run_dep_scan_for_repo(db, repo_id, str(tmp_path))
+            await db.rollback()
+    run(scan_then_caller_rollback())
+    with sqlite3.connect(db_path) as db:
+        assert db.execute('SELECT COUNT(*) FROM dependencies').fetchone()[0] == 0
+        assert db.execute('SELECT COUNT(*) FROM working_state').fetchone()[0] == 0
+        assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'repo-0'

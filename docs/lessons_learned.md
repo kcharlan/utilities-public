@@ -123,3 +123,10 @@ even when parsing yields no rows, and keep quick scans from overwriting them.
 Run blocking network and package-manager checks in a worker thread so requests
 and scan progress remain responsive. Test that responsiveness with a worker
 blocked on an event released by the server event loop.
+
+Dependency snapshot persistence also needs explicit failure rollback. A caller
+that catches a scan error and commits unrelated progress can otherwise publish
+earlier metadata and row writes. Protect metadata, upserts and stale deletion
+with a savepoint; roll back the savepoint on failure and preserve the caller's
+outer transaction. Regress with real SQLite trigger failures, followed by the
+caller's commit, and compare the complete previous snapshot.

@@ -92,7 +92,7 @@ One latest quick-scan snapshot per repository:
 - `scan_error` and `dep_check_error`
 - JSON-text `missing_dep_tools` (tool/description objects) and `dep_manifests` (manifest inventory), returned as parsed arrays by repository detail; fleet returns missing tools
 
-Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in the same transaction, including empty results.
+Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in one savepoint, including empty results. A write failure rolls back the scan snapshot before re-raising, so a later caller commit cannot publish partial coverage. Releasing the savepoint preserves an existing caller-owned transaction.
 
 ### `daily_stats`
 
