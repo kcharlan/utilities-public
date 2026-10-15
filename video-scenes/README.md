@@ -20,10 +20,9 @@ source venv/bin/activate
 ```
 
 The script deletes and recreates `video-scenes/venv`, then installs the exact
-PySceneDetect, OpenCV, and CLI dependency releases tracked in
-`requirements.txt`. PySceneDetect 0.7.1 no longer publishes an `opencv` extra,
-so OpenCV is declared directly rather than through `scenedetect[opencv]`. Do
-not keep anything important in that directory.
+dependency releases tracked in [requirements.txt](requirements.txt). OpenCV
+is declared directly because PySceneDetect no longer publishes an `opencv`
+extra. Do not keep anything important in that directory.
 
 ## Common Commands
 
@@ -54,8 +53,26 @@ scenedetect -i video.mp4 detect-hash -t 0.16 split-video
 - Run `scenedetect --help` for the global options, or
   `scenedetect help <command>` for command-specific options.
 
-The `scenedetect --help` command is also the dependency smoke check after an
-update.
+## Validation
+
+Run `venv/bin/scenedetect --help` as the dependency smoke check after an
+update. Also run a synthetic scene-detection check, keeping the fixture and
+results outside the checkout:
+
+```bash
+S=$(mktemp -d "${TMPDIR:-/tmp}/vs-check.XXXXXX")
+ffmpeg -v error -f lavfi -i testsrc=size=320x240:rate=25:duration=3 \
+  -f lavfi -i color=c=red:size=320x240:rate=25:duration=3 \
+  -filter_complex '[0:v][1:v]concat=n=2:v=1[v]' -map '[v]' \
+  -pix_fmt yuv420p "$S/cut.mp4"
+venv/bin/scenedetect -i "$S/cut.mp4" -o "$S/scenes" detect-content list-scenes
+```
+
+Acceptance: the scene CSV contains exactly two 75-frame scenes spanning
+0–3 and 3–6 seconds, with the cut at `00:00:03.000` (the second scene starts
+at frame 76). For dependency updates, retain the baseline scene CSV before
+changing the graph and require identical scene boundaries afterward;
+processing-time logs are not the comparison criterion.
 
 See the [PySceneDetect CLI reference](https://www.scenedetect.com/docs/latest/cli.html)
 for complete command and detector documentation.
