@@ -17,7 +17,8 @@ enum {
   F_START_COMPLETION = 1024u,
   F_ORPHAN = 2048u,
   F_FORKED = 4096u,
-  F_FORK_BASELINE = 8192u
+  F_FORK_BASELINE = 8192u,
+  F_RETAINED = 16384u
 };
 typedef struct {
   Str *items;
@@ -61,8 +62,12 @@ typedef struct {
 /* Production descriptors borrow canonical facts. Typed overrides borrow the
  * record arena; each spawn clock corresponds to one raw spawn in order. */
 AssemblyRecord assembly_record(const LogRecord *record);
+typedef enum { PROVIDER_CODEX, PROVIDER_CLAUDE } Provider;
 typedef struct {
   Str id, key, identity, title, title_full, title_source;
+  Provider provider;
+  bool history_only;
+  Str resume_config_dir;
   const LogRecord *record;
   const LogRecord **records;
   size_t record_count, record_capacity;
@@ -87,6 +92,7 @@ typedef struct {
   SessionMeta meta;
   AssemblyRecord meta_input;
   Str kind, parent_id, agent_path, forked_from, spawn_turn, link_method;
+  Str agent_label;
   Str workspace, subfolder;
   MaybeNum created_at_ms;
   bool has_depth;
@@ -121,6 +127,7 @@ typedef struct {
   FileDiagnostic malformed, truncated, recovered;
   size_t db_threads_without_logs;
   CorpusStrings orphaned_subagents, inferred_links;
+  CorpusStrings claude_orphaned_subagents;
   Omap workspaces;
   bool linked;
   Arena usage_arena;

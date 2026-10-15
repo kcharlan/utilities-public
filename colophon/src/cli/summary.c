@@ -17,11 +17,12 @@ static void diagnostic(const char *name,__int128 count,bool *first) {
     *first=false;fprintf(stderr,"%s=",name);decimal(stderr,count,false);
 }
 static int keys_order(const void *a,const void *b,void *unused){(void)unused;return str_compare(*(const Str *)a,*(const Str *)b);}
-Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
-    size_t sessions=0,agents=0;__int128 tokens=0;double sum=0.0,correction=0.0;bool available=in->ledger->available;
+static void provider_summary(Provider provider,const PayloadInputs *in) {
+    size_t sessions=0,agents=0,units=0;__int128 tokens=0;double sum=0.0,correction=0.0;bool available=provider==PROVIDER_CLAUDE||in->ledger->available;
     const Corpus *corpus=in->corpus;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
-        const SessionModel *session=entry->value;if(str_equal(session->kind,STR_LIT("subagent")))agents++;else sessions++;
+        const SessionModel *session=entry->value;if(session->provider!=provider)continue;if(str_equal(session->kind,STR_LIT("subagent")))agents++;else sessions++;
+        units+=session->unit_count;
         for(size_t i=0;i<session->unit_count;i++) {
             const UsageUnit *unit=&session->units[i];tokens+=unit->input+unit->output;
             if(!unit->has_cost){available=false;continue;}
@@ -32,15 +33,29 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         }
     }
     if(tokens<INT64_MIN||tokens>INT64_MAX)event_note("int128_payload_sum","summary.tokens",1);
-    printf("colophon: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",sessions,agents,in->logs,in->parsed,in->cached);decimal(stdout,tokens,true);
-    fputs(" tokens · ",stdout);if(available)printf("$%.2f",sum+correction);else fputs("costs unavailable",stdout);
-    printf(" est. · page %.2f MB → %s\n",(double)size/(1024*1024),output);
+    size_t logs=provider==PROVIDER_CODEX?in->logs:in->claude?in->claude->logs:0;
+    size_t parsed=provider==PROVIDER_CODEX?in->parsed:in->claude?in->claude->parsed:0;
+    size_t cached=provider==PROVIDER_CODEX?in->cached:in->claude?in->claude->cached:0;
+    printf("colophon: %s: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",provider==PROVIDER_CODEX?"codex":"claude",sessions,agents,logs,parsed,cached);decimal(stdout,tokens,true);
+    fputs(" tokens · ",stdout);if(!units)fputs("no priced usage",stdout);else if(available)printf("$%.2f est.",sum+correction);else fputs("costs unavailable",stdout);
+    fputc('\n',stdout);
+}
+Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
+    const Corpus *corpus=in->corpus;
+    provider_summary(PROVIDER_CODEX,in);
+    if(in->claude&&!in->claude->disabled)provider_summary(PROVIDER_CLAUDE,in);
+    printf("colophon: page %.2f MB → %s\n",(double)size/(1024*1024),output);
     bool first=true;__int128 unknown=0;for(OmapEntry *e=corpus->unknown_types.first;e;e=e->next)unknown+=*(__int128 *)e->value;
     size_t metadata=0,ledger=0,catalog=0;for(MetadataError *e=in->metadata->errors;e;e=e->next)metadata++;
     for(LedgerDiagnostic *e=in->ledger->diagnostics;e;e=e->next)ledger++;
     for(CatalogMessage *e=in->catalog->messages;e;e=e->next)catalog++;
-    diagnostic("skipped_files",corpus->skipped_file_count+in->scan->unreadable_count,&first);
-    diagnostic("malformed_lines",corpus->malformed.total,&first);diagnostic("truncated_lines",corpus->truncated.total,&first);diagnostic("recovered_lines",corpus->recovered.total,&first);
+    __int128 malformed=corpus->malformed.total,truncated=corpus->truncated.total,recovered=corpus->recovered.total,claude_unknown=0;
+    if(in->claude&&!in->claude->disabled){malformed+=in->claude->history_malformed;for(size_t i=0;i<in->claude->count;i++){const ReaderResult *r=&in->claude->records[i].reader;malformed+=r->malformed;truncated+=r->partial_final_line;recovered+=r->recovered;for(OmapEntry *q=r->unknown_types.first;q;q=q->next)claude_unknown+=*(uint64_t *)q->value;}}
+    diagnostic("skipped_files",corpus->skipped_file_count+in->scan->unreadable_count+(in->claude?in->claude->skipped_count:0),&first);
+    diagnostic("malformed_lines",malformed,&first);diagnostic("truncated_lines",truncated,&first);diagnostic("recovered_lines",recovered,&first);
+    diagnostic("claude_unknown_record_types",claude_unknown,&first);diagnostic("claude_session_id_collisions",in->claude?in->claude->collisions.count:0,&first);
+    diagnostic("claude_history_alias_conflicts",in->claude?in->claude->history_conflicts.size:0,&first);
+    diagnostic("claude_duplicate_responses",in->claude?in->claude->duplicate_rows:0,&first);diagnostic("claude_incomplete_requests",in->claude?in->claude->incomplete_requests:0,&first);
     diagnostic("unknown_record_types",unknown,&first);diagnostic("db_threads_without_logs",corpus->db_threads_without_logs,&first);diagnostic("metadata_errors",metadata,&first);
     diagnostic("orphaned_subagents",corpus->orphaned_subagents.count,&first);diagnostic("inferred_links",corpus->inferred_links.count,&first);
     diagnostic("unresolved_history_boundaries",payload_unresolved_history(NULL,corpus,NULL),&first);

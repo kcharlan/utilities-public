@@ -1,0 +1,46 @@
+#ifndef CP_CLAUDE_SCAN_H
+#define CP_CLAUDE_SCAN_H
+#include "cli/args.h"
+#include "parse.h"
+#include <signal.h>
+typedef enum { CLAUDE_PROJECTS, CLAUDE_DESKTOP, CLAUDE_SWAP } ClaudeRootKind;
+typedef struct { Str id, display, project; int64_t at_ms; } ClaudeHistory;
+typedef struct {
+  Str path;
+  Str resume_config_dir; /* Known primary CLI config origin; never shared with
+                            locator/swap stores. */
+  ClaudeRootKind kind;
+  bool present, complete;
+} ClaudeRoot;
+typedef struct {
+  Arena arena;
+  ClaudeRoot *roots;
+  size_t root_count;
+  Str config_root, history_path, desktop_dir;
+  bool disabled, present;
+  size_t history_usable, history_malformed;
+  ClaudeHistory *history;
+  size_t history_capacity, history_only;
+  Omap history_conflicts; /* Exact history id -> alias candidate owners. */
+  ClaudeRecord *records;
+  size_t count, capacity, logs, parsed, cached, retained;
+  struct ClaudeStore *store;
+  CorpusStrings retained_unreadable;
+  CorpusStrings collisions;
+  CorpusStrings metadata_errors;
+  struct ClaudeDesktopEntry *desktop_entries;
+  size_t desktop_count, desktop_capacity, desktop_without_transcripts;
+  Omap history_aliases; /* Exact alias -> scan-arena CorpusStrings of canonical
+                           owners. */
+  SkippedFile *skipped;
+  size_t skipped_count, skipped_capacity;
+  size_t duplicate_keys, duplicate_rows, incomplete_requests;
+  MaybeMs token_data_from_ms;
+} ClaudeScan;
+/* Path selection and history inspection are read-only, before runtime creation.
+ */
+Err claude_inspect(const Args *args, ClaudeScan *out);
+Err claude_scan(ClaudeScan *scan, volatile sig_atomic_t *interrupted);
+Err claude_scan_aliases(ClaudeScan *scan);
+void claude_scan_destroy(ClaudeScan *scan);
+#endif

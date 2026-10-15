@@ -102,6 +102,44 @@ static Err openai(Arena *arena,Str raw,bool *out) {
     Str lower;Err e=str_lower(arena,token_model_trim(raw),&lower);
     *out=!e.code&&str_equal(lower,STR_LIT("openai"));return e;
 }
+static bool claude_provider(Str id) {
+    const char *ids[]={"anthropic","openai","google","moonshot","kimi-for-coding","minimax","deepseek","kimi-coding","opencode","opencode-free"};
+    for(size_t i=0;i<sizeof ids/sizeof *ids;i++)if(str_equal(id,(Str){ids[i],(uint32_t)strlen(ids[i])}))return true;
+    return false;
+}
+static Err index_provider_models(ModelsDevIndex *out,yyjson_val *provider,bool wrapper,size_t provider_position) {
+    omap_destroy(&out->models);omap_destroy(&out->normalized);
+    Omap models={0};Err error=json_object_dict(get(provider,"models"),&models);
+    size_t model_position=0;
+    for(OmapEntry *m=models.first;!error.code&&m;m=m->next,model_position++) {
+        CatalogModel decoded;
+        char site[192];snprintf(site,sizeof site,"catalog:%s{value[%zu]}.models{value[%zu]}",wrapper?"providers":"",provider_position,model_position);
+        if(!decode_model(m->value,&decoded,site))continue;
+        Str key;error=str_nfc(&out->arena,m->key,"price.catalog.key",&key);if(error.code)break;
+        CatalogModel *copy;error=arena_alloc(&out->arena,sizeof *copy,_Alignof(CatalogModel),(void **)&copy);if(error.code)break;
+        *copy=decoded;error=str_copy(&out->arena,decoded.model_id,&copy->model_id);if(error.code)break;
+        error=omap_put(&out->models,key,copy);
+    }
+    omap_destroy(&models);return error;
+}
+static Err index_normalized(ModelsDevIndex *out) {
+    for(OmapEntry *m=out->models.first;m;m=m->next) {
+        CatalogModel *model=m->value;
+        Str identity;Err error=str_nfc(&out->arena,token_model_trim(model->model_id),"price.catalog.model_id",&identity);
+        if(error.code)return error;
+        if(!omap_get(&out->normalized,identity)) {
+            CatalogLookup *lookup;error=arena_alloc(&out->arena,sizeof *lookup,_Alignof(CatalogLookup),(void **)&lookup);if(error.code)return error;
+            Str spelling;error=str_copy(&out->arena,token_model_trim(model->model_id),&spelling);if(error.code)return error;
+            *lookup=(CatalogLookup){model,spelling};error=omap_put(&out->normalized,identity,lookup);if(error.code)return error;
+        }
+    }
+    return ERR_SUCCESS;
+}
+static Err claude_index_provider(ModelsDevIndex *out,Str id,yyjson_val *provider,bool wrapper,size_t position) {
+    ModelsDevIndex *child=omap_get(&out->claude_providers,id);Err e;
+    if(!child){e=arena_alloc(&out->arena,sizeof *child,_Alignof(ModelsDevIndex),(void **)&child);if(e.code)return e;*child=(ModelsDevIndex){0};e=omap_put(&out->claude_providers,id,child);if(e.code)return e;}
+    e=index_provider_models(child,provider,wrapper,position);return e.code?e:index_normalized(child);
+}
 Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out) {
     if(!yyjson_is_obj(catalog))return ERR_SUCCESS;
     yyjson_val *providers=get(catalog,"providers");
@@ -118,43 +156,22 @@ Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out) {
         yyjson_val *provider=entry->value;
         if(!provider_valid(provider))continue;
         yyjson_val *id=get(provider,"id");bool accepted;
+        Str provider_id;error=str_lower(&out->arena,token_model_trim(yyjson_is_str(id)?string(id):entry->key),&provider_id);if(error.code)break;
+        if(claude_provider(provider_id)&&!str_equal(provider_id,STR_LIT("openai"))){error=claude_index_provider(out,provider_id,provider,wrapper,provider_position);if(error.code)break;}
         error=openai(&out->arena,yyjson_is_str(id)?string(id):entry->key,&accepted);
         if(error.code)break;
         if(!accepted)continue;
-        omap_destroy(&out->models);omap_destroy(&out->normalized);
-        Omap models={0};error=json_object_dict(get(provider,"models"),&models);
-        if(error.code)break;
-        size_t model_position=0;
-        for(OmapEntry *m=models.first;m;m=m->next,model_position++) {
-            CatalogModel decoded;
-            char site[192];snprintf(site,sizeof site,"catalog:%s{value[%zu]}.models{value[%zu]}",wrapper?"providers":"",provider_position,model_position);
-            if(!decode_model(m->value,&decoded,site))continue;
-            Str key;error=str_nfc(&out->arena,m->key,"price.catalog.key",&key);
-            if(error.code)break;
-            CatalogModel *copy;
-            error=arena_alloc(&out->arena,sizeof *copy,_Alignof(CatalogModel),(void **)&copy);
-            if(error.code)break;
-            *copy=decoded;error=str_copy(&out->arena,decoded.model_id,&copy->model_id);
-            if(error.code)break;
-            error=omap_put(&out->models,key,copy);if(error.code)break;
-        }
-        omap_destroy(&models);if(error.code)break;
+        error=index_provider_models(out,provider,wrapper,provider_position);if(error.code)break;
     }
     omap_destroy(&dictionaries);
     if(error.code)return error;
-    for(OmapEntry *m=out->models.first;m;m=m->next) {
-        CatalogModel *model=m->value;
-        Str identity;error=str_nfc(&out->arena,token_model_trim(model->model_id),"price.catalog.model_id",&identity);
-        if(error.code)return error;
-        if(!omap_get(&out->normalized,identity)) {
-            CatalogLookup *lookup;error=arena_alloc(&out->arena,sizeof *lookup,_Alignof(CatalogLookup),(void **)&lookup);
-            if(error.code)return error;
-            Str spelling;error=str_copy(&out->arena,token_model_trim(model->model_id),&spelling);
-            if(error.code)return error;
-            *lookup=(CatalogLookup){model,spelling};error=omap_put(&out->normalized,identity,lookup);
-            if(error.code)return error;
-        }
-    }
+    error=index_normalized(out);if(error.code)return error;
+    /* Decode OpenAI once: Claude has separate query caches and map nodes, but
+     * borrows the immutable catalog rows. This preserves Codex event counts. */
+    ModelsDevIndex *shared;error=arena_alloc(&out->arena,sizeof *shared,_Alignof(ModelsDevIndex),(void **)&shared);if(error.code)return error;
+    *shared=(ModelsDevIndex){0};error=omap_put(&out->claude_providers,STR_LIT("openai"),shared);if(error.code)return error;
+    for(OmapEntry *m=out->models.first;m;m=m->next){error=omap_put(&shared->models,m->key,m->value);if(error.code)return error;}
+    for(OmapEntry *m=out->normalized.first;m;m=m->next){error=omap_put(&shared->normalized,m->key,m->value);if(error.code)return error;}
     return ERR_SUCCESS;
 }
 typedef struct { bool accepted; Omap queries; } ProviderMemo;
@@ -189,7 +206,14 @@ Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup 
     e=lookup_uncached(index,memo->accepted,raw,cached);if(e.code)return e;
     e=omap_put(&memo->queries,raw,cached);if(!e.code)*out=*cached;return e;
 }
+Err claude_catalog_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out) {
+    *out=(CatalogLookup){0};if(!index)return ERR_SUCCESS;
+    ModelsDevIndex *child=omap_get(&index->claude_providers,provider);
+    return child?models_dev_pricing(child,STR_LIT("openai"),raw,out):ERR_SUCCESS;
+}
 void models_dev_destroy(ModelsDevIndex *index) {
+    for(OmapEntry *p=index->claude_providers.first;p;p=p->next)models_dev_destroy(p->value);
+    omap_destroy(&index->claude_providers);
     for(OmapEntry *p=index->lookups.first;p;p=p->next)omap_destroy(&((ProviderMemo *)p->value)->queries);
     omap_destroy(&index->lookups);omap_destroy(&index->normalizations);
     omap_destroy(&index->models);omap_destroy(&index->normalized);arena_destroy(&index->arena);*index=(ModelsDevIndex){0};
@@ -443,7 +467,7 @@ static Err catalog_sanitize(yyjson_val *root,yyjson_doc **out,bool fetched) {
     if(!plain->root){error=err_make(ERR_NOMEM,"catalog allocation");goto done;}
     if(fetched) {
         yyjson_obj_iter keys=yyjson_obj_iter_with(root);yyjson_val *key;
-        while((key=yyjson_obj_iter_next(&keys)))if(!str_equal(string(key),STR_LIT("openai")))
+        while((key=yyjson_obj_iter_next(&keys)))if(!claude_provider(string(key)))
             yyjson_mut_obj_remove_keyn(plain->root,yyjson_get_str(key),yyjson_get_len(key));
     }
     yyjson_val *providers[]={root,get(root,"providers")};
@@ -456,7 +480,7 @@ static Err catalog_sanitize(yyjson_val *root,yyjson_doc **out,bool fetched) {
         while((key=yyjson_obj_iter_next(&it))) {
             size_t current_provider=provider_position++;
             yyjson_val *provider=yyjson_obj_iter_get_val(key);Str spelling=string(key);
-            if(fetched&&!str_equal(spelling,STR_LIT("openai")))continue;
+            if(fetched&&!claude_provider(spelling))continue;
             yyjson_mut_val *destination=yyjson_mut_obj_getn(destinations[p],spelling.p,spelling.n);
             bool valid=provider_valid(provider)&&keys_valid(provider)&&keys_valid(get(provider,"models"));
             const char *texts[]={"id","name"};
@@ -675,7 +699,7 @@ static Err perform_fetch(CatalogFetch *fetch) {
     if(!request_headers){error=err_make(ERR_NOMEM,"catalog header allocation");goto done;}
     struct curl_slist *grown_headers=curl_slist_append(request_headers,"Accept-Encoding: identity");
     if(!grown_headers){error=err_make(ERR_NOMEM,"catalog header allocation");goto done;}request_headers=grown_headers;
-    bool conditional=same_url&&out->has_etag&&out->etag.n&&!fetch->refresh;
+    bool conditional=same_url&&get(yyjson_doc_get_root(out->catalog),"anthropic")&&out->has_etag&&out->etag.n&&!fetch->refresh;
     if(conditional&&memchr(out->etag.p,0,out->etag.n)) {
         /* Approved invalid-header boundary: retain the cached JSON label, but
          * do not truncate or send it through libcurl's C-string header API. */

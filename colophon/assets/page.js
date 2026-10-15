@@ -4,6 +4,21 @@
   // --- data
   let data, currentState, searchTimer;
   const controls = {};
+  const usageProviders = new WeakMap();
+  const providerOf = row => typeof row === "string" ? row : row.provider || "codex";
+  const providerMatch = (row, state) => !state.src || state.src === "all" || providerOf(row) === state.src;
+  function providerCosts(provider) {return data.meta.sources?.[provider]?.costs || data.meta.costs;}
+  function costAvailability(rows) {
+    const providers = [...new Set(rows.map(providerOf))];
+    if (!providers.length) providers.push(currentState.src === "claude" ? "claude" : "codex");
+    const unavailable = providers.filter(provider => !providerCosts(provider).available);
+    return {any: providers.some(provider => providerCosts(provider).available), complete: !unavailable.length, unavailable};
+  }
+  function scopedCostRows(now, state = currentState) {const scoped = scope(data.sessions, state, now); return [...scoped.rows, ...scoped.agents];}
+  function availableCostText(value, unpriced, rows) {
+    const availability = costAvailability(rows);
+    return availability.any ? costText(value) + (unpriced ? " + unpriced" : "") + availability.unavailable.map(provider => " · " + provider + " costs unavailable").join("") : "costs unavailable";
+  }
   const periods = ["7d", "30d", "90d", "mtd", "all", "custom"];
   const heatColors = () => Array.from({length: 5}, (_, n) =>
     getComputedStyle(document.documentElement).getPropertyValue("--heat-" + n).trim());
@@ -79,12 +94,14 @@
   }
   const time = {localDayKey, localDayStart, addLocalDays, mondayIndex, localHour, splitByLocalDay, periodWindow, previousWindow};
   // --- state
-  const stateKeys = ["v", "p", "from", "to", "a", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
+  const stateKeys = ["v", "p", "from", "to", "a", "h", "src", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
   function normalizeState(raw) {
     const next = {
       v: ["overview", "list", "session"].includes(raw.v) ? raw.v : "overview",
       p: periods.includes(raw.p) ? raw.p : "90d",
       a: raw.a === "0" ? "0" : "1",
+      h: raw.h === "0" ? "0" : "1",
+      src: ["codex", "claude", "all"].includes(raw.src) ? raw.src : "all",
       sort: ["newest", "longest", "subtime", "tokens", "cost"].includes(raw.sort) ? raw.sort : "newest"
     };
     for (const key of ["from", "to", "day"]) if (parseDay(raw[key]) !== null) next[key] = raw[key];
@@ -116,6 +133,11 @@
   }
   function writeState(next, {replace = false} = {}) {
     currentState = normalizeState(next);
+    const selected = data.sessions.find(row => row.id === currentState.s) || data.subagents[currentState.s];
+    if (selected && !providerMatch(selected, currentState)) {
+      delete currentState.s;
+      if (currentState.v === "session") currentState.v = "list";
+    }
     const hash = "#" + stateKeys.filter(key => key in currentState).map(key => key + "=" + encodeURIComponent(currentState[key])).join("&");
     if (hash !== location.hash) history[replace ? "replaceState" : "pushState"](null, "", hash);
     render();
@@ -131,7 +153,7 @@
     return text.some(value => value.toLowerCase().includes(query));
   }
   function searchMatch(row, state, byId, seen = new Set()) {
-    if (seen.has(row.id) || (state.a === "0" && row.archived)) return false;
+    if (seen.has(row.id) || !providerMatch(row, state) || (state.a === "0" && row.archived) || (state.h === "0" && row.history_only)) return false;
     seen.add(row.id);
     const query = (state.q || "").toLowerCase();
     return ownSearch(row, query) || row.children.some(id => byId[id] && searchMatch(byId[id], state, byId, seen));
@@ -145,7 +167,7 @@
       const id = pending[n], child = byId[id];
       if (seen.has(id) || !child) continue;
       seen.add(id);
-      if (state.a === "0" && child.archived) continue;
+      if (!providerMatch(child, state) || (state.a === "0" && child.archived) || (state.h === "0" && child.history_only)) continue;
       rows.push(child);
       pending.push(...child.children);
     }
@@ -155,7 +177,7 @@
     return row.buckets.filter(bucket => typeof bucket[0] === "number" && inWindow(bucket[0] * 900000, window));
   }
   function ownMatch(row, state, window) {
-    if (!window || (state.a === "0" && row.archived)) return false;
+    if (!window || !providerMatch(row, state) || (state.a === "0" && row.archived) || (state.h === "0" && row.history_only)) return false;
     const buckets = windowBuckets(row, window);
     const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms && row.start_ms < window.to && row.end_ms >= window.from;
     if (!span && !buckets.length) return false;
@@ -169,7 +191,7 @@
   }
   function matchSession(session, state, byId) {
     const matchedSubagents = new Set();
-    if (state.a === "0" && session.archived) return {match: false, matchedSubagents};
+    if (!providerMatch(session, state) || (state.a === "0" && session.archived) || (state.h === "0" && session.history_only)) return {match: false, matchedSubagents};
     const window = state._window || periodWindow(state.p || "90d", data.meta.generated_at_ms, state);
     for (const child of descendants(session, byId, state)) if (ownMatch(child, state, window)) matchedSubagents.add(child.id);
     return {match: ownMatch(session, state, window) || matchedSubagents.size > 0, matchedSubagents};
@@ -269,7 +291,7 @@
     const running = (list, predicate) => list.flatMap(row => row.turns).filter(turn => turn.status === "running" && predicate(turn)).length;
     const contributesTime = turn => turnIntervals({turns: [turn]}, window).length > 0;
     const ownRunning = running(rows, turn => inWindow(turn.start_ms, window) || contributesTime(turn));
-    const usageRunning = [...rows, ...agents].map(row => liveUsage(row, window));
+    const usageRunning = [...rows, ...agents].map(row => ({...liveUsage(row, window), provider: providerOf(row)}));
     return {sessions: rows.length, active_ms: activeMs(rows.flatMap(row => turnIntervals(row, window))),
       agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
       average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
@@ -279,7 +301,7 @@
       interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
       live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
         turns: turns.filter(t => t.status === "running").length, tokens: usageRunning.reduce((sum, value) => sum + value.tokens, 0),
-        cost: data.meta.costs.available ? usageRunning.reduce((sum, value) => sum + value.costs, 0) : 0, aborted: 0}};
+        cost: usageRunning.filter(value => providerCosts(value.provider).available).reduce((sum, value) => sum + value.costs, 0), aborted: 0}};
   }
   function calendar(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now);
@@ -293,7 +315,7 @@
     }
     const days = new Map();
     for (let day = localDayStart(first); day < window.to; day = addLocalDays(day, 1)) {
-      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false});
+      days.set(localDayKey(day), {day: localDayKey(day), sessions: 0, active_ms: 0, tokens: 0, cost: 0, unpriced: false, providers: []});
     }
     for (const row of rows) {
       const starts = new Set(row.turns.filter(t => inWindow(t.start_ms, window)).map(t => localDayKey(t.start_ms)));
@@ -306,6 +328,7 @@
       const cell = days.get(localDayKey(bucket[0] * 900000));
       if (!cell) continue;
       cell.tokens += bucket[3] + bucket[6];
+      if (!cell.providers.includes(providerOf(row))) cell.providers.push(providerOf(row));
       if (bucket[8] === null) cell.unpriced = true;
       else cell.cost += bucket[8];
     }
@@ -328,8 +351,9 @@
   function models(sessions, state, now) {
     const {window, rows, agents} = scope(sessions, state, now), items = new Map();
     for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
-      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false});
+      if (!items.has(bucket[1])) items.set(bucket[1], {model: bucket[1], tokens: 0, cost: 0, unpriced: false, providers: []});
       const item = items.get(bucket[1]);
+      if (!item.providers.includes(providerOf(row))) item.providers.push(providerOf(row));
       item.tokens += bucket[3] + bucket[6];
       if (bucket[8] === null) item.unpriced = true;
       else item.cost += bucket[8];
@@ -374,6 +398,11 @@
     return node;
   }
   function mountTopbar() {
+    controls.sources = ["all", "codex", "claude"].map(src => {
+      const name = src === "all" ? "All" : src === "codex" ? "Codex" : "Claude";
+      const missing = src !== "all" && data.meta.sources?.[src]?.status !== undefined && data.meta.sources[src].status !== "ok";
+      return el("button", {type: "button", "data-source": src, text: name + (missing ? " · no data" : ""), onclick: () => act({src})});
+    });
     controls.search = el("input", {type: "search", placeholder: "Search titles and requests", "aria-label": "Search titles and requests", oninput: () => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => writeState({...currentState, q: controls.search.value}, {replace: true}), 200);
@@ -390,16 +419,19 @@
     controls.to = el("input", {type: "date", "aria-label": "To date", onchange: () => act({to: controls.to.value})});
     controls.custom = el("div", {class: "custom-dates"}, el("label", {text: "from "}, controls.from), el("label", {text: "to "}, controls.to));
     controls.archive = el("button", {type: "button", onclick: () => act({a: currentState.a === "1" ? "0" : "1"})});
+    controls.history = el("button", {type: "button", onclick: () => act({h: currentState.h === "1" ? "0" : "1"})});
     controls.breadcrumb = el("nav", {class: "breadcrumb", "aria-label": "Breadcrumb"});
     controls.chips = el("div", {class: "filter-chips"});
     const catalog = data.meta.catalog;
-    const priceText = catalog.fetched_at_ms === null ? "prices unavailable" : "prices " + catalog.source_host + " " + localStamp(catalog.fetched_at_ms);
+    const priceText = catalog.fetched_at_ms === null ? "catalog unavailable" : "catalog " + catalog.source_host + " " + localStamp(catalog.fetched_at_ms);
     document.getElementById("colophon-topbar").replaceChildren(
       el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
-      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + data.meta.counts.logs + " logs · " + priceText}),
-      el("div", {class: "controls"}, controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive), controls.chips);
+      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? Object.values(data.meta.sources).reduce((sum, source) => sum + source.logs, 0) : data.meta.counts.logs) + " logs · " + priceText}),
+      el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive, controls.history), controls.chips);
   }
   function renderTopbar() {
+    document.documentElement.dataset.source = currentState.src;
+    controls.sources.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.source === currentState.src)));
     controls.search.value = currentState.q || "";
     controls.periods.forEach((button, index) => button.setAttribute("aria-pressed", String(periods[index] === currentState.p)));
     controls.custom.hidden = currentState.p !== "custom";
@@ -407,6 +439,8 @@
     controls.to.value = currentState.to || "";
     controls.archive.textContent = "archived: " + (currentState.a === "1" ? "shown" : "hidden");
     controls.archive.setAttribute("aria-pressed", String(currentState.a === "1"));
+    controls.history.textContent = "history only: " + (currentState.h === "1" ? "shown" : "hidden");
+    controls.history.setAttribute("aria-pressed", String(currentState.h === "1"));
     controls.breadcrumb.replaceChildren(el("button", {type: "button", text: "overview", onclick: () => act({v: "overview", s: undefined})}),
       el("span", {text: "/"}), el("button", {type: "button", text: "sessions", onclick: () => act({v: "list", s: undefined})}));
     if (currentState.v === "session") controls.breadcrumb.append(el("span", {text: "/ session"}));
@@ -417,7 +451,7 @@
   const lineDiagnosticCategories = new Set(["malformed_lines", "truncated_lines", "recovered_lines"]);
   function diagnosticCount(key, value) {
     if (lineDiagnosticCategories.has(key)) return value.total;
-    if (key === "unknown_record_types") return Object.values(value).reduce((sum, count) => sum + count, 0);
+    if (key === "unknown_record_types" || key === "claude_unknown_record_types") return Object.values(value).reduce((sum, count) => sum + count, 0);
     if (Array.isArray(value)) return value.length;
     if (typeof value === "number") return value;
     if (typeof value === "boolean") return Number(value);
@@ -425,7 +459,7 @@
   }
   function diagnosticItems(key, value) {
     if (lineDiagnosticCategories.has(key)) return value.files;
-    if (key === "unknown_record_types") return Object.entries(value).map(([type, count]) => type + ": " + count);
+    if (key === "unknown_record_types" || key === "claude_unknown_record_types") return Object.entries(value).map(([type, count]) => type + ": " + count);
     return Array.isArray(value) ? value : [value];
   }
   function diagnosticText(value) {
@@ -441,12 +475,27 @@
         el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(key, value)}),
         el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
+      if (key === "claude_unknown_record_types") row.append(el("p", {text: "Claude's log format may have changed"}));
       if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
       if (key === "page_size_over_limit") row.append(el("p", {text: "page size: " + diagnostic.page_size_bytes + " bytes"}));
       return row;
     });
     document.getElementById("colophon-footer").replaceChildren(el("p", {text: "API-equivalent estimate (not billed)"}),
+      ...(currentState.src === "all" ? ["codex", "claude"].filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
+      ...tokenBoundaryNote(),
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
+  }
+  function tokenBoundaryNote() {
+    const boundary = data.meta.sources?.claude?.token_data_from_ms;
+    if (currentState.src === "codex" || !validMs(boundary)) return [];
+    const days = calendar(data.sessions, currentState, data.meta.generated_at_ms);
+    return days.length && boundary > parseDay(days[0].day) ? [el("p", {"data-token-boundary": "", text: "Claude token data starts " + localStamp(boundary)})] : [];
+  }
+  const sourceMissing = provider => data.meta.sources?.[provider] && data.meta.sources[provider].status !== "ok";
+  function sourceAbsence(provider) {
+    const source = data.meta.sources?.[provider];
+    if (provider === "claude") return source?.status === "disabled" ? "Claude disabled by --no-claude" : "No Claude data found. Checked " + [...(source?.roots || []), source?.history_path].filter(Boolean).join(", ");
+    return "No Codex sessions found in " + (source?.home || data.meta.codex_home);
   }
   // --- views/overview
   let calendarMetric = "sessions", workspaceMetric = "active_ms", expandedWorkspaces = false;
@@ -463,17 +512,26 @@
   }
   function renderKpis(now) {
     const totals = kpis(data.sessions, currentState, now), window = periodWindow(currentState.p, now, currentState);
+    const shares = Object.fromEntries(["codex", "claude"].map(src => [src, kpis(data.sessions, {...currentState, src}, now)]));
     const previous = previousWindow(currentState.p, window, now);
     const prior = previous ? kpis(data.sessions, {...currentState, _window: previous}, now) : null;
     const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
     const sorts = {sessions: "newest", active_ms: "longest", agent_ms: "subtime", turns: "newest", tokens: "tokens", cost: "cost", aborted: "newest"};
     return el("div", {class: "kpis"}, ...Object.entries(labels).map(([key, label]) => {
-      const value = key === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(key, totals[key]) + (key === "cost" && totals.unpriced ? " + unpriced" : "");
+      const value = key === "cost" ? availableCostText(totals[key], totals.unpriced, scopedCostRows(now)) : metricText(key, totals[key]);
       const open = () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})});
       const tile = el("article", {class: "kpi" + (key === "aborted" ? " warning" : ""), "data-kpi": key,
         onclick: event => {if (!event.target.closest("button")) open();}},
         el("button", {type: "button", class: "kpi-main", onclick: () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})})},
           el("span", {class: "kpi-label", text: label}), el("span", {class: "kpi-value", "data-value": totals[key], text: value})));
+      if (key === "cost" && value.includes(" · ")) {
+        const [amount, ...notes] = value.split(" · ");
+        tile.querySelector(".kpi-value").replaceChildren(el("span", {text: amount}), el("span", {class: "cost-note", text: " · " + notes.join(" · ")}));
+      }
+      const providers = currentState.src === "all" ? ["codex", "claude"] : [currentState.src];
+      const shareTotal = providers.reduce((sum, provider) => sum + shares[provider][key], 0);
+      tile.append(el("div", {class: "provider-shares", "aria-label": "Provider share"}, ...providers.map(provider =>
+        el("span", {"data-provider": provider, "data-share": shares[provider][key], title: (provider === "claude" ? "Claude" : "Codex") + ": " + metricText(key, shares[provider][key]), style: "width:" + (shareTotal ? shares[provider][key] / shareTotal * 100 : 0) + "%"}))));
       if (key === "turns") tile.append(el("p", {class: "kpi-sub", text: "avg " + durationText(totals.average_ms)}));
       if (key === "tokens") tile.append(el("p", {class: "kpi-sub", text: totals.cached_share === null ? "cached input: unknown" : (totals.cached_share * 100).toFixed(1) + "% cached input"}));
       if (key === "cost") tile.append(el("p", {class: "kpi-sub", text: "API-equivalent estimate (not billed)"}));
@@ -481,7 +539,7 @@
         el("button", {type: "button", class: "status-link", "data-status": "interrupted", text: totals.interrupted + " interrupted", onclick: () => drill({st: "interrupted", sort: "newest"})}),
         el("span", {text: " · "}), el("button", {type: "button", class: "status-link", "data-status": "abandoned", text: totals.abandoned + " abandoned", onclick: () => drill({st: "abandoned", sort: "newest"})})));
       if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
-      if (prior && (key !== "cost" || data.meta.costs.available)) {
+      if (prior && (key !== "cost" || (costAvailability(scopedCostRows(now)).complete && costAvailability(scopedCostRows(now, {...currentState, _window: previous})).complete))) {
         const delta = totals[key] - prior[key];
         tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " vs prior " + currentState.p.toUpperCase()}));
       }
@@ -490,14 +548,17 @@
   }
   function renderCalendar(now) {
     const days = calendar(data.sessions, currentState, now), ramp = levels(days.map(day => day[calendarMetric]));
+    const byProvider = Object.fromEntries(["codex", "claude"].map(src => [src, new Map(calendar(data.sessions, {...currentState, src}, now).map(day => [day.day, day]))]));
     const toggle = el("div", {class: "metric-toggle"}, ...[["sessions", "sessions"], ["active_ms", "active time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, label]) =>
       el("button", {type: "button", text: label, "aria-label": "Calendar " + label, "aria-pressed": key === calendarMetric, onclick: () => {calendarMetric = key; render();}})));
     const grid = el("div", {class: "calendar-grid"});
     const offset = days.length ? mondayIndex(parseDay(days[0].day)) : 0;
     for (let n = 0; n < offset; n++) grid.append(el("span", {class: "heat-cell blank"}));
     days.forEach((day, n) => {
-      const value = calendarMetric === "cost" && !data.meta.costs.available ? "costs unavailable" : metricText(calendarMetric, day[calendarMetric]) + (calendarMetric === "cost" && day.unpriced ? " + unpriced" : "");
+      const value = calendarMetric === "cost" ? availableCostText(day.cost, day.unpriced, day.providers) : metricText(calendarMetric, day[calendarMetric]);
+      const provider = currentState.src === "all" ? ((byProvider.claude.get(day.day)?.[calendarMetric] || 0) > (byProvider.codex.get(day.day)?.[calendarMetric] || 0) ? "claude" : "codex") : currentState.src;
       grid.append(el("button", {type: "button", class: "heat-cell", "data-day": day.day, "data-value": day[calendarMetric], "data-level": ramp[n],
+        "data-provider": provider,
         title: day.day + " · " + value, "aria-label": day.day + " · " + value, onclick: () => drill({day: day.day})}));
     });
     const viewport = el("div", {class: "calendar-viewport"}, grid);
@@ -533,19 +594,29 @@
   const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
   function renderWorkspaces(now) {
     const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
+    const byProvider = Object.fromEntries(["codex", "claude"].map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
     const maximum = rows.length ? rows[0][workspaceMetric] : 0;
     const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
       el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
       ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
         el("span", {class: "bar-label", text: workspaceName(row.key), title: workspaceName(row.key)}),
-        el("span", {class: "bar-track"}, el("span", {class: "bar-fill", style: "width:" + (maximum ? row[workspaceMetric] / maximum * 100 : 0) + "%"})),
+        el("span", {class: "bar-track"}, ...workspaceFills(row, maximum, byProvider)),
         el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
     if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
     return result;
   }
+  function workspaceFills(row, maximum, byProvider) {
+    const providers = currentState.src === "all" ? ["codex", "claude"] : [currentState.src];
+    const total = providers.reduce((sum, provider) => sum + (byProvider[provider].get(row.key)?.[workspaceMetric] || 0), 0);
+    return providers.map(provider => {
+      const value = byProvider[provider].get(row.key)?.[workspaceMetric] || 0;
+      return el("span", {class: "bar-fill", "data-provider": provider, title: provider + ": " + metricText(workspaceMetric, value), style: "width:" + (maximum && total ? row[workspaceMetric] / maximum * value / total * 100 : 0) + "%"});
+    });
+  }
   function rateTooltip(model, now) {
-    if (!data.meta.costs.available) return "costs unavailable";
     const {window, rows, agents} = scope(data.sessions, currentState, now), refs = new Map();
+    const matching = [...rows, ...agents].filter(row => windowBuckets(row, window).some(bucket => bucket[1] === model));
+    if (!costAvailability(matching).any) return "costs unavailable";
     let unpriced = false, unknown = false;
     for (const row of [...rows, ...agents]) {
       const buckets = windowBuckets(row, window).filter(bucket => bucket[1] === model);
@@ -556,7 +627,7 @@
       for (const ref of recorded) {
         const [key, index, role] = ref, pricing = data.models[key];
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
-        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
         const label = override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "";
         const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
@@ -564,12 +635,12 @@
       }
     }
     return ["Recorded rate periods in matching sessions (all dates)", ...refs.values(),
-      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : [])].join("\n");
+      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : []), ...costAvailability(matching).unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function renderModels(now) {
-    return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
+    return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-provider": row.providers.length === 1 ? row.providers[0] : "all", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
       el("span", {class: "model-name", text: row.model, title: row.model}), el("span", {text: countText(row.tokens)}),
-      el("span", {class: row.unpriced ? "warning" : "", text: !data.meta.costs.available ? "costs unavailable" : costText(row.cost) + (row.unpriced ? " + unpriced" : "")}))),
+      el("span", {class: row.unpriced ? "warning" : "", text: availableCostText(row.cost, row.unpriced, row.providers)}))),
       el("p", {class: "panel-meta", text: "API-equivalent estimate (not billed)"}));
   }
   function renderNotable(now) {
@@ -588,10 +659,10 @@
     const list = el("div", {"data-recent": ""});
     for (const row of recent(data.sessions, currentState, now)) {
       const own = activeMs(turnIntervals(row, periodWindow(currentState.p, now, currentState))), agents = descendants(row, data.subagents, currentState).length;
-      list.append(el("div", {class: "recent-row", "data-session-id": row.id,
+      list.append(el("div", {class: "recent-row", "data-session-id": row.id, "data-provider": providerOf(row),
         onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
         el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
-        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
+        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : "") + (row.history_only ? " · HISTORY ONLY" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
         el("span", {class: "recent-workspace", text: workspaceName(row.workspace), title: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents", title: durationText(own) + " · " + agents + " subagents"})));
     }
     result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
@@ -609,7 +680,7 @@
   const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
   const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
   function flagsLine(row) {
-    return el("div", {class: "row-flags"}, ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
+    return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
       ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
   }
   function listFigures(row) {
@@ -618,7 +689,8 @@
     return {active: activeMs(turnIntervals(row, window)), agents: children.length,
       subtime: children.reduce((sum, child) => sum + activeMs(turnIntervals(child, window)), 0),
       tokens: buckets.reduce((sum, bucket) => sum + bucket[3] + bucket[6], 0),
-      cost: data.meta.costs.available ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      cost: costAvailability([row, ...children]).any ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      providers: [row, ...children].map(providerOf),
       unpriced: buckets.some(bucket => bucket[8] === null)};
   }
   function renderSessionList(rows) {
@@ -643,9 +715,9 @@
       }
       const open = () => act({v: "session", s: row.id});
       const figuresText = currentState.sort === "tokens" ? countText(figuresForRow.tokens) + " tokens" : currentState.sort === "cost" ?
-        (figuresForRow.cost === null ? "costs unavailable" : costText(figuresForRow.cost) + (figuresForRow.unpriced ? " + unpriced" : "")) :
+        (figuresForRow.cost === null ? "costs unavailable" : availableCostText(figuresForRow.cost, figuresForRow.unpriced, figuresForRow.providers)) :
         currentState.sort === "subtime" ? durationText(figuresForRow.subtime) + " agent" : null;
-      result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id,
+      result.append(el("div", {class: "list-row" + (row.id === currentState.s ? " selected" : ""), "data-list-row": "", "data-session-id": row.id, "data-provider": providerOf(row),
         role: "button", tabindex: "0", "aria-label": "Open session " + row.title,
         onkeydown: event => {if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) {event.preventDefault(); open();}},
         onclick: event => {if (!event.target.closest("button")) open();}},
@@ -661,6 +733,7 @@
     return result;
   }
   // --- views/reader
+  const shellArgument = value => "'" + value.replace(/'/g, "'\\''") + "'";
   function ownActive(row) {
     if (row.flags.includes("history_unresolved")) return null;
     const eligible = row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status));
@@ -672,12 +745,13 @@
     return {tokens: evidenceSum(tokens), cost: evidenceSum(costs, true),
       unpriced: rows.some(row => row.own_usage.unpriced_tokens > 0)};
   }
-  function usageCostText(usage) {
-    if (!data.meta.costs.available) return "costs unavailable";
+  function usageCostText(usage, provider = usageProviders.get(usage) || "codex") {
+    if (!providerCosts(provider).available) return "costs unavailable";
     return (quantity(usage.cost_usd) ? costText(usage.cost_usd) : "unknown") + (usage.unpriced_tokens > 0 ? " + unpriced" : "");
   }
   function usageRateTooltip(usages) {
-    if (!data.meta.costs.available) return "costs unavailable · API-equivalent estimate (not billed)";
+    const availability = costAvailability(usages.map(usage => usageProviders.get(usage) || "codex"));
+    if (!availability.any) return "costs unavailable · API-equivalent estimate (not billed)";
     const refs = new Map();
     let unknown = false;
     for (const usage of usages) {
@@ -685,13 +759,13 @@
       for (const ref of usage.priced_by) {
         const [key, index, role] = ref, pricing = data.models[key];
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
-        if (!period || !["rates", "priority"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
+        if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
         const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
         refs.set(JSON.stringify(ref), (override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "") + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
       }
     }
-    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : [])].join("\n");
+    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function expandableText(text, label = "more") {
     const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
@@ -704,6 +778,7 @@
   }
   function renderRequest(request) {
     const tags = [];
+    if (request.kind === "command") tags.push("command");
     if (request.kind === "voice") tags.push("voice request");
     if (request.kind === "answer") tags.push("answer");
     if (request.images) tags.push("+ " + request.images + " images");
@@ -824,7 +899,7 @@
     const children = descendants(row, data.subagents, currentState), visibleChildren = new Map(children.map(child => [child.id, child]));
     const matched = matchSession(row, currentState, data.subagents).matchedSubagents;
     const full = readerUsage([row, ...children]), own = readerUsage([row]), agent = readerUsage(children), unresolved = row.flags.includes("history_unresolved");
-    const reader = el("section", {class: "reader", "data-reader": row.id}, el("button", {type: "button", class: "reader-back", text: "← sessions", onclick: () => act({v: "list", s: undefined})}));
+    const reader = el("section", {class: "reader", "data-reader": row.id, "data-provider": providerOf(row)}, el("button", {type: "button", class: "reader-back", text: "← sessions", onclick: () => act({v: "list", s: undefined})}));
     const title = el("button", {type: "button", class: "collapsed-title", title: row.title_full, "aria-label": "Expand full title", "aria-expanded": "false", text: row.title, onclick: () => {
       const expanded = title.getAttribute("aria-expanded") !== "true";
       title.className = expanded ? "expanded-title" : "collapsed-title"; title.textContent = expanded ? row.title_full : row.title; title.setAttribute("aria-expanded", String(expanded));
@@ -852,13 +927,22 @@
       }
     };
     const lifecycle = row.archived ? "archived" : "live";
-    const isSubagent = !row.kind || row.kind === "orphan";
-    const supports = action => action[lifecycle] && (!isSubagent || action.subagent);
+    const isSubagent = !row.kind || row.kind === "subagent" || row.kind === "orphan";
+    const supports = action => action && action[lifecycle] && (!isSubagent || action.subagent);
+    const claude = providerOf(row) === "claude";
+    const usablePath = value => typeof value === "string" && value.startsWith("/") && !/[\x00-\x1f\x7f]/.test(value);
+    const canContinue = claude ? supports(data.meta.links.claude_continue_in_cli) && usablePath(row.cwd) && usablePath(row.resume_config_dir) &&
+      !row.history_only && !row.flags.includes("transcript_deleted") : supports(data.meta.links.continue_in_cli);
+    // Claude CLI searches from cwd; CLAUDE_CONFIG_DIR chooses its session store.
+    // https://code.claude.com/docs/en/cli-reference (--resume)
+    // https://code.claude.com/docs/en/settings (CLAUDE_CONFIG_DIR)
+    const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : "codex resume " + row.id;
     header.append(el("div", {class: "reader-buttons"},
-      ...(supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+      ...(!claude && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
-      ...(supports(data.meta.links.continue_in_cli) ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy("codex resume " + row.id)})] : []),
-      el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}), el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})), copyArea);
+      ...(canContinue ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy(continuation())})] : []),
+      el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}),
+      ...(!row.history_only && !row.flags.includes("transcript_deleted") ? [el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})] : [])), copyArea);
     const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
       el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
     const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms ? row.end_ms - row.start_ms : null;
@@ -869,8 +953,8 @@
       stat("turns", "turns", unresolved ? null : row.turns.length, unresolved ? "withheld" : countText(row.turns.length), "your turns"),
       stat("subagents", "subagents", children.length, countText(children.length), durationText(agentMs) + " agent time"),
       stat("tokens", "tokens", full.tokens, full.tokens === null ? "unknown" : countText(full.tokens), "total (yours + subagents) · " + (own.tokens === null ? "unknown" : countText(own.tokens)) + " yours + " + (agent.tokens === null ? "unknown" : countText(agent.tokens)) + " subagents"),
-      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}),
-        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
+      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}, providerOf(row)),
+        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}, providerOf(row)) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
     if (unresolved) reader.append(el("p", {class: "reader-note", text: "history boundary unresolved — turn metrics withheld"}));
     else reader.append(renderTimeline(row, children, matched), ...row.turns.map(turn => renderTurn(turn, matched, visibleChildren)));
     if (Object.entries(row.outside_usage).some(([key, value]) => !["cost_usd", "priced_by"].includes(key) && quantity(value) && value > 0)) reader.append(el("p", {
@@ -879,16 +963,19 @@
   }
   function render() {
     renderTopbar();
+    renderFooter();
     const rows = scope(data.sessions, currentState, data.meta.generated_at_ms).rows;
     const app = document.getElementById("colophon-app");
-    if (!data.sessions.length) {
-      app.replaceChildren(el("p", {class: "empty-state", text: "No Codex sessions found in " + data.meta.codex_home}));
+    if (currentState.src !== "all" && sourceMissing(currentState.src)) {
+      app.replaceChildren(el("p", {class: "empty-state", text: sourceAbsence(currentState.src)}));
+    } else if (!data.sessions.length) {
+      app.replaceChildren(el("p", {class: "empty-state", text: "No sessions found"}));
     } else if (currentState.v === "overview") {
       app.replaceChildren(...renderOverview());
       fitCalendar();
     } else {
       const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
-      const visible = selected && !(currentState.a === "0" && selected.archived);
+      const visible = selected && providerMatch(selected, currentState) && !(currentState.a === "0" && selected.archived) && !(currentState.h === "0" && selected.history_only);
       app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}),
         el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderReader(selected)] : [])));
       fitReader();
@@ -898,9 +985,11 @@
   // --- boot
   document.addEventListener("DOMContentLoaded", () => {
     data = JSON.parse(document.getElementById("colophon-data").textContent);
+    for (const row of [...data.sessions, ...Object.values(data.subagents)]) {
+      for (const usage of [row.own_usage, row.outside_usage, ...row.turns.map(turn => turn.usage)]) if (usage) usageProviders.set(usage, providerOf(row));
+    }
     for (const weight of [300, 400, 500]) document.fonts.load(weight + " 12px 'Martian Mono'");
     mountTopbar();
-    renderFooter();
     const restore = () => {
       clearTimeout(searchTimer);
       writeState(readState(), {replace: true});

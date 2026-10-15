@@ -2,6 +2,7 @@ import json
 import ctypes
 import os
 import stat
+import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +13,578 @@ from helpers import SESSION, REQUEST, extract_payload, row, usage
 from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
+
+def test_claude_subagent_links_and_desktop_metadata(native):
+    parent = native.claude_session()
+    with parent.open("a") as stream:
+        stream.write(json.dumps({"type": "custom-title", "customTitle": "Synthetic custom title"}) + "\n")
+        stream.write(json.dumps({"type": "ai-title", "aiTitle": "Synthetic AI title"}) + "\n")
+    child_dir = parent.parent / "synthetic-claude/subagents"
+    child = native.claude_session("agent-synthetic-child", directory=child_dir)
+    native.claude_session("agent-synthetic-nested", directory=child_dir)
+    native.claude_session("agent-synthetic-bare", directory=child_dir)
+    native.claude_session("agent-synthetic-orphan", directory=child_dir)
+    rows = [json.loads(line) for line in child.read_text().splitlines()]
+    rows[1]["message"]["content"].append({"type": "tool_use", "name": "Agent", "id": "synthetic-spawn"})
+    child.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (child_dir / "agent-synthetic-nested.meta.json").write_text(json.dumps({
+        "parentAgentId": "synthetic-child", "toolUseId": "synthetic-spawn",
+        "spawnDepth": 7, "description": "Synthetic nested label", "agentType": "synthetic-worker"}))
+    (child_dir / "agent-synthetic-orphan.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-missing", "description": "Synthetic orphan label", "agentType": "synthetic-orphan-worker", "spawnDepth": 4}))
+    desktop = native.home / "Library/Application Support/Claude/claude-code-sessions/synthetic-account/synthetic-org"
+    desktop.mkdir(parents=True)
+    metadata = desktop / "local_synthetic.json"
+    metadata.write_text(json.dumps({"cliSessionId": "synthetic-claude", "title": "Synthetic desktop title", "isArchived": True, "cwd": 42, "createdAt": False}))
+    (desktop / "local_absent.json").write_text(json.dumps({"cliSessionId": "synthetic-absent"}))
+    (desktop / "local_broken.json").write_text("{")
+    before = metadata.read_bytes()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    session, = [s for s in payload["sessions"] if s["id"] == "synthetic-claude"]
+    assert session["title"] == "Synthetic desktop title"
+    assert session["title_source"] == "desktop"
+    assert session["archived"] is True
+    agents = payload["subagents"]
+    nested = agents["synthetic-claude/agent-synthetic-nested"]
+    assert nested["parent_id"] == "synthetic-claude/agent-synthetic-child"
+    assert nested["spawn_turn"] == "claude-turn-1"
+    assert nested["depth"] == 7
+    assert nested["label"] == "Synthetic nested label"
+    assert nested["nickname"] == "synthetic-worker"
+    assert len(session["children"]) == 2
+    assert agents["synthetic-claude/agent-synthetic-bare"]["spawn_turn"] is None
+    orphan, = [s for s in payload["sessions"] if s["kind"] == "orphan"]
+    assert orphan["parent_id"] == "synthetic-claude/agent-synthetic-missing"
+    assert orphan["label"] == "Synthetic orphan label"
+    assert orphan["nickname"] == "synthetic-orphan-worker"
+    assert orphan["depth"] == 4
+    assert orphan["spawn_turn"] is None
+    assert payload["diagnostics"]["claude_orphaned_subagents"] == ["synthetic-claude/agent-synthetic-orphan"]
+    assert payload["diagnostics"]["orphaned_subagents"] == []
+    assert payload["diagnostics"]["claude_desktop_sessions_without_transcripts"] == 1
+    assert any(value.startswith("claude:") for value in payload["diagnostics"]["metadata_errors"])
+    assert metadata.read_bytes() == before
+
+@pytest.mark.parametrize("variant", ["bare", "nested", "missing", "cycle"])
+def test_claude_subagent_descendant_accounting(native, variant):
+    parent = native.claude_session()
+    directory = parent.parent / "synthetic-claude/subagents"
+    paths = [parent, native.claude_session("agent-synthetic-a", directory=directory),
+             native.claude_session("agent-synthetic-b", directory=directory)]
+    for i, path in enumerate(paths):
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[1]["message"].update({"id": f"synthetic-message-{i}", "model": "synthetic-model",
+                                   "usage": {"input_tokens": 10 + i, "output_tokens": 1}})
+        path.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows))
+    if variant != "bare":
+        (directory / "agent-synthetic-b.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-missing" if variant == "missing" else "synthetic-a"}))
+    if variant == "cycle":
+        (directory / "agent-synthetic-a.meta.json").write_text(json.dumps({"parentAgentId": "synthetic-b"}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    rows = {s["id"]: s for s in payload["sessions"]}
+    rows.update(payload["subagents"])
+    def descendant_input(id):
+        row = rows[id]
+        return row["own_usage"]["input"] + sum(descendant_input(child) for child in row["children"])
+    assert descendant_input("synthetic-claude") == {"bare": 33, "nested": 33, "missing": 21, "cycle": 10}[variant]
+    assert sum(row["own_usage"]["input"] for row in rows.values()) == 33
+    assert len(payload["diagnostics"]["claude_orphaned_subagents"]) == {"bare": 0, "nested": 0, "missing": 1, "cycle": 2}[variant]
+    assert payload["meta"]["counts"] == {"logs": 0, "parsed": 0, "cached": 0, "sessions": 0, "subagents": 0, "orphans": 0}
+
+def test_claude_bundled_cost_independent_of_codex_ledger(native):
+    native.session()
+    native.claude_session(rows=[{
+        "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+        "message": {"model": "claude-opus-4-6", "usage": {
+            "input_tokens": 17, "cache_read_input_tokens": 13,
+            "cache_creation_input_tokens": 11, "output_tokens": 7,
+            "cache_creation": {"ephemeral_1h_input_tokens": 5}, "speed": "fast"}},
+    }])
+    source = native.home / ".claude/projects/synthetic-kite/synthetic-claude.jsonl"
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    native.runtime.mkdir()
+    (native.runtime / "price-history.json").write_text("synthetic-invalid-ledger")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    claude, = [s for s in payload["sessions"] if s["provider"] == "claude"]
+    assert claude["own_usage"]["cost_usd"] == pytest.approx((17 * 5e-6 + 13 * .5e-6 + 6 * 6.25e-6 + 5 * 10e-6 + 7 * 25e-6) * 6)
+    assert claude["own_usage"]["priced_by"] == [
+        ["claude:bundled/claude-opus-4-6", 0, "fast"],
+        ["claude:bundled/claude-opus-4-6", 0, "rates"],
+    ]
+    assert not payload["meta"]["costs"]["available"]
+    assert payload["meta"]["sources"]["claude"]["costs"]["available"]
+    codex_line, = [line for line in result.stdout.splitlines() if line.startswith("colophon: codex:")]
+    claude_line, = [line for line in result.stdout.splitlines() if line.startswith("colophon: claude:")]
+    assert "costs unavailable" in codex_line
+    assert "$0.00 est." in claude_line
+
+def test_claude_cost_from_catalog_and_stale_cache_refresh_without_etag(native):
+    catalog = {"openai": {"models": {}}, "anthropic": {"models": {
+        "claude-opus-4-7": {"id": "claude-opus-4-7", "cost": {
+            "input": 11, "cache_read": 7, "cache_write": 13, "output": 17}},
+    }}, "google": {"models": {
+        "synthetic-maple": {"id": "synthetic-maple", "cost": {"input": 19, "output": 31}},
+    }}}
+    calls = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append(self.headers.get("If-None-Match"))
+            body = json.dumps(catalog).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", '"synthetic-fresh-maple"')
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        native.env["COLOPHON_PRICING_URL"] = f"http://127.0.0.1:{server.server_port}/synthetic-maple.json"
+        native.runtime.mkdir()
+        (native.runtime / "pricing-cache.json").write_text(json.dumps({
+            "schema": 1, "url": native.env["COLOPHON_PRICING_URL"],
+            "etag": '"synthetic-stale-maple"', "fetched_at_ms": 1,
+            "catalog": {"openai": {"models": {}}},
+        }))
+        source = native.claude_session(rows=[{
+            "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+            "message": {"model": "claude-opus-4-7", "usage": {
+                "input_tokens": 17, "cache_read_input_tokens": 13,
+                "cache_creation_input_tokens": 11, "output_tokens": 7,
+                "cache_creation": {"ephemeral_1h_input_tokens": 5}, "speed": "fast"}},
+        }, {
+            "type": "assistant", "timestamp": "2001-01-01T00:15:00Z",
+            "message": {"model": "google/synthetic-maple", "usage": {
+                "input_tokens": 19, "output_tokens": 23}},
+        }])
+        source.write_text("".join(json.dumps(json.loads(line), separators=(",", ":")) + "\n" for line in source.read_text().splitlines()))
+        result = native.build(offline=False)
+        assert result.returncode == 0, result.stderr
+        assert calls == [None]
+        payload = native.payload()
+        claude, = payload["sessions"]
+        expected = (17 * 11 + 13 * 7 + 6 * 13 + 5 * 22 + 7 * 17) * 6 / 1e6 + (19 * 19 + 23 * 31) / 1e6
+        assert claude["own_usage"]["cost_usd"] == pytest.approx(expected)
+        assert "claude:anthropic/claude-opus-4-7" in payload["models"]
+        assert "claude:google/synthetic-maple" in payload["models"]
+        assert payload["models"]["claude:anthropic/claude-opus-4-7"]["periods"][0]["fast"] == {"multiplier": 6}
+        assert "anthropic" in json.loads((native.runtime / "pricing-cache.json").read_text())["catalog"]
+        assert "claude: 1 sessions" in result.stdout
+        assert "costs unavailable" not in result.stdout
+        before = claude["own_usage"]
+        assert native.build().returncode == 0
+        assert native.payload()["sessions"][0]["own_usage"] == before
+        assert calls == [None]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+def test_claude_resumed_usage_buckets_and_provider_isolation(native):
+    native.session()
+    assert native.build("--no-claude").returncode == 0
+    before = native.payload()
+    codex_before = before["sessions"][0]
+    assert codex_before["buckets"][0][:8] == [1963728, "gpt-5", "standard", 120, 20, 0, 30, 5]
+    source = native.claude_session(directory=native.home / ".claude/projects/a")
+    lines = source.read_text().splitlines()
+    assistant = json.loads(lines[-1])
+    assistant["requestId"] = "synthetic-request-kite"
+    assistant["message"]["id"] = "synthetic-message-kite"
+    assistant["message"]["model"] = "synthetic-claude-model"
+    assistant["message"]["usage"] = {
+        "input_tokens": 17, "cache_read_input_tokens": 13,
+        "cache_creation_input_tokens": 11, "output_tokens": 7,
+        "cache_creation": {"ephemeral_1h_input_tokens": 5},
+        "output_tokens_details": {"thinking_tokens": 3}, "speed": "fast",
+    }
+    source.write_text(lines[0] + "\n" + json.dumps(assistant, separators=(",", ":")) + "\n")
+    copy = native.home / ".claude/projects/b/synthetic-claude.jsonl"
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(source.read_bytes())
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    sessions = {s["provider"]: s for s in payload["sessions"]}
+    claude = sessions["claude"]
+    assert claude["own_usage"]["input"] == 41, payload["diagnostics"]["claude_rows_dropped"]
+    assert claude["own_usage"]["cached_input"] == 13
+    assert claude["own_usage"]["cache_write"] == 11
+    assert claude["own_usage"]["output"] == 7
+    assert claude["own_usage"]["reasoning"] == 3
+    assert claude["own_usage"]["cost_usd"] is None
+    assert claude["buckets"][0][2] == "fast"
+    assert claude["buckets"][0][3:8] == [41, 13, 11, 7, 3]
+    assert claude["buckets"][0][9] == "claude"
+    assert sessions["codex"]["own_usage"] == codex_before["own_usage"]
+    assert [b[:9] for b in sessions["codex"]["buckets"]] == [b[:9] for b in codex_before["buckets"]]
+    assert all(b[9] == "codex" for b in sessions["codex"]["buckets"])
+    assert payload["meta"]["costs"] == before["meta"]["costs"]
+    assert payload["diagnostics"]["claude_duplicate_responses"] == {"key_count": 1, "row_count": 1}
+    assert "colophon: codex:" in result.stdout
+    assert "colophon: claude:" in result.stdout
+
+def test_claude_usage_does_not_depend_on_codex_ledger(native):
+    native.session()
+    native.claude_session(rows=[{
+        "type": "assistant", "timestamp": "2001-01-01T00:00:00Z",
+        "message": {"model": "synthetic-claude-model", "usage": {
+            "input_tokens": 19, "output_tokens": 23}},
+    }])
+    source = native.home / ".claude/projects/synthetic-kite/synthetic-claude.jsonl"
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    native.runtime.mkdir()
+    (native.runtime / "price-history.json").write_text("synthetic-invalid-ledger")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert not payload["meta"]["costs"]["available"]
+    assert not payload["meta"]["sources"]["codex"]["costs"]["available"]
+    assert payload["meta"]["sources"]["claude"]["costs"] == {"available": True, "reason": None}
+    claude, = [s for s in payload["sessions"] if s["provider"] == "claude"]
+    assert claude["own_usage"]["input"] == 19
+    assert claude["own_usage"]["output"] == 23
+    assert claude["own_usage"]["unpriced_tokens"] == 42
+    assert claude["own_usage"]["cost_usd"] is None
+    lines = result.stdout.splitlines()
+    assert any(line.startswith("colophon: claude:") and "42 tokens" in line and "costs unavailable" in line for line in lines)
+
+def test_claude_session_without_codex(native):
+    native.codex.rmdir()
+    native.claude_session()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["schema"] == 1
+    session, = payload["sessions"]
+    assert session["id"] == "synthetic-claude"
+    assert session["provider"] == "claude"
+    assert session["title"] == "Invent a synthetic Claude kite"
+    assert session["cwd"] == "/synthetic/claude-kite"
+    assert session["branch"] == "synthetic-branch"
+    assert session["workspace"] in payload["workspaces"]
+    assert session["turns"][0]["status"] == "completed"
+    assert session["turns"][0]["requests"][0]["kind"] == "text"
+    assert "no_session_meta" not in session["flags"]
+    assert payload["meta"]["sources"]["codex"]["status"] == "absent"
+    assert payload["meta"]["sources"]["claude"]["status"] == "ok"
+    assert payload["meta"]["counts"] == {"logs": 0, "parsed": 0, "cached": 0, "sessions": 0, "subagents": 0, "orphans": 0}
+    assert session["resume_config_dir"] == str(native.home / ".claude")
+    assert not (native.runtime / "cache-native").exists()
+
+def test_claude_disabled_and_mixed(native):
+    native.session()
+    assert native.build("--no-claude").returncode == 0
+    baseline = native.payload()["meta"]["counts"]
+    native.claude_session()
+    assert native.build().returncode == 0
+    assert {s["provider"] for s in native.payload()["sessions"]} == {"codex", "claude"}
+    # The baseline was warm on disk; only parse-cache hit counters change.
+    baseline.update(parsed=0, cached=1)
+    assert native.payload()["meta"]["counts"] == baseline
+    assert native.payload()["meta"]["sources"]["claude"]["logs"] == 1
+    result = native.build("--no-claude")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert [s["provider"] for s in payload["sessions"]] == ["codex"]
+    assert payload["meta"]["sources"]["claude"]["status"] == "disabled"
+
+def test_claude_history_establishes_presence_read_only(native):
+    native.codex.rmdir()
+    config = native.home / ".claude"
+    config.mkdir()
+    history = config / "history.jsonl"
+    history.write_text(json.dumps({"sessionId": "synthetic-history", "display": "Synthetic remembered kite", "timestamp": 1767355200000, "project": "/synthetic/history"}) + "\n")
+    before = history.read_bytes()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["meta"]["sources"]["claude"]["status"] == "ok"
+    assert history.read_bytes() == before
+    payload = native.payload()
+    session, = payload["sessions"]
+    assert session["history_only"] is True
+    assert session["cwd"] == "/synthetic/history"
+    assert session["turns"][0]["status"] == "unknown"
+    assert session["turns"][0]["duration_ms"] is None
+    assert session["own_usage"]["input"] == 0
+    assert payload["meta"]["sources"]["claude"]["history_only"] == 1
+    assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] is None
+
+def test_no_sources_reports_checked_paths_without_runtime(native):
+    native.codex.rmdir()
+    result = native.build()
+    assert result.returncode == 1
+    assert str(native.codex) in result.stderr
+    assert str(native.home / ".claude/projects") in result.stderr
+    assert str(native.home / ".claude/history.jsonl") in result.stderr
+    assert not native.runtime.exists()
+
+@pytest.mark.parametrize("relative", [
+    ".claude/projects/synthetic-project",
+    ".config/claude/projects/synthetic-project",
+    "Library/Application Support/Claude/local-agent-mode-sessions/synthetic-account/synthetic-org/synthetic-session/local_agent/.claude/projects/synthetic-project",
+    "Library/Application Support/Claude/claude-code-sessions/synthetic-account/synthetic-org/.claude/projects/synthetic-project",
+    ".claude-swap-backup/sessions/1-synthetic/projects/synthetic-project",
+])
+def test_claude_each_search_root(native, relative):
+    native.codex.rmdir()
+    source = native.claude_session(directory=native.home / relative)
+    before = source.read_bytes()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+    assert source.read_bytes() == before
+    assert native.payload()["meta"]["sources"]["claude"]["logs"] == 1
+
+def test_claude_symlink_roots_deduplicate_without_nested_descent(native):
+    native.codex.rmdir()
+    primary = native.home / ".config/claude"
+    native.claude_session(directory=primary / "projects/synthetic-project")
+    (native.home / ".claude").symlink_to(primary, target_is_directory=True)
+    swap = native.home / ".claude-swap-backup/sessions"
+    swap.mkdir(parents=True)
+    (swap / "1-synthetic").symlink_to(primary, target_is_directory=True)
+    nested = native.root / "synthetic-outside"
+    native.claude_session("synthetic-excluded", directory=nested)
+    (primary / "projects/synthetic-linked").symlink_to(nested, target_is_directory=True)
+    native.claude_session("synthetic-hidden", directory=primary / "projects/.synthetic-hidden")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert [s["id"] for s in payload["sessions"]] == ["synthetic-claude"]
+    assert payload["meta"]["sources"]["claude"]["logs"] == 1
+    assert payload["meta"]["sources"]["claude"]["roots"].count(str(primary / "projects")) == 1
+    assert payload["sessions"][0]["resume_config_dir"] == str(primary)
+
+def test_claude_explicit_home_matches_environment_selection(native):
+    custom = native.root / "synthetic-custom-config"
+    native.claude_session(directory=custom / "projects/synthetic-project")
+    native.claude_session("synthetic-default-excluded")
+    native.claude_session("synthetic-xdg-excluded", directory=native.home / ".config/claude/projects/synthetic-project")
+    result = native.build("--claude-home", str(custom))
+    assert result.returncode == 0, result.stderr
+    explicit = native.payload()
+    native.env["CLAUDE_CONFIG_DIR"] = str(custom)
+    # Compare source selection at the same parse state; warm-cache counters now differ.
+    result = native.build("--rebuild")
+    assert result.returncode == 0, result.stderr
+    environment = native.payload()
+    assert explicit["meta"]["sources"]["claude"] == environment["meta"]["sources"]["claude"]
+    assert [s["id"] for s in environment["sessions"]] == ["synthetic-claude"]
+    assert environment["sessions"][0]["resume_config_dir"] == str(custom)
+
+def test_claude_xdg_default_and_same_stem_provenance_uses_ascending_config(native):
+    native.claude_session(directory=native.home / ".config/claude/projects/synthetic-project")
+    assert native.build().returncode == 0
+    xdg_config = str(native.home / ".config/claude")
+    assert native.payload()["sessions"][0]["resume_config_dir"] == xdg_config
+    native.claude_session()
+    assert native.build().returncode == 0
+    assert len(native.payload()["sessions"]) == 1
+    # .claude sorts before .config/claude despite XDG discovery occurring first.
+    assert native.payload()["sessions"][0]["resume_config_dir"] == str(native.home / ".claude")
+
+def test_claude_custom_config_is_not_assigned_to_swap_desktop_or_subagents(native):
+    custom = native.root / "synthetic-custom-config"
+    native.claude_session(directory=custom / "projects/synthetic-project")
+    native.claude_session("synthetic-swap", directory=native.home / ".claude-swap-backup/sessions/1-synthetic/projects/synthetic-project")
+    native.claude_session("agent-synthetic-child", directory=custom / "projects/synthetic-project/synthetic-claude/subagents")
+    result = native.build("--claude-home", str(custom))
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    rows = {s["id"]: s for s in payload["sessions"]}
+    rows.update(payload["subagents"])
+    assert rows["synthetic-claude"]["resume_config_dir"] == str(custom)
+    assert rows["synthetic-swap"]["resume_config_dir"] is None
+    assert rows["synthetic-claude/agent-synthetic-child"]["resume_config_dir"] is None
+    native.claude_session("synthetic-desktop", directory=native.home / "Library/Application Support/Claude/claude-code-sessions/a/.claude/projects/synthetic-project")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert next(s for s in native.payload()["sessions"] if s["id"] == "synthetic-desktop")["resume_config_dir"] is None
+
+@pytest.mark.parametrize("relative", [
+    "Library/Application Support/Claude/local-agent-mode-sessions/a/.claude/projects",
+    ".claude-swap-backup/sessions/1-synthetic/projects",
+])
+def test_claude_unreadable_locator_and_swap_projects_are_diagnostic(native, relative):
+    blocked = native.home / relative
+    native.claude_session(directory=blocked / "synthetic-project")
+    blocked.chmod(0)
+    try:
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        assert native.payload()["sessions"] == []
+        assert {p["path"] for p in native.payload()["diagnostics"]["skipped_files"]} == {str(blocked)}
+    finally:
+        blocked.chmod(0o700)
+
+def test_claude_desktop_override_and_locator_depth(native):
+    desktop = native.root / "synthetic-desktop"
+    base = desktop / "local-agent-mode-sessions"
+    native.claude_session(directory=base / "a/b/c/d/.claude/projects/synthetic-project")
+    native.claude_session("synthetic-too-deep", directory=base / "a/b/c/d/e/.claude/projects/synthetic-project")
+    native.claude_session("synthetic-build-excluded", directory=base / "build/.claude/projects/synthetic-project")
+    result = native.build("--claude-desktop-dir", str(desktop))
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+
+def test_claude_same_stem_foreign_ids_and_codex_collision(native):
+    native.session()
+    native.claude_session("synthetic-shared", directory=native.home / ".claude/projects/a")
+    native.claude_session("synthetic-shared", directory=native.home / ".claude/projects/b")
+    native.claude_session(SESSION)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert sorted(s["id"] for s in payload["sessions"]) == [SESSION, "synthetic-shared"]
+    assert next(s for s in payload["sessions"] if s["id"] == SESSION)["provider"] == "codex"
+    assert payload["diagnostics"]["claude_session_id_collisions"] == [SESSION]
+
+def test_claude_collision_preserves_codex_filename_fallback_identity(native):
+    rows = [r for r in native.session_rows() if r["type"] != "session_meta"]
+    native.write_session(rows, name=f"rollout-2026-01-02T12-00-00-{UUID}.jsonl")
+    native.claude_session(UUID)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert [(s["id"], s["provider"]) for s in payload["sessions"]] == [(UUID, "codex")]
+    assert payload["diagnostics"]["claude_session_id_collisions"] == [UUID]
+
+@pytest.mark.parametrize("rebuild", [False, True])
+@pytest.mark.parametrize("cache_state", ["populated", "incompatible", "recovery"])
+def test_absent_codex_preserves_cache_bytes_names_and_modes(native, rebuild, cache_state):
+    native.session()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    installed = native.runtime / "cache-native"
+    if cache_state == "incompatible":
+        (installed / "FORMAT").write_bytes(b"synthetic-incompatible-format\n")
+    if cache_state == "recovery":
+        backup = native.runtime / "cache-native.old-424242"
+        shutil.copytree(installed, backup)
+        stage = native.runtime / "cache-native.rebuild-424242"
+        stage.mkdir(mode=0o700)
+        (stage / "synthetic-recovery-residue").write_bytes(b"Synthetic recovery residue\n")
+        (stage / "synthetic-recovery-residue").chmod(0o600)
+    def snapshot():
+        roots = [p for p in native.runtime.iterdir() if "cache-native" in p.name]
+        paths = [p for root in roots for p in [root, *root.rglob("*")]]
+        return {str(p.relative_to(native.runtime)): (mode(p), None if p.is_dir() else p.read_bytes()) for p in paths}
+    before = snapshot()
+    shutil.rmtree(native.codex)
+    native.claude_session()
+    result = native.build(*(["--rebuild"] if rebuild else []))
+    assert result.returncode == 0, result.stderr
+    assert snapshot() == before
+    assert native.payload()["meta"]["sources"]["codex"]["status"] == "absent"
+
+@pytest.mark.parametrize("entry", [
+    {"sessionId": "", "display": "synthetic", "timestamp": 1767355200000, "project": "/synthetic"},
+    {"sessionId": "synthetic", "display": 1, "timestamp": 1767355200000, "project": "/synthetic"},
+    {"sessionId": "synthetic", "display": "synthetic", "timestamp": 1.5, "project": "/synthetic"},
+    {"sessionId": "synthetic", "display": "synthetic", "timestamp": True, "project": "/synthetic"},
+    {"sessionId": "synthetic", "display": "synthetic", "timestamp": 1767355200000, "project": None},
+])
+def test_unusable_claude_history_does_not_establish_presence(native, entry):
+    native.codex.rmdir()
+    config = native.home / ".claude"
+    config.mkdir()
+    (config / "history.jsonl").write_text(json.dumps(entry) + "\n")
+    result = native.build()
+    assert result.returncode == 1
+    assert not native.runtime.exists()
+
+def test_claude_readable_empty_directory_is_present(native):
+    native.codex.rmdir()
+    (native.home / ".claude/projects").mkdir(parents=True)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"] == []
+    assert native.payload()["meta"]["sources"]["claude"]["status"] == "ok"
+
+def test_claude_diagnostics_keep_codex_unknown_types_separate(native):
+    source = native.claude_session()
+    with source.open("a") as stream:
+        stream.write("synthetic malformed line\n")
+        stream.write(json.dumps({"type": "synthetic-future-kind"}) + "\n")
+    history = native.home / ".claude/history.jsonl"
+    history.write_text(json.dumps({"sessionId": "synthetic-missing-fields"}) + "\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    diagnostics = native.payload()["diagnostics"]
+    assert diagnostics["malformed_lines"]["total"] == 2
+    assert {p["path"] for p in diagnostics["malformed_lines"]["files"]} == {str(source), str(history)}
+    assert diagnostics["claude_unknown_record_types"] == {"synthetic-future-kind": 1}
+    assert diagnostics["unknown_record_types"] == {}
+    assert "malformed_lines=2" in result.stderr
+    assert "claude_unknown_record_types=1" in result.stderr
+
+def test_claude_config_relative_literal_and_explicit_precedence(native):
+    config = native.root / "synthetic-literal-config"
+    native.claude_session(directory=config / "projects/synthetic-project")
+    native.env["CLAUDE_CONFIG_DIR"] = "synthetic-absent-env"
+    relative = os.path.relpath(config, Path(__file__).resolve().parents[1])
+    result = native.build("--claude-home", relative)
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+    native.env["CLAUDE_CONFIG_DIR"] = relative
+    assert native.build().returncode == 0
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+
+def test_claude_config_tilde_is_literal_and_empty_uses_defaults(native):
+    native.claude_session()
+    native.env["CLAUDE_CONFIG_DIR"] = "~/.claude"
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"] == []
+    assert native.payload()["meta"]["sources"]["claude"]["status"] == "absent"
+    native.env["CLAUDE_CONFIG_DIR"] = ""
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+def test_claude_disabled_only_source_creates_no_runtime(native):
+    native.codex.rmdir()
+    native.claude_session()
+    result = native.build("--no-claude")
+    assert result.returncode == 1
+    assert "--no-claude" in result.stderr
+    assert not native.runtime.exists()
+
+def test_claude_desktop_search_root_symlink_and_nested_symlink_skip(native):
+    container = native.root / "synthetic-desktop-container"
+    native.claude_session(directory=container / "a/.claude/projects/synthetic-project")
+    excluded = native.root / "synthetic-desktop-excluded"
+    native.claude_session("synthetic-excluded", directory=excluded / ".claude/projects/synthetic-project")
+    (container / "synthetic-nested-link").symlink_to(excluded, target_is_directory=True)
+    nested_config = container / "b"
+    nested_config.mkdir()
+    (nested_config / ".claude").symlink_to(excluded / ".claude", target_is_directory=True)
+    desktop = native.home / "Library/Application Support/Claude"
+    desktop.mkdir(parents=True)
+    (desktop / "claude-code-sessions").symlink_to(container, target_is_directory=True)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+
+def test_claude_unreadable_descendant_is_diagnostic(native):
+    native.claude_session()
+    blocked = native.home / ".claude/projects/synthetic-unreadable"
+    native.claude_session("synthetic-unreadable", directory=blocked)
+    blocked.chmod(0)
+    try:
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        assert [s["id"] for s in native.payload()["sessions"]] == ["synthetic-claude"]
+        assert {p["path"] for p in native.payload()["diagnostics"]["skipped_files"]} == {str(blocked)}
+    finally:
+        blocked.chmod(0o700)
 
 @pytest.mark.parametrize("archived", [False, True])
 def test_zstd_log_counts_like_plain_across_cold_warm_rebuild(native, archived):
@@ -90,7 +663,7 @@ def test_help_and_version_create_no_runtime(native):
     assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.1.0\n"
+    assert version.stdout == "colophon 0.2.0\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -133,11 +706,27 @@ def test_sandbox_source_write_denied():
     assert result >= 0, "sandbox policy evaluation failed"
     assert result != 0, "PROJECT_DIR write protection missing"
 
+def test_sandbox_claude_paths_denied():
+    check = ctypes.CDLL(None).sandbox_check
+    check.restype = ctypes.c_int
+    check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    home = Path(os.environ["COLOPHON_TEST_REAL_HOME"])
+    selected = os.environ.get("COLOPHON_TEST_POLICY_TARGET")
+    targets = [selected] if selected else [".claude", ".config/claude", "Library/Application Support/Claude", ".claude-swap-backup"]
+    for target in targets:
+        for operation in (b"file-read-data", b"file-write-create"):
+            for path in (home / target, home / target / "synthetic-nonexistent-child"):
+                result = check(os.getpid(), operation, 1, os.fsencode(path))
+                assert result >= 0, "sandbox policy evaluation failed"
+                assert result != 0, f"Claude source protection missing: {target} {operation!r}"
+
 @pytest.mark.parametrize("args,diagnostic", [
     (["--not-synthetic-option"], "unrecognized arguments"),
     (["--output"], "expected one argument"),
     (["--offline", "--refresh-prices"], "cannot be combined"),
     (["--re"], "ambiguous option"),
+    (["--no"], "--no-open, --no-claude"),
+    (["--claude"], "--claude-home, --claude-desktop-dir"),
 ])
 def test_invalid_options_exit_two(native, args, diagnostic):
     result = native.invoke(*args)
@@ -369,3 +958,90 @@ def test_ledger_mirror_earlier_near_owns_before_later_exact(native):
     assert result.returncode == 0, result.stderr
     own = native.payload()["sessions"][0]["own_usage"]
     assert (own["input"], own["cached_input"], own["output"]) == (100, 0, 10)
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_claude_history_aliases_survive_deletion_and_rebuild(native, rebuild):
+    source = native.claude_session()
+    records = [json.loads(line) for line in source.read_text().splitlines()]
+    records[-1]["requestId"] = "synthetic-history-request"
+    records[-1]["message"].update(id="synthetic-history-response", model="claude-opus-4-6", usage={"input_tokens": 7, "output_tokens": 3})
+    source.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records))
+    history = native.home / ".claude/history.jsonl"
+    history.write_text(json.dumps({"sessionId": "synthetic-foreign-id", "display": "Synthetic alias memory", "timestamp": 1767355199000, "project": "/synthetic/history"}) + "\n")
+    for phase in range(3):
+        result = native.build(*(["--rebuild"] if rebuild else []))
+        assert result.returncode == 0, result.stderr
+        payload = native.payload()
+        assert [s["id"] for s in payload["sessions"]] == ["synthetic-claude"]
+        assert not payload["sessions"][0]["history_only"]
+        assert payload["meta"]["sources"]["claude"]["history_only"] == 0
+        assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] == 1767355203000
+        if phase == 0:
+            source.unlink()
+            source.parent.rmdir()
+            source.parent.parent.rmdir()
+        else:
+            assert "transcript_deleted" in payload["sessions"][0]["flags"]
+
+
+def test_claude_history_alias_conflicts_exact_precedence_and_collision(native):
+    native.session()
+    native.claude_session("synthetic-a")
+    native.claude_session("synthetic-b")
+    native.claude_session(SESSION)
+    history = native.home / ".claude/history.jsonl"
+    entries = ["synthetic-foreign-id", "synthetic-a", SESSION, "synthetic-history"]
+    history.write_text("".join(json.dumps({"sessionId": sid, "display": "Synthetic remembered kite", "timestamp": 1767355199000, "project": "/synthetic/history"}) + "\n" for sid in entries))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert {s["id"] for s in payload["sessions"]} == {SESSION, "synthetic-a", "synthetic-b", "synthetic-history"}
+    assert payload["diagnostics"]["claude_history_alias_conflicts"] == {"synthetic-foreign-id": ["synthetic-a", "synthetic-b", SESSION]}
+    assert "claude_history_alias_conflicts=1" in result.stderr
+
+
+def test_claude_history_grouping_validation_disabled_and_token_boundary(native):
+    native.codex.rmdir()
+    config = native.home / ".claude"
+    config.mkdir()
+    history = config / "history.jsonl"
+    entries = [
+        {"sessionId": "synthetic-history", "display": "Synthetic second", "timestamp": 1767355200000, "project": "/synthetic/second"},
+        {"sessionId": "synthetic-history", "display": "Synthetic first", "timestamp": 1767268800000, "project": "/synthetic/first"},
+        {"sessionId": "synthetic-other", "display": "", "timestamp": 1767355200000.0, "project": ""},
+        {"sessionId": "synthetic-bad", "display": False, "timestamp": 1767355200000, "project": "/synthetic/bad"},
+        {"sessionId": "synthetic-bad", "display": "Synthetic invalid", "timestamp": 1767355200000.5, "project": "/synthetic/bad"},
+        {"sessionId": "", "display": "Synthetic invalid", "timestamp": 1767355200000, "project": "/synthetic/bad"},
+    ]
+    history.write_text("".join(json.dumps(e) + "\n" for e in entries) + "{\n")
+    before = history.read_bytes()
+    assert native.build("--no-claude").returncode == 1
+    assert not native.runtime.exists()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["diagnostics"]["malformed_lines"]["total"] == 4
+    rows = {s["id"]: s for s in payload["sessions"]}
+    assert set(rows) == {"synthetic-history", "synthetic-other"}
+    row = rows["synthetic-history"]
+    assert row["cwd"] == "/synthetic/first"
+    assert (row["start_ms"], row["end_ms"]) == (1767268800000, 1767355200000)
+    assert [t["requests"][0]["text"] for t in row["turns"]] == ["Synthetic first", "Synthetic second"]
+    assert all(t["status"] == "unknown" and t["duration_ms"] is None for t in row["turns"])
+    assert row["buckets"] == [] and row["own_usage"]["input"] == 0 and row["own_usage"]["output"] == 0
+    assert row["own_usage"]["cost_usd"] == 0
+    assert payload["meta"]["sources"]["claude"]["history_only"] == 2
+    assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] is None
+    assert history.read_bytes() == before
+
+def test_claude_history_collision_preserves_codex_filename_fallback(native):
+    rows = [r for r in native.session_rows() if r["type"] != "session_meta"]
+    native.write_session(rows, name=f"rollout-2026-01-02T12-00-00-{UUID}.jsonl")
+    config = native.home / ".claude"
+    config.mkdir()
+    (config / "history.jsonl").write_text(json.dumps({"sessionId": UUID, "display": "Synthetic collision memory", "timestamp": 1767355200000, "project": "/synthetic/history"}) + "\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert [(s["id"], s["provider"]) for s in payload["sessions"]] == [(UUID, "codex")]
+    assert payload["diagnostics"]["claude_session_id_collisions"] == [UUID]

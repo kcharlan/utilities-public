@@ -1,8 +1,22 @@
 # Standalone validation
 
-Run `make test` for all 187 C units, fresh synthetic CLI and integration
-checks, two Chromium browser cases, and local
-asset/stable-sort guards (ten asset digests).
+History acceptance covers exact canonical/unique-alias resolution, ambiguous
+owners and collision-skipped aliases across deletion/rebuild, Codex filename
+fallback collisions, malformed fields, chronological grouping and the actual
+token-data boundary. Browser cases cover the independent `h` toggle, tags,
+direct hashes, period/hour-grid prompt activity and history reader action gates.
+
+Claude cases cover filename identity/collisions, prompt and tool mapping,
+root selection and symlink exclusions, read-only usable-history presence,
+mixed/disabled providers, and preservation of unopened Codex cache bytes,
+modes and recovery names during ordinary and rebuild runs. The reader
+browser case prevents Claude rows from offering Codex actions. Wrappers
+strip `CLAUDE_CONFIG_DIR`, deny real Claude-owned config/desktop/swap reads
+and writes, and mutation-check each explicit deny under synthetic scratch.
+
+Run `make test` for all retained C units, fresh synthetic CLI and integration
+checks, Chromium browser cases, and local
+asset/stable-sort guards (twelve asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.
 These checks are independent acceptance checks, not captured-corpus parity or
@@ -53,3 +67,12 @@ invented loopback endpoint. Browser cases open native-generated `file://` HTML,
 block external requests and native action links, and fail on browser errors.
 `browser_errors.py` preserves the bounded synchronous guard implementation from
 the repository's `tools/testkit.py` without importing shared launcher helpers.
+
+Claude store checks in `test_claude_store.py` and the retained C codec/store
+units cover cold/warm/rebuild accounting, strict deletion proof, removed search
+roots and descendants, partial traversal, root-wide commit rechecks, failed page
+output, interrupted partial commits, empty/malformed live files, restoration,
+retained/live response deduplication, last-known sidecars, extraction price
+snapshots and source byte/mode preservation. Immutable synthetic CLCD1 decoder
+inputs in `fixtures/claude_codec/` are copied to scratch before decoding. They
+are the narrow exception to the runtime-fixtures-in-scratch rule.

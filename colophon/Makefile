@@ -5,7 +5,7 @@ SQLITE_PREFIX ?= /opt/homebrew/opt/sqlite
 OPTFLAGS ?= -O2
 override CFLAGS += -std=c17 $(OPTFLAGS) -g -Wall -Wextra -Wpedantic -Werror -fno-fast-math -ffp-contract=off
 override CPPFLAGS += -Isrc -Ivendor/yyjson -Ivendor/zstd -I$(SQLITE_PREFIX)/include
-override LDLIBS += -lpthread -lcurl -framework CoreFoundation -L$(SQLITE_PREFIX)/lib -lsqlite3
+override LDLIBS += -lpthread -lcurl -framework CoreFoundation -framework Foundation -lobjc -L$(SQLITE_PREFIX)/lib -lsqlite3
 
 ZSTD_SOURCES := vendor/zstd/common/debug.c vendor/zstd/common/entropy_common.c \
                 vendor/zstd/common/error_private.c vendor/zstd/common/fse_decompress.c \
@@ -19,6 +19,7 @@ RELEASE_OBJECTS := $(patsubst %.c,$(BUILD)/release/%.o,$(SOURCES))
 UNIT_OBJECTS := $(patsubst %.c,$(BUILD)/unit/%.o,$(UNIT_SOURCES))
 ASSET_INPUTS := assets/page_template.html assets/font.css assets/page.css assets/page.js \
                 assets/OFL.txt assets/curated_bundled.json assets/curated_price_history.json \
+                assets/curated_bundled_claude.json assets/ccusage_fast_multiplier_overrides.json \
                 assets/pricing_numeric_ranges.txt assets/pricing_extend_ranges.txt \
                 assets/pricing_prepend_ranges.txt assets/MANIFEST
 REAL_HOME := $(HOME)
@@ -51,7 +52,7 @@ $(BUILD)/release/vendor/zstd/%.o $(BUILD)/unit/vendor/zstd/%.o: override CPPFLAG
 test-unit: $(BUILD)/unit-tests
 	@tests/run-unit.sh "$(REAL_HOME)" "$(CURDIR)/$(BUILD)/unit-tests"
 test-cli: all
-	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_cli.py $(PYTEST_ARGS)
+	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_cli.py tests/test_claude_store.py $(PYTEST_ARGS)
 test-browser: all
 	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_browser.py $(PYTEST_ARGS)
 test: check-sort check-assets test-unit test-cli test-browser

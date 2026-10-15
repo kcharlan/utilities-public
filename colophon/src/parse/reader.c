@@ -91,7 +91,7 @@ static Err consume_line(Str bytes, bool terminated, const ReaderCallbacks *callb
     yyjson_val *record = yyjson_doc_get_root(decoded.json.doc);
     err = record_type_key(record, &key);
     if (err.code) goto done;
-    if (!record_type_known(key)) {
+    if (!(callbacks && callbacks->known_type ? callbacks->known_type(key) : record_type_known(key))) {
         uint64_t *count = omap_get(&out->unknown_types, key);
         if (!count) {
             count = calloc(1, sizeof *count);

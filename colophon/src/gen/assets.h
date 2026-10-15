@@ -11,6 +11,8 @@ CP_DECLARE_ASSET(page_css);
 CP_DECLARE_ASSET(page_js);
 CP_DECLARE_ASSET(ofl);
 CP_DECLARE_ASSET(curated_bundled);
+CP_DECLARE_ASSET(curated_bundled_claude);
+CP_DECLARE_ASSET(ccusage_fast_multiplier_overrides);
 CP_DECLARE_ASSET(curated_price_history);
 #undef CP_DECLARE_ASSET
 #define CP_DECLARE_RANGES(name) \

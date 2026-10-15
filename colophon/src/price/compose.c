@@ -329,29 +329,32 @@ static int priced_order(const void *a,const void *b,void *unused) {
   (void)unused;const PricedBy *x=a,*y=b;int c=str_compare(x->period.model,y->period.model);
   if(c)return c;
   if(x->period.index!=y->period.index)return x->period.index<y->period.index?-1:1;
+  if(x->fast!=y->fast)return x->fast?-1:1;
   return x->priority==y->priority?0:x->priority?-1:1;
 }
 static void reset_cost(UsageSummary *s,bool available) {
   s->has_cost=available;s->cost_usd=0.0;s->unpriced_tokens=0;s->priced_count=0;
 }
-static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool priority) {
+static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool priority,bool fast) {
   if(!period.present)return ERR_SUCCESS;
-  PricedBy value={period,priority};
+  PricedBy value={period,priority,fast};
   for(size_t i=0;i<s->priced_count;i++)if(!priced_order(&s->priced_by[i],&value,NULL))return ERR_SUCCESS;
   return record_append(arena,(void **)&s->priced_by,&s->priced_count,&s->priced_capacity,sizeof value,&value);
 }
 static Err sum_cost(Arena *arena,UsageSummary *s,const UsageUnit *unit,bool available) {
   if(unit->has_cost)s->cost_usd+=unit->cost_usd;
   else {s->has_cost=false;if(available)s->unpriced_tokens+=unit->input+unit->output;}
-  TRY(add_period(arena,s,unit->period,false));return add_period(arena,s,unit->priority_period,true);
+  TRY(add_period(arena,s,unit->period,false,false));TRY(add_period(arena,s,unit->priority_period,true,false));return add_period(arena,s,unit->fast_period,false,true);
 }
 static Err finish_cost(UsageSummary *s,const char *site) {
   if(s->unpriced_tokens<INT64_MIN||s->unpriced_tokens>INT64_MAX)event_note("int128_payload_sum",site,1);
   return stable_sort(s->priced_by,s->priced_count,sizeof *s->priced_by,priced_order,NULL);
 }
 Err compose_refresh_costs(Corpus *corpus,bool available) {
+  bool codex_available=available;
   for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
     SessionModel *s=entry->value;Omap turns={0},buckets={0};Err error=ERR_SUCCESS;
+    available=s->provider==PROVIDER_CLAUDE?true:codex_available;
     reset_cost(s->own_usage,available);reset_cost(s->outside_usage,available);
     for(size_t i=0;i<s->turn_count;i++){reset_cost(s->turns[i].usage,available);error=omap_put(&turns,s->turns[i].id,s->turns[i].usage);if(error.code)goto done;}
     for(size_t i=0;i<s->bucket_count;i++) {
@@ -555,6 +558,9 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
     Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
+    if (s->provider == PROVIDER_CLAUDE) {
+      continue;
+    }
     FileMirrors *files = NULL;
     Omap *thread_priority = NULL;
     error = alloc(&c->usage_arena, s->record_count, sizeof *files, _Alignof(FileMirrors), (void **)&files);
@@ -833,7 +839,7 @@ void compose_summary_json(JsonWriter *w, const UsageSummary *value) {
   jsonw_i128(w, s->reasoning);
   jsonw_raw(w,",\"cost_usd\":");if(s->has_cost)jsonw_double(w,s->cost_usd);else jsonw_raw(w,"null");
   jsonw_raw(w,",\"unpriced_tokens\":");jsonw_i128(w,s->unpriced_tokens);jsonw_raw(w,",\"priced_by\":[");
-  for(size_t i=0;i<s->priced_count;i++){const PricedBy *p=&s->priced_by[i];if(i)jsonw_raw(w,",");jsonw_raw(w,"[");jsonw_string(w,p->period.model);jsonw_raw(w,",");jsonw_i128(w,p->period.index);jsonw_raw(w,",");jsonw_string(w,p->priority?STR_LIT("priority"):STR_LIT("rates"));jsonw_raw(w,"]");}
+  for(size_t i=0;i<s->priced_count;i++){const PricedBy *p=&s->priced_by[i];if(i)jsonw_raw(w,",");jsonw_raw(w,"[");jsonw_string(w,p->period.model);jsonw_raw(w,",");jsonw_i128(w,p->period.index);jsonw_raw(w,",");jsonw_string(w,p->fast?STR_LIT("fast"):p->priority?STR_LIT("priority"):STR_LIT("rates"));jsonw_raw(w,"]");}
   jsonw_raw(w,"]}");
 }
 void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
@@ -850,7 +856,7 @@ void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
     jsonw_raw(w, ",");
     jsonw_string(w, b->model);
     jsonw_raw(w, ",");
-    jsonw_string(w, b->priority ? STR_LIT("priority") : STR_LIT("standard"));
+    jsonw_string(w, b->priority ? (s->provider==PROVIDER_CLAUDE?STR_LIT("fast"):STR_LIT("priority")) : STR_LIT("standard"));
     jsonw_raw(w, ",");
     jsonw_i128(w, b->usage.input);
     jsonw_raw(w, ",");
@@ -861,7 +867,8 @@ void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
     jsonw_i128(w, b->usage.output);
     jsonw_raw(w, ",");
     jsonw_i128(w, b->usage.reasoning);
-    jsonw_raw(w, ",");if(b->usage.has_cost)jsonw_double(w,b->usage.cost_usd);else jsonw_raw(w,"null");jsonw_raw(w,"]");
+    jsonw_raw(w, ",");if(b->usage.has_cost)jsonw_double(w,b->usage.cost_usd);else jsonw_raw(w,"null");
+    jsonw_raw(w,",");jsonw_string(w,s->provider==PROVIDER_CLAUDE?STR_LIT("claude"):STR_LIT("codex"));jsonw_raw(w,"]");
   }
   jsonw_raw(w, "]");
 }

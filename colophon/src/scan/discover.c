@@ -119,7 +119,7 @@ static bool resource_flag(const char *path, CFStringRef key) {
 }
 #endif
 
-static bool hidden(const char *path) {
+bool discovery_hidden(const char *path) {
     if (*basename_of(path) == '.') return true;
 #ifdef __APPLE__
     return resource_flag(path, kCFURLIsHiddenKey);
@@ -128,13 +128,16 @@ static bool hidden(const char *path) {
 #endif
 }
 
-static bool package(const char *path) {
+bool discovery_package(const char *path) {
 #ifdef __APPLE__
     return resource_flag(path, kCFURLIsPackageKey);
 #else
     (void)path; return false;
 #endif
 }
+
+#define hidden discovery_hidden
+#define package discovery_package
 
 static bool directory(const char *path) {
     struct stat st;

@@ -4,6 +4,7 @@
 #include "scan/scan.h"
 #include "corpus/assemble.h"
 #include "price/pricing.h"
+#include "claude/scan.h"
 /* Borrowed typed product owners; each remains live through rendering. */
 typedef struct {
     int64_t snapshot_ms;
@@ -19,6 +20,8 @@ typedef struct {
     const PricingReport *pricing;
     const CatalogResult *catalog;
     const RuntimeLedger *ledger;
+    bool codex_present;
+    const ClaudeScan *claude;
 } PayloadInputs;
 void payload_empty(JsonWriter *w,const PayloadInputs *inputs);
 #endif

@@ -60,4 +60,6 @@ MaybeMs record_event_time(yyjson_val *root, yyjson_val *payload, Str *source);
 /* Arena vector append; old storage remains owned by arena until destroy. */
 Err record_append(Arena *arena, void **data, size_t *count, size_t *capacity, size_t element_size,
                   const void *value);
+Err record_append_aligned(Arena *arena, void **data, size_t *count, size_t *capacity,
+                          size_t element_size, size_t alignment, const void *value);
 #endif

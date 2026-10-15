@@ -50,6 +50,10 @@ static Err picked(PricingReport *report,const PriceHistory *history,Str model,in
     }
     return ERR_SUCCESS;
 }
+Err pricing_note_unpriced(PricingReport *report,Str key,__int128 tokens) {
+    PricingPeriods *unused;Err e=periods_for(report,key,&unused);if(e.code)return e;
+    return count_add(report,&report->unpriced,key,tokens);
+}
 static Err catalog_match(ModelsDevIndex *index,Str raw,CatalogLookup *out) {
     *out=(CatalogLookup){0};if(!index)return ERR_SUCCESS;
     Arena scratch={0};PricingTargets targets;Err e=codex_models_dev_pricing_targets(&scratch,raw,&targets);
@@ -64,6 +68,12 @@ static Err override_key(PricingReport *report,ModelsDevIndex *index,Str raw,Str 
 }
 static bool priority_equal(PricePriority a,PricePriority b) {
     return a.present==b.present&&(!a.present||(a.capped==b.capped&&(!a.capped||a.cap==b.cap)&&pynum_equal(a.multiplier,b.multiplier)));
+}
+Err pricing_claude_period(PricingReport *report,Str key,const PriceEntry *rates,double fast_multiplier,PricePeriod *out) {
+    PricingPeriods *group;Err e=periods_for(report,key,&group);if(e.code)return e;
+    size_t position=0;for(;position<group->count;position++){PricingPeriod *p=group->items[position];if(p->claude&&price_entry_equal(&p->rates,rates)&&p->fast_multiplier==fast_multiplier)break;}
+    if(position==group->count){PricingPeriod *p;e=allocate(report,sizeof *p,_Alignof(PricingPeriod),(void **)&p);if(e.code)return e;p->claude=true;p->rates=*rates;p->fast_multiplier=fast_multiplier;e=append_period(group,p);if(e.code)return e;}
+    *out=(PricePeriod){true,group->key,position};return ERR_SUCCESS;
 }
 static Err rates_at(PricingReport *report,const PriceHistory *history,ModelsDevIndex *index,Str key,Str source,
                     int64_t at,bool current,PricePriority priority,const PriceEntry **out,PricePeriod *reference) {
@@ -140,7 +150,7 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
 Err price_units(Corpus *corpus,const PriceHistory *history,ModelsDevIndex *index,bool available,PricingReport *report) {
     Err e=pricing_report_init(history,report);if(e.code)return e;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
-        SessionModel *session=entry->value;e=price_usage_units(session->units,session->unit_count,history,index,available,report);if(e.code)return e;
+        SessionModel *session=entry->value;if(session->provider!=PROVIDER_CODEX)continue;e=price_usage_units(session->units,session->unit_count,history,index,available,report);if(e.code)return e;
     }
     pricing_report_note_sums(report);return ERR_SUCCESS;
 }
@@ -167,6 +177,7 @@ static void period_json(JsonWriter *w,const PricingPeriod *period) {
         jsonw_raw(w,",");price_entry_fields_json(w,&period->rates);
     }
     jsonw_raw(w,",\"priority\":");if(period->history&&period->history->has_priority)jsonw_value(w,get(period->history->value,"priority"));else policy_json(w,period->priority);
+    if(period->claude){jsonw_raw(w,",\"cache_write_1h_multiplier\":2,\"fast\":{\"multiplier\":");jsonw_double(w,period->fast_multiplier);jsonw_raw(w,"}");}
     jsonw_raw(w,"}");
 }
 static void count_map_json(JsonWriter *w,const Omap *map,bool clock) {
@@ -203,6 +214,7 @@ void pricing_report_json(JsonWriter *w,const PricingReport *report) {
     jsonw_raw(w,"],\"untimed\":");count_map_json(w,&report->untimed,false);jsonw_raw(w,"}");
 }
 void pricing_report_destroy(PricingReport *report) {
+    omap_destroy(&report->claude_resolutions);yyjson_doc_free(report->claude_seed);
     for(OmapEntry *entry=report->periods.first;entry;entry=entry->next){PricingPeriods *group=entry->value;free(group->items);}
     omap_destroy(&report->periods);omap_destroy(&report->unpriced);omap_destroy(&report->history_begins);omap_destroy(&report->priority_without_multiplier);omap_destroy(&report->unrecorded);omap_destroy(&report->untimed);arena_destroy(&report->arena);*report=(PricingReport){0};
 }
