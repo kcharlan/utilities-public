@@ -146,36 +146,46 @@ static Err dropped(ClaudeRecord *r, const char *reason) {
   (*n)++;
   return ERR_SUCCESS;
 }
+/* Swift decoded-string contains/hasPrefix compare canonical-equivalent whole
+ * graphemes. Raw JSON prefilters deliberately retain their byte predicates. */
+static bool decoded_match(Str s, CFStringRef needle, bool prefix) {
+  CFStringRef string = CFStringCreateWithBytes(NULL, (const UInt8 *)s.p, s.n,
+                                               kCFStringEncodingUTF8, false);
+  if (!string)
+    return false;
+  bool found = false;
+  CFIndex at = 0, length = CFStringGetLength(string);
+  CFRange match;
+  while (at < length &&
+         CFStringFindWithOptions(string, needle, CFRangeMake(at, length - at),
+                                 kCFCompareNonliteral, &match)) {
+    if (prefix && match.location != 0)
+      break;
+    CFRange first = CFStringGetRangeOfComposedCharactersAtIndex(string,
+                                                                match.location),
+            last = CFStringGetRangeOfComposedCharactersAtIndex(
+                string, match.location + match.length - 1);
+    if (first.location == match.location &&
+        last.location + last.length == match.location + match.length) {
+      found = true;
+      break;
+    }
+    at = match.location + match.length;
+  }
+  CFRelease(string);
+  return found;
+}
+static bool decoded_contains(Str s, CFStringRef needle) {
+  return decoded_match(s, needle, false);
+}
+static bool decoded_prefix(Str s, CFStringRef needle) {
+  return decoded_match(s, needle, true);
+}
 static Err marker(Arena *a, Str s, bool gcp, bool *out) {
   Str lower;
   TRY(str_lower(a, s, &lower));
-  *out = false;
-  CFStringRef string = CFStringCreateWithBytes(
-      NULL, (const UInt8 *)lower.p, lower.n, kCFStringEncodingUTF8, false);
-  if (!string)
-    return ERR_SUCCESS;
-  CFStringRef needles[] = {CFSTR("vertex"), CFSTR("gcp")};
-  for (size_t i = 0; i < (gcp ? 2u : 1u); i++) {
-    CFIndex at = 0, length = CFStringGetLength(string);
-    CFRange match;
-    while (at < length && CFStringFindWithOptions(
-                              string, needles[i], CFRangeMake(at, length - at),
-                              kCFCompareNonliteral, &match)) {
-      CFRange first = CFStringGetRangeOfComposedCharactersAtIndex(
-                  string, match.location),
-              last = CFStringGetRangeOfComposedCharactersAtIndex(
-                  string, match.location + match.length - 1);
-      if (first.location == match.location &&
-          last.location + last.length == match.location + match.length) {
-        *out = true;
-        break;
-      }
-      at = match.location + match.length;
-    }
-    if (*out)
-      break;
-  }
-  CFRelease(string);
+  *out = decoded_contains(lower, CFSTR("vertex")) ||
+         (gcp && decoded_contains(lower, CFSTR("gcp")));
   return ERR_SUCCESS;
 }
 static Err timestamp(Str s, MaybeMs *out) {
@@ -293,13 +303,13 @@ static Err keep_row(ClaudeRecord *r, yyjson_val *v, yyjson_val *usage,
     session = text(get(get(v, "metadata"), "sessionId"));
   if (!session.p)
     session = text(get(get(m, "metadata"), "sessionId"));
-  ClaudeUsageRow row = {.incomplete =
-                            !advisor && yyjson_is_null(get(m, "stop_reason")) &&
-                            input > 0 && output == 0 &&
-                            !get(usage, "cache_read_input_tokens") &&
-                            !get(usage, "cache_creation_input_tokens"),
-                        .sidechain = boolean(get(v, "isSidechain")),
-                        .subagent = contains(r->key.path, "/subagents/")};
+  ClaudeUsageRow row = {
+      .incomplete = !advisor && yyjson_is_null(get(m, "stop_reason")) &&
+                    input > 0 && output == 0 &&
+                    !get(usage, "cache_read_input_tokens") &&
+                    !get(usage, "cache_creation_input_tokens"),
+      .sidechain = boolean(get(v, "isSidechain")),
+      .subagent = decoded_contains(r->key.path, CFSTR("/subagents/"))};
   Str originals[] = {model, message_id, text(get(v, "requestId")), session,
                      turn};
   Str *dest[] = {&row.unit.model_raw, &row.message_id, &row.request_id,
@@ -402,10 +412,10 @@ static Err decoded(void *context, const ReaderRawLine *raw,
   if (!str_equal(text(get(v, "type")), STR_LIT("assistant")))
     return dropped(r, "type");
   Str model = text(get(m, "model"));
-  bool vertex =
-      contains(text(get(m, "id")), "_vrtx_") ||
-      contains(text(get(v, "requestId")), "_vrtx_") ||
-      (model.n >= 7 && !memcmp(model.p, "claude-", 7) && contains(model, "@"));
+  bool vertex = decoded_contains(text(get(m, "id")), CFSTR("_vrtx_")) ||
+                decoded_contains(text(get(v, "requestId")), CFSTR("_vrtx_")) ||
+                (decoded_prefix(model, CFSTR("claude-")) &&
+                 decoded_contains(model, CFSTR("@")));
   bool scan_metadata = contains_case(raw->bytes, "vertex") ||
                        contains_case(raw->bytes, "gcp") ||
                        contains_case(raw->bytes, "\\u004") ||

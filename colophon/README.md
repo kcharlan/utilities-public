@@ -3,8 +3,8 @@
 A macOS C17 application that compiles local Codex `.jsonl` and compressed
 `.jsonl.zst` sessions, token usage and dated API-equivalent cost estimates
 into a private, self-contained offline HTML page. Claude Code `.jsonl`
-transcripts also supply requests, turns, tools and workspaces; Claude usage
-and pricing are not yet included. The canonical source
+transcripts also supply requests, turns, tools, workspaces and token usage;
+independent Claude pricing is not yet included. The canonical source
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 

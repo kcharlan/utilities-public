@@ -1,5 +1,10 @@
 # Lessons learned
 
+- Apply Swift's complete-grapheme matching to every decoded accounting marker,
+  including IDs, model prefixes and original path roles. Restrict byte search
+  to the pinned raw-line prefilters; a trailing combining mark can otherwise
+  wrongly filter a response or change its winning owner.
+
 - Claude advisor entries must survive a zero-token parent: the parent follows
   CodexBar's rejection while advisor construction follows ccusage's separate
   structural rules. Deduplicate constructed advisor IDs before aggregation.

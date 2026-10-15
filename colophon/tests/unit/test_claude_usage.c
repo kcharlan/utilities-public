@@ -428,6 +428,54 @@ TEST(claude_usage_vertex_metadata_dictionary_array_and_identifier_branches) {
   ASSERT_TRUE(omap_get(&r.rows_dropped, STR_LIT("type")));
   claude_record_destroy(&r);
 }
+TEST(claude_usage_primary_vertex_checks_respect_swift_grapheme_boundaries) {
+  const char *message_fields[] = {
+      "\"id\":\"msg_vrtx_\\u0301synthetic\",\"model\":\"synthetic-model\"",
+      "\"id\":\"synthetic-message\",\"model\":\"claude-\\u0301synthetic@1\"",
+      ("\"id\":\"synthetic-message\",\"model\":\"claude-synthetic@"
+       "\\u0301version\"")};
+  for (size_t i = 0; i < sizeof message_fields / sizeof *message_fields; i++) {
+    char bytes[768];
+    snprintf(bytes, sizeof bytes,
+             "{\"type\":\"assistant\",\"timestamp\":\"2001-01-01T00:00:00Z\","
+             "\"message\":{%s,\"usage\":{\"input_tokens\":3}}}",
+             message_fields[i]);
+    ClaudeRecord r = {0};
+    line(&r, bytes);
+    ASSERT_EQ(1, r.usage_count);
+    ASSERT_EQ(3, r.usage_rows[0].unit.input);
+    claude_record_destroy(&r);
+  }
+  ClaudeRecord r = {0};
+  line(&r, ROW_PREFIX "\"usage\":{\"input_tokens\":5}},\"requestId\":\"req_"
+                      "vrtx_\\u0301synthetic\"}");
+  ASSERT_EQ(1, r.usage_count);
+  claude_record_destroy(&r);
+}
+TEST(claude_usage_path_role_uses_complete_graphemes_for_winning_owner) {
+  ClaudeRecord records[2] = {
+      {.id = STR_LIT("synthetic-first-owner"),
+       .key = {.path = STR_LIT("/synthetic/subagents/\xcc\x81"
+                               "agent.jsonl")}},
+      {.id = STR_LIT("synthetic-second-owner"),
+       .key = {.path = STR_LIT("/synthetic/z.jsonl")}}};
+  line(&records[0], ROW_PREFIX "\"usage\":{\"input_tokens\":3}}}");
+  line(&records[1], ROW_PREFIX "\"usage\":{\"input_tokens\":7}}}");
+  Corpus c = {0};
+  ClaudeScan scan;
+  composed(records, 2, &scan, &c);
+  SessionModel *first = omap_get(&c.sessions, records[0].id),
+               *second = omap_get(&c.sessions, records[1].id);
+  ASSERT_EQ(1, first->unit_count);
+  ASSERT_EQ(3, first->own_usage->input);
+  ASSERT_EQ(0, second->unit_count);
+  ASSERT_FALSE(records[0].usage_rows[0].subagent);
+  ASSERT_EQ(1, scan.duplicate_keys);
+  ASSERT_EQ(1, scan.duplicate_rows);
+  corpus_destroy(&c);
+  for (size_t i = 0; i < 2; i++)
+    claude_record_destroy(&records[i]);
+}
 TEST(claude_usage_advisor_typed_envelope_and_nested_cache_creation) {
   ClaudeRecord r = {0};
   line(&r, ROW_PREFIX
