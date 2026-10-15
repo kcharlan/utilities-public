@@ -1,5 +1,11 @@
 # Lessons learned
 
+- History collision checks must index Codex public session IDs as well as map
+  keys: a filename-fallback row can have a different internal key. Preserve
+  primary aliases from collision-skipped transcripts and resolve exact canonical
+  IDs before ambiguous aliases. Group history by exact ID and stable timestamp
+  order so prompt activity has no invented duration or usage.
+
 - Browser screenshots belong under each test's scratch root. Fixed session
   evidence paths escape wrapper cleanup and let repeat/concurrent runs overwrite
   reviewed artifacts; assert destination isolation before the screenshot writes.

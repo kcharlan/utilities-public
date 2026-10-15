@@ -1,5 +1,11 @@
 # Standalone validation
 
+History acceptance covers exact canonical/unique-alias resolution, ambiguous
+owners and collision-skipped aliases across deletion/rebuild, Codex filename
+fallback collisions, malformed fields, chronological grouping and the actual
+token-data boundary. Browser cases cover the independent `h` toggle, tags,
+direct hashes, period/hour-grid prompt activity and history reader action gates.
+
 Claude cases cover filename identity/collisions, prompt and tool mapping,
 root selection and symlink exclusions, read-only usable-history presence,
 mixed/disabled providers, and preservation of unopened Codex cache bytes,

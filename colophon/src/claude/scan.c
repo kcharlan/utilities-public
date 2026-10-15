@@ -95,9 +95,17 @@ static Err history_line(void *context, const ReaderRawLine *line,
            ? time_ms_from_i64(n.i, true, "claude.history", &ms)
            : time_truncate_ms(n.f, "claude.history", &ms) && n.f == (double)ms);
   if (nonempty(get(v, "sessionId")) && yyjson_is_str(get(v, "display")) &&
-      yyjson_is_str(get(v, "project")) && timestamp)
-    s->history_usable++;
-  else
+      yyjson_is_str(get(v, "project")) && timestamp) {
+    ClaudeHistory h={.at_ms=ms};
+    Str *fields[]={&h.id,&h.display,&h.project};
+    const char *names[]={"sessionId","display","project"};
+    for(size_t i=0;i<3;i++) {
+      yyjson_val *value=get(v,names[i]);
+      TRY(str_copy(&s->arena,(Str){yyjson_get_str(value),(uint32_t)yyjson_get_len(value)},fields[i]));
+    }
+    TRY(record_append(&s->arena,(void **)&s->history,&s->history_usable,
+                      &s->history_capacity,sizeof h,&h));
+  } else
     s->history_malformed++;
   return ERR_SUCCESS;
 }
@@ -395,6 +403,7 @@ Err claude_scan_aliases(ClaudeScan *s) {
   Err e=ERR_SUCCESS;
     for (size_t i = 0; i < s->count; i++) {
       ClaudeRecord *record = &s->records[i];
+      if(record->parent_session.p)continue;
       for (size_t j = 0; j < record->aliases.count; j++) {
         Str alias = record->aliases.items[j];
         CorpusStrings *owners = omap_get(&s->history_aliases, alias);
@@ -425,6 +434,7 @@ void claude_scan_destroy(ClaudeScan *s) {
     claude_record_destroy(&s->records[i]);
   free(s->records);
   omap_destroy(&s->history_aliases);
+  omap_destroy(&s->history_conflicts);
   arena_destroy(&s->arena);
   *s = (ClaudeScan){0};
 }

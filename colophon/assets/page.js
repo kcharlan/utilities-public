@@ -94,12 +94,13 @@
   }
   const time = {localDayKey, localDayStart, addLocalDays, mondayIndex, localHour, splitByLocalDay, periodWindow, previousWindow};
   // --- state
-  const stateKeys = ["v", "p", "from", "to", "a", "src", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
+  const stateKeys = ["v", "p", "from", "to", "a", "h", "src", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
   function normalizeState(raw) {
     const next = {
       v: ["overview", "list", "session"].includes(raw.v) ? raw.v : "overview",
       p: periods.includes(raw.p) ? raw.p : "90d",
       a: raw.a === "0" ? "0" : "1",
+      h: raw.h === "0" ? "0" : "1",
       src: ["codex", "claude", "all"].includes(raw.src) ? raw.src : "all",
       sort: ["newest", "longest", "subtime", "tokens", "cost"].includes(raw.sort) ? raw.sort : "newest"
     };
@@ -152,7 +153,7 @@
     return text.some(value => value.toLowerCase().includes(query));
   }
   function searchMatch(row, state, byId, seen = new Set()) {
-    if (seen.has(row.id) || !providerMatch(row, state) || (state.a === "0" && row.archived)) return false;
+    if (seen.has(row.id) || !providerMatch(row, state) || (state.a === "0" && row.archived) || (state.h === "0" && row.history_only)) return false;
     seen.add(row.id);
     const query = (state.q || "").toLowerCase();
     return ownSearch(row, query) || row.children.some(id => byId[id] && searchMatch(byId[id], state, byId, seen));
@@ -166,7 +167,7 @@
       const id = pending[n], child = byId[id];
       if (seen.has(id) || !child) continue;
       seen.add(id);
-      if (!providerMatch(child, state) || (state.a === "0" && child.archived)) continue;
+      if (!providerMatch(child, state) || (state.a === "0" && child.archived) || (state.h === "0" && child.history_only)) continue;
       rows.push(child);
       pending.push(...child.children);
     }
@@ -176,7 +177,7 @@
     return row.buckets.filter(bucket => typeof bucket[0] === "number" && inWindow(bucket[0] * 900000, window));
   }
   function ownMatch(row, state, window) {
-    if (!window || !providerMatch(row, state) || (state.a === "0" && row.archived)) return false;
+    if (!window || !providerMatch(row, state) || (state.a === "0" && row.archived) || (state.h === "0" && row.history_only)) return false;
     const buckets = windowBuckets(row, window);
     const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms && row.start_ms < window.to && row.end_ms >= window.from;
     if (!span && !buckets.length) return false;
@@ -190,7 +191,7 @@
   }
   function matchSession(session, state, byId) {
     const matchedSubagents = new Set();
-    if (!providerMatch(session, state) || (state.a === "0" && session.archived)) return {match: false, matchedSubagents};
+    if (!providerMatch(session, state) || (state.a === "0" && session.archived) || (state.h === "0" && session.history_only)) return {match: false, matchedSubagents};
     const window = state._window || periodWindow(state.p || "90d", data.meta.generated_at_ms, state);
     for (const child of descendants(session, byId, state)) if (ownMatch(child, state, window)) matchedSubagents.add(child.id);
     return {match: ownMatch(session, state, window) || matchedSubagents.size > 0, matchedSubagents};
@@ -418,6 +419,7 @@
     controls.to = el("input", {type: "date", "aria-label": "To date", onchange: () => act({to: controls.to.value})});
     controls.custom = el("div", {class: "custom-dates"}, el("label", {text: "from "}, controls.from), el("label", {text: "to "}, controls.to));
     controls.archive = el("button", {type: "button", onclick: () => act({a: currentState.a === "1" ? "0" : "1"})});
+    controls.history = el("button", {type: "button", onclick: () => act({h: currentState.h === "1" ? "0" : "1"})});
     controls.breadcrumb = el("nav", {class: "breadcrumb", "aria-label": "Breadcrumb"});
     controls.chips = el("div", {class: "filter-chips"});
     const catalog = data.meta.catalog;
@@ -425,7 +427,7 @@
     document.getElementById("colophon-topbar").replaceChildren(
       el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
       el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? Object.values(data.meta.sources).reduce((sum, source) => sum + source.logs, 0) : data.meta.counts.logs) + " logs · " + priceText}),
-      el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive), controls.chips);
+      el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive, controls.history), controls.chips);
   }
   function renderTopbar() {
     document.documentElement.dataset.source = currentState.src;
@@ -437,6 +439,8 @@
     controls.to.value = currentState.to || "";
     controls.archive.textContent = "archived: " + (currentState.a === "1" ? "shown" : "hidden");
     controls.archive.setAttribute("aria-pressed", String(currentState.a === "1"));
+    controls.history.textContent = "history only: " + (currentState.h === "1" ? "shown" : "hidden");
+    controls.history.setAttribute("aria-pressed", String(currentState.h === "1"));
     controls.breadcrumb.replaceChildren(el("button", {type: "button", text: "overview", onclick: () => act({v: "overview", s: undefined})}),
       el("span", {text: "/"}), el("button", {type: "button", text: "sessions", onclick: () => act({v: "list", s: undefined})}));
     if (currentState.v === "session") controls.breadcrumb.append(el("span", {text: "/ session"}));
@@ -658,7 +662,7 @@
       list.append(el("div", {class: "recent-row", "data-session-id": row.id, "data-provider": providerOf(row),
         onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
         el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
-        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
+        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : "") + (row.history_only ? " · HISTORY ONLY" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
         el("span", {class: "recent-workspace", text: workspaceName(row.workspace), title: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents", title: durationText(own) + " · " + agents + " subagents"})));
     }
     result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
@@ -676,7 +680,7 @@
   const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
   const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
   function flagsLine(row) {
-    return el("div", {class: "row-flags"}, ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
+    return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
       ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
   }
   function listFigures(row) {
@@ -971,7 +975,7 @@
       fitCalendar();
     } else {
       const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
-      const visible = selected && providerMatch(selected, currentState) && !(currentState.a === "0" && selected.archived);
+      const visible = selected && providerMatch(selected, currentState) && !(currentState.a === "0" && selected.archived) && !(currentState.h === "0" && selected.history_only);
       app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}),
         el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderReader(selected)] : [])));
       fitReader();

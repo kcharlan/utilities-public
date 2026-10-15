@@ -54,6 +54,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
     diagnostic("skipped_files",corpus->skipped_file_count+in->scan->unreadable_count+(in->claude?in->claude->skipped_count:0),&first);
     diagnostic("malformed_lines",malformed,&first);diagnostic("truncated_lines",truncated,&first);diagnostic("recovered_lines",recovered,&first);
     diagnostic("claude_unknown_record_types",claude_unknown,&first);diagnostic("claude_session_id_collisions",in->claude?in->claude->collisions.count:0,&first);
+    diagnostic("claude_history_alias_conflicts",in->claude?in->claude->history_conflicts.size:0,&first);
     diagnostic("claude_duplicate_responses",in->claude?in->claude->duplicate_rows:0,&first);diagnostic("claude_incomplete_requests",in->claude?in->claude->incomplete_requests:0,&first);
     diagnostic("unknown_record_types",unknown,&first);diagnostic("db_threads_without_logs",corpus->db_threads_without_logs,&first);diagnostic("metadata_errors",metadata,&first);
     diagnostic("orphaned_subagents",corpus->orphaned_subagents.count,&first);diagnostic("inferred_links",corpus->inferred_links.count,&first);

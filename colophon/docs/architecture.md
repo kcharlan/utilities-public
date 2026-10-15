@@ -37,8 +37,10 @@ fields. Rendering still precedes Codex cache commit; unopened caches are
 safe to destroy. Claude graph metadata and persistent retention are implemented;
 the page applies shared provider matching to overview, list, descendant and
 direct-reader paths. Source-specific aggregates reuse the same computations
-for KPI/workspace shares and calendar dominance. History-session creation
-follows separately.
+for KPI/workspace shares and calendar dominance. Validated history entries
+create unknown-status prompt turns only after canonical and unique-alias
+resolution across live, retained and provisional records. Ambiguous aliases
+are diagnosed without inventing duplicate sessions.
 
 Claude raw rows capture priced nanocosts before winner reconciliation.
 After Codex composition/pricing, `claude_compose` authors Claude units and

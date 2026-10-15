@@ -153,7 +153,76 @@ Err claude_metadata_load(ClaudeScan *s) {
   snprintf(p,n,"%s/claude-code-sessions",s->desktop_dir.p);
   return walk(s,str(p),0);
 }
+static int history_order(const void *a,const void *b,void *ctx) {
+  (void)ctx; const ClaudeHistory *x=a,*y=b;
+  int id=str_compare(x->id,y->id);if(id)return id;
+  return (x->at_ms>y->at_ms)-(x->at_ms<y->at_ms);
+}
+/* History is activity evidence only. Resolve all transcript identities before
+ * inserting any history rows so an alias can never revive a skipped collision. */
+static Err history_apply_indexed(ClaudeScan *s,Corpus *c,const Omap *codex_ids,const Omap *primary_ids) {
+  TRY(stable_sort(s->history,s->history_usable,sizeof *s->history,history_order,NULL));
+  for(size_t i=0;i<s->history_usable;) {
+    size_t begin=i;ClaudeHistory *h=&s->history[i++];
+    while(i<s->history_usable && str_equal(s->history[i].id,h->id))i++;
+    size_t n=i-begin;
+    SessionModel *model=omap_get(&c->sessions,h->id);
+    if(omap_get(codex_ids,h->id) || (model && model->provider==PROVIDER_CODEX)) {
+      bool reported=false;
+      for(size_t j=0;j<s->collisions.count;j++)reported|=str_equal(s->collisions.items[j],h->id);
+      if(!reported)TRY(corpus_strings_add(&s->arena,&s->collisions,h->id));
+      continue;
+    }
+    if(model || omap_get(primary_ids,h->id))continue;
+    CorpusStrings *owners=omap_get(&s->history_aliases,h->id);
+    if(owners) {
+      if(owners->count>1 && !omap_get(&s->history_conflicts,h->id))
+        TRY(omap_put(&s->history_conflicts,h->id,owners));
+      continue;
+    }
+      TRY(arena_alloc(&c->arena,sizeof *model,_Alignof(SessionModel),(void **)&model));
+      *model=(SessionModel){.provider=PROVIDER_CLAUDE,.history_only=true,
+        .id=h->id,.key=h->id,.identity=h->id,.kind=STR_LIT("session"),
+        .meta={.cwd={.kind=JS_STRING,.value.s=h->project}},
+        .start_ms={true,h->at_ms},.end_ms={true,s->history[i-1].at_ms},
+        .turn_count=n,.request_count=n,
+        .title_full=h->display,.title_source=STR_LIT("first_request")};
+      TRY(title_display(&c->arena,model->title_full,&model->title));
+      TRY(omap_put(&c->sessions,h->id,model)); s->history_only++;
+    TRY(arena_alloc(&c->arena,n*sizeof *model->turns,_Alignof(TurnModel),(void **)&model->turns));
+    TRY(arena_alloc(&c->arena,n*sizeof *model->requests,_Alignof(Request),(void **)&model->requests));
+    TRY(arena_alloc(&c->arena,n*sizeof *model->ordered_requests,_Alignof(Request *),(void **)&model->ordered_requests));
+    for(size_t k=0;k<n;k++) {
+      ClaudeHistory *h=&s->history[begin+k];
+      char *id;TRY(arena_alloc(&c->arena,32,1,(void **)&id));
+      snprintf(id,32,"history-%zu",k+1);
+      Request *r=&model->requests[k];
+      *r=(Request){.at_ms={true,h->at_ms},.text=h->display,.kind=STR_LIT("text")};
+      model->ordered_requests[k]=r;
+      TurnModel *t=&model->turns[k];
+      *t=(TurnModel){.id=str(id),.n=k+1,.status=STR_LIT("unknown"),
+        .start_ms={true,{.i=h->at_ms}},.request_count=1,.flags=F_UNKNOWN};
+      t->requests=&model->ordered_requests[k];
+    }
+  }
+  return ERR_SUCCESS;
+}
+static Err history_apply(ClaudeScan *s,Corpus *c) {
+  Omap codex_ids={0},primary_ids={0};Err e=ERR_SUCCESS;
+  for(OmapEntry *q=c->sessions.first;q;q=q->next) {
+    SessionModel *model=q->value;if(model->provider!=PROVIDER_CODEX)continue;
+    e=omap_put(&codex_ids,model->id,model);if(e.code)goto done;
+  }
+  for(size_t i=0;i<s->count;i++) {
+    ClaudeRecord *r=&s->records[i];if(r->parent_session.p)continue;
+    e=omap_put(&primary_ids,r->id,r);if(e.code)goto done;
+  }
+  e=history_apply_indexed(s,c,&codex_ids,&primary_ids);
+done:
+  omap_destroy(&codex_ids);omap_destroy(&primary_ids);return e;
+}
 Err claude_metadata_apply(ClaudeScan *s, Corpus *c) {
+  if(s->disabled)return ERR_SUCCESS;
   s->desktop_without_transcripts=0;
   for(size_t i=0;i<s->desktop_count;i++) {
     ClaudeDesktop *d=&s->desktop_entries[i].value;
@@ -174,5 +243,5 @@ Err claude_metadata_apply(ClaudeScan *s, Corpus *c) {
     if(!model->start_ms.present)model->start_ms=d->created;
     if(!model->end_ms.present)model->end_ms=d->activity;
   }
-  return ERR_SUCCESS;
+  return history_apply(s,c);
 }

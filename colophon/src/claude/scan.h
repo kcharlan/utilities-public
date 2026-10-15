@@ -4,6 +4,7 @@
 #include "parse.h"
 #include <signal.h>
 typedef enum { CLAUDE_PROJECTS, CLAUDE_DESKTOP, CLAUDE_SWAP } ClaudeRootKind;
+typedef struct { Str id, display, project; int64_t at_ms; } ClaudeHistory;
 typedef struct {
   Str path;
   Str resume_config_dir; /* Known primary CLI config origin; never shared with
@@ -18,6 +19,9 @@ typedef struct {
   Str config_root, history_path, desktop_dir;
   bool disabled, present;
   size_t history_usable, history_malformed;
+  ClaudeHistory *history;
+  size_t history_capacity, history_only;
+  Omap history_conflicts; /* Exact history id -> alias candidate owners. */
   ClaudeRecord *records;
   size_t count, capacity, logs, parsed, cached, retained;
   struct ClaudeStore *store;

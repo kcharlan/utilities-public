@@ -349,3 +349,61 @@ def test_claude_costs_and_tooltips_survive_unavailable_codex(page, native):
         expect(model).to_contain_text("$0.00")
         assert "fast" in model.get_attribute("title")
         assert requests == []
+
+def test_history_toggle_tags_direct_hashes_and_activity(page, native):
+    def mutate(payload):
+        parent = next(row for row in payload["sessions"] if row["provider"] == "claude")
+        parent["history_only"] = True
+        agent = copy.deepcopy(parent)
+        agent.update(id="synthetic-history-agent", parent_id=parent["id"], children=[])
+        parent["children"] = [agent["id"]]
+        payload["subagents"][agent["id"]] = agent
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.get_by_role("button", name="history only: shown", exact=True)).to_be_visible()
+        expect(page.locator('[data-session-id="synthetic-claude"]')).to_contain_text("HISTORY ONLY")
+        page.get_by_role("button", name="history only: shown", exact=True).click()
+        expect(page.locator('[data-session-id="synthetic-claude"]')).to_have_count(0)
+        page.goto(native.page.as_uri() + "#v=session&p=all&h=0&s=synthetic-history-agent")
+        expect(page.locator("[data-reader]")).to_have_count(0)
+        page.goto(native.page.as_uri() + "#v=session&p=all&h=1&s=synthetic-claude")
+        reader = page.locator('[data-reader="synthetic-claude"]')
+        expect(reader).to_contain_text("HISTORY ONLY")
+        expect(reader.get_by_role("button", name="Copy Continue in CLI", exact=True)).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy log path", exact=True)).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_be_visible()
+        page.goto(native.page.as_uri() + "#v=overview&p=all&src=claude")
+        expect(page.locator("[data-recent]")).to_contain_text("HISTORY ONLY")
+        assert requests == []
+
+def test_real_history_period_hour_grid_zero_usage_and_actions(page, native):
+    native.codex.rmdir()
+    config = native.home / ".claude"
+    config.mkdir()
+    history = config / "history.jsonl"
+    history.write_text("".join(json.dumps({"sessionId": "synthetic-history", "display": prompt,
+        "timestamp": stamp, "project": "/synthetic/history"}) + "\n" for prompt, stamp in [
+        ("Synthetic first history prompt", 1767355200000), ("Synthetic second history prompt", 1767355205000)]))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + "#v=overview&p=custom&from=2026-01-02&to=2026-01-02&src=claude")
+        expect(page.locator('[data-how="4-7"]')).to_have_attribute("title", "Fri 7:00 · 2 turns")
+        expect(page.locator('[data-kpi="tokens"] .kpi-value')).to_contain_text("0")
+        expect(page.locator('[data-kpi="active_ms"] .kpi-value')).to_contain_text("0")
+        page.locator('[data-how="4-7"]').click()
+        expect(page.locator('[data-list-row]')).to_have_count(1)
+        page.locator('[data-list-row]').click()
+        reader = page.locator('[data-reader="synthetic-history"]')
+        expect(reader).to_contain_text("Synthetic first history prompt")
+        expect(reader).to_contain_text("Synthetic second history prompt")
+        expect(reader.get_by_role("button", name="Copy Continue in CLI", exact=True)).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy log path", exact=True)).to_have_count(0)
+        page.get_by_role("button", name="history only: shown", exact=True).click()
+        expect(page.locator("[data-reader]")).to_have_count(0)
+        assert "from=2026-01-02" in page.url and "how=4-7" in page.url
+        page.goto(native.page.as_uri() + "#v=list&p=custom&from=2026-01-03&to=2026-01-03")
+        expect(page.locator('[data-list-row]')).to_have_count(0)
+        assert requests == []

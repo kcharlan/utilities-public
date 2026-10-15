@@ -16,6 +16,24 @@ with a no-data label and explain the checked paths or `--no-claude` flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
 
+Claude history-only sessions are shown by default. The independent history-only
+toggle persists as `h=1|0` in the hash, like the archive toggle `a`; both apply
+to lists, descendants and direct reader links while preserving other filters.
+`HISTORY ONLY` marks these rows in lists, recent sessions and readers. Each
+usable history entry contributes one unknown-status turn and its prompt to
+period filters and the hour-by-weekday grid. History adds no active time,
+tokens or cost. Its first/last timestamps bound the session, and the first
+entry's project supplies cwd. Empty or malformed-only history does not establish
+source presence; usable history can be the sole source after directories vanish.
+
+History identities match exact canonical Claude filename IDs first, then unique
+primary transcript `sessionId` aliases. Aliases from live, retained, provisional
+and collision-skipped records suppress duplicates. Ambiguous aliases emit no
+history-only row and appear with candidate owners in
+`claude_history_alias_conflicts`; Codex identity collisions keep Codex.
+`meta.sources.claude.history_only` counts emitted history sessions and
+`token_data_from_ms` reports the first actual Claude token datum, or null.
+
 Claude readers keep Copy session ID and never offer Codex links. Copy Continue
 in CLI requires the lifecycle and subagent support flags, an absolute cwd and
 established primary CLI config-root provenance. Deleted and history-only rows
@@ -35,7 +53,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.1.0`.
+runtime state. Version is currently `colophon 0.2.0`.
 
 | Flag | Behavior |
 | --- | --- |

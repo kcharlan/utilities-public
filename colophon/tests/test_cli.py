@@ -307,6 +307,15 @@ def test_claude_history_establishes_presence_read_only(native):
     assert result.returncode == 0, result.stderr
     assert native.payload()["meta"]["sources"]["claude"]["status"] == "ok"
     assert history.read_bytes() == before
+    payload = native.payload()
+    session, = payload["sessions"]
+    assert session["history_only"] is True
+    assert session["cwd"] == "/synthetic/history"
+    assert session["turns"][0]["status"] == "unknown"
+    assert session["turns"][0]["duration_ms"] is None
+    assert session["own_usage"]["input"] == 0
+    assert payload["meta"]["sources"]["claude"]["history_only"] == 1
+    assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] is None
 
 def test_no_sources_reports_checked_paths_without_runtime(native):
     native.codex.rmdir()
@@ -654,7 +663,7 @@ def test_help_and_version_create_no_runtime(native):
     assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.1.0\n"
+    assert version.stdout == "colophon 0.2.0\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -949,3 +958,90 @@ def test_ledger_mirror_earlier_near_owns_before_later_exact(native):
     assert result.returncode == 0, result.stderr
     own = native.payload()["sessions"][0]["own_usage"]
     assert (own["input"], own["cached_input"], own["output"]) == (100, 0, 10)
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_claude_history_aliases_survive_deletion_and_rebuild(native, rebuild):
+    source = native.claude_session()
+    records = [json.loads(line) for line in source.read_text().splitlines()]
+    records[-1]["requestId"] = "synthetic-history-request"
+    records[-1]["message"].update(id="synthetic-history-response", model="claude-opus-4-6", usage={"input_tokens": 7, "output_tokens": 3})
+    source.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records))
+    history = native.home / ".claude/history.jsonl"
+    history.write_text(json.dumps({"sessionId": "synthetic-foreign-id", "display": "Synthetic alias memory", "timestamp": 1767355199000, "project": "/synthetic/history"}) + "\n")
+    for phase in range(3):
+        result = native.build(*(["--rebuild"] if rebuild else []))
+        assert result.returncode == 0, result.stderr
+        payload = native.payload()
+        assert [s["id"] for s in payload["sessions"]] == ["synthetic-claude"]
+        assert not payload["sessions"][0]["history_only"]
+        assert payload["meta"]["sources"]["claude"]["history_only"] == 0
+        assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] == 1767355203000
+        if phase == 0:
+            source.unlink()
+            source.parent.rmdir()
+            source.parent.parent.rmdir()
+        else:
+            assert "transcript_deleted" in payload["sessions"][0]["flags"]
+
+
+def test_claude_history_alias_conflicts_exact_precedence_and_collision(native):
+    native.session()
+    native.claude_session("synthetic-a")
+    native.claude_session("synthetic-b")
+    native.claude_session(SESSION)
+    history = native.home / ".claude/history.jsonl"
+    entries = ["synthetic-foreign-id", "synthetic-a", SESSION, "synthetic-history"]
+    history.write_text("".join(json.dumps({"sessionId": sid, "display": "Synthetic remembered kite", "timestamp": 1767355199000, "project": "/synthetic/history"}) + "\n" for sid in entries))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert {s["id"] for s in payload["sessions"]} == {SESSION, "synthetic-a", "synthetic-b", "synthetic-history"}
+    assert payload["diagnostics"]["claude_history_alias_conflicts"] == {"synthetic-foreign-id": ["synthetic-a", "synthetic-b", SESSION]}
+    assert "claude_history_alias_conflicts=1" in result.stderr
+
+
+def test_claude_history_grouping_validation_disabled_and_token_boundary(native):
+    native.codex.rmdir()
+    config = native.home / ".claude"
+    config.mkdir()
+    history = config / "history.jsonl"
+    entries = [
+        {"sessionId": "synthetic-history", "display": "Synthetic second", "timestamp": 1767355200000, "project": "/synthetic/second"},
+        {"sessionId": "synthetic-history", "display": "Synthetic first", "timestamp": 1767268800000, "project": "/synthetic/first"},
+        {"sessionId": "synthetic-other", "display": "", "timestamp": 1767355200000.0, "project": ""},
+        {"sessionId": "synthetic-bad", "display": False, "timestamp": 1767355200000, "project": "/synthetic/bad"},
+        {"sessionId": "synthetic-bad", "display": "Synthetic invalid", "timestamp": 1767355200000.5, "project": "/synthetic/bad"},
+        {"sessionId": "", "display": "Synthetic invalid", "timestamp": 1767355200000, "project": "/synthetic/bad"},
+    ]
+    history.write_text("".join(json.dumps(e) + "\n" for e in entries) + "{\n")
+    before = history.read_bytes()
+    assert native.build("--no-claude").returncode == 1
+    assert not native.runtime.exists()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["diagnostics"]["malformed_lines"]["total"] == 4
+    rows = {s["id"]: s for s in payload["sessions"]}
+    assert set(rows) == {"synthetic-history", "synthetic-other"}
+    row = rows["synthetic-history"]
+    assert row["cwd"] == "/synthetic/first"
+    assert (row["start_ms"], row["end_ms"]) == (1767268800000, 1767355200000)
+    assert [t["requests"][0]["text"] for t in row["turns"]] == ["Synthetic first", "Synthetic second"]
+    assert all(t["status"] == "unknown" and t["duration_ms"] is None for t in row["turns"])
+    assert row["buckets"] == [] and row["own_usage"]["input"] == 0 and row["own_usage"]["output"] == 0
+    assert row["own_usage"]["cost_usd"] == 0
+    assert payload["meta"]["sources"]["claude"]["history_only"] == 2
+    assert payload["meta"]["sources"]["claude"]["token_data_from_ms"] is None
+    assert history.read_bytes() == before
+
+def test_claude_history_collision_preserves_codex_filename_fallback(native):
+    rows = [r for r in native.session_rows() if r["type"] != "session_meta"]
+    native.write_session(rows, name=f"rollout-2026-01-02T12-00-00-{UUID}.jsonl")
+    config = native.home / ".claude"
+    config.mkdir()
+    (config / "history.jsonl").write_text(json.dumps({"sessionId": UUID, "display": "Synthetic collision memory", "timestamp": 1767355200000, "project": "/synthetic/history"}) + "\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert [(s["id"], s["provider"]) for s in payload["sessions"]] == [(UUID, "codex")]
+    assert payload["diagnostics"]["claude_session_id_collisions"] == [UUID]

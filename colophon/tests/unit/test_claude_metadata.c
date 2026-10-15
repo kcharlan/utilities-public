@@ -154,3 +154,61 @@ TEST(claude_desktop_independent_fields_clocks_fallback_and_disabled) {
   ASSERT_EQ(ERR_OK,claude_metadata_load(&scan).code);ASSERT_EQ(0,scan.desktop_count);
   claude_scan_destroy(&scan);
 }
+TEST(claude_history_groups_orders_and_resolves_exact_aliases_and_collisions) {
+  ClaudeRecord *r=calloc(4,sizeof *r);ASSERT_TRUE(r);
+  const Str ids[]={STR_LIT("synthetic-a"),STR_LIT("synthetic-b"),STR_LIT("synthetic-codex"),STR_LIT("synthetic-child")};
+  ClaudeScan s={.records=r,.count=4};Corpus c={0};
+  for(size_t i=0;i<4;i++)r[i].id=ids[i];
+  r[3].parent_session=ids[0];
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[0].arena,&r[0].aliases,STR_LIT("synthetic-alias")).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[0].arena,&r[0].aliases,ids[1]).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[1].arena,&r[1].aliases,ids[1]).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[0].arena,&r[0].aliases,STR_LIT("synthetic-shared")).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[1].arena,&r[1].aliases,STR_LIT("synthetic-shared")).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[2].arena,&r[2].aliases,STR_LIT("synthetic-blocked-alias")).code);
+  ASSERT_EQ(ERR_OK,corpus_strings_add(&r[3].arena,&r[3].aliases,STR_LIT("synthetic-child-alias")).code);
+  SessionModel codex={.id=ids[2]};
+  ASSERT_EQ(ERR_OK,omap_put(&c.sessions,codex.id,&codex).code);
+  ASSERT_EQ(ERR_OK,claude_corpus_add(r,4,0,&c,&s.collisions).code);
+  ASSERT_EQ(ERR_OK,claude_scan_aliases(&s).code);
+  const Str history_ids[]={ids[0],ids[1],STR_LIT("synthetic-alias"),STR_LIT("synthetic-shared"),STR_LIT("synthetic-blocked-alias"),STR_LIT("synthetic-history"),STR_LIT("synthetic-history"),STR_LIT("synthetic-child-alias"),STR_LIT("synthetic-history-collision")};
+  ClaudeHistory h[9]={0};
+  for(size_t i=0;i<9;i++)h[i]=(ClaudeHistory){history_ids[i],STR_LIT("Synthetic remembered kite"),STR_LIT("/synthetic/history"),200-(int64_t)i};
+  SessionModel other_codex={.id=history_ids[8]};
+  ASSERT_EQ(ERR_OK,omap_put(&c.sessions,other_codex.id,&other_codex).code);
+  s.history=h;s.history_usable=9;
+  ASSERT_EQ(ERR_OK,claude_metadata_apply(&s,&c).code);
+  ASSERT_EQ(2,s.history_only);ASSERT_EQ(1,s.history_conflicts.size);
+  ASSERT_FALSE(omap_get(&s.history_conflicts,ids[1]));
+  ASSERT_TRUE(omap_get(&s.history_conflicts,STR_LIT("synthetic-shared")));
+  ASSERT_FALSE(omap_get(&c.sessions,STR_LIT("synthetic-blocked-alias")));
+  SessionModel *history=omap_get(&c.sessions,STR_LIT("synthetic-history"));
+  ASSERT_TRUE(history);ASSERT_TRUE(history->history_only);ASSERT_EQ(2,history->turn_count);
+  ASSERT_EQ(194,history->start_ms.value);ASSERT_EQ(195,history->end_ms.value);
+  ASSERT_STREQ("unknown",history->turns[0].status.p);ASSERT_FALSE(history->turns[0].duration_ms.present);
+  ASSERT_EQ(0,history->unit_count);ASSERT_FALSE(history->resume_config_dir.p);
+  ASSERT_EQ(2,s.collisions.count);
+  corpus_destroy(&c);claude_scan_destroy(&s);
+}
+TEST(claude_history_inspection_validates_fields_without_transcript_directories) {
+  char root[1024],path[1200];scratch(root,sizeof root);
+  snprintf(path,sizeof path,"%s/history.jsonl",root);
+  write_file(path,
+    "{\"sessionId\":\"synthetic-history\",\"display\":\"\",\"project\":\"\",\"timestamp\":1767355200000.0}\n"
+    "{\"sessionId\":\"\",\"display\":\"Synthetic invalid\",\"project\":\"\",\"timestamp\":1}\n"
+    "{\"sessionId\":\"synthetic-invalid\",\"display\":false,\"project\":\"\",\"timestamp\":1}\n"
+    "{\"sessionId\":\"synthetic-invalid\",\"display\":\"\",\"project\":null,\"timestamp\":1}\n"
+    "{\"sessionId\":\"synthetic-invalid\",\"display\":\"\",\"project\":\"\",\"timestamp\":1.5}\n"
+    "{\n");
+  Args args={.claude_home=root};ClaudeScan s={0};
+  ASSERT_EQ(ERR_OK,claude_inspect(&args,&s).code);
+  ASSERT_TRUE(s.present);ASSERT_EQ(1,s.history_usable);ASSERT_EQ(5,s.history_malformed);
+  ASSERT_EQ(1767355200000,s.history[0].at_ms);
+  ASSERT_EQ(0,s.history[0].display.n);ASSERT_EQ(0,s.history[0].project.n);
+  ASSERT_FALSE(s.token_data_from_ms.present);
+  claude_scan_destroy(&s);
+  args.no_claude=true;
+  ASSERT_EQ(ERR_OK,claude_inspect(&args,&s).code);
+  ASSERT_FALSE(s.present);ASSERT_EQ(0,s.history_usable);ASSERT_EQ(0,s.history_malformed);
+  claude_scan_destroy(&s);
+}

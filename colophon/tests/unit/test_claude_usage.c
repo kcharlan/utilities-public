@@ -509,3 +509,16 @@ TEST(claude_usage_advisor_typed_envelope_and_nested_cache_creation) {
   ASSERT_EQ(6, r.usage_count); /* Serde rejects duplicate recognized fields. */
   claude_record_destroy(&r);
 }
+TEST(claude_token_boundary_uses_earliest_authored_complete_usage) {
+  ClaudeRecord r={.id=STR_LIT("synthetic-boundary"),.key={.path=STR_LIT("/synthetic/boundary.jsonl")}};
+  line(&r,"{\"type\":\"assistant\",\"timestamp\":\"2001-01-02T00:00:00Z\",\"message\":{\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":7}}}");
+  line(&r,"{\"type\":\"assistant\",\"timestamp\":\"2001-01-01T00:00:00Z\",\"message\":{\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":3}}}");
+  line(&r,"{\"type\":\"assistant\",\"timestamp\":\"2000-12-31T00:00:00Z\",\"message\":{\"model\":\"synthetic-model\",\"stop_reason\":null,\"usage\":{\"input_tokens\":2}}}");
+  Corpus c={0};ClaudeScan scan;
+  composed(&r,1,&scan,&c);
+  ASSERT_TRUE(scan.token_data_from_ms.present);ASSERT_EQ(978307200000,scan.token_data_from_ms.value);
+  corpus_destroy(&c);claude_record_destroy(&r);
+  r=(ClaudeRecord){.id=STR_LIT("synthetic-empty")};c=(Corpus){0};
+  composed(&r,1,&scan,&c);ASSERT_FALSE(scan.token_data_from_ms.present);
+  corpus_destroy(&c);claude_record_destroy(&r);
+}
