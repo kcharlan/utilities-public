@@ -13,6 +13,8 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import git_dashboard as gd
 
 
@@ -28,6 +30,13 @@ def _mock_proc(stdout: str, returncode: int = 0) -> MagicMock:
     proc.stdout = stdout
     proc.returncode = returncode
     return proc
+
+
+def _write_npm_lock(directory, versions):
+    (directory / 'package-lock.json').write_text(json.dumps({
+        'lockfileVersion': 3,
+        'packages': {f'node_modules/{name}': {'version': version} for name, version in versions.items()},
+    }))
 
 
 def _npm_outdated_output(packages: dict) -> str:
@@ -58,6 +67,10 @@ def _npm_audit_output(vulnerabilities: dict) -> str:
             "name": name,
             "severity": info["severity"],
             "via": [{"source": 1234, "name": name, "title": "Test Vulnerability"}],
+            "nodes": [f"node_modules/{name}"],
+            "range": "*",
+            "isDirect": True,
+            "effects": [],
             "fixAvailable": True,
         }
     return json.dumps({"vulnerabilities": vulns})
@@ -85,12 +98,13 @@ def test_check_node_outdated_npm_not_available(tmp_path):
 
 
 def test_check_node_outdated_up_to_date(tmp_path):
-    """Test 2: npm outdated returns {} — dep is up to date, severity=ok."""
+    """Test 2: absent npm row plus concrete version and registry comparison is clean."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
     try:
         dep = _make_npm_dep("react", "^18.2.0")
+        _write_npm_lock(tmp_path, {'react': '18.2.0'})
         proc = _mock_proc(json.dumps({}), returncode=0)
-        with patch("subprocess.run", return_value=proc):
+        with patch("subprocess.run", side_effect=[proc, _mock_proc('"18.2.0"')]):
             result = gd.check_node_outdated(tmp_path, [dep])
         r = result[0]
         assert r["severity"] == "ok"
@@ -153,7 +167,8 @@ def test_check_node_outdated_multiple_deps_mixed(tmp_path):
             }
         )
         proc = _mock_proc(stdout, returncode=1)
-        with patch("subprocess.run", return_value=proc):
+        _write_npm_lock(tmp_path, {'lodash': '4.17.21'})
+        with patch("subprocess.run", side_effect=[proc, _mock_proc('"4.17.21"')]):
             result = gd.check_node_outdated(tmp_path, deps)
 
         by_name = {r["name"]: r for r in result}
@@ -211,7 +226,7 @@ def test_check_node_outdated_exit_code_1_parsed(tmp_path):
 
 
 def test_check_node_outdated_dep_not_in_output(tmp_path):
-    """Test 9: dep not in npm outdated output (up-to-date) — severity=ok."""
+    """Test 9: an absent row is clean only after its own version comparison."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
     try:
         dep = _make_npm_dep("lodash", "^4.17.21")
@@ -220,7 +235,8 @@ def test_check_node_outdated_dep_not_in_output(tmp_path):
             {"some-other-pkg": {"current": "1.0.0", "wanted": "2.0.0", "latest": "2.0.0"}}
         )
         proc = _mock_proc(stdout, returncode=1)
-        with patch("subprocess.run", return_value=proc):
+        _write_npm_lock(tmp_path, {'lodash': '4.17.21'})
+        with patch("subprocess.run", side_effect=[proc, _mock_proc('"4.17.21"')]):
             result = gd.check_node_outdated(tmp_path, [dep])
         r = result[0]
         assert r["severity"] == "ok"
@@ -249,6 +265,7 @@ def test_check_node_vulns_no_vulnerabilities(tmp_path):
     gd.TOOLS["npm"] = "/usr/bin/npm"
     try:
         dep = {**_make_npm_dep("react"), "severity": "ok", "advisory_id": None}
+        _write_npm_lock(tmp_path, {'react': '1.0.0'})
         proc = _mock_proc(_npm_audit_output({}), returncode=0)
         with patch("subprocess.run", return_value=proc):
             result = gd.check_node_vulns(tmp_path, [dep])
@@ -261,6 +278,7 @@ def test_check_node_vulns_no_vulnerabilities(tmp_path):
 def test_check_node_vulns_one_vulnerable_dep(tmp_path):
     """Test 12: npm audit reports one vulnerable dep — severity=vulnerable, advisory_id set."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'lodash': '1.0.0'})
     try:
         dep = {**_make_npm_dep("lodash"), "severity": "ok", "advisory_id": None}
         audit_out = _npm_audit_output({"lodash": {"severity": "high"}})
@@ -277,6 +295,7 @@ def test_check_node_vulns_one_vulnerable_dep(tmp_path):
 def test_check_node_vulns_overrides_outdated(tmp_path):
     """Test 13: vuln overrides prior severity=outdated."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'lodash': '1.0.0'})
     try:
         dep = {**_make_npm_dep("lodash"), "severity": "outdated", "advisory_id": None}
         audit_out = _npm_audit_output({"lodash": {"severity": "critical"}})
@@ -289,13 +308,13 @@ def test_check_node_vulns_overrides_outdated(tmp_path):
 
 
 def test_check_node_vulns_subprocess_fails(tmp_path):
-    """Test 14: subprocess raises CalledProcessError — no crash, deps returned unchanged."""
+    """Test 14: subprocess raises CalledProcessError — no crash, coverage marked unchecked."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
     try:
         dep = {**_make_npm_dep("react"), "severity": "ok", "advisory_id": None}
         with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "npm")):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -308,7 +327,7 @@ def test_check_node_vulns_unexpected_json(tmp_path):
         proc = _mock_proc(json.dumps({"metadata": {}, "auditReportVersion": 2}), returncode=0)
         with patch("subprocess.run", return_value=proc):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -322,7 +341,7 @@ def test_check_node_vulns_no_lockfile_fallback(tmp_path):
         proc = _mock_proc("", returncode=1)
         with patch("subprocess.run", return_value=proc):
             result = gd.check_node_vulns(tmp_path, [dep])
-        assert result[0]["severity"] == "ok"
+        assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -333,6 +352,7 @@ def test_check_node_vulns_no_lockfile_fallback(tmp_path):
 def test_check_node_deps_full_pipeline(tmp_path):
     """Test 17: Full pipeline — outdated + vulnerable dep, correct severities."""
     gd.TOOLS["npm"] = "/usr/bin/npm"
+    _write_npm_lock(tmp_path, {'axios': '0.27.0', 'lodash': '4.17.0'})
     try:
         deps = [
             _make_npm_dep("axios", "^0.27.0"),
@@ -452,3 +472,212 @@ def test_check_node_deps_non_npm_deps_unchanged(tmp_path):
         assert "checked_at" in by_name["react"]
     finally:
         gd.TOOLS["npm"] = None
+
+
+def test_unlisted_npm_declaration_is_not_a_concrete_current(tmp_path):
+    with patch.dict(gd.TOOLS, npm='synthetic-tool'), patch('subprocess.run', return_value=_mock_proc('{}')):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic', '^1.0')])[0]
+    assert row['current_version'] is None
+    assert row['outdated_state'] == 'unchecked'
+
+
+def test_tool_failure_logging_is_bounded(tmp_path, caplog):
+    proc = _mock_proc('{}', 97)
+    proc.stderr = 'synthetic ignored first line\n' + 'x' * 400
+    with patch.dict(gd.TOOLS, npm='synthetic-tool'), patch('subprocess.run', return_value=proc):
+        gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic')])
+    assert 'synthetic ignored first line' not in caplog.text
+    assert 'x' * 241 not in caplog.text
+
+
+def _node_check(tmp_path, monkeypatch, output, *, code=1):
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output), code)):
+        return gd.check_node_outdated(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+
+
+@pytest.mark.parametrize('layout', [1, 2, 3])
+def test_node_current_version_from_lock(tmp_path, monkeypatch, layout):
+    lock = {'lockfileVersion': layout}
+    if layout == 1:
+        lock['dependencies'] = {'synthetic-widget': {'version': '1.0.0'}}
+    else:
+        lock['packages'] = {'node_modules/synthetic-widget': {'version': '1.0.0'}}
+    (tmp_path / 'package-lock.json').write_text(json.dumps(lock))
+    row = _node_check(tmp_path, monkeypatch, {'synthetic-widget': {'latest': '2.0.0'}})
+    assert row['current_version'] == '1.0.0'
+    assert row['outdated_state'] == 'checked'
+    assert row['severity'] == 'major'
+
+
+def test_node_current_version_from_installed_metadata(tmp_path, monkeypatch):
+    package = tmp_path / 'node_modules/synthetic-widget/package.json'
+    package.parent.mkdir(parents=True)
+    package.write_text(json.dumps({'name': 'synthetic-widget', 'version': '1.0.0'}))
+    row = _node_check(tmp_path, monkeypatch, {'synthetic-widget': {'latest': '1.2.0'}})
+    assert row['current_version'] == '1.0.0'
+    assert row['outdated_state'] == 'checked'
+    assert row['severity'] == 'outdated'
+
+
+@pytest.mark.parametrize('current', [None, 'MISSING', '^1.0', '', 1, {}])
+def test_node_missing_version_is_unchecked(tmp_path, monkeypatch, current):
+    row = _node_check(tmp_path, monkeypatch, {'synthetic-widget': {'current': current, 'latest': '2.0.0'}})
+    assert row['outdated_state'] == 'unchecked'
+    assert 'version' in row['check_note']
+
+
+def test_node_empty_output_without_version_is_unchecked(tmp_path, monkeypatch):
+    row = _node_check(tmp_path, monkeypatch, {}, code=0)
+    assert row['outdated_state'] == 'unchecked'
+    assert row['current_version'] is None
+    assert row['check_note']
+
+
+def test_node_absent_row_without_comparison_is_unchecked(tmp_path, monkeypatch):
+    (tmp_path / 'package-lock.json').write_text(json.dumps({
+        'lockfileVersion': 3, 'packages': {'node_modules/synthetic-widget': {'version': '1.0.0'}}}))
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', side_effect=[_mock_proc('{}'), _mock_proc('{}')]):
+        row = gd.check_node_outdated(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['outdated_state'] == 'unchecked'
+    assert row['current_version'] == '1.0.0'
+    assert 'comparison' in row['check_note']
+
+
+def test_node_empty_output_with_registry_evidence_is_checked(tmp_path, monkeypatch):
+    (tmp_path / 'package-lock.json').write_text(json.dumps({
+        'lockfileVersion': 3, 'packages': {'node_modules/synthetic-widget': {'version': '1.0.0'}}}))
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', side_effect=[_mock_proc('{}'), _mock_proc('"1.0.0"')]):
+        row = gd.check_node_outdated(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['current_version'] == row['latest_version'] == '1.0.0'
+    assert row['outdated_state'] == 'checked'
+    assert row['severity'] == 'ok'
+
+
+def test_node_audit_lock_error_is_unchecked(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps({'error': {'code': 'ENOLOCK'}}), 1)):
+        row = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['vuln_state'] == 'unchecked'
+    assert 'lockfile' in row['check_note']
+
+
+def test_node_audit_error_object_is_unchecked(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps({
+            'error': {'code': 'SYNTHETIC_ERROR'}, 'vulnerabilities': {}}), 1)):
+        row = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['vuln_state'] == 'unchecked'
+    assert row['check_note']
+
+
+@pytest.mark.parametrize('vulnerable', [False, True])
+@pytest.mark.parametrize('current', ['1.0.0', '2.0.0'])
+def test_node_audit_requires_displayed_version_match(tmp_path, monkeypatch, vulnerable, current):
+    """Lock-tree results must never certify a different installed current version."""
+    (tmp_path / 'package.json').write_text(json.dumps({
+        'dependencies': {'synthetic-widget': '^1.0.0'}}))
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}} if vulnerable else {}))
+    if vulnerable:
+        audit['vulnerabilities']['synthetic-widget']['nodes'] = ['node_modules/synthetic-widget']
+    outdated = _npm_outdated_output({'synthetic-widget': dict(current=current, wanted=current, latest=current)})
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', side_effect=[_mock_proc(outdated), _mock_proc(json.dumps(audit), int(vulnerable))]):
+        row = gd.check_node_deps(tmp_path, gd.parse_package_json(tmp_path / 'package.json'))[0]
+    assert row['current_version'] == current
+    assert row['outdated_state'] == 'checked'
+    if current == '2.0.0':
+        assert row['vuln_state'] == 'unchecked'
+        assert 'version' in row['check_note'] and '1.0.0' in row['check_note'] and '2.0.0' in row['check_note']
+        assert row['severity'] == 'unchecked'
+        assert row['advisory_id'] is None
+    else:
+        assert row['vuln_state'] == 'checked'
+        assert row['severity'] == ('vulnerable' if vulnerable else 'ok')
+
+
+def test_node_audit_same_name_nested_finding_does_not_taint_direct_node(tmp_path, monkeypatch):
+    """npm aggregates same-name nodes; only an affected direct node is our finding."""
+    _write_npm_lock(tmp_path, {'synthetic-widget': '2.0.0', 'synthetic-parent': '1.0.0'})
+    lock_path = tmp_path / 'package-lock.json'
+    lock = json.loads(lock_path.read_text())
+    lock['packages']['node_modules/synthetic-parent/node_modules/synthetic-widget'] = {'version': '1.0.0'}
+    lock_path.write_text(json.dumps(lock))
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    audit['vulnerabilities']['synthetic-widget']['nodes'] = ['node_modules/synthetic-parent/node_modules/synthetic-widget']
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    dep = dict(_make_npm_dep('synthetic-widget'), current_version='2.0.0', latest_version='2.0.0',
+               outdated_state='checked', severity='ok')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.finalize_dep_health(gd.check_node_vulns(tmp_path, [dep]))[0]
+    assert row['vuln_state'] == 'checked'
+    assert row['severity'] == 'ok'
+    assert row['advisory_id'] is None
+
+
+@pytest.mark.parametrize('nodes', [None, [], 'node_modules/synthetic-widget', [42]])
+def test_node_audit_missing_node_evidence_is_unchecked(tmp_path, monkeypatch, nodes):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    audit['vulnerabilities']['synthetic-widget']['nodes'] = nodes
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.check_node_vulns(tmp_path, [dict(_make_npm_dep('synthetic-widget'), current_version='1.0.0')])[0]
+    assert row['vuln_state'] == 'unchecked'
+    assert not row.get('advisory_id')
+
+
+@pytest.mark.parametrize('vulnerable', [False, True])
+def test_node_audit_requires_concrete_lock_evidence(tmp_path, monkeypatch, vulnerable):
+    """Neither absent current nor absent audit version can certify coverage."""
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    audit = _npm_audit_output({'synthetic-widget': {'severity': 'high'}} if vulnerable else {})
+    with patch('subprocess.run', return_value=_mock_proc(audit, int(vulnerable))):
+        row = gd.finalize_dep_health(gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')]))[0]
+    assert row['current_version'] is None
+    assert row['vuln_state'] == 'unchecked'
+    assert 'lock evidence' in row['check_note']
+    assert row['advisory_id'] is None
+    assert row['severity'] == 'unchecked'
+
+
+@pytest.mark.parametrize('layout', [1, 2, 3])
+def test_node_shrinkwrap_precedes_package_lock_for_current_and_audit(tmp_path, monkeypatch, layout):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    shrinkwrap = dict(lockfileVersion=layout)
+    if layout == 1:
+        shrinkwrap['dependencies'] = {'synthetic-widget': {'version': '2.0.0'}}
+    else:
+        shrinkwrap['packages'] = {'node_modules/synthetic-widget': {'version': '2.0.0'}}
+    (tmp_path / 'npm-shrinkwrap.json').write_text(json.dumps(shrinkwrap))
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    def run(cmd, **kwargs):
+        if cmd[1] == 'outdated':
+            return _mock_proc('{}')
+        if cmd[1] == 'view':
+            return _mock_proc('"2.0.0"')
+        assert cmd[1] == 'audit'
+        return _mock_proc(_npm_audit_output({}))
+    with patch('subprocess.run', side_effect=run):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['current_version'] == '2.0.0'
+    assert row['outdated_state'] == row['vuln_state'] == 'checked'
+    assert row['severity'] == 'ok'
+
+
+@pytest.mark.parametrize('shrinkwrap', ['{', '{"lockfileVersion":99}', '{"lockfileVersion":3,"packages":[]}'])
+def test_node_invalid_selected_shrinkwrap_never_uses_package_lock(tmp_path, monkeypatch, shrinkwrap):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    (tmp_path / 'npm-shrinkwrap.json').write_text(shrinkwrap)
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    output = _npm_outdated_output({'synthetic-widget': dict(current='1.0.0', wanted='1.0.0', latest='1.0.0')})
+    with patch('subprocess.run', side_effect=[_mock_proc(output), _mock_proc(_npm_audit_output({}))]):
+        row = gd.check_node_deps(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['current_version'] == '1.0.0'
+    assert row['outdated_state'] == 'checked'
+    assert row['vuln_state'] == 'unchecked'
+    assert 'lock evidence' in row['check_note']
+    assert row['severity'] == 'unchecked'

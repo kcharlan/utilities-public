@@ -118,24 +118,24 @@ def test_check_go_outdated_major_update(tmp_path):
 
 # Test 5
 def test_check_go_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["go"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     with patch("subprocess.run", side_effect=Exception("timeout")):
         result = gd.check_go_outdated(tmp_path, [dep])
     assert result[0]["name"] == "github.com/gin-gonic/gin"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 6
 def test_check_go_outdated_invalid_output(tmp_path):
-    """Non-JSON stdout → no crash, deps returned unchanged."""
+    """Non-JSON stdout → no crash, coverage marked unchecked."""
     gd.TOOLS["go"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     with patch("subprocess.run", return_value=_mock_proc("not json at all")):
         result = gd.check_go_outdated(tmp_path, [dep])
     assert result[0]["name"] == "github.com/gin-gonic/gin"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 7
@@ -157,14 +157,8 @@ def test_check_go_vulns_govulncheck_not_available(tmp_path):
 def test_check_go_vulns_vulnerability_found(tmp_path):
     """Vuln found → severity='vulnerable', advisory_id=OSV ID."""
     gd.TOOLS["govulncheck"] = FAKE_TOOL_PATH
-    vuln_json = json.dumps({
-        "Vulns": [
-            {
-                "OSV": {"id": "GO-2024-1234", "aliases": ["CVE-2024-1234"]},
-                "Modules": [{"Path": "github.com/gin-gonic/gin"}],
-            }
-        ]
-    })
+    # Current govulncheck -json uses a versioned stream, not the legacy Vulns fixture.
+    vuln_json = _govuln_stream(findings=[('github.com/gin-gonic/gin', 'v1.9.1', 'GO-2024-1234')])
     with patch("subprocess.run", return_value=_mock_proc(vuln_json)):
         dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
         dep["severity"] = "ok"
@@ -176,13 +170,13 @@ def test_check_go_vulns_vulnerability_found(tmp_path):
 
 # Test 9
 def test_check_go_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["govulncheck"] = FAKE_TOOL_PATH
     dep = _make_dep("github.com/gin-gonic/gin", "v1.9.1", "gomod")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_go_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 10
@@ -205,14 +199,7 @@ def test_check_go_deps_full_pipeline(tmp_path):
             "Version": "v1.8.0",
         })
     )
-    vuln_json = json.dumps({
-        "Vulns": [
-            {
-                "OSV": {"id": "GO-2024-9999"},
-                "Modules": [{"Path": "github.com/gorilla/mux"}],
-            }
-        ]
-    })
+    vuln_json = _govuln_stream(findings=[('github.com/gorilla/mux', 'v1.8.0', 'GO-2024-9999')])
 
     side_effects = [_mock_proc(outdated_ndjson), _mock_proc(vuln_json)]
     with patch("subprocess.run", side_effect=side_effects):
@@ -287,13 +274,13 @@ def test_check_rust_outdated_major_update(tmp_path):
 
 # Test 15
 def test_check_rust_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["cargo_outdated"] = FAKE_TOOL_PATH
     dep = _make_dep("serde", "1.0.190", "cargo")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_rust_outdated(tmp_path, [dep])
     assert result[0]["name"] == "serde"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 16
@@ -335,13 +322,13 @@ def test_check_rust_vulns_vulnerability_found(tmp_path):
 
 # Test 18
 def test_check_rust_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["cargo_audit"] = FAKE_TOOL_PATH
     dep = _make_dep("serde", "1.0.190", "cargo")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_rust_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 19
@@ -432,13 +419,13 @@ def test_check_ruby_outdated_major_update(tmp_path):
 
 # Test 24
 def test_check_ruby_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["bundle"] = FAKE_TOOL_PATH
     dep = _make_dep("rails", "7.0.8", "bundler")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_ruby_outdated(tmp_path, [dep])
     assert result[0]["name"] == "rails"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 25
@@ -462,7 +449,7 @@ def test_check_ruby_vulns_vulnerability_found(tmp_path):
     audit_json = json.dumps({
         "results": [
             {
-                "type": "UnpatchedGem",
+                "type": "unpatched_gem",
                 "gem": {"name": "rails", "version": "7.0.8"},
                 "advisory": {
                     "id": "CVE-2024-12345",
@@ -483,13 +470,13 @@ def test_check_ruby_vulns_vulnerability_found(tmp_path):
 
 # Test 27
 def test_check_ruby_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["bundler_audit"] = FAKE_TOOL_PATH
     dep = _make_dep("rails", "7.0.8", "bundler")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_ruby_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 28
@@ -504,7 +491,7 @@ def test_check_ruby_deps_full_pipeline(tmp_path):
     audit_json = json.dumps({
         "results": [
             {
-                "type": "UnpatchedGem",
+                "type": "unpatched_gem",
                 "gem": {"name": "rails", "version": "7.0.8"},
                 "advisory": {
                     "id": "CVE-2024-99999",
@@ -595,13 +582,13 @@ def test_check_php_outdated_major_update(tmp_path):
 
 # Test 33
 def test_check_php_outdated_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["composer"] = FAKE_TOOL_PATH
     dep = _make_dep("laravel/framework", "10.0.0", "composer")
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_php_outdated(tmp_path, [dep])
     assert result[0]["name"] == "laravel/framework"
-    assert "severity" not in result[0]
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 34
@@ -633,13 +620,13 @@ def test_check_php_vulns_vulnerability_found(tmp_path):
 
 # Test 35
 def test_check_php_vulns_subprocess_failure(tmp_path):
-    """Subprocess exception → no crash, deps returned unchanged."""
+    """Subprocess exception → no crash, coverage marked unchecked."""
     gd.TOOLS["composer"] = FAKE_TOOL_PATH
     dep = _make_dep("laravel/framework", "10.0.0", "composer")
     dep["severity"] = "ok"
     with patch("subprocess.run", side_effect=Exception("error")):
         result = gd.check_php_vulns(tmp_path, [dep])
-    assert result[0]["severity"] == "ok"
+    assert result[0]["severity"] == gd.derive_severity(result[0]) == "unchecked"
 
 
 # Test 36
@@ -704,7 +691,8 @@ def test_check_php_deps_empty_list(tmp_path):
         "go",
         FAKE_TOOL_PATH,
         json.dumps({"Path": "pkg/foo", "Version": "v1.0.0"}),
-        json.dumps({"Vulns": []}),
+        '\n'.join([json.dumps({'config': {'protocol_version': 'v1.0.0'}}),
+                   json.dumps({'SBOM': {'modules': [{'path': 'pkg/foo', 'version': 'v1.0.0'}]}})]),
     ),
     (
         "rust",
@@ -808,11 +796,7 @@ def test_vuln_overrides_outdated(tmp_path, ecosystem, manager, outdated_fn, vuln
 
         # Build mock vuln outputs per ecosystem
         if ecosystem == "go":
-            vuln_out = json.dumps({
-                "Vulns": [
-                    {"OSV": {"id": "GO-2024-TEST"}, "Modules": [{"Path": "test-pkg"}]}
-                ]
-            })
+            vuln_out = _govuln_stream(findings=[('test-pkg', '1.0.0', 'GO-2024-TEST')])
         elif ecosystem == "rust":
             vuln_out = json.dumps({
                 "vulnerabilities": {
@@ -828,7 +812,7 @@ def test_vuln_overrides_outdated(tmp_path, ecosystem, manager, outdated_fn, vuln
             vuln_out = json.dumps({
                 "results": [
                     {
-                        "type": "UnpatchedGem",
+                        "type": "unpatched_gem",
                         "gem": {"name": "test-pkg", "version": "1.0.0"},
                         "advisory": {
                             "id": "CVE-2024-TEST",
@@ -862,3 +846,201 @@ def test_vuln_overrides_outdated(tmp_path, ecosystem, manager, outdated_fn, vuln
         )
     finally:
         gd.TOOLS[tool_key] = old_val
+
+
+# One contract table drives every subprocess check's failure coverage.
+TOOL_CHECK_CONTRACTS = [
+    ('python', 'pip', 'vulns', 'pip_audit'),
+    ('node', 'npm', 'outdated', 'npm'), ('node', 'npm', 'vulns', 'npm'),
+    ('go', 'gomod', 'outdated', 'go'), ('go', 'gomod', 'vulns', 'govulncheck'),
+    ('rust', 'cargo', 'outdated', 'cargo_outdated'), ('rust', 'cargo', 'vulns', 'cargo_audit'),
+    ('ruby', 'bundler', 'outdated', 'bundle'), ('ruby', 'bundler', 'vulns', 'bundler_audit'),
+    ('php', 'composer', 'outdated', 'composer'), ('php', 'composer', 'vulns', 'composer'),
+]
+
+
+@pytest.mark.parametrize('language,manager,kind,tool', TOOL_CHECK_CONTRACTS)
+@pytest.mark.parametrize('stdout,returncode', [('{}', 97), ('[]', 0)])
+def test_tool_failure_never_establishes_coverage(tmp_path, monkeypatch, language, manager, kind, tool, stdout, returncode):
+    (tmp_path / 'requirements.txt').write_text('synthetic==1.0\n')
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    dep = dict(name='synthetic', manager=manager, version='1.0')
+    with patch('subprocess.run', return_value=_mock_proc(stdout, returncode)):
+        result = getattr(gd, f'check_{language}_{kind}')(tmp_path, [dep])
+    row = gd.finalize_dep_health(result)[0]
+    field = 'vuln_state' if kind == 'vulns' else 'outdated_state'
+    assert row[field] == 'unchecked'
+    assert f'{field}: no evaluation evidence' not in row['check_note']
+    assert row['severity'] == 'unchecked'
+
+
+NONPYTHON_CONTRACTS = [c for c in TOOL_CHECK_CONTRACTS if c[0] != 'python']
+
+
+@pytest.mark.parametrize('language,manager,kind,tool', NONPYTHON_CONTRACTS)
+@pytest.mark.parametrize('source', ['nested', 'absolute', 'legacy'])
+def test_nonpython_checks_use_manifest_directories(tmp_path, monkeypatch, language, manager, kind, tool, source):
+    manifests = {'npm': 'package.json', 'gomod': 'go.mod', 'cargo': 'Cargo.toml',
+                 'bundler': 'Gemfile', 'composer': 'composer.json'}
+    nested = tmp_path / 'synthetic-project'
+    nested.mkdir()
+    source_path = {'nested': f'synthetic-project/{manifests[manager]}',
+                   'absolute': str(nested / manifests[manager]), 'legacy': ''}[source]
+    expected = tmp_path if source == 'legacy' else nested
+    dep = dict(name='synthetic-widget', version='1.0.0', manager=manager, source_path=source_path)
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    # The external boundary returns its cwd as a failure reason, exposing actual routing.
+    def run(cmd, **kwargs):
+        if cmd[0] == 'synthetic-tool':
+            raise ValueError(f'synthetic cwd={kwargs["cwd"]}')
+        raise ValueError('synthetic other check')
+    with patch('subprocess.run', side_effect=run):
+        row = getattr(gd, f'check_{language}_deps')(tmp_path, [dep])[0]
+    assert f'synthetic cwd={expected}' in row['check_note']
+    assert row['source_path'] == source_path
+
+
+@pytest.mark.parametrize('language,manager,kind,tool,output', [
+    ('node', 'npm', 'outdated', 'npm', {'synthetic-widget': {'current': '1.0.0'}}),
+    ('node', 'npm', 'vulns', 'npm', {'vulnerabilities': {'synthetic-widget': {}}}),
+    ('go', 'gomod', 'outdated', 'go', {'Path': 'synthetic-widget'}),
+    ('go', 'gomod', 'outdated', 'go', {'Path': 'synthetic-widget', 'Version': 'v1.0.0', 'Update': {}}),
+    ('go', 'gomod', 'vulns', 'govulncheck', {'Vulns': []}),
+    ('rust', 'cargo', 'outdated', 'cargo_outdated', {'dependencies': [{'name': 'synthetic-widget'}]}),
+    ('rust', 'cargo', 'outdated', 'cargo_outdated', {'error': 'synthetic failure', 'dependencies': [
+        {'name': 'synthetic-widget', 'project': '1.0.0', 'latest': '2.0.0'}]}),
+    ('rust', 'cargo', 'vulns', 'cargo_audit', {'vulnerabilities': {}}),
+    ('rust', 'cargo', 'vulns', 'cargo_audit', {'vulnerabilities': {'list': [{}]}}),
+    ('ruby', 'bundler', 'outdated', 'bundle', 'synthetic-widget (newest 2.0.0, installed 1.0.0)\nmalformed-row'),
+    ('ruby', 'bundler', 'vulns', 'bundler_audit', {'results': [{}]}),
+    ('php', 'composer', 'outdated', 'composer', {'installed': [{'name': 'synthetic-widget', 'version': '1.0.0'}]}),
+    ('php', 'composer', 'vulns', 'composer', {'advisories': {'synthetic-widget': [{}]}}),
+])
+def test_nonpython_malformed_tool_result_is_unchecked(tmp_path, monkeypatch, language, manager, kind, tool, output):
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    dep = dict(name='synthetic-widget', version='1.0.0', manager=manager)
+    stdout = output if isinstance(output, str) else json.dumps(output)
+    with patch('subprocess.run', return_value=_mock_proc(stdout)):
+        row = getattr(gd, f'check_{language}_{kind}')(tmp_path, [dep])[0]
+    field = 'outdated_state' if kind == 'outdated' else 'vuln_state'
+    assert row[field] == 'unchecked'
+    assert row['check_note']
+
+
+def test_absent_go_list_row_is_unchecked(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'go', 'synthetic-go')
+    with patch('subprocess.run', return_value=_mock_proc('{"Path":"synthetic-other","Version":"v1.0.0"}')):
+        row = gd.check_go_outdated(tmp_path, [dict(name='synthetic-widget', manager='gomod', version='v1.0.0')])[0]
+    assert row['outdated_state'] == 'unchecked'
+    assert row['check_note']
+
+
+def _govuln_stream(*, modules=(), findings=()):
+    messages = [{'config': {'protocol_version': 'v1.0.0'}},
+                {'SBOM': {'modules': [{'path': name, 'version': version} for name, version in modules]}}]
+    messages.extend({'finding': {'osv': advisory, 'trace': [{'module': name, 'version': version}]}}
+                    for name, version, advisory in findings)
+    return '\n'.join(json.dumps(message) for message in messages)
+
+
+def test_go_clean_sbom_establishes_independent_vulnerability_coverage(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
+    dep = dict(name='synthetic-widget', manager='gomod', version='v1.0.0', outdated_state='unchecked')
+    with patch('subprocess.run', return_value=_mock_proc(_govuln_stream(modules=[('synthetic-widget', 'v1.0.0')]))):
+        row = gd.check_go_vulns(tmp_path, [dep])[0]
+    assert row['vuln_state'] == 'checked'
+    assert row['outdated_state'] == 'unchecked'
+
+
+def test_go_configuration_without_evaluated_module_is_unchecked(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
+    with patch('subprocess.run', return_value=_mock_proc(_govuln_stream())):
+        row = gd.check_go_vulns(tmp_path, [dict(name='synthetic-widget', manager='gomod', version='v1.0.0')])[0]
+    assert row['vuln_state'] == 'unchecked'
+
+
+@pytest.mark.parametrize('version,update', [('not-a-version', None), ('v1.0.0', 'not-a-version')])
+def test_go_invalid_comparison_version_is_unchecked(tmp_path, monkeypatch, version, update):
+    monkeypatch.setitem(gd.TOOLS, 'go', 'synthetic-go')
+    output = dict(Path='synthetic-widget', Version=version)
+    if update:
+        output['Update'] = dict(Version=update)
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output))):
+        row = gd.check_go_outdated(tmp_path, [dict(name='synthetic-widget', manager='gomod', version='v1.0.0')])[0]
+    assert row['outdated_state'] == 'unchecked'
+    assert row['check_note']
+
+
+def test_go_finding_version_cannot_be_reassigned_by_later_sbom(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
+    # Stream ordering has no guarantee after config. A finding for another version
+    # must not attach to this declaration when a matching SBOM follows it.
+    output = _govuln_stream(findings=[('synthetic-widget', 'v0.5.0', 'GO-SYNTHETIC')])
+    output += '\n' + json.dumps({'SBOM': {'modules': [{'path': 'synthetic-widget', 'version': 'v1.0.0'}]}})
+    with patch('subprocess.run', return_value=_mock_proc(output)):
+        row = gd.check_go_vulns(tmp_path, [dict(name='synthetic-widget', manager='gomod', version='v1.0.0')])[0]
+    assert not row.get('advisory_id')
+
+
+@pytest.mark.parametrize('language,manager,kind,tool,output', [
+    ('node', 'npm', 'outdated', 'npm', '{}'),
+    ('rust', 'cargo', 'outdated', 'cargo_outdated', '{"dependencies":[]}'),
+    ('ruby', 'bundler', 'outdated', 'bundle', ''),
+    ('php', 'composer', 'outdated', 'composer', '{"installed":[]}'),
+])
+def test_findings_only_absence_does_not_invent_comparison(tmp_path, monkeypatch, language, manager, kind, tool, output):
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    with patch('subprocess.run', return_value=_mock_proc(output)):
+        row = getattr(gd, f'check_{language}_{kind}')(tmp_path, [dict(name='synthetic-widget', manager=manager, version='^1.0.0')])[0]
+    assert row['outdated_state'] == 'unchecked'
+    assert row.get('current_version') is None
+    assert row['check_note']
+
+
+def test_composer_explicit_clean_row_is_checked(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'composer', 'synthetic-composer')
+    output = {'installed': [{'name': 'synthetic-widget', 'version': '1.0.0',
+                             'latest': '1.0.0', 'latest-status': 'up-to-date'}]}
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output))):
+        row = gd.check_php_outdated(tmp_path, [dict(name='synthetic-widget', manager='composer', version='^1.0.0')])[0]
+    assert row['outdated_state'] == 'checked'
+    assert row['severity'] == 'ok'
+    assert row['current_version'] == row['latest_version'] == '1.0.0'
+
+
+@pytest.mark.parametrize('language,manager,kind,tool', NONPYTHON_CONTRACTS)
+def test_nonpython_check_failure_preserves_other_coverage(tmp_path, monkeypatch, language, manager, kind, tool):
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    other = 'vuln_state' if kind == 'outdated' else 'outdated_state'
+    dep = dict(name='synthetic-widget', manager=manager, version='1.0.0', **{other: 'checked'})
+    with patch('subprocess.run', return_value=_mock_proc('{}', 97)):
+        row = getattr(gd, f'check_{language}_{kind}')(tmp_path, [dep])[0]
+    assert row[other] == 'checked'
+    assert row['vuln_state' if kind == 'vulns' else 'outdated_state'] == 'unchecked'
+
+
+@pytest.mark.parametrize('language,manager,tool,output', [
+    ('rust', 'cargo', 'cargo_audit', {'vulnerabilities': {'list': [{
+        'advisory': {'id': 'RUSTSEC-SYNTHETIC'}, 'package': {'name': 'synthetic-widget', 'version': '0.5.0'}}]}}),
+    ('ruby', 'bundler', 'bundler_audit', {'results': [{'type': 'unpatched_gem',
+        'advisory': {'id': 'CVE-SYNTHETIC'}, 'gem': {'name': 'synthetic-widget', 'version': '0.5.0'}}]}),
+])
+def test_audit_finding_for_another_current_version_is_unchecked(tmp_path, monkeypatch, language, manager, tool, output):
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    dep = dict(name='synthetic-widget', manager=manager, version='^1.0.0', current_version='1.0.0')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output), 1)):
+        row = getattr(gd, f'check_{language}_vulns')(tmp_path, [dep])[0]
+    assert row['vuln_state'] == 'unchecked'
+    assert not row.get('advisory_id')
+
+
+def test_cargo_multiple_versions_keep_matching_advisory(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'cargo_audit', 'synthetic-cargo-audit')
+    output = {'vulnerabilities': {'list': [
+        {'advisory': {'id': 'RUSTSEC-SYNTHETIC-CURRENT'}, 'package': {'name': 'synthetic-widget', 'version': '1.0.0'}},
+        {'advisory': {'id': 'RUSTSEC-SYNTHETIC-OTHER'}, 'package': {'name': 'synthetic-widget', 'version': '0.5.0'}},
+    ]}}
+    dep = dict(name='synthetic-widget', manager='cargo', version='^1.0.0', current_version='1.0.0')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output), 1)):
+        row = gd.check_rust_vulns(tmp_path, [dep])[0]
+    assert row['advisory_id'] == 'RUSTSEC-SYNTHETIC-CURRENT'

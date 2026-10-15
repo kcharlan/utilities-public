@@ -29,7 +29,10 @@ import signal
 import argparse
 import sqlite3
 import subprocess
+import tempfile
 import tomllib
+import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timezone, timedelta
@@ -45,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -221,6 +224,27 @@ def run_preflight() -> None:
 
 # ── SQLite Schema ─────────────────────────────────────────────────────────────
 
+_DEPENDENCIES_TABLE_SQL = """\
+CREATE TABLE IF NOT EXISTS dependencies (
+  repo_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  manager TEXT NOT NULL,
+  source_path TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  declared_spec TEXT,
+  current_version TEXT,
+  wanted_version TEXT,
+  latest_version TEXT,
+  severity TEXT DEFAULT 'unchecked',
+  advisory_id TEXT,
+  outdated_state TEXT DEFAULT 'unchecked',
+  vuln_state TEXT DEFAULT 'unchecked',
+  check_note TEXT,
+  checked_at TEXT,
+  PRIMARY KEY (repo_id, manager, source_path, name)
+);
+"""
+
+
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
 
@@ -254,19 +278,7 @@ CREATE TABLE IF NOT EXISTS branches (
   PRIMARY KEY (repo_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS dependencies (
-  repo_id          TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  manager          TEXT NOT NULL,
-  name             TEXT NOT NULL,
-  current_version  TEXT,
-  wanted_version   TEXT,
-  latest_version   TEXT,
-  severity         TEXT DEFAULT 'ok',
-  advisory_id      TEXT,
-  checked_at       TEXT,
-  source_path      TEXT DEFAULT '',
-  PRIMARY KEY (repo_id, manager, name)
-);
+""" + _DEPENDENCIES_TABLE_SQL + """
 
 CREATE TABLE IF NOT EXISTS working_state (
   repo_id              TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
@@ -280,7 +292,9 @@ CREATE TABLE IF NOT EXISTS working_state (
   last_commit_date     TEXT,
   checked_at           TEXT,
   scan_error           TEXT DEFAULT NULL,
-  dep_check_error      BOOLEAN DEFAULT FALSE
+  dep_check_error      BOOLEAN DEFAULT FALSE,
+  missing_dep_tools    TEXT DEFAULT '[]',
+  dep_manifests        TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS scan_log (
@@ -311,12 +325,70 @@ def init_schema(db_path: Path) -> None:
 _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN scan_error TEXT DEFAULT NULL",
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
+    "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
 ]
 
 
+def normalize_dep_name(manager: str, name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower() if manager == "pip" else name
+
+
+def dependency_identity_name(dep: dict) -> str:
+    if dep.get("reference_identity"):
+        return dep["name"]
+    return normalize_dep_name(dep["manager"], dep["name"])
+
+
+def _version_sort_key(value: str) -> tuple:
+    from packaging.version import InvalidVersion, Version
+    try:
+        return (0, Version(value), value)
+    except InvalidVersion:
+        return (1, None, value)
+
+
+def _migrate_dependencies_v2(conn: sqlite3.Connection) -> None:
+    """Rebuild the historical package key as a manifest declaration key atomically."""
+    info = conn.execute("PRAGMA table_info(dependencies)").fetchall()
+    key = [r[1] for r in sorted(info, key=lambda r: r[5]) if r[5]]
+    if key == ["repo_id", "manager", "source_path", "name"]:
+        return
+    conn.execute("SAVEPOINT dependencies_v2")
+    try:
+        cursor = conn.execute("SELECT * FROM dependencies ORDER BY rowid")
+        columns = [d[0] for d in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        conn.execute("ALTER TABLE dependencies RENAME TO dependencies_legacy")
+        conn.execute(_DEPENDENCIES_TABLE_SQL)
+        for row in rows:
+            note = (f"Legacy result: severity={row.get('severity')!r}; "
+                    f"advisory={row.get('advisory_id')!r}. "
+                    "Rescan dependencies to establish check coverage.")
+            conn.execute(
+                """INSERT INTO dependencies
+                   (repo_id, manager, source_path, name, current_version,
+                    wanted_version, latest_version, severity, advisory_id,
+                    outdated_state, vuln_state, check_note, checked_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'unchecked', NULL,
+                           'unchecked', 'unchecked', ?, ?)
+                   ON CONFLICT(repo_id, manager, source_path, name) DO NOTHING""",
+                (row["repo_id"], row["manager"], row.get("source_path") or "",
+                 normalize_dep_name(row["manager"], row["name"]),
+                 row.get("current_version"), row.get("wanted_version"),
+                 row.get("latest_version"), note, row.get("checked_at")),
+            )
+        conn.execute("DROP TABLE dependencies_legacy")
+        conn.execute("RELEASE SAVEPOINT dependencies_v2")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT dependencies_v2")
+        conn.execute("RELEASE SAVEPOINT dependencies_v2")
+        raise
+
+
 def run_migrations(db_path: Path) -> None:
-    """Add new columns to working_state (idempotent — safe to run multiple times)."""
+    """Apply additive migrations, then migrate the dependency declaration key."""
     conn = sqlite3.connect(str(db_path))
     try:
         for sql in _MIGRATION_SQL:
@@ -324,6 +396,7 @@ def run_migrations(db_path: Path) -> None:
                 conn.execute(sql)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        _migrate_dependencies_v2(conn)
         conn.commit()
     finally:
         conn.close()
@@ -855,123 +928,120 @@ async def emit_scan_progress(scan_id: int, event: dict) -> None:
         await q.put(event)
 
 
+DEP_TOOL_REQUIREMENTS = {
+    "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning")],
+    "npm":      [("npm", "npm", "Node.js dependency checks")],
+    "gomod":    [("go", "go", "Go dependency checks"),
+                 ("govulncheck", "govulncheck", "Go vulnerability scanning")],
+    "cargo":    [("cargo", "cargo", "Rust dependency checks"),
+                 ("cargo_outdated", "cargo-outdated", "Rust outdated checks"),
+                 ("cargo_audit", "cargo-audit", "Rust vulnerability scanning")],
+    "bundler":  [("bundle", "bundle", "Ruby dependency checks"),
+                 ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning")],
+    "composer": [("composer", "composer", "PHP dependency checks")],
+}
+
+
+@dataclass
+class DepAnalysis:
+    enriched: list[dict]
+    any_error: bool
+    missing_tools: list[dict]
+    manifests: list[dict]
+
+
+def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
+    """Run blocking manifest/tool work away from the server event loop."""
+    manifests: list[dict] = []
+    raw = parse_deps_for_repo(repo_path, manifests_out=manifests)
+    managers = {d['manager'] for d in raw} | {('pip' if m['kind'] in ('requirements', 'pyproject', 'pep723') else
+                 next(manager for filename, manager, _ in _DEP_FILE_PRIORITY if filename == m['kind']))
+                for m in manifests}
+    missing = []
+    for manager in sorted(managers):
+        for key, tool, description in DEP_TOOL_REQUIREMENTS.get(manager, []):
+            if not TOOLS.get(key) and not any(m['tool'] == tool for m in missing):
+                missing.append(dict(tool=tool, description=description))
+                logger.info('Missing %s (%s)', tool, description)
+    enriched = raw
+    any_error = any(m.get('error') for m in manifests)
+    for manager, checker in (
+        ('pip', check_python_deps), ('npm', check_node_deps),
+        ('gomod', check_go_deps), ('cargo', check_rust_deps),
+        ('bundler', check_ruby_deps), ('composer', check_php_deps),
+    ):
+        try:
+            enriched = checker(repo_path, enriched)
+        except Exception as exc:
+            any_error = True
+            note = tool_failure_note(f'{manager} checker', exc)
+            enriched = [mark_unchecked(dict(d), note) if d.get('manager') == manager else d
+                        for d in enriched]
+    enriched = finalize_dep_health(enriched)
+    any_error |= bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
+                                     for d in enriched)
+    return DepAnalysis(enriched, any_error, missing, manifests)
+
+
 async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
-    """Detect, parse, and health-check deps for one repo, then persist to DB."""
-    repo_path_obj = Path(repo_path)
-
-    # 1. Parse raw deps from manifest files
-    raw_deps = parse_deps_for_repo(repo_path_obj)
-    if not raw_deps:
-        # Clear any stale deps if the manifest was removed.
-        await db.execute("DELETE FROM dependencies WHERE repo_id = ?", (repo_id,))
-        await db.commit()
-        return
-
-    # Determine which ecosystems this repo actually uses (from parsed deps)
-    detected_managers = {d.get("manager", "") for d in raw_deps}
-
-    # Map manager → tools needed for full analysis
-    _MANAGER_TOOL_MAP = {
-        "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning")],
-        "npm":      [("npm", "npm", "Node.js dependency checks")],
-        "gomod":    [("go", "go", "Go dependency checks"),
-                     ("govulncheck", "govulncheck", "Go vulnerability scanning")],
-        "cargo":    [("cargo", "cargo", "Rust dependency checks"),
-                     ("cargo_outdated", "cargo-outdated", "Rust outdated checks"),
-                     ("cargo_audit", "cargo-audit", "Rust vulnerability scanning")],
-        "bundler":  [("bundle", "bundle", "Ruby dependency checks"),
-                     ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning")],
-        "composer": [("composer", "composer", "PHP dependency checks")],
-    }
-
-    for mgr in detected_managers:
-        for tool_key, display_name, description in _MANAGER_TOOL_MAP.get(mgr, []):
-            if not TOOLS.get(tool_key):
-                logger.info(
-                    "Missing %s while scanning %s dependencies for %s (%s)",
-                    display_name,
-                    mgr,
-                    repo_id,
-                    description,
-                )
-
-    # 2. Route through ecosystem health checkers (each operates on the full list;
-    #    only enriches deps matching its ecosystem)
-    enriched = list(raw_deps)
-    any_error = False
+    """Analyze in a worker thread; persist rows and metadata together."""
+    analysis = await asyncio.to_thread(analyze_repo_deps, Path(repo_path))
+    enriched = analysis.enriched
+    await db.execute('SAVEPOINT dep_scan_snapshot')
     try:
-        enriched = check_python_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Python dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_node_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Node dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_go_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Go dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_rust_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Rust dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_ruby_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("Ruby dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-    try:
-        enriched = check_php_deps(repo_path_obj, enriched)
-    except Exception as exc:
-        logger.error("PHP dep check failed for %s: %s", repo_id, exc)
-        any_error = True
-
-    # Update dep_check_error in working_state.
-    await db.execute(
-        "INSERT INTO working_state (repo_id, dep_check_error) VALUES (?, ?) "
-        "ON CONFLICT(repo_id) DO UPDATE SET dep_check_error = excluded.dep_check_error",
-        (repo_id, any_error),
-    )
-
-    # 3. Upsert into dependencies table
-    for dep in enriched:
         await db.execute(
-            """INSERT OR REPLACE INTO dependencies
-               (repo_id, manager, name, current_version, wanted_version,
-                latest_version, severity, advisory_id, checked_at, source_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                repo_id,
-                dep.get("manager", ""),
-                dep.get("name", ""),
-                dep.get("current_version"),
-                dep.get("wanted_version"),
-                dep.get("latest_version"),
-                dep.get("severity", "ok"),
-                dep.get("advisory_id"),
-                dep.get("checked_at"),
-                dep.get("source_path", ""),
-            ),
+            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
+            "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
+            "dep_manifests = excluded.dep_manifests",
+            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(analysis.manifests)),
         )
 
-    # 4. Delete stale deps (in DB but no longer in manifest)
-    current_keys = {(dep.get("manager", ""), dep.get("name", "")) for dep in enriched}
-    cursor = await db.execute(
-        "SELECT manager, name FROM dependencies WHERE repo_id = ?", (repo_id,)
-    )
-    db_keys = await cursor.fetchall()
-    for manager, name in db_keys:
-        if (manager, name) not in current_keys:
+        # 3. Upsert into dependencies table
+        for dep in enriched:
             await db.execute(
-                "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND name = ?",
-                (repo_id, manager, name),
+                """INSERT OR REPLACE INTO dependencies
+                   (repo_id, manager, name, current_version, wanted_version,
+                    latest_version, severity, advisory_id, checked_at, source_path,
+                    declared_spec, outdated_state, vuln_state, check_note)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    repo_id,
+                    dep.get("manager", ""),
+                    dep.get("name", ""),
+                    dep.get("current_version"),
+                    dep.get("wanted_version"),
+                    dep.get("latest_version"),
+                    dep.get("severity", "ok"),
+                    dep.get("advisory_id"),
+                    dep.get("checked_at"),
+                    dep.get("source_path") or "",
+                    dep.get("declared_spec", dep.get("version")),
+                    dep.get("outdated_state", "unchecked"),
+                    dep.get("vuln_state", "unchecked"),
+                    dep.get("check_note"),
+                ),
             )
 
-    await db.commit()
+        # 4. Delete stale deps (in DB but no longer in manifest)
+        current_keys = {(dep.get("manager", ""), dep.get("source_path") or "", dep.get("name", "")) for dep in enriched}
+        cursor = await db.execute(
+            "SELECT manager, source_path, name FROM dependencies WHERE repo_id = ?", (repo_id,)
+        )
+        db_keys = await cursor.fetchall()
+        for manager, source_path, name in db_keys:
+            if (manager, source_path, name) not in current_keys:
+                await db.execute(
+                    "DELETE FROM dependencies WHERE repo_id = ? AND manager = ? AND source_path = ? AND name = ?",
+                    (repo_id, manager, source_path, name),
+                )
+
+    except BaseException:
+        await db.execute('ROLLBACK TO SAVEPOINT dep_scan_snapshot')
+        await db.execute('RELEASE SAVEPOINT dep_scan_snapshot')
+        raise
+    else:
+        await db.execute('RELEASE SAVEPOINT dep_scan_snapshot')
 
 
 async def run_fleet_scan(scan_id: int, scan_type: str) -> None:
@@ -1207,7 +1277,7 @@ def detect_runtime(repo_path: Path) -> str:
 # ── Dependency Detection & Parsing (packet 12) ────────────────────────────────
 
 # Detection priority table: (filename, manager, runtime)
-# Within a runtime, only the highest-priority file is returned.
+# Python manifests coexist; other ecosystem filenames retain their choices.
 _DEP_FILE_PRIORITY: list[tuple[str, str, str]] = [
     ("pyproject.toml", "pip",      "python"),
     ("requirements.txt", "pip",    "python"),
@@ -1230,58 +1300,183 @@ _DEP_WALK_SKIP = {
 _DEP_WALK_MAX_DEPTH = 3
 
 
+_REQUIREMENTS_RE = re.compile(
+    r"^requirements(?:[-_.][A-Za-z0-9_.-]+)?\.(?:txt|lock)$", re.IGNORECASE
+)
+
+
+def _source_path(repo_path: Path, file_path: Path) -> str:
+    resolved = file_path.resolve()
+    try:
+        return resolved.relative_to(repo_path.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def detect_dep_files(repo_path: Path) -> list[dict]:
-    """Return a list of {file, manager, runtime, dir} for every manifest found.
-
-    Walks the repo tree up to _DEP_WALK_MAX_DEPTH levels deep, skipping
-    common vendored/generated directories.  Within a single directory and
-    runtime, only the highest-priority manifest is returned (e.g. pyproject.toml
-    wins over requirements.txt in the same dir).  Across different directories,
-    all manifests are returned so monorepos are fully covered.
-    """
-    results: list[dict] = []
-
-    dirs_to_walk: list[tuple[Path, int]] = [(repo_path, 0)]
+    """Discover coexisting Python manifests and other ecosystem manifests."""
+    results = []
+    dirs_to_walk = [(repo_path, 0)]
     while dirs_to_walk:
         current_dir, depth = dirs_to_walk.pop()
         try:
-            entries = list(current_dir.iterdir())
-        except (OSError, PermissionError):
+            entries = sorted(current_dir.iterdir())
+        except OSError:
             continue
-
-        dir_files: set[str] = set()
         for entry in entries:
-            if entry.is_file():
-                dir_files.add(entry.name.lower())
-            elif entry.is_dir() and depth < _DEP_WALK_MAX_DEPTH:
-                if entry.name not in _DEP_WALK_SKIP and not entry.name.startswith("."):
+            if entry.is_dir():
+                if depth < _DEP_WALK_MAX_DEPTH and entry.name not in _DEP_WALK_SKIP and not entry.name.startswith('.'):
                     dirs_to_walk.append((entry, depth + 1))
-
-        # Within this directory, apply the priority dedup per-runtime
-        seen_runtimes: set[str] = set()
-        for filename, manager, runtime in _DEP_FILE_PRIORITY:
-            if filename.lower() in dir_files and runtime not in seen_runtimes:
-                seen_runtimes.add(runtime)
-                results.append({
-                    "file": filename,
-                    "manager": manager,
-                    "runtime": runtime,
-                    "dir": current_dir,
-                })
-
+                continue
+            if not entry.is_file():
+                continue
+            known = next(((filename, manager, runtime) for filename, manager, runtime
+                          in _DEP_FILE_PRIORITY if runtime != 'python'
+                          and filename.lower() == entry.name.lower()), None)
+            if known:
+                filename, manager, runtime = known
+                results.append(dict(file=entry.name, kind=filename, manager=manager, runtime=runtime, dir=current_dir))
+                continue
+            kind = None
+            if entry.name.lower() == 'pyproject.toml':
+                kind = 'pyproject'
+            elif _REQUIREMENTS_RE.fullmatch(entry.name):
+                kind = 'requirements'
+            elif entry.suffix.lower() in ('.py', '.pyw'):
+                kind = 'pep723'
+            elif not entry.suffix:
+                try:
+                    with entry.open('rb') as candidate:
+                        first_line = candidate.readline()
+                    if first_line.startswith(b'#!'):
+                        kind = 'pep723'
+                except OSError:
+                    continue
+            if kind:
+                results.append(dict(file=entry.name, kind=kind, manager='pip', runtime='python', dir=current_dir))
+                continue
     return results
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) -> list[dict]:
-    """Parse a requirements.txt file and return [{name, version, manager}].
+def _manifest_record(inventory: dict | None, path: Path, kind: str) -> dict:
+    record = dict(kind=kind, dependencies=0, error=None)
+    if inventory is not None:
+        inventory[path.resolve()] = record
+    return record
 
-    Handles:
-    - Comments and blank lines (skip)
-    - -e / --editable (skip)
-    - -r / --requirement includes (one level, circular-safe)
-    - Other flags (-i, --index-url, etc.) (skip)
-    - name==version (exact pin → extract version)
-    - name>=version or unpinned (version = None)
+
+def _find_pep723_block(script: str) -> str | None:
+    """Apply PEP 723's reference grammar only to the leading comment prelude."""
+    prelude = []
+    for line in script.splitlines(keepends=True):
+        if line.strip() and not line.lstrip().startswith('#'):
+            break
+        prelude.append(line)
+    # https://peps.python.org/pep-0723/#reference-implementation
+    regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$'
+    blocks = [m for m in re.finditer(regex, ''.join(prelude)) if m.group('type') == 'script']
+    if len(blocks) > 1:
+        raise ValueError('Multiple script blocks found')
+    if not blocks:
+        return None
+    return ''.join(line[2:] if line.startswith('# ') else line[1:]
+                   for line in blocks[0].group('content').splitlines(keepends=True))
+
+
+def parse_pep723_script(file_path: Path, *, manifests_out: dict | None = None) -> list[dict]:
+    # An explicit requirements include owns its resolved file, even if its
+    # filename also makes it a script candidate. Never reread or replace it.
+    if manifests_out is not None and file_path.resolve() in manifests_out:
+        return []
+    record = _manifest_record(manifests_out, file_path, 'pep723')
+    try:
+        block = _find_pep723_block(file_path.read_text(encoding='utf-8'))
+        if block is None:
+            if manifests_out is not None:
+                manifests_out.pop(file_path.resolve(), None)
+            return []
+        data = tomllib.loads(block)
+        declarations = data.get('dependencies', [])
+        if not isinstance(declarations, list) or not all(isinstance(d, str) for d in declarations):
+            raise ValueError('dependencies must be a list of strings')
+        deps = []
+        for text in declarations:
+            dep = parse_python_requirement(text)
+            if dep is None:
+                raise ValueError('invalid dependency declaration')
+            deps.append(dep)
+        record['dependencies'] = len(deps)
+        return deps
+    except (OSError, UnicodeError, ValueError) as exc:
+        record['error'] = str(exc)
+        return []
+
+
+_VCS_SCHEMES = ("git+", "hg+", "svn+", "bzr+")
+_URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+NOTE_DIRECT_REF = "direct VCS/URL reference; not compared with PyPI or audited"
+
+
+def _direct_reference(name: str | None, url: str, declared: str) -> dict:
+    vcs = next((scheme[:-1] for scheme in _VCS_SCHEMES
+                if url.startswith(scheme)), None)
+    target = url[len(vcs) + 1:] if vcs else url
+    parts = urllib.parse.urlsplit(target)
+    path = parts.path
+    revision = None
+    if vcs and "@" in path:
+        path, _, revision = path.rpartition("@")
+    egg = urllib.parse.parse_qs(parts.fragment).get("egg", [None])[0]
+    if name is None and egg:
+        from packaging.requirements import Requirement
+        name = Requirement(egg).name
+    current = None
+    if name is None and not vcs and path.endswith(".whl"):
+        from packaging.utils import parse_wheel_filename
+        wheel_name, wheel_version, _, _ = parse_wheel_filename(path.rsplit("/", 1)[-1])
+        name, current = str(wheel_name), str(wheel_version)
+    reference_identity = name is None
+    if reference_identity:
+        host = parts.hostname or ""
+        if parts.port:
+            host += f":{parts.port}"
+        name = host + path.removesuffix(".git").rstrip("/")
+    else:
+        name = normalize_dep_name("pip", name)
+    if vcs:
+        current = f"{vcs}:{revision}" if revision else f"{vcs}:default branch"
+    return {
+        "name": name, "manager": "pip", "declared_spec": declared,
+        "version": None, "current_version": current, "direct_ref": True,
+        "reference_identity": reference_identity,
+    }
+
+
+def parse_python_requirement(text: str) -> dict | None:
+    """Parse PEP 508 or pip's bare URL form without evaluating markers."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    text = text.strip()
+    try:
+        if text.startswith(_VCS_SCHEMES) or _URL_RE.match(text):
+            return _direct_reference(None, text, text)
+        requirement = Requirement(text)
+        if requirement.url:
+            return _direct_reference(requirement.name, requirement.url, text)
+        pins = [spec.version for spec in requirement.specifier
+                if spec.operator in ('==', '===') and '*' not in spec.version
+                and _exact_pip_version(spec.version)]
+        version = pins[0] if len(pins) == 1 else None
+        return dict(name=requirement.name, manager='pip', version=version,
+                    declared_spec=text)
+    except (InvalidRequirement, ValueError):
+        return None
+
+
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None) -> list[dict]:
+    """Parse PEP 508 declarations and direct URLs with circular-safe includes.
+
+    Join continuations and remove comments/options while preserving extras and
+    markers in declared_spec. Editable/local requirements remain unsupported.
     """
     if _visited is None:
         _visited = set()
@@ -1290,14 +1485,17 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
     if resolved in _visited:
         return []
     _visited.add(resolved)
+    record = _manifest_record(manifests_out, file_path, 'requirements')
 
     try:
         text = file_path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, PermissionError):
+    except OSError as exc:
+        record['error'] = str(exc)
         return []
 
     deps: list[dict] = []
-    for line in text.splitlines():
+    for line in re.sub(r"\\\r?\n", " ", text).splitlines():
+        line = re.split(r"\s+#", line, maxsplit=1)[0]
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -1309,78 +1507,57 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
             if len(parts) < 2:
                 continue
             include_path = file_path.parent / parts[1].strip()
-            deps.extend(parse_requirements_txt(include_path, _visited))
+            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out))
             continue
         if line.startswith("-"):
             # Other flags: -i, --index-url, -f, --find-links, etc.
             continue
 
-        # Package line: may have extras [extra], env markers ; marker
-        # Strip environment markers
-        pkg_part = line.split(";")[0].strip()
-        # Strip inline comments
-        pkg_part = pkg_part.split(" #")[0].strip()
-
-        # Match: name[extras]  op  version
-        m = re.match(
-            r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)"  # package name
-            r"(\[[^\]]*\])?"                                   # optional extras
-            r"\s*==\s*([^\s,;]+)",                             # == version
-            pkg_part,
-        )
-        if m:
-            deps.append({"name": m.group(1), "version": m.group(4), "manager": "pip"})
-            continue
-
-        # Unpinned or range constraint — just extract the name
-        m2 = re.match(
-            r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?",
-            pkg_part,
-        )
-        if m2:
-            deps.append({"name": m2.group(1), "version": None, "manager": "pip"})
+        requirement_text = re.split(r"\s+--(?:hash|config-settings|global-option|install-option)\b", line, maxsplit=1)[0].strip()
+        dep = parse_python_requirement(requirement_text)
+        if dep is not None:
+            dep['source_file'] = file_path.resolve()
+            deps.append(dep)
+            record['dependencies'] += 1
+        else:
+            record['error'] = 'invalid dependency declaration'
 
     return deps
 
 
-def parse_pyproject_toml(file_path: Path) -> list[dict]:
+def parse_pyproject_toml(file_path: Path, *, manifests_out: dict | None = None) -> list[dict]:
     """Parse pyproject.toml and return [{name, version, manager}].
 
     Supports:
     - PEP 621: [project].dependencies  (preferred if both sections exist)
     - Poetry:  [tool.poetry.dependencies]
     """
+    record = _manifest_record(manifests_out, file_path, 'pyproject')
     try:
         with open(file_path, "rb") as f:
             data = tomllib.load(f)
     except Exception as exc:
+        record['error'] = str(exc)
         logger.warning("Failed to parse %s: %s", file_path, exc)
         return []
 
     deps: list[dict] = []
 
-    # PEP 621 takes priority
-    project_deps = data.get("project", {}).get("dependencies", None)
-    if project_deps is not None:
-        for entry in project_deps:
-            if not isinstance(entry, str):
-                continue
-            # Strip markers
-            entry = entry.split(";")[0].strip()
-            m = re.match(
-                r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?"
-                r"\s*==\s*([^\s,;]+)",
-                entry,
-            )
-            if m:
-                deps.append({"name": m.group(1), "version": m.group(4), "manager": "pip"})
-            else:
-                m2 = re.match(
-                    r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?",
-                    entry,
-                )
-                if m2:
-                    deps.append({"name": m2.group(1), "version": None, "manager": "pip"})
+    project = data.get('project', {})
+    declarations = list(project.get('dependencies', []))
+    for optional in project.get('optional-dependencies', {}).values():
+        declarations.extend(optional)
+    for group in data.get('dependency-groups', {}).values():
+        declarations.extend(entry for entry in group if isinstance(entry, str))
+    for entry in declarations:
+        dep = parse_python_requirement(entry) if isinstance(entry, str) else None
+        if dep is not None:
+            deps.append(dep)
+        else:
+            record['error'] = 'invalid dependency declaration'
+    if 'dependencies' in project:
+        _apply_uv_lock_versions(file_path, deps, record)
+        record['dependencies'] = len(deps)
         return deps
 
     # Poetry fallback
@@ -1393,10 +1570,48 @@ def parse_pyproject_toml(file_path: Path) -> list[dict]:
                 version = val.get("version") or None
             else:
                 version = None
-            deps.append({"name": name, "version": version, "manager": "pip"})
+            declared = val if isinstance(val, str) else json.dumps(val, sort_keys=True)
+            deps.append({"name": name, "version": version, "manager": "pip", "declared_spec": declared})
+        _apply_uv_lock_versions(file_path, deps, record)
+        record['dependencies'] = len(deps)
         return deps
 
-    return []
+    _apply_uv_lock_versions(file_path, deps, record)
+    record['dependencies'] = len(deps)
+    return deps
+
+
+def _load_uv_lock_versions(lock_path: Path) -> dict[str, set[str]]:
+    with lock_path.open('rb') as stream:
+        data = tomllib.load(stream)
+    versions: dict[str, set[str]] = {}
+    for package in data.get('package', []):
+        if isinstance(package.get('source'), dict) and 'registry' in package['source'] and package.get('version'):
+            name = normalize_dep_name('pip', package['name'])
+            versions.setdefault(name, set()).add(package['version'])
+    return versions
+
+
+def _apply_uv_lock_versions(file_path: Path, deps: list[dict], record: dict) -> None:
+    lock = file_path.with_name('uv.lock')
+    if not lock.exists():
+        return
+    try:
+        versions = _load_uv_lock_versions(lock)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        record['error'] = f'uv.lock: {exc}'
+        return
+    for dep in deps:
+        if dep.get('direct_ref'):
+            continue
+        locked = versions.get(normalize_dep_name('pip', dep['name']), set())
+        if len(locked) == 1:
+            dep['version'] = next(iter(locked))
+            dep['version_source'] = str(lock.resolve())
+            add_check_note(dep, 'version from adjacent uv.lock')
+        elif len(locked) > 1:
+            dep['resolution_blocked'] = True
+            mark_unchecked(dep, 'ambiguous uv.lock registry versions; resolution blocked')
 
 
 def parse_package_json(file_path: Path) -> list[dict]:
@@ -1536,57 +1751,149 @@ def parse_composer_json(file_path: Path) -> list[dict]:
     return deps
 
 
-def parse_deps_for_repo(repo_path: Path) -> list[dict]:
-    """Detect manifest files in repo_path (including subdirectories) and parse them.
-
-    Returns a merged list of {name, version, manager} dicts.
-    Walks the repo tree via detect_dep_files(), so monorepos with manifests
-    in subdirectories are fully covered.
-    """
-    manifest_entries = detect_dep_files(repo_path)
-    if not manifest_entries:
-        return []
-
-    _parser_map = {
-        "requirements.txt": parse_requirements_txt,
-        "pyproject.toml":   parse_pyproject_toml,
-        "package.json":     parse_package_json,
-        "go.mod":           parse_go_mod,
-        "Cargo.toml":       parse_cargo_toml,
-        "Gemfile":          parse_gemfile,
-        "composer.json":    parse_composer_json,
-    }
-
-    all_deps: list[dict] = []
-    seen_dep_keys: set[tuple[str, str]] = set()  # (manager, name) dedup across dirs
-    for entry in manifest_entries:
-        filename = entry["file"]
-        parser = _parser_map.get(filename)
-        if parser is None:
-            continue
-        manifest_dir = entry["dir"]
-        file_path = manifest_dir / filename
-        # Compute relative path from repo root for display
+def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None) -> list[dict]:
+    """Parse declarations with a shared inventory of attempted manifest reads."""
+    inventory: dict[Path, dict] = {}
+    visited: set[str] = set()
+    parsers = {'pyproject': parse_pyproject_toml, 'pep723': parse_pep723_script,
+               'package.json': parse_package_json, 'go.mod': parse_go_mod,
+               'Cargo.toml': parse_cargo_toml, 'Gemfile': parse_gemfile,
+               'composer.json': parse_composer_json}
+    all_deps = []
+    seen = set()
+    # Parse explicit manifests/includes before probing script candidates. This
+    # gives arbitrary include filenames stable ownership regardless of walk order.
+    entries = sorted(detect_dep_files(repo_path), key=lambda entry: entry['kind'] == 'pep723')
+    for entry in entries:
+        file_path = entry['dir'] / entry['file']
+        kind = entry['kind']
         try:
-            rel_dir = str(manifest_dir.relative_to(repo_path))
-        except ValueError:
-            rel_dir = str(manifest_dir)
-        source = f"{rel_dir}/{filename}" if rel_dir != "." else filename
-        try:
-            parsed = parser(file_path)
+            if kind == 'requirements':
+                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory)
+            elif kind in ('pyproject', 'pep723'):
+                parsed = parsers[kind](file_path, manifests_out=inventory)
+            else:
+                record = _manifest_record(inventory, file_path, kind)
+                # Validate structured manifests here because legacy parsers return
+                # [] for errors as well as valid empty files.
+                text = file_path.read_text(encoding='utf-8')
+                if kind in ('package.json', 'composer.json'):
+                    json.loads(text)
+                elif kind == 'Cargo.toml':
+                    tomllib.loads(text)
+                parsed = parsers[kind](file_path)
+                record['dependencies'] = len(parsed)
         except Exception as exc:
-            logger.warning("Error parsing %s in %s: %s", filename, manifest_dir, exc)
+            logger.warning('Error parsing %s: %s', file_path, exc)
+            inventory.setdefault(file_path.resolve(), dict(kind=kind, dependencies=0))['error'] = str(exc)
             parsed = []
         for dep in parsed:
-            key = (dep.get("manager", ""), dep.get("name", ""))
-            if key not in seen_dep_keys:
-                seen_dep_keys.add(key)
-                dep["source_path"] = source
+            source = _source_path(repo_path, Path(dep.pop('source_file', file_path)))
+            dep['name'] = dependency_identity_name(dep)
+            key = (dep['manager'], source, dep['name'])
+            if key not in seen:
+                seen.add(key)
+                dep['source_path'] = source
+                if dep.get('version_source'):
+                    dep['version_source'] = _source_path(repo_path, Path(dep['version_source']))
                 all_deps.append(dep)
+    if manifests_out is not None:
+        manifests_out.extend(dict(path=_source_path(repo_path, path), **record)
+                             for path, record in inventory.items())
     return all_deps
 
 
 # ── Python dependency health (Packet 13) ──────────────────────────────────────
+
+def _validate_tool_result(proc, tool: str, allowed: tuple[int, ...]) -> None:
+    if proc.returncode not in allowed:
+        detail = (proc.stderr or '').strip()
+        raise ValueError(f'{tool} exited {proc.returncode}: {detail}')
+
+
+def _check_failed(deps: list[dict], tool: str, error, field: str) -> list[dict]:
+    reason = tool_failure_note(tool, error)
+    return [mark_unchecked(dict(d), reason, field) for d in deps]
+
+
+def add_check_note(dep: dict, reason: str) -> dict:
+    """Append distinct incomplete-coverage reasons without multiplying on finalize."""
+    existing = dep.get('check_note') or ''
+    if reason and f'; {reason}; ' not in f'; {existing}; ':
+        existing = f'{existing}; {reason}' if existing else reason
+    dep['check_note'] = existing or None
+    return dep
+
+
+def mark_unchecked(dep: dict, reason: str, field: str | None = None) -> dict:
+    for key in ((field,) if field else ('outdated_state', 'vuln_state')):
+        dep[key] = 'unchecked'
+    add_check_note(dep, reason)
+    dep['severity'] = derive_severity(dep)
+    return dep
+
+
+def tool_failure_note(tool: str, error) -> str:
+    detail = getattr(error, 'stderr', None) or str(error)
+    if isinstance(detail, bytes):
+        detail = detail.decode('utf-8', errors='replace')
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    note = f"{tool}: {(lines[-1] if lines else 'check failed')[:240]}"
+    logger.warning('%s', note)
+    return note
+
+
+def derive_severity(dep: dict) -> str:
+    if dep.get("advisory_id"):
+        return "vulnerable"
+    if (dep.get("outdated_state") in ("checked", "floating")
+            and dep.get("severity") in ("major", "outdated")):
+        return dep["severity"]
+    if "unchecked" in (
+        dep.get("outdated_state", "unchecked"),
+        dep.get("vuln_state", "unchecked"),
+    ):
+        return "unchecked"
+    return "ok"
+
+
+def _exact_pip_version(value: str | None) -> str | None:
+    from packaging.version import InvalidVersion, Version
+    if not value:
+        return None
+    try:
+        Version(value)
+    except InvalidVersion:
+        return None
+    return value
+
+
+def finalize_dep_health(deps: list[dict]) -> list[dict]:
+    result = []
+    now = datetime.now(timezone.utc).isoformat()
+    for dep in deps:
+        d = dict(dep)
+        d.setdefault('declared_spec', d.get('version'))
+        current = (_exact_pip_version(d.get('version')) if d.get('manager') == 'pip'
+                   else d.get('version') if d.get('manager') == 'gomod' else None)
+        d.setdefault('current_version', current)
+        if not d.get('wanted_version'):
+            d['wanted_version'] = d.get('current_version')
+        d.setdefault('latest_version', None)
+        d.setdefault('advisory_id', None)
+        d.setdefault('checked_at', now)
+        for field, valid in (('outdated_state', ('checked', 'floating', 'unchecked')),
+                             ('vuln_state', ('checked', 'unchecked'))):
+            missing_evidence = d.get(field) not in valid
+            if missing_evidence:
+                d[field] = 'unchecked'
+            if missing_evidence or (d[field] == 'unchecked' and not d.get('check_note')):
+                add_check_note(d, f'{field}: no evaluation evidence')
+        d.setdefault('check_note', None)
+        d['severity'] = derive_severity(d)
+        result.append(d)
+    return result
+
 
 def classify_severity(current: str, latest: str) -> str:
     """Compare two PEP 440 version strings and return a severity label.
@@ -1607,111 +1914,216 @@ def classify_severity(current: str, latest: str) -> str:
     return "outdated"
 
 
+_PYPI_MAX_CONSECUTIVE_FAILURES = 3
+
+
+def _floating_specifier(dep: dict) -> str:
+    """Extract supported PEP 508/440 constraints without interpreting Poetry syntax."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.specifiers import SpecifierSet
+
+    text = (dep.get('declared_spec') or dep.get('version') or '').strip()
+    if text in ('', '*'):
+        return ''
+    try:
+        requirement = Requirement(text)
+    except InvalidRequirement:
+        return str(SpecifierSet(text))
+    if (requirement.url or normalize_dep_name('pip', requirement.name)
+            != normalize_dep_name('pip', dep['name'])):
+        raise ValueError('unsupported Python declaration')
+    return str(requirement.specifier)
+
+
+def resolve_floating_version(payload: dict, constraint: str) -> str | None:
+    """Select the highest allowed release with at least one non-yanked file."""
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    releases = payload.get('releases')
+    if isinstance(releases, dict):
+        versions = [Version(version) for version, files in releases.items()
+                    if _exact_pip_version(version) and isinstance(files, list)
+                    and any(isinstance(file, dict) and not file.get('yanked', False)
+                            for file in files)]
+    else:
+        fallback = _exact_pip_version(payload.get('info', {}).get('version'))
+        versions = [Version(fallback)] if fallback else []
+    selected = max(SpecifierSet(constraint).filter(versions), default=None)
+    return str(selected) if selected is not None else None
+
+
 def check_python_outdated(deps: list[dict]) -> list[dict]:
-    """Query PyPI JSON API for each pinned pip dep and populate version/severity fields.
-
-    Skips deps where:
-      - manager != "pip"
-      - version is None
-      - version contains range operators (>=, ~=, <, !=, >, ^)
-
-    On any network or parse error the dep is left with severity="ok" and
-    latest_version=None (fail-open: don't block the rest of the scan).
-
-    Returns a new list of dicts (input dicts are copied, not mutated in-place).
-    """
-    _RANGE_OPS = (">=", "<=", "~=", "!=", ">", "<", "^", "*")
-
-    result: list[dict] = []
+    """Evaluate exact or floating declarations, caching registry results per scan."""
+    cache: dict[str, tuple[dict | None, str | None]] = {}
+    connection_failures = 0
+    result = []
     for dep in deps:
-        d = dict(dep)  # shallow copy; only add new scalar fields
-        if d.get("manager") != "pip" or d.get("version") is None:
-            result.append(d)
-            continue
-
-        ver_str: str = d["version"]
-
-        # Extract bare version from "name==version" or "==version" notation
-        if "==" in ver_str:
-            ver_str = ver_str.split("==")[-1].strip()
-
-        # Skip range/unpinned specifiers
-        if any(op in ver_str for op in _RANGE_OPS):
-            result.append(d)
-            continue
-
-        name = d["name"]
-        latest_version = None
-        severity = "ok"
-        try:
-            url = f"https://pypi.org/pypi/{name}/json"
-            with urllib.request.urlopen(url, timeout=15) as resp:
-                data = json.loads(resp.read())
-            latest_version = data["info"]["version"]
-            severity = classify_severity(ver_str, latest_version)
-        except Exception as exc:
-            logger.warning("PyPI lookup failed for %s: %s", name, exc)
-
-        d["latest_version"] = latest_version
-        d["severity"] = severity
+        d = dict(dep)
         result.append(d)
-
+        if d.get('manager') != 'pip' or d.get('resolution_blocked'):
+            continue
+        if d.get('direct_ref'):
+            mark_unchecked(d, NOTE_DIRECT_REF)
+            continue
+        current = (_exact_pip_version(d.get('current_version'))
+                   or _exact_pip_version(d.get('version')))
+        d['current_version'] = current
+        d['wanted_version'] = current
+        d['latest_version'] = None
+        try:
+            constraint = _floating_specifier(d) if current is None else None
+        except (ValueError, TypeError) as exc:
+            mark_unchecked(d, f'unsupported Python constraint: {exc}', 'outdated_state')
+            continue
+        name = normalize_dep_name('pip', d['name'])
+        if name not in cache:
+            if connection_failures >= _PYPI_MAX_CONSECUTIVE_FAILURES:
+                cache[name] = (None, 'PyPI lookup: connection failure limit reached')
+            else:
+                try:
+                    with urllib.request.urlopen(f'https://pypi.org/pypi/{name}/json', timeout=15) as resp:
+                        payload = json.loads(resp.read())
+                    if not isinstance(payload, dict):
+                        raise ValueError('invalid registry result')
+                    if not _exact_pip_version(payload.get('info', {}).get('version')):
+                        raise ValueError('missing or invalid registry latest version')
+                    cache[name] = (payload, None)
+                    connection_failures = 0
+                except Exception as exc:
+                    if (isinstance(exc, (TimeoutError, ConnectionError, urllib.error.URLError))
+                            and not isinstance(exc, urllib.error.HTTPError)):
+                        connection_failures += 1
+                    cache[name] = (None, tool_failure_note('PyPI lookup', exc))
+        payload, note = cache[name]
+        if note:
+            mark_unchecked(d, note, 'outdated_state')
+            continue
+        try:
+            evaluated = current or resolve_floating_version(payload, constraint)
+            if evaluated is None:
+                raise ValueError('no usable release satisfies the declaration')
+            d['wanted_version'] = evaluated
+            d['latest_version'] = payload['info']['version']
+            d['severity'] = classify_severity(evaluated, d['latest_version'])
+            d['outdated_state'] = 'checked' if current else 'floating'
+        except Exception as exc:
+            mark_unchecked(d, tool_failure_note('PyPI lookup', exc), 'outdated_state')
     return result
 
 
-def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
-    """Run pip-audit against the repo's requirements.txt (if present) and merge results.
+def _pip_audit_batches(pins: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+    """Deduplicate pins, separating conflicting versions of the same distribution."""
+    batches: list[list[tuple[str, str]]] = []
+    seen = set()
+    for name, version in pins:
+        pin = (normalize_dep_name('pip', name), version)
+        if pin in seen:
+            continue
+        seen.add(pin)
+        for batch in batches:
+            if all(existing_name != pin[0] for existing_name, _ in batch):
+                batch.append(pin)
+                break
+        else:
+            batches.append([pin])
+    return batches
 
-    If pip-audit is not installed (TOOLS["pip_audit"] is None), returns deps unchanged.
-    If the repo has no requirements.txt (only pyproject.toml), logs a warning and skips.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
 
-    Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
-    Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = <first vuln ID>.
-    """
-    pip_audit = TOOLS.get("pip_audit")
-    if not pip_audit:
-        return deps
+def _audit_python_pins(pip_audit: str, batch: list[tuple[str, str]]) -> dict:
+    def failed(note):
+        return {pin: {"vuln_state": "unchecked", "note": note} for pin in batch}
 
-    # pip-audit --requirement only works with requirements.txt-style files
-    manifest = repo_path / "requirements.txt"
-    if not manifest.exists():
-        logger.warning(
-            "check_python_vulns: no requirements.txt in %s — skipping vuln check", repo_path
-        )
-        return deps
-
+    proc = None
     try:
-        proc = subprocess.run(
-            [pip_audit, "--requirement", str(manifest), "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        with tempfile.TemporaryDirectory(prefix="git-fleet-audit-") as tmp:
+            path = Path(tmp) / "pins.txt"
+            path.write_text("".join(f"{name}=={version}\n"
+                                    for name, version in batch), encoding="utf-8")
+            proc = subprocess.run(
+                [pip_audit, "--requirement", str(path), "--no-deps", "--disable-pip",
+                 "--format", "json", "--progress-spinner", "off"],
+                capture_output=True, text=True, timeout=300,
+            )
+        if proc.returncode not in (0, 1):
+            return failed(tool_failure_note(
+                "pip-audit", proc.stderr or f"exit status {proc.returncode}"
+            ))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or not isinstance(raw.get("dependencies"), list):
+            raise ValueError("missing dependencies result")
+        entries = {}
+        for entry in raw["dependencies"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                raise ValueError("invalid dependency result")
+            name = normalize_dep_name("pip", entry["name"])
+            if name in entries:
+                raise ValueError("duplicate dependency result")
+            entries[name] = entry
+        results = {}
+        for pin in batch:
+            name, version = pin
+            entry = entries.get(name)
+            if entry is None:
+                results[pin] = {"vuln_state": "unchecked", "note": "not in pip-audit output"}
+                continue
+            if entry.get("skip_reason"):
+                results[pin] = {"vuln_state": "unchecked",
+                                "note": f"pip-audit skipped: {entry['skip_reason']}"}
+                continue
+            vulns = entry.get("vulns")
+            if (not isinstance(vulns, list)
+                    or any(not isinstance(v, dict) or not isinstance(v.get("id"), str)
+                           or not v["id"] for v in vulns)):
+                raise ValueError("missing or invalid vulnerability result")
+            if entry.get("version") is not None and entry["version"] != version:
+                raise ValueError("audit version differs from requested pin")
+            if proc.returncode == 0 and vulns:
+                raise ValueError("audit exit status contradicts advisories")
+            results[pin] = {"vuln_state": "checked",
+                            "advisory_id": vulns[0]["id"] if vulns else None}
+        if proc.returncode == 1 and not any(
+            result.get("advisory_id") for result in results.values()
+        ):
+            raise ValueError("advisory exit status without a requested advisory")
+        return results
     except Exception as exc:
-        logger.warning("pip-audit failed for %s: %s", repo_path, exc)
-        return deps
+        detail = proc.stderr if proc is not None and proc.stderr else str(exc)
+        return failed(tool_failure_note("pip-audit", detail))
 
-    # Build lookup: {package_name_lower: first_vuln_id}
-    vuln_map: dict[str, str] = {}
-    try:
-        for entry in raw.get("dependencies", []):
-            vuln_list = entry.get("vulns", [])
-            if vuln_list:
-                vuln_map[entry["name"].lower()] = vuln_list[0]["id"]
-    except Exception as exc:
-        logger.warning("pip-audit output parse error for %s: %s", repo_path, exc)
-        return deps
 
-    result: list[dict] = []
+def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
+    """Audit concrete evaluated declarations across manifests without resolving deps."""
+    pip_audit = TOOLS.get('pip_audit')
+    result = []
+    rows_by_pin: dict[tuple[str, str], list[dict]] = {}
     for dep in deps:
         d = dict(dep)
-        key = d.get("name", "").lower()
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
         result.append(d)
+        if d.get('manager') != 'pip' or d.get('resolution_blocked'):
+            continue
+        if d.get('direct_ref'):
+            mark_unchecked(d, NOTE_DIRECT_REF)
+            continue
+        version = (_exact_pip_version(d.get('current_version'))
+                   or _exact_pip_version(d.get('version'))
+                   or _exact_pip_version(d.get('wanted_version')))
+        if version is None:
+            mark_unchecked(d, 'no concrete Python version to audit', 'vuln_state')
+        elif not pip_audit:
+            mark_unchecked(d, 'pip-audit: tool unavailable', 'vuln_state')
+        else:
+            pin = (normalize_dep_name('pip', d['name']), version)
+            rows_by_pin.setdefault(pin, []).append(d)
+    for batch in _pip_audit_batches(list(rows_by_pin)):
+        for pin, audit in _audit_python_pins(pip_audit, batch).items():
+            for row in rows_by_pin[pin]:
+                row['vuln_state'] = audit['vuln_state']
+                if audit['vuln_state'] == 'unchecked':
+                    mark_unchecked(row, audit['note'], 'vuln_state')
+                else:
+                    row['advisory_id'] = audit['advisory_id']
+                    row['severity'] = derive_severity(row)
     return result
 
 
@@ -1733,27 +2145,124 @@ def check_python_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not pip_deps:
         return other_deps
 
-    pip_deps = check_python_outdated(pip_deps)
-    pip_deps = check_python_vulns(repo_path, pip_deps)
+    blocked = [d for d in pip_deps if d.get('resolution_blocked')]
+    pip_deps = [d for d in pip_deps if not d.get('resolution_blocked')]
+    if pip_deps:
+        pip_deps = check_python_outdated(pip_deps)
+        pip_deps = check_python_vulns(repo_path, pip_deps)
 
-    # Ensure all required fields are present (fill defaults for skipped/unpinned deps)
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in pip_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(pip_deps + blocked) + other_deps
 
 
 # ── Node dependency health (Packet 14) ────────────────────────────────────────
+
+
+def _group_by_manifest_dir(repo_path: Path, deps: list[dict]) -> dict[Path, list[dict]]:
+    """Keep independent declaration projects in their physically declaring directory."""
+    groups: dict[Path, list[dict]] = {}
+    for dep in deps:
+        source = dep.get('source_path')
+        directory = ((repo_path / source).resolve().parent if source else repo_path.resolve())
+        groups.setdefault(directory, []).append(dep)
+    return groups
+
+
+def _tool_version(value) -> str | None:
+    """Accept concrete comparable versions, never ranges or tool sentinels."""
+    if not isinstance(value, str) or not re.match(r'^v?\d', value):
+        return None
+    return _exact_pip_version(value)
+
+
+def _npm_lock_versions(manifest_dir: Path) -> dict[str, str]:
+    """Read direct v1–v3 lock entries, honoring npm's shrinkwrap precedence."""
+    try:
+        lock = manifest_dir / 'npm-shrinkwrap.json'
+        if not lock.exists():
+            lock = manifest_dir / 'package-lock.json'
+        raw = json.loads(lock.read_text())
+        if not isinstance(raw, dict):
+            return {}
+        layout = raw.get('lockfileVersion', 1)
+        if layout == 1:
+            entries = raw.get('dependencies', {})
+        elif layout in (2, 3):
+            entries = {path[len('node_modules/'):]: entry
+                       for path, entry in raw.get('packages', {}).items()
+                       if path.startswith('node_modules/') and '/node_modules/' not in path}
+        else:
+            return {}
+        return {name: entry['version'] for name, entry in entries.items()
+                if isinstance(entry, dict) and not entry.get('link') and _tool_version(entry.get('version'))}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def _npm_installed_version(manifest_dir: Path, name: str) -> str | None:
+    """Read package metadata only; never load JavaScript or execute lifecycle code."""
+    if not re.fullmatch(r'(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
+        return None
+    try:
+        raw = json.loads((manifest_dir / 'node_modules' / name / 'package.json').read_text())
+        if isinstance(raw, dict) and raw.get('name') == name:
+            return _tool_version(raw.get('version'))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _npm_latest_version(npm: str, manifest_dir: Path, name: str) -> str:
+    proc = subprocess.run([npm, 'view', name, 'version', '--json'], cwd=str(manifest_dir),
+                          capture_output=True, text=True, timeout=30)
+    _validate_tool_result(proc, 'npm view', (0,))
+    version = _tool_version(json.loads(proc.stdout))
+    if not version:
+        raise ValueError('registry comparison did not return a concrete version')
+    return version
+
+
+def _required_text(row: dict, key: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'missing or invalid {key}')
+    return value
+
+
+def _version_finding(dep: dict, current: str, latest: str, tool: str) -> None:
+    try:
+        severity = classify_severity(current, latest)
+    except Exception as exc:
+        mark_unchecked(dep, tool_failure_note(tool, exc), 'outdated_state')
+        return
+    dep.update(current_version=current, wanted_version=current, latest_version=latest,
+               outdated_state='checked', severity=severity)
+
+
+def _merge_vulnerability_report(deps: list[dict], findings: dict[str, str], tool: str,
+                                evaluated: set[str] | None = None,
+                                finding_versions: dict[str, dict[str, str]] | None = None) -> list[dict]:
+    """A findings-only report does not by itself prove an absent declaration was audited."""
+    result = []
+    for dep in deps:
+        d = dict(dep)
+        name = d.get('name', '')
+        if name in findings:
+            versions = finding_versions.get(name, {}) if finding_versions is not None else None
+            current = d.get('current_version')
+            if versions is not None and ((current and current not in versions)
+                                         or (not current and len(versions) != 1)):
+                mark_unchecked(d, f'{tool}: finding version does not match current version', 'vuln_state')
+            else:
+                if versions is not None and not current:
+                    current = d['current_version'] = next(iter(versions))
+                advisory = versions[current] if versions is not None else findings[name]
+                d.update(severity='vulnerable', advisory_id=advisory, vuln_state='checked')
+        elif evaluated is not None and name in evaluated:
+            d['vuln_state'] = 'checked'
+        else:
+            mark_unchecked(d, f'{tool}: report does not establish declaration evaluation', 'vuln_state')
+        result.append(d)
+    return result
 
 
 def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -1761,7 +2270,7 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If npm is not available (TOOLS["npm"] is None), returns deps unchanged.
     Handles npm's non-zero exit code when outdated packages exist (this is normal).
-    On any subprocess or JSON parse failure, returns deps unchanged (fail-open).
+    Missing version or comparison evidence remains unchecked with a reason.
     """
     npm = TOOLS.get("npm")
     if not npm:
@@ -1777,41 +2286,50 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'npm outdated', (0, 1))
         # npm outdated exits with code 1 when outdated packages exist — this is normal.
         # Only treat as error if stdout is empty/unparseable and returncode is non-zero.
         if not proc.stdout.strip() and proc.returncode != 0:
             logger.warning("npm outdated returned no output for %s (rc=%d)", repo_path, proc.returncode)
-            return deps
+            return _check_failed(deps, 'npm outdated', ValueError('no tool output'), 'outdated_state')
         outdated_map = json.loads(proc.stdout)
+        if not isinstance(outdated_map, dict) or 'error' in outdated_map:
+            raise ValueError('invalid npm outdated result')
+        if not all(isinstance(info, dict) for info in outdated_map.values()):
+            raise ValueError('invalid npm outdated row')
+        if proc.returncode == 1 and not outdated_map:
+            raise ValueError('outdated exit status without findings')
     except subprocess.CalledProcessError as exc:
-        logger.warning("npm outdated CalledProcessError for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
     except Exception as exc:
-        logger.warning("npm outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
 
+    versions = _npm_lock_versions(repo_path)
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
-        if name in outdated_map:
-            info = outdated_map[name]
-            d["current_version"] = info.get("current")
-            d["wanted_version"] = info.get("wanted")
-            d["latest_version"] = info.get("latest")
-            current = info.get("current") or ""
-            latest = info.get("latest") or ""
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
-        else:
-            # Not in npm outdated output → up to date
-            d.setdefault("current_version", d.get("version"))
-            d.setdefault("wanted_version", d.get("version"))
-            d.setdefault("latest_version", None)
-            d["severity"] = "ok"
+        info = outdated_map.get(name, {})
+        current = (_tool_version(info.get('current')) or versions.get(name)
+                   or _npm_installed_version(repo_path, name))
+        d['current_version'] = current
+        d['wanted_version'] = _tool_version(info.get('wanted'))
+        d['latest_version'] = _tool_version(info.get('latest'))
         d["checked_at"] = now
+        if not current:
+            mark_unchecked(d, 'npm outdated: no concrete current or locked version', 'outdated_state')
+        else:
+            try:
+                latest = d['latest_version']
+                if name not in outdated_map:
+                    latest = _npm_latest_version(npm, repo_path, name)
+                    d['latest_version'] = latest
+                if not latest:
+                    raise ValueError('missing latest version comparison')
+                d['outdated_state'] = 'checked'
+                d['severity'] = classify_severity(current, latest)
+            except Exception as exc:
+                mark_unchecked(d, tool_failure_note('npm outdated comparison', exc), 'outdated_state')
         result.append(d)
 
     return result
@@ -1822,7 +2340,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If npm is not available (TOOLS["npm"] is None), returns deps unchanged.
     Handles npm's non-zero exit code when vulnerabilities exist (normal behavior).
-    If npm audit fails (e.g. missing package-lock.json), returns deps unchanged (fail-open).
+    A failed audit or missing declaration coverage remains unchecked.
     Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = "npm:<name>".
     """
@@ -1840,31 +2358,51 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         )
         if not proc.stdout.strip():
             logger.warning("npm audit returned no output for %s (rc=%d)", repo_path, proc.returncode)
-            return deps
+            return _check_failed(deps, 'npm audit', ValueError('no tool output'), 'vuln_state')
         raw = json.loads(proc.stdout)
+        if isinstance(raw, dict) and 'error' in raw:
+            error = raw['error']
+            if isinstance(error, dict) and error.get('code') == 'ENOLOCK':
+                raise ValueError('lockfile required (ENOLOCK)')
+            raise ValueError('tool returned an error object')
+        _validate_tool_result(proc, 'npm audit', (0, 1))
+        if not isinstance(raw, dict) or not isinstance(raw.get('vulnerabilities'), dict):
+            raise ValueError('invalid npm audit result')
+        for name, entry in raw['vulnerabilities'].items():
+            if (not isinstance(entry, dict) or entry.get('name') != name
+                    or not isinstance(entry.get('severity'), str)
+                    or not isinstance(entry.get('via'), list) or not entry['via']
+                    or not isinstance(entry.get('nodes'), list) or not entry['nodes']
+                    or not all(isinstance(node, str) and node for node in entry['nodes'])
+                    or not all(isinstance(via, (str, dict)) and via for via in entry['via'])):
+                raise ValueError('invalid npm audit vulnerability row')
+        if proc.returncode == 1 and not raw['vulnerabilities']:
+            raise ValueError('audit exit status without vulnerability findings')
     except subprocess.CalledProcessError as exc:
-        logger.warning("npm audit CalledProcessError for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
     except Exception as exc:
-        logger.warning("npm audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'npm audit', exc, 'vuln_state')
 
-    # Build lookup: {package_name_lower: True} for vulnerable packages
-    vuln_names: set[str] = set()
-    try:
-        for name in raw.get("vulnerabilities", {}).keys():
-            vuln_names.add(name.lower())
-    except Exception as exc:
-        logger.warning("npm audit output parse error for %s: %s", repo_path, exc)
-        return deps
-
+    # npm audits the virtual lock tree, while outdated may describe node_modules.
+    # Reuse direct lock evidence and match the finding's affected node location.
+    versions = _npm_lock_versions(repo_path)
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
-        name_lower = d.get("name", "").lower()
-        if name_lower in vuln_names:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = f"npm:{d.get('name', name_lower)}"
+        name = d.get('name', '')
+        audited_version = versions.get(name)
+        current = d.get('current_version')
+        if not audited_version:
+            mark_unchecked(d, 'npm audit: declaration absent from audited lock evidence', 'vuln_state')
+        elif current and current != audited_version:
+            mark_unchecked(d, f'npm audit: audited lock version {audited_version} does not match current version {current}', 'vuln_state')
+        else:
+            if not current:
+                d['current_version'] = audited_version
+            d['vuln_state'] = 'checked'
+            finding = raw['vulnerabilities'].get(name)
+            if finding and f'node_modules/{name}' in finding['nodes']:
+                d.update(severity='vulnerable', advisory_id=f'npm:{name}')
         result.append(d)
 
     return result
@@ -1888,24 +2426,10 @@ def check_node_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not npm_deps:
         return other_deps
 
-    npm_deps = check_node_outdated(repo_path, npm_deps)
-    npm_deps = check_node_vulns(repo_path, npm_deps)
+    npm_deps = [d for directory, group in _group_by_manifest_dir(repo_path, npm_deps).items()
+                for d in check_node_vulns(directory, check_node_outdated(directory, group))]
 
-    # Ensure all required fields are present
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in npm_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(npm_deps) + other_deps
 
 
 # ── Go dependency health (Packet 15) ──────────────────────────────────────────
@@ -1942,7 +2466,7 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     If go is not available (TOOLS["go"] is None), returns deps unchanged.
     Parses NDJSON output (one JSON object per line).
     Strips 'v' prefix from Go versions before calling classify_severity().
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     go = TOOLS.get("go")
     if not go:
@@ -1956,19 +2480,32 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'go list', (0,))
         modules = _parse_go_ndjson(proc.stdout)
+        if not all(isinstance(m, dict) for m in modules):
+            raise ValueError('invalid module result')
+        mod_map: dict[str, dict] = {}
+        for mod in modules:
+            path = _required_text(mod, 'Path')
+            if mod.get('Error'):
+                raise ValueError('module evaluation error')
+            if mod.get('Main') is True:
+                continue
+            version = _required_text(mod, 'Version')
+            if mod.get('Replace'):
+                # Replacement versions/paths may have a different comparison target.
+                continue
+            update = mod.get('Update')
+            update_version = None
+            if 'Update' in mod:
+                if not isinstance(update, dict) or update.get('Error'):
+                    raise ValueError('invalid module update')
+                update_version = _required_text(update, 'Version')
+            if path in mod_map:
+                raise ValueError('duplicate module result')
+            mod_map[path] = {'version': version, 'update': update_version}
     except Exception as exc:
-        logger.warning("go list failed for %s: %s", repo_path, exc)
-        return deps
-
-    # Build lookup: {module_path: {"version": str, "update": str|None}}
-    mod_map: dict[str, dict] = {}
-    for mod in modules:
-        path = mod.get("Path", "")
-        version = mod.get("Version", "")
-        update = mod.get("Update", {})
-        update_version = update.get("Version") if update else None
-        mod_map[path] = {"version": version, "update": update_version}
+        return _check_failed(deps, 'go list', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -1978,14 +2515,9 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             info = mod_map[name]
             current = info["version"]
             update_ver = info["update"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # Go has no "wanted" concept
-            if update_ver:
-                d["latest_version"] = update_ver
-                d["severity"] = classify_severity(_strip_v(current), _strip_v(update_ver))
-            else:
-                d["latest_version"] = current
-                d["severity"] = "ok"
+            _version_finding(d, current, update_ver or current, 'go list')
+        else:
+            mark_unchecked(d, 'go list: declaration absent from evaluated module rows', 'outdated_state')
         result.append(d)
     return result
 
@@ -1994,7 +2526,8 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run govulncheck -json ./... and merge vulnerability info into gomod dep dicts.
 
     If govulncheck is not available (TOOLS["govulncheck"] is None), returns deps unchanged.
-    Parses the Vulns array from govulncheck JSON output.
+    Parses the v1 streaming config/SBOM/finding protocol. OSV entries alone
+    describe possible advisories, not findings for the scanned version.
     Vulnerability severity overrides any prior severity.
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = OSV ID.
     """
@@ -2010,32 +2543,47 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=300,
         )
-        raw = json.loads(proc.stdout)
+        # JSON output reports findings in the stream and exits zero; nonzero is failure.
+        _validate_tool_result(proc, 'govulncheck', (0,))
+        messages = _parse_go_ndjson(proc.stdout)
+        if (not messages or not isinstance(messages[0], dict)
+                or messages[0].get('config', {}).get('protocol_version') != 'v1.0.0'):
+            raise ValueError('missing supported govulncheck protocol config')
+        evaluated_versions: set[tuple[str, str]] = set()
+        versioned_findings: dict[tuple[str, str], str] = {}
+        for message in messages:
+            if not isinstance(message, dict) or len(message) != 1:
+                raise ValueError('invalid govulncheck message')
+            kind, entry = next(iter(message.items()))
+            if kind not in ('config', 'progress', 'SBOM', 'osv', 'finding') or not isinstance(entry, dict):
+                raise ValueError('invalid govulncheck message type')
+            if kind == 'SBOM':
+                modules = entry.get('modules', [])
+                if not isinstance(modules, list):
+                    raise ValueError('invalid govulncheck SBOM modules')
+                for module in modules:
+                    name = _required_text(module, 'path')
+                    version = module.get('version')
+                    if isinstance(version, str) and version:
+                        evaluated_versions.add((name, version))
+            elif kind == 'finding':
+                advisory = _required_text(entry, 'osv')
+                trace = entry.get('trace')
+                if not isinstance(trace, list) or not trace or not isinstance(trace[0], dict):
+                    raise ValueError('invalid govulncheck finding trace')
+                name = _required_text(trace[0], 'module')
+                version = _required_text(trace[0], 'version')
+                evaluated_versions.add((name, version))
+                versioned_findings[name, version] = advisory
+            elif kind == 'osv':
+                _required_text(entry, 'id')
     except Exception as exc:
-        logger.warning("govulncheck failed for %s: %s", repo_path, exc)
-        return deps
-
-    # Build lookup: {module_path: osv_id}
-    vuln_map: dict[str, str] = {}
-    try:
-        for vuln in raw.get("Vulns", []):
-            osv_id = vuln.get("OSV", {}).get("id", "")
-            for mod in vuln.get("Modules", []):
-                mod_path = mod.get("Path", "")
-                if mod_path:
-                    vuln_map[mod_path] = osv_id
-    except Exception as exc:
-        logger.warning("govulncheck output parse error for %s: %s", repo_path, exc)
-        return deps
-
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        if d.get("name", "") in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[d["name"]]
-        result.append(d)
-    return result
+        return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
+    evaluated = {d['name'] for d in deps if (d['name'], d.get('current_version') or d.get('version'))
+                 in evaluated_versions}
+    findings = {d['name']: versioned_findings[d['name'], d.get('current_version') or d.get('version')]
+                for d in deps if (d['name'], d.get('current_version') or d.get('version')) in versioned_findings}
+    return _merge_vulnerability_report(deps, findings, 'govulncheck', evaluated)
 
 
 def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2056,23 +2604,10 @@ def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not go_deps:
         return other_deps
 
-    go_deps = check_go_outdated(repo_path, go_deps)
-    go_deps = check_go_vulns(repo_path, go_deps)
+    go_deps = [d for directory, group in _group_by_manifest_dir(repo_path, go_deps).items()
+               for d in check_go_vulns(directory, check_go_outdated(directory, group))]
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in go_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(go_deps) + other_deps
 
 
 # ── Rust dependency health (Packet 15) ────────────────────────────────────────
@@ -2082,7 +2617,7 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run cargo outdated --format json and enrich cargo deps with version/severity fields.
 
     If cargo-outdated is not available (TOOLS["cargo_outdated"] is None), returns deps unchanged.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     cargo_outdated = TOOLS.get("cargo_outdated")
     if not cargo_outdated:
@@ -2096,24 +2631,24 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'cargo outdated', (0,))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('dependencies'), list):
+            raise ValueError('invalid cargo outdated result')
     except Exception as exc:
-        logger.warning("cargo outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
 
     # Build lookup: {name: {"project": current, "latest": latest}}
     outdated_map: dict[str, dict] = {}
     try:
         for entry in raw.get("dependencies", []):
-            name = entry.get("name", "")
-            if name:
-                outdated_map[name] = {
-                    "project": entry.get("project", ""),
-                    "latest": entry.get("latest", ""),
-                }
+            name = _required_text(entry, 'name')
+            if name in outdated_map:
+                raise ValueError('duplicate cargo outdated row')
+            outdated_map[name] = {'project': _required_text(entry, 'project'),
+                                  'latest': _required_text(entry, 'latest')}
     except Exception as exc:
-        logger.warning("cargo outdated output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2121,15 +2656,9 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         name = d.get("name", "")
         if name in outdated_map:
             info = outdated_map[name]
-            current = info["project"]
-            latest = info["latest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # cargo has no "wanted" concept
-            d["latest_version"] = latest
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
+            _version_finding(d, info['project'], info['latest'], 'cargo outdated')
+        else:
+            mark_unchecked(d, 'cargo outdated: report does not establish declaration evaluation', 'outdated_state')
         result.append(d)
     return result
 
@@ -2153,31 +2682,33 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'cargo audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if (not isinstance(raw, dict) or 'error' in raw
+                or not isinstance(raw.get('vulnerabilities'), dict)
+                or not isinstance(raw['vulnerabilities'].get('list'), list)):
+            raise ValueError('invalid cargo audit result')
     except Exception as exc:
-        logger.warning("cargo audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
     # Build lookup: {package_name: rustsec_id}
     vuln_map: dict[str, str] = {}
+    finding_versions: dict[str, dict[str, str]] = {}
     try:
         for entry in raw.get("vulnerabilities", {}).get("list", []):
-            advisory_id = entry.get("advisory", {}).get("id", "")
-            pkg_name = entry.get("package", {}).get("name", "")
-            if pkg_name and advisory_id:
-                vuln_map[pkg_name] = advisory_id
+            advisory_id = _required_text(entry.get('advisory', {}), 'id')
+            pkg_name = _required_text(entry.get('package', {}), 'name')
+            version = _required_text(entry.get('package', {}), 'version')
+            if not _tool_version(version):
+                raise ValueError('invalid cargo audit package version')
+            vuln_map[pkg_name] = advisory_id
+            finding_versions.setdefault(pkg_name, {})[version] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('cargo audit failed without vulnerability findings')
     except Exception as exc:
-        logger.warning("cargo audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        if d.get("name", "") in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[d["name"]]
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'cargo audit', finding_versions=finding_versions)
 
 
 def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2198,23 +2729,10 @@ def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not cargo_deps:
         return other_deps
 
-    cargo_deps = check_rust_outdated(repo_path, cargo_deps)
-    cargo_deps = check_rust_vulns(repo_path, cargo_deps)
+    cargo_deps = [d for directory, group in _group_by_manifest_dir(repo_path, cargo_deps).items()
+                  for d in check_rust_vulns(directory, check_rust_outdated(directory, group))]
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in cargo_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(cargo_deps) + other_deps
 
 
 # ── Ruby dependency health (Packet 15) ────────────────────────────────────────
@@ -2225,7 +2743,7 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If bundle is not available (TOOLS["bundle"] is None), returns deps unchanged.
     Parses line-by-line output: 'gem-name (newest X.Y.Z, installed A.B.C, ...)'.
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     bundle = TOOLS.get("bundle")
     if not bundle:
@@ -2239,23 +2757,33 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'bundle outdated', (0, 1))
         stdout = proc.stdout
+        if stdout.strip() and not any(' (newest ' in line for line in stdout.splitlines()):
+            raise ValueError('unrecognized bundle outdated output')
     except Exception as exc:
-        logger.warning("bundle outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundle outdated', exc, 'outdated_state')
 
     # Parse line-by-line: gem-name (newest X.Y.Z, installed A.B.C[, requested ~> A.B])
     _BUNDLE_LINE_RE = re.compile(
-        r'^(\S+)\s+\(newest\s+([^,]+),\s+installed\s+([^,)]+)'
+        r'^(\S+)\s+\(newest\s+([^,]+),\s+installed\s+([^,)]+)(?:, requested [^)]+)?\)$'
     )
     outdated_map: dict[str, dict] = {}
-    for line in stdout.splitlines():
-        m = _BUNDLE_LINE_RE.match(line.strip())
-        if m:
+    try:
+        for line in stdout.splitlines():
+            if not line.strip():
+                continue
+            m = _BUNDLE_LINE_RE.fullmatch(line.strip())
+            if not m or m.group(1) in outdated_map:
+                raise ValueError('invalid bundle outdated row')
             gem_name = m.group(1)
             newest = m.group(2).strip()
             installed = m.group(3).strip()
             outdated_map[gem_name] = {"installed": installed, "newest": newest}
+        if proc.returncode == 1 and not outdated_map:
+            raise ValueError('bundle outdated failed without findings')
+    except Exception as exc:
+        return _check_failed(deps, 'bundle outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2263,12 +2791,9 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         name = d.get("name", "")
         if name in outdated_map:
             info = outdated_map[name]
-            current = info["installed"]
-            latest = info["newest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # bundler has no "wanted" concept
-            d["latest_version"] = latest
-            d["severity"] = classify_severity(current, latest)
+            _version_finding(d, info['installed'], info['newest'], 'bundle outdated')
+        else:
+            mark_unchecked(d, 'bundle outdated: report does not establish declaration evaluation', 'outdated_state')
         result.append(d)
     return result
 
@@ -2292,32 +2817,33 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'bundler-audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('results'), list):
+            raise ValueError('invalid bundler-audit result')
     except Exception as exc:
-        logger.warning("bundler-audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
-    # Build lookup: {gem_name_lower: advisory_id}
+    # Build lookup: {gem_name: advisory_id}, retaining audited-version attribution.
     vuln_map: dict[str, str] = {}
+    finding_versions: dict[str, dict[str, str]] = {}
     try:
         for entry in raw.get("results", []):
-            gem_name = entry.get("gem", {}).get("name", "")
-            advisory_id = entry.get("advisory", {}).get("id", "")
-            if gem_name and advisory_id:
-                vuln_map[gem_name.lower()] = advisory_id
+            if entry.get('type') != 'unpatched_gem':
+                raise ValueError('unsupported bundler-audit finding type')
+            gem_name = _required_text(entry.get('gem', {}), 'name')
+            version = _required_text(entry.get('gem', {}), 'version')
+            if not _tool_version(version):
+                raise ValueError('invalid bundler-audit gem version')
+            advisory_id = _required_text(entry.get('advisory', {}), 'id')
+            vuln_map[gem_name] = advisory_id
+            finding_versions.setdefault(gem_name, {})[version] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('bundler-audit failed without vulnerability findings')
     except Exception as exc:
-        logger.warning("bundler-audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        key = d.get("name", "").lower()
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'bundler-audit', finding_versions=finding_versions)
 
 
 def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2338,23 +2864,10 @@ def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not ruby_deps:
         return other_deps
 
-    ruby_deps = check_ruby_outdated(repo_path, ruby_deps)
-    ruby_deps = check_ruby_vulns(repo_path, ruby_deps)
+    ruby_deps = [d for directory, group in _group_by_manifest_dir(repo_path, ruby_deps).items()
+                 for d in check_ruby_vulns(directory, check_ruby_outdated(directory, group))]
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in ruby_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(ruby_deps) + other_deps
 
 
 # ── PHP dependency health (Packet 15) ─────────────────────────────────────────
@@ -2364,8 +2877,8 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run composer outdated --format=json and enrich composer deps with version/severity fields.
 
     If composer is not available (TOOLS["composer"] is None), returns deps unchanged.
-    Skips deps with latest-status == "up-to-date".
-    On any subprocess or parse failure, returns deps unchanged (fail-open).
+    Requests all installed rows, including up-to-date packages, for explicit coverage.
+    On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     composer = TOOLS.get("composer")
     if not composer:
@@ -2373,33 +2886,33 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     try:
         proc = subprocess.run(
-            [composer, "outdated", "--format=json"],
+            [composer, "outdated", "--all", "--format=json"],
             cwd=str(repo_path),
             capture_output=True,
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'composer outdated', (0,))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('installed'), list):
+            raise ValueError('invalid composer outdated result')
     except Exception as exc:
-        logger.warning("composer outdated failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
 
     # Build lookup: {name: {"version": current, "latest": latest}}
     outdated_map: dict[str, dict] = {}
     try:
         for entry in raw.get("installed", []):
-            status = entry.get("latest-status", "up-to-date")
-            if status == "up-to-date":
-                continue
-            name = entry.get("name", "")
-            if name:
-                outdated_map[name] = {
-                    "version": entry.get("version", ""),
-                    "latest": entry.get("latest", ""),
-                }
+            status = _required_text(entry, 'latest-status')
+            if status not in ('up-to-date', 'semver-safe-update', 'update-possible'):
+                raise ValueError('invalid composer latest-status')
+            name = _required_text(entry, 'name')
+            if name in outdated_map:
+                raise ValueError('duplicate composer outdated row')
+            outdated_map[name] = {'version': _required_text(entry, 'version'),
+                                  'latest': _required_text(entry, 'latest')}
     except Exception as exc:
-        logger.warning("composer outdated output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
@@ -2407,15 +2920,9 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         name = d.get("name", "")
         if name in outdated_map:
             info = outdated_map[name]
-            current = info["version"]
-            latest = info["latest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # composer has no "wanted" concept
-            d["latest_version"] = latest
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
+            _version_finding(d, info['version'], info['latest'], 'composer outdated')
+        else:
+            mark_unchecked(d, 'composer outdated: declaration absent from evaluated package rows', 'outdated_state')
         result.append(d)
     return result
 
@@ -2440,33 +2947,31 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
+        _validate_tool_result(proc, 'composer audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('advisories'), dict):
+            raise ValueError('invalid composer audit result')
     except Exception as exc:
-        logger.warning("composer audit failed for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
     # Build lookup: {package_name: advisory_id}
     # composer audit JSON: {"advisories": {"pkg/name": [{"advisoryId": "...", ...}]}}
     vuln_map: dict[str, str] = {}
     try:
         for pkg_name, advisories in raw.get("advisories", {}).items():
-            if advisories:
-                advisory_id = advisories[0].get("advisoryId") or advisories[0].get("cve", "")
-                if advisory_id:
-                    vuln_map[pkg_name.lower()] = advisory_id
+            if not isinstance(advisories, list) or not advisories:
+                raise ValueError('invalid composer advisory list')
+            for advisory in advisories:
+                if _required_text(advisory, 'packageName') != pkg_name:
+                    raise ValueError('composer advisory package mismatch')
+                advisory_id = _required_text(advisory, 'advisoryId')
+                vuln_map[pkg_name] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('composer audit failed without vulnerability findings')
     except Exception as exc:
-        logger.warning("composer audit output parse error for %s: %s", repo_path, exc)
-        return deps
+        return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        key = d.get("name", "").lower()
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'composer audit')
 
 
 def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2487,23 +2992,10 @@ def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not php_deps:
         return other_deps
 
-    php_deps = check_php_outdated(repo_path, php_deps)
-    php_deps = check_php_vulns(repo_path, php_deps)
+    php_deps = [d for directory, group in _group_by_manifest_dir(repo_path, php_deps).items()
+                for d in check_php_vulns(directory, check_php_outdated(directory, group))]
 
-    now = datetime.now(timezone.utc).isoformat()
-    enriched: list[dict] = []
-    for dep in php_deps:
-        d = dict(dep)
-        ver = d.get("version")
-        d.setdefault("current_version", ver)
-        d.setdefault("wanted_version", ver)
-        d.setdefault("latest_version", None)
-        d.setdefault("severity", "ok")
-        d.setdefault("advisory_id", None)
-        d.setdefault("checked_at", now)
-        enriched.append(d)
-
-    return enriched + other_deps
+    return finalize_dep_health(php_deps) + other_deps
 
 
 async def get_default_branch(repo_path: Path) -> str:
@@ -3542,17 +4034,18 @@ HTML_TEMPLATE = """\
     }
 
     // DepBadge — compact dep summary pill with coverage dot
-    function DepBadge({ dep, missingTools }) {
-      if (!dep) return null;
+    function DepBadge({ dep, missingTools, analysisError }) {
+      if (!dep && !missingTools?.length && !analysisError) return null;
+      dep = dep || {total: 0};
       const { total, outdated, vulnerable } = dep;
       if (!total && total !== 0) return null;
 
       const hasMissing = missingTools && missingTools.length > 0;
-      // Status dot: green = full coverage, amber = partial (missing tools)
-      const dotColor = hasMissing ? 'var(--status-orange)' : 'var(--status-green)';
-      const dotTitle = hasMissing
-        ? 'Incomplete: ' + missingTools.map(t => t.tool || t).join(', ')
-        : 'Full tool coverage';
+      const incomplete = analysisError || hasMissing || dep.unchecked > 0;
+      const dotColor = incomplete ? 'var(--status-orange)' : 'var(--status-green)';
+      const dotTitle = incomplete
+        ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (analysisError ? '; analysis error — see repository dependencies' : '') + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
+        : 'All declarations fully checked';
 
       let label = null;
       if (vulnerable > 0) {
@@ -3571,6 +4064,8 @@ HTML_TEMPLATE = """\
           color: 'var(--text-muted)',
         }}>{total} deps</span>;
       }
+      if (!label && hasMissing) label = <span>Missing tools</span>;
+      if (!label && analysisError) label = <span>Analysis error</span>;
       if (!label) return null;
 
       return (
@@ -3583,6 +4078,7 @@ HTML_TEMPLATE = """\
             }}
           />
           {label}
+          {total > 0 && analysisError && <span style={{color: 'var(--status-orange)'}}>Analysis error</span>}
         </span>
       );
     }
@@ -3761,7 +4257,7 @@ HTML_TEMPLATE = """\
             }}>
               {repo.branch_count || 0}br
             </span>
-            <DepBadge dep={repo.dep_summary} missingTools={repo.missing_dep_tools} />
+            <DepBadge dep={repo.dep_summary} missingTools={repo.missing_dep_tools} analysisError={repo.dep_check_error} />
           </div>
 
           <SparklineOverlay sparkline={repo.sparkline} visible={hovered} />
@@ -3798,7 +4294,7 @@ HTML_TEMPLATE = """\
       );
     }
 
-    // KpiRow — row of 6 KPI cards
+    // KpiRow — fleet activity, findings, and independent coverage
     function KpiRow({ kpis }) {
       if (!kpis) return null;
       const dirtyColor = kpis.repos_with_changes > 0 ? 'var(--status-yellow)' : undefined;
@@ -3817,6 +4313,7 @@ HTML_TEMPLATE = """\
           <KpiCard value={locValue} label="Net LOC" tooltip="Net lines of code changed this week (insertions minus deletions, across all repos)" />
           <KpiCard value={kpis.stale_branches ?? 0} label="Stale Branches" color={staleColor} tooltip="Branches with no commits in the last 30 days (across all repos)" />
           <KpiCard value={vulnValue} label="Vuln / Outdated" color={vulnColor} tooltip="Vulnerable dependencies / outdated dependencies (across all repos)" />
+          <KpiCard value={kpis.unchecked_deps ?? 0} label="Not Checked" color={kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip="Declarations with incomplete outdated or vulnerability coverage, including those with findings" />
         </div>
       );
     }
@@ -4603,355 +5100,149 @@ HTML_TEMPLATE = """\
       );
     }
 
-    function DepsTab({ repoId, depCheckError, missingDepTools }) {
+    function fullyChecked(pkg) {
+      return ['checked', 'floating'].includes(pkg.outdated_state) && pkg.vuln_state === 'checked';
+    }
+
+    function summarizeDeps(groups, manifests = []) {
+      const summary = { declarations: 0, manifests: manifests.length, ok: 0, outdated: 0, major: 0, vulnerable: 0, unchecked: 0, fullyChecked: 0 };
+      for (const group of groups) for (const pkg of group.packages) {
+        summary.declarations++;
+        if (['ok', 'outdated', 'major', 'vulnerable'].includes(pkg.severity)) summary[pkg.severity]++;
+        if (fullyChecked(pkg)) summary.fullyChecked++; else summary.unchecked++;
+      }
+      return summary;
+    }
+
+    function currentText(pkg) {
+      if (pkg.current_version) return pkg.current_version;
+      if (pkg.wanted_version && pkg.outdated_state === 'floating') return 'evaluated ' + pkg.wanted_version + ' (floating)';
+      return 'unresolved';
+    }
+
+    function statusText(pkg) {
+      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: pkg.advisory_id || 'vulnerable', unchecked: 'not checked'})[pkg.severity] || 'not checked';
+      return headline + (pkg.severity !== 'unchecked' && !fullyChecked(pkg) ? ' — incomplete coverage' : '');
+    }
+
+    function severityColor(severity) {
+      switch (severity) {
+        case 'ok':         return 'var(--status-green)';
+        case 'outdated':   return 'var(--status-yellow)';
+        case 'major':      return 'var(--status-orange)';
+        case 'vulnerable': return 'var(--status-red)';
+        default:           return 'var(--text-muted)';
+      }
+    }
+
+    function DepsTab({ repoId }) {
       const [managerGroups, setManagerGroups] = useState([]);
+      const [repo, setRepo] = useState(null);
+      const [appStatus, setAppStatus] = useState(null);
       const [loading, setLoading] = useState(true);
       const [scanning, setScanning] = useState(false);
+      const [error, setError] = useState(null);
 
-      function fetchDeps() {
-        setLoading(true);
-        fetch(`/api/repos/${repoId}/deps`)
-          .then(r => r.json())
-          .then(data => {
-            setManagerGroups(Array.isArray(data) ? data : []);
-            setLoading(false);
-          })
-          .catch(() => setLoading(false));
+      async function fetchDeps(scan = false) {
+        setError(null);
+        if (scan) setScanning(true); else setLoading(true);
+        try {
+          const depsResponse = await fetch(scan ? '/api/repos/' + repoId + '/scan/deps' : '/api/repos/' + repoId + '/deps', scan ? { method: 'POST' } : undefined);
+          if (!depsResponse.ok) throw new Error('Dependency request failed: ' + depsResponse.status);
+          const groups = await depsResponse.json();
+          // Fetch persisted metadata after the scan transaction has completed.
+          const responses = await Promise.all([fetch('/api/repos/' + repoId), fetch('/api/status')]);
+          if (responses.some(r => !r.ok)) throw new Error('Coverage metadata request failed');
+          const [detail, status] = await Promise.all(responses.map(r => r.json()));
+          setManagerGroups(Array.isArray(groups) ? groups : []);
+          setRepo(detail);
+          setAppStatus(status);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+          setScanning(false);
+        }
       }
-
       useEffect(() => { fetchDeps(); }, [repoId]);
 
-      function handleCheckNow() {
-        setScanning(true);
-        fetch(`/api/repos/${repoId}/scan/deps`, { method: 'POST' })
-          .then(r => r.json())
-          .then(data => {
-            setManagerGroups(Array.isArray(data) ? data : []);
-            setScanning(false);
-          })
-          .catch(() => setScanning(false));
-      }
+      const ws = repo?.working_state || {};
+      const manifests = ws.dep_manifests || [];
+      const missingTools = ws.missing_dep_tools || [];
+      const summary = summarizeDeps(managerGroups, manifests);
+      const packages = managerGroups.flatMap(group => group.packages.map(pkg => ({...pkg, _manager: group.manager, _label: group.label || group.manager})));
+      const severityOrder = {vulnerable: 0, major: 1, outdated: 2};
+      const issues = packages.filter(pkg => pkg.severity in severityOrder).sort((a, b) =>
+        severityOrder[a.severity] - severityOrder[b.severity] || a.name.localeCompare(b.name));
+      const unchecked = packages.filter(pkg => !fullyChecked(pkg));
+      const incomplete = summary.unchecked > 0 || missingTools.length > 0 || manifests.some(m => m.error) || ws.dep_check_error;
+      const newestScan = packages.map(p => p.checked_at).filter(Boolean).sort().at(-1) || null;
 
-      function severityColor(severity) {
-        switch (severity) {
-          case 'ok':         return 'var(--status-green)';
-          case 'outdated':   return 'var(--status-yellow)';
-          case 'major':      return 'var(--status-orange)';
-          case 'vulnerable': return 'var(--status-red)';
-          default:           return 'var(--text-muted)';
-        }
-      }
-
-      function severityText(pkg) {
-        switch (pkg.severity) {
-          case 'ok':         return 'up to date';
-          case 'outdated':   return 'outdated';
-          case 'major':      return 'major update';
-          case 'vulnerable': return pkg.advisory_id || 'vulnerable';
-          default:           return pkg.severity || '—';
-        }
-      }
-
-      // Collect all packages needing attention (anything not 'ok') across all groups
-      const issuePackages = useMemo(() => {
-        const sevOrder = { vulnerable: 0, major: 1, outdated: 2 };
-        const items = [];
-        for (const group of managerGroups) {
-          for (const pkg of group.packages) {
-            if (pkg.severity && pkg.severity !== 'ok') {
-              items.push({ ...pkg, _manager: group.manager, _label: group.label || group.manager });
-            }
-          }
-        }
-        items.sort((a, b) => {
-          const sa = sevOrder[a.severity] ?? 99;
-          const sb = sevOrder[b.severity] ?? 99;
-          if (sa !== sb) return sa - sb;
-          return a.name.localeCompare(b.name);
-        });
-        return items;
-      }, [managerGroups]);
-
-      // Export helpers
       function downloadBlob(content, filename, mimeType) {
-        const blob = new Blob([content], { type: mimeType });
-        const url = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
         const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       }
-
+      function report() {
+        return {format: 'git-fleet-dependency-report', format_version: 2, generated_at: new Date().toISOString(),
+          git_fleet_version: appStatus?.version, repo: {id: repoId, name: repo?.name}, missing_tools: missingTools,
+          summary, scope: appStatus?.dependency_scope, manifests, groups: managerGroups};
+      }
       function handleExportJSON() {
-        const json = JSON.stringify(managerGroups, null, 2);
-        downloadBlob(json, 'deps-export.json', 'application/json');
+        downloadBlob(JSON.stringify(report(), null, 2), 'deps-export.json', 'application/json');
       }
-
       function handleExportMD() {
-        let md = '# Dependency Report\\n\\n';
-
-        // Issues section
-        if (issuePackages.length > 0) {
-          md += '## Attention Required\\n\\n';
-          md += '| Package | Current | Latest | Status | Source |\\n';
-          md += '|---------|---------|--------|--------|--------|\\n';
-          for (const pkg of issuePackages) {
-            const status = pkg.severity === 'vulnerable'
-              ? (pkg.advisory_id || 'vulnerable')
-              : pkg.severity === 'major' ? 'major update' : 'outdated';
-            md += `| ${pkg.name} | ${pkg.current_version || '—'} | ${pkg.latest_version || '—'} | ${status} | ${pkg._label} |\\n`;
-          }
-          md += '\\n';
-        }
-
-        // All dependencies by group
-        md += '## All Dependencies\\n\\n';
-        for (const group of managerGroups) {
-          md += `### ${group.label || group.manager}\\n\\n`;
-          md += '| Package | Current | Latest | Status |\\n';
-          md += '|---------|---------|--------|--------|\\n';
-          for (const pkg of group.packages) {
-            md += `| ${pkg.name} | ${pkg.current_version || '—'} | ${pkg.latest_version || '—'} | ${severityText(pkg)} |\\n`;
-          }
-          md += '\\n';
-        }
-
+        const data = report();
+        const cell = value => String(value ?? '—').replace(/\\|/g, '\\\\|').replace(/[\\r\\n]+/g, ' ');
+        const table = rows => '| Package | Declared | Version | Latest | Outdated check | Vulnerability check | Status | Source | Reasons |\\n' +
+          '|---|---|---|---|---|---|---|---|---|\\n' + rows.map(p => '| ' + [p.name, p.declared_spec, currentText(p), p.latest_version,
+            p.outdated_state, p.vuln_state, statusText(p), p.source_path, p.check_note].map(cell).join(' | ') + ' |\\n').join('');
+        let md = '# Dependency Report\\n\\nRepository: ' + cell(data.repo.name) + ' (' + cell(repoId) + ')\\n\\n' +
+          'Generated: ' + data.generated_at + '\\n\\nGit Fleet version: ' + data.git_fleet_version + '\\n\\nNewest declaration check: ' + (newestScan || 'No declaration check timestamp available') + '\\n\\n' +
+          'Declarations: ' + summary.declarations + '; Manifests: ' + summary.manifests + '; Fully checked: ' + summary.fullyChecked + '; Not checked: ' + summary.unchecked + '\\n\\n' +
+          'Vulnerable: ' + summary.vulnerable + '; Major: ' + summary.major + '; Outdated: ' + summary.outdated + '; Up to date: ' + summary.ok + '\\n\\n' +
+          'Coverage: ' + (incomplete ? 'Incomplete' : 'Complete') + '\\n\\nMissing tools: ' + (missingTools.map(t => cell(t.tool) + ' — ' + cell(t.description)).join('; ') || 'None') + '\\n\\n' +
+          '## Scope\\n\\n' + JSON.stringify(data.scope, null, 2) + '\\n\\n' +
+          '## Attention Required\\n\\n' + table(issues) + '\\n## Not Checked\\n\\n' + table(unchecked) + '\\n## All Dependencies\\n\\n' + table(packages) +
+          '\\n## Manifests Scanned\\n\\n| File | Kind | Declarations | Error |\\n|---|---|---|---|\\n' +
+          manifests.map(m => '| ' + [m.path, m.kind, m.dependencies, m.error].map(cell).join(' | ') + ' |\\n').join('');
         downloadBlob(md, 'deps-export.md', 'text/markdown');
       }
-
-      if (loading) {
-        return <div className="table-empty">Loading…</div>;
+      function dependencyTable(rows) {
+        return <div className="table-container" style={{overflowX: 'auto'}}>
+          <table className="data-table" style={{width: '100%', textAlign: 'left', fontSize: '13px'}}>
+            <thead><tr>{['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => <th key={h} style={{padding: '8px'}}>{h}</th>)}</tr></thead>
+            <tbody>{rows.map(pkg => <tr key={JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}>
+              <td style={{padding: '8px'}}>{pkg.name}</td><td>{pkg.declared_spec || '—'}</td><td>{currentText(pkg)}</td><td>{pkg.latest_version || '—'}</td>
+              <td style={{color: severityColor(pkg.severity)}}>{statusText(pkg)}<br/><small>outdated: {pkg.outdated_state || 'unchecked'}; vulnerability: {pkg.vuln_state || 'unchecked'}</small></td>
+              <td>{pkg._label}<br/>{pkg.check_note}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>;
       }
-
-      if (managerGroups.length === 0) {
-        return (
-          <div className="table-container">
-            <div className="table-empty">No dependencies detected</div>
-          </div>
-        );
-      }
-
-      return (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px' }}>
-            <button
-              className="btn btn-secondary"
-              onClick={handleExportMD}
-              title="Export as Markdown"
-            >
-              Export MD
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleExportJSON}
-              title="Export as JSON"
-            >
-              Export JSON
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleCheckNow}
-              disabled={scanning}
-            >
-              {scanning ? 'Checking…' : 'Check Now'}
-            </button>
-          </div>
-
-          {/* Missing tools notice */}
-          {missingDepTools && missingDepTools.length > 0 && (
-            <div style={{
-              padding: '10px 14px', marginBottom: '16px',
-              fontSize: '13px', fontFamily: 'var(--font-body)',
-              color: 'var(--status-orange)',
-              background: 'var(--status-orange-bg)',
-              borderRadius: '6px',
-              borderLeft: '2px solid var(--status-orange)',
-              lineHeight: '1.5',
-            }}>
-              <span style={{ fontWeight: 600 }}>Incomplete analysis</span>
-              <span style={{ color: 'var(--text-secondary)' }}> — missing tools for this repo:</span>
-              <div style={{ marginTop: '4px' }}>
-                {missingDepTools.map(t => (
-                  <div key={t.tool || t} style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '12px',
-                    color: 'var(--text-secondary)', paddingLeft: '8px',
-                  }}>
-                    <span style={{ color: 'var(--status-orange)' }}>{t.tool || t}</span>
-                    {t.description && <span> — {t.description}</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Attention Required section */}
-          {issuePackages.length > 0 ? (
-            <div style={{ marginBottom: '28px' }}>
-              <div style={{
-                fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-                color: 'var(--status-red)', marginBottom: '8px',
-                textTransform: 'uppercase', letterSpacing: '0.5px',
-              }}>
-                Attention Required
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
-                  color: 'var(--text-secondary)', textTransform: 'none',
-                  marginLeft: '8px',
-                }}>
-                  {issuePackages.length} {issuePackages.length === 1 ? 'issue' : 'issues'}
-                </span>
-              </div>
-              <div className="table-container" style={{
-                borderLeft: '2px solid var(--status-red)',
-              }}>
-                <div className="table-header" style={{ gridTemplateColumns: 'minmax(120px, 1fr) 100px 100px 130px minmax(150px, 2fr)' }}>
-                  <span>Package</span>
-                  <span>Current</span>
-                  <span>Latest</span>
-                  <span>Status</span>
-                  <span>Source</span>
-                </div>
-                {issuePackages.map(pkg => (
-                  <div key={pkg.name + pkg._label} className="table-row"
-                    style={{ gridTemplateColumns: 'minmax(120px, 1fr) 100px 100px 130px minmax(150px, 2fr)' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '14px',
-                      color: 'var(--text-primary)',
-                    }}>
-                      {pkg.name}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                    }}>
-                      {pkg.current_version || '—'}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      fontWeight: (pkg.current_version !== pkg.latest_version) ? 600 : 400,
-                    }}>
-                      {pkg.latest_version || '—'}
-                    </span>
-                    <span style={{
-                      color: severityColor(pkg.severity), fontSize: '13px',
-                      fontFamily: 'var(--font-body)',
-                      fontWeight: pkg.severity === 'vulnerable' ? 600 : 400,
-                    }}>
-                      {severityText(pkg)}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '11px',
-                      color: 'var(--text-muted)',
-                    }}>
-                      {pkg._label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{
-              padding: '12px 16px', marginBottom: '24px',
-              fontSize: '13px', fontFamily: 'var(--font-body)',
-              color: 'var(--status-green)',
-              background: 'var(--status-green-bg)',
-              borderRadius: '6px',
-              borderLeft: '2px solid var(--status-green)',
-            }}>
-              No issues found — all dependencies are up to date.
-            </div>
-          )}
-
-          {/* All Dependencies section */}
-          <div style={{
-            fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-            color: 'var(--text-muted)', marginBottom: '12px',
-            textTransform: 'uppercase', letterSpacing: '0.5px',
-          }}>
-            All Dependencies
-          </div>
-          {managerGroups.map((group, gi) => (
-            <div key={group.label || group.manager + gi} style={{ marginBottom: '24px' }}>
-              <div style={{
-                fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
-                color: 'var(--text-muted)', marginBottom: '8px',
-                textTransform: 'uppercase', letterSpacing: '0.5px',
-              }}>
-                {group.label || group.manager}
-                {group.source_path && (
-                  <span style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
-                    color: 'var(--text-secondary)', textTransform: 'none',
-                    marginLeft: '8px',
-                  }}>
-                    {group.source_path}
-                  </span>
-                )}
-              </div>
-              <div className="table-container">
-                <div className="table-header" style={{ gridTemplateColumns: '1fr 100px 100px 160px' }}>
-                  <span>Package</span>
-                  <span>Current</span>
-                  <span>Latest</span>
-                  <span>Status</span>
-                </div>
-                {group.packages.map(pkg => (
-                  <div key={pkg.name} className="table-row"
-                    style={{ gridTemplateColumns: '1fr 100px 100px 160px' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '14px',
-                      color: 'var(--text-primary)',
-                    }}>
-                      {pkg.name}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                    }}>
-                      {pkg.current_version || '—'}
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      fontWeight: (pkg.current_version !== pkg.latest_version) ? 600 : 400,
-                    }}>
-                      {pkg.latest_version || '—'}
-                    </span>
-                    <span style={{
-                      color: severityColor(pkg.severity), fontSize: '13px',
-                      fontFamily: 'var(--font-body)',
-                      fontWeight: pkg.severity === 'vulnerable' ? 600 : 400,
-                    }}>
-                      {severityText(pkg)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                fontSize: '13px', fontFamily: 'var(--font-body)',
-                color: 'var(--text-muted)', marginTop: '6px',
-              }}>
-                Last checked: {timeAgo(group.checked_at)}
-                {depCheckError && (
-                  <>
-                    <span style={{
-                      display: 'inline-block', width: '6px', height: '6px',
-                      borderRadius: '50%', background: 'var(--status-orange)',
-                      flexShrink: 0,
-                    }} />
-                    <span style={{ color: 'var(--status-orange)', fontSize: '12px' }}>offline</span>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
+      if (loading) return <div className="table-empty">Loading…</div>;
+      return <div>
+        <div style={{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}>
+          <button className="btn btn-secondary" onClick={handleExportMD} disabled={!repo || !appStatus}>Export MD</button>
+          <button className="btn btn-secondary" onClick={handleExportJSON} disabled={!repo || !appStatus}>Export JSON</button>
+          <button className="btn btn-secondary" onClick={() => fetchDeps(true)} disabled={scanning}>{scanning ? 'Checking…' : 'Check Now'}</button>
         </div>
-      );
+        {error && <div role="alert">{error}</div>}
+        <div data-testid="dep-coverage" style={{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}>
+          {incomplete && <strong>Incomplete coverage — </strong>}{summary.declarations} declarations; {summary.manifests} manifests; {summary.fullyChecked} fully checked; {summary.unchecked} not checked.
+          {missingTools.map(t => <div key={t.tool}>{t.tool} — {t.description}</div>)}
+        </div>
+        {issues.length > 0 && <section><h3>Attention Required</h3>{dependencyTable(issues)}</section>}
+        {unchecked.length > 0 && <section data-testid="dep-not-checked"><h3>Not Checked</h3>{dependencyTable(unchecked)}</section>}
+        {summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+          <div style={{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>}
+        <section data-testid="dep-all"><h3>All Dependencies</h3>{managerGroups.map(group => <div key={JSON.stringify([group.manager, group.source_path])} style={{marginBottom: '16px'}}>
+          <h4>{group.label || group.manager}</h4>{dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}
+        </div>)}{!packages.length && <div>No dependencies detected</div>}</section>
+        <section><h3>Manifests Scanned</h3>{manifests.map(m => <div key={m.path}>{m.path} — {m.kind} — {m.dependencies} declarations{m.error ? ' — ' + m.error : ''}</div>)}</section>
+        <div style={{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: {newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet {appStatus?.version}</div>
+      </div>;
     }
 
     function PlaceholderTab({ text }) {
@@ -5019,7 +5310,7 @@ HTML_TEMPLATE = """\
           <SubTabNav active={activeSubTab} onChange={handleSubTabChange} />
           <div className="detail-content">
             {activeSubTab === 'activity'  && <ActivityTab repoId={repoId} />}
-            {activeSubTab === 'deps'      && <DepsTab repoId={repoId} depCheckError={!!(repo.working_state && repo.working_state.dep_check_error)} missingDepTools={(repo.working_state && repo.working_state.missing_dep_tools) || []} />}
+            {activeSubTab === 'deps'      && <DepsTab repoId={repoId} />}
             {activeSubTab === 'branches'  && <BranchesTab repoId={repoId} selectedBranch={selectedBranch} onSelectBranch={handleSelectBranch} />}
             {activeSubTab === 'commits'   && <CommitsTab repoId={repoId} branch={selectedBranch} />}
           </div>
@@ -5491,7 +5782,7 @@ HTML_TEMPLATE = """\
                           onClick={() => toggleExpanded(key)}
                           style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}
                         >
-                          {isExpanded ? '▾' : '▸'} {pkg.count} repos
+                          {isExpanded ? '▾' : '▸'} {pkg.count} uses in {pkg.repo_count} repos
                         </span>
                       </td>
                       <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -5502,8 +5793,8 @@ HTML_TEMPLATE = """\
                       <tr style={{ borderTop: '1px solid var(--border-default)' }}>
                         <td colSpan={4} style={{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}>
                           {pkg.repos.map(repo => (
-                            <div key={repo.repo_id} style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                              {repo.name} — {repo.version !== null ? repo.version : '(unknown)'}
+                            <div key={JSON.stringify([repo.repo_id, repo.source_path])} style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                              {repo.name} — {repo.source_path} — {repo.version !== null ? repo.version : '(unknown)'}
                             </div>
                           ))}
                         </td>
@@ -5543,9 +5834,11 @@ HTML_TEMPLATE = """\
       };
 
       const reposWithDeps = repos.filter(r => r.dep_summary && r.dep_summary.total > 0);
+      const reposWithCoverage = repos.filter(r => r.dep_summary?.total > 0 || r.dep_check_error || r.missing_dep_tools?.length);
       const totalDeps = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.total || 0), 0);
       const totalOutdated = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.outdated || 0), 0);
       const totalVuln = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.vulnerable || 0), 0);
+      const totalUnchecked = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.unchecked || 0), 0);
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -5554,6 +5847,7 @@ HTML_TEMPLATE = """\
             <KpiCard label="Total Deps" value={loading ? '...' : totalDeps} tooltip="Total dependencies detected across all repos" />
             <KpiCard label="Outdated" value={loading ? '...' : totalOutdated} tooltip="Dependencies with newer versions available (minor or major)" />
             <KpiCard label="Vulnerable" value={loading ? '...' : totalVuln} tooltip="Dependencies with known security vulnerabilities" />
+            <KpiCard label="Not Checked" value={loading ? '...' : totalUnchecked} tooltip="Declarations with incomplete check coverage, including findings" />
             <KpiCard label="Repos w/ Deps" value={loading ? '...' : reposWithDeps.length} tooltip="Repos where at least one dependency manifest was detected" />
           </div>
 
@@ -5562,37 +5856,40 @@ HTML_TEMPLATE = """\
             <h2 style={sectionHeaderStyle}>Per-Repo Health</h2>
             {loading ? (
               <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>
-            ) : reposWithDeps.length === 0 ? (
+            ) : reposWithCoverage.length === 0 ? (
               <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
                 No dependencies detected. Run a Full Scan to discover dependencies in your repos.
               </div>
             ) : (
               <div className="table-container">
-                <div className="table-header" style={{ gridTemplateColumns: '1fr 100px 100px 100px' }}>
+                <div className="table-header" style={{ gridTemplateColumns: '1fr repeat(4, 100px)' }}>
                   <span>Repo</span>
                   <span>Total</span>
                   <span>Outdated</span>
                   <span>Vulnerable</span>
+                  <span>Not Checked</span>
                 </div>
-                {reposWithDeps.map(r => (
+                {reposWithCoverage.map(r => (
                   <div
                     key={r.id}
                     className="table-row"
-                    style={{ gridTemplateColumns: '1fr 100px 100px 100px', cursor: 'pointer' }}
+                    style={{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }}
                     onClick={() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}
                   >
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>
-                      {r.name}
+                      <span>{r.name}</span>
+                      <span style={{display: 'block', fontSize: '11px'}}><DepBadge dep={r.dep_summary} missingTools={r.missing_dep_tools} analysisError={r.dep_check_error} /></span>
                     </span>
                     <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                      {r.dep_summary.total}
+                      {r.dep_summary?.total || 0}
                     </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>
-                      {r.dep_summary.outdated}
+                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>
+                      {r.dep_summary?.outdated || 0}
                     </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
-                      {r.dep_summary.vulnerable}
+                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
+                      {r.dep_summary?.vulnerable || 0}
                     </span>
+                    <span style={{color: 'var(--status-orange)'}}>{r.dep_summary?.unchecked || 0}</span>
                   </div>
                 ))}
               </div>
@@ -5815,7 +6112,32 @@ async def get_ui():
 @app.get("/api/status")
 async def get_status():
     """Return tool availability and app version for the frontend banner."""
-    return {"tools": TOOLS, "version": VERSION}
+    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope()}
+
+
+def dependency_report_scope() -> dict:
+    """Describe the implemented declaration scan; reuse discovery's runtime limits."""
+    return {
+        "python": "Declaration evaluation, not installed-environment inspection or full dependency resolution. "
+                  "Markers, requires-python and inter-package compatibility are not evaluated. "
+                  "Undeclared transitive Python dependencies are not audited. Exact declared or unique adjacent-lock versions are evaluated; "
+                  "supported PEP 440 constraints select the highest allowed non-yanked release using SpecifierSet.filter prerelease rules. "
+                  "The selection is compared with registry latest even beyond a declaration cap. Unsupported Poetry constraints without concrete versions and ambiguous lock versions remain unchecked. "
+                  "Floating selections are evaluated versions, not installed versions.",
+        "direct_references": "Direct VCS/URL references are not compared with PyPI or audited; "
+                             "remote metadata and VCS commit resolution are excluded.",
+        "discovery": {
+            "max_depth": _DEP_WALK_MAX_DEPTH,
+            "skip_directories": sorted(_DEP_WALK_SKIP),
+            "hidden_directories": "Skipped",
+            "pep723": "Python .py/.pyw and suffixless shebang candidates; metadata only in the leading comment/blank-line prelude. "
+                      "PEP 723 reference grammar; unclosed blocks ignored; duplicate script blocks, malformed TOML and invalid dependencies reported as inventory errors.",
+        },
+        "groups": "Python manifest kinds coexist. Requirements includes retain physical source paths (including external includes). "
+                  "PEP 621 optional dependencies and string dependency-group entries are included; include-group tables and Poetry groups are not expanded. "
+                  "Adjacent uv.lock supplies unique registry versions only, not declarations. "
+                  "Node dependencies/devDependencies, Cargo dependencies/dev-dependencies, Composer require/require-dev (excluding platform entries), Go requirements and conventional Bundler gem declarations are included.",
+    }
 
 
 @app.get("/api/browse")
@@ -6016,7 +6338,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
     ws_cursor = await db.execute(
         "SELECT repo_id, has_uncommitted, modified_count, untracked_count, "
         "staged_count, current_branch, last_commit_hash, last_commit_message, "
-        "last_commit_date, checked_at, dep_check_error "
+        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests "
         "FROM working_state WHERE repo_id = ?",
         (repo_id,),
     )
@@ -6035,7 +6357,8 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
             "last_commit_date": ws_row[8],
             "checked_at": ws_row[9],
             "dep_check_error": bool(ws_row[10]) if ws_row[10] is not None else False,
-            "missing_dep_tools": [],
+            "missing_dep_tools": json.loads(ws_row[11] or "[]"),
+            "dep_manifests": json.loads(ws_row[12] or "[]"),
         }
 
     return {
@@ -6231,7 +6554,8 @@ async def _fetch_repo_deps(repo_id: str, db):
     cursor = await db.execute(
         """
         SELECT manager, name, current_version, wanted_version, latest_version,
-               severity, advisory_id, checked_at, COALESCE(source_path, '')
+               severity, advisory_id, checked_at, source_path,
+               declared_spec, outdated_state, vuln_state, check_note
         FROM dependencies
         WHERE repo_id = ?
         ORDER BY source_path, manager,
@@ -6250,7 +6574,8 @@ async def _fetch_repo_deps(repo_id: str, db):
     result = []
     group_key_index = {}
     for row in rows:
-        mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id, checked_at, source_path = row
+        (mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id,
+         checked_at, source_path, declared_spec, outdated_state, vuln_state, check_note) = row
         # Group by (manager, source_path) so monorepo subdirs show separately
         gkey = (mgr, source_path)
         if gkey not in group_key_index:
@@ -6272,6 +6597,11 @@ async def _fetch_repo_deps(repo_id: str, db):
                 "severity": severity,
                 "advisory_id": advisory_id,
                 "source_path": source_path,
+                "declared_spec": declared_spec,
+                "outdated_state": outdated_state,
+                "vuln_state": vuln_state,
+                "check_note": check_note,
+                "checked_at": checked_at,
             }
         )
     return result
@@ -6354,12 +6684,12 @@ async def get_analytics_allocation(days: int = 90, db=Depends(get_db)):
 
 @app.get("/api/analytics/dep-overlap")
 async def get_analytics_dep_overlap(db=Depends(get_db)):
-    """Return packages shared across 2+ repos, sorted by count descending."""
+    """Return repeated declarations, including multiple manifests in one repo."""
     cursor = await db.execute(
-        "SELECT d.name, d.manager, d.repo_id, r.name as repo_name, d.current_version "
+        "SELECT d.name, d.manager, d.repo_id, r.name as repo_name, d.current_version, d.source_path "
         "FROM dependencies d "
         "JOIN repositories r ON r.id = d.repo_id "
-        "ORDER BY d.name, d.manager, r.name"
+        "ORDER BY d.name, d.manager, r.name, d.source_path"
     )
     rows = await cursor.fetchall()
 
@@ -6371,18 +6701,19 @@ async def get_analytics_dep_overlap(db=Depends(get_db)):
         row_list = list(group)
         if len(row_list) < 2:
             continue
-        versions = [r[4] for r in row_list if r[4] is not None]
-        versions_sorted = sorted(versions) if versions else []
+        versions = {r[4] for r in row_list if r[4] is not None}
+        versions_sorted = sorted(versions, key=_version_sort_key)
         spread = f"{versions_sorted[0]} - {versions_sorted[-1]}" if versions_sorted else ""
         packages.append({
             "name": pkg_name,
             "manager": manager,
             "repos": [
-                {"repo_id": r[2], "name": r[3], "version": r[4]}
+                {"repo_id": r[2], "name": r[3], "version": r[4], "source_path": r[5]}
                 for r in row_list
             ],
             "version_spread": spread,
             "count": len(row_list),
+            "repo_count": len({r[2] for r in row_list}),
         })
 
     packages.sort(key=lambda p: p["count"], reverse=True)
@@ -6409,18 +6740,18 @@ async def get_fleet(db=Depends(get_db)):
         ids = [r["id"] for r in results]
         placeholders = ",".join("?" * len(ids))
         ws_cursor = await db.execute(
-            f"SELECT repo_id, scan_error, dep_check_error "
+            f"SELECT repo_id, scan_error, dep_check_error, missing_dep_tools "
             f"FROM working_state WHERE repo_id IN ({placeholders})",
             ids,
         )
         ws_map = {}
         for row in await ws_cursor.fetchall():
-            ws_map[row[0]] = (row[1], bool(row[2]))
+            ws_map[row[0]] = (row[1], bool(row[2]), json.loads(row[3] or "[]"))
         for repo in results:
-            scan_err, dep_err = ws_map.get(repo["id"], (None, False))
+            scan_err, dep_err, missing_tools = ws_map.get(repo["id"], (None, False, []))
             repo["scan_error"] = scan_err
             repo["dep_check_error"] = dep_err
-            repo["missing_dep_tools"] = []
+            repo["missing_dep_tools"] = missing_tools
 
     # Augment with branch counts from branches table (packet 08) and placeholders
     for repo in results:
@@ -6440,16 +6771,18 @@ async def get_fleet(db=Depends(get_db)):
         cursor = await db.execute(
             "SELECT COUNT(*), "
             "SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END) "
+            "SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END) "
             "FROM dependencies WHERE repo_id = ?",
             (repo["id"],),
         )
-        total_deps, outdated_count, vuln_count = await cursor.fetchone()
+        total_deps, outdated_count, vuln_count, unchecked_count = await cursor.fetchone()
         if total_deps and total_deps > 0:
             repo["dep_summary"] = {
                 "total": total_deps,
                 "outdated": (outdated_count or 0),
                 "vulnerable": (vuln_count or 0),
+                "unchecked": (unchecked_count or 0),
             }
         else:
             repo["dep_summary"] = None
@@ -6479,10 +6812,11 @@ async def get_fleet(db=Depends(get_db)):
 
     cursor = await db.execute(
         "SELECT COALESCE(SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), 0), "
-        "COALESCE(SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), 0) "
+        "COALESCE(SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END), 0) "
         "FROM dependencies"
     )
-    vuln_total, outdated_total = await cursor.fetchone()
+    vuln_total, outdated_total, unchecked_total = await cursor.fetchone()
 
     kpis = {
         "total_repos": len(results),
@@ -6493,6 +6827,7 @@ async def get_fleet(db=Depends(get_db)):
         "stale_branches": sum(r.get("stale_branch_count", 0) for r in results),
         "vulnerable_deps": vuln_total,
         "outdated_deps": outdated_total,
+        "unchecked_deps": unchecked_total,
     }
 
     return {

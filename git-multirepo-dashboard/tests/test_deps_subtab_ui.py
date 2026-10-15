@@ -259,3 +259,50 @@ def test_severity_status_text_mapping():
     assert "major update" in tmpl
     # Vulnerable shows advisory_id value — template must reference advisory_id for display
     assert "advisory_id" in tmpl
+
+
+def test_detail_returns_coverage_metadata(test_app, tmp_path):
+    import sqlite3
+    import json
+    client, db_path = test_app
+    missing = [dict(tool='synthetic-tool', description='Synthetic analysis')]
+    manifests = [dict(source_path='package.json', manager='npm')]
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+        db.execute("INSERT INTO working_state (repo_id,missing_dep_tools,dep_manifests) VALUES ('synthetic',?,?)", (json.dumps(missing), json.dumps(manifests)))
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['missing_dep_tools'] == missing
+    assert ws['dep_manifests'] == manifests
+
+
+def test_quick_scan_preserves_coverage_metadata(test_app, tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from unittest.mock import AsyncMock
+    import git_dashboard as gd
+    client, db_path = test_app
+    missing = [dict(tool='synthetic-tool', description='Synthetic analysis')]
+    manifests = [dict(source_path='package.json', manager='npm')]
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+        db.execute("INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES ('synthetic',1,?,?)", (json.dumps(missing), json.dumps(manifests)))
+    monkeypatch.setattr(gd, 'quick_scan_repo', AsyncMock(return_value=dict(has_uncommitted=False,modified_count=0,untracked_count=0,staged_count=0,current_branch='main',last_commit_hash=None,last_commit_message=None,last_commit_date=None,checked_at='synthetic')))
+    response = client.get('/api/fleet')
+    assert response.status_code == 200
+    assert response.json()['repos'][0]['missing_dep_tools'] == missing
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['missing_dep_tools'] == missing
+    assert ws['dep_manifests'] == manifests
+    assert ws['dep_check_error'] is True
+
+
+def test_dependency_response_exposes_coverage(test_app, tmp_path, dependency_report_seed):
+    client, db_path = test_app
+    dependency_report_seed['seed'](db_path, 'synthetic-coverage', tmp_path)
+    groups = client.get('/api/repos/synthetic-coverage/deps').json()
+    actual = {(r['source_path'], r['name']): r for g in groups for r in g['packages']}
+    for row in dependency_report_seed['rows']:
+        assert actual[(row['source_path'], row['name'])] == {k: v for k, v in row.items() if k != 'manager'}
+    status = client.get('/api/status').json()
+    assert status['dependency_scope']['discovery']['max_depth'] == git_dashboard._DEP_WALK_MAX_DEPTH
+    assert status['dependency_scope']['discovery']['skip_directories'] == sorted(git_dashboard._DEP_WALK_SKIP)

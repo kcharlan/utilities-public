@@ -317,7 +317,7 @@ def test_schema_branches_columns():
 
 
 def test_schema_dependencies_columns():
-    """dependencies table must have the expected columns."""
+    """Declaration-key schema includes declared text and independent check coverage."""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = Path(f.name)
     try:
@@ -330,6 +330,7 @@ def test_schema_dependencies_columns():
             "repo_id", "manager", "name", "current_version",
             "wanted_version", "latest_version", "severity",
             "advisory_id", "checked_at", "source_path",
+            "declared_spec", "outdated_state", "vuln_state", "check_note",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:
@@ -352,7 +353,7 @@ def test_schema_working_state_columns():
             "last_commit_hash", "last_commit_message",
             "last_commit_date", "checked_at",
             # Added in packet 22: error state columns
-            "scan_error", "dep_check_error",
+            "scan_error", "dep_check_error", "missing_dep_tools", "dep_manifests",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:
@@ -512,3 +513,17 @@ def test_find_free_port_exhaustion_raises_runtime_error(monkeypatch):
     assert str(start) in msg, f"RuntimeError message should mention start port {start}: {msg!r}"
     end = start + max_attempts - 1
     assert str(end) in msg, f"RuntimeError message should mention end port {end}: {msg!r}"
+
+
+def test_migrate_working_state_coverage_metadata(tmp_path):
+    db_path = tmp_path / 'synthetic.db'
+    git_dashboard.init_schema(db_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute('ALTER TABLE working_state DROP COLUMN missing_dep_tools')
+        db.execute('ALTER TABLE working_state DROP COLUMN dep_manifests')
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic','/synthetic','synthetic')")
+        db.execute("INSERT INTO working_state (repo_id,dep_check_error) VALUES ('synthetic',1)")
+    git_dashboard.run_migrations(db_path)
+    git_dashboard.run_migrations(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute('SELECT dep_check_error, missing_dep_tools, dep_manifests FROM working_state').fetchone() == (1, '[]', '[]')

@@ -52,6 +52,8 @@ Git Fleet also requires at least one installed dependency-analysis tool from the
 
 The overview quick-scans up to eight registered repositories concurrently whenever it loads. Cards show the current branch, most recent commit, staged/modified/untracked counts, dependency summary, branch health, and a 13-week activity sparkline. Fleet KPIs summarize repository state, recent commits and line changes, stale branches, and dependency findings.
 
+**Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
+
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry.
 
 ### Full scan
@@ -69,28 +71,54 @@ Progress is streamed to the browser with server-sent events. Only one fleet scan
 Each repository has four views:
 
 - **Activity** — commit, insertion, and deletion history for 30 days, 90 days, 180 days, one year, or all stored history.
-- **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Results can be rescanned on demand or exported as Markdown or JSON.
+- **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Independent outdated and vulnerability coverage distinguish checked results from unchecked declarations; incomplete checks retain a reason. Missing dependency tools and discovered manifests are stored with the repository detail, including scans with no dependency rows. Results can be rescanned on demand or exported as Markdown or JSON.
 - **Branches** — local branches with default/stale status and live commits-ahead and diff statistics against the default branch.
 - **Commits** — paginated live Git history for all refs or a selected branch.
 
 If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
 
+The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, and reasons. **Not Checked** includes partially checked findings. The clean banner requires every declaration to be fully checked and no missing tools or inventory errors. **Manifests Scanned** includes empty and failed files, independently of dependency groups; exports remain available with an empty declaration set.
+
+Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 2 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
+
 ### Analytics
 
-Fleet-wide analytics include a one-year commit heatmap, configurable time-allocation charts, and dependency overlap across repositories.
+Fleet-wide analytics include a one-year commit heatmap, configurable time-allocation charts, and dependency overlap across manifests and repositories. Overlap counts declaration uses separately from distinct repositories and attributes each version to its manifest. Version spreads use semantic version ordering, with non-version text sorted afterward.
 
 ## Dependency discovery
 
 Git Fleet searches the repository root and subdirectories up to three levels deep, while skipping common generated and vendored directories. It recognizes:
 
-- `pyproject.toml` or `requirements.txt`
+- `pyproject.toml`, `requirements*.txt` / `requirements*.lock` (including separator suffixes such as `requirements-dev.txt`), and Python scripts with leading PEP 723 metadata
 - `package.json`
 - `go.mod`
 - `Cargo.toml`
 - `Gemfile`
 - `composer.json`
 
-Within one directory, `pyproject.toml` takes precedence over `requirements.txt`. A dependency row records the manifest path that supplied it. The current schema identifies a package by repository, package manager, and package name, so repeated declarations of the same package within one repository are represented once.
+Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file, including arbitrary filenames and paths outside the repository. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
+
+Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
+
+Non-Python health checks run separately in each resolved manifest directory, with the repository root used only for legacy rows without a source. A successful process needs valid result structure and declaration evidence before either check becomes checked. Outdated and vulnerability coverage remain independent, and incomplete coverage retains its reason.
+
+For npm, [`outdated`](https://docs.npmjs.com/cli/v11/commands/npm-outdated/) rows need concrete current and latest versions. Missing current versions can come from adjacent `package-lock.json` layouts 1–3 or installed `node_modules` package metadata, read without running package code. A lock is version evidence only. An absent outdated row with a concrete version gets one `npm view <name> version --json` comparison with a 30-second timeout; absent versions, failed comparisons and malformed results remain unchecked. Audit coverage requires the declaration's direct node in the supported adjacent lock and a version matching the displayed current version. A mismatch preserves current/outdated evidence and leaves vulnerability coverage unchecked with a reason. Findings must list that direct node in `nodes`; a same-name nested finding does not implicate the direct declaration. Top-level audit errors, invalid vulnerability mappings or node lists and failure statuses never establish coverage; `ENOLOCK` retains a lockfile-specific reason.
+
+Fleet cards and Per-Repo Health retain analysis errors and missing tools even when no declarations were discovered or every discovered declaration was fully checked. Repository analysis errors are labeled explicitly; declaration-based Not Checked counts remain unchanged.
+
+The shared npm lock reader honors [`npm-shrinkwrap.json` precedence](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/) over `package-lock.json`, using the same supported layouts for version and audit evidence. An invalid or unsupported selected shrinkwrap cannot fall back to package-lock audit coverage.
+
+Go outdated coverage requires its own `go list` module row. Vulnerability checks consume the current [govulncheck streaming protocol](https://pkg.go.dev/golang.org/x/vuln/internal/govulncheck): matching module/version entries in the SBOM establish evaluation, and matching findings establish advisories. OSV database entries alone are not findings. The historical `Vulns` object is unsupported. Composer requests [`outdated --all`](https://getcomposer.org/doc/03-cli.md#outdated) so clean packages have explicit comparison rows. Cargo and Bundler findings-only reports do not establish evaluation of absent declarations; those rows conservatively remain unchecked. Cargo/Bundler audit findings are matched to the current version when known; their clean reports and Composer's clean audit report lack per-declaration evaluation evidence and remain unchecked. Non-comparable versions and unsupported report shapes also retain unchecked reasons.
+
+### Python dependency-health scope
+
+Python health evaluates declarations. Exact declared or unique adjacent-lock versions become `current_version`. Supported PEP 440 ranges and unpinned declarations select the highest allowed PyPI release with non-yanked release files as `wanted_version`, with floating outdated coverage and no invented current version. Prerelease selection follows [`SpecifierSet.filter`](https://packaging.pypa.io/en/stable/specifiers.html#packaging.specifiers.SpecifierSet.filter). The evaluated version is compared with PyPI's latest version, so a capped range can still show an update outside its cap. Unsupported constraints, including Poetry caret/tilde syntax and unresolved dependency tables, remain unchecked when no concrete declared or locked version is available.
+
+Registry successes and failures are cached by normalized package name for one repository scan. Three consecutive timeout/connection failures stop uncached lookups for that scan; a successful lookup resets the count. HTTP and JSON errors do not count toward that limit. Direct VCS/URL references bypass PyPI and auditing and retain their display identity and unchecked reason. Ambiguous lock versions also block both checks.
+
+Vulnerability checks audit only exact evaluated pins from every supported Python manifest. Conflicting versions of one package go into separate batches; repeated pins share results. Temporary audit files live outside the checkout. [`pip-audit`](https://pypi.org/project/pip-audit/) runs with `--no-deps --disable-pip`, and a result counts as checked only when its status, dependency entry, requested version and advisory shape agree. Missing tools, unresolved versions, skipped or absent entries and failed batches retain unchecked reasons. A failed batch does not invalidate another batch.
+
+This scope does not inspect an installed environment or perform full dependency resolution. Markers, `requires-python` and compatibility among packages are not evaluated. Undeclared transitive Python dependencies are not audited. A floating selection describes the declaration at scan time; it is not evidence of an installed version.
 
 ## Command-line options
 

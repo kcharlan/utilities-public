@@ -290,3 +290,31 @@ def test_dep_overlap_expand_pattern(test_app):
     html = resp.text
     # Must have some expand/collapse state variable
     assert "expanded" in html or "toggle" in html
+
+
+def test_dep_overlap_counts_manifest_uses_and_repositories(test_app):
+    client, db_path = test_app
+    _insert_repo(db_path, 'synthetic-repo', 'synthetic-repo')
+    with sqlite3.connect(db_path) as conn:
+        for source in ('a/requirements.txt', 'b/requirements.txt'):
+            conn.execute('INSERT INTO dependencies (repo_id, manager, name, source_path, current_version) VALUES (?, ?, ?, ?, ?)', ('synthetic-repo', 'pip', 'synthetic-pkg', source, '1.0'))
+    pkg, = client.get('/api/analytics/dep-overlap').json()['packages']
+    assert pkg['count'] == 2 and pkg['repo_count'] == 1
+    assert {r['source_path'] for r in pkg['repos']} == {'a/requirements.txt', 'b/requirements.txt'}
+
+
+def test_dep_overlap_orders_versions(test_app):
+    client, db_path = test_app
+    for i, version in enumerate(('10.0', '2.0', 'synthetic-unknown', None)):
+        repo = f'synthetic-repo-{i}'
+        _insert_repo(db_path, repo, repo)
+        _insert_dep(db_path, repo, 'synthetic-pkg', 'pip', version)
+    pkg, = client.get('/api/analytics/dep-overlap').json()['packages']
+    assert pkg['version_spread'] == '2.0 - synthetic-unknown'
+
+
+def test_overlap_component_keys_include_source(test_app):
+    client, _ = test_app
+    component = client.get('/').text.split('function DepOverlap()', 1)[1].split('// ── FleetDepsTab', 1)[0]
+    assert 'key={JSON.stringify([repo.repo_id, repo.source_path])}' in component
+    assert '{repo.source_path}' in component

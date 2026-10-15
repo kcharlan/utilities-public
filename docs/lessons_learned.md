@@ -1,5 +1,49 @@
 # Lessons learned
 
+## 2026-10-15: Compose inventory coverage and npm audit evidence across views
+
+Manifest inventory failures are independent of declaration rows. Fleet cards and
+per-repository summaries must consume persisted analysis errors and missing tools
+even for empty results or fully checked rows, while declaration KPIs continue to
+count only actual row states. Exercise both cases through the rendered browser.
+
+npm outdated can report installed versions while audit evaluates the virtual
+lock tree. Reuse lock-version evidence, require a concrete matching evaluated
+version, and match the audit's affected node location before applying a finding.
+A same-name nested vulnerable node does not implicate the direct declaration.
+Mocks must include real affected-node evidence rather than validating name-only
+attribution; retain valid current/outdated evidence when audit versions differ.
+Select npm-shrinkwrap before package-lock in the same parser; invalid selected
+shrinkwrap evidence must not silently certify a different fallback lock tree.
+
+## 2026-10-15: Attribute package-manager checks to declaring projects and evaluated versions
+
+A manifest path is part of a dependency declaration's identity and also selects
+the package-manager working directory. Group checks by the resolved declaring
+directory so a monorepo's nested projects cannot inherit root-project tool output.
+An npm lock supplies a concrete version, not registry comparison evidence; require
+an actual comparison even after successful empty outdated output. Treat audit
+errors and required report fields as evidence boundaries, including lock-specific
+failures, rather than promoting audit prerequisites to successful coverage.
+
+Findings-only reports cannot prove that an absent declaration was evaluated.
+Prefer explicit all-package comparison rows or evaluated module/version evidence,
+and retain unchecked reasons where that evidence is unavailable. Current
+govulncheck JSON is a versioned message stream: OSV database candidates are not
+findings, SBOMs establish evaluated modules, and finding attribution includes the
+version regardless of message order. When an audit contains several versions of
+one name, preserve the matching version's advisory instead of the last name match.
+
+## 2026-10-15: Preserve dependency declaration identity across manifests
+
+Git Fleet previously deduplicated and stored dependency rows by repository,
+manager, and package name, losing repeated declarations in nested manifests.
+Include the manifest path in parsing, persistence, stale-row deletion, and
+overlap attribution. Normalize Python names before deciding identity; preserve
+fallback reference identifiers. Test schema migration against historical DDL,
+including SQL NULL sources and normalized-name collisions, and invalidate
+legacy health coverage rather than presenting old results as fresh evidence.
+
 ## 2026-10-15: Verify extension release identity during deployment
 
 The extension repair was deployed with its previous manifest version, so the
@@ -101,3 +145,82 @@ validate the remaining header, and reparsing a safe JSON prefix after truncation
 loses long prompts. Consume an entire recognized container before publishing
 any of it. Preserve live sanitation provenance outside serialized records, so
 admission can distinguish a fully inspected prefix from untrusted restored text.
+
+## 2026-10-15: Separate dependency findings from check coverage
+
+An unchanged declaration after a missing or failed tool is not a clean health
+result. Track outdated and vulnerability evidence separately, retain bounded
+failure reasons, and derive display severity after enrichment. Preserve proven
+findings when the other check is incomplete. Do not promote a declared version
+constraint to an installed version. Persist missing tools and manifest inventory
+even when parsing yields no rows, and keep quick scans from overwriting them.
+Run blocking network and package-manager checks in a worker thread so requests
+and scan progress remain responsive. Test that responsiveness with a worker
+blocked on an event released by the server event loop.
+
+Dependency snapshot persistence also needs explicit failure rollback. A caller
+that catches a scan error and commits unrelated progress can otherwise publish
+earlier metadata and row writes. Protect metadata, upserts and stale deletion
+with a savepoint; roll back the savepoint on failure and preserve the caller's
+outer transaction. Regress with real SQLite trigger failures, followed by the
+caller's commit, and compare the complete previous snapshot.
+
+Python direct-reference identity needs a distinct path from distribution-name
+normalization. Parse URL authority before separating a VCS revision from its
+path: an SSH user separator is not a revision, and revisions can contain slashes.
+Keep extras and markers as declaration text and reject wildcard pins as concrete
+versions. Filtering direct-reference result rows does not exclude their URLs
+from an auditor that reads the original mixed manifest; filter the actual audit
+input too. Regress the full parse-to-persistence path and inspect synthetic
+auditor input, because parser-only tests miss later identity normalization and
+whole-manifest external work.
+
+### Git Fleet: declaration sources and discovery inventory
+
+Manifest priority can silently discard independent Python declarations. Discover
+pyproject, requirements variants and leading PEP 723 metadata together, and keep
+resolved include-file provenance separate from the including file. A file inventory
+must record attempted reads, empty files and failures independently of dependency
+rows. Adjacent locks supply versions only; ambiguous versions must block checker
+entry before any floating resolution can run. PEP 723 extraction needs its greedy
+closing-line grammar, not a first-terminator scan or fixed prelude byte cutoff.
+
+An arbitrary requirements include can also look like a discovered script. Parse
+explicit manifests and their includes before script candidates, and let an existing
+resolved-path inventory record own that file. A harmless metadata probe must never
+replace or remove the include's empty, populated or failed record. Regress both
+filename orders and assert one actual read, not merely one surviving declaration.
+
+### Git Fleet: evaluate Python declarations and validate audit evidence
+
+An unpinned declaration still has a registry evaluation: retain the highest allowed
+usable release as a floating wanted version, without calling it installed or
+current. Apply `SpecifierSet.filter` to the candidate set so explicit prerelease
+constraints and fallback behavior follow packaging's semantics. Cache successes
+and failures by normalized name for one scan, and distinguish connection failures
+from HTTP/JSON errors before opening an offline breaker.
+
+Auditing the original manifest can resolve extra dependencies and conflate versions
+declared in different projects. Audit exact evaluated pins with dependency resolution
+disabled, splitting conflicting versions of one normalized name into separate
+batches. Treat process status and JSON as a joint evidence contract: missing entries,
+skips, malformed advisories, duplicate names, version mismatches and status/advisory
+contradictions cannot establish clean coverage. Regress matching across manifests
+and limit failures to the affected batch. Synthetic auditor fixtures must use real
+exit semantics and the requested versions so they cannot conceal these errors.
+
+### Git Fleet: findings and coverage are independent report dimensions
+
+A vulnerability or update headline does not prove both health checks ran. Count
+unchecked declarations from the independent check states in SQL and the UI, and
+allow a finding to appear in both Attention Required and Not Checked. Count
+manifest reads from discovery inventory so empty or failed files survive reports.
+Refresh metadata after a scan before publishing the report; stale parent props can
+otherwise pair fresh rows with old missing-tool and inventory information. Browser
+regressions should inspect real downloaded contents and use one shared synthetic
+fixture to compute API, UI and report expectations.
+
+A declaration timestamp is not a scan timestamp. An inventory-only scan can have
+no declaration timestamps; label that absence explicitly instead of claiming the
+repository was not scanned. Never substitute a quick-scan time for dependency
+evaluation history.

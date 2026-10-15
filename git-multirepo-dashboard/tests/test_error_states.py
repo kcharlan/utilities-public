@@ -403,12 +403,13 @@ def test_dep_check_error_cleared_on_success(test_app, tmp_path):
     _set_ws(db_path, repo_id, dep_check_error=1)
 
     def identity(repo_path, deps):
-        return deps
+        return [dict(d, outdated_state='checked', vuln_state='checked') for d in deps]
 
     async def _run():
         async with aiosqlite.connect(str(db_path)) as db:
             await db.execute("PRAGMA foreign_keys = ON")
             with (
+                patch.object(git_dashboard, "TOOLS", dict(pip_audit='synthetic-tool')),
                 patch.object(git_dashboard, "check_python_deps", identity),
                 patch.object(git_dashboard, "check_node_deps", identity),
                 patch.object(git_dashboard, "check_go_deps", identity),
@@ -458,8 +459,9 @@ def test_detail_remove_update_buttons_ui(client):
     assert "Update Path" in r.text
 
 
-def test_offline_indicator_ui(client):
-    """GET / HTML contains 'offline' in the dep check indicator context."""
+def test_incomplete_coverage_indicator_ui(client):
+    """Incomplete analysis is not necessarily offline: retain coverage and reasons."""
     r = client.get("/")
     assert r.status_code == 200
-    assert "offline" in r.text
+    assert "Incomplete coverage" in r.text
+    assert "pkg.check_note" in r.text

@@ -48,6 +48,8 @@ def _make_dep(name: str, manager: str = "pip", severity: str = "ok",
         "wanted_version": current,
         "latest_version": latest,
         "severity": severity,
+        "outdated_state": "checked",
+        "vuln_state": "checked",
         "advisory_id": advisory_id,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -789,3 +791,252 @@ def test_get_fleet_kpis_zero_when_no_deps(test_app_raise):
     kpis = response.json()["kpis"]
     assert kpis["vulnerable_deps"] == 0
     assert kpis["outdated_deps"] == 0
+
+
+def test_scan_removes_only_stale_declarations(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    raw = [dict(_make_dep('synthetic-pkg'), source_path=source,
+                declared_spec='==1.0.0', outdated_state='checked',
+                vuln_state='unchecked', check_note='synthetic coverage note')
+           for source in ('a/requirements.txt', 'b/requirements.txt')]
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kwargs: raw)
+    for checker in ('python', 'node', 'go', 'rust', 'ruby', 'php'):
+        monkeypatch.setattr(git_dashboard, f'check_{checker}_deps', lambda path, deps: deps)
+
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, repo_id, '/synthetic/repo')
+            return await git_dashboard._fetch_repo_deps(repo_id, db)
+    groups = run(scan())
+    package = groups[0]['packages'][0]
+    assert package['declared_spec'] == '==1.0.0'
+    assert package['outdated_state'] == 'checked'
+    assert package['vuln_state'] == 'unchecked'
+    assert package['check_note'] == 'synthetic coverage note'
+    assert package['checked_at'] == raw[0]['checked_at']
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM dependencies').fetchone()[0] == 2
+    raw[:] = [dict(raw[1], current_version='2.0')]
+    run(scan())
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute('SELECT source_path, current_version FROM dependencies').fetchall() == [('b/requirements.txt', '2.0')]
+
+
+@pytest.mark.parametrize('manager', git_dashboard.DEP_TOOL_REQUIREMENTS)
+def test_missing_tool_marks_served_state_unchecked(test_app, tmp_path, monkeypatch, manager):
+    client, db_path = test_app
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {})
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kwargs:
+                        [dict(name='synthetic', manager=manager, version='1.0')])
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    with patch('urllib.request.urlopen', side_effect=OSError('synthetic offline')):
+        response = client.post('/api/repos/synthetic/scan/deps')
+    assert response.status_code == 200
+    row = response.json()[0]['packages'][0]
+    assert row['severity'] == 'unchecked'
+    assert row['check_note']
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['dep_check_error'] is True
+    assert ws['missing_dep_tools']
+
+
+def test_crashed_checker_invalidates_its_manager_only(tmp_path, monkeypatch):
+    rows = [dict(_make_dep('synthetic', manager=m), outdated_state='checked', vuln_state='checked')
+            for m in ('pip', 'npm')]
+    monkeypatch.setattr(git_dashboard, 'parse_deps_for_repo', lambda path, **kw: rows)
+    monkeypatch.setattr(git_dashboard, 'TOOLS', dict(pip_audit='synthetic', npm='synthetic'))
+    monkeypatch.setattr(git_dashboard, 'check_python_deps', lambda path, deps: deps)
+    monkeypatch.setattr(git_dashboard, 'check_node_deps', lambda *args: (_ for _ in ()).throw(ValueError('synthetic crash')))
+    result = git_dashboard.analyze_repo_deps(tmp_path)
+    by_manager = {d['manager']: d for d in result.enriched}
+    assert result.any_error
+    assert by_manager['pip']['severity'] == 'ok'
+    assert by_manager['npm']['severity'] == 'unchecked'
+    assert 'synthetic crash' in by_manager['npm']['check_note']
+
+
+@pytest.mark.parametrize('with_rows', [False, True])
+def test_scan_persists_metadata_without_rows(tmp_path, monkeypatch, with_rows):
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    metadata = [dict(tool='synthetic-tool', description='Synthetic check')]
+    manifests = [dict(path='package.json', kind='package.json', dependencies=0, error=None)]
+    rows = [dict(_make_dep('synthetic'), outdated_state='checked', vuln_state='checked')] if with_rows else []
+    analysis = git_dashboard.DepAnalysis(rows, True, metadata, manifests)
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path: analysis)
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+    run(scan())
+    with sqlite3.connect(db_path) as db:
+        row = db.execute('SELECT dep_check_error, missing_dep_tools, dep_manifests FROM working_state').fetchone()
+    import json
+    assert row[0] == 1
+    assert json.loads(row[1]) == metadata
+    assert json.loads(row[2]) == manifests
+
+
+def test_dep_scan_allows_event_loop_progress(tmp_path, monkeypatch):
+    import threading
+    started, release = threading.Event(), threading.Event()
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    def analyze(path):
+        started.set()
+        assert release.wait(2), 'event loop did not run while analyzer blocked'
+        return git_dashboard.DepAnalysis([], False, [], [])
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', analyze)
+    async def scan():
+        async with aiosqlite.connect(db_path) as db:
+            task = asyncio.create_task(git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path)))
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(.01)
+            assert started.is_set()
+            release.set()
+            await task
+    run(scan())
+
+
+def test_scan_persists_missing_tools(test_app, tmp_path, monkeypatch):
+    client, db_path = test_app
+    (tmp_path / 'package.json').write_text('{"dependencies": {}}')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {})
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    assert client.post('/api/repos/synthetic/scan/deps').json() == []
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    assert ws['missing_dep_tools'] == [dict(tool='npm', description='Node.js dependency checks')]
+    assert ws['dep_manifests'] == [dict(path='package.json', kind='package.json', dependencies=0, error=None)]
+    assert ws['dep_check_error'] is True
+
+
+@pytest.mark.parametrize('failure_stage', ['later_row', 'stale_delete'])
+def test_failed_persistence_restores_snapshot_after_caller_commit(tmp_path, monkeypatch, failure_stage):
+    import json
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    with sqlite3.connect(db_path) as db:
+        db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,0,?,?)',
+                   (repo_id, json.dumps([dict(tool='synthetic-old', description='Synthetic old check')]),
+                    json.dumps([dict(source_path='old.json', manager='npm')])))
+        for name in ('synthetic-existing', 'synthetic-stale'):
+            db.execute('INSERT INTO dependencies (repo_id,manager,name,current_version) VALUES (?,\'npm\',?,\'1.0\')', (repo_id, name))
+        old_metadata = db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall()
+        old_rows = db.execute('SELECT * FROM dependencies ORDER BY name').fetchall()
+        if failure_stage == 'later_row':
+            db.execute("CREATE TRIGGER synthetic_failure BEFORE INSERT ON dependencies WHEN NEW.name = 'synthetic-failing' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+        else:
+            db.execute("CREATE TRIGGER synthetic_failure BEFORE DELETE ON dependencies WHEN OLD.name = 'synthetic-stale' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+    rows = [_make_dep('synthetic-existing', 'npm', current='2.0')]
+    if failure_stage == 'later_row':
+        rows.append(_make_dep('synthetic-failing', 'npm'))
+    analysis = git_dashboard.DepAnalysis(rows, True,
+        [dict(tool='synthetic-new', description='Synthetic new check')],
+        [dict(source_path='new.json', manager='npm')])
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path: analysis)
+
+    async def scan_and_commit_as_caller():
+        async with aiosqlite.connect(db_path) as db:
+            # Caller-owned work must survive the scan's rollback.
+            await db.execute("UPDATE repositories SET name = 'synthetic-caller-change' WHERE id = ?", (repo_id,))
+            with pytest.raises(sqlite3.IntegrityError, match='synthetic write failure'):
+                await git_dashboard.run_dep_scan_for_repo(db, repo_id, str(tmp_path))
+            await db.commit()
+    run(scan_and_commit_as_caller())
+    with sqlite3.connect(db_path) as db:
+        assert db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall() == old_metadata
+        assert db.execute('SELECT * FROM dependencies ORDER BY name').fetchall() == old_rows
+        assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'synthetic-caller-change'
+
+
+def test_successful_dep_persistence_preserves_caller_transaction(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    repo_id = 'synthetic-repo'
+    run(_make_db_with_repo(db_path, repo_id))
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path:
+                        git_dashboard.DepAnalysis([_make_dep('synthetic')], False, [], []))
+    async def scan_then_caller_rollback():
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute("UPDATE repositories SET name = 'synthetic-caller-change' WHERE id = ?", (repo_id,))
+            await git_dashboard.run_dep_scan_for_repo(db, repo_id, str(tmp_path))
+            await db.rollback()
+    run(scan_then_caller_rollback())
+    with sqlite3.connect(db_path) as db:
+        assert db.execute('SELECT COUNT(*) FROM dependencies').fetchone()[0] == 0
+        assert db.execute('SELECT COUNT(*) FROM working_state').fetchone()[0] == 0
+        assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'repo-0'
+
+
+def test_direct_reference_persists_identity_and_coverage(tmp_path, monkeypatch):
+    (tmp_path / 'requirements.txt').write_text('git+ssh://git@git.example.invalid/acme/widget-kit.git@feature/fix\n')
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    with patch('urllib.request.urlopen') as registry, patch('subprocess.run') as audit:
+        async def scan():
+            async with aiosqlite.connect(db_path) as db:
+                await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+        run(scan())
+    registry.assert_not_called()
+    audit.assert_not_called()
+    with sqlite3.connect(db_path) as db:
+        row = db.execute('SELECT name,current_version,outdated_state,vuln_state,check_note FROM dependencies').fetchone()
+    assert row == ('git.example.invalid/acme/widget-kit', 'git:feature/fix', 'unchecked', 'unchecked',
+                   'direct VCS/URL reference; not compared with PyPI or audited')
+
+
+def test_mixed_direct_reference_is_absent_from_auditor_input(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    (tmp_path / 'requirements.txt').write_text('synthetic-widget==1.2.3\ngit+https://git.example.invalid/acme/direct.git\n')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    seen = []
+    def audit(command, **kwargs):
+        audit_path = Path(command[command.index('--requirement') + 1])
+        assert not audit_path.is_relative_to(tmp_path)
+        seen.append(audit_path.read_text())
+        return SimpleNamespace(returncode=0, stdout=json.dumps({'dependencies': [{'name': 'synthetic-widget', 'version': '1.2.3', 'vulns': []}]}))
+    with patch.object(git_dashboard, 'check_python_outdated', side_effect=lambda deps: deps), patch('subprocess.run', side_effect=audit):
+        result = git_dashboard.analyze_repo_deps(tmp_path)
+    assert seen == ['synthetic-widget==1.2.3\n']
+    direct = next(d for d in result.enriched if d.get('direct_ref'))
+    assert direct['check_note'] == 'direct VCS/URL reference; not compared with PyPI or audited'
+    assert direct['vuln_state'] == 'unchecked'
+
+
+def test_scan_persists_empty_and_failed_manifests(test_app, tmp_path, monkeypatch):
+    client, db_path = test_app
+    (tmp_path / 'requirements.txt').write_text('-r missing-extra.txt\n-r empty-extra.txt\n')
+    (tmp_path / 'empty-extra.txt').write_text('')
+    (tmp_path / 'pyproject.toml').write_text('[invalid')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    assert client.post('/api/repos/synthetic/scan/deps').json() == []
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    inventory = {m['path']: m for m in ws['dep_manifests']}
+    assert set(inventory) == {'requirements.txt', 'missing-extra.txt', 'empty-extra.txt', 'pyproject.toml'}
+    assert inventory['missing-extra.txt']['error']
+    assert inventory['pyproject.toml']['error']
+    assert inventory['empty-extra.txt']['dependencies'] == 0
+    assert ws['dep_check_error'] is True
+
+
+def test_fleet_coverage_counts_follow_states(test_app, tmp_path, monkeypatch, dependency_report_seed):
+    client, db_path = test_app
+    dependency_report_seed['seed'](db_path, 'synthetic-coverage', tmp_path)
+    monkeypatch.setattr(git_dashboard, 'quick_scan_repo', AsyncMock(return_value=dict(
+        has_uncommitted=False, modified_count=0, untracked_count=0, staged_count=0,
+        current_branch='main', last_commit_hash=None, last_commit_message=None,
+        last_commit_date=None, checked_at='synthetic')))
+    result = client.get('/api/fleet').json()
+    expected = dependency_report_seed['summary']
+    assert result['repos'][0]['dep_summary']['unchecked'] == expected['unchecked']
+    assert result['kpis']['unchecked_deps'] == expected['unchecked']
+    assert result['kpis']['outdated_deps'] == expected['outdated'] + expected['major']

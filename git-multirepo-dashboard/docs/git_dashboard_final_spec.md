@@ -50,7 +50,7 @@ Runtime paths are resolved once when the module loads:
 | Runtime home | `~/.git_dashboard` | `GIT_DASHBOARD_HOME` |
 | Database | `<runtime-home>/dashboard.db` | `GIT_DASHBOARD_DB` |
 
-The runtime home contains mutable state only. SQLite is initialized idempotently, uses WAL mode, and has small additive migrations for columns introduced after the first schema version.
+The runtime home contains mutable state only. SQLite is initialized idempotently and uses WAL mode. Startup applies additive column migrations followed by the transactional 0.2.0 dependency-key rebuild when needed. The rebuild preserves version values and timestamps, normalizes Python names, coalesces missing or NULL sources to an empty string, and keeps the first row by rowid on a normalized-key collision. Legacy severity and advisory values move into a rescan note; active advisory is cleared and severity/outdated/vulnerability coverage become unchecked. Already migrated rows are unchanged.
 
 ## Startup contracts
 
@@ -90,6 +90,9 @@ One latest quick-scan snapshot per repository:
 - latest commit hash, message, and date
 - check timestamp
 - `scan_error` and `dep_check_error`
+- JSON-text `missing_dep_tools` (tool/description objects) and `dep_manifests` (manifest inventory), returned as parsed arrays by repository detail; fleet returns missing tools
+
+Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in one savepoint, including empty results. A write failure rolls back the scan snapshot before re-raising, so a later caller commit cannot publish partial coverage. Releasing the savepoint preserves an existing caller-owned transaction.
 
 ### `daily_stats`
 
@@ -111,14 +114,15 @@ The default branch is never presented as stale even if its stored date exceeds t
 
 ### `dependencies`
 
-Dependency health keyed by repository, manager, and package name:
+Dependency declarations keyed by `(repo_id, manager, source_path, name)`:
 
-- current, wanted, and latest versions
-- severity: `ok`, `outdated`, `major`, or `vulnerable`
-- advisory identifier and check timestamp
-- manifest `source_path`
+- non-null manifest `source_path`, defaulting to an empty string
+- declared specification text and current, wanted, and latest versions
+- severity, defaulting to `unchecked`
+- independent `outdated_state` and `vuln_state`, defaulting to `unchecked`
+- active advisory identifier, check note, and check timestamp
 
-Because `source_path` is not part of the primary key and parsing deduplicates by manager/name, repeated declarations of the same package within one repository are represented once.
+Parsing retains the first repeated identity within a manifest and preserves declarations from different manifests. Python package identity lowercases names and replaces runs of hyphens, underscores, and dots with a hyphen. Other manager names and fallback reference identifiers retain their spelling. The dependency API exposes the declared text, row timestamp, and coverage fields alongside the versions and manifest attribution.
 
 ### `scan_log`
 
@@ -152,6 +156,8 @@ Registration is idempotent for an existing absolute path. The path-repair endpoi
 
 Results update `working_state` without erasing error fields created by broader scans. The endpoint then joins stored branches, dependencies, 13-week sparklines, and fleet KPIs into the response.
 
+Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
+
 ### Full history
 
 The history scanner parses `git log --all` with ISO dates and short statistics, aggregates commits and line changes by day, and upserts `daily_stats`. After the initial scan it passes `last_full_scan_at` as the incremental lower bound and updates that timestamp after the scan.
@@ -174,25 +180,46 @@ Manifest discovery walks through depth three and skips hidden, virtual-environme
 
 | File | Manager |
 | --- | --- |
-| `pyproject.toml`, `requirements.txt` | `pip` |
+| `pyproject.toml`, requirements `.txt`/`.lock` files, leading PEP 723 script metadata | `pip` |
 | `package.json` | `npm` |
 | `go.mod` | `gomod` |
 | `Cargo.toml` | `cargo` |
 | `Gemfile` | `bundler` |
 | `composer.json` | `composer` |
 
-Within one directory, only the highest-priority manifest for an ecosystem is selected; `pyproject.toml` precedes `requirements.txt`. Manifests in different directories are considered, subject to repository-wide manager/name deduplication.
+Python manifest kinds coexist within each directory. Requirements filenames match `^requirements(?:[-_.][A-Za-z0-9_.-]+)?\.(?:txt|lock)$`, case-insensitively. Python suffixes and suffixless shebang files are script candidates; only metadata in their leading comment/blank-line prelude is read. PEP 723 grammar and closing-line precedence follow the [reference implementation](https://peps.python.org/pep-0723/#reference-implementation); unclosed blocks are ignored, while duplicate script blocks, malformed TOML and invalid dependency values become inventory errors. Manifests in different directories are considered independently; declaration deduplication is scoped to manager, manifest path, and identity name.
 
 Parsing is intentionally lightweight:
 
-- Python supports PEP 621, Poetry, exact requirements pins, ranges/unpinned names, extras, markers, and circular-safe requirements includes.
+- Python requirements and PEP 621 declarations share a `packaging.requirements.Requirement` parser. Extras and markers remain in textual `declared_spec`; markers are not evaluated against the scanner's environment. Exact PEP 440 pins become versions; wildcard pins and ranges remain unpinned. Requirements continuations are joined, inline comments and per-requirement options are stripped, and recursive includes remain circular-safe. PEP 621 optional dependencies and string dependency-group entries are included, without include-group expansion or Poetry group support. Poetry retains its supported scalar/table values and stores declaration text as a string. Adjacent `uv.lock` supplies unique normalized-name registry versions and a `version_source` path; ambiguous versions set `resolution_blocked` with an unchecked reason, bypassing checker calls. Absent names use ordinary resolution, and direct references keep their own coverage path. The lock is a version source, not a declaration manifest.
+- Named direct URLs and legacy `egg` references use normalized distribution identities. Bare wheel URLs derive the name and display version from the wheel filename. Other bare references use host plus path as a fallback identity, preserving its spelling through deduplication. VCS revisions are extracted from the URL path, separately from authority user information; their display is `git:<revision>` (or the corresponding VCS), with `default branch` when absent. Direct references bypass PyPI and pip-audit, retaining unchecked coverage with `direct VCS/URL reference; not compared with PyPI or audited`. All audit inputs contain only exact evaluated registry pins in private temporary files outside the repository. Resolving VCS commits or remote package metadata is outside the scan contract. See [pip VCS support](https://pip.pypa.io/en/stable/topics/vcs-support/) for supported URL forms.
 - Node reads dependencies and devDependencies.
 - Go reads block and single-line requirements.
 - Cargo reads dependencies and dev-dependencies.
 - Bundler recognizes conventional `gem` declarations.
 - Composer reads require and require-dev while excluding PHP/platform extensions.
 
-Outdated and vulnerability checks fail open so one external tool or network error does not discard other parsed dependencies. The scanner records a repository-level incomplete-analysis flag. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, and manifest inventory. A checker crash invalidates coverage only for its manager; other managers continue.
+
+Coverage is independent: `outdated_state` is `checked`, `floating`, or `unchecked`; `vuln_state` is `checked` or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Advisory evidence has highest severity precedence, followed by proven major/outdated results; remaining incomplete coverage yields `unchecked`, and complete clean coverage yields `ok`. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
+
+Non-Python orchestrators group declarations by the resolved parent of `source_path`; only legacy empty sources fall back to the repository root. Each inner checker keeps its existing signature and receives its manifest directory as the working directory. npm current versions prefer the outdated row, supported adjacent package-lock v1/v2/v3 entries, then installed package metadata. Listed rows need a latest comparison; absent rows need a concrete version plus a successful bounded `npm view` comparison (30 seconds). Lock evidence never substitutes for that comparison. Audit error objects, missing/invalid vulnerability mappings or affected-node lists and unexpected statuses invalidate npm audit coverage; `ENOLOCK` records the lockfile requirement. Both clean and vulnerable audit coverage require a concrete direct-node lock version matching the displayed current version; a mismatch retains current/outdated evidence and an unchecked vulnerability reason. If no current version exists, concrete audited lock evidence may supply it. Findings additionally require the declaration's `node_modules/<name>` location in the audit entry's `nodes` list. Same-name nested findings cannot establish a direct declaration's vulnerability.
+
+Go `list` needs a valid row for the declaration; absent and replaced modules remain unchecked. govulncheck consumes the current v1 streaming protocol with initial config and validates SBOM/module/version and finding/trace evidence. The successful JSON stream exits zero. Only a matching evaluated module version establishes clean vulnerability coverage, and only matching findings supply advisories; OSV entries describe database candidates. Legacy `Vulns` objects are rejected. Composer outdated requests `--all`, validates `installed` entries including `latest-status`, and retains explicit clean comparison rows. Cargo outdated and Bundler outdated reports without evaluated declaration membership leave absent rows unchecked. Cargo/Bundler audit rows require package, version and advisory IDs, with version attribution preserved; absent findings in those reports or Composer audit do not establish per-declaration coverage. Unexpected statuses, missing required keys/fields, duplicate comparison rows and non-comparable versions remain unchecked, preserving the other check's independent state. See the [npm outdated contract](https://docs.npmjs.com/cli/v11/commands/npm-outdated/), [govulncheck protocol](https://pkg.go.dev/golang.org/x/vuln/internal/govulncheck) and [Composer commands](https://getcomposer.org/doc/03-cli.md#outdated).
+
+The shared npm lock reader selects `npm-shrinkwrap.json` before `package-lock.json`, using the same layouts 1–3 and direct-node parser for outdated version evidence and audit attribution. An unreadable, malformed or unsupported selected shrinkwrap returns no lock evidence and never silently falls back to package-lock. See [npm lock precedence](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/), the [virtual-tree audit implementation](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/arborist/index.js), and [audit affected-node serialization](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/vuln.js).
+
+`parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths or absolute paths for external includes. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+
+### Python health evaluation and scope
+
+The evaluated version is the validated current declared/locked PEP 440 version, or a floating selection stored only in `wanted_version`. `_floating_specifier` accepts PEP 508 requirement syntax or standalone PEP 440 constraints; unsupported Poetry syntax remains unchecked. `resolve_floating_version` selects the highest allowed release using [`SpecifierSet.filter`](https://packaging.pypa.io/en/stable/specifiers.html#packaging.specifiers.SpecifierSet.filter), excluding invalid versions and releases without a non-yanked file. When there is no releases mapping, valid `info.version` is the fallback candidate. Compare the evaluated version to the registry's latest version with `classify_severity`, including versions beyond a declaration's cap. Exact evaluations set `outdated_state=checked`; floating evaluations set `outdated_state=floating`.
+
+`check_python_outdated` caches registry payloads and failure notes by normalized name within the repository scan. `_PYPI_MAX_CONSECUTIVE_FAILURES` is three: timeout/connection failures count toward it and successful lookups reset it. HTTP and JSON errors do not count. Once open, the breaker marks uncached lookups unchecked without a request; cached results remain usable.
+
+`_pip_audit_batches` deduplicates normalized `(name, version)` pins and separates conflicting versions of one name. `_audit_python_pins` writes exact-pin inputs outside the checkout and invokes pip-audit with `--no-deps --disable-pip --format json --progress-spinner off` and a 300-second timeout. The [documented status](https://pypi.org/project/pip-audit/) must be 0 for clean results or 1 for advisory results. The report also requires a dependencies list, unique normalized result names, valid advisory dictionaries with nonempty string IDs, and a matching version if returned. Missing/skipped requested entries remain unchecked; malformed output or contradictory status invalidates that batch. Results map back by normalized name and audited version across manifests, preferring current versions over floating selections. Tool absence, unresolved versions and process failures retain reasons.
+
+Scope: this is declaration evaluation, not installed-environment inspection or full dependency resolution. It does not evaluate markers, `requires-python` or inter-package compatibility, and it does not audit undeclared transitive Python dependencies. Direct references and ambiguous lock versions retain their separate unchecked contracts.
 
 ## HTTP API
 
@@ -218,7 +245,13 @@ The local SPA consumes these JSON and streaming endpoints:
 | POST | `/api/repos/{id}/scan/deps` | Synchronous single-repository dependency scan |
 | GET | `/api/analytics/heatmap` | Fleet daily commit totals |
 | GET | `/api/analytics/allocation` | Per-repository commit series |
-| GET | `/api/analytics/dep-overlap` | Packages used by at least two repositories |
+| GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
+
+`/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package.
+
+### Dependency overlap response
+
+`GET /api/analytics/dep-overlap` returns `{ "packages": [...] }`. Each entry groups declarations by manager and identity name, includes `count` (declaration uses), `repo_count` (distinct repositories), and `repos[]` with `repo_id`, `name`, `version`, and `source_path`. Groups with fewer than two uses are excluded; results sort by use count descending. `version_spread` uses distinct non-null versions ordered by `packaging.version.Version`, followed by invalid version text in lexical order. Empty version sets produce an empty spread. Expanded rows display each manifest beside its version and use repository ID plus source path as their React key.
 
 ## UI contracts
 
@@ -231,6 +264,16 @@ Important interaction contracts:
 - Repository detail preserves the selected branch across Branches and Commits.
 - Dependency findings can be exported entirely in the browser as Markdown or JSON.
 - Missing CDN resources or JavaScript errors are covered by the separate Playwright suite.
+
+`summarizeDeps(groups, manifests)` returns declaration and inventory manifest counts, individual `ok`, `outdated`, `major`, and `vulnerable` severity counts, state-based `unchecked`, and `fullyChecked`. A fully checked declaration has outdated state `checked`/`floating` and vulnerability state `checked`. Inventory counts include empty and failed files, independent of nonempty groups.
+
+The Dependencies tab fetches detail metadata and application status on mount and after Check Now. It displays the declared text, current version or explicitly labeled floating evaluated selection, both check states, headline status and retained reasons. Partially checked findings appear in both Attention Required and Not Checked. An incomplete banner also covers missing tools, manifest errors and persisted analysis errors. The clean banner requires a nonempty declaration set, no findings, complete check states, and complete analysis metadata. Fleet KPIs, per-repository summaries and card coverage titles expose Not Checked independently of findings. Cards consume the independent `dep_check_error` signal and show an Analysis error label. Per-Repo Health includes repositories with analysis errors or missing tools even with no declaration rows; its badges retain those reasons for fully checked rows too. Repository-level errors never manufacture unchecked declarations or alter the state-based KPI predicate.
+
+### Downloaded dependency reports
+
+JSON downloads have `{format: "git-fleet-dependency-report", format_version: 2, generated_at, git_fleet_version, repo: {id, name}, missing_tools, summary, scope, manifests, groups}`. Only this downloaded envelope is versioned; the dependency API remains a grouped list. Scope documents Python declaration-evaluation limits, direct-reference exclusions, runtime discovery limits, PEP 723 prelude handling and dependency-group boundaries.
+
+Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp (or No declaration check timestamp available), coverage, missing tools and Scope. Attention Required, Not Checked and All Dependencies tables retain declared specifications, version displays, both check states, headline statuses, sources and reasons. Manifests Scanned lists inventory paths, kinds, declaration counts and errors. Empty inventories and declaration sets remain exportable.
 
 ## Testing contracts
 
