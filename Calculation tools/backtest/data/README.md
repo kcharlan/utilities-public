@@ -84,13 +84,15 @@ their external targets are never chmodded.
 ## Environment and tests
 
 Python execution and installation require a virtual environment. The tested
-maintainer environment is Python 3.14.7 on macOS arm64. Source syntax requires
-Python 3.10 or newer; other interpreter/platform combinations remain unverified. Setup checks Python
-3.10 or newer, an isolated venv and the pinned installed dependencies rather
-than requiring the maintainer patch version or CPU identity.
-`requirements.txt` retains the direct requirements pandas 2.3.2 and xlrd 2.0.2.
-`requirements.lock` records the complete tested resolution; pandas was built
-from its source distribution. Do not run the script's shebang directly.
+maintainer environment is Python 3.14.8 on macOS arm64. Source syntax requires
+Python 3.10 or newer, while pandas 3.0.6 declares `Requires-Python: >=3.11`.
+The `environment()` guard in `tools/setup_data.mjs` therefore checks Python
+3.11 or newer, an isolated venv and the pinned installed dependencies rather
+than requiring the maintainer patch version or CPU identity. Other
+interpreter/platform combinations remain unverified.
+`requirements.txt` retains the direct requirements pandas 3.0.6 and xlrd 2.0.2.
+`requirements.lock` records the complete resolution installed from public PyPI
+wheels in a fresh `--copies` venv. Do not run the script's shebang directly.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`; a nonempty override
 selects the external local data root. Setup places its compiler venv in `.venv`,
