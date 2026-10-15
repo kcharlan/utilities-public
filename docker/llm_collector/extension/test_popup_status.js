@@ -41,6 +41,59 @@ function loadPopupStatusRenderer(background = null) {
   return { context, elements, callbacks, blobs };
 }
 
+// Keep the list present: export-only fixtures otherwise skip renderStatus entirely.
+// Capture HTML-parser input separately from text-node output; Chromium acceptance
+// checks the resulting real DOM and intercepted resource requests as well.
+function attachStatusList(popup) {
+  const markup = [];
+  function node() {
+    return {
+      style: {}, children: [], ownText: '',
+      appendChild(child) { this.children.push(child); return child; },
+      set textContent(value) { this.ownText = String(value); this.children = []; },
+      get textContent() { return this.ownText + this.children.map(child => child.textContent).join(''); },
+      set innerHTML(value) { markup.push(String(value)); this.ownText = ''; this.children = []; }
+    };
+  }
+  popup.elements.list = node();
+  popup.context.document.createDocumentFragment = node;
+  popup.context.document.createElement = node;
+  popup.context.document.createTextNode = value => { const text = node(); text.textContent = value; return text; };
+  return markup;
+}
+
+test('observed decoded diagnostic markup stays inert through normalization and popup rendering', async () => {
+  const { loadBackground, tick } = require('./background_harness.js');
+  const bg = loadBackground({ config: true });
+  const popup = loadPopupStatusRenderer(bg);
+  const markup = attachStatusList(popup);
+  const payload = '<img src="https://synthetic.invalid/probe">';
+  bg.request('https://chatgpt.com/user-SYNTHETICUSERID1234/' + encodeURIComponent(payload));
+  await tick();
+  const status = await bg.status();
+  assert.equal(status.debug.at(-1).path, '/user-REDACTED/' + payload);
+  assert.ok(Buffer.byteLength(JSON.stringify(status.debug)) <= 256 * 1024);
+  popup.context.renderStatus(status);
+  assert.ok(!markup.some(html => html.includes(payload)), 'observed markup must never reach the HTML parser');
+  assert.ok(popup.elements.list.textContent.includes('/user-REDACTED/' + payload));
+  assert.ok(!popup.elements.list.textContent.includes('SYNTHETICUSERID1234'));
+  bg.dispose();
+});
+
+test('adjacent diagnostic and status values render as literal text', () => {
+  const popup = loadPopupStatusRenderer();
+  const markup = attachStatusList(popup);
+  const payload = '<img src="https://synthetic.invalid/adjacent">';
+  popup.context.renderStatus({ collectorStatus: { state: 'connected' },
+    serverCounters: { [payload]: payload }, pending: { [payload]: payload },
+    client_id: payload, seq: payload,
+    debug: [{ decision: payload, ts: 1, host: payload, path: payload, rpcids: payload, reason: payload }] });
+  assert.ok(!markup.some(html => html.includes(payload)), 'dynamic values must never reach the HTML parser');
+  assert.ok(popup.elements.list.textContent.includes('client_id: ' + payload));
+  assert.ok(popup.elements.list.textContent.includes('[rpcids=' + payload + ']'));
+  assert.ok(popup.elements.list.textContent.includes(payload + payload));
+});
+
 test("renders a successful authenticated probe as connected", () => {
   const { context, elements } = loadPopupStatusRenderer();
 

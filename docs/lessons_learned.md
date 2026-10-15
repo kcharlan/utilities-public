@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-15: Redacted diagnostics still need text-only rendering
+
+In `docker/llm_collector/extension`, decoding paths to redact identifiers also
+decoded encoded markup. The popup interpolated that sanitized text into
+`innerHTML`, creating an actual image and attempting an external request under
+the extension CSP. Redaction removes sensitive content; it does not make text
+safe for an HTML parser. Render every dynamic diagnostic field, neighboring
+count row and identity value with `textContent` and DOM elements. Preserve the
+sanitizer's byte limits independently. Keep the list present in renderer tests
+and exercise observation, normalization and rendering together; verify the
+actual popup in isolated Chromium with resource attempts intercepted.
+
 ## 2026-10-15: Treat diagnostic restoration and persistence as recoverable states
 
 In `docker/llm_collector/extension`, waiting only for the enable setting let

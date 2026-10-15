@@ -20,6 +20,10 @@ storage. Each record holds the hostname, path, and, when the URL carries one
 names the RPCs in the batch; other query parameters such as session ids are
 not recorded.
 
+The popup renders diagnostic fields and other dynamic list values as literal
+text. Sanitized paths may contain decoded markup characters; those characters
+cannot create elements or load resources in the popup.
+
 The collector receives only hostname/count deltas, a generated client ID, a
 sequence number, and an event timestamp. Request and response content is not
 sent.

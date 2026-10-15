@@ -3,6 +3,22 @@
 function $(id){ return document.getElementById(id); }
 function fmt(ts){ if(!ts) return "—"; const d=new Date(ts); return d.toLocaleString(); }
 
+function textElement(tag, text) {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  return element;
+}
+
+function counterRow(host, count) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const label = textElement("span", host);
+  label.title = host;
+  row.appendChild(label);
+  row.appendChild(textElement("span", count));
+  return row;
+}
+
 function setNotice(message = "", tone = "neutral") {
   const notice = $("notice");
   if (!notice) return;
@@ -117,10 +133,7 @@ function renderStatus(data){
     frag.appendChild(row);
   } else {
     for (const [h,c] of totalsEntries.slice(0,10)){
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = `<span title="${h}">${h}</span><span>${c}</span>`;
-      frag.appendChild(row);
+      frag.appendChild(counterRow(h, c));
     }
   }
 
@@ -138,10 +151,7 @@ function renderStatus(data){
     frag.appendChild(row);
   } else {
     for (const [h,c] of pendingEntries.slice(0,10)){
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = `<span title="${h}">${h}</span><span>${c}</span>`;
-      frag.appendChild(row);
+      frag.appendChild(counterRow(h, c));
     }
   }
 
@@ -153,7 +163,12 @@ function renderStatus(data){
 
   const meta = document.createElement("div");
   meta.style.marginTop = "10px";
-  meta.innerHTML = `<small>client_id: ${client_id}<br/>seq: ${seq}<br/>debug records: ${debug?.length ?? 0}</small>`;
+  const details = textElement("small", `client_id: ${client_id}`);
+  details.appendChild(document.createElement("br"));
+  details.appendChild(textElement("span", `seq: ${seq}`));
+  details.appendChild(document.createElement("br"));
+  details.appendChild(textElement("span", `debug records: ${debug?.length ?? 0}`));
+  meta.appendChild(details);
   frag.appendChild(meta);
 
   if (debug && debug.length > 0) {
@@ -170,11 +185,21 @@ function renderStatus(data){
       row.style.borderBottom = "1px solid #eee";
       row.style.padding = "2px 0";
       const color = d.decision === "counted" ? "#080" : "#666";
-      row.innerHTML = `
-        <div style="color:${color}"><b>${d.decision}</b> ${fmt(d.ts)}</div>
-        <div style="color:#444; word-break:break-all;">${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}</div>
-        ${d.reason ? `<div style="color:#999 italic">${d.reason}</div>` : ""}
-      `;
+      const heading = document.createElement("div");
+      heading.style.color = color;
+      heading.appendChild(textElement("b", d.decision));
+      heading.appendChild(textElement("span", ` ${fmt(d.ts)}`));
+      row.appendChild(heading);
+      const location = textElement("div", `${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}`);
+      location.style.color = "#444";
+      location.style.wordBreak = "break-all";
+      row.appendChild(location);
+      if (d.reason) {
+        const reason = textElement("div", d.reason);
+        reason.style.color = "#999";
+        reason.style.fontStyle = "italic";
+        row.appendChild(reason);
+      }
       frag.appendChild(row);
     }
   }
