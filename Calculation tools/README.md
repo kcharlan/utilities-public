@@ -2,7 +2,7 @@
 
 Four financial calculators are self-contained HTML files with no build step or server component. Open those files directly in a modern browser or serve them with a static host. The independently maintained [Market Atlas](backtest/README.md) app lives in `backtest/` and uses external local historical data and a static packaging step. Its data-bearing builds are local runtime artifacts.
 
-The standalone `ai-model-timeline.html` visualization also lives here. Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/calculators/ai-model-timeline.html). It has no build step. Its direct-copy installer and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#ai-model-timeline-direct-copy-deployment).
+The standalone `ai-model-timeline.html` visualization also lives here. Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/calculators/ai-model-timeline.html). It has no build step. Its direct-copy installer and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#calculator-page-direct-copy-deployments).
 
 Calculations run entirely in the browser, and scenario inputs remain in page memory. The four HTML calculators do not save browser preferences; Market Atlas saves only its appearance preference. Reloading restores the built-in scenario defaults.
 
@@ -42,6 +42,8 @@ Projection dates are anchored to the browser's current local month when the page
 In CSV exports, `tax_paid` combines recurring-income and asset-sale tax. The `overrides` column contains deterministic month and phase-qualified values with application status. The `income_tax_paid`, `sale_tax_paid`, and `net_sale_proceeds` columns provide readable tax and sale components.
 
 The tax model is a planning simplification. It does not model cost basis, lot selection, account type, capital-gains character, deductions, or jurisdiction-specific rules.
+
+The installed copy is served at [drawdown](http://127.0.0.1:7711/calculators/drawdown.html). Its direct-copy installer (`tools/deploy_drawdown.mjs`) and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#calculator-page-direct-copy-deployments).
 
 ### `early_loan_termination_calculator.html`
 
