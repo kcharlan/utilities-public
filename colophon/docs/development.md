@@ -2,8 +2,9 @@
 
 Release prerequisites and commands are in the [README](../README.md).
 The full standalone suite uses macOS `sandbox-exec`, ripgrep, the project's
-own Python 3.14 virtual environment, pytest 9.1.1, Playwright 1.63.0 and
-cached Playwright Chromium. Release builds do not require those Python tools.
+own Python 3.14 virtual environment, the pinned pytest and Playwright packages
+in [requirements-dev.txt](../requirements-dev.txt), and cached Playwright Chromium.
+Release builds do not require those Python tools.
 
 Create `.venv` only if absent, using an absolute Homebrew interpreter:
 
