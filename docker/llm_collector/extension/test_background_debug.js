@@ -47,3 +47,31 @@ test("debug records survive a service-worker restart", async () => {
   assert.deepEqual(debug.map(d => d.path), ["/v1/processSession", "/_/BardChatUi/data/batchexecute"]);
   assert.ok(!JSON.stringify(localStore).includes("processSession"), "debug log written to persistent local storage");
 });
+
+test("debug paths are sanitized before storage and console with capture on or off", async () => {
+  for (const enabled of [true, false]) {
+    const sessionStore = {};
+    const bg = loadBackground({ sessionStore });
+    await bg.send({ cmd: 'set_capture', enabled });
+    bg.request('https://chatgpt.com/example/user-SYNTHETICUSERID1234/');
+    const status = await bg.status();
+    await tick();
+    assert.equal(status.debug[0].path, '/example/user-REDACTED/');
+    for (const source of [sessionStore, bg.consoleRecords]) assert.ok(!JSON.stringify(source).includes('SYNTHETICUSERID1234'));
+  }
+});
+
+test('expanded paths are omitted in live and restored debug admission', async () => {
+  const path = '/' + 'Bearer+a;'.repeat(900);
+  const sessionStore = { llm_debug_v1: [{ path, decision: 'synthetic-restored' }] };
+  const bg = loadBackground({ sessionStore });
+  bg.request('https://chatgpt.com' + path);
+  const { debug } = await bg.status();
+  await tick();
+  assert.equal(debug.length, 2);
+  assert.deepEqual(debug.map(rec => rec.path), ['<omitted>', '<omitted>']);
+  assert.deepEqual(sessionStore.llm_debug_v1.map(rec => rec.path), ['<omitted>', '<omitted>']);
+  const live = bg.consoleRecords.flat().find(rec => rec && rec.decision === 'not-allowlisted');
+  assert.ok(live);
+  assert.equal(live.path, '<omitted>');
+});

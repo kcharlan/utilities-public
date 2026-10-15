@@ -3,6 +3,22 @@
 function $(id){ return document.getElementById(id); }
 function fmt(ts){ if(!ts) return "—"; const d=new Date(ts); return d.toLocaleString(); }
 
+function textElement(tag, text) {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  return element;
+}
+
+function counterRow(host, count) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const label = textElement("span", host);
+  label.title = host;
+  row.appendChild(label);
+  row.appendChild(textElement("span", count));
+  return row;
+}
+
 function setNotice(message = "", tone = "neutral") {
   const notice = $("notice");
   if (!notice) return;
@@ -60,6 +76,15 @@ function renderCaptureState({ captureEnabled, captureCount = 0 } = {}) {
   toggle.textContent = `Capture: ${captureEnabled ? "On" : "Off"} (${captureCount})`;
 }
 
+function renderPersistenceStatus({ capturePersistence, debugPersistence } = {}) {
+  const line = $('persistenceStatus');
+  if (!line) return;
+  line.textContent = [['Capture', capturePersistence], ['Debug', debugPersistence]].map(([name, status]) =>
+    `${name} persistence: ${status?.state || 'pending'}${status?.error ? ` (${status.error})` : ''}`
+  ).join(' · ');
+  line.dataset.state = [capturePersistence, debugPersistence].some(s => s?.state === 'error') ? 'error' : 'ready';
+}
+
 function showCheckingStatus() {
   const panel = $("status");
   const label = $("statusLabel");
@@ -108,33 +133,42 @@ function renderStatus(data){
     frag.appendChild(row);
   } else {
     for (const [h,c] of totalsEntries.slice(0,10)){
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = `<span title="${h}">${h}</span><span>${c}</span>`;
-      frag.appendChild(row);
+      frag.appendChild(counterRow(h, c));
     }
   }
 
-  const pendingEntries = Object.entries(pending).sort((a,b)=>b[1]-a[1]);
+  const pendingEntries = Object.entries(pending || {}).sort((a,b)=>b[1]-a[1]);
   const pendTitle = document.createElement("div");
   pendTitle.style.marginTop = "10px";
-  pendTitle.innerHTML = "<b>Pending (unsent)</b>";
+  pendTitle.innerHTML = "<b>Pending (queued or unacknowledged)</b>";
   frag.appendChild(pendTitle);
-  if (pendingEntries.length === 0){
+  if (data?.available === false) {
+    const row = document.createElement("div");
+    row.textContent = `Counts unavailable: ${data.deliveryError || 'local delivery storage failed'}`;
+    frag.appendChild(row);
+  } else if (pendingEntries.length === 0){
     const row = document.createElement("div"); row.textContent = "(none)";
     frag.appendChild(row);
   } else {
     for (const [h,c] of pendingEntries.slice(0,10)){
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = `<span title="${h}">${h}</span><span>${c}</span>`;
-      frag.appendChild(row);
+      frag.appendChild(counterRow(h, c));
     }
+  }
+
+  if (data?.deliveryError && data.available !== false) {
+    const row = document.createElement("div");
+    row.textContent = `Delivery: ${data.deliveryError}`;
+    frag.appendChild(row);
   }
 
   const meta = document.createElement("div");
   meta.style.marginTop = "10px";
-  meta.innerHTML = `<small>client_id: ${client_id}<br/>seq: ${seq}<br/>debug records: ${debug?.length ?? 0}</small>`;
+  const details = textElement("small", `client_id: ${client_id}`);
+  details.appendChild(document.createElement("br"));
+  details.appendChild(textElement("span", `seq: ${seq}`));
+  details.appendChild(document.createElement("br"));
+  details.appendChild(textElement("span", `debug records: ${debug?.length ?? 0}`));
+  meta.appendChild(details);
   frag.appendChild(meta);
 
   if (debug && debug.length > 0) {
@@ -151,11 +185,21 @@ function renderStatus(data){
       row.style.borderBottom = "1px solid #eee";
       row.style.padding = "2px 0";
       const color = d.decision === "counted" ? "#080" : "#666";
-      row.innerHTML = `
-        <div style="color:${color}"><b>${d.decision}</b> ${fmt(d.ts)}</div>
-        <div style="color:#444; word-break:break-all;">${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}</div>
-        ${d.reason ? `<div style="color:#999 italic">${d.reason}</div>` : ""}
-      `;
+      const heading = document.createElement("div");
+      heading.style.color = color;
+      heading.appendChild(textElement("b", d.decision));
+      heading.appendChild(textElement("span", ` ${fmt(d.ts)}`));
+      row.appendChild(heading);
+      const location = textElement("div", `${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}`);
+      location.style.color = "#444";
+      location.style.wordBreak = "break-all";
+      row.appendChild(location);
+      if (d.reason) {
+        const reason = textElement("div", d.reason);
+        reason.style.color = "#999";
+        reason.style.fontStyle = "italic";
+        row.appendChild(reason);
+      }
       frag.appendChild(row);
     }
   }
@@ -195,6 +239,7 @@ async function refresh({ showChecking = true } = {}){
     renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
     renderCaptureState(resp);
+    renderPersistenceStatus(resp);
   } catch (e){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
@@ -220,8 +265,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("reset", "click", async () => {
     setNotice("Clearing pending data…");
     try {
-      await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000);
-      setNotice("Pending data cleared.", "success");
+      const resp = await sendMessageWithTimeout({ cmd: "clear_pending" }, 2000);
+      if (resp.ok !== true) throw new Error(resp.error || "clear rejected");
+      setNotice(resp.inFlight ? `Queued data cleared; outstanding submission (${resp.inFlight}) retained.` : "Queued data cleared.", "success");
     } catch (e) {
       setNotice(`Clear failed: ${e.message}`, "error");
     }
@@ -237,11 +283,17 @@ document.addEventListener("DOMContentLoaded", () => {
         collectorStatus: resp.collectorStatus || null,
         collectorUrl: resp.collectorUrl || null,
         serverCounters: resp.serverCounters || {},
-        pending: resp.pending || {},
+        pending: resp.available === false ? null : (resp.pending || {}),
+        available: resp.available,
+        deliveryError: resp.deliveryError,
+        inFlight: resp.inFlight,
         seq: resp.seq,
         client_id: resp.client_id,
         debug: resp.debug || [],
         captureEnabled: cap.captureEnabled,
+        capturePersistence: cap.capturePersistence,
+        debugPersistence: cap.debugPersistence,
+        captureDiagnostics: cap.captureDiagnostics,
         capture: cap.capture || []
       };
       const json = JSON.stringify(data, null, 2);
@@ -279,7 +331,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setNotice("Requesting pending-data push…");
     try {
       const resp = await sendMessageWithTimeout({ cmd: "force_push" }, 2000);
-      if (resp.ok === false) throw new Error(resp.error || "push rejected");
+      if (resp.ok !== true) throw new Error(resp.error || "push rejected");
       setNotice("Push requested.", "success");
       setTimeout(() => refresh({ showChecking: false }), 300); // allow background to POST, then refresh
     } catch (e){
@@ -290,7 +342,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("captureToggle", "click", async () => {
     const turnOn = $("captureToggle")?.dataset.enabled !== "true";
     try {
-      await sendMessageWithTimeout({ cmd: "set_capture", enabled: turnOn }, 2000);
+      const result = await sendMessageWithTimeout({ cmd: "set_capture", enabled: turnOn }, 2000);
+      if (result.ok !== true) throw new Error(result.error || 'capture setting rejected');
       setNotice(`Full capture turned ${turnOn ? "on" : "off"}.`, "success");
     } catch (e) {
       setNotice(`Capture toggle failed: ${e.message}`, "error");
@@ -300,7 +353,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bind("clearCapture", "click", async () => {
     try {
-      await sendMessageWithTimeout({ cmd: "clear_capture" }, 2000);
+      const result = await sendMessageWithTimeout({ cmd: "clear_capture" }, 2000);
+      if (result.ok !== true) throw new Error(result.error || 'capture clear rejected');
       setNotice("Capture cleared.", "success");
     } catch (e) {
       setNotice(`Clear capture failed: ${e.message}`, "error");

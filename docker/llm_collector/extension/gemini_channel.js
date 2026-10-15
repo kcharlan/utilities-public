@@ -31,8 +31,13 @@
     const parts = (requestBody.raw || []).filter(c => c.bytes);
     if (!parts.length) return {};
     const form = {};
-    for (const c of parts) {
-      for (const [k, v] of new URLSearchParams(new TextDecoder().decode(c.bytes))) (form[k] ||= []).push(v);
+    // A key, percent escape, or UTF-8 sequence can span arbitrary raw chunks.
+    const bytes = new Uint8Array(parts.reduce((n,c) => n + c.bytes.byteLength, 0));
+    let offset = 0;
+    for (const c of parts) { bytes.set(new Uint8Array(c.bytes), offset); offset += c.bytes.byteLength; }
+    for (const [k, v] of new URLSearchParams(new TextDecoder().decode(bytes))) {
+      if (!Object.hasOwn(form,k)) Object.defineProperty(form,k,{value:[],enumerable:true});
+      form[k].push(v);
     }
     return form;
   }
@@ -55,5 +60,28 @@
     return messageBytes(requestBody).filter(b => b === PROMPT_TAG).length;
   }
 
-  globalThis.LLMGeminiChannel = Object.freeze({ messageFields, promptCount });
+  function describeMessages(requestBody) {
+    const form = formOf(requestBody);
+    const keys = Object.keys(form).filter(k => /^req.*___data__$/.test(k));
+    if (!keys.length) return [];
+    const invalid = () => { throw new Error('channel-invalid'); };
+    const number = value => {
+      if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return invalid();
+      const n = Number(value);
+      if (!Number.isSafeInteger(n)) return invalid();
+      return n;
+    };
+    if (!Array.isArray(form.ofs) || form.ofs.length !== 1) return invalid();
+    const offset = number(form.ofs[0]);
+    return keys.map(key => {
+      const match = key.match(/^req(\d+)___data__$/);
+      if (!match || !Array.isArray(form[key]) || form[key].length !== 1) return invalid();
+      const index = number(match[1]), id = offset + index;
+      if (!Number.isSafeInteger(id)) return invalid();
+      const byte = firstByte(form[key][0]);
+      return {index,id,field:byte === null ? null : byte >> 3,isPrompt:byte === PROMPT_TAG};
+    }).sort((a,b) => a.index-b.index);
+  }
+
+  globalThis.LLMGeminiChannel = Object.freeze({ messageFields, promptCount, describeMessages });
 })();

@@ -2,6 +2,7 @@
 
 // --- Config ---
 importScripts("collector_status.js");
+importScripts("delivery.js");
 importScripts("request_debug.js");
 importScripts("gemini_channel.js");
 importScripts("session_buffer.js");
@@ -162,15 +163,13 @@ function passesDebounce(details, u) {
   return true;
 }
 
-// --- Storage keys ---
-const CLIENT_ID_KEY = "llm_client_id_v1"; // stable per browser profile
-const SEQ_KEY       = "llm_seq_v1";       // last successfully applied seq (server agrees)
-const PENDING_KEY   = "llm_pending_v1";   // {host: count} unsent or unacked
-
 // --- Debug buffer for popup ---
 // Mirrored to chrome.storage.session so it survives the worker stopping when idle.
 const DEBUG_BUF_MAX = 200;
-const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({ key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX });
+const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({
+  key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX, maxBytes: 256 * 1024,
+  normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('debug', rec)
+});
 function dbgPush(decision, d, u, reason) {
   const rec = {
     ts: Date.now(),
@@ -178,13 +177,13 @@ function dbgPush(decision, d, u, reason) {
     method: d.method,
     type: d.type || null,
     host: u.hostname,
-    path: u.pathname,
+    path: globalThis.LLMCaptureRedact.redactPath(u.pathname),
     rpcids: globalThis.LLMRequestDebug.rpcidsFromUrl(u),
     tabId: d.tabId ?? null,
     reason: reason || null
   };
-  debugStore.push(rec);
-  if (DEBUG) console.log("[LLM-UC]", rec);
+  const admitted = debugStore.push(rec);
+  if (DEBUG && admitted) console.log("[LLM-UC]", admitted);
 }
 
 function getConfigError() {
@@ -197,115 +196,23 @@ function getConfigError() {
   return null;
 }
 
-// --- chrome.storage helpers ---
-function getStore(keys) { return new Promise(r => chrome.storage.local.get(keys, v => r(v || {}))); }
-function setStore(obj)  { return new Promise(r => chrome.storage.local.set(obj, r)); }
-
-async function getClientId() {
-  const v = await getStore([CLIENT_ID_KEY]);
-  if (v[CLIENT_ID_KEY]) return v[CLIENT_ID_KEY];
-  const id = crypto.randomUUID();
-  await setStore({ [CLIENT_ID_KEY]: id });
-  return id;
-}
-async function getSeq() {
-  const v = await getStore([SEQ_KEY]);
-  return typeof v[SEQ_KEY] === "number" ? v[SEQ_KEY] : 0;
-}
-async function setSeq(n) { return setStore({ [SEQ_KEY]: n }); }
-async function getPending() {
-  const v = await getStore([PENDING_KEY]);
-  return v[PENDING_KEY] || {};
-}
-async function setPending(obj) { return setStore({ [PENDING_KEY]: obj }); }
-
-// --- Sequence handshake (bootstrap or recovery) ---
-async function handshakeSeq() {
-  if (getConfigError()) return;
-  const clientId = await getClientId();
-  let serverLast = 0;
-  try {
-    const r = await fetch(`${COLLECTOR}/client_status?client_id=${encodeURIComponent(clientId)}`, {
-      headers: { "X-API-KEY": API_KEY }
-    });
-    if (r.ok) {
-      const j = await r.json();
-      serverLast = j.last_seq | 0;
-    }
-  } catch {}
-  await setSeq(serverLast);
-  if (DEBUG) console.log("[LLM-UC] handshake: server last_seq =", serverLast);
-}
-
-// --- Pending ops ---
-// Every read-modify-write of the pending counts goes through one queue, so
-// overlapping updates cannot overwrite each other.
-let pendingQueue = Promise.resolve();
-function updatePending(fn) {
-  const run = pendingQueue.then(async () => {
-    const p = await getPending();
-    fn(p);
-    await setPending(p);
-  });
-  pendingQueue = run.catch(() => {});
-  return run;
-}
-
-async function incrementPending(host, delta = 1) {
-  await updatePending(p => { p[host] = (p[host] || 0) + delta; });
-  schedulePush();
-}
-
-// --- Coalesced push ---
+// Durable delivery owns every accounting write, including migration.
+const delivery = globalThis.LLMDelivery.createDelivery({
+  storage: chrome.storage.local, fetchImpl: fetch, collectorUrl: COLLECTOR, apiKey: API_KEY
+});
 let pushTimerHandle = null;
 function schedulePush() {
-  if (pushTimerHandle) clearTimeout(pushTimerHandle);
-  pushTimerHandle = setTimeout(pushToCollector, PUSH_COALESCE_MS);
+  if (pushTimerHandle !== null) clearTimeout(pushTimerHandle);
+  pushTimerHandle = setTimeout(() => { pushTimerHandle = null; delivery.push(); }, PUSH_COALESCE_MS);
 }
-
-async function pushToCollector() {
-  if (getConfigError()) return;
+async function incrementPending(host, count, details, url, reason = null) {
   try {
-    const [clientId, seq, pending] = await Promise.all([getClientId(), getSeq(), getPending()]);
-    // Build snapshot of nonzero deltas
-    const snapshot = {};
-    for (const [k, vRaw] of Object.entries(pending || {})) {
-      const v = vRaw | 0;
-      if (v > 0) snapshot[k] = v;
-    }
-    if (Object.keys(snapshot).length === 0) return;
-
-    const res = await fetch(`${COLLECTOR}/add`, {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "X-API-KEY": API_KEY },
-      body: JSON.stringify({ ts: Date.now(), client_id: clientId, seq: seq + 1, deltas: snapshot })
-    });
-
-    if (res.status === 200) {
-      const rsp = await res.json().catch(()=>({}));
-      await setSeq(rsp.last_seq ?? (seq + 1));
-
-      // subtract exactly what we just sent
-      await updatePending(cur => {
-        for (const k of Object.keys(snapshot)) {
-          cur[k] = Math.max(0, (cur[k] || 0) - snapshot[k]);
-          if (cur[k] === 0) delete cur[k];
-        }
-      });
-      if (DEBUG) console.log("[LLM-UC] add ok; seq advanced; pending reduced:", snapshot);
-    } else if (res.status === 409) {
-      const j = await res.json().catch(()=>({}));
-      const expected = j.expected_next | 0;
-      if (expected > 0) {
-        await setSeq(expected - 1);
-        if (DEBUG) console.log("[LLM-UC] out-of-order; aligning seq to", expected - 1, "and retrying");
-        schedulePush();
-      }
-    } else {
-      if (DEBUG) console.log("[LLM-UC] add failed:", res.status);
-    }
-  } catch (e) {
-    if (DEBUG) console.log("[LLM-UC] add error:", e);
+    await delivery.increment(host, count);
+    dbgPush('counted', details, url, reason);
+    schedulePush();
+  } catch {
+    // Session-backed diagnostics preserve the rejection across worker restart.
+    dbgPush('recording-failed', details, url, 'Observation not recorded; local accounting failed');
   }
 }
 
@@ -323,15 +230,33 @@ const GEMINI_CHANNEL = {
 function isGeminiChannel(u) {
   return u.hostname === GEMINI_CHANNEL.host && GEMINI_CHANNEL.path.test(u.pathname);
 }
+let channelAccounting = Promise.resolve();
 function countGeminiChannel(d, u) {
-  const fields = globalThis.LLMGeminiChannel.messageFields(d.requestBody);
+  let messages;
+  try {
+    messages = globalThis.LLMGeminiChannel.describeMessages(d.requestBody);
+    if (messages.length && (u.searchParams.getAll('SID').length !== 1 || !u.searchParams.get('SID'))) throw new Error('channel-invalid');
+  } catch {
+    dbgPush('channel-invalid',d,u,'Invalid channel message identity'); return;
+  }
+  const fields = messages.map(m=>m.field);
   const desc = `channel fields=${fields.length ? fields.map(f => f ?? "?").join(",") : "none"}`;
-  const prompts = globalThis.LLMGeminiChannel.promptCount(d.requestBody);
-  if (!prompts) { dbgPush("not-prompt", d, u, desc); return; }
+  if (!messages.length) { dbgPush("not-prompt", d, u, desc); return; }
   if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
-  // Each prompt message is a distinct turn, so the path debounce does not apply.
-  incrementPending(GEMINI_CHANNEL.creditHost, prompts);
-  dbgPush("counted", d, u, `${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+  // Serialize hashing and recording so status and subsequent requests observe
+  // complete durable transactions, including setup/end message identities.
+  channelAccounting = channelAccounting.then(async () => {
+    try {
+      const channelKey = await delivery.channelKey(u.href,u.searchParams.get('SID'));
+      const count = await delivery.recordChannelMessages({channelKey,host:GEMINI_CHANNEL.creditHost,messages});
+      if (count) {
+        dbgPush('counted',d,u,`${desc}; credited to ${GEMINI_CHANNEL.creditHost}`);
+        schedulePush();
+      } else dbgPush(messages.some(m=>m.isPrompt) ? 'channel-replay' : 'not-prompt',d,u,desc);
+    } catch {
+      dbgPush('recording-failed',d,u,'Observation not recorded; local accounting failed');
+    }
+  });
 }
 
 // --- Network listener (only count real user sends) ---
@@ -347,8 +272,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
       if (!passesDebounce(d, u)) { dbgPush("debounced", d, u, `window=${DEDUPE_WINDOW_MS}ms`); return; }
 
-      incrementPending(u.hostname, 1);
-      dbgPush("counted", d, u, null);
+      incrementPending(u.hostname, 1, d, u);
     } catch (e) {
       if (DEBUG) console.log("[LLM-UC] onBeforeRequest error", e);
     }
@@ -358,17 +282,19 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 // --- Bootstrap / recovery ---
-chrome.runtime.onInstalled?.addListener(handshakeSeq);
-chrome.runtime.onStartup?.addListener(handshakeSeq);
-
-// Try to drain pending whenever SW wakes
-chrome.runtime.onInstalled?.addListener(() => schedulePush());
-chrome.runtime.onStartup?.addListener(() => schedulePush());
+chrome.runtime.onInstalled?.addListener(schedulePush);
+chrome.runtime.onStartup?.addListener(schedulePush);
+delivery.ready.then(schedulePush);
 
 // --- Popup API (optional, keep if your popup uses it) ---
 chrome.runtime.onMessage.addListener((m, s, send) => {
+  const failure = error => send({ ok: false, error: error.message || String(error) });
+  const persistence = () => ({
+    capturePersistence: globalThis.LLMCapture.status(), debugPersistence: debugStore.status(),
+    captureDiagnostics: globalThis.LLMCapture.diagnostics()
+  });
   if (m && m.cmd === "get_status") {
-    Promise.all([getPending(), getSeq(), getClientId(), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([pending, seq, client_id]) => {
+    Promise.all([channelAccounting.then(()=>delivery.status()), debugStore.loaded, globalThis.LLMCapture.settled()]).then(async ([deliveryStatus]) => {
       const configError = getConfigError();
       const collectorStatus = configError
         ? {
@@ -383,9 +309,8 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
           });
 
       send({
-        client_id,
-        seq,
-        pending,
+        ...persistence(),
+        ...deliveryStatus,
         serverCounters: collectorStatus.serverCounters || {},
         collectorStatus,
         collectorUrl: COLLECTOR,
@@ -394,7 +319,7 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
         captureCount: globalThis.LLMCapture.records().length,
         configError
       });
-    });
+    }).catch(failure);
     return true;
   } else if (m && m.cmd === "get_config_status") {
     send({ configError: getConfigError(), collectorUrl: COLLECTOR });
@@ -404,23 +329,31 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
       send({ ok: false, error: getConfigError() });
       return true;
     }
-    schedulePush();
-    send({ ok: true });
+    delivery.status().then(status => {
+      if (!status.available) send({ok:false,error:status.deliveryError});
+      else { delivery.push(); send({ok:true}); }
+    }).catch(failure);
     return true;
   } else if (m && m.cmd === "clear_pending") {
-    updatePending(p => { for (const k of Object.keys(p)) delete p[k]; }).then(() => send({ ok: true }));
+    delivery.clearQueued().then(result => send({ok:true,...result}), error => send({ok:false,error:error.message}));
     return true;
   } else if (m && m.cmd === "get_capture") {
-    globalThis.LLMCapture.ready.then(() => send({
+    globalThis.LLMCapture.settled().then(() => send({
+      ...persistence(),
       captureEnabled: globalThis.LLMCapture.isEnabled(),
       capture: globalThis.LLMCapture.records()
-    }));
+    })).catch(failure);
     return true;
   } else if (m && m.cmd === "set_capture") {
-    globalThis.LLMCapture.setEnabled(m.enabled).then(enabled => send({ ok: true, captureEnabled: enabled }));
+    globalThis.LLMCapture.setEnabled(m.enabled).then(enabled => send({ ok: true, captureEnabled: enabled }), failure);
     return true;
   } else if (m && m.cmd === "clear_capture") {
-    globalThis.LLMCapture.ready.then(() => { globalThis.LLMCapture.clear(); send({ ok: true }); });
+    globalThis.LLMCapture.clear().then(() => send({ ok: true, ...persistence() }), failure);
+    return true;
+  } else if (m && m.cmd === 'reload_capture') {
+    Promise.all([globalThis.LLMCapture.reload(), debugStore.reload()]).then(results => send({
+      ok: results.every(r => r.ok), ...persistence()
+    }), failure);
     return true;
   }
 });

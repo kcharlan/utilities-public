@@ -56,8 +56,12 @@ The collector preserves the extension's idempotency contract:
 - `seq <= last_seq` is an acknowledged duplicate and does not reapply deltas.
 - `seq == last_seq + 1` is accepted and persisted.
 - a sequence gap returns HTTP 409 with `expected_next`.
-- `/reset` clears totals, date buckets, and client sequences after snapshotting,
-  so clients realign through `/client_status`.
+- `/reset` snapshots and clears totals and date buckets while retaining client
+  sequences. Snapshot, clearing and save hold the same state lock, so a
+  concurrent add belongs either to the snapshot or to the new reporting period.
+  Rollup runs after releasing that lock. A retry after reset remains a duplicate,
+  including after a collector restart; the next sequence remains acceptable.
+  Deploy this reset behavior before the extension's durable delivery client.
 
 ## Configuration
 

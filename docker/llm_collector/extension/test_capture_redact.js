@@ -3,6 +3,63 @@ const { readFileSync } = require("node:fs");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
+test('aggregate form, Unicode body and raw inspection are bounded before retention', () => {
+  const r = context.LLMCaptureRedact;
+  const form = Object.fromEntries(Array.from({ length: 700 }, (_, i) => ['synthetic' + i, ['x'.repeat(16384)]]));
+  assert.ok(Buffer.byteLength(JSON.stringify(r.redactBody({ formData: form }))) <= 65536);
+  const body = r.redactBody({ raw: [{ bytes: new TextEncoder().encode('界'.repeat(20000)).buffer }] });
+  assert.ok(Buffer.byteLength(body.text) <= 16384);
+  const raw = r.redactBody({ raw: [{ bytes: new ArrayBuffer(1048577) }] });
+  assert.equal(raw.text, '<omitted>');
+  assert.equal(raw.truncated, true);
+  assert.equal(r.redactUrl('https://example.invalid/?note=' + 'x'.repeat(9000)), '<omitted>');
+  assert.equal(r.redactHeaders([{ name: 'X-Synthetic', value: 'x'.repeat(9000) }])[0].value, '<omitted>');
+});
+
+test('restored body strings and debug paths obey byte budgets', () => {
+  const r = context.LLMCaptureRedact;
+  const safe = r.sanitizeDiagnosticRecord('capture', { body: { text: '界'.repeat(15000) } });
+  assert.ok(Buffer.byteLength(safe.body.text) <= 16384);
+  assert.equal(safe.body.truncated, true);
+  assert.equal(r.redactPath('/' + '界'.repeat(3000)), '<omitted>');
+  const error = r.redactBody({ error: '界'.repeat(10000) });
+  assert.ok(Buffer.byteLength(error.error) <= 16384);
+  const restored = r.sanitizeDiagnosticRecord('capture', { body: { syntheticNested: { value: '界'.repeat(10000) } } });
+  assert.ok(Buffer.byteLength(restored.body.syntheticNested.value) <= 16384);
+  assert.equal(restored.body.truncated, true);
+});
+
+test('redaction expansion cannot exceed URL and header string budgets', () => {
+  const r = context.LLMCaptureRedact;
+  assert.equal(r.redactUrl('https://example.invalid/?' + 'sid=a&'.repeat(1000)), '<omitted>');
+  assert.equal(r.redactHeaders([{ name: 'Referer', value: 'https://example.invalid/?' + 'sid=a&'.repeat(1000) }])[0].value, '<omitted>');
+});
+
+test('path redaction expansion obeys the output byte budget', () => {
+  const r = context.LLMCaptureRedact;
+  const path = '/' + 'Bearer+a;'.repeat(900);
+  assert.equal(Buffer.byteLength(path), 8101);
+  assert.equal(r.redactPath(path), '<omitted>');
+  assert.equal(r.sanitizeDiagnosticRecord('debug', { path }).path, '<omitted>');
+  assert.equal(r.redactPath('/synthetic/Bearer+a;'), '/synthetic/Bearer+REDACTED;');
+});
+
+test('restored and growing records shed body then oldest detail within 128 KiB', () => {
+  const r = context.LLMCaptureRedact;
+  const source = { id: 'synthetic-large', body: { text: 'synthetic body' },
+    responseHeaders: Array.from({ length: 30 }, (_, i) => ({ name: 'X-Synthetic-' + i, value: 'x'.repeat(8000) })) };
+  const safe = r.sanitizeDiagnosticRecord('capture', source);
+  assert.ok(Buffer.byteLength(JSON.stringify(safe)) <= 131072);
+  assert.equal(safe.body.omitted, '<omitted>');
+  assert.equal(safe.truncated, true);
+  assert.notEqual(safe.responseHeaders[0].name, 'X-Synthetic-0');
+  assert.equal(safe.responseHeaders.at(-1).name, 'X-Synthetic-29');
+  safe.responseHeaders.push(...Array.from({ length: 30 }, () => ({ name: 'X-Late', value: 'x'.repeat(8000) })));
+  r.boundDiagnosticRecord(safe);
+  assert.ok(Buffer.byteLength(JSON.stringify(safe)) <= 131072);
+  assert.equal(r.sanitizeDiagnosticRecord('capture', { id: 'x'.repeat(140000) }), null);
+});
+
 const context = vm.createContext({ URL, URLSearchParams, TextDecoder, TextEncoder });
 vm.runInContext(readFileSync(require.resolve("./capture_redact.js"), "utf8"), context);
 const { redactUrl, redactHeaders, redactBody, scrubText, MAX_VALUE_CHARS } = context.LLMCaptureRedact;
@@ -114,4 +171,119 @@ test("redacts WebSocket verify tokens and account identifiers", () => {
 
   assert.equal(url, "wss://ws.chatgpt.com/p3/ws/user/user-REDACTED/?verify=REDACTED");
   assert.deepEqual(headers.map(h => h.value), ["REDACTED", "REDACTED"]);
+});
+
+const rawBody = text => plain(redactBody({ raw: [{ bytes: new TextEncoder().encode(text).buffer }] }));
+
+test("raw JSON redacts sensitive members regardless of value type", () => {
+  const body = rawBody('{"at":"SYNTHETIC_AT","sid":"SYNTHETIC_SID","account_id":"SYNTHETIC_ACCOUNT","authorization":{"value":"SYNTHETIC_AUTH"},"token":["SYNTHETIC_TOKEN"],"nested":[{"\\u0073id":42,"verify":false,"secret":null,"prompt":"synthetic prompt","data":"{\\"at\\":\\"SYNTHETIC_NESTED\\"}"}]}');
+  assert.deepEqual(JSON.parse(body.text), {
+    at: "REDACTED", sid: "REDACTED", account_id: "REDACTED", authorization: "REDACTED", token: "REDACTED",
+    nested: [{ sid: "REDACTED", verify: "REDACTED", secret: "REDACTED", prompt: "synthetic prompt", data: '{"at":"REDACTED"}' }]
+  });
+});
+
+test("encoded containers use the shared policy", () => {
+  for (const ending of ["", "\r\n", "\n", "\r"]) {
+    const url = new URL(redactUrl('https://example.invalid/?VER=8&RID=12&plain=%2f&%24HtTpHeAdErS=' +
+      encodeURIComponent('X-Server-Token:SYNTHETIC_TOKEN' + ending) +
+      '&data=%7B%22token%22%3A%22SYNTHETIC_TOKEN%22%7D&note=Bearer%20SYNTHETIC%2FSECRET'));
+    assert.equal(url.searchParams.get('$HtTpHeAdErS'), 'X-Server-Token:REDACTED' + ending);
+    assert.equal(url.searchParams.get('data'), '{"token":"REDACTED"}');
+    assert.equal(url.searchParams.get('note'), 'Bearer REDACTED');
+    assert.ok(url.search.includes('VER=8&RID=12&plain=%2f'));
+  }
+  for (const name of ['Location', 'Content-Location', 'Referer', 'Refresh', 'Link']) {
+    const target = '/user-SYNTHETICUSERID1234/?sid=SYNTHETIC_SID';
+    const value = name === 'Refresh' ? '0; url=' + target : name === 'Link' ? '<' + target + '>; rel="next"' : target;
+    const result = redactHeaders([{ name, value }])[0].value;
+    assert.ok(!result.includes('SYNTHETIC'), name);
+    assert.ok(result.includes('sid=REDACTED'), name);
+  }
+  assert.equal(redactHeaders([{ name: 'Content-Location', value: 'https://[' }])[0].value, '<omitted>');
+  assert.equal(new URL(redactUrl('https://example.invalid/?data=%ZZ')).searchParams.get('data'), '<omitted>');
+  assert.equal(new URL(redactUrl('https://example.invalid/?data=%257B%2522at%2522%253A%2522SYNTHETIC_AT%2522%257D')).searchParams.get('data'), '%7B%22at%22%3A%22REDACTED%22%7D');
+  assert.ok(!redactUrl('https://example.invalid/?data=%25257B%252522at%252522%25253A%252522SYNTHETIC_AT%252522%25257D').includes('SYNTHETIC'));
+});
+
+test("form and JSON keys cannot mutate prototypes", () => {
+  const form = rawBody('__proto__=first&__proto__=second&constructor=third&toString=fourth');
+  assert.deepEqual(form.formData, { ['__proto__']: ['first', 'second'], constructor: ['third'], toString: ['fourth'] });
+  const json = JSON.parse(rawBody('{"__proto__":{"at":"SYNTHETIC_AT"},"constructor":{"sid":12},"prompt":"keep"}').text);
+  assert.deepEqual(json, { ['__proto__']: { at: 'REDACTED' }, constructor: { sid: 'REDACTED' }, prompt: 'keep' });
+  assert.equal({}.at, undefined);
+});
+
+test("uninspectable structures are omitted without raw prefixes", () => {
+  assert.equal(rawBody('{"sid":"SYNTHETIC_AT"').text, '<omitted>');
+  const deep = JSON.stringify(Array.from({ length: 1 }, () => 'synthetic prompt'));
+  const nested = '['.repeat(34) + deep + ']'.repeat(34);
+  assert.ok(!rawBody(nested).text.includes('synthetic prompt'));
+  const wide = rawBody(JSON.stringify(Array(10002).fill('synthetic prompt'))).text;
+  assert.ok(wide.includes('<omitted>'));
+  const cycle = {}; cycle.self = cycle;
+  assert.equal(context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', cycle), null);
+});
+
+test("nested names and named header containers cannot bypass the policy", () => {
+  const url = new URL(redactUrl('https://example.invalid/?%2573id=SYNTHETIC_SID&%ZZ=SYNTHETIC_BAD&%252573id=SYNTHETIC_DEEP'));
+  assert.ok(!url.href.includes('SYNTHETIC'));
+  const header = 'X-Server-Token:SYNTHETIC_TOKEN';
+  assert.equal(rawBody('%24httpHeaders=' + encodeURIComponent(header)).formData.$httpHeaders[0], 'X-Server-Token:REDACTED');
+  assert.equal(JSON.parse(rawBody(JSON.stringify({ $httpHeaders: header })).text).$httpHeaders, 'X-Server-Token:REDACTED');
+});
+
+test("encoded paths and ordinary URL/header diagnostics stay readable", () => {
+  const path = context.LLMCaptureRedact.redactPath('/example/user-%53YNTHETICUSERID1234/');
+  assert.equal(path, '/example/user-REDACTED/');
+  assert.equal(redactHeaders([{ name: 'Link', value: '<https://[>; rel="next"' }])[0].value, '<omitted>');
+  assert.equal(redactHeaders([{ name: 'Location', value: 'javascript:synthetic' }])[0].value, '<omitted>');
+  const safe = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', {
+    body: { formData: { at: ['SYNTHETIC_AT'], prompt: ['synthetic prompt'] } },
+    requestHeaders: [{ name: 'Location', value: '/?sid=SYNTHETIC_SID' }]
+  });
+  assert.deepEqual(plain(safe).body.formData, { at: ['REDACTED'], prompt: ['synthetic prompt'] });
+  assert.equal(safe.requestHeaders[0].value, '/?sid=REDACTED');
+  assert.equal(redactHeaders([{ name: 'Location', value: '?sid=SYNTHETIC_SID' }])[0].value, '?sid=REDACTED');
+  assert.equal(redactHeaders([{ name: 'Location', value: '../next?sid=SYNTHETIC_SID' }])[0].value, '../next?sid=REDACTED');
+});
+
+test("inspection budgets cover form fields, headers, and decoded query values", () => {
+  const form = Object.fromEntries(Array.from({ length: 10001 }, (_, i) => ['field' + i, ['synthetic value']]));
+  const result = plain(redactBody({ formData: form }));
+  assert.ok(JSON.stringify(result).includes('<omitted>'));
+  assert.ok(!JSON.stringify(result).includes('synthetic value'));
+  const headers = Array.from({ length: 10001 }, () => ({ name: 'X-Ordinary', value: 'synthetic value' }));
+  const safe = JSON.stringify(redactHeaders(headers));
+  assert.ok(safe.includes('<omitted>'));
+  assert.ok(!safe.includes('synthetic value'));
+  const query = Array.from({ length: 10001 }, () => 'data=synthetic').join('&');
+  assert.equal(redactUrl('https://example.invalid/?' + query), '<omitted>');
+});
+
+test("Link rejects mixed valid and malformed entries as one container", () => {
+  for (const value of [
+    '<https://example.invalid/>; rel="next", https://example.invalid/?sid=SYNTHETIC_SID',
+    'https://example.invalid/?sid=SYNTHETIC_SID, <https://example.invalid/>',
+    '<https://example.invalid/>; rel="next",',
+    '<https://example.invalid/>; rel="unterminated',
+    '<https://example.invalid/> garbage'
+  ]) {
+    assert.equal(redactHeaders([{ name: 'Link', value }])[0].value, '<omitted>');
+  }
+  assert.equal(redactHeaders([{ name: 'Link', value:
+    '<https://example.invalid/?sid=SYNTHETIC_SID>; rel="next"; title="one, two", </next?at=SYNTHETIC_AT>; rel=prev'
+  }])[0].value, '<https://example.invalid/?sid=REDACTED>; rel="next"; title="one, two", </next?at=REDACTED>; rel=prev');
+});
+
+test("only live sanitized body prefixes retain truncated JSON prompt content", () => {
+  const body = redactBody({ raw: [{ bytes: new TextEncoder().encode(JSON.stringify({
+    sid: 'SYNTHETIC_SID', prompt: 'synthetic prompt '.repeat(1100)
+  })).buffer }] });
+  const admitted = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', { body });
+  assert.equal(admitted.body.text.length, MAX_VALUE_CHARS);
+  assert.ok(admitted.body.text.startsWith('{"sid":"REDACTED","prompt":"synthetic prompt '));
+  assert.ok(!admitted.body.text.includes('SYNTHETIC_SID'));
+  const restored = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', { body: plain(body) });
+  assert.equal(restored.body.text, '<omitted>');
 });

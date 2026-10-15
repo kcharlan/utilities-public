@@ -323,11 +323,11 @@ def add():
 @app.post("/reset")
 def reset():
     _auth_or_403(request)
-    snap = snapshot_totals()
     with _state_lock:
+        snap = snapshot_totals()
         STATE["totals"].clear()
         STATE["daily_totals"].clear()
-        STATE["clients"].clear()
+        # Receipts outlive reporting periods, including uncertain client sends.
         save_state()
     log(f"[RESET] snapshot={snap}")
     
