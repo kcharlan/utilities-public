@@ -39,7 +39,11 @@ docker/propagate-updates.zsh deploy
   `webserver/app_py`, `uv lock --upgrade` for `llm_proxy`) and audits them
   (`npm audit`, `pip-audit`). It then test-builds the images under throwaway
   `propagate-check-*` Compose project names, removes those images, and runs
-  the webserver Nginx routing test and the `llm_proxy` pytest suite.
+  the webserver Nginx routing test and the `llm_proxy` pytest suite. The
+  routing test never pulls images, and a check build does not leave its base
+  images as named local images, so `refresh` first pulls the test's
+  `nginx:stable-alpine` and `node:24-alpine` (or the images named by
+  `NGINX_TEST_IMAGE` and `NGINX_TEST_NODE_IMAGE`).
   `package.json`, `pyproject.toml` and exact pins are never edited. Review the
   printed diff and commit it.
 - `deploy` refuses to run while tracked `docker/` files have uncommitted
