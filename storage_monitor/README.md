@@ -181,7 +181,7 @@ STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/p
 From the repository root, run the deployment and fleet fixture suites:
 
 ```zsh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 node --test tools/tests/check_static_deployments.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 uv run --no-python-downloads --script tools/check_uv_headers.py

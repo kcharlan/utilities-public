@@ -128,6 +128,7 @@ compare_bytes() {
 
 copy_mappings=(
   'Calculation tools/ai-model-timeline.html|calculators/ai-model-timeline.html'
+  'Calculation tools/drawdown.html|calculators/drawdown.html'
   'abacus usage/de-abacus.py|de-abacus.py'
   'div_conv/div_conv|div_conv'
   'dloc/dloc|dloc'

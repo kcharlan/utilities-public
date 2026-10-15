@@ -158,32 +158,42 @@ state; agents never run data acquisition (see the project guide). The
 history. No release manifests, receipts, parser or metadata restoration
 framework is required for this single-owner localhost deployment.
 
-## AI model timeline direct-copy deployment
+## Calculator page direct-copy deployments
 
-`Calculation tools/ai-model-timeline.html` is copied to
-`<WEBROOT>/calculators/ai-model-timeline.html`, served by the existing Docker
-webserver at `http://127.0.0.1:7711/calculators/ai-model-timeline.html`.
+Two standalone pages under `Calculation tools/` are direct copies into
+`<WEBROOT>/calculators/`, served by the existing Docker webserver:
+
+| Source | Installer | Installed URL | Backup namespace |
+| --- | --- | --- | --- |
+| `ai-model-timeline.html` | `tools/deploy_ai_model_timeline.mjs` | `http://127.0.0.1:7711/calculators/ai-model-timeline.html` | `ai-model-timeline` |
+| `drawdown.html` | `tools/deploy_drawdown.mjs` | `http://127.0.0.1:7711/calculators/drawdown.html` | `drawdown` |
+
+Both entry scripts call the shared `tools/calculator_page_deployment.mjs`.
 `UTILITIES_WEBROOT_DIR` defaults to `~/webroot`; no proxy or container restart
-is needed. Repository updates do not update this installed copy.
+is needed. Repository updates do not update these installed copies; deploy
+from merged `main`.
 
-After validating the page, stage its source so that the index contains the
-reviewed bytes. From the repository root:
+After validating the page with its project's full suite, stage its source so
+that the index contains the reviewed bytes. From the repository root, for
+example for drawdown:
 
 ```sh
-node tools/deploy_ai_model_timeline.mjs --dry-run
-node tools/deploy_ai_model_timeline.mjs
+node tools/deploy_drawdown.mjs --dry-run
+node tools/deploy_drawdown.mjs
 zsh tools/check_local_deployments.zsh
 ```
 
-Both installer and audit honor `UTILITIES_WEBROOT_DIR`. The installer also
-accepts `--webroot "<WEBROOT>"` and `--repo "<REPOSITORY>"`. It requires a
+Both installers and the audit honor `UTILITIES_WEBROOT_DIR`. The installers also
+accept `--webroot "<WEBROOT>"` and `--repo "<REPOSITORY>"`. Each requires a
 regular stage-zero tracked HTML source with working bytes equal to the index.
 It refuses symlinked destinations, user-created directory links and repository
 webroots, while accepting macOS's standard `/var` and `/tmp` aliases.
-Dry-run performs validation without creating directories or backups.
+Dry-run performs validation without creating directories or backups. When the
+installed bytes and mode already match source, the installer reports that and
+writes nothing.
 
-The installer changes only this one HTML file. When replacing it, the prior
-file is saved at `~/.utilities-deploy-backups/ai-model-timeline/copy-*/ai-model-timeline.html`
+Each installer changes only its one HTML file. When replacing it, the prior
+file is saved at `~/.utilities-deploy-backups/<namespace>/copy-*/<page>.html`
 in a new `0700` directory, with backup file mode `0600`. It verifies a temporary
 candidate's bytes and complete permission mode before atomically renaming it
 over the destination. Copy, validation or activation failure leaves the prior
@@ -191,7 +201,8 @@ installed file in place and removes the candidate. Backups are retained.
 To roll back, copy the chosen backup over the installed file and restore its
 desired serving mode (normally `0644`); audit will flag that older copy until
 source and deployment match again. Neighboring calculators and local state are
-preserved.
+preserved. Drawdown backups made by hand before this installer existed use the
+same `drawdown/copy-*` layout.
 
 The fleet audit checks index membership, source and destination regular-file
 types, installed bytes and complete permission modes. It does not update the
@@ -200,7 +211,7 @@ response bytes with the reviewed source and exercise the page in a browser.
 Run the isolated installer lifecycle tests with:
 
 ```sh
-node --test tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_calculator_pages.test.mjs
 ```
 
 ## Native Colophon deployment
@@ -274,7 +285,7 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
@@ -335,7 +346,7 @@ continues reporting drift until the reviewed native deployment is installed.
 Synthetic installer and fleet fixtures run with:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_ai_model_timeline.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
