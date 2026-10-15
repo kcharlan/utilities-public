@@ -67,6 +67,18 @@ static int64_t integer(yyjson_val *v) {
     memcpy(&signed_value, &unsigned_value, sizeof signed_value);
     return signed_value;
   }
+  /* JSONSerialization may choose NSDecimalNumber for a fractional spelling.
+   * Converting it through double first changes its intValue semantics. */
+  if (yyjson_is_raw(v) &&
+      !json_number_is_integer(
+          (Str){yyjson_get_raw(v), (uint32_t)yyjson_get_len(v)})) {
+    int64_t value = 0;
+    bool ignored;
+    (void)claude_foundation_number(
+        (Str){yyjson_get_raw(v), (uint32_t)yyjson_get_len(v)}, &value,
+        &ignored);
+    return value;
+  }
   PyNum n;
   if (!json_number(v, "claude.usage", &n)) {
     int64_t value = 0;
@@ -97,6 +109,16 @@ static bool boolean(yyjson_val *v) {
   uint64_t u;
   if (unsigned_number(v, &u))
     return u != 0;
+  if (yyjson_is_raw(v) &&
+      !json_number_is_integer(
+          (Str){yyjson_get_raw(v), (uint32_t)yyjson_get_len(v)})) {
+    int64_t ignored;
+    bool value = false;
+    (void)claude_foundation_number(
+        (Str){yyjson_get_raw(v), (uint32_t)yyjson_get_len(v)}, &ignored,
+        &value);
+    return value;
+  }
   PyNum n;
   if (json_number(v, "claude.sidechain", &n))
     return n.is_float ? n.f != 0 : n.i != 0;

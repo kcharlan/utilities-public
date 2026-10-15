@@ -58,10 +58,11 @@ and timestamp contracts. Claude uses CoreFoundation's ISO8601 formatter
 for the historical Foundation fallback; Codex's separate timestamp policy
 remains unchanged.
 `src/claude/foundation.c` delegates original-object validity and oversized
-integer coercion to system `NSJSONSerialization`/`NSNumber`. This preserves
+integer and fractional coercion to system `NSJSONSerialization`/`NSNumber`. This preserves
 `NSDecimalNumber` rounding and rejection instead of approximating arbitrary
-precision through the Codex numeric parser. Ordinary token values retain the
-native C fast path; the build links the system Foundation/Objective-C runtime.
+precision through the Codex numeric parser. Ordinary integer token values retain
+the native C fast path; fractional spellings also use Foundation because it may
+decode them as decimal numbers. The build links the system Foundation/Objective-C runtime.
 
 `src/claude/compose.c` observes original physical lines, with the pinned
 512 KiB ceiling and literal assistant/usage prefilter. Display suffix

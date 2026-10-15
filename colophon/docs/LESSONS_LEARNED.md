@@ -5,6 +5,9 @@
   structural rules. Deduplicate constructed advisor IDs before aggregation.
   Keep serde's duplicate-known-field rejection scoped to advisor envelopes;
   primary Foundation row decoding retains its different last-value behavior.
+- Foundation may decode long fractional JSON spellings as NSDecimalNumber;
+  converting them through binary64 first changes intValue. Delegate fractional
+  and oversized integer coercion to the same system implementation.
 - Wide Claude rows and units need their type's explicit alignment. Extend the
   shared append primitive with an alignment argument rather than relying on
   macOS `max_align_t`; test every initial arena offset.
