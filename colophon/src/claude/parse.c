@@ -330,7 +330,7 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
 void claude_record_destroy(ClaudeRecord *r) {
   omap_destroy(&r->tool_turns);
   omap_destroy(&r->rows_dropped);
-  for (size_t i = 0; i < r->turn_count; i++) {
+  for (size_t i = 0; r->tools && i < r->turn_count; i++) {
     omap_destroy(&r->tools[i].mcp);
     omap_destroy(&r->tools[i].other);
   }
@@ -349,7 +349,8 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       continue;
     }
     if (s) {
-      if (r->config_dir.p && !r->parent_session.p &&
+      if(!r->retained)s->flags &= ~F_RETAINED;
+      if (r->config_dir.p && !r->parent_session.p && (!r->retained || (s->flags & F_RETAINED)) &&
           (!s->resume_config_dir.p ||
            str_compare(r->config_dir, s->resume_config_dir) < 0))
         s->resume_config_dir = r->config_dir;
@@ -369,6 +370,7 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                         .resume_config_dir = r->config_dir,
                         .start_ms = r->first_ms,
                         .end_ms = r->last_ms};
+    if(r->retained)s->flags|=F_RETAINED;
     int64_t mtime = r->key.mtime_ns / 1000000;
     TRY(turn_models(&c->arena, r->turns, r->turn_count, false, mtime, snapshot,
                     &s->turns));

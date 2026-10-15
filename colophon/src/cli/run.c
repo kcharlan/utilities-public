@@ -4,6 +4,7 @@
 #include "progress.h"
 #include "summary.h"
 #include "claude/scan.h"
+#include "claude/store.h"
 #include "claude/metadata.h"
 #include "claude/compose.h"
 #include "out/payload.h"
@@ -54,7 +55,7 @@ int cli_run(const Args *args){
     CP_PHASE_START(args->phase_times);
     const char *conflict=args_conflict(args);if(conflict){fprintf(stderr,"colophon: %s\n",conflict);return 2;}
     char *codex=NULL,*home=NULL,*output=NULL,*display=NULL,*host=NULL,*ledger_path=NULL;JsonWriter payload={0},page={0};
-    Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};ClaudeScan claude={0};bool codex_present=false,cache_opened=false;
+    Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};ClaudeScan claude={0};ClaudeStore claude_store={0};bool codex_present=false,cache_opened=false;
     CodexMetadata metadata={0};Corpus corpus={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
     CatalogResult catalog={0};CatalogFetch *fetch=NULL;ModelsDevIndex index={0};RuntimeLedger ledger={0};PriceHistory history={0};PricingReport pricing={0};LedgerAppend appended={0};yyjson_doc *recording=NULL,*new_entries=NULL;
     bool home_exists=false,page_failure=false,committed=false,clock_started=false;int result=1;Err failure=ERR_SUCCESS;
@@ -63,9 +64,14 @@ int cli_run(const Args *args){
     struct stat st;codex_present=!stat(codex,&st)&&S_ISDIR(st.st_mode)&&!access(codex,R_OK|X_OK);
     failure=runtime_home(&home);if(failure.code!=ERR_OK)goto fail;
     failure=claude_inspect(args,&claude);if(failure.code)goto fail;
+    action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);interrupted=0;handler=sigaction(SIGINT,&action,&previous)==0;
+    failure=claude_store_inspect(home,&claude,args->rebuild,&claude_store);if(failure.code)goto fail;
+    claude.store=&claude_store;
+    failure=claude_scan(&claude,&interrupted);if(failure.code)goto fail;
+    failure=claude_store_reconcile(&claude_store,&claude,&interrupted);if(failure.code)goto fail;
+    failure=claude_scan_aliases(&claude);if(failure.code)goto fail;
     if(!codex_present&&!claude.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s\n",claude.history_path.p,claude.disabled?" (--no-claude)":"");goto done;}
     int64_t snapshot=cp_now_ms();scan_display.tty=progress_tty();
-    action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);interrupted=0;handler=sigaction(SIGINT,&action,&previous)==0;
     failure=ensure_runtime_home(home);home_exists=!stat(home,&st)&&S_ISDIR(st.st_mode);if(failure.code!=ERR_OK)goto fail;
     failure=templates(home);if(failure.code!=ERR_OK)goto fail;
     ledger_path=join(home,"price-history.json");if(!ledger_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
@@ -82,7 +88,6 @@ int cli_run(const Args *args){
     if(cp_fault("scan")){failure=err_make(ERR_IO,"synthetic injected scan");goto fail;}
     if(codex_present)failure=scan_logs(codex,&cache,&interrupted,progress_update,&scan_display,&scan);progress_close(&scan_display);
     if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
-    failure=claude_scan(&claude,&interrupted);if(failure.code)goto fail;
     /* scan -> metadata -> corpus -> links -> workspaces -> catalog join. */
     CP_PHASE_MARK(1);
     if(codex_present){failure=metadata_load(codex,&metadata);if(failure.code)goto fail;}
@@ -137,6 +142,7 @@ int cli_run(const Args *args){
     failure=cp_fault("original_page_failure")?err_make(ERR_IO,"Synthetic page failure"):
         cp_fault("page_replace")?err_make(ERR_IO,"synthetic injected page_replace"):atomic_write(output,page.data,page.length);
     if(failure.code!=ERR_OK){page_failure=true;goto fail;}
+    failure=claude_store_commit(&claude_store,&claude,&interrupted);if(failure.code)goto fail;
     if(cache_opened){failure=cache_commit(&cache,&scan.live,&interrupted);committed=cache.committed;}
     if(failure.code!=ERR_OK)goto fail;
     if(interrupted)goto fail;
@@ -160,5 +166,5 @@ done:
     corpus_destroy(&corpus);pricing_report_destroy(&pricing);history_destroy(&history);runtime_ledger_destroy(&ledger);models_dev_destroy(&index);catalog_result_destroy(&catalog);ledger_append_destroy(&appended);yyjson_doc_free(recording);yyjson_doc_free(new_entries);priority_destroy(&priority);workspace_aliases_destroy(&aliases);free(assembly_records);metadata_destroy(&metadata);cache_destroy(&cache);scan_destroy(&scan);
     if(clock_started)(void)cp_monotonic_finish();if(home_exists)event_flush(home);
     if(handler)sigaction(SIGINT,&previous,NULL);
-    claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
+    claude_store_destroy(&claude_store);claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
 }

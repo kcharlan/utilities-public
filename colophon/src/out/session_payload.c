@@ -61,6 +61,7 @@ void payload_corpus_flags(JsonWriter *w, unsigned f, bool turn) {
                {F_ABORTED, "aborted"},
                {F_COLLAPSED, turn ? "collapsed" : "collapsed_timestamps"},
                {F_FORK_BASELINE, "fork_baseline_unavailable"},
+               {F_RETAINED, "transcript_deleted"},
                {F_FORKED, "forked"},
                {F_HISTORY, "history_unresolved"},
                {F_INTERRUPTED, "interrupted"},

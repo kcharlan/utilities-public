@@ -19,7 +19,9 @@ typedef struct {
   bool disabled, present;
   size_t history_usable, history_malformed;
   ClaudeRecord *records;
-  size_t count, capacity, logs, parsed;
+  size_t count, capacity, logs, parsed, cached, retained;
+  struct ClaudeStore *store;
+  CorpusStrings retained_unreadable;
   CorpusStrings collisions;
   CorpusStrings metadata_errors;
   struct ClaudeDesktopEntry *desktop_entries;
@@ -35,5 +37,6 @@ typedef struct {
  */
 Err claude_inspect(const Args *args, ClaudeScan *out);
 Err claude_scan(ClaudeScan *scan, volatile sig_atomic_t *interrupted);
+Err claude_scan_aliases(ClaudeScan *scan);
 void claude_scan_destroy(ClaudeScan *scan);
 #endif

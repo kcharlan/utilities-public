@@ -61,3 +61,12 @@ invented loopback endpoint. Browser cases open native-generated `file://` HTML,
 block external requests and native action links, and fail on browser errors.
 `browser_errors.py` preserves the bounded synchronous guard implementation from
 the repository's `tools/testkit.py` without importing shared launcher helpers.
+
+Claude store checks in `test_claude_store.py` and the retained C codec/store
+units cover cold/warm/rebuild accounting, strict deletion proof, removed search
+roots and descendants, partial traversal, root-wide commit rechecks, failed page
+output, interrupted partial commits, empty/malformed live files, restoration,
+retained/live response deduplication, last-known sidecars, extraction price
+snapshots and source byte/mode preservation. Immutable synthetic CLCD1 decoder
+inputs in `fixtures/claude_codec/` are copied to scratch before decoding. They
+are the narrow exception to the runtime-fixtures-in-scratch rule.

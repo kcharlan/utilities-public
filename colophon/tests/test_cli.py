@@ -363,7 +363,8 @@ def test_claude_explicit_home_matches_environment_selection(native):
     assert result.returncode == 0, result.stderr
     explicit = native.payload()
     native.env["CLAUDE_CONFIG_DIR"] = str(custom)
-    result = native.build()
+    # Compare source selection at the same parse state; warm-cache counters now differ.
+    result = native.build("--rebuild")
     assert result.returncode == 0, result.stderr
     environment = native.payload()
     assert explicit["meta"]["sources"]["claude"] == environment["meta"]["sources"]["claude"]

@@ -1,5 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "scan.h"
+#include "store.h"
+#include "metadata.h"
 #include "corpus/subagents.h"
 #include "parse/record.h"
 #include "testing/hooks.h"
@@ -263,12 +265,12 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
         TRY(walk_projects(s, r, child, flag, seen));
       continue;
     }
-    if (!S_ISREG(st.st_mode) || !jsonl(child) || !st.st_size)
+    if (!S_ISREG(st.st_mode) || !jsonl(child))
       continue;
     if (omap_get(seen, child))
       continue;
     TRY(omap_put(seen, child, (void *)1));
-    s->logs++;
+    if(st.st_size)s->logs++;
     if (s->count == s->capacity) {
       size_t n = s->capacity ? s->capacity * 2 : 16;
       ClaudeRecord *next = realloc(s->records, n * sizeof *next);
@@ -286,7 +288,14 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
                          .stat_ok = true,
                          .device = st.st_dev,
                          .inode = st.st_ino};
-    Err e = claude_parse(&key, r->path, r->resume_config_dir, record);
+    bool hit=false;
+    Err e=claude_store_get(s->store,&key,record,&hit);
+    if(!e.code&&!hit)e=claude_parse(&key,r->path,r->resume_config_dir,record);
+    else if(!e.code) {
+      record->parent_agent=record->tool_use_id=record->description=record->agent_type=(Str){0};
+      record->has_spawn_depth=false; record->spawn_depth=0;
+      e=claude_sidecar_load(record);
+    }
     if (e.code) {
       claude_record_destroy(record);
       if (e.code != ERR_IO)
@@ -295,7 +304,7 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
       TRY(skipped(s, child));
     } else {
       s->count++;
-      s->parsed++;
+      if(hit)s->cached++;else s->parsed++;
     }
   }
   return ERR_SUCCESS;
@@ -348,8 +357,10 @@ Err claude_scan(ClaudeScan *s, volatile sig_atomic_t *flag) {
   Err e = ERR_SUCCESS;
   for (size_t i = 0; i < s->root_count && !e.code; i++) {
     ClaudeRoot *r = &s->roots[i];
-    if (!r->present)
+    if (!r->present) {
+      if(!claude_path_deleted(r->path.p))TRY(traversal_error(s,r,r->path));
       continue;
+    }
     if (r->kind == CLAUDE_PROJECTS)
       e = walk_projects(s, r, r->path, flag, &seen);
     else if (r->kind == CLAUDE_DESKTOP)
@@ -377,7 +388,11 @@ Err claude_scan(ClaudeScan *s, volatile sig_atomic_t *flag) {
     }
   }
   omap_destroy(&seen);
-  if (!e.code)
+  if(!e.code)e=claude_scan_aliases(s);
+  return e;
+}
+Err claude_scan_aliases(ClaudeScan *s) {
+  Err e=ERR_SUCCESS;
     for (size_t i = 0; i < s->count; i++) {
       ClaudeRecord *record = &s->records[i];
       for (size_t j = 0; j < record->aliases.count; j++) {

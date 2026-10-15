@@ -113,3 +113,11 @@ historical evidence, not available native acceptance commands.
   Preserve wrapper traps, scratch `TMPDIR`, browser cache and loopback-only
   networking. Apple Silicon ctypes calls to variadic `sandbox_check` must declare
   only its three fixed arguments, and evaluation errors must fail the test.
+- [Claude retention](runtime.md#claude-parse-cache-and-retained-transcripts)
+  requires positive deletion evidence, not absence from a discovery list.
+  Reconcile before presence/rendering, recheck every candidate before any root
+  mutation, and retain installed bytes through failed output and rebuild.
+  Interrupted live supersession can leave both installed and retained copies;
+  prefer the installed candidate and replay the original path once without
+  deleting the last decodable recovery copy. Refresh live sidecars on cache
+  hits, while retained facts preserve their last-known sidecar state.

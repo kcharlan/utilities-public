@@ -17,7 +17,8 @@ enum {
   F_START_COMPLETION = 1024u,
   F_ORPHAN = 2048u,
   F_FORKED = 4096u,
-  F_FORK_BASELINE = 8192u
+  F_FORK_BASELINE = 8192u,
+  F_RETAINED = 16384u
 };
 typedef struct {
   Str *items;

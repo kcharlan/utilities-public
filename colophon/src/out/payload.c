@@ -7,7 +7,7 @@ static void text(JsonWriter *w,const char *s){jsonw_string(w,(Str){s,(uint32_t)s
 static void sources(JsonWriter *w,const PayloadInputs *in){
     const ClaudeScan *c=in->claude;jsonw_raw(w,",\"sources\":{\"codex\":{\"status\":");text(w,in->codex_present?"ok":"absent");jsonw_raw(w,",\"home\":");text(w,in->source_codex_home?in->source_codex_home:in->codex_home);
     jsonw_raw(w,",\"logs\":");jsonw_i64(w,in->scan?(int64_t)(in->scan->count+in->scan->unreadable_count):0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,in->scan?(int64_t)in->scan->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i64(w,in->scan?(int64_t)in->scan->cached:0);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"}},\"claude\":{\"status\":");text(w,c&&c->disabled?"disabled":c&&c->present?"ok":"absent");jsonw_raw(w,",\"roots\":[");
-    if(c)for(size_t i=0;i<c->root_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,c->roots[i].path);}jsonw_raw(w,"],\"history_path\":");if(c)jsonw_string(w,c->history_path);else jsonw_raw(w,"null");jsonw_raw(w,",\"logs\":");jsonw_i64(w,c?(int64_t)c->logs:0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,c?(int64_t)c->parsed:0);jsonw_raw(w,",\"cached\":0,\"retained\":0,\"history_only\":0,\"token_data_from_ms\":null,\"costs\":{\"available\":true,\"reason\":null}}}");
+    if(c)for(size_t i=0;i<c->root_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,c->roots[i].path);}jsonw_raw(w,"],\"history_path\":");if(c)jsonw_string(w,c->history_path);else jsonw_raw(w,"null");jsonw_raw(w,",\"logs\":");jsonw_i64(w,c?(int64_t)c->logs:0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,c?(int64_t)c->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i128(w,c?c->cached:0);jsonw_raw(w,",\"retained\":");jsonw_i128(w,c?c->retained:0);jsonw_raw(w,",\"history_only\":0,\"token_data_from_ms\":null,\"costs\":{\"available\":true,\"reason\":null}}}");
 }
 static uint64_t lines(const ClaudeRecord *r,int kind){return kind==0?r->reader.malformed:kind==1?r->reader.partial_final_line:r->reader.recovered;}
 static void line_diagnostic(JsonWriter *w,const FileDiagnostic *d,const ClaudeScan *c,int kind){
@@ -22,6 +22,7 @@ static void claude_map_json(JsonWriter *w,const ClaudeScan *c,bool dropped){
 }
 static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
     jsonw_raw(w,",\"claude_session_id_collisions\":");CorpusStrings empty={0};payload_corpus_strings(w,c?&c->collisions:&empty);
+    jsonw_raw(w,",\"claude_retained_unreadable\":");payload_corpus_strings(w,c?&c->retained_unreadable:&empty);
     jsonw_raw(w,",\"claude_unknown_record_types\":");claude_map_json(w,c,false);
     jsonw_raw(w,",\"claude_rows_dropped\":");claude_map_json(w,c,true);
     jsonw_raw(w,",\"claude_duplicate_responses\":{\"key_count\":");jsonw_i128(w,c?c->duplicate_keys:0);jsonw_raw(w,",\"row_count\":");jsonw_i128(w,c?c->duplicate_rows:0);jsonw_raw(w,"},\"claude_incomplete_requests\":");jsonw_i128(w,c?c->incomplete_requests:0);

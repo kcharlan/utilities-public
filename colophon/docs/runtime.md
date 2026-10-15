@@ -85,17 +85,20 @@ exit 1 names the Codex home, Claude roots and history path checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
 opening, recovery and replacement, including with `--rebuild`. Claude
 history is only inspected for presence in this release; history-only
-session rendering and Claude parse caching/retention are separate work.
+session rendering is separate work. Decodable retained records and eligible
+provisional deletion candidates also establish presence (see below).
 
 The home is created and reapplied with mode 0700; written files are mode
-0600. Page and ordinary state replacements are atomic. Parent directories
-of an explicit output must already exist. Direct hidden `.*.tmp` regular
+0600. Page and ordinary state replacements are atomic. Missing parent directories
+of an explicit output are created with mode 0700. Direct hidden `.*.tmp` regular
 files older than one hour are cleaned from the runtime home.
 
 | Runtime path | Purpose |
 | --- | --- |
 | `colophon.html` | Generated offline page. |
 | `cache-native/` | Native per-log parse cache; changed logs reparse from the beginning. |
+| `cache-claude/` | Claude parse records, grouped by resolved search root. |
+| `claude-retained/` | Claude facts retained after proved source deletion; no automatic age limit. |
 | `price-history.json` | Editable user ledger, created with schema 1 and empty entries. |
 | `pricing-cache.json` | OpenAI catalog, URL, ETag and successful fetch timestamp. |
 | `priority-turns.json` | Sticky detected priority-turn metadata and first-seen times. |
@@ -163,3 +166,57 @@ containing NUL is retained as a JSON label but omitted from the HTTP request,
 which can change refresh/fetch-timestamp outcomes. Performance is
 workload-dependent and three original targets were missed; no new speed or
 memory acceptance is claimed.
+
+## Claude parse cache and retained transcripts
+
+`cache-claude/<root-key>/<path-key>.rec` contains parsed Claude facts;
+`claude-retained/<root-key>/` contains records whose source transcripts were
+positively proved deleted. Keys are SHA-256 names from the resolved search-root
+and original transcript paths. Files are private (0600), directories 0700.
+The Claude CLCD1 codec is independent of the Codex native cache. It preserves
+exact aliases, original paths, config/resume origin, prompts, turns, tools,
+sidecar facts and every raw usage row, including extraction-time cost snapshots
+for duplicate losers. Earlier codec versions keep their decoders and immutable
+synthetic test inputs.
+
+Existing stores and history are inspected read-only before runtime creation.
+Decodable retained records and eligible provisional deletion candidates establish
+source presence. Retained records are read regardless of the selected roots;
+`--no-claude` disables both reading and reconciliation. Installed cache records
+are considered only for selected search roots, including on `--rebuild`.
+
+Deletion requires a complete, uninterrupted scan plus a fresh ENOENT path check
+and a readable/searchable surviving ancestor. Removed project directories,
+Desktop session containers and cswap slots/roots retain their original search-root
+provenance. Unreadable trees, other path errors and interrupted traversals never
+prove deletion. Existing empty transcripts supersede stale facts with an empty
+live record; they are not deletions. Unknown or corrupt installed cache data is
+reparsed when its source is available. Corrupt/unreadable retained data remains
+untouched and appears in `claude_retained_unreadable`.
+
+Provisional and retained facts participate in the first disappearance-run page
+and in response deduplication. Their owning sessions receive `transcript_deleted`.
+Live parsed paths take precedence. Cached transcript hits still refresh live
+sidecars independently; retained records preserve the last successfully observed
+sidecar facts. History aliases survive retention and identity collisions.
+
+Only successful page output permits commit. Before the first change for a root,
+commit rechecks every provisional candidate. Changed evidence aborts all cache
+updates and retention moves for that root, preserving its installed records;
+the already-written page remains the scan snapshot. Eligible installed records
+are atomically renamed into retained storage, then live records are atomically
+installed. Rebuild reparses into the in-memory staging set rather than removing
+an installed directory. Ineligible/unreadable installed records are not pruned.
+Interrupted commits recover each record from its installed or retained location;
+existing retained copies are never overwritten. Recovery siblings can accumulate,
+and only one record per original path is replayed. A successfully installed live
+record removes its decodable retained copies; undecodable files remain untouched.
+Failed output and interruptions before commit leave all retention moves uncommitted.
+
+Retention has no automatic age or size limit. It stores parsed facts, not original
+transcript bytes, and is not a transcript backup. To forget retained data, stop
+Colophon and manually remove the desired records (or the complete
+`claude-retained/` directory) from the private runtime home. Also remove matching
+`cache-claude/` records to prevent later deletion reconciliation from restoring
+those facts. `--rebuild` does not forget retained data. Source transcripts and
+sidecars are never edited.
