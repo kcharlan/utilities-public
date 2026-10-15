@@ -1,5 +1,23 @@
 # Lessons learned
 
+## 2026-10-15: Attribute package-manager checks to declaring projects and evaluated versions
+
+A manifest path is part of a dependency declaration's identity and also selects
+the package-manager working directory. Group checks by the resolved declaring
+directory so a monorepo's nested projects cannot inherit root-project tool output.
+An npm lock supplies a concrete version, not registry comparison evidence; require
+an actual comparison even after successful empty outdated output. Treat audit
+errors and required report fields as evidence boundaries, including lock-specific
+failures, rather than promoting audit prerequisites to successful coverage.
+
+Findings-only reports cannot prove that an absent declaration was evaluated.
+Prefer explicit all-package comparison rows or evaluated module/version evidence,
+and retain unchecked reasons where that evidence is unavailable. Current
+govulncheck JSON is a versioned message stream: OSV database candidates are not
+findings, SBOMs establish evaluated modules, and finding attribution includes the
+version regardless of message order. When an audit contains several versions of
+one name, preserve the matching version's advisory instead of the last name match.
+
 ## 2026-10-15: Preserve dependency declaration identity across manifests
 
 Git Fleet previously deduplicated and stored dependency rows by repository,

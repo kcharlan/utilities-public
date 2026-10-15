@@ -2157,12 +2157,117 @@ def check_python_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
 # ── Node dependency health (Packet 14) ────────────────────────────────────────
 
 
+def _group_by_manifest_dir(repo_path: Path, deps: list[dict]) -> dict[Path, list[dict]]:
+    """Keep independent declaration projects in their physically declaring directory."""
+    groups: dict[Path, list[dict]] = {}
+    for dep in deps:
+        source = dep.get('source_path')
+        directory = ((repo_path / source).resolve().parent if source else repo_path.resolve())
+        groups.setdefault(directory, []).append(dep)
+    return groups
+
+
+def _tool_version(value) -> str | None:
+    """Accept concrete comparable versions, never ranges or tool sentinels."""
+    if not isinstance(value, str) or not re.match(r'^v?\d', value):
+        return None
+    return _exact_pip_version(value)
+
+
+def _npm_lock_versions(manifest_dir: Path) -> dict[str, str]:
+    """Read direct node_modules entries from package-lock v1, v2 and v3."""
+    try:
+        raw = json.loads((manifest_dir / 'package-lock.json').read_text())
+        if not isinstance(raw, dict):
+            return {}
+        layout = raw.get('lockfileVersion', 1)
+        if layout == 1:
+            entries = raw.get('dependencies', {})
+        elif layout in (2, 3):
+            entries = {path[len('node_modules/'):]: entry
+                       for path, entry in raw.get('packages', {}).items()
+                       if path.startswith('node_modules/') and '/node_modules/' not in path}
+        else:
+            return {}
+        return {name: entry['version'] for name, entry in entries.items()
+                if isinstance(entry, dict) and not entry.get('link') and _tool_version(entry.get('version'))}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def _npm_installed_version(manifest_dir: Path, name: str) -> str | None:
+    """Read package metadata only; never load JavaScript or execute lifecycle code."""
+    if not re.fullmatch(r'(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
+        return None
+    try:
+        raw = json.loads((manifest_dir / 'node_modules' / name / 'package.json').read_text())
+        if isinstance(raw, dict) and raw.get('name') == name:
+            return _tool_version(raw.get('version'))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _npm_latest_version(npm: str, manifest_dir: Path, name: str) -> str:
+    proc = subprocess.run([npm, 'view', name, 'version', '--json'], cwd=str(manifest_dir),
+                          capture_output=True, text=True, timeout=30)
+    _validate_tool_result(proc, 'npm view', (0,))
+    version = _tool_version(json.loads(proc.stdout))
+    if not version:
+        raise ValueError('registry comparison did not return a concrete version')
+    return version
+
+
+def _required_text(row: dict, key: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'missing or invalid {key}')
+    return value
+
+
+def _version_finding(dep: dict, current: str, latest: str, tool: str) -> None:
+    try:
+        severity = classify_severity(current, latest)
+    except Exception as exc:
+        mark_unchecked(dep, tool_failure_note(tool, exc), 'outdated_state')
+        return
+    dep.update(current_version=current, wanted_version=current, latest_version=latest,
+               outdated_state='checked', severity=severity)
+
+
+def _merge_vulnerability_report(deps: list[dict], findings: dict[str, str], tool: str,
+                                evaluated: set[str] | None = None,
+                                finding_versions: dict[str, dict[str, str]] | None = None) -> list[dict]:
+    """A findings-only report does not by itself prove an absent declaration was audited."""
+    result = []
+    for dep in deps:
+        d = dict(dep)
+        name = d.get('name', '')
+        if name in findings:
+            versions = finding_versions.get(name, {}) if finding_versions is not None else None
+            current = d.get('current_version')
+            if versions is not None and ((current and current not in versions)
+                                         or (not current and len(versions) != 1)):
+                mark_unchecked(d, f'{tool}: finding version does not match current version', 'vuln_state')
+            else:
+                if versions is not None and not current:
+                    current = d['current_version'] = next(iter(versions))
+                advisory = versions[current] if versions is not None else findings[name]
+                d.update(severity='vulnerable', advisory_id=advisory, vuln_state='checked')
+        elif evaluated is not None and name in evaluated:
+            d['vuln_state'] = 'checked'
+        else:
+            mark_unchecked(d, f'{tool}: report does not establish declaration evaluation', 'vuln_state')
+        result.append(d)
+    return result
+
+
 def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run npm outdated --json and enrich each npm dep with version/severity fields.
 
     If npm is not available (TOOLS["npm"] is None), returns deps unchanged.
     Handles npm's non-zero exit code when outdated packages exist (this is normal).
-    On any subprocess or JSON parse failure, returns deps unchanged (fail-open).
+    Missing version or comparison evidence remains unchecked with a reason.
     """
     npm = TOOLS.get("npm")
     if not npm:
@@ -2187,34 +2292,41 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         outdated_map = json.loads(proc.stdout)
         if not isinstance(outdated_map, dict) or 'error' in outdated_map:
             raise ValueError('invalid npm outdated result')
+        if not all(isinstance(info, dict) for info in outdated_map.values()):
+            raise ValueError('invalid npm outdated row')
+        if proc.returncode == 1 and not outdated_map:
+            raise ValueError('outdated exit status without findings')
     except subprocess.CalledProcessError as exc:
         return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
     except Exception as exc:
         return _check_failed(deps, 'npm outdated', exc, 'outdated_state')
 
+    versions = _npm_lock_versions(repo_path)
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
-        if name in outdated_map:
-            d['outdated_state'] = 'checked'
-            info = outdated_map[name]
-            d["current_version"] = info.get("current")
-            d["wanted_version"] = info.get("wanted")
-            d["latest_version"] = info.get("latest")
-            current = info.get("current") or ""
-            latest = info.get("latest") or ""
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
-        else:
-            # Absence is not evidence of a concrete installed version or evaluation.
-            d.setdefault("current_version", None)
-            d.setdefault("wanted_version", None)
-            d.setdefault("latest_version", None)
-            d["severity"] = "ok"
+        info = outdated_map.get(name, {})
+        current = (_tool_version(info.get('current')) or versions.get(name)
+                   or _npm_installed_version(repo_path, name))
+        d['current_version'] = current
+        d['wanted_version'] = _tool_version(info.get('wanted'))
+        d['latest_version'] = _tool_version(info.get('latest'))
         d["checked_at"] = now
+        if not current:
+            mark_unchecked(d, 'npm outdated: no concrete current or locked version', 'outdated_state')
+        else:
+            try:
+                latest = d['latest_version']
+                if name not in outdated_map:
+                    latest = _npm_latest_version(npm, repo_path, name)
+                    d['latest_version'] = latest
+                if not latest:
+                    raise ValueError('missing latest version comparison')
+                d['outdated_state'] = 'checked'
+                d['severity'] = classify_severity(current, latest)
+            except Exception as exc:
+                mark_unchecked(d, tool_failure_note('npm outdated comparison', exc), 'outdated_state')
         result.append(d)
 
     return result
@@ -2225,7 +2337,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     If npm is not available (TOOLS["npm"] is None), returns deps unchanged.
     Handles npm's non-zero exit code when vulnerabilities exist (normal behavior).
-    If npm audit fails (e.g. missing package-lock.json), returns deps unchanged (fail-open).
+    A failed audit or missing declaration coverage remains unchecked.
     Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = "npm:<name>".
     """
@@ -2244,10 +2356,23 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if not proc.stdout.strip():
             logger.warning("npm audit returned no output for %s (rc=%d)", repo_path, proc.returncode)
             return _check_failed(deps, 'npm audit', ValueError('no tool output'), 'vuln_state')
-        _validate_tool_result(proc, 'npm audit', (0, 1))
         raw = json.loads(proc.stdout)
+        if isinstance(raw, dict) and 'error' in raw:
+            error = raw['error']
+            if isinstance(error, dict) and error.get('code') == 'ENOLOCK':
+                raise ValueError('lockfile required (ENOLOCK)')
+            raise ValueError('tool returned an error object')
+        _validate_tool_result(proc, 'npm audit', (0, 1))
         if not isinstance(raw, dict) or not isinstance(raw.get('vulnerabilities'), dict):
             raise ValueError('invalid npm audit result')
+        for name, entry in raw['vulnerabilities'].items():
+            if (not isinstance(entry, dict) or entry.get('name') != name
+                    or not isinstance(entry.get('severity'), str)
+                    or not isinstance(entry.get('via'), list) or not entry['via']
+                    or not all(isinstance(via, (str, dict)) and via for via in entry['via'])):
+                raise ValueError('invalid npm audit vulnerability row')
+        if proc.returncode == 1 and not raw['vulnerabilities']:
+            raise ValueError('audit exit status without vulnerability findings')
     except subprocess.CalledProcessError as exc:
         return _check_failed(deps, 'npm audit', exc, 'vuln_state')
     except Exception as exc:
@@ -2261,6 +2386,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     except Exception as exc:
         return _check_failed(deps, 'npm audit', exc, 'vuln_state')
 
+    versions = _npm_lock_versions(repo_path)
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
@@ -2269,6 +2395,10 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             d["severity"] = "vulnerable"
             d["advisory_id"] = f"npm:{d.get('name', name_lower)}"
             d['vuln_state'] = 'checked'
+        elif d.get('name') in versions:
+            d['vuln_state'] = 'checked'
+        else:
+            mark_unchecked(d, 'npm audit: declaration absent from audited lock evidence', 'vuln_state')
         result.append(d)
 
     return result
@@ -2292,8 +2422,8 @@ def check_node_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not npm_deps:
         return other_deps
 
-    npm_deps = check_node_outdated(repo_path, npm_deps)
-    npm_deps = check_node_vulns(repo_path, npm_deps)
+    npm_deps = [d for directory, group in _group_by_manifest_dir(repo_path, npm_deps).items()
+                for d in check_node_vulns(directory, check_node_outdated(directory, group))]
 
     return finalize_dep_health(npm_deps) + other_deps
 
@@ -2350,35 +2480,40 @@ def check_go_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         modules = _parse_go_ndjson(proc.stdout)
         if not all(isinstance(m, dict) for m in modules):
             raise ValueError('invalid module result')
+        mod_map: dict[str, dict] = {}
+        for mod in modules:
+            path = _required_text(mod, 'Path')
+            if mod.get('Error'):
+                raise ValueError('module evaluation error')
+            if mod.get('Main') is True:
+                continue
+            version = _required_text(mod, 'Version')
+            if mod.get('Replace'):
+                # Replacement versions/paths may have a different comparison target.
+                continue
+            update = mod.get('Update')
+            update_version = None
+            if 'Update' in mod:
+                if not isinstance(update, dict) or update.get('Error'):
+                    raise ValueError('invalid module update')
+                update_version = _required_text(update, 'Version')
+            if path in mod_map:
+                raise ValueError('duplicate module result')
+            mod_map[path] = {'version': version, 'update': update_version}
     except Exception as exc:
         return _check_failed(deps, 'go list', exc, 'outdated_state')
-
-    # Build lookup: {module_path: {"version": str, "update": str|None}}
-    mod_map: dict[str, dict] = {}
-    for mod in modules:
-        path = mod.get("Path", "")
-        version = mod.get("Version", "")
-        update = mod.get("Update", {})
-        update_version = update.get("Version") if update else None
-        mod_map[path] = {"version": version, "update": update_version}
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
         if name in mod_map:
-            d['outdated_state'] = 'checked'
             info = mod_map[name]
             current = info["version"]
             update_ver = info["update"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # Go has no "wanted" concept
-            if update_ver:
-                d["latest_version"] = update_ver
-                d["severity"] = classify_severity(_strip_v(current), _strip_v(update_ver))
-            else:
-                d["latest_version"] = current
-                d["severity"] = "ok"
+            _version_finding(d, current, update_ver or current, 'go list')
+        else:
+            mark_unchecked(d, 'go list: declaration absent from evaluated module rows', 'outdated_state')
         result.append(d)
     return result
 
@@ -2387,7 +2522,8 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run govulncheck -json ./... and merge vulnerability info into gomod dep dicts.
 
     If govulncheck is not available (TOOLS["govulncheck"] is None), returns deps unchanged.
-    Parses the Vulns array from govulncheck JSON output.
+    Parses the v1 streaming config/SBOM/finding protocol. OSV entries alone
+    describe possible advisories, not findings for the scanned version.
     Vulnerability severity overrides any prior severity.
     Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = OSV ID.
     """
@@ -2403,34 +2539,47 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=300,
         )
-        _validate_tool_result(proc, 'govulncheck', (0, 1))
-        raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('Vulns'), list):
-            raise ValueError('invalid govulncheck result')
+        # JSON output reports findings in the stream and exits zero; nonzero is failure.
+        _validate_tool_result(proc, 'govulncheck', (0,))
+        messages = _parse_go_ndjson(proc.stdout)
+        if (not messages or not isinstance(messages[0], dict)
+                or messages[0].get('config', {}).get('protocol_version') != 'v1.0.0'):
+            raise ValueError('missing supported govulncheck protocol config')
+        evaluated_versions: set[tuple[str, str]] = set()
+        versioned_findings: dict[tuple[str, str], str] = {}
+        for message in messages:
+            if not isinstance(message, dict) or len(message) != 1:
+                raise ValueError('invalid govulncheck message')
+            kind, entry = next(iter(message.items()))
+            if kind not in ('config', 'progress', 'SBOM', 'osv', 'finding') or not isinstance(entry, dict):
+                raise ValueError('invalid govulncheck message type')
+            if kind == 'SBOM':
+                modules = entry.get('modules', [])
+                if not isinstance(modules, list):
+                    raise ValueError('invalid govulncheck SBOM modules')
+                for module in modules:
+                    name = _required_text(module, 'path')
+                    version = module.get('version')
+                    if isinstance(version, str) and version:
+                        evaluated_versions.add((name, version))
+            elif kind == 'finding':
+                advisory = _required_text(entry, 'osv')
+                trace = entry.get('trace')
+                if not isinstance(trace, list) or not trace or not isinstance(trace[0], dict):
+                    raise ValueError('invalid govulncheck finding trace')
+                name = _required_text(trace[0], 'module')
+                version = _required_text(trace[0], 'version')
+                evaluated_versions.add((name, version))
+                versioned_findings[name, version] = advisory
+            elif kind == 'osv':
+                _required_text(entry, 'id')
     except Exception as exc:
         return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
-
-    # Build lookup: {module_path: osv_id}
-    vuln_map: dict[str, str] = {}
-    try:
-        for vuln in raw.get("Vulns", []):
-            osv_id = vuln.get("OSV", {}).get("id", "")
-            for mod in vuln.get("Modules", []):
-                mod_path = mod.get("Path", "")
-                if mod_path:
-                    vuln_map[mod_path] = osv_id
-    except Exception as exc:
-        return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
-
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        if d.get("name", "") in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[d["name"]]
-            d['vuln_state'] = 'checked'
-        result.append(d)
-    return result
+    evaluated = {d['name'] for d in deps if (d['name'], d.get('current_version') or d.get('version'))
+                 in evaluated_versions}
+    findings = {d['name']: versioned_findings[d['name'], d.get('current_version') or d.get('version')]
+                for d in deps if (d['name'], d.get('current_version') or d.get('version')) in versioned_findings}
+    return _merge_vulnerability_report(deps, findings, 'govulncheck', evaluated)
 
 
 def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2451,8 +2600,8 @@ def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not go_deps:
         return other_deps
 
-    go_deps = check_go_outdated(repo_path, go_deps)
-    go_deps = check_go_vulns(repo_path, go_deps)
+    go_deps = [d for directory, group in _group_by_manifest_dir(repo_path, go_deps).items()
+               for d in check_go_vulns(directory, check_go_outdated(directory, group))]
 
     return finalize_dep_health(go_deps) + other_deps
 
@@ -2478,9 +2627,9 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
             text=True,
             timeout=120,
         )
-        _validate_tool_result(proc, 'cargo outdated', (0, 1))
+        _validate_tool_result(proc, 'cargo outdated', (0,))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('dependencies'), list):
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('dependencies'), list):
             raise ValueError('invalid cargo outdated result')
     except Exception as exc:
         return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
@@ -2489,12 +2638,11 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     outdated_map: dict[str, dict] = {}
     try:
         for entry in raw.get("dependencies", []):
-            name = entry.get("name", "")
-            if name:
-                outdated_map[name] = {
-                    "project": entry.get("project", ""),
-                    "latest": entry.get("latest", ""),
-                }
+            name = _required_text(entry, 'name')
+            if name in outdated_map:
+                raise ValueError('duplicate cargo outdated row')
+            outdated_map[name] = {'project': _required_text(entry, 'project'),
+                                  'latest': _required_text(entry, 'latest')}
     except Exception as exc:
         return _check_failed(deps, 'cargo outdated', exc, 'outdated_state')
 
@@ -2503,17 +2651,10 @@ def check_rust_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
-            d['outdated_state'] = 'checked'
             info = outdated_map[name]
-            current = info["project"]
-            latest = info["latest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # cargo has no "wanted" concept
-            d["latest_version"] = latest
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
+            _version_finding(d, info['project'], info['latest'], 'cargo outdated')
+        else:
+            mark_unchecked(d, 'cargo outdated: report does not establish declaration evaluation', 'outdated_state')
         result.append(d)
     return result
 
@@ -2539,31 +2680,31 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         )
         _validate_tool_result(proc, 'cargo audit', (0, 1))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('vulnerabilities'), dict):
+        if (not isinstance(raw, dict) or 'error' in raw
+                or not isinstance(raw.get('vulnerabilities'), dict)
+                or not isinstance(raw['vulnerabilities'].get('list'), list)):
             raise ValueError('invalid cargo audit result')
     except Exception as exc:
         return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
     # Build lookup: {package_name: rustsec_id}
     vuln_map: dict[str, str] = {}
+    finding_versions: dict[str, dict[str, str]] = {}
     try:
         for entry in raw.get("vulnerabilities", {}).get("list", []):
-            advisory_id = entry.get("advisory", {}).get("id", "")
-            pkg_name = entry.get("package", {}).get("name", "")
-            if pkg_name and advisory_id:
-                vuln_map[pkg_name] = advisory_id
+            advisory_id = _required_text(entry.get('advisory', {}), 'id')
+            pkg_name = _required_text(entry.get('package', {}), 'name')
+            version = _required_text(entry.get('package', {}), 'version')
+            if not _tool_version(version):
+                raise ValueError('invalid cargo audit package version')
+            vuln_map[pkg_name] = advisory_id
+            finding_versions.setdefault(pkg_name, {})[version] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('cargo audit failed without vulnerability findings')
     except Exception as exc:
         return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        if d.get("name", "") in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[d["name"]]
-            d['vuln_state'] = 'checked'
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'cargo audit', finding_versions=finding_versions)
 
 
 def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2584,8 +2725,8 @@ def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not cargo_deps:
         return other_deps
 
-    cargo_deps = check_rust_outdated(repo_path, cargo_deps)
-    cargo_deps = check_rust_vulns(repo_path, cargo_deps)
+    cargo_deps = [d for directory, group in _group_by_manifest_dir(repo_path, cargo_deps).items()
+                  for d in check_rust_vulns(directory, check_rust_outdated(directory, group))]
 
     return finalize_dep_health(cargo_deps) + other_deps
 
@@ -2621,30 +2762,34 @@ def check_ruby_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     # Parse line-by-line: gem-name (newest X.Y.Z, installed A.B.C[, requested ~> A.B])
     _BUNDLE_LINE_RE = re.compile(
-        r'^(\S+)\s+\(newest\s+([^,]+),\s+installed\s+([^,)]+)'
+        r'^(\S+)\s+\(newest\s+([^,]+),\s+installed\s+([^,)]+)(?:, requested [^)]+)?\)$'
     )
     outdated_map: dict[str, dict] = {}
-    for line in stdout.splitlines():
-        m = _BUNDLE_LINE_RE.match(line.strip())
-        if m:
+    try:
+        for line in stdout.splitlines():
+            if not line.strip():
+                continue
+            m = _BUNDLE_LINE_RE.fullmatch(line.strip())
+            if not m or m.group(1) in outdated_map:
+                raise ValueError('invalid bundle outdated row')
             gem_name = m.group(1)
             newest = m.group(2).strip()
             installed = m.group(3).strip()
             outdated_map[gem_name] = {"installed": installed, "newest": newest}
+        if proc.returncode == 1 and not outdated_map:
+            raise ValueError('bundle outdated failed without findings')
+    except Exception as exc:
+        return _check_failed(deps, 'bundle outdated', exc, 'outdated_state')
 
     result: list[dict] = []
     for dep in deps:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
-            d['outdated_state'] = 'checked'
             info = outdated_map[name]
-            current = info["installed"]
-            latest = info["newest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # bundler has no "wanted" concept
-            d["latest_version"] = latest
-            d["severity"] = classify_severity(current, latest)
+            _version_finding(d, info['installed'], info['newest'], 'bundle outdated')
+        else:
+            mark_unchecked(d, 'bundle outdated: report does not establish declaration evaluation', 'outdated_state')
         result.append(d)
     return result
 
@@ -2670,32 +2815,31 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         )
         _validate_tool_result(proc, 'bundler-audit', (0, 1))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('results'), list):
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('results'), list):
             raise ValueError('invalid bundler-audit result')
     except Exception as exc:
         return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
-    # Build lookup: {gem_name_lower: advisory_id}
+    # Build lookup: {gem_name: advisory_id}, retaining audited-version attribution.
     vuln_map: dict[str, str] = {}
+    finding_versions: dict[str, dict[str, str]] = {}
     try:
         for entry in raw.get("results", []):
-            gem_name = entry.get("gem", {}).get("name", "")
-            advisory_id = entry.get("advisory", {}).get("id", "")
-            if gem_name and advisory_id:
-                vuln_map[gem_name.lower()] = advisory_id
+            if entry.get('type') != 'unpatched_gem':
+                raise ValueError('unsupported bundler-audit finding type')
+            gem_name = _required_text(entry.get('gem', {}), 'name')
+            version = _required_text(entry.get('gem', {}), 'version')
+            if not _tool_version(version):
+                raise ValueError('invalid bundler-audit gem version')
+            advisory_id = _required_text(entry.get('advisory', {}), 'id')
+            vuln_map[gem_name] = advisory_id
+            finding_versions.setdefault(gem_name, {})[version] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('bundler-audit failed without vulnerability findings')
     except Exception as exc:
         return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        key = d.get("name", "").lower()
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
-            d['vuln_state'] = 'checked'
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'bundler-audit', finding_versions=finding_versions)
 
 
 def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2716,8 +2860,8 @@ def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not ruby_deps:
         return other_deps
 
-    ruby_deps = check_ruby_outdated(repo_path, ruby_deps)
-    ruby_deps = check_ruby_vulns(repo_path, ruby_deps)
+    ruby_deps = [d for directory, group in _group_by_manifest_dir(repo_path, ruby_deps).items()
+                 for d in check_ruby_vulns(directory, check_ruby_outdated(directory, group))]
 
     return finalize_dep_health(ruby_deps) + other_deps
 
@@ -2729,7 +2873,7 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     """Run composer outdated --format=json and enrich composer deps with version/severity fields.
 
     If composer is not available (TOOLS["composer"] is None), returns deps unchanged.
-    Skips deps with latest-status == "up-to-date".
+    Requests all installed rows, including up-to-date packages, for explicit coverage.
     On subprocess or parse failure, marks the affected check unchecked with a reason.
     """
     composer = TOOLS.get("composer")
@@ -2738,15 +2882,15 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     try:
         proc = subprocess.run(
-            [composer, "outdated", "--format=json"],
+            [composer, "outdated", "--all", "--format=json"],
             cwd=str(repo_path),
             capture_output=True,
             text=True,
             timeout=120,
         )
-        _validate_tool_result(proc, 'composer outdated', (0, 1))
+        _validate_tool_result(proc, 'composer outdated', (0,))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('installed'), list):
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('installed'), list):
             raise ValueError('invalid composer outdated result')
     except Exception as exc:
         return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
@@ -2755,15 +2899,14 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
     outdated_map: dict[str, dict] = {}
     try:
         for entry in raw.get("installed", []):
-            status = entry.get("latest-status", "up-to-date")
-            if status == "up-to-date":
-                continue
-            name = entry.get("name", "")
-            if name:
-                outdated_map[name] = {
-                    "version": entry.get("version", ""),
-                    "latest": entry.get("latest", ""),
-                }
+            status = _required_text(entry, 'latest-status')
+            if status not in ('up-to-date', 'semver-safe-update', 'update-possible'):
+                raise ValueError('invalid composer latest-status')
+            name = _required_text(entry, 'name')
+            if name in outdated_map:
+                raise ValueError('duplicate composer outdated row')
+            outdated_map[name] = {'version': _required_text(entry, 'version'),
+                                  'latest': _required_text(entry, 'latest')}
     except Exception as exc:
         return _check_failed(deps, 'composer outdated', exc, 'outdated_state')
 
@@ -2772,17 +2915,10 @@ def check_php_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
         d = dict(dep)
         name = d.get("name", "")
         if name in outdated_map:
-            d['outdated_state'] = 'checked'
             info = outdated_map[name]
-            current = info["version"]
-            latest = info["latest"]
-            d["current_version"] = current
-            d["wanted_version"] = current  # composer has no "wanted" concept
-            d["latest_version"] = latest
-            if current and latest:
-                d["severity"] = classify_severity(current, latest)
-            else:
-                d["severity"] = "outdated"
+            _version_finding(d, info['version'], info['latest'], 'composer outdated')
+        else:
+            mark_unchecked(d, 'composer outdated: declaration absent from evaluated package rows', 'outdated_state')
         result.append(d)
     return result
 
@@ -2809,7 +2945,7 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         )
         _validate_tool_result(proc, 'composer audit', (0, 1))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('advisories'), dict):
+        if not isinstance(raw, dict) or 'error' in raw or not isinstance(raw.get('advisories'), dict):
             raise ValueError('invalid composer audit result')
     except Exception as exc:
         return _check_failed(deps, 'composer audit', exc, 'vuln_state')
@@ -2819,23 +2955,19 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     vuln_map: dict[str, str] = {}
     try:
         for pkg_name, advisories in raw.get("advisories", {}).items():
-            if advisories:
-                advisory_id = advisories[0].get("advisoryId") or advisories[0].get("cve", "")
-                if advisory_id:
-                    vuln_map[pkg_name.lower()] = advisory_id
+            if not isinstance(advisories, list) or not advisories:
+                raise ValueError('invalid composer advisory list')
+            for advisory in advisories:
+                if _required_text(advisory, 'packageName') != pkg_name:
+                    raise ValueError('composer advisory package mismatch')
+                advisory_id = _required_text(advisory, 'advisoryId')
+                vuln_map[pkg_name] = advisory_id
+        if proc.returncode == 1 and not vuln_map:
+            raise ValueError('composer audit failed without vulnerability findings')
     except Exception as exc:
         return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
-    result: list[dict] = []
-    for dep in deps:
-        d = dict(dep)
-        key = d.get("name", "").lower()
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
-            d['vuln_state'] = 'checked'
-        result.append(d)
-    return result
+    return _merge_vulnerability_report(deps, vuln_map, 'composer audit')
 
 
 def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2856,8 +2988,8 @@ def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not php_deps:
         return other_deps
 
-    php_deps = check_php_outdated(repo_path, php_deps)
-    php_deps = check_php_vulns(repo_path, php_deps)
+    php_deps = [d for directory, group in _group_by_manifest_dir(repo_path, php_deps).items()
+                for d in check_php_vulns(directory, check_php_outdated(directory, group))]
 
     return finalize_dep_health(php_deps) + other_deps
 
