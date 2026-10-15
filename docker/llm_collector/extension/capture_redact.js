@@ -5,13 +5,21 @@
 (() => {
   const REDACTED = "REDACTED";
   const MAX_VALUE_CHARS = 16384;
+  const OMITTED = "<omitted>";
+  const MAX_DEPTH = 32;
+  const MAX_VALUES = 10000;
+  const MAX_DECODING = 2;
+  const state = () => ({ visited: 0, active: new Set() });
+  function visit(s, depth) {
+    if (depth > MAX_DEPTH || ++s.visited > MAX_VALUES) throw new Error("inspection limit");
+  }
 
   // Parameter, header and form-field names whose values are credentials or
   // session or account identifiers. `at` is Google's XSRF form token; `verify`
   // carries ChatGPT's WebSocket token; `oai-did` is its device id.
   const SENSITIVE_NAME = /sid|session|token|auth|cookie|secret|passw|api[-_]?key|^key$|signature|^sig$|xsrf|csrf|credential|client-data|visitor|account[-_]?id|^oai-did$|^verify$/i;
   function isSensitiveName(name) {
-    return name.toLowerCase() === "at" || SENSITIVE_NAME.test(name);
+    return String(name).toLowerCase() === "at" || SENSITIVE_NAME.test(String(name));
   }
 
   // Token formats that can appear inside any text, plus JSON members whose name
@@ -35,11 +43,14 @@
 
   // "Name: value" lines, as in Google WebChannel's $httpHeaders URL parameter,
   // which carries Authorization and API-key headers inside the URL.
-  const HEADER_LINE = /^([\w-]+)([ \t]*:[ \t]*)(.*)$/gm;
   const HAS_HEADER_LINE = /^[\w-]+[ \t]*:/m;
-  function redactHeaderBlock(text) {
-    return text.replace(HEADER_LINE, (_, name, sep, value) =>
-      name + sep + (isSensitiveName(name) ? REDACTED : scrubText(value)));
+  function redactHeaderBlock(text, s, depth, layers) {
+    return text.split(/(\r\n|\r|\n)/).map(line => {
+      if (!line || /^(\r\n|\r|\n)$/.test(line)) return line;
+      const match = line.match(/^([\w-]+)([ \t]*:[ \t]*)(.*)$/);
+      if (!match) throw new Error("invalid header block");
+      return match[1] + match[2] + headerValue(match[1], match[3], s, depth + 1, layers);
+    }).join("");
   }
 
   function decodeComponent(raw) {
@@ -48,52 +59,163 @@
 
   // Path segments such as ChatGPT's /ws/user/user-<id>/.
   const PATH_IDS = /\b(user-)[A-Za-z0-9]{12,}/g;
+  function redactPath(pathname) {
+    try {
+      // Decode path escapes before matching identifiers, but retain unchanged spelling.
+      const original = String(pathname);
+      const decoded = decodeURIComponent(original);
+      const safe = scrubText(decoded.replace(PATH_IDS, `$1${REDACTED}`));
+      return safe === decoded ? original : safe;
+    } catch { return OMITTED; }
+  }
+
+  function walk(value, s, depth, layers) {
+    visit(s, depth);
+    if (typeof value === "string") return inspectText(value, s, depth, layers);
+    if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+    if (!value || typeof value !== "object" || s.active.has(value)) throw new Error("unsafe value");
+    s.active.add(value);
+    try {
+      if (Array.isArray(value)) return value.map(v => walk(v, s, depth + 1, layers));
+      const out = Object.create(null);
+      for (const [name, v] of Object.entries(value)) {
+        out[name] = isSensitiveName(name) ? REDACTED
+          : name.toLowerCase() === '$httpheaders' && typeof v === 'string'
+            ? redactHeaderBlock(v, s, depth + 1, layers)
+            : walk(v, s, depth + 1, layers);
+      }
+      return out;
+    } finally { s.active.delete(value); }
+  }
+
+  function inspectText(text, s, depth, layers) {
+    if (depth > MAX_DEPTH) throw new Error("inspection limit");
+    const trimmed = text.trim();
+    if (/^[{[\"]/.test(trimmed)) {
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { return OMITTED; }
+      const safe = JSON.stringify(walk(parsed, s, depth + 1, layers));
+      // Preserve whitespace and escaping when nothing needed changing.
+      return safe === JSON.stringify(parsed) ? text : safe;
+    }
+    if (/^(?:https?|wss?):\/\//i.test(trimmed) || /^(?:\/|\.\.?\/|\?)/.test(trimmed)) {
+      return urlValue(text, s, depth + 1, layers);
+    }
+    if (/%[0-9a-f]{2}/i.test(text)) {
+      if (layers >= MAX_DECODING) return OMITTED;
+      const decoded = decodeComponent(text);
+      if (decoded === null) return OMITTED;
+      const safe = inspectText(decoded, s, depth + 1, layers + 1);
+      return safe === decoded ? text : safe === OMITTED ? OMITTED : encodeURIComponent(safe);
+    }
+    return scrubText(text);
+  }
+
+  function headerValue(name, value, s, depth, layers) {
+    visit(s, depth);
+    if (isSensitiveName(name)) return REDACTED;
+    if (/^(location|content-location|referer)$/i.test(name)) return urlValue(value, s, depth + 1, layers);
+    if (/^refresh$/i.test(name)) {
+      const match = value.match(/^(\s*\d+(?:\.\d+)?\s*;\s*url\s*=\s*)(.*)$/i);
+      if (!match) return /^\s*\d+(?:\.\d+)?\s*$/.test(value) ? value : OMITTED;
+      const target = match[2].replace(/^(["'])(.*)\1$/, '$2');
+      const safe = urlValue(target, s, depth + 1, layers);
+      return safe === OMITTED ? OMITTED : match[1] + safe;
+    }
+    if (/^link$/i.test(name)) {
+      let count = 0;
+      const safe = value.replace(/<([^<>]*)>/g, (_, target) => {
+        count++;
+        const url = urlValue(target, s, depth + 1, layers);
+        if (url === OMITTED) throw new Error("invalid link");
+        return '<' + url + '>';
+      });
+      return count ? scrubText(safe) : OMITTED;
+    }
+    return inspectText(value, s, depth + 1, layers);
+  }
+
+  function decodedName(rawName) {
+    let name = rawName;
+    for (let layer = 0; layer < MAX_DECODING; layer++) {
+      const decoded = decodeComponent(name);
+      if (decoded === null) return null;
+      name = decoded;
+      if (!/%[0-9a-f]{2}/i.test(name)) return name;
+    }
+    return null;
+  }
 
   // Rebuilds the query by hand so non-sensitive values keep their original
   // encoding. The fragment is dropped; it never reaches the server.
-  function redactUrl(urlString) {
-    const u = new URL(urlString);
-    const path = u.pathname.replace(PATH_IDS, `$1${REDACTED}`);
+  function urlValue(urlString, s, depth, layers) {
+    visit(s, depth);
+    let u;
+    const relative = !/^[a-z][a-z\d+.-]*:/i.test(urlString);
+    try { u = new URL(urlString, "https://relative.invalid/"); } catch { return OMITTED; }
+    if (!/^(https?|wss?):$/.test(u.protocol)) return OMITTED;
+    const path = redactPath(relative && !urlString.startsWith('//') ? urlString.split(/[?#]/)[0] : u.pathname);
+    if (path === OMITTED) return OMITTED;
+    const prefix = relative ? (urlString.startsWith('//') ? '//' + u.host : '') : u.origin;
     const query = u.search.slice(1);
-    if (!query) return `${u.origin}${path}`;
+    if (!query) return `${prefix}${path}`;
     const parts = query.split("&").map(part => {
+      visit(s, depth + 1);
       const eq = part.indexOf("=");
       const rawName = eq < 0 ? part : part.slice(0, eq);
-      const name = decodeComponent(rawName) ?? rawName;
+      const name = decodedName(rawName);
+      if (name === null) return `${OMITTED}=${OMITTED}`;
       if (isSensitiveName(name)) return `${rawName}=${REDACTED}`;
       const value = eq < 0 ? null : decodeComponent(part.slice(eq + 1));
-      if (value && /[\r\n]/.test(value) && HAS_HEADER_LINE.test(value)) {
-        return `${rawName}=${encodeURIComponent(redactHeaderBlock(value))}`;
-      }
-      return scrubText(part);
+      if (eq < 0) return rawName;
+      if (value === null || layers >= MAX_DECODING) return `${rawName}=${encodeURIComponent(OMITTED)}`;
+      const safe = name.toLowerCase() === '$httpheaders' || (/[\r\n]/.test(value) && HAS_HEADER_LINE.test(value))
+        ? redactHeaderBlock(value, s, depth + 1, layers + 1)
+        : inspectText(value, s, depth + 1, layers + 1);
+      return safe === value ? part : `${rawName}=${encodeURIComponent(safe)}`;
     });
-    return `${u.origin}${path}?${parts.join("&")}`;
+    return `${prefix}${path}?${parts.join("&")}`;
+  }
+  function redactUrl(urlString) {
+    try { return urlValue(String(urlString), state(), 0, 0); } catch { return OMITTED; }
   }
 
   function redactHeaders(headers) {
-    return (headers || []).map(({ name, value }) => ({
-      name,
-      value: isSensitiveName(name) ? REDACTED : scrubText(value ?? "")
-    }));
+    const s = state();
+    try {
+      return (headers || []).map(({ name, value }) => ({
+        name,
+        value: headerValue(name, String(value ?? ""), s, 0, 0)
+      }));
+    } catch { return [{ name: OMITTED, value: OMITTED }]; }
+  }
+  function safeText(value) {
+    try { return inspectText(String(value), state(), 0, 0); } catch { return OMITTED; }
   }
 
   function redactForm(form) {
-    const out = {};
+    const out = Object.create(null);
+    const s = state();
     let truncated = false;
-    for (const [name, values] of Object.entries(form)) {
-      out[name] = values.map(v => {
-        if (isSensitiveName(name)) return REDACTED;
-        const c = capped(scrubText(v));
-        if (c.truncated) truncated = true;
-        return c.value;
-      });
-    }
+    try {
+      for (const [name, values] of Object.entries(form)) {
+        out[name] = values.map(v => {
+          visit(s, 0);
+          if (isSensitiveName(name)) return REDACTED;
+          const safe = name.toLowerCase() === '$httpheaders'
+            ? redactHeaderBlock(String(v), s, 0, 0) : inspectText(String(v), s, 0, 0);
+          const c = capped(safe);
+          if (c.truncated) truncated = true;
+          return c.value;
+        });
+      }
+    } catch { return { formData: Object.create(null), omitted: OMITTED }; }
     return { formData: out, ...(truncated && { truncated }) };
   }
 
   const FORM_BODY = /^[\w.%*~-]+=[^&]*(&[\w.%*~-]+=[^&]*)*$/;
   function parseForm(text) {
-    const form = {};
+    const form = Object.create(null);
     for (const [k, v] of new URLSearchParams(text)) (form[k] ||= []).push(v);
     return form;
   }
@@ -102,7 +224,7 @@
   // carry a local path, which is never recorded.
   function redactBody(requestBody) {
     if (!requestBody) return null;
-    if (requestBody.error) return { error: requestBody.error };
+    if (requestBody.error) return { error: safeText(requestBody.error) };
     if (requestBody.formData) return redactForm(requestBody.formData);
 
     const chunks = requestBody.raw || [];
@@ -117,11 +239,32 @@
     const text = new TextDecoder("utf-8").decode(joined);
 
     if (FORM_BODY.test(text)) return { bytes: total, ...redactForm(parseForm(text)) };
-    const c = capped(scrubText(text));
+    const c = capped(safeText(text));
     return { bytes: total, text: c.value, ...(c.truncated && { truncated: true }) };
   }
 
+  function sanitizeDiagnosticRecord(kind, record) {
+    if (!['capture', 'debug'].includes(kind) || !record || typeof record !== 'object' || Array.isArray(record)) return null;
+    try {
+      // Walk first: malformed/cyclic or over-budget records never reach consumers.
+      const out = walk(record, state(), 0, 0);
+      if (record.body?.formData) out.body = { ...out.body, ...redactForm(record.body.formData) };
+      for (const key of ['url', 'initiator']) if (typeof record[key] === 'string') {
+        const safe = redactUrl(record[key]);
+        // Initiator origins historically have no trailing slash.
+        out[key] = key === 'initiator' && safe === record[key] + '/' ? record[key] : safe;
+      }
+      if (typeof record.path === 'string') out.path = redactPath(record.path);
+      for (const key of ['requestHeaders', 'responseHeaders']) {
+        if (Object.hasOwn(record, key)) out[key] = redactHeaders(record[key]);
+      }
+      if (Array.isArray(record.redirects)) out.redirects = record.redirects.map(r => ({ ...walk(r, state(), 0, 0), url: redactUrl(r.url) }));
+      return out;
+    } catch { return null; }
+  }
+
   globalThis.LLMCaptureRedact = Object.freeze({
-    MAX_VALUE_CHARS, REDACTED, isSensitiveName, scrubText, redactUrl, redactHeaders, redactBody
+    MAX_VALUE_CHARS, REDACTED, isSensitiveName, scrubText, redactUrl, redactHeaders, redactBody,
+    redactPath, sanitizeDiagnosticRecord
   });
 })();

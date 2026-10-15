@@ -97,11 +97,25 @@ form field, header or JSON member whose name looks like a credential or
 session or account identifier (`SID`, `gsessionid`, `f.sid`, `at`, `verify`,
 cookies, `Authorization`, API keys, account and device ids, and similar), plus
 OAuth, `Bearer`, `SAPISIDHASH` and Google API-key tokens wherever they appear,
-including percent-encoded. Header blocks carried inside a URL parameter (Google
-WebChannel's `$httpHeaders`) are redacted header by header, and `user-<id>`
-path segments are masked. Names stay visible, so the
+including percent-encoded. Valid JSON is inspected structurally: a sensitive
+member's entire value is replaced, including objects, arrays, and scalar values.
+Nested JSON and URL strings use the same policy. Header blocks carried in
+`$httpHeaders` are recognized even when they contain only one line. `Location`,
+`Content-Location`, `Referer`, `Refresh`, and `Link` URL targets are sanitized,
+including relative targets. Unchanged query values keep their original encoding.
+`user-<id>` path segments are masked in capture and debug records before storage
+or console logging. Names stay visible, so the
 capture shows which fields were present. Prompt text in request bodies is kept;
 each body value is cut at 16 KB. Uploaded files are recorded as `<file>`.
+
+Inspection is limited to 32 structural levels, 10000 visited values, and two
+percent-decoding layers. Malformed JSON-looking content, invalid recognized
+containers, and content that cannot be fully inspected are represented as
+`<omitted>`, without retaining a raw prefix. An over-budget form keeps an empty
+`formData` map and an `omitted` marker; an uninspectable header list keeps an
+omission marker. Unsafe diagnostic records are discarded. Session records from
+older workers are sanitized before publication and rewritten to session storage;
+discarded records are counted without logging their original contents.
 
 `chrome.webRequest` cannot see response bodies or WebSocket frames, so those
 are never captured.

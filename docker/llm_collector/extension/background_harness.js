@@ -11,7 +11,7 @@ const WEB_REQUEST_EVENTS = [
 
 function storageArea(store) {
   return {
-    get(keys, cb) { cb(Object.fromEntries(keys.filter(k => k in store).map(k => [k, store[k]]))); },
+    get(keys, cb) { cb(JSON.parse(JSON.stringify(Object.fromEntries(keys.filter(k => Object.hasOwn(store, k)).map(k => [k, store[k]]))))); },
     set(obj, cb) { Object.assign(store, JSON.parse(JSON.stringify(obj))); cb && cb(); }
   };
 }
@@ -31,6 +31,7 @@ function matchPatternToRegExp(pattern) {
 // With config: true it loads a synthetic config so counting is active; fetch
 // always fails, so counts stay pending where tests can read them.
 function loadBackground({ sessionStore = {}, localStore = {}, config = false } = {}) {
+  const consoleRecords = [];
   const listeners = Object.fromEntries(WEB_REQUEST_EVENTS.map(e => [e, []]));
   let onMessage;
   const event = () => ({ addListener() {} });
@@ -50,7 +51,7 @@ function loadBackground({ sessionStore = {}, localStore = {}, config = false } =
     chrome, URL, URLSearchParams, TextDecoder, TextEncoder, Date, crypto,
     setTimeout, clearTimeout, AbortController,
     fetch: async () => { throw new TypeError("synthetic: offline"); },
-    console: { log() {} }
+    console: { log(...args) { consoleRecords.push(JSON.parse(JSON.stringify(args))); } }
   });
   context.globalThis = context;
   context.importScripts = (file) => {
@@ -67,6 +68,7 @@ function loadBackground({ sessionStore = {}, localStore = {}, config = false } =
   const counting = () => listeners.onBeforeRequest.find(l => !l.filter.urls.includes("<all_urls>"));
 
   return {
+    consoleRecords,
     // Whether the counting listener (not full capture) observes this URL.
     filterMatches(url) { return matches(counting(), url); },
     fire(eventName, details) {

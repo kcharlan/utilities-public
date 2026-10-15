@@ -143,3 +143,23 @@ test("the stored path is redacted like the URL", async () => {
   assert.equal(rec.path, "/p3/ws/user/user-REDACTED/");
   assert.ok(!JSON.stringify(rec).includes("SYNTHETIC"), "identifier reached the capture");
 });
+
+test("restored diagnostics are sanitized before publication", async () => {
+  const sessionStore = {
+    llm_capture_v1: [{ id: 'synthetic-restored', url: 'https://example.invalid/?sid=SYNTHETIC_SID',
+      path: '/example/user-SYNTHETICUSERID1234/', body: { text: '{"at":"SYNTHETIC_AT","prompt":"synthetic prompt"}' },
+      responseHeaders: [{ name: 'Content-Location', value: 'https://example.invalid/?sid=SYNTHETIC_SID' }] }, null, 'unsafe'],
+    llm_debug_v1: [{ path: '/example/user-SYNTHETICUSERID1234/', decision: 'not-allowlisted' }, null]
+  };
+  const bg = loadBackground({ sessionStore });
+  const status = await bg.status();
+  const records = await capture(bg);
+  await tick();
+  assert.equal(records.length, 1);
+  assert.equal(status.debug.length, 1);
+  assert.equal(status.captureCount, 1);
+  assert.equal(JSON.parse(records[0].body.text).prompt, 'synthetic prompt');
+  for (const source of [records, status.debug, sessionStore, bg.consoleRecords]) {
+    assert.ok(!/SYNTHETIC_(?:SID|AT)|SYNTHETICUSERID1234/.test(JSON.stringify(source)));
+  }
+});

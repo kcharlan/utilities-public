@@ -4,9 +4,16 @@
 // workers are reloaded ahead of anything this worker has recorded.
 
 (() => {
-  function createSessionBuffer({ key, maxItems, maxChars = Infinity }) {
+  function createSessionBuffer({ key, maxItems, maxChars = Infinity, normalizeRecord = rec => rec }) {
     const area = globalThis.chrome?.storage?.session;
     const items = [];
+    let omittedRecords = 0;
+    function normalize(rec) {
+      let normalized;
+      try { normalized = normalizeRecord(rec); } catch { normalized = null; }
+      if (normalized === null) omittedRecords++;
+      return normalized;
+    }
 
     function trimCount() {
       if (items.length > maxItems) items.splice(0, items.length - maxItems);
@@ -16,7 +23,7 @@
       if (!area) return resolve();
       area.get([key], v => {
         const stored = v && Array.isArray(v[key]) ? v[key] : [];
-        items.unshift(...stored);
+        items.unshift(...stored.map(normalize).filter(rec => rec !== null));
         trimCount();
         resolve();
       });
@@ -56,9 +63,12 @@
     }
 
     function push(rec) {
-      items.push(rec);
+      const normalized = normalize(rec);
+      if (normalized === null) return null;
+      items.push(normalized);
       trimCount();
       save();
+      return normalized;
     }
 
     function clear() {
@@ -66,7 +76,12 @@
       save();
     }
 
-    return { items, loaded, push, save, clear };
+    // Always rewrite restored data after inspection, before exposing it via loaded.
+    const ready = loaded.then(async () => {
+      if (area) await save();
+      if (omittedRecords) console.log('[LLM-UC] session buffer omitted records', key, omittedRecords);
+    });
+    return { items, loaded: ready, push, save, clear, get omittedRecords() { return omittedRecords; } };
   }
 
   globalThis.LLMSessionBuffer = Object.freeze({ createSessionBuffer });

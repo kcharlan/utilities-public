@@ -12,7 +12,8 @@
   const store = globalThis.LLMSessionBuffer.createSessionBuffer({
     key: "llm_capture_v1",
     maxItems: 3000,
-    maxChars: 8_000_000   // chrome.storage.session holds 10 MB in total
+    maxChars: 8_000_000,   // chrome.storage.session holds 10 MB in total
+    normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', rec)
   });
 
   // Pages whose traffic is captured, matched against the request's initiator
@@ -87,8 +88,8 @@
       frameId: d.frameId ?? null,
       body: redactBody(d.requestBody)
     };
-    open.set(d.requestId, rec);
-    store.push(rec);
+    const admitted = store.push(rec);
+    if (admitted) open.set(d.requestId, admitted);
   }), ALL, ["requestBody"]);
 
   chrome.webRequest.onSendHeaders.addListener(whenOn(d => {

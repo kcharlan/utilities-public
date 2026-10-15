@@ -3,32 +3,41 @@ const { readFileSync } = require("node:fs");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
-function loadPopupStatusRenderer() {
+function loadPopupStatusRenderer(background = null) {
+  const callbacks = {};
+  const blobs = [];
   const elements = {
     status: { dataset: {} },
     statusLabel: { textContent: "" },
     statusDetail: { textContent: "" },
     captureToggle: { textContent: "", dataset: {} }
   };
+  if (background) {
+    for (const id of ['export', 'notice']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
+    elements.captureToggle.addEventListener = (event, fn) => { callbacks['captureToggle:' + event] = fn; };
+  }
   const document = {
-    addEventListener() {},
+    addEventListener(event, fn) { callbacks[event] = fn; },
+    createElement() { return { click() {} }; },
+    body: { appendChild() {}, removeChild() {} },
     getElementById(id) {
       return elements[id] || null;
     }
   };
   const context = vm.createContext({
     Blob,
-    URL,
+    URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:synthetic'; }, revokeObjectURL() {} },
+    chrome: { runtime: { sendMessage(msg, cb) { background.send(msg).then(cb); } } },
     clearInterval,
     clearTimeout,
     console,
     document,
-    setInterval,
+    setInterval() { return 1; },
     setTimeout,
     window: { addEventListener() {} }
   });
   vm.runInContext(readFileSync(require.resolve("./popup.js"), "utf8"), context);
-  return { context, elements };
+  return { context, elements, callbacks, blobs };
 }
 
 test("renders a successful authenticated probe as connected", () => {
@@ -84,4 +93,32 @@ test("shows whether full capture is on and how much it holds", () => {
   context.renderCaptureState({ captureEnabled: false, captureCount: 0 });
   assert.equal(elements.captureToggle.textContent, "Capture: Off (0)");
   assert.equal(elements.captureToggle.dataset.enabled, "false");
+});
+
+test("export removes credentials from capture and debug", async () => {
+  const { loadBackground, tick } = require('./background_harness.js');
+  const bg = loadBackground();
+  const popup = loadPopupStatusRenderer(bg);
+  popup.callbacks.DOMContentLoaded();
+  await tick();
+  for (const enabled of [true, false]) {
+    await bg.send({ cmd: 'set_capture', enabled });
+    const url = 'https://chatgpt.com/example/user-SYNTHETICUSERID1234/?data=%7B%22token%22%3A%22SYNTHETIC_TOKEN%22%7D&note=Bearer%20SYNTHETIC%2FSECRET&%24httpHeaders=X-Server-Token%3ASYNTHETIC_TOKEN';
+    bg.fire('onBeforeRequest', { requestId: String(enabled), url, method: 'POST', initiator: 'https://chatgpt.com',
+      requestBody: { raw: [{ bytes: new TextEncoder().encode('{"at":"SYNTHETIC_AT","prompt":"synthetic prompt"}').buffer }] } });
+    bg.fire('onCompleted', { requestId: String(enabled), url, initiator: 'https://chatgpt.com',
+      responseHeaders: [{ name: 'Content-Location', value: 'https://example.invalid/?sid=SYNTHETIC_SID' }] });
+    await tick();
+    await popup.callbacks['export:click']();
+    const text = await popup.blobs.at(-1).text();
+    const data = JSON.parse(text);
+    assert.equal(data.captureEnabled, enabled);
+    assert.ok(!/SYNTHETIC_(?:AT|SID|TOKEN)|SYNTHETICUSERID1234|%2FSECRET/.test(text));
+    assert.equal(data.debug.at(-1).path, '/example/user-REDACTED/');
+    assert.equal(JSON.parse(data.capture[0].body.text).prompt, 'synthetic prompt');
+  }
+  await popup.context.refresh({ showChecking: false });
+  await popup.callbacks['captureToggle:click']();
+  await tick();
+  assert.equal((await bg.status()).captureEnabled, true);
 });

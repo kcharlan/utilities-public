@@ -47,3 +47,16 @@ test("debug records survive a service-worker restart", async () => {
   assert.deepEqual(debug.map(d => d.path), ["/v1/processSession", "/_/BardChatUi/data/batchexecute"]);
   assert.ok(!JSON.stringify(localStore).includes("processSession"), "debug log written to persistent local storage");
 });
+
+test("debug paths are sanitized before storage and console with capture on or off", async () => {
+  for (const enabled of [true, false]) {
+    const sessionStore = {};
+    const bg = loadBackground({ sessionStore });
+    await bg.send({ cmd: 'set_capture', enabled });
+    bg.request('https://chatgpt.com/example/user-SYNTHETICUSERID1234/');
+    const status = await bg.status();
+    await tick();
+    assert.equal(status.debug[0].path, '/example/user-REDACTED/');
+    for (const source of [sessionStore, bg.consoleRecords]) assert.ok(!JSON.stringify(source).includes('SYNTHETICUSERID1234'));
+  }
+});

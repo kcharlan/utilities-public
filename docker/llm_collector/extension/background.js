@@ -170,7 +170,10 @@ const PENDING_KEY   = "llm_pending_v1";   // {host: count} unsent or unacked
 // --- Debug buffer for popup ---
 // Mirrored to chrome.storage.session so it survives the worker stopping when idle.
 const DEBUG_BUF_MAX = 200;
-const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({ key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX });
+const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({
+  key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX,
+  normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('debug', rec)
+});
 function dbgPush(decision, d, u, reason) {
   const rec = {
     ts: Date.now(),
@@ -178,13 +181,13 @@ function dbgPush(decision, d, u, reason) {
     method: d.method,
     type: d.type || null,
     host: u.hostname,
-    path: u.pathname,
+    path: globalThis.LLMCaptureRedact.redactPath(u.pathname),
     rpcids: globalThis.LLMRequestDebug.rpcidsFromUrl(u),
     tabId: d.tabId ?? null,
     reason: reason || null
   };
-  debugStore.push(rec);
-  if (DEBUG) console.log("[LLM-UC]", rec);
+  const admitted = debugStore.push(rec);
+  if (DEBUG && admitted) console.log("[LLM-UC]", admitted);
 }
 
 function getConfigError() {
