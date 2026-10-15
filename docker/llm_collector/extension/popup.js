@@ -60,6 +60,15 @@ function renderCaptureState({ captureEnabled, captureCount = 0 } = {}) {
   toggle.textContent = `Capture: ${captureEnabled ? "On" : "Off"} (${captureCount})`;
 }
 
+function renderPersistenceStatus({ capturePersistence, debugPersistence } = {}) {
+  const line = $('persistenceStatus');
+  if (!line) return;
+  line.textContent = [['Capture', capturePersistence], ['Debug', debugPersistence]].map(([name, status]) =>
+    `${name} persistence: ${status?.state || 'pending'}${status?.error ? ` (${status.error})` : ''}`
+  ).join(' · ');
+  line.dataset.state = [capturePersistence, debugPersistence].some(s => s?.state === 'error') ? 'error' : 'ready';
+}
+
 function showCheckingStatus() {
   const panel = $("status");
   const label = $("statusLabel");
@@ -205,6 +214,7 @@ async function refresh({ showChecking = true } = {}){
     renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
     renderCaptureState(resp);
+    renderPersistenceStatus(resp);
   } catch (e){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
@@ -256,6 +266,9 @@ document.addEventListener("DOMContentLoaded", () => {
         client_id: resp.client_id,
         debug: resp.debug || [],
         captureEnabled: cap.captureEnabled,
+        capturePersistence: cap.capturePersistence,
+        debugPersistence: cap.debugPersistence,
+        captureDiagnostics: cap.captureDiagnostics,
         capture: cap.capture || []
       };
       const json = JSON.stringify(data, null, 2);
@@ -304,7 +317,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("captureToggle", "click", async () => {
     const turnOn = $("captureToggle")?.dataset.enabled !== "true";
     try {
-      await sendMessageWithTimeout({ cmd: "set_capture", enabled: turnOn }, 2000);
+      const result = await sendMessageWithTimeout({ cmd: "set_capture", enabled: turnOn }, 2000);
+      if (result.ok !== true) throw new Error(result.error || 'capture setting rejected');
       setNotice(`Full capture turned ${turnOn ? "on" : "off"}.`, "success");
     } catch (e) {
       setNotice(`Capture toggle failed: ${e.message}`, "error");
@@ -314,7 +328,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bind("clearCapture", "click", async () => {
     try {
-      await sendMessageWithTimeout({ cmd: "clear_capture" }, 2000);
+      const result = await sendMessageWithTimeout({ cmd: "clear_capture" }, 2000);
+      if (result.ok !== true) throw new Error(result.error || 'capture clear rejected');
       setNotice("Capture cleared.", "success");
     } catch (e) {
       setNotice(`Clear capture failed: ${e.message}`, "error");

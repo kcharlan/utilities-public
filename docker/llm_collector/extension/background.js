@@ -167,7 +167,7 @@ function passesDebounce(details, u) {
 // Mirrored to chrome.storage.session so it survives the worker stopping when idle.
 const DEBUG_BUF_MAX = 200;
 const debugStore = globalThis.LLMSessionBuffer.createSessionBuffer({
-  key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX,
+  key: "llm_debug_v1", maxItems: DEBUG_BUF_MAX, maxBytes: 256 * 1024,
   normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('debug', rec)
 });
 function dbgPush(decision, d, u, reason) {
@@ -288,8 +288,13 @@ delivery.ready.then(schedulePush);
 
 // --- Popup API (optional, keep if your popup uses it) ---
 chrome.runtime.onMessage.addListener((m, s, send) => {
+  const failure = error => send({ ok: false, error: error.message || String(error) });
+  const persistence = () => ({
+    capturePersistence: globalThis.LLMCapture.status(), debugPersistence: debugStore.status(),
+    captureDiagnostics: globalThis.LLMCapture.diagnostics()
+  });
   if (m && m.cmd === "get_status") {
-    Promise.all([channelAccounting.then(()=>delivery.status()), debugStore.loaded, globalThis.LLMCapture.ready]).then(async ([deliveryStatus]) => {
+    Promise.all([channelAccounting.then(()=>delivery.status()), debugStore.loaded, globalThis.LLMCapture.settled()]).then(async ([deliveryStatus]) => {
       const configError = getConfigError();
       const collectorStatus = configError
         ? {
@@ -304,6 +309,7 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
           });
 
       send({
+        ...persistence(),
         ...deliveryStatus,
         serverCounters: collectorStatus.serverCounters || {},
         collectorStatus,
@@ -313,7 +319,7 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
         captureCount: globalThis.LLMCapture.records().length,
         configError
       });
-    });
+    }).catch(failure);
     return true;
   } else if (m && m.cmd === "get_config_status") {
     send({ configError: getConfigError(), collectorUrl: COLLECTOR });
@@ -326,22 +332,28 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
     delivery.status().then(status => {
       if (!status.available) send({ok:false,error:status.deliveryError});
       else { delivery.push(); send({ok:true}); }
-    });
+    }).catch(failure);
     return true;
   } else if (m && m.cmd === "clear_pending") {
     delivery.clearQueued().then(result => send({ok:true,...result}), error => send({ok:false,error:error.message}));
     return true;
   } else if (m && m.cmd === "get_capture") {
-    globalThis.LLMCapture.ready.then(() => send({
+    globalThis.LLMCapture.settled().then(() => send({
+      ...persistence(),
       captureEnabled: globalThis.LLMCapture.isEnabled(),
       capture: globalThis.LLMCapture.records()
-    }));
+    })).catch(failure);
     return true;
   } else if (m && m.cmd === "set_capture") {
-    globalThis.LLMCapture.setEnabled(m.enabled).then(enabled => send({ ok: true, captureEnabled: enabled }));
+    globalThis.LLMCapture.setEnabled(m.enabled).then(enabled => send({ ok: true, captureEnabled: enabled }), failure);
     return true;
   } else if (m && m.cmd === "clear_capture") {
-    globalThis.LLMCapture.ready.then(() => { globalThis.LLMCapture.clear(); send({ ok: true }); });
+    globalThis.LLMCapture.clear().then(() => send({ ok: true, ...persistence() }), failure);
+    return true;
+  } else if (m && m.cmd === 'reload_capture') {
+    Promise.all([globalThis.LLMCapture.reload(), debugStore.reload()]).then(results => send({
+      ok: results.every(r => r.ok), ...persistence()
+    }), failure);
     return true;
   }
 });

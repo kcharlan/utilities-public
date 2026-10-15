@@ -6,6 +6,148 @@ const GEMINI = "https://gemini.google.com";
 const BACKCHANNEL = "https://geminiweb-pa.clients6.google.com/v1/processSession" +
   "?VER=8&gsessionid=SYNTHETIC_GSESSION&SID=SYNTHETIC_SID&RID=rpc&TYPE=xmlhttp&t=1";
 
+test('completion waits for restored capture in either read ordering', async () => {
+  for (const localFirst of [true, false]) {
+    const sessionControl = { deferRead: true }, localControl = { deferRead: true };
+    const bg = loadBackground({ sessionControl, localControl, sessionStore: {
+      llm_capture_v1: [{ id: 'restored', ts: 1000, url: BACKCHANNEL }]
+    } });
+    bg.fire('onSendHeaders', { requestId: 'restored', url: BACKCHANNEL, initiator: GEMINI,
+      requestHeaders: [{ name: 'Authorization', value: 'SYNTHETIC_SECRET' }] });
+    bg.fire('onCompleted', { requestId: 'restored', url: BACKCHANNEL, initiator: GEMINI, statusCode: 201, timeStamp: 1200 });
+    if (localFirst) { localControl.flushRead(); await tick(); }
+    sessionControl.flushRead(); sessionControl.flushRead();
+    if (!localFirst) localControl.flushRead();
+    localControl.flushRead();
+    const [rec] = await capture(bg);
+    assert.equal(rec.statusCode, 201);
+    assert.equal(rec.durationMs, 200);
+    assert.equal(rec.requestHeaders[0].value, 'REDACTED');
+  }
+});
+
+test('failed setting read refuses capture and explicit successful set recovers', async () => {
+  const bg = loadBackground({ localControl: { failRead: true, failKey: 'llm_capture_enabled_v1' } });
+  fullExchange(bg);
+  assert.deepEqual(await capture(bg), []);
+  assert.equal((await bg.status()).capturePersistence.state, 'error');
+  await bg.send({ cmd: 'set_capture', enabled: true });
+  fullExchange(bg);
+  assert.equal((await capture(bg)).length, 1);
+});
+
+test('reload reports a still-unread enable setting as failed', async () => {
+  const localControl = { readError: 'synthetic setting read failed', failKey: 'llm_capture_enabled_v1' };
+  const bg = loadBackground({ localControl });
+  assert.equal((await bg.send({ cmd: 'reload_capture' })).ok, false);
+  delete localControl.readError;
+  assert.equal((await bg.send({ cmd: 'reload_capture' })).ok, true);
+  assert.equal((await bg.status()).captureEnabled, true);
+});
+
+test('capture and debug read failures stay visible and clear intentionally recovers capture', async () => {
+  for (const key of ['llm_capture_v1', 'llm_debug_v1']) {
+    const sessionStore = { [key]: [{ id: 'unread', decision: 'synthetic' }] };
+    const bg = loadBackground({ sessionStore, sessionControl: { failRead: true, failKey: key } });
+    const status = await bg.status();
+    assert.equal(status[key === 'llm_capture_v1' ? 'capturePersistence' : 'debugPersistence'].state, 'error');
+    const exported = await bg.send({ cmd: 'get_capture' });
+    assert.equal(exported[key === 'llm_capture_v1' ? 'capturePersistence' : 'debugPersistence'].state, 'error');
+    if (key === 'llm_capture_v1') {
+      assert.equal((await bg.send({ cmd: 'clear_capture' })).ok, true);
+      assert.deepEqual(sessionStore[key], []);
+    }
+  }
+});
+
+test('failed record read stages sanitized content and reload merges the unread store', async () => {
+  const sessionStore = { llm_capture_v1: [{ id: 'old', url: 'https://example.invalid/?sid=SYNTHETIC_SECRET' }] };
+  const bg = loadBackground({ sessionStore, sessionControl: { failRead: true, failKey: 'llm_capture_v1' } });
+  fullExchange(bg, { id: 'new' });
+  assert.deepEqual((await capture(bg)).map(r => r.id), ['new']);
+  assert.deepEqual(sessionStore.llm_capture_v1.map(r => r.id), ['old']);
+  assert.equal((await bg.send({ cmd: 'reload_capture' })).ok, true);
+  assert.deepEqual((await capture(bg)).map(r => r.id), ['old', 'new']);
+  assert.ok(!JSON.stringify((await capture(bg))).includes('SYNTHETIC_SECRET'));
+});
+
+test('failed writes give clear and set commands error replies and recover on retry', async () => {
+  const sessionControl = {}, localControl = {};
+  const bg = loadBackground({ sessionControl, localControl });
+  await bg.status();
+  sessionControl.writeError = 'synthetic non-quota failure';
+  sessionControl.failKey = 'llm_capture_v1';
+  const reply = await bg.send({ cmd: 'clear_capture' });
+  assert.equal(reply.ok, false);
+  assert.match(reply.error, /non-quota/);
+  assert.equal((await bg.status()).capturePersistence.state, 'error');
+  delete sessionControl.writeError;
+  assert.equal((await bg.send({ cmd: 'clear_capture' })).ok, true);
+  localControl.failWrite = true;
+  localControl.failKey = 'llm_capture_enabled_v1';
+  assert.equal((await bg.send({ cmd: 'set_capture', enabled: true })).ok, false);
+  assert.equal((await bg.send({ cmd: 'set_capture', enabled: false })).ok, true);
+});
+
+test('initialization staging bounds events and content before delayed reads resolve', async () => {
+  const sessionControl = { deferRead: true };
+  const bg = loadBackground({ sessionControl });
+  for (let i = 0; i < 1300; i++) fullExchange(bg, { id: 'staged-' + i });
+  sessionControl.flushRead(); sessionControl.flushRead();
+  const status = await bg.status();
+  assert.ok(status.captureDiagnostics.droppedEvents > 0);
+  assert.equal(status.captureDiagnostics.stagedEvents, 0);
+  assert.equal(status.captureDiagnostics.stagedBytes, 0);
+  assert.ok((await capture(bg)).length <= 1000);
+});
+
+test('initialization staging has an aggregate byte bound below the event count limit', async () => {
+  const sessionControl = { deferRead: true };
+  const bg = loadBackground({ sessionControl });
+  for (let i = 0; i < 100; i++) bg.fire('onBeforeRequest', {
+    requestId: 'byte-staged-' + i, url: BACKCHANNEL, initiator: GEMINI, method: 'GET',
+    requestBody: { formData: { prompt: ['x'.repeat(16384)], at: ['SYNTHETIC_SECRET'] } }
+  });
+  sessionControl.flushRead(); sessionControl.flushRead();
+  const status = await bg.status();
+  assert.ok(status.captureDiagnostics.droppedEvents > 0);
+  const records = await capture(bg);
+  assert.ok(records.length <= 64);
+  assert.ok(!JSON.stringify(records).includes('SYNTHETIC_SECRET'));
+});
+
+test('omitted oversized URL retains safe request metadata', async () => {
+  const bg = loadBackground();
+  bg.fire('onBeforeRequest', { requestId: 'synthetic-long-url',
+    url: 'https://gemini.google.com/synthetic?note=' + 'x'.repeat(9000),
+    initiator: GEMINI, method: 'GET', type: 'xmlhttprequest' });
+  const [record] = await capture(bg);
+  assert.ok(record, 'safe metadata was lost with the oversized URL');
+  assert.equal(record.host, 'gemini.google.com');
+  assert.equal(record.method, 'GET');
+  assert.equal(record.url, '<omitted>');
+  assert.equal(record.truncated, true);
+});
+
+test('byte eviction never resurrects an old in-flight record on late completion', async () => {
+  const bg = loadBackground();
+  const base = { url: 'https://gemini.google.com/synthetic', initiator: GEMINI, method: 'GET' };
+  for (let i = 0; i < 420; i++) {
+    bg.fire('onBeforeRequest', { ...base, requestId: 'evicted-' + i,
+      requestBody: { formData: { prompt: ['synthetic '.repeat(1600)] } } });
+    await tick();
+  }
+  const before = await capture(bg);
+  assert.ok(!before.some(r => r.id === 'evicted-0'));
+  assert.ok(Buffer.byteLength(JSON.stringify(before)) <= 6 * 1024 * 1024);
+  bg.fire('onCompleted', { ...base, requestId: 'evicted-0', statusCode: 200 });
+  assert.deepEqual(await capture(bg), before);
+  await bg.send({ cmd: 'set_capture', enabled: false });
+  await bg.send({ cmd: 'clear_capture' });
+  bg.fire('onCompleted', { ...base, requestId: 'evicted-419', statusCode: 200 });
+  assert.deepEqual(await capture(bg), []);
+});
+
 function fullExchange(bg, { id = "1", url = BACKCHANNEL, initiator = GEMINI, method = "GET" } = {}) {
   const base = { requestId: id, url, initiator, tabId: 7, frameId: 0, type: "xmlhttprequest" };
   bg.fire("onBeforeRequest", { ...base, method, timeStamp: 1000 });

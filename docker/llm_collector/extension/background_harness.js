@@ -14,9 +14,9 @@ function storageArea(store, control = {}, runtime = {}) {
   function complete(kind, fn, keys = []) {
     const queue = kind === 'Read' ? reads : writes;
     const run = () => {
-      if (control['fail' + kind] && (!control.failKey || keys.includes(control.failKey))) {
+      if ((control['fail' + kind] || control[kind.toLowerCase() + 'Error']) && (!control.failKey || keys.includes(control.failKey))) {
         control['fail' + kind] = false;
-        runtime.lastError = { message: `synthetic ${kind.toLowerCase()} failure` };
+        runtime.lastError = { message: control[kind.toLowerCase() + 'Error'] || `synthetic ${kind.toLowerCase()} failure` };
         try { fn(false); } finally { delete runtime.lastError; }
       } else fn(true);
     };
@@ -26,7 +26,7 @@ function storageArea(store, control = {}, runtime = {}) {
   control.flushWrite = () => writes.shift()?.();
   return {
     get(keys, cb) { complete('Read', () => cb(JSON.parse(JSON.stringify(Object.fromEntries(keys.filter(k => Object.hasOwn(store, k)).map(k => [k, store[k]]))))), keys); },
-    set(obj, cb) { complete('Write', ok => { if (ok) Object.assign(store, JSON.parse(JSON.stringify(obj))); cb && cb(); }); }
+    set(obj, cb) { const snapshot = JSON.parse(JSON.stringify(obj)); complete('Write', ok => { if (ok) Object.assign(store, snapshot); cb && cb(); }, Object.keys(obj)); }
   };
 }
 

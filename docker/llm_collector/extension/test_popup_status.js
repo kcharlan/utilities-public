@@ -10,10 +10,11 @@ function loadPopupStatusRenderer(background = null) {
     status: { dataset: {} },
     statusLabel: { textContent: "" },
     statusDetail: { textContent: "" },
-    captureToggle: { textContent: "", dataset: {} }
+    captureToggle: { textContent: "", dataset: {} },
+    persistenceStatus: { textContent: '', dataset: {} }
   };
   if (background) {
-    for (const id of ['export', 'notice', 'reset', 'forcePush']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
+    for (const id of ['export', 'notice', 'reset', 'forcePush', 'clearCapture']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
     elements.captureToggle.addEventListener = (event, fn) => { callbacks['captureToggle:' + event] = fn; };
   }
   const document = {
@@ -52,6 +53,29 @@ test("renders a successful authenticated probe as connected", () => {
   assert.equal(elements.status.dataset.state, "connected");
   assert.equal(elements.statusLabel.textContent, "Collector connected");
   assert.match(elements.statusDetail.textContent, /24 ms/);
+});
+
+test('debug persistence error remains visible in popup and export', async () => {
+  const { loadBackground, tick } = require('./background_harness.js');
+  const bg = loadBackground({ sessionControl: { failRead: true, failKey: 'llm_debug_v1' } });
+  const popup = loadPopupStatusRenderer(bg);
+  popup.callbacks.DOMContentLoaded();
+  await tick();
+  assert.match(popup.elements.persistenceStatus.textContent, /debug.*error/i);
+  assert.match(popup.elements.persistenceStatus.textContent, /synthetic read failure/);
+  await popup.callbacks['export:click']();
+  const exported = JSON.parse(await popup.blobs[0].text());
+  assert.equal(exported.debugPersistence.state, 'error');
+  assert.ok(exported.capturePersistence);
+});
+
+test('failed capture clear and setting writes cannot show success', async () => {
+  const popup = loadPopupStatusRenderer({ send: async () => ({ ok: false, error: 'synthetic capture failure' }) });
+  popup.callbacks.DOMContentLoaded();
+  await popup.callbacks['clearCapture:click']();
+  assert.match(popup.elements.notice.textContent, /Clear capture failed: synthetic capture failure/);
+  await popup.callbacks['captureToggle:click']();
+  assert.match(popup.elements.notice.textContent, /Capture toggle failed: synthetic capture failure/);
 });
 
 test("renders authentication and network failures as errors", () => {

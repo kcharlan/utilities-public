@@ -9,6 +9,11 @@
   const MAX_DEPTH = 32;
   const MAX_VALUES = 10000;
   const MAX_DECODING = 2;
+  const byteLength = value => new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)).byteLength;
+  const MAX_STRING_BYTES = 16 * 1024;
+  const MAX_URL_HEADER_BYTES = 8 * 1024;
+  const MAX_BODY_BYTES = 64 * 1024;
+  const MAX_RECORD_BYTES = 128 * 1024;
   // Only this worker's fully inspected body objects can carry a safe prefix.
   // Session serialization cannot transfer this provenance to restored input.
   const sanitizedBodyPrefixes = new WeakMap();
@@ -41,7 +46,28 @@
   }
 
   function capped(text) {
-    return text.length > MAX_VALUE_CHARS ? { value: text.slice(0, MAX_VALUE_CHARS), truncated: true } : { value: text };
+    let value = text.slice(0, MAX_VALUE_CHARS);
+    if (byteLength(value) > MAX_STRING_BYTES) {
+      // Decode a bounded UTF-8 prefix without manufacturing half a surrogate.
+      value = new TextDecoder().decode(new TextEncoder().encode(value).slice(0, MAX_STRING_BYTES), { stream: true });
+    }
+    return { value, ...(value !== text && { truncated: true }) };
+  }
+  function boundBodyStrings(body) {
+    let truncated = false;
+    function bound(value) {
+      if (!value || typeof value !== 'object') return;
+      for (const name of Object.keys(value)) {
+        if (typeof value[name] === 'string') {
+          const c = capped(value[name]);
+          value[name] = c.value;
+          if (c.truncated) truncated = true;
+        } else bound(value[name]);
+      }
+    }
+    bound(body);
+    if (truncated) body.truncated = true;
+    return body;
   }
 
   // "Name: value" lines, as in Google WebChannel's $httpHeaders URL parameter,
@@ -66,6 +92,7 @@
     try {
       // Decode path escapes before matching identifiers, but retain unchanged spelling.
       const original = String(pathname);
+      if (byteLength(original) > MAX_URL_HEADER_BYTES) return OMITTED;
       const decoded = decodeURIComponent(original);
       const safe = scrubText(decoded.replace(PATH_IDS, `$1${REDACTED}`));
       return safe === decoded ? original : safe;
@@ -185,17 +212,25 @@
     return `${prefix}${path}?${parts.join("&")}`;
   }
   function redactUrl(urlString) {
-    try { return urlValue(String(urlString), state(), 0, 0); } catch { return OMITTED; }
+    if (byteLength(String(urlString)) > MAX_URL_HEADER_BYTES) return OMITTED;
+    try {
+      const safe = urlValue(String(urlString), state(), 0, 0);
+      return byteLength(safe) > MAX_URL_HEADER_BYTES ? OMITTED : safe;
+    } catch { return OMITTED; }
   }
 
   function redactHeaders(headers) {
     const s = state();
     try {
       return (headers || []).map(({ name, value }) => ({
-        name,
-        value: headerValue(name, String(value ?? ""), s, 0, 0)
+        name: byteLength(String(name)) > MAX_URL_HEADER_BYTES ? OMITTED : name,
+        value: byteLength(String(value ?? '')) > MAX_URL_HEADER_BYTES ? OMITTED : boundedHeaderValue(name, String(value ?? ''), s)
       }));
     } catch { return [{ name: OMITTED, value: OMITTED }]; }
+  }
+  function boundedHeaderValue(name, value, s) {
+    const safe = headerValue(name, value, s, 0, 0);
+    return byteLength(safe) > MAX_URL_HEADER_BYTES ? OMITTED : safe;
   }
   function safeText(value) {
     try { return inspectText(String(value), state(), 0, 0); } catch { return OMITTED; }
@@ -216,9 +251,11 @@
           if (c.truncated) truncated = true;
           return c.value;
         });
+        if (byteLength(out) > MAX_BODY_BYTES - 64) return { formData: Object.create(null), omitted: OMITTED, truncated: true };
       }
     } catch { return { formData: Object.create(null), omitted: OMITTED }; }
-    return { formData: out, ...(truncated && { truncated }) };
+    const body = { formData: out, ...(truncated && { truncated }) };
+    return byteLength(body) > MAX_BODY_BYTES ? { formData: Object.create(null), omitted: OMITTED, truncated: true } : body;
   }
 
   const FORM_BODY = /^[\w.%*~-]+=[^&]*(&[\w.%*~-]+=[^&]*)*$/;
@@ -232,7 +269,7 @@
   // carry a local path, which is never recorded.
   function redactBody(requestBody) {
     if (!requestBody) return null;
-    if (requestBody.error) return { error: safeText(requestBody.error) };
+    if (requestBody.error) return boundBodyStrings({ error: safeText(requestBody.error) });
     if (requestBody.formData) return redactForm(requestBody.formData);
 
     const chunks = requestBody.raw || [];
@@ -241,6 +278,7 @@
     }
     const parts = chunks.filter(c => c.bytes);
     const total = parts.reduce((n, c) => n + c.bytes.byteLength, 0);
+    if (total > 1024 * 1024) return { bytes: total, text: OMITTED, truncated: true };
     const joined = new Uint8Array(total);
     let offset = 0;
     for (const c of parts) { joined.set(new Uint8Array(c.bytes), offset); offset += c.bytes.byteLength; }
@@ -261,6 +299,7 @@
       const safePrefix = sanitizedBodyPrefixes.get(record.body);
       if (safePrefix !== undefined) out.body.text = safePrefix;
       if (record.body?.formData) out.body = { ...out.body, ...redactForm(record.body.formData) };
+      if (out.body) boundBodyStrings(out.body);
       for (const key of ['url', 'initiator']) if (typeof record[key] === 'string') {
         const safe = redactUrl(record[key]);
         // Initiator origins historically have no trailing slash.
@@ -271,12 +310,26 @@
         if (Object.hasOwn(record, key)) out[key] = redactHeaders(record[key]);
       }
       if (Array.isArray(record.redirects)) out.redirects = record.redirects.map(r => ({ ...walk(r, state(), 0, 0), url: redactUrl(r.url) }));
-      return out;
+      return boundDiagnosticRecord(out);
     } catch { return null; }
+  }
+
+  // Mutate admitted records in place: re-inspection would lose the provenance
+  // of already sanitized JSON prefixes. Late header/redirect growth uses this
+  // same reducer and can never resurrect an evicted request.
+  function boundDiagnosticRecord(rec) {
+    if (rec.body && byteLength(rec.body) > MAX_BODY_BYTES) rec.body = { omitted: OMITTED, truncated: true };
+    if (byteLength(rec) <= MAX_RECORD_BYTES) return rec;
+    if (rec.body) rec.body = { omitted: OMITTED, truncated: true };
+    rec.truncated = true;
+    for (const field of ['redirects', 'requestHeaders', 'responseHeaders']) {
+      while (rec[field]?.length && byteLength(rec) > MAX_RECORD_BYTES) rec[field].shift();
+    }
+    return byteLength(rec) > MAX_RECORD_BYTES ? null : rec;
   }
 
   globalThis.LLMCaptureRedact = Object.freeze({
     MAX_VALUE_CHARS, REDACTED, isSensitiveName, scrubText, redactUrl, redactHeaders, redactBody,
-    redactPath, sanitizeDiagnosticRecord
+    redactPath, sanitizeDiagnosticRecord, boundDiagnosticRecord
   });
 })();

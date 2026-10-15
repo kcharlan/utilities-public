@@ -12,8 +12,9 @@
   const store = globalThis.LLMSessionBuffer.createSessionBuffer({
     key: "llm_capture_v1",
     maxItems: 3000,
-    maxChars: 8_000_000,   // chrome.storage.session holds 10 MB in total
-    normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', rec)
+    maxBytes: 6 * 1024 * 1024,
+    normalizeRecord: rec => globalThis.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', rec),
+    reduceRecord: globalThis.LLMCaptureRedact.boundDiagnosticRecord
   });
 
   // Pages whose traffic is captured, matched against the request's initiator
@@ -33,18 +34,42 @@
     return !!host && LLM_PAGE_HOSTS.some(p => globalThis.matchHostPattern(host, p));
   }
 
-  let enabled = true;
-  const ready = new Promise(resolve => {
-    chrome.storage.local.get([ENABLED_KEY], v => {
-      if (v && typeof v[ENABLED_KEY] === "boolean") enabled = v[ENABLED_KEY];
-      resolve();
+  let enabled = false, settingError = null;
+  function settingOperation(method, arg) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local[method](arg, value => {
+          const error = chrome.runtime.lastError;
+          if (error) reject(new Error(error.message || 'Capture setting failed'));
+          else resolve(value);
+        });
+      } catch (error) { reject(error); }
     });
-  });
+  }
+  async function readSetting() {
+    try {
+      const value = await settingOperation('get', [ENABLED_KEY]);
+      enabled = typeof value?.[ENABLED_KEY] === 'boolean' ? value[ENABLED_KEY] : true;
+      settingError = null;
+      return { ok: true, error: null };
+    } catch (error) {
+      enabled = false;
+      settingError = error.message;
+      return { ok: false, error: error.message };
+    }
+  }
+  const ready = Promise.all([readSetting(), store.loaded]).then(results => ({
+    ok: results.every(r => r.ok), error: results.find(r => !r.ok)?.error || null
+  }));
+  let queue = ready;
+  const serialize = fn => {
+    const result = queue.then(fn);
+    queue = result.catch(() => {});
+    return result;
+  };
 
-  // requestId -> record; records from before a worker restart are found by scan.
-  const open = new Map();
+  // Scan retained records, including restored ones, without a second owner.
   function recordFor(requestId) {
-    if (open.has(requestId)) return open.get(requestId);
     for (let i = store.items.length - 1; i >= 0; i--) {
       if (store.items[i].id === requestId) return store.items[i];
     }
@@ -55,16 +80,49 @@
     if (!rec) return;
     Object.assign(rec, fields);
     if (d.timeStamp && rec.ts) rec.durationMs = Math.round(d.timeStamp - rec.ts);
-    open.delete(d.requestId);
     store.save();
   }
 
-  // Listener work waits for the on/off setting; .then keeps event order.
+  let stagedEvents = 0, stagedBytes = 0, droppedEvents = 0;
+  const eventBytes = d => new TextEncoder().encode(JSON.stringify(d)).byteLength;
+  function snapshot(d) {
+    // Do not retain raw request bodies or mutable Chrome event objects while
+    // initialization/control work waits. Inspect content before staging it.
+    const safeInitiator = d.initiator ? redactUrl(d.initiator) : null;
+    const url = redactUrl(d.url);
+    let parsed = null;
+    try { parsed = new URL(url); } catch {}
+    return globalThis.LLMCaptureRedact.boundDiagnosticRecord({
+      requestId: String(d.requestId), timeStamp: d.timeStamp, method: d.method,
+      type: d.type, url, host: hostOf(d.url), path: parsed?.pathname || '<omitted>',
+      rpcids: parsed ? rpcidsFromUrl(parsed) : null,
+      ...(url === '<omitted>' && { truncated: true }),
+      initiator: safeInitiator === d.initiator + '/' ? d.initiator : safeInitiator,
+      tabId: d.tabId, frameId: d.frameId,
+      body: d.requestBody ? redactBody(d.requestBody) : null,
+      requestHeaders: d.requestHeaders ? redactHeaders(d.requestHeaders) : undefined,
+      responseHeaders: d.responseHeaders ? redactHeaders(d.responseHeaders) : undefined,
+      statusCode: d.statusCode, statusLine: d.statusLine ? globalThis.LLMCaptureRedact.scrubText(d.statusLine).slice(0, 8192) : undefined,
+      fromCache: d.fromCache, ip: d.ip,
+      redirectUrl: d.redirectUrl ? redactUrl(d.redirectUrl) : undefined,
+      error: d.error ? globalThis.LLMCaptureRedact.scrubText(d.error).slice(0, 8192) : undefined
+    });
+  }
   function whenOn(fn) {
     return d => {
-      ready.then(() => {
-        if (!enabled || !isFromLlmPage(d)) return;
-        try { fn(d); } catch (e) { console.log("[LLM-UC] capture error", e); }
+      if (!isFromLlmPage(d)) return;
+      const safe = snapshot(d);
+      if (!safe) { droppedEvents++; return; }
+      const size = eventBytes(safe);
+      if (stagedEvents >= 1000 || stagedBytes + size > 1024 * 1024) {
+        droppedEvents++;
+        return;
+      }
+      stagedEvents++; stagedBytes += size;
+      serialize(() => {
+        stagedEvents--; stagedBytes -= size;
+        if (!enabled || settingError) return;
+        try { fn(safe); } catch { console.log('[LLM-UC] capture event omitted'); }
       });
     };
   }
@@ -72,30 +130,28 @@
   const ALL = { urls: ["<all_urls>"] };
 
   chrome.webRequest.onBeforeRequest.addListener(whenOn(d => {
-    const u = new URL(d.url);
-    const url = redactUrl(d.url);
     const rec = {
       id: d.requestId,
       ts: d.timeStamp ?? Date.now(),
       method: d.method,
       type: d.type || null,
-      url,
-      host: u.hostname,
-      path: new URL(url).pathname,
-      rpcids: rpcidsFromUrl(u),
+      url: d.url,
+      host: d.host,
+      path: d.path,
+      rpcids: d.rpcids,
+      ...(d.truncated && { truncated: true }),
       initiator: d.initiator || null,
       tabId: d.tabId ?? null,
       frameId: d.frameId ?? null,
-      body: redactBody(d.requestBody)
+      body: d.body
     };
-    const admitted = store.push(rec);
-    if (admitted) open.set(d.requestId, admitted);
+    store.push(rec);
   }), ALL, ["requestBody"]);
 
   chrome.webRequest.onSendHeaders.addListener(whenOn(d => {
     const rec = recordFor(d.requestId);
     if (!rec) return;
-    rec.requestHeaders = redactHeaders(d.requestHeaders);
+    rec.requestHeaders = d.requestHeaders;
     store.save();
   }), ALL, ["requestHeaders"]);
 
@@ -111,23 +167,37 @@
     statusLine: d.statusLine || null,
     fromCache: d.fromCache ?? null,
     ip: d.ip || null,
-    responseHeaders: redactHeaders(d.responseHeaders)
+    responseHeaders: d.responseHeaders
   })), ALL, ["responseHeaders"]);
 
   chrome.webRequest.onErrorOccurred.addListener(whenOn(d => finish(d, { error: d.error || "unknown" })), ALL, []);
 
   async function setEnabled(value) {
-    await ready;
-    enabled = !!value;
-    await new Promise(r => chrome.storage.local.set({ [ENABLED_KEY]: enabled }, r));
-    return enabled;
+    return serialize(async () => {
+      try {
+        await settingOperation('set', { [ENABLED_KEY]: !!value });
+        enabled = !!value;
+        settingError = null;
+        return enabled;
+      } catch (error) { settingError = error.message; enabled = false; throw error; }
+    });
   }
 
   globalThis.LLMCapture = Object.freeze({
-    ready: Promise.all([ready, store.loaded]),
+    ready,
     isEnabled: () => enabled,
     setEnabled,
     records: () => store.items,
-    clear() { open.clear(); store.clear(); }
+    settled: () => queue,
+    status() {
+      return settingError ? { state: 'error', error: settingError } : store.status();
+    },
+    diagnostics: () => ({ stagedEvents, stagedBytes, droppedEvents }),
+    reload: () => serialize(async () => {
+      const setting = settingError ? await readSetting() : { ok: true, error: null };
+      const records = await store.reload();
+      return setting.ok ? records : setting;
+    }),
+    clear: () => serialize(() => store.clear())
   });
 })();

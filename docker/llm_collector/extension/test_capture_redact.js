@@ -3,6 +3,54 @@ const { readFileSync } = require("node:fs");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
+test('aggregate form, Unicode body and raw inspection are bounded before retention', () => {
+  const r = context.LLMCaptureRedact;
+  const form = Object.fromEntries(Array.from({ length: 700 }, (_, i) => ['synthetic' + i, ['x'.repeat(16384)]]));
+  assert.ok(Buffer.byteLength(JSON.stringify(r.redactBody({ formData: form }))) <= 65536);
+  const body = r.redactBody({ raw: [{ bytes: new TextEncoder().encode('界'.repeat(20000)).buffer }] });
+  assert.ok(Buffer.byteLength(body.text) <= 16384);
+  const raw = r.redactBody({ raw: [{ bytes: new ArrayBuffer(1048577) }] });
+  assert.equal(raw.text, '<omitted>');
+  assert.equal(raw.truncated, true);
+  assert.equal(r.redactUrl('https://example.invalid/?note=' + 'x'.repeat(9000)), '<omitted>');
+  assert.equal(r.redactHeaders([{ name: 'X-Synthetic', value: 'x'.repeat(9000) }])[0].value, '<omitted>');
+});
+
+test('restored body strings and debug paths obey byte budgets', () => {
+  const r = context.LLMCaptureRedact;
+  const safe = r.sanitizeDiagnosticRecord('capture', { body: { text: '界'.repeat(15000) } });
+  assert.ok(Buffer.byteLength(safe.body.text) <= 16384);
+  assert.equal(safe.body.truncated, true);
+  assert.equal(r.redactPath('/' + '界'.repeat(3000)), '<omitted>');
+  const error = r.redactBody({ error: '界'.repeat(10000) });
+  assert.ok(Buffer.byteLength(error.error) <= 16384);
+  const restored = r.sanitizeDiagnosticRecord('capture', { body: { syntheticNested: { value: '界'.repeat(10000) } } });
+  assert.ok(Buffer.byteLength(restored.body.syntheticNested.value) <= 16384);
+  assert.equal(restored.body.truncated, true);
+});
+
+test('redaction expansion cannot exceed URL and header string budgets', () => {
+  const r = context.LLMCaptureRedact;
+  assert.equal(r.redactUrl('https://example.invalid/?' + 'sid=a&'.repeat(1000)), '<omitted>');
+  assert.equal(r.redactHeaders([{ name: 'Referer', value: 'https://example.invalid/?' + 'sid=a&'.repeat(1000) }])[0].value, '<omitted>');
+});
+
+test('restored and growing records shed body then oldest detail within 128 KiB', () => {
+  const r = context.LLMCaptureRedact;
+  const source = { id: 'synthetic-large', body: { text: 'synthetic body' },
+    responseHeaders: Array.from({ length: 30 }, (_, i) => ({ name: 'X-Synthetic-' + i, value: 'x'.repeat(8000) })) };
+  const safe = r.sanitizeDiagnosticRecord('capture', source);
+  assert.ok(Buffer.byteLength(JSON.stringify(safe)) <= 131072);
+  assert.equal(safe.body.omitted, '<omitted>');
+  assert.equal(safe.truncated, true);
+  assert.notEqual(safe.responseHeaders[0].name, 'X-Synthetic-0');
+  assert.equal(safe.responseHeaders.at(-1).name, 'X-Synthetic-29');
+  safe.responseHeaders.push(...Array.from({ length: 30 }, () => ({ name: 'X-Late', value: 'x'.repeat(8000) })));
+  r.boundDiagnosticRecord(safe);
+  assert.ok(Buffer.byteLength(JSON.stringify(safe)) <= 131072);
+  assert.equal(r.sanitizeDiagnosticRecord('capture', { id: 'x'.repeat(140000) }), null);
+});
+
 const context = vm.createContext({ URL, URLSearchParams, TextDecoder, TextEncoder });
 vm.runInContext(readFileSync(require.resolve("./capture_redact.js"), "utf8"), context);
 const { redactUrl, redactHeaders, redactBody, scrubText, MAX_VALUE_CHARS } = context.LLMCaptureRedact;

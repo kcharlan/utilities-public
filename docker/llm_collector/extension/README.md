@@ -185,9 +185,41 @@ are never captured.
 
 The capture is on by default. Use **Capture: On/Off** in the popup to switch it
 (the choice is kept), and **Clear Capture** to start a clean test. It holds the
-newest 3000 requests within about 8 MB in `chrome.storage.session`: it survives
-the service worker stopping, is cleared when the browser quits, and is never
-sent to the collector. **Export JSON** includes it under `capture`.
+newest 3000 requests within a 6 MiB serialized UTF-8 budget. Debug holds at most
+200 decisions within 256 KiB. Both use `chrome.storage.session`: they survive
+the service worker stopping, are cleared when the browser quits, and are never
+sent to the collector. **Export JSON** includes records and each store's
+`capturePersistence` / `debugPersistence` status. A persistent popup line shows
+whether each store is ready, pending, or in error.
+
+Capture records are limited to 128 KiB, bodies to 64 KiB, body strings to 16 KiB
+(and 16384 characters), and URL/header strings to 8 KiB. Raw bodies over 1 MiB
+are omitted before joining or decoding. Content is sanitized before reduction.
+Oversized forms omit their content; oversized records omit bodies and then
+oldest redirect/header detail, retaining truncation indicators and safe
+metadata. Records whose metadata cannot fit are dropped. Restoration, new
+records, and late lifecycle updates all respect these limits. Evicted requests
+cannot return through late completion events; retained records are their only
+long-lived owner.
+
+Listeners register immediately and queue sanitized lifecycle events until both
+record and enable-setting initialization settle. Waiting work is bounded to
+1000 events and 1 MiB; additional events increment `captureDiagnostics.droppedEvents`
+without retaining content. A failed enable-setting read refuses capture until
+the setting can be read or explicitly saved successfully. A failed session read
+allows bounded sanitized memory staging but never overwrites unread records.
+The `reload_capture` runtime command retries failed reads and merges restored
+records before staged records; it also retries failed writes. **Clear Capture**
+intentionally replaces only the capture key and reports success after its empty
+write completes. A failed clear reports failure and can be retried.
+
+Serialized budgets differ from Chrome's session-memory accounting. Quota
+callback errors evict the oldest half and retry at most three times, including
+an empty store. Other failures, or exhausted quota retries, leave bounded memory
+records and a visible persistence error. A later successful write clears that
+error. Writes are serialized by generation, so an obsolete retry cannot replace
+a newer change or clear. Diagnostics failures remain separate from durable
+prompt-count accounting.
 
 ## Validation
 

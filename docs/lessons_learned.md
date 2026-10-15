@@ -1,5 +1,25 @@
 # Lessons learned
 
+## 2026-10-15: Treat diagnostic restoration and persistence as recoverable states
+
+In `docker/llm_collector/extension`, waiting only for the enable setting let
+completion events miss records whose session read was still pending. Register
+listeners synchronously, sanitize bounded staging immediately, and serialize
+events and controls after both initialization results settle. A failed read
+means storage is unread, not empty: merge bounded staged records after reload,
+or intentionally replace the owned key through a successful clear.
+
+Session callback completion does not imply persistence success. Read
+`chrome.runtime.lastError` inside each callback, keep failures observable in
+status/export, and publish clear success only after the latest empty write.
+Use generations so obsolete writes/retries cannot restore cleared content.
+Bound count, serialized UTF-8 bytes, individual records and bodies separately;
+Chrome's actual memory quota needs its own browser measurement. Evict even an
+oversized singleton and remove additional owners of evicted in-flight records.
+Preserve live redaction provenance rather than reparsing sanitized JSON prefixes
+during every retention pass. Test Unicode, late growth, unread stores, failed
+callbacks, deferred clear, and worker stop/wake with a fresh synthetic profile.
+
 ## 2026-10-15: Commit transport history with prompt accounting
 
 In `docker/llm_collector/extension`, counting each Gemini WebChannel POST counts
