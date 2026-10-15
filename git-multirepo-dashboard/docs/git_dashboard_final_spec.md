@@ -271,7 +271,7 @@ The Dependencies tab fetches detail metadata and application status on mount and
 
 JSON downloads have `{format: "git-fleet-dependency-report", format_version: 2, generated_at, git_fleet_version, repo: {id, name}, missing_tools, summary, scope, manifests, groups}`. Only this downloaded envelope is versioned; the dependency API remains a grouped list. Scope documents Python declaration-evaluation limits, direct-reference exclusions, runtime discovery limits, PEP 723 prelude handling and dependency-group boundaries.
 
-Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp (or Not scanned), coverage, missing tools and Scope. Attention Required, Not Checked and All Dependencies tables retain declared specifications, version displays, both check states, headline statuses, sources and reasons. Manifests Scanned lists inventory paths, kinds, declaration counts and errors. Empty inventories and declaration sets remain exportable.
+Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp (or No declaration check timestamp available), coverage, missing tools and Scope. Attention Required, Not Checked and All Dependencies tables retain declared specifications, version displays, both check states, headline statuses, sources and reasons. Manifests Scanned lists inventory paths, kinds, declaration counts and errors. Empty inventories and declaration sets remain exportable.
 
 ## Testing contracts
 

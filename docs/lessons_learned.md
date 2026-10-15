@@ -203,3 +203,8 @@ Refresh metadata after a scan before publishing the report; stale parent props c
 otherwise pair fresh rows with old missing-tool and inventory information. Browser
 regressions should inspect real downloaded contents and use one shared synthetic
 fixture to compute API, UI and report expectations.
+
+A declaration timestamp is not a scan timestamp. An inventory-only scan can have
+no declaration timestamps; label that absence explicitly instead of claiming the
+repository was not scanned. Never substitute a quick-scan time for dependency
+evaluation history.

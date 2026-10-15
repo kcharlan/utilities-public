@@ -5193,7 +5193,7 @@ HTML_TEMPLATE = """\
           '|---|---|---|---|---|---|---|---|---|\\n' + rows.map(p => '| ' + [p.name, p.declared_spec, currentText(p), p.latest_version,
             p.outdated_state, p.vuln_state, statusText(p), p.source_path, p.check_note].map(cell).join(' | ') + ' |\\n').join('');
         let md = '# Dependency Report\\n\\nRepository: ' + cell(data.repo.name) + ' (' + cell(repoId) + ')\\n\\n' +
-          'Generated: ' + data.generated_at + '\\n\\nGit Fleet version: ' + data.git_fleet_version + '\\n\\nNewest scan: ' + (newestScan || 'Not scanned') + '\\n\\n' +
+          'Generated: ' + data.generated_at + '\\n\\nGit Fleet version: ' + data.git_fleet_version + '\\n\\nNewest declaration check: ' + (newestScan || 'No declaration check timestamp available') + '\\n\\n' +
           'Declarations: ' + summary.declarations + '; Manifests: ' + summary.manifests + '; Fully checked: ' + summary.fullyChecked + '; Not checked: ' + summary.unchecked + '\\n\\n' +
           'Vulnerable: ' + summary.vulnerable + '; Major: ' + summary.major + '; Outdated: ' + summary.outdated + '; Up to date: ' + summary.ok + '\\n\\n' +
           'Coverage: ' + (incomplete ? 'Incomplete' : 'Complete') + '\\n\\nMissing tools: ' + (missingTools.map(t => cell(t.tool) + ' — ' + cell(t.description)).join('; ') || 'None') + '\\n\\n' +
@@ -5235,7 +5235,7 @@ HTML_TEMPLATE = """\
           <h4>{group.label || group.manager}</h4>{dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}
         </div>)}{!packages.length && <div>No dependencies detected</div>}</section>
         <section><h3>Manifests Scanned</h3>{manifests.map(m => <div key={m.path}>{m.path} — {m.kind} — {m.dependencies} declarations{m.error ? ' — ' + m.error : ''}</div>)}</section>
-        <div style={{marginTop: '12px', color: 'var(--text-muted)'}}>Last checked: {newestScan ? timeAgo(newestScan) : 'Not scanned'} · Git Fleet {appStatus?.version}</div>
+        <div style={{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: {newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet {appStatus?.version}</div>
       </div>;
     }
 

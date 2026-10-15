@@ -310,11 +310,16 @@ def test_empty_inventory_remains_exportable_and_incomplete(page, seeded_coverage
     expect(page.get_by_test_id('dep-coverage')).to_contain_text('Incomplete coverage')
     expect(page.get_by_test_id('dep-coverage')).to_contain_text(f"{len(seeded_coverage['manifests'])} manifests")
     expect(page.get_by_text('No dependencies detected', exact=True)).to_be_visible()
+    expect(page.get_by_text('Newest declaration check: No declaration check timestamp available', exact=False)).to_be_visible()
+    expect(page.get_by_text('Last checked: Not scanned', exact=False)).to_have_count(0)
     report = json.loads(_download_text(page, 'Export JSON'))
     assert report['summary']['declarations'] == 0
     assert report['summary']['manifests'] == len(seeded_coverage['manifests'])
     assert report['manifests'] == seeded_coverage['manifests']
-    assert 'Synthetic read failure' in _download_text(page, 'Export MD')
+    md = _download_text(page, 'Export MD')
+    assert 'Synthetic read failure' in md
+    assert 'Newest declaration check: No declaration check timestamp available' in md
+    assert 'Newest scan: Not scanned' not in md
 
 
 def test_clean_banner_requires_both_checks(page, seeded_coverage):
