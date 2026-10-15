@@ -1,5 +1,15 @@
 # Lessons learned
 
+- Source filtering must cover direct subagent reader hashes as well as the
+  session list and descendant collection. Apply one provider predicate, treat
+  legacy rows as Codex, and remove opposite-provider reader selections while
+  retaining every other hash filter. Claude orphan rows still carry subagent
+  identity and must obey subagent action-support restrictions.
+- Keep known mixed-provider costs in the KPI value and unavailable-provider
+  detail in compact text; a long availability sentence at value size distorts
+  every card in the grid. Contain calendar scrolling in CSS before resize-time
+  JavaScript fits cells, and keep sparse hour labels on one line at phone width.
+
 - Claude subagent tool IDs belong to the actual parent agent transcript,
   rather than always the root session. Share graph validation and ordering
   with Codex while keeping record access and orphan diagnostics provider

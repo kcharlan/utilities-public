@@ -10,6 +10,13 @@ request; unavailable Codex rates do not hide Claude estimates. The canonical sou
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 
+The page's All/Codex/Claude switch preserves filters and uses green/blue
+provider marks, split overview bars and metric-based calendar colors.
+Claude continuation commands are offered only for supported primary CLI
+origins with known cwd/config root; copying never runs the CLI. See
+[runtime behavior](docs/runtime.md) for source absence, cost availability
+and reader-action details.
+
 Build prerequisites are Apple's clang/Command Line Tools, make, Perl,
 ripgrep (for the development sort guard), and Homebrew SQLite. Install
 prerequisites deliberately; the build does not install dependencies:

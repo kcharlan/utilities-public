@@ -1,5 +1,31 @@
 # Runtime behavior
 
+The offline page defaults to all sources. Its All/Codex/Claude segmented
+switch persists as `src=all|codex|claude` in the URL hash and retains the
+other filters. Switching away from a selected reader's provider closes that
+reader. Missing legacy provider fields mean Codex. Source filtering applies
+to overview totals, session lists, descendants and direct subagent links.
+The snapshot log count always includes both sources, regardless of the switch.
+
+Codex uses green and Claude uses blue. In All, KPI share rules and workspace
+bars split by provider; calendar cells use the provider with the greater
+selected metric (ties use Codex). Model, recent and list rows carry provider
+marks. Costs retain each provider's independent availability; a known subtotal
+also names unavailable providers. Absent/disabled sources remain selectable
+with a no-data label and explain the checked paths or `--no-claude` flag.
+The All footer includes absent-source details, Claude unknown-record diagnostics
+and the start of Claude token data when later than the calendar's start.
+
+Claude readers keep Copy session ID and never offer Codex links. Copy Continue
+in CLI requires the lifecycle and subagent support flags, an absolute cwd and
+established primary CLI config-root provenance. Deleted and history-only rows
+cannot continue or copy a log path. Desktop/Cowork and cswap origins without
+CLI provenance cannot continue. The copied command changes to cwd and sets
+`CLAUDE_CONFIG_DIR` before `claude --resume`; every substituted value uses
+POSIX shell quoting. Copying never runs the CLI. The command follows the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference) and
+[settings reference](https://code.claude.com/docs/en/settings).
+
 `--codex-home PATH` selects readable Codex data (default `~/.codex`).
 Claude is enabled by default. `--claude-home PATH` overrides
 `CLAUDE_CONFIG_DIR`; a nonempty value is one literal directory, resolved

@@ -34,8 +34,11 @@ record aliases are indexed separately, including collision-skipped records.
 Codex composition explicitly skips Claude records and initializes their
 empty usage summaries. The schema stays 1 with additive provider/source
 fields. Rendering still precedes Codex cache commit; unopened caches are
-safe to destroy. Claude graph metadata, persistent retention,
-source switching and history-session creation follow in later work.
+safe to destroy. Claude graph metadata and persistent retention are implemented;
+the page applies shared provider matching to overview, list, descendant and
+direct-reader paths. Source-specific aggregates reuse the same computations
+for KPI/workspace shares and calendar dominance. History-session creation
+follows separately.
 
 Claude raw rows capture priced nanocosts before winner reconciliation.
 After Codex composition/pricing, `claude_compose` authors Claude units and
