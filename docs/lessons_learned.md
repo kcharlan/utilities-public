@@ -140,3 +140,13 @@ from an auditor that reads the original mixed manifest; filter the actual audit
 input too. Regress the full parse-to-persistence path and inspect synthetic
 auditor input, because parser-only tests miss later identity normalization and
 whole-manifest external work.
+
+### Git Fleet: declaration sources and discovery inventory
+
+Manifest priority can silently discard independent Python declarations. Discover
+pyproject, requirements variants and leading PEP 723 metadata together, and keep
+resolved include-file provenance separate from the including file. A file inventory
+must record attempted reads, empty files and failures independently of dependency
+rows. Adjacent locks supply versions only; ambiguous versions must block checker
+entry before any floating resolution can run. PEP 723 extraction needs its greedy
+closing-line grammar, not a first-terminator scan or fixed prelude byte cutoff.

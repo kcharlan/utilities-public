@@ -135,21 +135,13 @@ def test_detect_dep_files_empty_dir():
     assert result == []
 
 
-def test_detect_dep_files_priority_order_python():
-    """Test 10: pyproject.toml has higher priority than requirements.txt for same runtime"""
+def test_detect_dep_files_returns_pyproject_and_requirements():
+    """Coexisting Python manifests must both be discovered."""
     root = make_tmpdir({
-        "pyproject.toml": "[project]\nname = 'mypkg'\n",
-        "requirements.txt": "flask==2.3.0\n",
+        'pyproject.toml': '[project]\nname="synthetic"\n',
+        'requirements.txt': 'synthetic-alpha==1.0\n',
     })
-    result = detect_dep_files(root)
-    # Only one python file returned, and it must be pyproject.toml
-    python_results = [r for r in result if r["runtime"] == "python"]
-    assert len(python_results) == 1
-    assert python_results[0]["file"] == "pyproject.toml"
-    # pyproject.toml must appear before requirements.txt (if somehow both appeared)
-    files = [r["file"] for r in result]
-    assert "pyproject.toml" in files
-    assert "requirements.txt" not in files
+    assert {r['file'] for r in detect_dep_files(root)} == {'pyproject.toml', 'requirements.txt'}
 
 
 # ── parse_requirements_txt tests ──────────────────────────────────────────────
@@ -617,7 +609,8 @@ def test_pep508_extras_markers_wildcards_and_continuations(tmp_path):
     assert rows[2]['version'] is None
     (tmp_path / 'pyproject.toml').write_text('[project]\ndependencies = [\'Synthetic_Widget[extra]==1.2.3 ; python_version < "0"\', "synthetic-wild==1.2.*"]\n')
     pep_rows = parse_pyproject_toml(tmp_path / 'pyproject.toml')
-    assert pep_rows == rows[:2]
+    # Requirements rows now carry the physically declaring file.
+    assert pep_rows == [{k: v for k, v in row.items() if k != 'source_file'} for row in rows[:2]]
 
 
 def test_poetry_declaration_text_is_not_a_mapping(tmp_path):
@@ -626,3 +619,146 @@ def test_poetry_declaration_text_is_not_a_mapping(tmp_path):
     assert row['version'] == '^1.2'
     assert isinstance(row['declared_spec'], str)
     assert '^1.2' in row['declared_spec']
+
+# PEP 723 fixture grammar: https://peps.python.org/pep-0723/#specification
+# Examples adapt its script and embedded-C# examples with synthetic declarations.
+def _script(dependencies='["synthetic-alpha==1.0"]'):
+    return '# /// script\n# dependencies = ' + dependencies + '\n# ///\n'
+
+
+def test_python_manifest_kinds_coexist(tmp_path):
+    (tmp_path / 'pyproject.toml').write_text('[project]\ndependencies=["synthetic-alpha"]')
+    (tmp_path / 'requirements-dev.txt').write_text('synthetic-beta')
+    (tmp_path / 'tool.py').write_text(_script())
+    assert {d['kind'] for d in detect_dep_files(tmp_path)} == {'pyproject', 'requirements', 'pep723'}
+    assert len(parse_deps_for_repo(tmp_path)) == 3
+
+
+def test_pep723_suffix_and_shebang_discovery(tmp_path):
+    for filename, prefix in [('tool.py', ''), ('tool.pyw', ''), ('runner', '#!/usr/bin/env python3\n')]:
+        (tmp_path / filename).write_text(prefix + _script())
+    (tmp_path / 'ordinary').write_text(_script())
+    assert {d['file'] for d in detect_dep_files(tmp_path)} == {'tool.py', 'tool.pyw', 'runner'}
+
+
+def test_pep723_lookalike_after_code_is_ignored(tmp_path):
+    (tmp_path / 'tool.py').write_text('print("synthetic")\n' + _script())
+    manifests = []
+    assert parse_deps_for_repo(tmp_path, manifests_out=manifests) == []
+    assert manifests == []
+
+
+def test_pep723_empty_dependencies_remain_in_inventory(tmp_path):
+    (tmp_path / 'tool.py').write_text(_script('[]'))
+    manifests = []
+    assert parse_deps_for_repo(tmp_path, manifests_out=manifests) == []
+    assert manifests == [dict(path='tool.py', kind='pep723', dependencies=0, error=None)]
+
+
+def test_pep723_duplicate_script_blocks_report_error(tmp_path):
+    (tmp_path / 'tool.py').write_text(_script() + '\n' + _script())
+    manifests = []
+    assert parse_deps_for_repo(tmp_path, manifests_out=manifests) == []
+    assert 'Multiple script blocks' in manifests[0]['error']
+
+
+def test_pep723_embedded_terminator_obeys_pep_grammar(tmp_path):
+    content = _script().replace('# ///\n', '# [tool.synthetic]\n# text = """\n# /// <summary>\n# /// text\n# ///\n# /// </summary>\n# """\n# ///\n')
+    (tmp_path / 'tool.py').write_text(content)
+    assert len(parse_deps_for_repo(tmp_path)) == 1
+
+
+def test_pep723_long_leading_prelude_is_read(tmp_path):
+    (tmp_path / 'tool.py').write_text('# synthetic comment\n' * 20000 + _script())
+    assert len(parse_deps_for_repo(tmp_path)) == 1
+
+
+@pytest.mark.parametrize('metadata', ['[1]', '"synthetic-alpha"', '["invalid ???"]', '['])
+def test_pep723_invalid_metadata_reports_error(tmp_path, metadata):
+    (tmp_path / 'tool.py').write_text(_script(metadata))
+    manifests = []
+    assert parse_deps_for_repo(tmp_path, manifests_out=manifests) == []
+    assert manifests[0]['error']
+
+
+def test_recursive_includes_keep_declaring_source(tmp_path):
+    (tmp_path / 'requirements.txt').write_text('-r nested/extra.txt\nsynthetic-alpha==1.0\n')
+    (tmp_path / 'nested').mkdir()
+    (tmp_path / 'nested/extra.txt').write_text('synthetic-beta==2.0\n')
+    rows = parse_deps_for_repo(tmp_path)
+    assert {r['name']: r['source_path'] for r in rows} == {'synthetic-alpha': 'requirements.txt', 'synthetic-beta': 'nested/extra.txt'}
+
+
+def test_includes_are_deduplicated_across_discovery(tmp_path):
+    (tmp_path / 'requirements.txt').write_text('-r requirements-dev.txt\n')
+    (tmp_path / 'requirements-dev.txt').write_text('synthetic-alpha==1.0\n-r requirements.txt\n')
+    manifests = []
+    assert len(parse_deps_for_repo(tmp_path, manifests_out=manifests)) == 1
+    assert len(manifests) == 2
+    assert sum(m['dependencies'] for m in manifests) == 1
+
+
+def test_inventory_includes_empty_arbitrary_and_external_files(tmp_path):
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    outside = tmp_path / 'outside.txt'
+    outside.write_text('')
+    (repo / 'empty-extra.txt').write_text('')
+    (repo / 'requirements.txt').write_text('-r empty-extra.txt\n-r ../outside.txt\nsynthetic-alpha==1.0\n')
+    manifests = []
+    rows = parse_deps_for_repo(repo, manifests_out=manifests)
+    by_path = {m['path']: m for m in manifests}
+    assert by_path['empty-extra.txt']['dependencies'] == 0
+    assert by_path[str(outside.resolve())]['dependencies'] == 0
+    assert by_path['requirements.txt']['dependencies'] == len(rows)
+    assert {r['source_path'] for r in rows} == {'requirements.txt'}
+
+
+def test_lock_manifest_is_independent(tmp_path):
+    (tmp_path / 'requirements.txt').write_text('synthetic-alpha>=1\n')
+    (tmp_path / 'requirements.lock').write_text('synthetic-alpha==1.0\nsynthetic-transitive==2.0\n')
+    rows = parse_deps_for_repo(tmp_path)
+    assert len(rows) == 3
+    assert {r['source_path'] for r in rows} == {'requirements.txt', 'requirements.lock'}
+
+
+def test_pyproject_optional_dependencies_and_groups(tmp_path):
+    (tmp_path / 'pyproject.toml').write_text('[project]\ndependencies=["synthetic-main"]\n[project.optional-dependencies]\nextra=["synthetic-extra"]\n[dependency-groups]\ndev=["synthetic-dev", {include-group="other"}]\n')
+    assert {r['name'] for r in parse_pyproject_toml(tmp_path / 'pyproject.toml')} == {'synthetic-main', 'synthetic-extra', 'synthetic-dev'}
+
+
+def test_uv_lock_unique_ambiguous_and_absent_names(tmp_path, monkeypatch):
+    import git_dashboard
+    (tmp_path / 'pyproject.toml').write_text('[project]\ndependencies=["Synthetic_Alpha>=1", "synthetic-beta", "synthetic-absent", "synthetic-direct @ https://packages.example.invalid/a.whl"]')
+    (tmp_path / 'uv.lock').write_text(''.join(f'[[package]]\nname="{name}"\nversion="{version}"\nsource={{registry="https://packages.example.invalid/simple"}}\n' for name, version in [('synthetic-alpha', '1.2'), ('synthetic-beta', '2.0'), ('synthetic-beta', '3.0')]))
+    manifests = []
+    rows = {r['name']: r for r in parse_deps_for_repo(tmp_path, manifests_out=manifests)}
+    assert rows['synthetic-alpha']['version'] == '1.2'
+    assert rows['synthetic-alpha']['version_source'] == 'uv.lock'
+    assert rows['synthetic-beta']['resolution_blocked'] is True
+    assert 'ambiguous' in rows['synthetic-beta']['check_note']
+    assert rows['synthetic-absent']['version'] is None
+    assert rows['synthetic-direct']['direct_ref']
+    assert len(manifests) == 1
+    monkeypatch.setattr(git_dashboard, 'check_python_outdated', lambda deps: (_ for _ in ()).throw(AssertionError('floating query')))
+    assert git_dashboard.check_python_deps(tmp_path, [rows['synthetic-beta']])[0]['vuln_state'] == 'unchecked'
+
+
+def test_shebang_does_not_override_known_non_python_manifest(tmp_path):
+    (tmp_path / 'Gemfile').write_text('#!/usr/bin/env ruby\ngem "synthetic-gem", "1.0"\n')
+    [entry] = detect_dep_files(tmp_path)
+    assert entry['manager'] == 'bundler'
+    assert entry['kind'] == 'Gemfile'
+
+
+def test_pep723_unclosed_and_unknown_blocks_are_ignored(tmp_path):
+    (tmp_path / 'tool.py').write_text('# /// script\n# dependencies = ["synthetic-alpha"]\n')
+    (tmp_path / 'other.py').write_text('# /// synthetic-type\n# dependencies = ["synthetic-alpha"]\n# ///\n')
+    manifests = []
+    assert parse_deps_for_repo(tmp_path, manifests_out=manifests) == []
+    assert manifests == []
+
+
+def test_pep723_prelude_allows_indented_comments(tmp_path):
+    (tmp_path / 'tool.py').write_text('  # synthetic leading comment\n' + _script())
+    assert len(parse_deps_for_repo(tmp_path)) == 1

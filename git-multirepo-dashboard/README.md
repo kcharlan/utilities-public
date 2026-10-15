@@ -83,14 +83,14 @@ Fleet-wide analytics include a one-year commit heatmap, configurable time-alloca
 
 Git Fleet searches the repository root and subdirectories up to three levels deep, while skipping common generated and vendored directories. It recognizes:
 
-- `pyproject.toml` or `requirements.txt`
+- `pyproject.toml`, `requirements*.txt` / `requirements*.lock` (including separator suffixes such as `requirements-dev.txt`), and Python scripts with leading PEP 723 metadata
 - `package.json`
 - `go.mod`
 - `Cargo.toml`
 - `Gemfile`
 - `composer.json`
 
-Within one directory, `pyproject.toml` takes precedence over `requirements.txt`. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
+Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file, including arbitrary filenames and paths outside the repository. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
 
 Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
 

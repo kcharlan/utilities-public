@@ -952,7 +952,9 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
     """Run blocking manifest/tool work away from the server event loop."""
     manifests: list[dict] = []
     raw = parse_deps_for_repo(repo_path, manifests_out=manifests)
-    managers = {d['manager'] for d in raw} | {m['manager'] for m in manifests}
+    managers = {d['manager'] for d in raw} | {('pip' if m['kind'] in ('requirements', 'pyproject', 'pep723') else
+                 next(manager for filename, manager, _ in _DEP_FILE_PRIORITY if filename == m['kind']))
+                for m in manifests}
     missing = []
     for manager in sorted(managers):
         for key, tool, description in DEP_TOOL_REQUIREMENTS.get(manager, []):
@@ -960,7 +962,7 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
                 missing.append(dict(tool=tool, description=description))
                 logger.info('Missing %s (%s)', tool, description)
     enriched = raw
-    any_error = False
+    any_error = any(m.get('error') for m in manifests)
     for manager, checker in (
         ('pip', check_python_deps), ('npm', check_node_deps),
         ('gomod', check_go_deps), ('cargo', check_rust_deps),
@@ -1273,7 +1275,7 @@ def detect_runtime(repo_path: Path) -> str:
 # ── Dependency Detection & Parsing (packet 12) ────────────────────────────────
 
 # Detection priority table: (filename, manager, runtime)
-# Within a runtime, only the highest-priority file is returned.
+# Python manifests coexist; other ecosystem filenames retain their choices.
 _DEP_FILE_PRIORITY: list[tuple[str, str, str]] = [
     ("pyproject.toml", "pip",      "python"),
     ("requirements.txt", "pip",    "python"),
@@ -1296,46 +1298,112 @@ _DEP_WALK_SKIP = {
 _DEP_WALK_MAX_DEPTH = 3
 
 
+_REQUIREMENTS_RE = re.compile(
+    r"^requirements(?:[-_.][A-Za-z0-9_.-]+)?\.(?:txt|lock)$", re.IGNORECASE
+)
+
+
+def _source_path(repo_path: Path, file_path: Path) -> str:
+    resolved = file_path.resolve()
+    try:
+        return resolved.relative_to(repo_path.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def detect_dep_files(repo_path: Path) -> list[dict]:
-    """Return a list of {file, manager, runtime, dir} for every manifest found.
-
-    Walks the repo tree up to _DEP_WALK_MAX_DEPTH levels deep, skipping
-    common vendored/generated directories.  Within a single directory and
-    runtime, only the highest-priority manifest is returned (e.g. pyproject.toml
-    wins over requirements.txt in the same dir).  Across different directories,
-    all manifests are returned so monorepos are fully covered.
-    """
-    results: list[dict] = []
-
-    dirs_to_walk: list[tuple[Path, int]] = [(repo_path, 0)]
+    """Discover coexisting Python manifests and other ecosystem manifests."""
+    results = []
+    dirs_to_walk = [(repo_path, 0)]
     while dirs_to_walk:
         current_dir, depth = dirs_to_walk.pop()
         try:
-            entries = list(current_dir.iterdir())
-        except (OSError, PermissionError):
+            entries = sorted(current_dir.iterdir())
+        except OSError:
             continue
-
-        dir_files: set[str] = set()
         for entry in entries:
-            if entry.is_file():
-                dir_files.add(entry.name.lower())
-            elif entry.is_dir() and depth < _DEP_WALK_MAX_DEPTH:
-                if entry.name not in _DEP_WALK_SKIP and not entry.name.startswith("."):
+            if entry.is_dir():
+                if depth < _DEP_WALK_MAX_DEPTH and entry.name not in _DEP_WALK_SKIP and not entry.name.startswith('.'):
                     dirs_to_walk.append((entry, depth + 1))
-
-        # Within this directory, apply the priority dedup per-runtime
-        seen_runtimes: set[str] = set()
-        for filename, manager, runtime in _DEP_FILE_PRIORITY:
-            if filename.lower() in dir_files and runtime not in seen_runtimes:
-                seen_runtimes.add(runtime)
-                results.append({
-                    "file": filename,
-                    "manager": manager,
-                    "runtime": runtime,
-                    "dir": current_dir,
-                })
-
+                continue
+            if not entry.is_file():
+                continue
+            known = next(((filename, manager, runtime) for filename, manager, runtime
+                          in _DEP_FILE_PRIORITY if runtime != 'python'
+                          and filename.lower() == entry.name.lower()), None)
+            if known:
+                filename, manager, runtime = known
+                results.append(dict(file=entry.name, kind=filename, manager=manager, runtime=runtime, dir=current_dir))
+                continue
+            kind = None
+            if entry.name.lower() == 'pyproject.toml':
+                kind = 'pyproject'
+            elif _REQUIREMENTS_RE.fullmatch(entry.name):
+                kind = 'requirements'
+            elif entry.suffix.lower() in ('.py', '.pyw'):
+                kind = 'pep723'
+            elif not entry.suffix:
+                try:
+                    with entry.open('rb') as candidate:
+                        first_line = candidate.readline()
+                    if first_line.startswith(b'#!'):
+                        kind = 'pep723'
+                except OSError:
+                    continue
+            if kind:
+                results.append(dict(file=entry.name, kind=kind, manager='pip', runtime='python', dir=current_dir))
+                continue
     return results
+
+
+def _manifest_record(inventory: dict | None, path: Path, kind: str) -> dict:
+    record = dict(kind=kind, dependencies=0, error=None)
+    if inventory is not None:
+        inventory[path.resolve()] = record
+    return record
+
+
+def _find_pep723_block(script: str) -> str | None:
+    """Apply PEP 723's reference grammar only to the leading comment prelude."""
+    prelude = []
+    for line in script.splitlines(keepends=True):
+        if line.strip() and not line.lstrip().startswith('#'):
+            break
+        prelude.append(line)
+    # https://peps.python.org/pep-0723/#reference-implementation
+    regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$'
+    blocks = [m for m in re.finditer(regex, ''.join(prelude)) if m.group('type') == 'script']
+    if len(blocks) > 1:
+        raise ValueError('Multiple script blocks found')
+    if not blocks:
+        return None
+    return ''.join(line[2:] if line.startswith('# ') else line[1:]
+                   for line in blocks[0].group('content').splitlines(keepends=True))
+
+
+def parse_pep723_script(file_path: Path, *, manifests_out: dict | None = None) -> list[dict]:
+    record = _manifest_record(manifests_out, file_path, 'pep723')
+    try:
+        block = _find_pep723_block(file_path.read_text(encoding='utf-8'))
+        if block is None:
+            if manifests_out is not None:
+                manifests_out.pop(file_path.resolve(), None)
+            return []
+        data = tomllib.loads(block)
+        declarations = data.get('dependencies', [])
+        if not isinstance(declarations, list) or not all(isinstance(d, str) for d in declarations):
+            raise ValueError('dependencies must be a list of strings')
+        deps = []
+        for text in declarations:
+            dep = parse_python_requirement(text)
+            if dep is None:
+                raise ValueError('invalid dependency declaration')
+            deps.append(dep)
+        record['dependencies'] = len(deps)
+        return deps
+    except (OSError, UnicodeError, ValueError) as exc:
+        record['error'] = str(exc)
+        return []
 
 
 _VCS_SCHEMES = ("git+", "hg+", "svn+", "bzr+")
@@ -1398,7 +1466,7 @@ def parse_python_requirement(text: str) -> dict | None:
         return None
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) -> list[dict]:
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None) -> list[dict]:
     """Parse PEP 508 declarations and direct URLs with circular-safe includes.
 
     Join continuations and remove comments/options while preserving extras and
@@ -1411,10 +1479,12 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
     if resolved in _visited:
         return []
     _visited.add(resolved)
+    record = _manifest_record(manifests_out, file_path, 'requirements')
 
     try:
         text = file_path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, PermissionError):
+    except OSError as exc:
+        record['error'] = str(exc)
         return []
 
     deps: list[dict] = []
@@ -1431,7 +1501,7 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
             if len(parts) < 2:
                 continue
             include_path = file_path.parent / parts[1].strip()
-            deps.extend(parse_requirements_txt(include_path, _visited))
+            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out))
             continue
         if line.startswith("-"):
             # Other flags: -i, --index-url, -f, --find-links, etc.
@@ -1440,36 +1510,48 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None) ->
         requirement_text = re.split(r"\s+--(?:hash|config-settings|global-option|install-option)\b", line, maxsplit=1)[0].strip()
         dep = parse_python_requirement(requirement_text)
         if dep is not None:
+            dep['source_file'] = file_path.resolve()
             deps.append(dep)
+            record['dependencies'] += 1
+        else:
+            record['error'] = 'invalid dependency declaration'
 
     return deps
 
 
-def parse_pyproject_toml(file_path: Path) -> list[dict]:
+def parse_pyproject_toml(file_path: Path, *, manifests_out: dict | None = None) -> list[dict]:
     """Parse pyproject.toml and return [{name, version, manager}].
 
     Supports:
     - PEP 621: [project].dependencies  (preferred if both sections exist)
     - Poetry:  [tool.poetry.dependencies]
     """
+    record = _manifest_record(manifests_out, file_path, 'pyproject')
     try:
         with open(file_path, "rb") as f:
             data = tomllib.load(f)
     except Exception as exc:
+        record['error'] = str(exc)
         logger.warning("Failed to parse %s: %s", file_path, exc)
         return []
 
     deps: list[dict] = []
 
-    # PEP 621 takes priority
-    project_deps = data.get("project", {}).get("dependencies", None)
-    if project_deps is not None:
-        for entry in project_deps:
-            if not isinstance(entry, str):
-                continue
-            dep = parse_python_requirement(entry)
-            if dep is not None:
-                deps.append(dep)
+    project = data.get('project', {})
+    declarations = list(project.get('dependencies', []))
+    for optional in project.get('optional-dependencies', {}).values():
+        declarations.extend(optional)
+    for group in data.get('dependency-groups', {}).values():
+        declarations.extend(entry for entry in group if isinstance(entry, str))
+    for entry in declarations:
+        dep = parse_python_requirement(entry) if isinstance(entry, str) else None
+        if dep is not None:
+            deps.append(dep)
+        else:
+            record['error'] = 'invalid dependency declaration'
+    if 'dependencies' in project:
+        _apply_uv_lock_versions(file_path, deps, record)
+        record['dependencies'] = len(deps)
         return deps
 
     # Poetry fallback
@@ -1484,9 +1566,46 @@ def parse_pyproject_toml(file_path: Path) -> list[dict]:
                 version = None
             declared = val if isinstance(val, str) else json.dumps(val, sort_keys=True)
             deps.append({"name": name, "version": version, "manager": "pip", "declared_spec": declared})
+        _apply_uv_lock_versions(file_path, deps, record)
+        record['dependencies'] = len(deps)
         return deps
 
-    return []
+    _apply_uv_lock_versions(file_path, deps, record)
+    record['dependencies'] = len(deps)
+    return deps
+
+
+def _load_uv_lock_versions(lock_path: Path) -> dict[str, set[str]]:
+    with lock_path.open('rb') as stream:
+        data = tomllib.load(stream)
+    versions: dict[str, set[str]] = {}
+    for package in data.get('package', []):
+        if isinstance(package.get('source'), dict) and 'registry' in package['source'] and package.get('version'):
+            name = normalize_dep_name('pip', package['name'])
+            versions.setdefault(name, set()).add(package['version'])
+    return versions
+
+
+def _apply_uv_lock_versions(file_path: Path, deps: list[dict], record: dict) -> None:
+    lock = file_path.with_name('uv.lock')
+    if not lock.exists():
+        return
+    try:
+        versions = _load_uv_lock_versions(lock)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        record['error'] = f'uv.lock: {exc}'
+        return
+    for dep in deps:
+        if dep.get('direct_ref'):
+            continue
+        locked = versions.get(normalize_dep_name('pip', dep['name']), set())
+        if len(locked) == 1:
+            dep['version'] = next(iter(locked))
+            dep['version_source'] = str(lock.resolve())
+            add_check_note(dep, 'version from adjacent uv.lock')
+        elif len(locked) > 1:
+            dep['resolution_blocked'] = True
+            mark_unchecked(dep, 'ambiguous uv.lock registry versions; resolution blocked')
 
 
 def parse_package_json(file_path: Path) -> list[dict]:
@@ -1626,56 +1745,52 @@ def parse_composer_json(file_path: Path) -> list[dict]:
     return deps
 
 
-def parse_deps_for_repo(repo_path: Path, *, manifests_out: list[dict] | None = None) -> list[dict]:
-    """Detect manifest files in repo_path (including subdirectories) and parse them.
-
-    Returns a merged list of {name, version, manager} dicts.
-    Walks the repo tree via detect_dep_files(), so monorepos with manifests
-    in subdirectories are fully covered.
-    """
-    manifest_entries = detect_dep_files(repo_path)
-    if not manifest_entries:
-        return []
-
-    _parser_map = {
-        "requirements.txt": parse_requirements_txt,
-        "pyproject.toml":   parse_pyproject_toml,
-        "package.json":     parse_package_json,
-        "go.mod":           parse_go_mod,
-        "Cargo.toml":       parse_cargo_toml,
-        "Gemfile":          parse_gemfile,
-        "composer.json":    parse_composer_json,
-    }
-
-    all_deps: list[dict] = []
-    seen_dep_keys: set[tuple[str, str, str]] = set()
-    for entry in manifest_entries:
-        filename = entry["file"]
-        parser = _parser_map.get(filename)
-        if parser is None:
-            continue
-        manifest_dir = entry["dir"]
-        file_path = manifest_dir / filename
-        # Compute relative path from repo root for display
+def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None) -> list[dict]:
+    """Parse declarations with a shared inventory of attempted manifest reads."""
+    inventory: dict[Path, dict] = {}
+    visited: set[str] = set()
+    parsers = {'pyproject': parse_pyproject_toml, 'pep723': parse_pep723_script,
+               'package.json': parse_package_json, 'go.mod': parse_go_mod,
+               'Cargo.toml': parse_cargo_toml, 'Gemfile': parse_gemfile,
+               'composer.json': parse_composer_json}
+    all_deps = []
+    seen = set()
+    for entry in detect_dep_files(repo_path):
+        file_path = entry['dir'] / entry['file']
+        kind = entry['kind']
         try:
-            rel_dir = str(manifest_dir.relative_to(repo_path))
-        except ValueError:
-            rel_dir = str(manifest_dir)
-        source = f"{rel_dir}/{filename}" if rel_dir != "." else filename
-        if manifests_out is not None:
-            manifests_out.append(dict(source_path=source, manager=entry['manager']))
-        try:
-            parsed = parser(file_path)
+            if kind == 'requirements':
+                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory)
+            elif kind in ('pyproject', 'pep723'):
+                parsed = parsers[kind](file_path, manifests_out=inventory)
+            else:
+                record = _manifest_record(inventory, file_path, kind)
+                # Validate structured manifests here because legacy parsers return
+                # [] for errors as well as valid empty files.
+                text = file_path.read_text(encoding='utf-8')
+                if kind in ('package.json', 'composer.json'):
+                    json.loads(text)
+                elif kind == 'Cargo.toml':
+                    tomllib.loads(text)
+                parsed = parsers[kind](file_path)
+                record['dependencies'] = len(parsed)
         except Exception as exc:
-            logger.warning("Error parsing %s in %s: %s", filename, manifest_dir, exc)
+            logger.warning('Error parsing %s: %s', file_path, exc)
+            inventory.setdefault(file_path.resolve(), dict(kind=kind, dependencies=0))['error'] = str(exc)
             parsed = []
         for dep in parsed:
-            dep["name"] = dependency_identity_name(dep)
-            key = (dep["manager"], source, dep["name"])
-            if key not in seen_dep_keys:
-                seen_dep_keys.add(key)
-                dep["source_path"] = source
+            source = _source_path(repo_path, Path(dep.pop('source_file', file_path)))
+            dep['name'] = dependency_identity_name(dep)
+            key = (dep['manager'], source, dep['name'])
+            if key not in seen:
+                seen.add(key)
+                dep['source_path'] = source
+                if dep.get('version_source'):
+                    dep['version_source'] = _source_path(repo_path, Path(dep['version_source']))
                 all_deps.append(dep)
+    if manifests_out is not None:
+        manifests_out.extend(dict(path=_source_path(repo_path, path), **record)
+                             for path, record in inventory.items())
     return all_deps
 
 
@@ -1942,10 +2057,13 @@ def check_python_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not pip_deps:
         return other_deps
 
-    pip_deps = check_python_outdated(pip_deps)
-    pip_deps = check_python_vulns(repo_path, pip_deps)
+    blocked = [d for d in pip_deps if d.get('resolution_blocked')]
+    pip_deps = [d for d in pip_deps if not d.get('resolution_blocked')]
+    if pip_deps:
+        pip_deps = check_python_outdated(pip_deps)
+        pip_deps = check_python_vulns(repo_path, pip_deps)
 
-    return finalize_dep_health(pip_deps) + other_deps
+    return finalize_dep_health(pip_deps + blocked) + other_deps
 
 
 # ── Node dependency health (Packet 14) ────────────────────────────────────────

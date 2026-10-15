@@ -178,18 +178,18 @@ Manifest discovery walks through depth three and skips hidden, virtual-environme
 
 | File | Manager |
 | --- | --- |
-| `pyproject.toml`, `requirements.txt` | `pip` |
+| `pyproject.toml`, requirements `.txt`/`.lock` files, leading PEP 723 script metadata | `pip` |
 | `package.json` | `npm` |
 | `go.mod` | `gomod` |
 | `Cargo.toml` | `cargo` |
 | `Gemfile` | `bundler` |
 | `composer.json` | `composer` |
 
-Within one directory, only the highest-priority manifest for an ecosystem is selected; `pyproject.toml` precedes `requirements.txt`. Manifests in different directories are considered independently; declaration deduplication is scoped to manager, manifest path, and identity name.
+Python manifest kinds coexist within each directory. Requirements filenames match `^requirements(?:[-_.][A-Za-z0-9_.-]+)?\.(?:txt|lock)$`, case-insensitively. Python suffixes and suffixless shebang files are script candidates; only metadata in their leading comment/blank-line prelude is read. PEP 723 grammar and closing-line precedence follow the [reference implementation](https://peps.python.org/pep-0723/#reference-implementation); unclosed blocks are ignored, while duplicate script blocks, malformed TOML and invalid dependency values become inventory errors. Manifests in different directories are considered independently; declaration deduplication is scoped to manager, manifest path, and identity name.
 
 Parsing is intentionally lightweight:
 
-- Python requirements and PEP 621 declarations share a `packaging.requirements.Requirement` parser. Extras and markers remain in textual `declared_spec`; markers are not evaluated against the scanner's environment. Exact PEP 440 pins become versions; wildcard pins and ranges remain unpinned. Requirements continuations are joined, inline comments and per-requirement options are stripped, and recursive includes remain circular-safe. Poetry retains its supported scalar/table values and stores declaration text as a string.
+- Python requirements and PEP 621 declarations share a `packaging.requirements.Requirement` parser. Extras and markers remain in textual `declared_spec`; markers are not evaluated against the scanner's environment. Exact PEP 440 pins become versions; wildcard pins and ranges remain unpinned. Requirements continuations are joined, inline comments and per-requirement options are stripped, and recursive includes remain circular-safe. PEP 621 optional dependencies and string dependency-group entries are included, without include-group expansion or Poetry group support. Poetry retains its supported scalar/table values and stores declaration text as a string. Adjacent `uv.lock` supplies unique normalized-name registry versions and a `version_source` path; ambiguous versions set `resolution_blocked` with an unchecked reason, bypassing checker calls. Absent names use ordinary resolution, and direct references keep their own coverage path. The lock is a version source, not a declaration manifest.
 - Named direct URLs and legacy `egg` references use normalized distribution identities. Bare wheel URLs derive the name and display version from the wheel filename. Other bare references use host plus path as a fallback identity, preserving its spelling through deduplication. VCS revisions are extracted from the URL path, separately from authority user information; their display is `git:<revision>` (or the corresponding VCS), with `default branch` when absent. Direct references bypass PyPI and pip-audit, retaining unchecked coverage with `direct VCS/URL reference; not compared with PyPI or audited`. Mixed manifests use a private temporary audit input containing only registry declarations. Resolving VCS commits or remote package metadata is outside the scan contract. See [pip VCS support](https://pip.pypa.io/en/stable/topics/vcs-support/) for supported URL forms.
 - Node reads dependencies and devDependencies.
 - Go reads block and single-line requirements.
@@ -201,7 +201,7 @@ Dependency parsing and blocking health checks run in `analyze_repo_deps` through
 
 Coverage is independent: `outdated_state` is `checked`, `floating`, or `unchecked`; `vuln_state` is `checked` or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Advisory evidence has highest severity precedence, followed by proven major/outdated results; remaining incomplete coverage yields `unchecked`, and complete clean coverage yields `ok`. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
 
-`parse_deps_for_repo` accepts optional keyword-only `manifests_out`, an output list populated with `source_path` and `manager` for each selected manifest, even an empty one. This is the basic inventory interface; parser outcome diagnostics can extend its entries. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+`parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths or absolute paths for external includes. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
 
 ## HTTP API
 

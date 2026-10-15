@@ -863,7 +863,7 @@ def test_scan_persists_metadata_without_rows(tmp_path, monkeypatch, with_rows):
     db_path = tmp_path / 'synthetic.db'
     run(_make_db_with_repo(db_path))
     metadata = [dict(tool='synthetic-tool', description='Synthetic check')]
-    manifests = [dict(source_path='package.json', manager='npm')]
+    manifests = [dict(path='package.json', kind='package.json', dependencies=0, error=None)]
     rows = [dict(_make_dep('synthetic'), outdated_state='checked', vuln_state='checked')] if with_rows else []
     analysis = git_dashboard.DepAnalysis(rows, True, metadata, manifests)
     monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path: analysis)
@@ -911,7 +911,7 @@ def test_scan_persists_missing_tools(test_app, tmp_path, monkeypatch):
     assert client.post('/api/repos/synthetic/scan/deps').json() == []
     ws = client.get('/api/repos/synthetic').json()['working_state']
     assert ws['missing_dep_tools'] == [dict(tool='npm', description='Node.js dependency checks')]
-    assert ws['dep_manifests'] == [dict(source_path='package.json', manager='npm')]
+    assert ws['dep_manifests'] == [dict(path='package.json', kind='package.json', dependencies=0, error=None)]
     assert ws['dep_check_error'] is True
 
 
@@ -1008,3 +1008,21 @@ def test_mixed_direct_reference_is_absent_from_auditor_input(tmp_path, monkeypat
     direct = next(d for d in result.enriched if d.get('direct_ref'))
     assert direct['check_note'] == 'direct VCS/URL reference; not compared with PyPI or audited'
     assert direct['vuln_state'] == 'unchecked'
+
+
+def test_scan_persists_empty_and_failed_manifests(test_app, tmp_path, monkeypatch):
+    client, db_path = test_app
+    (tmp_path / 'requirements.txt').write_text('-r missing-extra.txt\n-r empty-extra.txt\n')
+    (tmp_path / 'empty-extra.txt').write_text('')
+    (tmp_path / 'pyproject.toml').write_text('[invalid')
+    monkeypatch.setattr(git_dashboard, 'TOOLS', {'pip_audit': 'synthetic'})
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES ('synthetic','synthetic',?,'synthetic')", (str(tmp_path),))
+    assert client.post('/api/repos/synthetic/scan/deps').json() == []
+    ws = client.get('/api/repos/synthetic').json()['working_state']
+    inventory = {m['path']: m for m in ws['dep_manifests']}
+    assert set(inventory) == {'requirements.txt', 'missing-extra.txt', 'empty-extra.txt', 'pyproject.toml'}
+    assert inventory['missing-extra.txt']['error']
+    assert inventory['pyproject.toml']['error']
+    assert inventory['empty-extra.txt']['dependencies'] == 0
+    assert ws['dep_check_error'] is True
