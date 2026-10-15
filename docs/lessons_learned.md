@@ -156,3 +156,21 @@ explicit manifests and their includes before script candidates, and let an exist
 resolved-path inventory record own that file. A harmless metadata probe must never
 replace or remove the include's empty, populated or failed record. Regress both
 filename orders and assert one actual read, not merely one surviving declaration.
+
+### Git Fleet: evaluate Python declarations and validate audit evidence
+
+An unpinned declaration still has a registry evaluation: retain the highest allowed
+usable release as a floating wanted version, without calling it installed or
+current. Apply `SpecifierSet.filter` to the candidate set so explicit prerelease
+constraints and fallback behavior follow packaging's semantics. Cache successes
+and failures by normalized name for one scan, and distinguish connection failures
+from HTTP/JSON errors before opening an offline breaker.
+
+Auditing the original manifest can resolve extra dependencies and conflate versions
+declared in different projects. Audit exact evaluated pins with dependency resolution
+disabled, splitting conflicting versions of one normalized name into separate
+batches. Treat process status and JSON as a joint evidence contract: missing entries,
+skips, malformed advisories, duplicate names, version mismatches and status/advisory
+contradictions cannot establish clean coverage. Regress matching across manifests
+and limit failures to the affected batch. Synthetic auditor fixtures must use real
+exit semantics and the requested versions so they cannot conceal these errors.

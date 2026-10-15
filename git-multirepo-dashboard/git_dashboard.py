@@ -29,7 +29,9 @@ import signal
 import argparse
 import sqlite3
 import subprocess
+import tempfile
 import tomllib
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -1912,137 +1914,216 @@ def classify_severity(current: str, latest: str) -> str:
     return "outdated"
 
 
+_PYPI_MAX_CONSECUTIVE_FAILURES = 3
+
+
+def _floating_specifier(dep: dict) -> str:
+    """Extract supported PEP 508/440 constraints without interpreting Poetry syntax."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.specifiers import SpecifierSet
+
+    text = (dep.get('declared_spec') or dep.get('version') or '').strip()
+    if text in ('', '*'):
+        return ''
+    try:
+        requirement = Requirement(text)
+    except InvalidRequirement:
+        return str(SpecifierSet(text))
+    if (requirement.url or normalize_dep_name('pip', requirement.name)
+            != normalize_dep_name('pip', dep['name'])):
+        raise ValueError('unsupported Python declaration')
+    return str(requirement.specifier)
+
+
+def resolve_floating_version(payload: dict, constraint: str) -> str | None:
+    """Select the highest allowed release with at least one non-yanked file."""
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    releases = payload.get('releases')
+    if isinstance(releases, dict):
+        versions = [Version(version) for version, files in releases.items()
+                    if _exact_pip_version(version) and isinstance(files, list)
+                    and any(isinstance(file, dict) and not file.get('yanked', False)
+                            for file in files)]
+    else:
+        fallback = _exact_pip_version(payload.get('info', {}).get('version'))
+        versions = [Version(fallback)] if fallback else []
+    selected = max(SpecifierSet(constraint).filter(versions), default=None)
+    return str(selected) if selected is not None else None
+
+
 def check_python_outdated(deps: list[dict]) -> list[dict]:
-    """Query PyPI JSON API for each pinned pip dep and populate version/severity fields.
-
-    Skips deps where:
-      - manager != "pip"
-      - version is None
-      - version contains range operators (>=, ~=, <, !=, >, ^)
-
-    On network or parse error the outdated check is unchecked with a reason and
-    latest_version=None; remaining dependencies are still evaluated.
-
-    Returns a new list of dicts (input dicts are copied, not mutated in-place).
-    """
-    _RANGE_OPS = (">=", "<=", "~=", "!=", ">", "<", "^", "*")
-
-    result: list[dict] = []
+    """Evaluate exact or floating declarations, caching registry results per scan."""
+    cache: dict[str, tuple[dict | None, str | None]] = {}
+    connection_failures = 0
+    result = []
     for dep in deps:
-        d = dict(dep)  # shallow copy; only add new scalar fields
+        d = dict(dep)
+        result.append(d)
+        if d.get('manager') != 'pip' or d.get('resolution_blocked'):
+            continue
         if d.get('direct_ref'):
-            result.append(mark_unchecked(d, NOTE_DIRECT_REF))
+            mark_unchecked(d, NOTE_DIRECT_REF)
             continue
-        if d.get("manager") != "pip" or d.get("version") is None:
-            result.append(d)
-            continue
-
-        ver_str: str = d["version"]
-
-        # Extract bare version from "name==version" or "==version" notation
-        if "==" in ver_str:
-            ver_str = ver_str.split("==")[-1].strip()
-
-        # Skip range/unpinned specifiers
-        if any(op in ver_str for op in _RANGE_OPS):
-            result.append(d)
-            continue
-
-        name = d["name"]
-        latest_version = None
-        severity = "ok"
+        current = (_exact_pip_version(d.get('current_version'))
+                   or _exact_pip_version(d.get('version')))
+        d['current_version'] = current
+        d['wanted_version'] = current
+        d['latest_version'] = None
         try:
-            url = f"https://pypi.org/pypi/{name}/json"
-            with urllib.request.urlopen(url, timeout=15) as resp:
-                data = json.loads(resp.read())
-            latest_version = data["info"]["version"]
-            severity = classify_severity(ver_str, latest_version)
-            d['outdated_state'] = 'checked'
+            constraint = _floating_specifier(d) if current is None else None
+        except (ValueError, TypeError) as exc:
+            mark_unchecked(d, f'unsupported Python constraint: {exc}', 'outdated_state')
+            continue
+        name = normalize_dep_name('pip', d['name'])
+        if name not in cache:
+            if connection_failures >= _PYPI_MAX_CONSECUTIVE_FAILURES:
+                cache[name] = (None, 'PyPI lookup: connection failure limit reached')
+            else:
+                try:
+                    with urllib.request.urlopen(f'https://pypi.org/pypi/{name}/json', timeout=15) as resp:
+                        payload = json.loads(resp.read())
+                    if not isinstance(payload, dict):
+                        raise ValueError('invalid registry result')
+                    if not _exact_pip_version(payload.get('info', {}).get('version')):
+                        raise ValueError('missing or invalid registry latest version')
+                    cache[name] = (payload, None)
+                    connection_failures = 0
+                except Exception as exc:
+                    if (isinstance(exc, (TimeoutError, ConnectionError, urllib.error.URLError))
+                            and not isinstance(exc, urllib.error.HTTPError)):
+                        connection_failures += 1
+                    cache[name] = (None, tool_failure_note('PyPI lookup', exc))
+        payload, note = cache[name]
+        if note:
+            mark_unchecked(d, note, 'outdated_state')
+            continue
+        try:
+            evaluated = current or resolve_floating_version(payload, constraint)
+            if evaluated is None:
+                raise ValueError('no usable release satisfies the declaration')
+            d['wanted_version'] = evaluated
+            d['latest_version'] = payload['info']['version']
+            d['severity'] = classify_severity(evaluated, d['latest_version'])
+            d['outdated_state'] = 'checked' if current else 'floating'
         except Exception as exc:
             mark_unchecked(d, tool_failure_note('PyPI lookup', exc), 'outdated_state')
-
-        d["latest_version"] = latest_version
-        d["severity"] = severity
-        d['severity'] = derive_severity(d) if d.get('outdated_state') == 'unchecked' else severity
-        result.append(d)
-
     return result
 
 
-def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
-    """Run pip-audit against the repo's requirements.txt (if present) and merge results.
+def _pip_audit_batches(pins: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+    """Deduplicate pins, separating conflicting versions of the same distribution."""
+    batches: list[list[tuple[str, str]]] = []
+    seen = set()
+    for name, version in pins:
+        pin = (normalize_dep_name('pip', name), version)
+        if pin in seen:
+            continue
+        seen.add(pin)
+        for batch in batches:
+            if all(existing_name != pin[0] for existing_name, _ in batch):
+                batch.append(pin)
+                break
+        else:
+            batches.append([pin])
+    return batches
 
-    If pip-audit is not installed (TOOLS["pip_audit"] is None), returns deps unchanged.
-    If the repo has no requirements.txt (only pyproject.toml), logs a warning and skips.
-    On subprocess or parse failure, marks the affected check unchecked with a reason.
 
-    Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
-    Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = <first vuln ID>.
-    """
-    direct_deps = [mark_unchecked(dict(d), NOTE_DIRECT_REF) for d in deps if d.get('direct_ref')]
-    registry_deps = [d for d in deps if not d.get('direct_ref')]
-    if direct_deps:
-        if not registry_deps:
-            return direct_deps
-        # A mixed requirements file must never send direct URLs to pip-audit.
-        # Keep this private temporary manifest outside the repository checkout.
-        import tempfile
-        with tempfile.TemporaryDirectory(prefix='git-fleet-audit-') as audit_dir:
-            filtered = Path(audit_dir) / 'requirements.txt'
-            filtered.write_text(''.join(
-                (d.get('declared_spec') or f"{d['name']}=={d['version']}") + '\n'
-                for d in registry_deps), encoding='utf-8')
-            checked = check_python_vulns(Path(audit_dir), registry_deps)
-        return checked + direct_deps
+def _audit_python_pins(pip_audit: str, batch: list[tuple[str, str]]) -> dict:
+    def failed(note):
+        return {pin: {"vuln_state": "unchecked", "note": note} for pin in batch}
 
-    pip_audit = TOOLS.get("pip_audit")
-    if not pip_audit:
-        return deps
-
-    # pip-audit --requirement only works with requirements.txt-style files
-    manifest = repo_path / "requirements.txt"
-    if not manifest.exists():
-        logger.warning(
-            "check_python_vulns: no requirements.txt in %s — skipping vuln check", repo_path
-        )
-        return deps
-
+    proc = None
     try:
-        proc = subprocess.run(
-            [pip_audit, "--requirement", str(manifest), "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        _validate_tool_result(proc, 'pip-audit', (0, 1))
+        with tempfile.TemporaryDirectory(prefix="git-fleet-audit-") as tmp:
+            path = Path(tmp) / "pins.txt"
+            path.write_text("".join(f"{name}=={version}\n"
+                                    for name, version in batch), encoding="utf-8")
+            proc = subprocess.run(
+                [pip_audit, "--requirement", str(path), "--no-deps", "--disable-pip",
+                 "--format", "json", "--progress-spinner", "off"],
+                capture_output=True, text=True, timeout=300,
+            )
+        if proc.returncode not in (0, 1):
+            return failed(tool_failure_note(
+                "pip-audit", proc.stderr or f"exit status {proc.returncode}"
+            ))
         raw = json.loads(proc.stdout)
-        if not isinstance(raw, dict) or not isinstance(raw.get('dependencies'), list):
-            raise ValueError('invalid pip-audit result')
+        if not isinstance(raw, dict) or not isinstance(raw.get("dependencies"), list):
+            raise ValueError("missing dependencies result")
+        entries = {}
+        for entry in raw["dependencies"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                raise ValueError("invalid dependency result")
+            name = normalize_dep_name("pip", entry["name"])
+            if name in entries:
+                raise ValueError("duplicate dependency result")
+            entries[name] = entry
+        results = {}
+        for pin in batch:
+            name, version = pin
+            entry = entries.get(name)
+            if entry is None:
+                results[pin] = {"vuln_state": "unchecked", "note": "not in pip-audit output"}
+                continue
+            if entry.get("skip_reason"):
+                results[pin] = {"vuln_state": "unchecked",
+                                "note": f"pip-audit skipped: {entry['skip_reason']}"}
+                continue
+            vulns = entry.get("vulns")
+            if (not isinstance(vulns, list)
+                    or any(not isinstance(v, dict) or not isinstance(v.get("id"), str)
+                           or not v["id"] for v in vulns)):
+                raise ValueError("missing or invalid vulnerability result")
+            if entry.get("version") is not None and entry["version"] != version:
+                raise ValueError("audit version differs from requested pin")
+            if proc.returncode == 0 and vulns:
+                raise ValueError("audit exit status contradicts advisories")
+            results[pin] = {"vuln_state": "checked",
+                            "advisory_id": vulns[0]["id"] if vulns else None}
+        if proc.returncode == 1 and not any(
+            result.get("advisory_id") for result in results.values()
+        ):
+            raise ValueError("advisory exit status without a requested advisory")
+        return results
     except Exception as exc:
-        return _check_failed(deps, 'pip-audit', exc, 'vuln_state')
+        detail = proc.stderr if proc is not None and proc.stderr else str(exc)
+        return failed(tool_failure_note("pip-audit", detail))
 
-    # Build lookup: {package_name_lower: first_vuln_id}
-    vuln_map: dict[str, str] = {}
-    try:
-        for entry in raw.get("dependencies", []):
-            vuln_list = entry.get("vulns", [])
-            if vuln_list:
-                vuln_map[entry["name"].lower()] = vuln_list[0]["id"]
-    except Exception as exc:
-        return _check_failed(deps, 'pip-audit', exc, 'vuln_state')
 
-    result: list[dict] = []
+def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
+    """Audit concrete evaluated declarations across manifests without resolving deps."""
+    pip_audit = TOOLS.get('pip_audit')
+    result = []
+    rows_by_pin: dict[tuple[str, str], list[dict]] = {}
     for dep in deps:
         d = dict(dep)
-        key = d.get("name", "").lower()
-        if any(normalize_dep_name('pip', e.get('name', '')) == normalize_dep_name('pip', key)
-               and isinstance(e.get('vulns'), list) for e in raw['dependencies']):
-            d['vuln_state'] = 'checked'
-        if key in vuln_map:
-            d["severity"] = "vulnerable"
-            d["advisory_id"] = vuln_map[key]
-            d['vuln_state'] = 'checked'
         result.append(d)
+        if d.get('manager') != 'pip' or d.get('resolution_blocked'):
+            continue
+        if d.get('direct_ref'):
+            mark_unchecked(d, NOTE_DIRECT_REF)
+            continue
+        version = (_exact_pip_version(d.get('current_version'))
+                   or _exact_pip_version(d.get('version'))
+                   or _exact_pip_version(d.get('wanted_version')))
+        if version is None:
+            mark_unchecked(d, 'no concrete Python version to audit', 'vuln_state')
+        elif not pip_audit:
+            mark_unchecked(d, 'pip-audit: tool unavailable', 'vuln_state')
+        else:
+            pin = (normalize_dep_name('pip', d['name']), version)
+            rows_by_pin.setdefault(pin, []).append(d)
+    for batch in _pip_audit_batches(list(rows_by_pin)):
+        for pin, audit in _audit_python_pins(pip_audit, batch).items():
+            for row in rows_by_pin[pin]:
+                row['vuln_state'] = audit['vuln_state']
+                if audit['vuln_state'] == 'unchecked':
+                    mark_unchecked(row, audit['note'], 'vuln_state')
+                else:
+                    row['advisory_id'] = audit['advisory_id']
+                    row['severity'] = derive_severity(row)
     return result
 
 

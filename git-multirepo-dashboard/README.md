@@ -94,6 +94,16 @@ Python manifest kinds coexist in each directory. Requirements includes retain th
 
 Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
 
+### Python dependency-health scope
+
+Python health evaluates declarations. Exact declared or unique adjacent-lock versions become `current_version`. Supported PEP 440 ranges and unpinned declarations select the highest allowed PyPI release with non-yanked release files as `wanted_version`, with floating outdated coverage and no invented current version. Prerelease selection follows [`SpecifierSet.filter`](https://packaging.pypa.io/en/stable/specifiers.html#packaging.specifiers.SpecifierSet.filter). The evaluated version is compared with PyPI's latest version, so a capped range can still show an update outside its cap. Unsupported constraints, including Poetry caret/tilde syntax and unresolved dependency tables, remain unchecked when no concrete declared or locked version is available.
+
+Registry successes and failures are cached by normalized package name for one repository scan. Three consecutive timeout/connection failures stop uncached lookups for that scan; a successful lookup resets the count. HTTP and JSON errors do not count toward that limit. Direct VCS/URL references bypass PyPI and auditing and retain their display identity and unchecked reason. Ambiguous lock versions also block both checks.
+
+Vulnerability checks audit only exact evaluated pins from every supported Python manifest. Conflicting versions of one package go into separate batches; repeated pins share results. Temporary audit files live outside the checkout. [`pip-audit`](https://pypi.org/project/pip-audit/) runs with `--no-deps --disable-pip`, and a result counts as checked only when its status, dependency entry, requested version and advisory shape agree. Missing tools, unresolved versions, skipped or absent entries and failed batches retain unchecked reasons. A failed batch does not invalidate another batch.
+
+This scope does not inspect an installed environment or perform full dependency resolution. Markers, `requires-python` and compatibility among packages are not evaluated. Undeclared transitive Python dependencies are not audited. A floating selection describes the declaration at scan time; it is not evidence of an installed version.
+
 ## Command-line options
 
 ```text
