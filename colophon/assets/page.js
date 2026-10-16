@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   // --- data
-  let data, currentState, searchTimer;
+  let data, currentState, searchTimer, earliestMs = null, dialShown = null;
   const controls = {};
   const usageProviders = new WeakMap();
   const providerOf = row => typeof row === "string" ? row : row.provider || "codex";
@@ -19,7 +19,10 @@
     const availability = costAvailability(rows);
     return availability.any ? costText(value) + (unpriced ? " + unpriced" : "") + availability.unavailable.map(provider => " · " + provider + " costs unavailable").join("") : "costs unavailable";
   }
-  const periods = ["7d", "30d", "90d", "mtd", "all", "custom"];
+  const periods = ["mtd", "qtd", "ytd", "7d", "30d", "90d", "all", "custom"];
+  // Calendar periods step by whole months, quarters or years; `o` counts steps back from the current one.
+  const calendarMonths = {mtd: 1, qtd: 3, ytd: 12};
+  const defaultPeriod = "mtd";
   const heatColors = () => Array.from({length: 5}, (_, n) =>
     getComputedStyle(document.documentElement).getPropertyValue("--heat-" + n).trim());
   // --- time
@@ -63,48 +66,59 @@
     }
     return parts;
   }
-  function periodWindow(period, now, custom = {}) {
+  function monthStart(year, month) {
+    // setFullYear normalizes month overflow and keeps years 0-99 literal.
+    const date = new Date(2000, 0, 1);
+    date.setFullYear(year, month, 1);
+    return validMs(+date) ? +date : null;
+  }
+  const periodOffset = state => calendarMonths[state.p] && /^-[1-9]\d{0,3}$/.test(state.o || "") ? Number(state.o) : 0;
+  function calendarWindow(period, now, offset) {
+    const months = calendarMonths[period], d = new Date(now);
+    const first = d.getMonth() - d.getMonth() % months;
+    const from = monthStart(d.getFullYear(), first + offset * months), end = monthStart(d.getFullYear(), first + (offset + 1) * months);
+    if (from === null || end === null) return null;
+    return {from, to: offset ? end : now + 1};
+  }
+  function periodWindow(period, now, state = {}) {
     if (!validMs(now)) return null;
     period = String(period).toLowerCase();
     const day = localDayStart(now);
     if (period === "all") return {from: -Infinity, to: now + 1};
     if (period === "custom") {
-      const from = parseDay(custom.from), last = parseDay(custom.to);
+      const from = parseDay(state.from), last = parseDay(state.to);
       return from !== null && last !== null && from <= last ? {from, to: addLocalDays(last, 1)} : null;
     }
-    if (period === "mtd") {
-      const d = new Date(day), from = new Date(d.getFullYear(), d.getMonth(), 1);
-      from.setFullYear(d.getFullYear());
-      return {from: +from, to: now + 1};
-    }
+    if (calendarMonths[period]) return calendarWindow(period, now, periodOffset({p: period, o: state.o}));
     const days = {"7d": 7, "30d": 30, "90d": 90}[period];
     return days ? {from: addLocalDays(day, 1 - days), to: now + 1} : null;
   }
-  function previousWindow(period, window, now) {
+  function previousWindow(period, window, now, state = {}) {
     period = String(period).toLowerCase();
     if (!window || period === "all" || period === "custom") return null;
     const length = window.to - window.from;
-    if (period === "mtd") {
+    if (calendarMonths[period]) {
       if (!validMs(now)) return null;
-      const d = new Date(now), from = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-      from.setFullYear(d.getFullYear() - (d.getMonth() === 0 ? 1 : 0));
-      return {from: +from, to: Math.min(+from + length, window.from)};
+      const offset = periodOffset({p: period, o: state.o}), prior = calendarWindow(period, now, offset - 1);
+      // The current period is partial: compare it with the same elapsed span of the prior one.
+      return !prior ? null : offset ? prior : {from: prior.from, to: Math.min(prior.from + length, prior.to)};
     }
     return {from: window.from - length, to: window.from};
   }
   const time = {localDayKey, localDayStart, addLocalDays, mondayIndex, localHour, splitByLocalDay, periodWindow, previousWindow};
   // --- state
-  const stateKeys = ["v", "p", "from", "to", "a", "h", "src", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
+  const stateKeys = ["v", "p", "o", "from", "to", "a", "h", "src", "q", "day", "how", "ws", "sub", "model", "st", "sort", "s"];
   function normalizeState(raw) {
     const next = {
       v: ["overview", "list", "session"].includes(raw.v) ? raw.v : "overview",
-      p: periods.includes(raw.p) ? raw.p : "90d",
+      p: periods.includes(raw.p) ? raw.p : defaultPeriod,
       a: raw.a === "0" ? "0" : "1",
       h: raw.h === "0" ? "0" : "1",
       src: ["codex", "claude", "all"].includes(raw.src) ? raw.src : "all",
       sort: ["newest", "longest", "subtime", "tokens", "cost"].includes(raw.sort) ? raw.sort : "newest"
     };
     for (const key of ["from", "to", "day"]) if (parseDay(raw[key]) !== null) next[key] = raw[key];
+    if (periodOffset({p: next.p, o: raw.o})) next.o = raw.o;
     if (/^[0-6]-(?:[0-9]|1[0-9]|2[0-3])$/.test(raw.how || "")) next.how = raw.how;
     if (["aborted", "interrupted", "abandoned"].includes(raw.st)) next.st = raw.st;
     for (const key of ["q", "ws", "sub", "model", "s"]) {
@@ -192,13 +206,13 @@
   function matchSession(session, state, byId) {
     const matchedSubagents = new Set();
     if (!providerMatch(session, state) || (state.a === "0" && session.archived) || (state.h === "0" && session.history_only)) return {match: false, matchedSubagents};
-    const window = state._window || periodWindow(state.p || "90d", data.meta.generated_at_ms, state);
+    const window = state._window || periodWindow(state.p || defaultPeriod, data.meta.generated_at_ms, state);
     for (const child of descendants(session, byId, state)) if (ownMatch(child, state, window)) matchedSubagents.add(child.id);
     return {match: ownMatch(session, state, window) || matchedSubagents.size > 0, matchedSubagents};
   }
   filters.matchSession = matchSession;
   function scope(sessions, state, now) {
-    const window = state._window || periodWindow(state.p || "90d", now, state);
+    const window = state._window || periodWindow(state.p || defaultPeriod, now, state);
     const rows = sessions.filter(row => matchSession(row, {...state, _window: window}, data.subagents).match);
     const agents = new Map();
     for (const row of rows) for (const child of descendants(row, data.subagents, state)) agents.set(child.id, child);
@@ -407,17 +421,24 @@
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => writeState({...currentState, q: controls.search.value}, {replace: true}), 200);
     }});
-    controls.periods = periods.map(period => el("button", {type: "button", text: period.toUpperCase(), onclick: () => {
-      const patch = {p: period};
-      if (period === "custom" && (!currentState.from || !currentState.to)) {
-        patch.from = localDayKey(periodWindow("90d", data.meta.generated_at_ms).from);
-        patch.to = localDayKey(data.meta.generated_at_ms);
+    // Choosing a period always returns to its current instance; Custom starts from the range on screen.
+    controls.periods = periods.map(period => el("button", {type: "button", text: period === "custom" ? "Custom" : period.toUpperCase(), onclick: () => {
+      const patch = {p: period, o: undefined}, now = data.meta.generated_at_ms;
+      if (period === "custom" && currentState.p !== "custom") {
+        const window = periodWindow(currentState.p, now, currentState);
+        patch.from = localDayKey(window && Number.isFinite(window.from) ? window.from : earliestMs ?? now);
+        patch.to = localDayKey(window ? window.to - 1 : now);
       }
       act(patch);
     }}));
     controls.from = el("input", {type: "date", "aria-label": "From date", onchange: () => act({from: controls.from.value})});
     controls.to = el("input", {type: "date", "aria-label": "To date", onchange: () => act({to: controls.to.value})});
-    controls.custom = el("div", {class: "custom-dates"}, el("label", {text: "from "}, controls.from), el("label", {text: "to "}, controls.to));
+    controls.custom = el("span", {class: "custom-dates"}, controls.from, el("span", {class: "period-note", "aria-hidden": "true", text: "–"}), controls.to);
+    controls.label = el("span", {class: "period-label", "data-period-label": "", "aria-live": "polite"});
+    controls.prev = el("button", {type: "button", class: "period-step", text: "‹", onclick: () => stepPeriod(-1)});
+    controls.next = el("button", {type: "button", class: "period-step", text: "›", onclick: () => stepPeriod(1)});
+    controls.dial = el("div", {class: "period-dial", role: "group", "aria-label": "Period range"},
+      controls.prev, el("span", {class: "period-view"}, controls.label, controls.custom), controls.next);
     controls.archive = el("button", {type: "button", onclick: () => act({a: currentState.a === "1" ? "0" : "1"})});
     controls.history = el("button", {type: "button", onclick: () => act({h: currentState.h === "1" ? "0" : "1"})});
     controls.breadcrumb = el("nav", {class: "breadcrumb", "aria-label": "Breadcrumb"});
@@ -427,14 +448,74 @@
     document.getElementById("colophon-topbar").replaceChildren(
       el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
       el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? Object.values(data.meta.sources).reduce((sum, source) => sum + source.logs, 0) : data.meta.counts.logs) + " logs · " + priceText}),
-      el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "periods", "aria-label": "Period"}, ...controls.periods), controls.custom, controls.archive, controls.history), controls.chips);
+      el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "period-controls"}, controls.dial, el("div", {class: "periods", role: "group", "aria-label": "Period"}, ...controls.periods)), controls.archive, controls.history), controls.chips);
+  }
+  // --- period dial
+  const monthText = (ms, month) => new Date(ms).toLocaleString("en-US", {month});
+  const dayText = (ms, withYear) => monthText(ms, "short") + " " + new Date(ms).getDate() + (withYear ? ", " + new Date(ms).getFullYear() : "");
+  function rangeText(window) {
+    const last = localDayStart(window.to - 1), year = ms => new Date(ms).getFullYear();
+    const split = year(window.from) !== year(last), withYear = split || year(last) !== year(data.meta.generated_at_ms);
+    if (!split && new Date(window.from).getMonth() === new Date(last).getMonth()) return dayText(window.from, false) + "–" + dayText(last, withYear).replace(/^\S+ /, "");
+    return dayText(window.from, split) + " – " + dayText(last, withYear);
+  }
+  function periodName(period, window, offset) {
+    if (!window) return {name: "No dates selected", note: ""};
+    const d = new Date(window.from), year = String(d.getFullYear()), note = offset ? "" : "to date";
+    if (period === "mtd") return {name: monthText(window.from, "long") + " " + year, note};
+    if (period === "qtd") return {name: "Q" + (Math.floor(d.getMonth() / 3) + 1) + " " + year,
+      note: note || monthText(window.from, "short") + " – " + monthText(window.to - 1, "short")};
+    if (period === "ytd") return {name: year, note};
+    if (period === "all") return {name: "All time", note: ""};
+    return {name: rangeText(window), note: ""};
+  }
+  function comparisonText(previous) {
+    const period = currentState.p;
+    if (!calendarMonths[period]) return "vs prior " + period.toUpperCase();
+    return "vs " + (periodOffset(currentState) ? periodName(period, previous, -1).name : rangeText(previous));
+  }
+  // The patch that moves the period one step, or null when that step would leave the data or pass the snapshot.
+  function periodStep(direction, state = currentState) {
+    const now = data.meta.generated_at_ms, window = periodWindow(state.p, now, state);
+    if (!window || (direction < 0 && (earliestMs === null || window.from <= earliestMs))) return null;
+    if (calendarMonths[state.p]) {
+      const offset = periodOffset(state) + direction;
+      return offset > 0 ? null : {o: offset ? String(offset) : undefined};
+    }
+    if (state.p !== "custom" || (direction > 0 && state.to >= localDayKey(now))) return null;
+    const from = parseDay(state.from), to = parseDay(state.to), span = Math.round((to - from) / 86400000) + 1;
+    return {from: localDayKey(addLocalDays(from, direction * span)), to: localDayKey(addLocalDays(to, direction * span))};
+  }
+  function stepPeriod(direction) {
+    const patch = periodStep(direction);
+    if (patch) act(patch);
+  }
+  function renderDial() {
+    const period = currentState.p, custom = period === "custom", unit = {mtd: "month", qtd: "quarter", ytd: "year", custom: "range"}[period] || "period";
+    const window = periodWindow(period, data.meta.generated_at_ms, currentState), {name, note} = periodName(period, window, periodOffset(currentState));
+    controls.label.hidden = custom;
+    controls.custom.hidden = !custom;
+    controls.label.replaceChildren(el("span", {class: "period-name", text: name}), ...(note ? [el("span", {class: "period-note", text: note})] : []));
+    for (const [button, direction, word, key] of [[controls.prev, -1, "Previous", "["], [controls.next, 1, "Next", "]"]]) {
+      button.disabled = !periodStep(direction);
+      button.setAttribute("aria-label", word + " " + unit);
+      button.title = word + " " + unit + " (" + key + ")";
+    }
+    // Slide the new period in from the side it lies on; a jump of several periods travels farther.
+    const before = dialShown;
+    dialShown = window && {period, from: window.from, span: window.to - window.from};
+    if (!before || !dialShown || before.period !== period || before.from === dialShown.from) return;
+    const shift = dialShown.from - before.from;
+    controls.dial.removeAttribute("data-motion");
+    void controls.dial.offsetWidth;
+    controls.dial.dataset.motion = (shift < 0 ? "back" : "forward") + (Math.abs(shift) > Math.max(before.span, dialShown.span) * 1.5 ? "-far" : "");
   }
   function renderTopbar() {
     document.documentElement.dataset.source = currentState.src;
     controls.sources.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.source === currentState.src)));
     controls.search.value = currentState.q || "";
     controls.periods.forEach((button, index) => button.setAttribute("aria-pressed", String(periods[index] === currentState.p)));
-    controls.custom.hidden = currentState.p !== "custom";
+    renderDial();
     controls.from.value = currentState.from || "";
     controls.to.value = currentState.to || "";
     controls.archive.textContent = "archived: " + (currentState.a === "1" ? "shown" : "hidden");
@@ -513,7 +594,7 @@
   function renderKpis(now) {
     const totals = kpis(data.sessions, currentState, now), window = periodWindow(currentState.p, now, currentState);
     const shares = Object.fromEntries(["codex", "claude"].map(src => [src, kpis(data.sessions, {...currentState, src}, now)]));
-    const previous = previousWindow(currentState.p, window, now);
+    const previous = previousWindow(currentState.p, window, now, currentState);
     const prior = previous ? kpis(data.sessions, {...currentState, _window: previous}, now) : null;
     const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
     const sorts = {sessions: "newest", active_ms: "longest", agent_ms: "subtime", turns: "newest", tokens: "tokens", cost: "cost", aborted: "newest"};
@@ -541,7 +622,7 @@
       if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
       if (prior && (key !== "cost" || (costAvailability(scopedCostRows(now)).complete && costAvailability(scopedCostRows(now, {...currentState, _window: previous})).complete))) {
         const delta = totals[key] - prior[key];
-        tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " vs prior " + currentState.p.toUpperCase()}));
+        tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " " + comparisonText(previous)}));
       }
       return tile;
     }));
@@ -988,6 +1069,7 @@
     for (const row of [...data.sessions, ...Object.values(data.subagents)]) {
       for (const usage of [row.own_usage, row.outside_usage, ...row.turns.map(turn => turn.usage)]) if (usage) usageProviders.set(usage, providerOf(row));
     }
+    earliestMs = [...data.sessions, ...Object.values(data.subagents)].map(row => row.start_ms).filter(validMs).reduce((min, ms) => min === null || ms < min ? ms : min, null);
     for (const weight of [300, 400, 500]) document.fonts.load(weight + " 12px 'Martian Mono'");
     mountTopbar();
     const restore = () => {
@@ -996,6 +1078,11 @@
     };
     window.addEventListener("popstate", restore);
     window.addEventListener("hashchange", restore);
+    document.addEventListener("keydown", event => {
+      if (!["[", "]"].includes(event.key) || event.metaKey || event.ctrlKey || event.altKey || (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]"))) return;
+      event.preventDefault();
+      stepPeriod(event.key === "[" ? -1 : 1);
+    });
     window.addEventListener("resize", () => {fitCalendar(); fitReader();});
     window.__colophonTest = {time, filters, aggregates, format, levels, state: {readState, writeState}, heatColors};
     restore();

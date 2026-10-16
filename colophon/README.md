@@ -61,7 +61,9 @@ disables Claude inspection. Either readable provider is sufficient; usable
 Claude history supplies history-only sessions when transcript roots are absent
 or an entry has no matching transcript identity. They show remembered prompts
 without active time, tokens or cost, with a separate shown-by-default toggle.
-Version 0.2.0 includes this history activity. The runtime home is
+Version 0.2.0 includes this history activity. Version 0.3.0 opens the page on
+month to date, adds QTD/YTD and steps periods back and forward from a period
+dial (see [runtime behavior](docs/runtime.md)). The runtime home is
 `~/.colophon`. Runtime files remain compatible with prior Python releases;
 native uses its own `cache-native/`. Use a separately selected `COLOPHON_HOME`
 for independent state. If an older release shares this home, run commands

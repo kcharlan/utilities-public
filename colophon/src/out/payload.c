@@ -32,7 +32,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.2.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.3.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);

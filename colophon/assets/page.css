@@ -37,7 +37,7 @@ button, input { border: 1px solid var(--chip-line); border-radius: 3px; backgrou
 button:hover { background: var(--hover); color: var(--hi); }
 button[aria-pressed="true"] { color: var(--g); border-color: var(--g); background: var(--sel); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-input[type="search"] { width: min(100%, 360px); }
+input[type="search"] { width: min(100%, 280px); }
 input[type="date"] { width: 150px; }
 .brand { border: 0; background: transparent; padding: 0; color: var(--g); font-size: 15px; font-weight: 500; letter-spacing: .35em; }
 .brand:hover { background: transparent; }
@@ -46,7 +46,26 @@ input[type="date"] { width: 150px; }
 .breadcrumb { color: var(--muted); }
 .breadcrumb button { border: 0; background: transparent; padding: 0; }
 .controls { margin-top: 14px; gap: 12px; }
-.custom-dates label { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.period-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.period-dial { display: inline-flex; align-items: stretch; max-width: 100%; border: 1px solid var(--chip-line); border-radius: 3px; background: var(--panel); }
+.period-step { border: 0; border-radius: 0; background: transparent; padding: 0 11px; color: var(--muted); font-size: 15px; line-height: 1; }
+.period-step:first-child { border-right: 1px solid var(--line); }
+.period-step:last-child { border-left: 1px solid var(--line); }
+.period-step:disabled { color: var(--line); background: transparent; cursor: default; }
+.period-view { display: flex; align-items: center; justify-content: center; width: 272px; overflow: hidden; }
+.period-label { display: flex; align-items: baseline; gap: 8px; padding: 5px 12px; color: var(--hi); font-weight: 400; white-space: nowrap; }
+.period-note { color: var(--dim); font-size: 10px; font-weight: 300; }
+.period-dial .custom-dates { flex-wrap: nowrap; gap: 4px; padding: 2px 4px; }
+.period-dial input[type="date"] { width: 120px; border-color: transparent; background: transparent; padding: 3px 4px; color: var(--hi); }
+.period-dial input[type="date"]:hover { border-color: var(--chip-line); }
+.period-dial[data-motion] :is(.period-label, .custom-dates) { animation: period-slide 180ms cubic-bezier(.2, .7, .3, 1); }
+.period-dial[data-motion$="-far"] :is(.period-label, .custom-dates) { animation: period-rocket 340ms cubic-bezier(.2, .8, .2, 1); }
+.period-dial[data-motion="back"] { --travel: -14px; }
+.period-dial[data-motion="forward"] { --travel: 14px; }
+.period-dial[data-motion="back-far"] { --travel: -44px; }
+.period-dial[data-motion="forward-far"] { --travel: 44px; }
+@keyframes period-slide { from { transform: translateX(var(--travel)); opacity: 0; } }
+@keyframes period-rocket { 0% { transform: translateX(var(--travel)); opacity: 0; } 70% { transform: translateX(calc(var(--travel) / -14)); opacity: 1; } 100% { transform: none; } }
 #snapshot-meta { color: var(--dim); font-size: 10px; overflow-wrap: anywhere; margin: 12px 0 0; }
 .filter-chips { margin-top: 12px; }
 .fchip { background: var(--fchip-bg); border-color: var(--fchip-line); color: var(--g); max-width: 100%; overflow-wrap: anywhere; }
@@ -204,4 +223,8 @@ details ul { padding-left: 20px; }
   header, main, footer { padding: 16px; }
   .controls { align-items: flex-start; }
   input[type="search"] { width: 100%; }
+  .period-dial { width: 100%; }
+  .period-controls, .period-controls .periods { width: 100%; }
+  .period-view { flex: 1; width: auto; }
+  .period-dial input[type="date"] { width: auto; flex: 1 1 0; }
 }

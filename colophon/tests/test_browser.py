@@ -9,11 +9,10 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-@pytest.fixture
-def page():
+def browser_page(**context_options):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context()
+        context = browser.new_context(**context_options)
         page = context.new_page()
         # Native action links remain inert even if a test accidentally clicks one.
         page.add_init_script("document.addEventListener('click', e => { const a=e.target.closest('a'); if(a && !/^(file:|#)/.test(a.getAttribute('href') || '')) { e.preventDefault(); e.stopImmediatePropagation(); } }, true)")
@@ -22,6 +21,15 @@ def page():
         finally:
             context.close()
             browser.close()
+
+@pytest.fixture
+def page():
+    yield from browser_page()
+
+@pytest.fixture
+def zoned_page():
+    """Period boundaries are local calendar days, so these cases pin the browser zone."""
+    yield from browser_page(timezone_id="America/New_York")
 
 def open_native(page, native_page):
     requests = []
@@ -406,4 +414,120 @@ def test_real_history_period_hour_grid_zero_usage_and_actions(page, native):
         assert "from=2026-01-02" in page.url and "how=4-7" in page.url
         page.goto(native.page.as_uri() + "#v=list&p=custom&from=2026-01-03&to=2026-01-03")
         expect(page.locator('[data-list-row]')).to_have_count(0)
+        assert requests == []
+
+# 2026-03-15 12:00 in New York; the synthetic sessions start on 2026-01-02.
+PERIOD_SNAPSHOT_MS = int(datetime(2026, 3, 15, 16, tzinfo=timezone.utc).timestamp() * 1000)
+
+def period_page(native):
+    def mutate(payload):
+        payload["meta"]["generated_at_ms"] = PERIOD_SNAPSHOT_MS
+    source_page(native, mutate)
+
+def test_period_dial_defaults_to_mtd_steps_and_returns_home(zoned_page, native):
+    page = zoned_page
+    period_page(native)
+    dial, label = page.get_by_role("group", name="Period range"), page.locator("[data-period-label]")
+    sessions = page.locator('[data-kpi="sessions"]')
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + "#v=overview")
+        expect(page).to_have_url(re.compile(r"p=mtd"))
+        expect(page.get_by_role("button", name="MTD", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(label).to_have_text(re.compile(r"^March 2026\s*to date$"))
+        expect(dial.get_by_role("button", name="Next month")).to_be_disabled()
+        expect(sessions.locator(".kpi-value")).to_have_attribute("data-value", "0")
+        expect(sessions.locator(".kpi-delta")).to_have_text("▲ 0 vs Feb 1–15")
+        dial.get_by_role("button", name="Previous month").click()
+        expect(label).to_have_text("February 2026")
+        expect(dial).to_have_attribute("data-motion", "back")
+        expect(page).to_have_url(re.compile(r"o=-1"))
+        expect(sessions.locator(".kpi-delta")).to_have_text(re.compile(r"vs January 2026$"))
+        page.locator("body").press("[")
+        expect(label).to_have_text("January 2026")
+        expect(page).to_have_url(re.compile(r"o=-2"))
+        expect(sessions.locator(".kpi-value")).to_have_attribute("data-value", "2")
+        expect(sessions.locator(".kpi-delta")).to_have_text(re.compile(r"vs December 2025$"))
+        expect(dial.get_by_role("button", name="Previous month")).to_be_disabled()
+        expect(dial.get_by_role("button", name="Next month")).to_be_enabled()
+        # Choosing MTD again returns to the current month from any distance.
+        page.get_by_role("button", name="MTD", exact=True).click()
+        expect(label).to_have_text(re.compile(r"^March 2026\s*to date$"))
+        expect(dial).to_have_attribute("data-motion", "forward-far")
+        assert "o=" not in page.url
+        page.go_back()
+        expect(label).to_have_text("January 2026")
+        page.get_by_role("button", name="QTD", exact=True).click()
+        expect(label).to_have_text(re.compile(r"^Q1 2026\s*to date$"))
+        assert "o=" not in page.url
+        expect(sessions.locator(".kpi-value")).to_have_attribute("data-value", "2")
+        expect(dial.get_by_role("button", name="Previous quarter")).to_be_disabled()
+        expect(dial.get_by_role("button", name="Next quarter")).to_be_disabled()
+        page.get_by_role("button", name="YTD", exact=True).click()
+        expect(label).to_have_text(re.compile(r"^2026\s*to date$"))
+        expect(dial.get_by_role("button", name="Previous year")).to_be_disabled()
+        page.get_by_role("button", name="30D", exact=True).click()
+        expect(label).to_have_text("Feb 14 – Mar 15")
+        expect(sessions.locator(".kpi-delta")).to_have_text(re.compile(r"vs prior 30D$"))
+        for name in ["Previous period", "Next period"]:
+            expect(dial.get_by_role("button", name=name)).to_be_disabled()
+        page.get_by_role("button", name="ALL", exact=True).click()
+        expect(label).to_have_text("All time")
+        page.get_by_role("button", name="30D", exact=True).click()
+        assert requests == []
+
+def test_period_custom_starts_from_shown_range_and_shifts(zoned_page, native):
+    page = zoned_page
+    period_page(native)
+    dial = page.get_by_role("group", name="Period range")
+    start, end = dial.get_by_label("From date"), dial.get_by_label("To date")
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + "#v=overview&p=mtd&o=-1")
+        page.get_by_role("button", name="Custom", exact=True).click()
+        expect(start).to_have_value("2026-02-01")
+        expect(end).to_have_value("2026-02-28")
+        expect(page.locator("[data-period-label]")).to_be_hidden()
+        page.goto(native.page.as_uri() + "#v=overview&p=30d")
+        page.get_by_role("button", name="Custom", exact=True).click()
+        expect(start).to_have_value("2026-02-14")
+        expect(end).to_have_value("2026-03-15")
+        expect(dial.get_by_role("button", name="Next range")).to_be_disabled()
+        dial.get_by_role("button", name="Previous range").click()
+        expect(start).to_have_value("2026-01-15")
+        expect(end).to_have_value("2026-02-13")
+        assert "from=2026-01-15" in page.url and "to=2026-02-13" in page.url
+        page.locator("body").press("]")
+        expect(end).to_have_value("2026-03-15")
+        # Keys typed into a field never step the period.
+        page.get_by_role("searchbox").press("[")
+        expect(start).to_have_value("2026-02-14")
+        assert requests == []
+
+def test_period_offsets_normalize_and_cross_year_boundaries(zoned_page, native):
+    page = zoned_page
+    period_page(native)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        for raw, kept in [("p=qtd&o=-3", True), ("p=30d&o=-1", False), ("p=mtd&o=1", False), ("p=mtd&o=-0", False), ("p=ytd&o=x", False)]:
+            page.goto(native.page.as_uri() + "#v=overview&" + raw)
+            expect(page).to_have_url(re.compile(r"p=" + raw[2:5]))
+            assert ("o=" in page.url) == kept, raw
+        cases = page.evaluate("""() => {
+          const t = window.__colophonTest.time, now = new Date(2026, 0, 10, 12).getTime();
+          const show = w => w && [t.localDayKey(w.from), t.localDayKey(w.to - 1)];
+          return Object.fromEntries([["mtd"], ["mtd", "-1"], ["qtd"], ["qtd", "-1"], ["qtd", "-4"], ["ytd", "-1"], ["30d", "-1"]].map(([p, o]) => {
+            const w = t.periodWindow(p, now, {o});
+            return [p + (o || ""), [show(w), show(t.previousWindow(p, w, now, {o}))]];
+          }));
+        }""")
+        assert cases == {
+            "mtd": [["2026-01-01", "2026-01-10"], ["2025-12-01", "2025-12-10"]],
+            "mtd-1": [["2025-12-01", "2025-12-31"], ["2025-11-01", "2025-11-30"]],
+            "qtd": [["2026-01-01", "2026-01-10"], ["2025-10-01", "2025-10-10"]],
+            "qtd-1": [["2025-10-01", "2025-12-31"], ["2025-07-01", "2025-09-30"]],
+            "qtd-4": [["2025-01-01", "2025-03-31"], ["2024-10-01", "2024-12-31"]],
+            "ytd-1": [["2025-01-01", "2025-12-31"], ["2024-01-01", "2024-12-31"]],
+            "30d-1": [["2025-12-12", "2026-01-10"], ["2025-11-12", "2025-12-11"]],
+        }
         assert requests == []
