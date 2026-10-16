@@ -11,6 +11,9 @@ editing Dockerfiles, Compose files, or tracked source configuration.
 - `curl`
 - Node.js 18 or newer only if you use `migrate.sh` or run extension tests
 
+For the Python 3.14 development environment, Chromium setup, and complete suite,
+see [Development and tests](README.md#development-and-tests).
+
 ## 1. Create Private Configuration
 
 From the `docker/llm_collector` directory:

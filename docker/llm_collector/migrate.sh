@@ -91,17 +91,20 @@ source_test() {
   log "Running collector, snapshot, shell-config, and extension source tests."
 
   if [ "$DRY_RUN" = "1" ]; then
-    log "DRY RUN: would create/use $SOURCE_DIR/.venv, run pytest, and run shell/extension tests."
+    log "DRY RUN: would create/use $SOURCE_DIR/.venv, install requirements-dev.txt and Playwright Chromium, run pytest, and run shell/extension tests."
     return 0
   fi
 
   if [ ! -x "$SOURCE_DIR/.venv/bin/python" ]; then
-    python3 -m venv "$SOURCE_DIR/.venv"
+    local LLM_COLLECTOR_PYTHON="${LLM_COLLECTOR_PYTHON:-/opt/homebrew/opt/python@3.14/bin/python3.14}"
+    [ -x "$LLM_COLLECTOR_PYTHON" ] || die "Python 3.14 not found at $LLM_COLLECTOR_PYTHON. Install it with 'brew install python@3.14' or set LLM_COLLECTOR_PYTHON."
+    "$LLM_COLLECTOR_PYTHON" -m venv "$SOURCE_DIR/.venv"
   fi
 
   "$SOURCE_DIR/.venv/bin/python" -m pip install --upgrade pip
-  "$SOURCE_DIR/.venv/bin/python" -m pip install -r "$SOURCE_DIR/collector/requirements.txt" pytest
-  "$SOURCE_DIR/.venv/bin/python" -m pytest "$SOURCE_DIR/collector" "$SOURCE_DIR/snapshots"
+  "$SOURCE_DIR/.venv/bin/python" -m pip install -r "$SOURCE_DIR/requirements-dev.txt"
+  "$SOURCE_DIR/.venv/bin/python" -m playwright install chromium
+  "$SOURCE_DIR/.venv/bin/python" -m pytest "$SOURCE_DIR/collector" "$SOURCE_DIR/snapshots" "$SOURCE_DIR/extension"
   "$SOURCE_DIR/tests/test_local_config.zsh"
   node --test "$SOURCE_DIR"/extension/test_*.js
 }
