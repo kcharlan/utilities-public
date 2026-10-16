@@ -111,7 +111,7 @@ def extension(tmp_path_factory, collector):
 
 
 @contextmanager
-def open_popup(extension, collector, profile, color_scheme):
+def open_popup(extension, collector, profile, color_scheme, skin=None):
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=profile, channel="chromium", headless=True,
@@ -126,6 +126,10 @@ def open_popup(extension, collector, profile, color_scheme):
             page = context.new_page()
             with guard_browser_errors(page):
                 page.goto(f"chrome-extension://{extension_id}/popup.html")
+                if skin is not None:
+                    page.evaluate("skin => localStorage.setItem('llmUsageCounter.appearance', skin)", skin)
+                    page.reload()
+                    expect(page.locator("html")).to_have_attribute("data-skin", skin)
                 expect(page.locator("#status")).to_have_attribute("data-state", "connected")
                 yield page
             assert all(url.startswith((f"chrome-extension://{extension_id}/", collector.url + "/")) for url in requests), requests
@@ -133,9 +137,14 @@ def open_popup(extension, collector, profile, color_scheme):
             context.close()
 
 
+@pytest.fixture(params=["meter", "native"])
+def skin(request):
+    return request.param
+
+
 @pytest.fixture
-def popup(extension, collector, tmp_path, color_scheme):
-    with open_popup(extension, collector, tmp_path / "profile", color_scheme) as page:
+def popup(extension, collector, tmp_path, color_scheme, skin):
+    with open_popup(extension, collector, tmp_path / "profile", color_scheme, skin) as page:
         yield page
 
 
@@ -202,10 +211,50 @@ def test_capture_switch(popup, tmp_path):
     screenshot(popup, tmp_path, "capture-switch")
 
 
-def test_system_appearance_changes_background(extension, collector, tmp_path):
+def test_system_appearance_changes_background(extension, collector, tmp_path, skin):
     backgrounds = []
     for color_scheme in ["light", "dark"]:
-        with open_popup(extension, collector, tmp_path / color_scheme, color_scheme) as page:
+        with open_popup(extension, collector, tmp_path / color_scheme, color_scheme, skin) as page:
             backgrounds.append(page.locator("body").evaluate("node => getComputedStyle(node).backgroundColor"))
             screenshot(page, tmp_path, f"system-{color_scheme}")
     assert backgrounds[0] != backgrounds[1]
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_automatic_platform_default(extension, collector, tmp_path, color_scheme):
+    with open_popup(extension, collector, tmp_path / "profile", color_scheme) as page:
+        expect(page.locator("html")).to_have_attribute("data-skin", "native" if sys.platform == "darwin" else "meter")
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_appearance_persists_in_new_popup(popup, tmp_path):
+    popup.locator("#appearanceButton").click()
+    popup.locator("#appearanceMeter").click()
+    context, url = popup.context, popup.url
+    popup.close()
+    new_page = context.new_page()
+    with guard_browser_errors(new_page):
+        new_page.goto(url)
+        expect(new_page.locator("html")).to_have_attribute("data-skin", "meter")
+        screenshot(new_page, tmp_path, "persisted-meter")
+    new_page.close()
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_appearance_keyboard(popup, tmp_path):
+    popup.evaluate("localStorage.setItem('llmUsageCounter.appearance', 'meter')")
+    popup.reload()
+    expect(popup.locator("html")).to_have_attribute("data-skin", "meter")
+    popup.locator("#appearanceButton").focus()
+    popup.keyboard.press("Enter")
+    expect(popup.locator("#appearanceMeter")).to_be_focused()
+    screenshot(popup, tmp_path, "appearance-menu-meter")
+    popup.keyboard.press("ArrowDown")
+    expect(popup.locator("#appearanceNative")).to_be_focused()
+    popup.keyboard.press("Enter")
+    expect(popup.locator("html")).to_have_attribute("data-skin", "native")
+    expect(popup.locator("#appearanceMenu")).to_be_hidden()
+    expect(popup.locator("#appearanceButton")).to_be_focused()
+    popup.locator("#appearanceButton").click()
+    expect(popup.locator("#appearanceNative")).to_have_attribute("aria-checked", "true")
+    screenshot(popup, tmp_path, "appearance-menu-native")

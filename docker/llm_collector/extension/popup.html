@@ -1,7 +1,8 @@
 <!doctype html>
-<html data-skin="meter">
+<html>
 <head>
 <meta charset="utf-8">
+<script src="popup_appearance.js"></script>
 <title>LLM usage</title>
 <style>
 :root { color-scheme: light dark; }
@@ -116,6 +117,116 @@ body { width: 360px; margin: 0; background: var(--bg); color: var(--ink); font: 
   .sw-row .k { white-space: normal; }
   .fold summary { display: flex; }
   .reg h2 { margin: 0; font: inherit; }
+  [data-skin="meter"] .gear { width: 30px; height: 28px; display: grid; place-items: center; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); }
+  [data-skin="meter"] .gear:hover, [data-skin="meter"] .gear[aria-expanded="true"] { border-color: var(--btn-line); color: var(--ink); }
+  [data-skin="meter"] .menu { padding: 6px; border-radius: 8px; background: var(--surface); border: 1px solid var(--btn-line); box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+  [data-skin="meter"] .menu-h { padding: 4px 8px 6px; font-size: 12px; font-weight: 600; }
+  [data-skin="meter"] .menu [role="menuitemradio"] { display: flex; width: 100%; gap: 8px; align-items: baseline; padding: 6px 8px; border: 0; border-radius: 5px; background: none; color: var(--ink); text-align: left; }
+  [data-skin="meter"] .menu [role="menuitemradio"]:hover { background: var(--btn-hover); }
+  [data-skin="meter"] .menu [aria-checked="true"] { background: var(--ok-soft); color: var(--ok); font-weight: 500; }
+  [data-skin="meter"] .menu .hint { margin-left: auto; font-size: 11px; color: var(--muted); font-weight: 400; }
+  [data-skin="meter"] .menu-foot { padding: 6px 8px 2px; font-size: 11px; color: var(--muted); }
+
+  /* =================================================================
+     Skin: Native. macOS grouped lists, row buttons, system font.
+     ================================================================= */
+  [data-skin="native"] {
+    --bg: #ececee; --group: #ffffff; --ink: #1d1d1f; --muted: #6e6e73; --sep: rgba(60,60,67,.16);
+    --ok: #248a3d; --warn: #b25000; --bad: #d70015; --tint: #0a66d8; --track: #d6d6db;
+    --hover: rgba(0,0,0,.045); --pill: rgba(0,0,0,.08); --focus: #0a66d8;
+    background: var(--bg); color: var(--ink);
+    font: 13px/1.38 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { [data-skin="native"] {
+    --bg: #1c1c1e; --group: #2c2c2e; --ink: #f5f5f7; --muted: #98989d; --sep: rgba(235,235,245,.14);
+    --ok: #30d158; --warn: #ff9f0a; --bad: #ff453a; --tint: #3d8bff; --track: #48484a;
+    --hover: rgba(255,255,255,.06); --pill: rgba(255,255,255,.12); --focus: #3d8bff;
+  }
+  }
+  [data-skin="native"] .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 12px; position: relative; }
+  [data-skin="native"] .row + .row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--sep); }
+  [data-skin="native"] .k { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  [data-skin="native"] .v { color: var(--muted); }
+
+  [data-skin="native"] .hd { padding: 4px 4px 14px; }
+  [data-skin="native"] .app { display: none; }
+  [data-skin="native"] .status { display: flex; gap: 11px; align-items: center; }
+  [data-skin="native"] .mark { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--ok); }
+
+  [data-skin="native"] .sec-h { display: flex; justify-content: space-between; margin: 0 12px 5px; font-size: 12px; font-weight: 400; color: var(--muted); }
+  [data-skin="native"] .fold { background: var(--group); border-radius: 10px; overflow: hidden; }
+  [data-skin="native"] .reg .v { color: var(--ink); font-weight: 500; }
+  [data-skin="native"] .reg .q { color: var(--warn); font-size: 11px; }
+  [data-skin="native"] .bar { display: none; }
+  [data-skin="native"] .empty { padding: 9px 12px; color: var(--muted); }
+
+  [data-skin="native"] .fold { margin-top: 10px; }
+  [data-skin="native"] .fold > summary { font-weight: 500; }
+  [data-skin="native"] .fold > summary:hover { background: var(--hover); }
+  [data-skin="native"] .fold > summary .chev { order: 3; margin-left: 2px; }
+  [data-skin="native"] .state { font-weight: 400; }
+  [data-skin="native"] .state.warn, [data-skin="native"] .kv .v.warn { color: var(--warn); }
+  [data-skin="native"] .state.bad, [data-skin="native"] .kv .v.bad { color: var(--bad); }
+  [data-skin="native"] .fold-body { position: relative; }
+  [data-skin="native"] .fold-body > * { position: relative; }
+  [data-skin="native"] .fold-body > *::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--sep); }
+  [data-skin="native"] .kv .v { max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  [data-skin="native"] code { font: 11px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  [data-skin="native"] .sw-row { cursor: pointer; }
+  [data-skin="native"] .switch { width: 36px; height: 21px; border-radius: 11px; }
+  [data-skin="native"] .switch::after { top: 2px; left: 2px; width: 17px; height: 17px; }
+  [data-skin="native"] .switch:checked::after { transform: translateX(15px); }
+  [data-skin="native"] .acts { display: flex; flex-direction: column; }
+  [data-skin="native"] .act { position: relative; width: 100%; min-height: 34px; padding: 6px 12px; border: 0; background: none; text-align: left; color: var(--tint); }
+  [data-skin="native"] .act + .act::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--sep); }
+  [data-skin="native"] .act:hover:not(:disabled) { background: var(--hover); }
+  [data-skin="native"] .act.danger { color: var(--bad); }
+  [data-skin="native"] .act:disabled { color: var(--muted); }
+  [data-skin="native"] .log { padding: 0 12px 4px; }
+  [data-skin="native"] .log li { display: grid; grid-template-columns: 1fr auto; padding: 6px 0; border-top: 1px solid var(--sep); font-size: 12px; }
+  [data-skin="native"] .log li:first-child { border-top: 0; }
+  [data-skin="native"] .log .dec { grid-row: 1; grid-column: 1; font-weight: 500; }
+  [data-skin="native"] .log time { grid-row: 1; grid-column: 2; color: var(--muted); }
+  [data-skin="native"] .log code { grid-column: 1 / -1; color: var(--muted); overflow-wrap: anywhere; }
+  [data-skin="native"] .dec.ok { color: var(--ok); }
+  [data-skin="native"] .dec.bad { color: var(--bad); }
+  [data-skin="native"] .none { padding: 8px 0; color: var(--muted); }
+
+  [data-skin="native"] .ft { display: flex; align-items: center; gap: 6px; margin: 0 -12px; padding: 12px 16px; background: var(--bg); }
+  [data-skin="native"] .note { flex: 1; font-size: 11px; color: var(--muted); }
+  [data-skin="native"] .note.ok { color: var(--ok); }
+  [data-skin="native"] .ft .act { width: auto; min-height: 0; padding: 6px 11px; border-radius: 6px; background: var(--pill); color: var(--ink); font-weight: 500; font-size: 12px; text-align: center; }
+  [data-skin="native"] .ft .act.primary { background: var(--tint); color: #fff; }
+  [data-skin="native"] .ft .act + .act::before { display: none; }
+  [data-skin="native"] .gear { width: 28px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--muted); }
+  [data-skin="native"] .gear:hover, [data-skin="native"] .gear[aria-expanded="true"] { background: var(--pill); color: var(--ink); }
+  [data-skin="native"] .menu { padding: 5px; border-radius: 10px; background: var(--group); box-shadow: 0 0 0 .5px rgba(0,0,0,.25), 0 10px 30px rgba(0,0,0,.25); }
+  [data-skin="native"] .menu-h { padding: 4px 9px 4px; font-size: 11px; color: var(--muted); }
+  [data-skin="native"] .menu [role="menuitemradio"] { display: flex; width: 100%; gap: 6px; align-items: baseline; padding: 4px 9px 4px 22px; border: 0; border-radius: 5px; background: none; color: var(--ink); text-align: left; position: relative; }
+  [data-skin="native"] .menu [role="menuitemradio"]:hover { background: var(--tint); color: #fff; }
+  [data-skin="native"] .menu [role="menuitemradio"]:hover .hint { color: rgba(255,255,255,.8); }
+  [data-skin="native"] .menu [aria-checked="true"]::before { content: "✓"; position: absolute; left: 7px; font-size: 11px; }
+  [data-skin="native"] .menu .hint { margin-left: auto; font-size: 11px; color: var(--muted); }
+  [data-skin="native"] .menu-foot { margin-top: 4px; padding: 6px 9px 3px; border-top: 1px solid var(--sep); font-size: 11px; color: var(--muted); }
+
+  .pop .menu { position: absolute; right: 10px; bottom: calc(100% + 6px); width: 232px; }
+  .pop .menu[hidden] { display: none; }
+  [data-skin="meter"] .menu [aria-checked="true"]::before { content: "✓"; }
+  [data-skin="meter"] .gear { flex: none; }
+  [data-skin="native"] body { padding: 12px 12px 0; }
+  [data-skin="native"] .hd { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 11px; }
+  [data-skin="native"] .hd .status { display: contents; }
+  [data-skin="native"] .hd .mark { grid-column: 1; grid-row: 1 / 3; background: var(--warn); color: white; font-size: 20px; }
+  [data-skin="native"] .hd[data-state="connected"] .mark { background: var(--ok); }
+  [data-skin="native"] .hd[data-state="connected"] .mark::after { content: "✓"; }
+  [data-skin="native"] .hd[data-state="error"] .mark { background: var(--bad); }
+  [data-skin="native"] .hd[data-state="error"] .mark::after { content: "!"; }
+  [data-skin="native"] #statusLabel { grid-column: 2; color: var(--ink); font-size: 14px; font-weight: 600; }
+  [data-skin="native"] .hd .status-detail { grid-column: 2; padding: 0; background: none; color: var(--muted); }
+  [data-skin="native"] #register { background: var(--group); border-radius: 10px; overflow: hidden; }
+  [data-skin="native"] .sw-row .k { white-space: normal; }
+  [data-skin="native"] .reason { grid-column: 1 / -1; }
+  [data-skin="native"] .log .none { display: block; }
 </style>
 <script src="popup.js" defer></script>
 </head>
@@ -185,8 +296,18 @@ body { width: 360px; margin: 0; background: var(--bg); color: var(--ink); font: 
 
   <footer class="ft">
     <span id="notice" class="note" role="status"></span>
+    <button id="appearanceButton" type="button" class="gear" aria-label="Appearance" aria-haspopup="menu" aria-controls="appearanceMenu" aria-expanded="false">
+      <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 5.5h14M3 10h14M3 14.5h14"/><circle cx="7" cy="5.5" r="1.7" fill="var(--bg)"/><circle cx="13" cy="10" r="1.7" fill="var(--bg)"/><circle cx="8.5" cy="14.5" r="1.7" fill="var(--bg)"/></svg>
+    </button>
     <button id="reload" type="button" class="act">Check again</button>
     <button id="export" type="button" class="act primary">Export</button>
+    <div id="appearanceMenu" class="menu" role="menu" aria-label="Appearance" hidden>
+      <div class="menu-h">Appearance</div>
+      <button id="appearanceAuto" type="button" role="menuitemradio" aria-checked="true" tabindex="-1">Automatic<span id="automaticHint" class="hint"></span></button>
+      <button id="appearanceMeter" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">Meter</button>
+      <button id="appearanceNative" type="button" role="menuitemradio" aria-checked="false" tabindex="-1">Native<span class="hint">macOS style</span></button>
+      <div class="menu-foot">Light and dark follow your system setting.</div>
+    </div>
   </footer>
 </body>
 </html>

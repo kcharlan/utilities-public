@@ -30,6 +30,21 @@ sent.
 
 The popup also shows the current collector connection state. A green indicator means the extension received a valid response from the authenticated `/counters` endpoint. A red indicator distinguishes an unreachable collector, timeout, API-key rejection, server error, invalid response, or missing extension configuration.
 
+## Appearance
+
+The footer's **Appearance** button offers **Automatic**, **Meter** (tally bars
+and cards), and **Native** (macOS-style grouped rows). The choice is stored
+locally under `localStorage` key `llmUsageCounter.appearance`, with values
+`auto`, `meter`, or `native`; it is not synced between devices. Automatic is
+the default for missing, invalid, or unreadable preferences. It selects Native
+when the platform is `macOS` or contains `Mac`, and Meter elsewhere. If saving
+fails, the chosen skin still applies to the current popup and a notice explains
+that it could not be saved.
+
+Both skins follow the system's light or dark setting. Open the menu with Enter
+or Space, move with the arrow keys, and select with Enter or Space. Escape or
+clicking outside closes it and returns focus to Appearance.
+
 ## Supported Providers
 
 The extension currently supports tracking usage on the following platforms:

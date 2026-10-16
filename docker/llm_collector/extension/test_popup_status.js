@@ -11,16 +11,21 @@ function fakeNode(markup = []) {
     set innerHTML(value) { markup.push(String(value)); this.ownText = ''; this.children = []; }
   };
 }
-function loadPopupStatusRenderer(background = null, clipboard = { writeText: async () => {} }) {
+function loadPopupStatusRenderer(background = null, clipboard = { writeText: async () => {} }, storage = { getItem: () => null, setItem() {} }) {
   const callbacks = {};
   const blobs = [];
   const elements = {};
   const markup = [];
-  for (const id of ['status','statusLabel','statusDetail','captureToggle','persistenceStatus','registerHeading','registerTotal','register','deliveryState','deliveryDetails','captureState','captureHeld','logState','logList','deliveryFold','captureFold','logFold','export','notice','reset','forcePush','clearCapture','reload']) {
+  for (const id of ['appearanceButton','appearanceMenu','appearanceAuto','appearanceMeter','appearanceNative','automaticHint','status','statusLabel','statusDetail','captureToggle','persistenceStatus','registerHeading','registerTotal','register','deliveryState','deliveryDetails','captureState','captureHeld','logState','logList','deliveryFold','captureFold','logFold','export','notice','reset','forcePush','clearCapture','reload']) {
     elements[id] = fakeNode(markup);
     elements[id].addEventListener = (event, fn) => { callbacks[id + ':' + event] = fn; };
+    elements[id].attributes = {};
+    elements[id].setAttribute = (name, value) => { elements[id].attributes[name] = value; };
+    elements[id].focus = () => { document.activeElement = elements[id]; };
+    elements[id].contains = target => target === elements[id];
   }
   const document = {
+    documentElement: { dataset: {} },
     addEventListener(event, fn) { callbacks[event] = fn; },
     createElement() { return fakeNode(markup); },
     body: { appendChild() {}, removeChild() {} },
@@ -28,9 +33,11 @@ function loadPopupStatusRenderer(background = null, clipboard = { writeText: asy
       return elements[id] || null;
     }
   };
+  elements.appearanceMenu.hidden = true;
   const context = vm.createContext({
     Blob,
     navigator: { clipboard },
+    localStorage: storage,
     URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:synthetic'; }, revokeObjectURL() {} },
     chrome: { runtime: { sendMessage(msg, cb) { background.send(msg).then(cb); } } },
     clearInterval,
@@ -41,9 +48,58 @@ function loadPopupStatusRenderer(background = null, clipboard = { writeText: asy
     setTimeout,
     window: { addEventListener() {} }
   });
+  vm.runInContext(readFileSync(require.resolve('./popup_appearance.js'), 'utf8'), context);
   vm.runInContext(readFileSync(require.resolve("./popup.js"), "utf8"), context);
   return { context, elements, callbacks, blobs, markup };
 }
+
+test('Appearance selection persists Native, updates checked state and returns focus', () => {
+  let saved;
+  const popup = loadPopupStatusRenderer({ send: async () => ({}) }, undefined, { getItem: () => 'meter', setItem(key, value) { saved = [key, value]; } });
+  popup.callbacks.DOMContentLoaded();
+  assert.equal(typeof popup.callbacks['appearanceButton:click'], 'function');
+  popup.callbacks['appearanceButton:click']();
+  assert.equal(popup.context.document.activeElement, popup.elements.appearanceMeter);
+  popup.callbacks['appearanceNative:click']();
+  assert.deepEqual(saved, ['llmUsageCounter.appearance', 'native']);
+  assert.equal(popup.context.document.documentElement.dataset.skin, 'native');
+  assert.equal(popup.elements.appearanceNative.attributes['aria-checked'], 'true');
+  assert.equal(popup.elements.appearanceMeter.attributes['aria-checked'], 'false');
+  assert.equal(popup.elements.appearanceMenu.hidden, true);
+  assert.equal(popup.elements.appearanceButton.attributes['aria-expanded'], 'false');
+  assert.equal(popup.context.document.activeElement, popup.elements.appearanceButton);
+});
+
+test('Appearance menu wraps arrow focus, selects with Space, and closes on Escape and outside click', () => {
+  const popup = loadPopupStatusRenderer({ send: async () => ({}) });
+  popup.callbacks.DOMContentLoaded();
+  assert.equal(typeof popup.callbacks['appearanceButton:click'], 'function');
+  popup.callbacks['appearanceButton:click']();
+  const key = key => popup.callbacks['appearanceMenu:keydown']({ key, preventDefault() {} });
+  key('ArrowUp');
+  assert.equal(popup.context.document.activeElement, popup.elements.appearanceNative);
+  key('ArrowDown');
+  assert.equal(popup.context.document.activeElement, popup.elements.appearanceAuto);
+  key('ArrowDown'); key(' ');
+  assert.equal(popup.context.document.documentElement.dataset.skin, 'meter');
+  popup.callbacks['appearanceButton:click']();
+  popup.callbacks.keydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(popup.elements.appearanceMenu.hidden, true);
+  popup.callbacks['appearanceButton:click']();
+  popup.callbacks.click({ target: popup.elements.register });
+  assert.equal(popup.elements.appearanceMenu.hidden, true);
+  assert.equal(popup.context.document.activeElement, popup.elements.appearanceButton);
+});
+
+test('blocked Appearance storage still applies the skin with the failed-save notice', () => {
+  const storage = { getItem() { throw Error('synthetic read'); }, setItem() { throw Error('synthetic write'); } };
+  const popup = loadPopupStatusRenderer({ send: async () => ({}) }, undefined, storage);
+  popup.callbacks.DOMContentLoaded();
+  assert.equal(typeof popup.callbacks['appearanceNative:click'], 'function');
+  popup.callbacks['appearanceNative:click']();
+  assert.equal(popup.context.document.documentElement.dataset.skin, 'native');
+  assert.equal(popup.elements.notice.textContent, 'Appearance applied for now; it could not be saved.');
+});
 
 // Keep every dynamic container present, including in export-only fixtures.
 // Capture HTML-parser input separately from text-node output; Chromium acceptance

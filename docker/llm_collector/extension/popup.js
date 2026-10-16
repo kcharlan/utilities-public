@@ -251,7 +251,62 @@ function bind(id, event, fn){
   if (el) el.addEventListener(event, fn);
 }
 
+function bindAppearance() {
+  const appearance = globalThis.LLMPopupAppearance;
+  const button = $('appearanceButton');
+  const menu = $('appearanceMenu');
+  const items = ['auto', 'meter', 'native'].map((pref, index) => ({
+    pref, element: $(['appearanceAuto', 'appearanceMeter', 'appearanceNative'][index])
+  }));
+  let storage;
+  try { storage = globalThis.localStorage; } catch { /* Use this popup's session when storage is blocked. */ }
+  let preference = appearance.readPreference(storage);
+  const platform = appearance.currentPlatform();
+  $('automaticHint').textContent = appearance.resolveSkin('auto', platform) === 'native' ? 'Native on this Mac' : 'Meter here';
+  function updateChecked() {
+    for (const { pref, element } of items) element.setAttribute('aria-checked', String(pref === preference));
+  }
+  function close() {
+    menu.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    button.focus();
+  }
+  function select(pref) {
+    preference = pref;
+    const saved = appearance.writePreference(storage, pref);
+    document.documentElement.dataset.skin = appearance.resolveSkin(pref, platform);
+    updateChecked();
+    close();
+    if (!saved) setNotice('Appearance applied for now; it could not be saved.');
+  }
+  updateChecked();
+  bind('appearanceButton', 'click', () => {
+    if (!menu.hidden) { close(); return; }
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    items.find(item => item.pref === preference).element.focus();
+  });
+  for (const { pref, element } of items) element.addEventListener('click', () => select(pref));
+  bind('appearanceMenu', 'keydown', event => {
+    const index = items.findIndex(item => item.element === document.activeElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].element.focus();
+    } else if ((event.key === 'Enter' || event.key === ' ') && index >= 0) {
+      event.preventDefault();
+      select(items[index].pref);
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); close(); }
+  });
+  document.addEventListener('click', event => {
+    if (!menu.hidden && !menu.contains(event.target) && !button.contains(event.target)) close();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  bindAppearance();
   bind("reset", "click", async () => {
     setNotice("Clearing pending data…");
     try {
