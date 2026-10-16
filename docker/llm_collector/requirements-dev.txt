@@ -1,0 +1,5 @@
+# Everything the full llm_collector test suite needs, including the Chromium
+# popup tests. The collector container installs only collector/requirements.txt.
+-r collector/requirements.txt
+pytest==9.1.1
+playwright==1.64.0

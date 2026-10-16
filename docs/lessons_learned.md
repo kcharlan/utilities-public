@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-16: Verify extension popup typography and empty-state layout in Chromium
+
+Chromium's extension stylesheet can give `body` a relative font size even when
+the root declares the intended size. Explicitly inherit the root font on the
+popup body and assert its computed size in browser tests. Empty states inside
+structured lists also need selectors strong enough to override item layouts;
+otherwise a plain message can be squeezed into a grid column. Keep light and
+dark screenshots and computed-style regressions beside the popup behavior tests.
+
 ## 2026-10-15: Preserve calculator cache precedence during webserver updates
 
 The live Nginx configuration had a calculator-specific `no-store` rule absent

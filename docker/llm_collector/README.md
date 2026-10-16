@@ -15,7 +15,7 @@ For diagnosing how a site sends prompts, the extension also keeps a full
 request capture (on by default, switchable in the popup): redacted URLs,
 headers and request bodies, including prompt text, for requests made by LLM
 pages. It stays in browser session memory, is cleared when the browser quits,
-and leaves the browser only through the popup's **Export JSON**. See
+and leaves the browser only through the popup's **Export**. See
 [extension/README.md](extension/README.md#full-request-capture).
 
 This can be useful for understanding relative request activity and usage
@@ -111,6 +111,36 @@ To view the collected data, you can access the following endpoints on the collec
 
 - **Counters:** `GET http://127.0.0.1:9000/counters` (requires `X-API-KEY`)
 - **Reset:** `POST http://127.0.0.1:9000/reset` (requires `X-API-KEY`)
+
+## Development and tests
+
+Use Python 3.14 in this project's existing `.venv`. If it is missing, create it
+with `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv` on macOS.
+Install the tracked development dependencies and matching Chromium build:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pip check
+```
+
+Run the complete suite from this directory (no skips):
+
+```bash
+.venv/bin/python -m pytest collector snapshots extension
+zsh tests/test_local_config.zsh
+node --test extension/test_*.js
+```
+
+The popup tests use an isolated extension copy, synthetic configuration, a
+loopback stub collector, and a fresh Chromium profile per test. They fail when
+the matching Chromium build is missing. The collector container installs only
+`collector/requirements.txt`; development dependencies stay outside its image.
+Agents run these checks directly and never run `migrate.sh`, even in dry-run mode.
+
+**Export** downloads the diagnostic JSON and copies the same text to the
+clipboard. If copying fails, the download still succeeds and the popup reports
+the clipboard failure.
 
 ## Contributing
 

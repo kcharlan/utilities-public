@@ -1,165 +1,192 @@
 <!doctype html>
-<html>
+<html data-skin="meter">
 <head>
-  <meta charset="utf-8" />
-  <title>LLM Usage Counter</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #15231e;
-      --muted: #64716b;
-      --line: #d8dedb;
-      --surface: #f9fbfa;
-      --green: #17824f;
-      --green-soft: #e5f5ec;
-      --red: #bf3b35;
-      --red-soft: #fbe9e7;
-      --amber: #a46713;
-      --amber-soft: #fff2d8;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      width: 360px;
-      color: var(--ink);
-      background:
-        linear-gradient(rgba(21, 35, 30, 0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(21, 35, 30, 0.025) 1px, transparent 1px),
-        var(--surface);
-      background-size: 18px 18px;
-      font: 13px/1.45 "Avenir Next", Avenir, "Segoe UI", sans-serif;
-    }
-    .shell { padding: 12px; }
-    .masthead { margin-bottom: 10px; }
-    .masthead h1 {
-      margin: 0;
-      font-family: "DIN Alternate", "Avenir Next Condensed", sans-serif;
-      font-size: 16px;
-      letter-spacing: 0.035em;
-      text-transform: uppercase;
-    }
-    .masthead p { margin: 1px 0 0; color: var(--muted); font-size: 11px; }
-    #status {
-      display: grid;
-      grid-template-columns: 18px 1fr;
-      gap: 9px;
-      align-items: center;
-      min-height: 62px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-left-width: 4px;
-      border-radius: 7px;
-      background: rgba(255, 255, 255, 0.92);
-      box-shadow: 0 6px 18px rgba(21, 35, 30, 0.07);
-    }
-    #status[data-state="connected"] { border-left-color: var(--green); background: var(--green-soft); }
-    #status[data-state="error"] { border-left-color: var(--red); background: var(--red-soft); }
-    #status[data-state="checking"] { border-left-color: var(--amber); background: var(--amber-soft); }
-    .status-dot {
-      width: 13px;
-      height: 13px;
-      border: 2px solid white;
-      border-radius: 50%;
-      background: var(--amber);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 30%, transparent);
-    }
-    #status[data-state="connected"] .status-dot {
-      background: var(--green);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 30%, transparent);
-    }
-    #status[data-state="error"] .status-dot {
-      background: var(--red);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
-    }
-    #status[data-state="checking"] .status-dot { animation: pulse 1.1s ease-in-out infinite; }
-    .status-kicker {
-      color: var(--muted);
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-    }
-    #statusLabel { font-size: 15px; font-weight: 700; line-height: 1.25; }
-    #statusDetail { margin-top: 1px; color: var(--muted); font-size: 11px; }
-    .row { display: flex; justify-content: space-between; gap: 8px; }
-    .row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
-    .btns { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
-    button {
-      padding: 5px 8px;
-      border: 1px solid #c7cfcb;
-      border-radius: 5px;
-      color: var(--ink);
-      background: #fff;
-      font: 600 11px/1.2 "Avenir Next", Avenir, sans-serif;
-      cursor: pointer;
-    }
-    button:hover { border-color: #8e9b95; background: #f2f5f3; }
-    button:focus-visible { outline: 2px solid #276a50; outline-offset: 2px; }
-    #notice { min-height: 17px; margin-bottom: 5px; color: var(--muted); font-size: 11px; }
-    #notice[data-tone="error"] { color: var(--red); }
-    #notice[data-tone="success"] { color: var(--green); }
-    #list {
-      padding: 9px 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.8);
-    }
-    textarea {
-      width: 100%;
-      height: 145px;
-      margin-top: 8px;
-      padding: 8px;
-      resize: vertical;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-    }
-    small { color: #666; }
-    @keyframes pulse {
-      0%, 100% { transform: scale(0.88); opacity: 0.7; }
-      50% { transform: scale(1.08); opacity: 1; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      #status[data-state="checking"] .status-dot { animation: none; }
-    }
-  </style>
-</head>
-<body>
-  <main class="shell">
-    <header class="masthead">
-      <h1>LLM Usage Counter</h1>
-      <p>Local collector diagnostics</p>
-    </header>
+<meta charset="utf-8">
+<title>LLM usage</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { width: 360px; margin: 0; background: var(--bg); color: var(--ink); font: inherit; }
+  .pop { min-height: 100%; }
+  .pop h1, .pop h2, .pop p, .pop ul, .pop dl { margin: 0; padding: 0; }
+  .pop ul { list-style: none; }
+  .pop button { font: inherit; cursor: pointer; }
+  .pop button:disabled { cursor: default; }
+  .pop summary { list-style: none; cursor: pointer; }
+  .pop summary::-webkit-details-marker { display: none; }
+  .pop :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .pop .num { font-variant-numeric: tabular-nums; }
+  .pop .ft { position: sticky; bottom: 0; z-index: 2; }
+  .pop .switch { appearance: none; margin: 0; flex: none; position: relative; cursor: pointer; background: var(--track); transition: background .15s; }
+  .pop .switch::after { content: ""; position: absolute; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+  .pop .switch:checked { background: var(--ok); }
+  .pop .chev { flex: none; width: 7px; height: 7px; border-right: 1.6px solid var(--muted); border-bottom: 1.6px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+  .pop details[open] > summary .chev { transform: rotate(45deg); }
+  @media (prefers-reduced-motion: reduce) { .pop * { transition: none !important; animation: none !important; } }
 
-    <div id="status" data-state="checking" role="status" aria-live="polite">
-      <span class="status-dot" aria-hidden="true"></span>
-      <div>
-        <div class="status-kicker">Collector link</div>
-        <div id="statusLabel">Checking…</div>
-        <div id="statusDetail">Contacting the local collector</div>
+  /* =================================================================
+     Skin: Meter. Portable, card-based, tally bars, DIN numerals.
+     ================================================================= */
+  [data-skin="meter"] {
+    --bg: #f5f7f6; --surface: #ffffff; --ink: #17201c; --muted: #66726c; --line: #dde3e0;
+    --ok: #23704f; --ok-soft: #e3f0e9; --warn: #9a5a00; --warn-soft: #fbf0dc; --warn-bar: #d39a3d;
+    --bad: #b0292b; --bad-soft: #fbe8e7; --bad-ink: #5e1616; --bad-line: #e6c3c2;
+    --btn: #ffffff; --btn-line: #c9d1cd; --btn-hover: #f0f3f1;
+    --primary: #17201c; --primary-ink: #ffffff; --track: #cfd6d2; --focus: #23704f;
+    background: var(--bg); color: var(--ink);
+    font: 13px/1.45 "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { [data-skin="meter"] {
+    --bg: #141a17; --surface: #1c2420; --ink: #e5ebe8; --muted: #93a19a; --line: #2d3732;
+    --ok: #52c08b; --ok-soft: rgba(82,192,139,.14); --warn: #e3a646; --warn-soft: rgba(227,166,70,.14); --warn-bar: #b7822f;
+    --bad: #f07a73; --bad-soft: rgba(240,122,115,.13); --bad-ink: #f6d2cf; --bad-line: #5a2f2d;
+    --btn: #222b27; --btn-line: #38443e; --btn-hover: #2a3530;
+    --primary: #e5ebe8; --primary-ink: #141a17; --track: #3a4540; --focus: #52c08b;
+  } }
+  [data-skin="meter"] .num { font-family: "DIN Alternate", Bahnschrift, "Avenir Next", sans-serif; }
+  [data-skin="meter"] .row { display: flex; align-items: baseline; gap: 8px; }
+  [data-skin="meter"] .k { flex: 1; min-width: 0; }
+
+  [data-skin="meter"] .hd { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 16px 12px; }
+  [data-skin="meter"] .app { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+  [data-skin="meter"] .status { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+  [data-skin="meter"] .status .mark { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  [data-skin="meter"] .reg { margin: 0 12px; padding: 12px 14px 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  [data-skin="meter"] .sec-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+  [data-skin="meter"] .sec-h .num { color: var(--ink); font-size: 15px; }
+  [data-skin="meter"] .reg .row { flex-wrap: wrap; padding: 7px 0 8px; border-top: 1px solid var(--line); }
+  [data-skin="meter"] .reg .row:first-child { border-top: 0; }
+  [data-skin="meter"] .reg .k { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  [data-skin="meter"] .reg .q { color: var(--warn); font-size: 11px; font-weight: 600; }
+  [data-skin="meter"] .reg .v { font-size: 21px; line-height: 1; min-width: 2.2ch; text-align: right; }
+  [data-skin="meter"] .bar { flex-basis: 100%; display: flex; height: 3px; margin-top: 6px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  [data-skin="meter"] .bar span { height: 100%; background: var(--ok); }
+  [data-skin="meter"] .bar span.bq { background: var(--warn-bar); }
+  [data-skin="meter"] .empty { padding: 4px 0 12px; color: var(--muted); font-size: 12px; }
+
+  [data-skin="meter"] .fold { margin: 8px 12px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  [data-skin="meter"] .fold > summary { align-items: center; padding: 9px 12px; font-weight: 500; }
+  [data-skin="meter"] .fold > summary .chev { margin-right: 4px; }
+  [data-skin="meter"] .state { color: var(--muted); font-weight: 400; font-size: 12px; }
+  [data-skin="meter"] .state.warn { color: var(--warn); font-weight: 500; }
+  [data-skin="meter"] .state.bad { color: var(--bad); font-weight: 500; }
+  [data-skin="meter"] .fold-body { padding: 2px 12px 12px 30px; font-size: 12px; }
+  [data-skin="meter"] .kv { margin-bottom: 10px; }
+  [data-skin="meter"] .kv .row { padding: 1px 0; }
+  [data-skin="meter"] .kv .k { flex: 0 0 104px; color: var(--muted); }
+  [data-skin="meter"] .kv .v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  [data-skin="meter"] .kv .v.bad { color: var(--bad); }
+  [data-skin="meter"] .kv .v.warn { color: var(--warn); }
+  [data-skin="meter"] code { font: 11px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  [data-skin="meter"] .sw-row { align-items: center; margin-bottom: 8px; cursor: pointer; }
+  [data-skin="meter"] .switch { width: 30px; height: 18px; border-radius: 9px; }
+  [data-skin="meter"] .switch::after { top: 2px; left: 2px; width: 14px; height: 14px; }
+  [data-skin="meter"] .switch:checked::after { transform: translateX(12px); }
+  [data-skin="meter"] .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  [data-skin="meter"] .act { font: 500 12px/1 "Avenir Next", Avenir, "Segoe UI", sans-serif; padding: 7px 11px; border-radius: 6px; border: 1px solid var(--btn-line); background: var(--btn); color: var(--ink); }
+  [data-skin="meter"] .act:hover:not(:disabled) { background: var(--btn-hover); }
+  [data-skin="meter"] .act.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+  [data-skin="meter"] .act.danger { color: var(--bad); border-color: var(--bad-line); }
+  [data-skin="meter"] .act.danger:hover:not(:disabled) { background: var(--bad-soft); }
+  [data-skin="meter"] .act:disabled { opacity: .45; }
+  [data-skin="meter"] .log li { display: grid; grid-template-columns: 54px 1fr; gap: 0 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+  [data-skin="meter"] .log li:first-child { border-top: 0; }
+  [data-skin="meter"] .log time { grid-row: 1; grid-column: 1; color: var(--muted); font-size: 11px; }
+  [data-skin="meter"] .log .dec { grid-row: 1; grid-column: 2; font-weight: 600; font-size: 11px; color: var(--muted); }
+  [data-skin="meter"] .log code { grid-column: 2; overflow-wrap: anywhere; }
+  [data-skin="meter"] .dec.ok { color: var(--ok); }
+  [data-skin="meter"] .dec.bad { color: var(--bad); }
+  [data-skin="meter"] .log .none { display: block; color: var(--muted); }
+
+  [data-skin="meter"] .ft { display: flex; gap: 8px; align-items: center; padding: 12px; margin-top: 10px; border-top: 1px solid var(--line); background: var(--surface); }
+  [data-skin="meter"] .note { flex: 1; font-size: 11px; color: var(--muted); }
+  [data-skin="meter"] .note.ok { color: var(--ok); }
+
+
+  .hd { flex-wrap: wrap; }
+  .status-detail { flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+  .hd[data-state="error"] .status-detail { padding: 9px 12px; border-radius: 8px; background: var(--bad-soft); color: var(--bad-ink); }
+  .hd .status { color: var(--warn); background: var(--warn-soft); }
+  .hd[data-state="connected"] .status { color: var(--ok); background: var(--ok-soft); }
+  .hd[data-state="error"] .status { color: var(--bad); background: var(--bad-soft); }
+  .reason { grid-column: 2; overflow-wrap: anywhere; color: var(--muted); }
+  .note { min-width: 0; overflow-wrap: anywhere; }
+  .note.bad { color: var(--bad); }
+  .sw-row .k { white-space: normal; }
+  .fold summary { display: flex; }
+  .reg h2 { margin: 0; font: inherit; }
+</style>
+<script src="popup.js" defer></script>
+</head>
+<body class="pop">
+  <header id="status" class="hd" data-state="checking" role="status" aria-live="polite">
+    <h1 class="app">LLM usage</h1>
+    <div class="status">
+      <span class="mark" aria-hidden="true"></span>
+      <span id="statusLabel">Checking…</span>
+    </div>
+    <p id="statusDetail" class="status-detail">Contacting the local collector</p>
+  </header>
+
+  <section class="reg" aria-label="Requests by site">
+    <div class="sec-h">
+      <h2 id="registerHeading">Requests</h2>
+      <span id="registerTotal" class="num"></span>
+    </div>
+    <div id="register"></div>
+  </section>
+
+  <details id="deliveryFold" class="fold">
+    <summary class="row">
+      <span class="chev"></span><span class="k">Delivery</span>
+      <span id="deliveryState" class="state"></span>
+    </summary>
+    <div class="fold-body">
+      <div id="deliveryDetails" class="kv"></div>
+      <div class="acts">
+        <button id="forcePush" type="button" class="act">Send now</button>
+        <button id="reset" type="button" class="act danger">Discard queued</button>
       </div>
     </div>
+  </details>
 
-    <div id="persistenceStatus" role="status" aria-live="polite">Capture persistence: pending · Debug persistence: pending</div>
-    <div class="btns">
-      <button id="reload"    type="button">Reload</button>
-      <button id="forcePush" type="button">Force Push</button>
-      <button id="reset"     type="button">Clear Pending</button>
-      <button id="export"    type="button">Export JSON</button>
-      <button id="captureToggle" type="button">Capture: …</button>
-      <button id="clearCapture"  type="button">Clear Capture</button>
+  <details id="captureFold" class="fold">
+    <summary class="row">
+      <span class="chev"></span><span class="k">Request capture</span>
+      <span id="captureState" class="state"></span>
+    </summary>
+    <div class="fold-body">
+      <label class="row sw-row">
+        <span class="k">Record full requests from LLM pages</span>
+        <input type="checkbox" role="switch" id="captureToggle" class="switch">
+      </label>
+      <div class="kv">
+        <div class="row"><span class="k">Held</span><span id="captureHeld" class="v"></span></div>
+        <div class="row"><span class="k">Kept until</span><span class="v">Browser quits</span></div>
+        <div class="row">
+          <span class="k">Storage</span>
+          <span id="persistenceStatus" class="v" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div class="acts">
+        <button id="clearCapture" type="button" class="act danger">Discard capture</button>
+      </div>
     </div>
-    <div id="notice" role="status" aria-live="polite"></div>
+  </details>
 
-    <div id="list"></div>
+  <details id="logFold" class="fold">
+    <summary class="row">
+      <span class="chev"></span><span class="k">Recent decisions</span>
+      <span id="logState" class="state"></span>
+    </summary>
+    <div class="fold-body"><ul id="logList" class="log"></ul></div>
+  </details>
 
-    <textarea id="out" aria-label="Exported diagnostics" placeholder="Exported JSON appears here…"></textarea>
-  </main>
-
-  <!-- important: defer so DOM is ready before popup.js runs -->
-  <script src="popup.js" defer></script>
+  <footer class="ft">
+    <span id="notice" class="note" role="status"></span>
+    <button id="reload" type="button" class="act">Check again</button>
+    <button id="export" type="button" class="act primary">Export</button>
+  </footer>
 </body>
 </html>

@@ -112,7 +112,7 @@ The extension's `background.js` script is the core of the extension. It performs
     all observed message IDs, including setup/end messages, and commit atomically
     with new prompt counts. The salt and history survive worker suspension,
     extension disable/reload/update, and browser restart. They are independent
-    of session capture/debug storage and remain after **Clear Pending**.
+    of session capture/debug storage and remain after **Discard queued**.
 
     History is limited to 1 MiB serialized UTF-8, 4096 channel keys, 128 intervals
     per channel, and 16384 intervals overall. Adjacent IDs compact into intervals.
@@ -137,9 +137,9 @@ The extension's `background.js` script is the core of the extension. It performs
     Body transport failures retry; malformed JSON remains a visible error.
     Network and server failures retry after
     1, 2, 4, 8, 16, then 30 seconds while the worker stays awake. Initialization,
-    startup, installation and **Force Push** request the same drain. Force Push
+    startup, installation and **Send now** request the same drain. Send now
     confirms the request, while subsequent status reports delivery errors and
-    outstanding counts. **Clear Pending** clears only queued observations and
+    outstanding counts. **Discard queued** clears only queued observations and
     reports any outstanding submission it retained.
 
     Migration imports the represented legacy client, sequence and pending
@@ -152,7 +152,7 @@ The extension's `background.js` script is the core of the extension. It performs
 
 6.  **Connection diagnostics:** Opening the popup asks the service worker to
     probe authenticated `/counters` with a two-second timeout. The popup checks
-    again every ten seconds while open, and **Reload** triggers an immediate
+    again every ten seconds while open, and **Check again** triggers an immediate
     retry. No connection polling runs while the popup is closed.
 
 ## Full Request Capture
@@ -199,14 +199,15 @@ discarded records are counted without logging their original contents.
 `chrome.webRequest` cannot see response bodies or WebSocket frames, so those
 are never captured.
 
-The capture is on by default. Use **Capture: On/Off** in the popup to switch it
-(the choice is kept), and **Clear Capture** to start a clean test. It holds the
+The capture is on by default. Use the **Record full requests from LLM pages** switch in the popup to change it
+(the choice is kept), and **Discard capture** to start a clean test. It holds the
 newest 3000 requests within a 6 MiB serialized UTF-8 budget. Debug holds at most
 200 decisions within 256 KiB. Both use `chrome.storage.session`: they survive
 the service worker stopping, are cleared when the browser quits, and are never
-sent to the collector. **Export JSON** includes records and each store's
-`capturePersistence` / `debugPersistence` status. A persistent popup line shows
-whether each store is ready, pending, or in error.
+sent to the collector. **Export** includes records and each store's
+`capturePersistence` / `debugPersistence` status. The Request capture fold shows **Storage: Working** when both stores are ready,
+and names each pending or failed store otherwise. Its summary shows whether
+capture is on and how many requests it holds.
 
 Capture records are limited to 128 KiB, bodies to 64 KiB, body strings to 16 KiB
 (and 16384 characters), and URL/header strings to 8 KiB. Raw bodies over 1 MiB
@@ -225,7 +226,7 @@ without retaining content. A failed enable-setting read refuses capture until
 the setting can be read or explicitly saved successfully. A failed session read
 allows bounded sanitized memory staging but never overwrites unread records.
 The `reload_capture` runtime command retries failed reads and merges restored
-records before staged records; it also retries failed writes. **Clear Capture**
+records before staged records; it also retries failed writes. **Discard capture**
 intentionally replaces only the capture key and reports success after its empty
 write completes. A failed clear reports failure and can be retried.
 
@@ -239,13 +240,14 @@ prompt-count accounting.
 
 ## Validation
 
-Run the dependency-free extension tests with Node.js:
+Follow the project [Development and tests](../README.md#development-and-tests)
+section for the tracked environment and complete collector, snapshot, shell,
+Node, and Chromium popup suites.
 
-```bash
-node --test test_*.js
-```
+For a manual failure-path check, open the popup with the collector running, stop the collector, and use **Check again**. The indicator should change from green to red within two seconds. Start the collector and use **Check again** to verify recovery.
 
-For a manual failure-path check, open the popup with the collector running, stop the collector, and use **Reload**. The indicator should change from green to red within two seconds. Start the collector and reload again to verify recovery.
+**Export** downloads diagnostic JSON and copies the same text to the clipboard.
+A clipboard failure is reported after the successful download.
 
 ## Customization
 

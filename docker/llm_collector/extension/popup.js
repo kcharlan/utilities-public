@@ -1,7 +1,6 @@
 // popup.js — MV3-safe messaging with timeouts + defensive DOM guards
 
 function $(id){ return document.getElementById(id); }
-function fmt(ts){ if(!ts) return "—"; const d=new Date(ts); return d.toLocaleString(); }
 
 function textElement(tag, text) {
   const element = document.createElement(tag);
@@ -9,20 +8,11 @@ function textElement(tag, text) {
   return element;
 }
 
-function counterRow(host, count) {
-  const row = document.createElement("div");
-  row.className = "row";
-  const label = textElement("span", host);
-  label.title = host;
-  row.appendChild(label);
-  row.appendChild(textElement("span", count));
-  return row;
-}
-
 function setNotice(message = "", tone = "neutral") {
   const notice = $("notice");
   if (!notice) return;
-  notice.textContent = message;
+  notice.textContent = message || (chrome.runtime.getManifest ? `Version ${chrome.runtime.getManifest().version}` : "");
+  notice.className = `note ${tone === "success" ? "ok" : tone === "error" ? "bad" : ""}`;
   notice.dataset.tone = tone;
 }
 
@@ -67,22 +57,27 @@ function renderConnectionStatus(status, configError = null) {
     label.textContent = "Collector unreachable";
     detail.textContent = status?.message || "Check that the local container is running.";
   }
+  if (state === "unreachable" || state === "timeout") detail.textContent += " Counts keep queuing here and send once it is back.";
 }
 
 function renderCaptureState({ captureEnabled, captureCount = 0 } = {}) {
   const toggle = $("captureToggle");
   if (!toggle) return;
   toggle.dataset.enabled = String(!!captureEnabled);
-  toggle.textContent = `Capture: ${captureEnabled ? "On" : "Off"} (${captureCount})`;
+  toggle.checked = !!captureEnabled;
+  $("captureState").textContent = captureEnabled ? `On, ${captureCount} held` : "Off";
+  $("captureHeld").textContent = `${captureCount} requests`;
+  $("clearCapture").disabled = captureCount === 0;
 }
 
 function renderPersistenceStatus({ capturePersistence, debugPersistence } = {}) {
-  const line = $('persistenceStatus');
-  if (!line) return;
-  line.textContent = [['Capture', capturePersistence], ['Debug', debugPersistence]].map(([name, status]) =>
+  const stores = [['Capture', capturePersistence], ['Debug', debugPersistence]];
+  const failed = stores.some(([, status]) => status?.state === 'error');
+  $('persistenceStatus').textContent = stores.every(([, status]) => status?.state === 'ready') ? 'Working' : stores.filter(([, status]) => status?.state !== 'ready').map(([name, status]) =>
     `${name} persistence: ${status?.state || 'pending'}${status?.error ? ` (${status.error})` : ''}`
   ).join(' · ');
-  line.dataset.state = [capturePersistence, debugPersistence].some(s => s?.state === 'error') ? 'error' : 'ready';
+  $('persistenceStatus').className = failed ? 'v bad' : 'v';
+  $('captureState').className = failed ? 'state bad' : 'state';
 }
 
 function showCheckingStatus() {
@@ -94,118 +89,119 @@ function showCheckingStatus() {
   if (detail) detail.textContent = "Contacting the local collector";
 }
 
-function renderStatus(data){
-  const {
-    serverCounters = {},
-    pending = {},
-    seq = 0,
-    client_id = "—",
-    debug = [],
-    configError = null,
-    collectorStatus = null
-  } = data || {};
-  const list = $("list"); if (!list) return;
-  const frag = document.createDocumentFragment();
+let previousDeliveryError = null;
+const sumCounts = counts => Object.values(counts || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
 
+function detailRow(label, value, tone = '', mono = false) {
+  const row = textElement('div', '');
+  row.className = 'row';
+  const key = textElement('span', label);
+  key.className = 'k';
+  row.appendChild(key);
+  const val = textElement(mono ? 'code' : 'span', value);
+  val.className = `v ${tone}`;
+  val.title = String(value);
+  row.appendChild(val);
+  return row;
+}
+
+function renderStatus(data = {}) {
+  const { serverCounters = {}, pending = {}, seq = 0, client_id = '—', debug = [], configError, collectorStatus, deliveryError, inFlight } = data;
+  const connected = collectorStatus?.state === 'connected';
+  const pendingCount = sumCounts(pending);
+  const flightCount = sumCounts(inFlight?.deltas);
+  const queued = pendingCount - flightCount;
+  const register = $('register');
+  register.textContent = '';
+  $('registerTotal').textContent = '';
+  let empty;
   if (configError) {
-    const row = document.createElement("div");
-    row.style.color = "#c00";
-    row.style.fontSize = "12px";
-    row.style.lineHeight = "1.4";
-    row.textContent = configError;
-    frag.appendChild(row);
-    list.innerHTML = "";
-    list.appendChild(frag);
-    return;
-  }
-
-  const totalsEntries = Object.entries(serverCounters).sort((a,b)=>b[1]-a[1]);
-  const serverTitle = document.createElement("div");
-  serverTitle.innerHTML = "<b>Server totals</b>";
-  frag.appendChild(serverTitle);
-  if (collectorStatus?.state !== "connected") {
-    const row = document.createElement("div");
-    row.textContent = "(unavailable while disconnected)";
-    row.style.color = "#64716b";
-    frag.appendChild(row);
-  } else if (totalsEntries.length === 0){
-    const row = document.createElement("div"); row.textContent = "(none yet)";
-    frag.appendChild(row);
+    $('registerHeading').textContent = 'Setup needed';
+    empty = configError;
+  } else if (data.available === false) {
+    $('registerHeading').textContent = 'Requests';
+    empty = `Counts unavailable: ${deliveryError || 'local delivery storage failed'}`;
   } else {
-    for (const [h,c] of totalsEntries.slice(0,10)){
-      frag.appendChild(counterRow(h, c));
-    }
-  }
-
-  const pendingEntries = Object.entries(pending || {}).sort((a,b)=>b[1]-a[1]);
-  const pendTitle = document.createElement("div");
-  pendTitle.style.marginTop = "10px";
-  pendTitle.innerHTML = "<b>Pending (queued or unacknowledged)</b>";
-  frag.appendChild(pendTitle);
-  if (data?.available === false) {
-    const row = document.createElement("div");
-    row.textContent = `Counts unavailable: ${data.deliveryError || 'local delivery storage failed'}`;
-    frag.appendChild(row);
-  } else if (pendingEntries.length === 0){
-    const row = document.createElement("div"); row.textContent = "(none)";
-    frag.appendChild(row);
-  } else {
-    for (const [h,c] of pendingEntries.slice(0,10)){
-      frag.appendChild(counterRow(h, c));
-    }
-  }
-
-  if (data?.deliveryError && data.available !== false) {
-    const row = document.createElement("div");
-    row.textContent = `Delivery: ${data.deliveryError}`;
-    frag.appendChild(row);
-  }
-
-  const meta = document.createElement("div");
-  meta.style.marginTop = "10px";
-  const details = textElement("small", `client_id: ${client_id}`);
-  details.appendChild(document.createElement("br"));
-  details.appendChild(textElement("span", `seq: ${seq}`));
-  details.appendChild(document.createElement("br"));
-  details.appendChild(textElement("span", `debug records: ${debug?.length ?? 0}`));
-  meta.appendChild(details);
-  frag.appendChild(meta);
-
-  if (debug && debug.length > 0) {
-    const debugTitle = document.createElement("div");
-    debugTitle.style.marginTop = "10px";
-    debugTitle.innerHTML = "<b>Recent Debug Logs</b>";
-    frag.appendChild(debugTitle);
-    
-    // Show last 5
-    const recentDebug = debug.slice(-5).reverse();
-    for (const d of recentDebug) {
-      const row = document.createElement("div");
-      row.style.fontSize = "10px";
-      row.style.borderBottom = "1px solid #eee";
-      row.style.padding = "2px 0";
-      const color = d.decision === "counted" ? "#080" : "#666";
-      const heading = document.createElement("div");
-      heading.style.color = color;
-      heading.appendChild(textElement("b", d.decision));
-      heading.appendChild(textElement("span", ` ${fmt(d.ts)}`));
-      row.appendChild(heading);
-      const location = textElement("div", `${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ""}`);
-      location.style.color = "#444";
-      location.style.wordBreak = "break-all";
-      row.appendChild(location);
-      if (d.reason) {
-        const reason = textElement("div", d.reason);
-        reason.style.color = "#999";
-        reason.style.fontStyle = "italic";
-        row.appendChild(reason);
+    $('registerHeading').textContent = connected ? 'Requests since last reset' : 'Waiting to send';
+    $('registerTotal').textContent = String(sumCounts(connected ? serverCounters : pending));
+    const hosts = new Set([...Object.keys(connected ? serverCounters : {}), ...Object.keys(pending || {})]);
+    const rows = [...hosts].map(host => ({
+      host,
+      total: connected ? (serverCounters?.[host] || 0) : 0,
+      queued: pending?.[host] || 0
+    })).sort((a,b) => (Number(b.total) + Number(b.queued)) - (Number(a.total) + Number(a.queued))).slice(0,10);
+    const max = Math.max(1, ...rows.map(row => Number(row.total) + Number(row.queued)));
+    for (const {host, total, queued: waiting} of rows) {
+      const row = textElement('div', '');
+      row.className = 'row';
+      const label = textElement('span', host);
+      label.className = 'k';
+      label.title = host;
+      row.appendChild(label);
+      if (connected && waiting) {
+        const marker = textElement('span', `+${waiting} queued`);
+        marker.className = 'q';
+        row.appendChild(marker);
       }
-      frag.appendChild(row);
+      const count = textElement('span', connected ? total : waiting);
+      count.className = 'v num';
+      row.appendChild(count);
+      const bar = textElement('div', '');
+      bar.className = 'bar';
+      for (const [className, n] of [['bar-total',total],['bar-queued bq',waiting]]) {
+        const segment = textElement('span','');
+        segment.className = className;
+        segment.style.width = `${Number(n) / max * 100}%`;
+        bar.appendChild(segment);
+      }
+      row.appendChild(bar);
+      register.appendChild(row);
     }
+    if (!rows.length) empty = connected ? 'No requests yet. Send a prompt on a supported site and it shows up here.' : 'Nothing waiting to send.';
   }
-
-  list.innerHTML = "";
-  list.appendChild(frag);
+  if (empty) {
+    const row = textElement('div',empty);
+    row.className = 'empty';
+    register.appendChild(row);
+  }
+  const state = $('deliveryState');
+  state.textContent = data.available === false ? 'Unavailable' : deliveryError ? `${pendingCount} waiting, retrying` : pendingCount ? `${pendingCount} queued` : 'Up to date';
+  state.className = data.available === false ? 'state bad' : (deliveryError || pendingCount) ? 'state warn' : 'state';
+  if (deliveryError && !previousDeliveryError) $('deliveryFold').open = true;
+  previousDeliveryError = deliveryError;
+  const details = $('deliveryDetails');
+  details.textContent = '';
+  details.appendChild(detailRow('Queued', queued));
+  details.appendChild(detailRow('Sent, unconfirmed', flightCount ? `${flightCount} in batch ${inFlight.seq}` : '0'));
+  if (deliveryError) details.appendChild(detailRow('Last error',deliveryError,'bad'));
+  details.appendChild(detailRow('Sequence',seq));
+  details.appendChild(detailRow('Client',client_id,'',true));
+  $('forcePush').disabled = pendingCount === 0 || data.available === false;
+  $('reset').disabled = queued === 0 || data.available === false;
+  renderCaptureState(data);
+  renderPersistenceStatus(data);
+  $('logState').textContent = debug.length ? `${debug.length} logged` : 'None';
+  const log = $('logList');
+  log.textContent = '';
+  for (const d of debug.slice(-5).reverse()) {
+    const row = textElement('li','');
+    row.appendChild(textElement('time', d.ts ? new Date(d.ts).toLocaleTimeString() : '—'));
+    const decision = textElement('span',d.decision);
+    decision.className = 'dec' + (d.decision === 'counted' ? ' ok' : ['recording-failed','channel-invalid','config-missing'].includes(d.decision) ? ' bad' : '');
+    row.appendChild(decision);
+    row.appendChild(textElement('code', `${d.host}${d.path}${d.rpcids ? ` [rpcids=${d.rpcids}]` : ''}`));
+    if (d.reason) {
+      const reason = textElement('div',d.reason);
+      reason.className = 'reason';
+      row.appendChild(reason);
+    }
+    log.appendChild(row);
+  }
+  if (!debug.length) {
+    const row = textElement('li','Nothing observed since the browser started.');
+    row.className = 'none';
+    log.appendChild(row);
+  }
 }
 
 let refreshGeneration = 0;
@@ -238,20 +234,14 @@ async function refresh({ showChecking = true } = {}){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
-    renderCaptureState(resp);
-    renderPersistenceStatus(resp);
   } catch (e){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
-    const list = $("list");
-    if (list) {
-      list.innerHTML = `
-        <div style="color:#c00; font-size:12px; line-height:1.4;">
-          • If this says <i>"The message port closed before a response was received."</i>:
-          <br/>— Ensure <code>background.js</code> handles <code>get_status</code> and returns <code>true</code>.
-          <br/>— Click "Reload" to retry (wakes the service worker).
-          <br/>— Or reload the extension from <code>vivaldi://extensions</code> and reopen the popup.
-        </div>`;
+    renderStatus({available:false});
+    $('registerHeading').textContent = 'Extension not responding';
+    const register = $('register'); register.textContent = '';
+    for (const message of ['Check again to wake the background worker.', "If it still fails, reload the extension from the browser's Extensions page and reopen this popup."]) {
+      const row = textElement('div',message); row.className = 'empty'; register.appendChild(row);
     }
   }
 }
@@ -298,17 +288,6 @@ document.addEventListener("DOMContentLoaded", () => {
       };
       const json = JSON.stringify(data, null, 2);
       
-      const out = $("out");
-      if (out) {
-        out.value = json;
-        out.focus(); out.select();
-        try {
-          document.execCommand("copy");
-        } catch (err) {
-          console.error("Copy failed", err);
-        }
-      }
-
       // Trigger download
       const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -321,7 +300,13 @@ document.addEventListener("DOMContentLoaded", () => {
       URL.revokeObjectURL(url);
 
       renderConnectionStatus(resp.collectorStatus, resp.configError);
-      setNotice("Exported and copied to clipboard.", "success");
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(json);
+        setNotice("Exported and copied to clipboard.", "success");
+      } catch (error) {
+        setNotice(`Exported. Copy to clipboard failed: ${error.message}`, "success");
+      }
     } catch (e){
       setNotice(`Export failed: ${e.message}`, "error");
     }
@@ -366,6 +351,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setNotice();
     refresh({ showChecking: true });
   });
+
+  setNotice();
 
   // initial load
   refresh({ showChecking: true });

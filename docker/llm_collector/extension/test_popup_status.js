@@ -3,23 +3,26 @@ const { readFileSync } = require("node:fs");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
-function loadPopupStatusRenderer(background = null) {
+function fakeNode(markup = []) {
+  return { style: {}, dataset: {}, disabled: false, checked: false, open: false, children: [], ownText: '',
+    appendChild(child) { this.children.push(child); return child; }, click() {},
+    set textContent(value) { this.ownText = String(value); this.children = []; },
+    get textContent() { return this.ownText + this.children.map(child => child.textContent).join(''); },
+    set innerHTML(value) { markup.push(String(value)); this.ownText = ''; this.children = []; }
+  };
+}
+function loadPopupStatusRenderer(background = null, clipboard = { writeText: async () => {} }) {
   const callbacks = {};
   const blobs = [];
-  const elements = {
-    status: { dataset: {} },
-    statusLabel: { textContent: "" },
-    statusDetail: { textContent: "" },
-    captureToggle: { textContent: "", dataset: {} },
-    persistenceStatus: { textContent: '', dataset: {} }
-  };
-  if (background) {
-    for (const id of ['export', 'notice', 'reset', 'forcePush', 'clearCapture']) elements[id] = { dataset: {}, addEventListener(event, fn) { callbacks[id + ':' + event] = fn; } };
-    elements.captureToggle.addEventListener = (event, fn) => { callbacks['captureToggle:' + event] = fn; };
+  const elements = {};
+  const markup = [];
+  for (const id of ['status','statusLabel','statusDetail','captureToggle','persistenceStatus','registerHeading','registerTotal','register','deliveryState','deliveryDetails','captureState','captureHeld','logState','logList','deliveryFold','captureFold','logFold','export','notice','reset','forcePush','clearCapture','reload']) {
+    elements[id] = fakeNode(markup);
+    elements[id].addEventListener = (event, fn) => { callbacks[id + ':' + event] = fn; };
   }
   const document = {
     addEventListener(event, fn) { callbacks[event] = fn; },
-    createElement() { return { click() {} }; },
+    createElement() { return fakeNode(markup); },
     body: { appendChild() {}, removeChild() {} },
     getElementById(id) {
       return elements[id] || null;
@@ -27,6 +30,7 @@ function loadPopupStatusRenderer(background = null) {
   };
   const context = vm.createContext({
     Blob,
+    navigator: { clipboard },
     URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:synthetic'; }, revokeObjectURL() {} },
     chrome: { runtime: { sendMessage(msg, cb) { background.send(msg).then(cb); } } },
     clearInterval,
@@ -38,35 +42,22 @@ function loadPopupStatusRenderer(background = null) {
     window: { addEventListener() {} }
   });
   vm.runInContext(readFileSync(require.resolve("./popup.js"), "utf8"), context);
-  return { context, elements, callbacks, blobs };
+  return { context, elements, callbacks, blobs, markup };
 }
 
-// Keep the list present: export-only fixtures otherwise skip renderStatus entirely.
+// Keep every dynamic container present, including in export-only fixtures.
 // Capture HTML-parser input separately from text-node output; Chromium acceptance
 // checks the resulting real DOM and intercepted resource requests as well.
 function attachStatusList(popup) {
-  const markup = [];
-  function node() {
-    return {
-      style: {}, children: [], ownText: '',
-      appendChild(child) { this.children.push(child); return child; },
-      set textContent(value) { this.ownText = String(value); this.children = []; },
-      get textContent() { return this.ownText + this.children.map(child => child.textContent).join(''); },
-      set innerHTML(value) { markup.push(String(value)); this.ownText = ''; this.children = []; }
-    };
-  }
-  popup.elements.list = node();
-  popup.context.document.createDocumentFragment = node;
-  popup.context.document.createElement = node;
-  popup.context.document.createTextNode = value => { const text = node(); text.textContent = value; return text; };
-  return markup;
+  for (const id of ['register','deliveryDetails','logList']) popup.elements[id] = fakeNode(popup.markup);
+  return { markup: popup.markup, text: () => ['register','deliveryDetails','logList'].map(id => popup.elements[id].textContent).join('') };
 }
 
 test('observed decoded diagnostic markup stays inert through normalization and popup rendering', async () => {
   const { loadBackground, tick } = require('./background_harness.js');
   const bg = loadBackground({ config: true });
   const popup = loadPopupStatusRenderer(bg);
-  const markup = attachStatusList(popup);
+  const { markup, text } = attachStatusList(popup);
   const payload = '<img src="https://synthetic.invalid/probe">';
   bg.request('https://chatgpt.com/user-SYNTHETICUSERID1234/' + encodeURIComponent(payload));
   await tick();
@@ -75,23 +66,24 @@ test('observed decoded diagnostic markup stays inert through normalization and p
   assert.ok(Buffer.byteLength(JSON.stringify(status.debug)) <= 256 * 1024);
   popup.context.renderStatus(status);
   assert.ok(!markup.some(html => html.includes(payload)), 'observed markup must never reach the HTML parser');
-  assert.ok(popup.elements.list.textContent.includes('/user-REDACTED/' + payload));
-  assert.ok(!popup.elements.list.textContent.includes('SYNTHETICUSERID1234'));
+  assert.ok(text().includes('/user-REDACTED/' + payload));
+  assert.ok(!text().includes('SYNTHETICUSERID1234'));
   bg.dispose();
 });
 
 test('adjacent diagnostic and status values render as literal text', () => {
   const popup = loadPopupStatusRenderer();
-  const markup = attachStatusList(popup);
+  const { markup, text } = attachStatusList(popup);
   const payload = '<img src="https://synthetic.invalid/adjacent">';
   popup.context.renderStatus({ collectorStatus: { state: 'connected' },
     serverCounters: { [payload]: payload }, pending: { [payload]: payload },
     client_id: payload, seq: payload,
     debug: [{ decision: payload, ts: 1, host: payload, path: payload, rpcids: payload, reason: payload }] });
   assert.ok(!markup.some(html => html.includes(payload)), 'dynamic values must never reach the HTML parser');
-  assert.ok(popup.elements.list.textContent.includes('client_id: ' + payload));
-  assert.ok(popup.elements.list.textContent.includes('[rpcids=' + payload + ']'));
-  assert.ok(popup.elements.list.textContent.includes(payload + payload));
+  assert.ok(popup.elements.deliveryDetails.textContent.includes(payload));
+  assert.ok(popup.elements.logList.textContent.includes('[rpcids=' + payload + ']'));
+  assert.deepEqual(markup, []);
+  assert.ok(text().includes(payload + payload));
 });
 
 test("renders a successful authenticated probe as connected", () => {
@@ -164,11 +156,15 @@ test("shows whether full capture is on and how much it holds", () => {
   const { context, elements } = loadPopupStatusRenderer();
 
   context.renderCaptureState({ captureEnabled: true, captureCount: 42 });
-  assert.equal(elements.captureToggle.textContent, "Capture: On (42)");
+  // Deliberate copy change: capture state now lives in the fold summary.
+  assert.equal(elements.captureState.textContent, "On, 42 held");
+  assert.equal(elements.captureHeld.textContent, "42 requests");
+  assert.equal(elements.captureToggle.checked, true);
   assert.equal(elements.captureToggle.dataset.enabled, "true");
 
   context.renderCaptureState({ captureEnabled: false, captureCount: 0 });
-  assert.equal(elements.captureToggle.textContent, "Capture: Off (0)");
+  assert.equal(elements.captureState.textContent, "Off");
+  assert.equal(elements.captureToggle.checked, false);
   assert.equal(elements.captureToggle.dataset.enabled, "false");
 });
 
@@ -238,12 +234,92 @@ test('clear reports retained submission and rejects failed background replies', 
 
 test('unavailable delivery renders counts as unavailable', () => {
   const popup=loadPopupStatusRenderer();
-  const node=()=>({style:{},children:[],appendChild(child){this.children.push(child);}});
-  popup.elements.list=node();
-  popup.context.document.createDocumentFragment=node;
-  popup.context.document.createElement=node;
+  attachStatusList(popup);
   popup.context.renderStatus({available:false,pending:null,deliveryError:'synthetic read failed'});
-  const text=JSON.stringify(popup.elements.list);
+  const text=popup.elements.register.textContent;
   assert.match(text,/unavailable/i);
   assert.match(text,/synthetic read failed/);
+});
+
+const connected = { collectorStatus: {state:'connected'}, serverCounters:{'synthetic.example':8}, pending:{'synthetic.example':3,'pending.invalid':2} };
+test('register merges totals and queue, and disconnected rows omit markers', () => {
+ const p=loadPopupStatusRenderer(); p.context.renderStatus(connected);
+ assert.equal(p.elements.registerTotal.textContent,'8');
+ assert.match(p.elements.register.textContent,/synthetic.example\+3 queued8/);
+ assert.match(p.elements.register.textContent,/pending.invalid\+2 queued0/);
+ p.context.renderStatus({...connected,collectorStatus:{state:'unreachable'}});
+ assert.equal(p.elements.registerHeading.textContent,'Waiting to send');
+ assert.equal(p.elements.registerTotal.textContent,'5');
+ assert.ok(!p.elements.register.textContent.includes('queued'));
+ const offlineBar = p.elements.register.children[0].children.at(-1);
+ assert.equal(offlineBar.children[0].style.width, '0%');
+ assert.equal(offlineBar.children[1].style.width, '100%');
+ p.context.renderStatus({pending:{}}); assert.equal(p.elements.register.textContent,'Nothing waiting to send.');
+});
+test('delivery states, queued/inflight arithmetic, buttons and first-error fold opening', () => {
+ const p=loadPopupStatusRenderer();
+ p.context.renderStatus({pending:{}}); assert.equal(p.elements.deliveryState.textContent,'Up to date'); assert.equal(p.elements.forcePush.disabled,true); assert.equal(p.elements.reset.disabled,true);
+ p.context.renderStatus({...connected,inFlight:{seq:2,deltas:{'synthetic.example':3}}});
+ assert.equal(p.elements.deliveryState.textContent,'5 queued'); assert.match(p.elements.deliveryDetails.textContent,/Queued2Sent, unconfirmed3 in batch 2/); assert.equal(p.elements.reset.disabled,false);
+ p.context.renderStatus({pending:{a:3},inFlight:{seq:2,deltas:{a:3}}}); assert.equal(p.elements.reset.disabled,true); assert.equal(p.elements.forcePush.disabled,false);
+ p.context.renderStatus({...connected,deliveryError:'synthetic failure'}); assert.equal(p.elements.deliveryState.textContent,'5 waiting, retrying'); assert.equal(p.elements.deliveryFold.open,true);
+ p.elements.deliveryFold.open=false; p.context.renderStatus({...connected,deliveryError:'synthetic failure'}); assert.equal(p.elements.deliveryFold.open,false);
+ p.context.renderStatus({available:false}); assert.equal(p.elements.deliveryState.textContent,'Unavailable');
+ p.context.renderCaptureState({captureCount:0}); assert.equal(p.elements.clearCapture.disabled,true);
+ p.context.renderCaptureState({captureCount:1}); assert.equal(p.elements.clearCapture.disabled,false);
+});
+test('log shows newest five with decision tones and empty state', () => {
+ const p=loadPopupStatusRenderer(); p.context.renderStatus({debug:[]}); assert.equal(p.elements.logState.textContent,'None'); assert.match(p.elements.logList.textContent,/Nothing observed/);
+ p.context.renderStatus({debug:['old','neutral','counted','recording-failed','channel-invalid','config-missing'].map((decision,ts)=>({decision,ts,host:'synthetic.invalid',path:'/'}))});
+ assert.equal(p.elements.logList.children.length,5); assert.equal(p.elements.logState.textContent,'6 logged');
+ assert.match(p.elements.logList.children[0].textContent,/config-missing/);
+ assert.equal(p.elements.logList.children[0].children[1].className,'dec bad');
+ assert.equal(p.elements.logList.children[3].children[1].className,'dec ok');
+ assert.ok(!p.elements.logList.textContent.includes('old'));
+});
+test('refresh failure renders recovery rows', async () => {
+ const p=loadPopupStatusRenderer(); p.context.chrome.runtime.sendMessage=()=>{throw new Error('synthetic worker failure');};
+ await p.context.refresh(); assert.equal(p.elements.registerHeading.textContent,'Extension not responding'); assert.match(p.elements.register.textContent,/Check again to wake/); assert.match(p.elements.register.textContent,/Extensions page/);
+});
+test('popup renderer never uses HTML parsing',()=>{assert.ok(!readFileSync(require.resolve('./popup.js'),'utf8').includes('innerHTML'));});
+test('export download survives clipboard rejection and reports successful copy',async()=>{
+ let rejects=false; const p=loadPopupStatusRenderer({send:async()=>({})},{writeText:async()=>{if(rejects)throw new Error('synthetic clipboard failure');}});
+ p.callbacks.DOMContentLoaded(); await p.callbacks['export:click'](); assert.equal(p.elements.notice.textContent,'Exported and copied to clipboard.');
+ rejects=true; await p.callbacks['export:click'](); assert.equal(p.blobs.length,2); assert.equal(p.elements.notice.textContent,'Exported. Copy to clipboard failed: synthetic clipboard failure'); assert.equal(p.elements.notice.dataset.tone,'success');
+});
+
+test('rejected capture change restores the last rendered checkbox state', async () => {
+  const { tick } = require('./background_harness.js');
+  const popup = loadPopupStatusRenderer({ send: async message => message.cmd === 'get_status'
+    ? { captureEnabled: false, captureCount: 42 }
+    : { ok: false, error: 'synthetic rejected change' } });
+  popup.callbacks.DOMContentLoaded();
+  await popup.context.refresh();
+  popup.elements.captureToggle.checked = true; // The browser toggles before click dispatch.
+  await popup.callbacks['captureToggle:click']();
+  await tick();
+  assert.equal(popup.elements.captureToggle.checked, false);
+  assert.equal(popup.elements.captureToggle.dataset.enabled, 'false');
+  assert.equal(popup.elements.captureState.textContent, 'Off');
+  assert.equal(popup.elements.captureHeld.textContent, '42 requests');
+  assert.match(popup.elements.notice.textContent, /Capture toggle failed: synthetic rejected change/);
+});
+
+test('storage row summarizes ready stores and highlights capture summary errors', () => {
+  const { context, elements } = loadPopupStatusRenderer();
+  context.renderPersistenceStatus({ capturePersistence: { state: 'ready' }, debugPersistence: { state: 'ready' } });
+  assert.equal(elements.persistenceStatus.textContent, 'Working');
+  assert.equal(elements.captureState.className, 'state');
+  context.renderPersistenceStatus({ capturePersistence: { state: 'ready' }, debugPersistence: { state: 'error', error: 'synthetic read failure' } });
+  assert.equal(elements.persistenceStatus.textContent, 'Debug persistence: error (synthetic read failure)');
+  assert.equal(elements.captureState.className, 'state bad');
+});
+
+test('missing clipboard keeps the successful export download', async () => {
+  const popup = loadPopupStatusRenderer({ send: async () => ({}) }, null);
+  popup.callbacks.DOMContentLoaded();
+  await popup.callbacks['export:click']();
+  assert.equal(popup.blobs.length, 1);
+  assert.equal(popup.elements.notice.textContent, 'Exported. Copy to clipboard failed: Clipboard unavailable');
+  assert.equal(popup.elements.notice.dataset.tone, 'success');
 });
