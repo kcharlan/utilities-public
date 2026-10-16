@@ -1,6 +1,22 @@
 # Runtime behavior
 
-The offline page defaults to all sources. Its All/Codex/Claude segmented
+The offline page opens on month to date (MTD). The period buttons are MTD, QTD
+(quarter to date), YTD (year to date), rolling 7D/30D/90D, ALL and Custom; the
+choice persists as `p` in the URL hash. "Now" is the snapshot time shown as
+"data as of", not the time the page is viewed. The period dial beside the
+buttons names the dates on screen and steps MTD by month, QTD by quarter and
+YTD by year; `o=-N` in the hash records N steps back. A past month, quarter or
+year covers the whole period and its KPI deltas compare it with the whole
+previous one. The current period compares with the same elapsed span of the
+previous one. Choosing a period button always returns to its current period,
+so pressing MTD after stepping back returns to this month. Custom shows two date inputs in the dial,
+pre-filled with the range that was on screen. Its arrows shift the range by its
+own length. Rolling periods and ALL have no steps. The back arrow stops once the
+window starts at or before the earliest session. The forward arrow stops at the
+current period, or for Custom once the range reaches the snapshot day. `[` and
+`]` step back and forward unless focus is in a text field.
+
+The page defaults to all sources. Its All/Codex/Claude segmented
 switch persists as `src=all|codex|claude` in the URL hash and retains the
 other filters. Switching away from a selected reader's provider closes that
 reader. Missing legacy provider fields mean Codex. Source filtering applies
@@ -53,7 +69,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.2.0`.
+runtime state. Version is currently `colophon 0.3.0`.
 
 | Flag | Behavior |
 | --- | --- |

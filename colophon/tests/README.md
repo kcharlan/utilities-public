@@ -5,6 +5,9 @@ owners and collision-skipped aliases across deletion/rebuild, Codex filename
 fallback collisions, malformed fields, chronological grouping and the actual
 token-data boundary. Browser cases cover the independent `h` toggle, tags,
 direct hashes, period/hour-grid prompt activity and history reader action gates.
+Period dial cases pin the browser to America/New_York and a synthetic snapshot
+so month, quarter and year boundaries, offsets, Custom shifts and KPI
+comparison labels are deterministic.
 
 Claude cases cover filename identity/collisions, prompt and tool mapping,
 root selection and symlink exclusions, read-only usable-history presence,
