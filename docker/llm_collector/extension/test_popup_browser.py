@@ -258,3 +258,92 @@ def test_appearance_keyboard(popup, tmp_path):
     popup.locator("#appearanceButton").click()
     expect(popup.locator("#appearanceNative")).to_have_attribute("aria-checked", "true")
     screenshot(popup, tmp_path, "appearance-menu-native")
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_keyboard_focus_inside_fold_bounds(popup, tmp_path):
+    # A positive outline offset disappears behind Native's overflow clipping.
+    popup.keyboard.press("Tab")
+    for fold in ["deliveryFold", "captureFold", "logFold"]:
+        summary = popup.locator(f"#{fold} > summary")
+        summary.focus()
+        assert summary.evaluate("node => node.matches(':focus-visible')")
+        assert summary.evaluate("""node => {
+            const style = getComputedStyle(node);
+            const parent = getComputedStyle(node.parentElement);
+            return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2 &&
+                (parent.overflow !== 'hidden' || parseFloat(style.outlineOffset) <= -parseFloat(style.outlineWidth));
+        }""")
+        screenshot(popup, tmp_path, f"focus-{fold}")
+    popup.locator("#captureFold > summary").press("Enter")
+    # A held synthetic record enables the real row action without a capture mutation.
+    popup.evaluate("renderStatus({captureEnabled:true, captureCount:1})")
+    button = popup.locator("#clearCapture")
+    button.focus()
+    assert button.evaluate("node => node.matches(':focus-visible')")
+    assert button.evaluate("""node => {
+        const style = getComputedStyle(node);
+        return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2 &&
+            parseFloat(style.outlineOffset) <= -parseFloat(style.outlineWidth);
+    }""")
+    screenshot(popup, tmp_path, "focus-row-button")
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_error_notice_uses_error_color(popup, tmp_path):
+    popup.evaluate("setNotice('Synthetic operation failed.', 'error')")
+    expected = {"native": {"light": "rgb(215, 0, 21)", "dark": "rgb(255, 69, 58)"},
+                "meter": {"light": "rgb(176, 41, 43)", "dark": "rgb(240, 122, 115)"}}
+    skin = popup.locator("html").get_attribute("data-skin")
+    scheme = popup.evaluate("matchMedia('(prefers-color-scheme: dark)').matches")
+    assert popup.locator("#notice").evaluate("node => getComputedStyle(node).color") == expected[skin]["dark" if scheme else "light"]
+    screenshot(popup, tmp_path, "error-notice")
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_status_failure_preserves_capture_and_recovers(popup, tmp_path):
+    expect(popup.locator("#captureState")).to_have_text("On, 0 held")
+    popup.locator("#captureFold > summary").click()
+    popup.evaluate("""async () => {
+        window.syntheticOriginalSend = chrome.runtime.sendMessage;
+        chrome.runtime.sendMessage = (message, callback) => {
+            if (message.cmd !== 'get_status') throw Error('Unexpected capture mutation');
+            callback({ok:false, error:'Synthetic status rejection'});
+        };
+        await refresh();
+    }""")
+    expect(popup.locator("#captureState")).to_have_text("On, 0 held · stale")
+    expect(popup.locator("#captureToggle")).to_be_checked()
+    expect(popup.locator("#captureToggle")).to_be_disabled()
+    expect(popup.locator("#export")).to_be_disabled()
+    expect(popup.locator("#registerHeading")).to_have_text("Extension not responding")
+    assert popup.locator("#captureFold").evaluate("node => node.open")
+    screenshot(popup, tmp_path, "status-stale")
+    popup.evaluate("""async () => {
+        chrome.runtime.sendMessage = window.syntheticOriginalSend;
+        await refresh();
+    }""")
+    expect(popup.locator("#captureState")).to_have_text("On, 0 held")
+    expect(popup.locator("#captureToggle")).to_be_enabled()
+    expect(popup.locator("#export")).to_be_enabled()
+    expect(popup.locator("#clearCapture")).to_be_disabled()
+    screenshot(popup, tmp_path, "status-recovered")
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+def test_initial_status_unavailable(popup, tmp_path):
+    # Fail only the popup messaging boundary before its first status render.
+    page = popup.context.new_page()
+    page.add_init_script("""chrome.runtime.sendMessage = (message, callback) => {
+        if (message.cmd !== 'get_status') throw Error('Unexpected capture mutation');
+        callback({ok:false, error:'Synthetic first status failure'});
+    };""")
+    with guard_browser_errors(page):
+        page.goto(popup.url)
+        expect(page.locator("#registerHeading")).to_have_text("Extension not responding")
+        expect(page.locator("#captureState")).to_have_text("Unknown · status unavailable")
+        expect(page.locator("#captureHeld")).to_have_text("Unknown")
+        for selector in ["#captureToggle", "#clearCapture", "#forcePush", "#reset", "#export"]:
+            expect(page.locator(selector)).to_be_disabled()
+        screenshot(page, tmp_path, "status-initial-unknown")
+    page.close()

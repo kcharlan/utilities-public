@@ -90,6 +90,7 @@ function showCheckingStatus() {
 }
 
 let previousDeliveryError = null;
+let lastConfirmedStatus = null;
 const sumCounts = counts => Object.values(counts || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
 
 function detailRow(label, value, tone = '', mono = false) {
@@ -106,6 +107,7 @@ function detailRow(label, value, tone = '', mono = false) {
 }
 
 function renderStatus(data = {}) {
+  lastConfirmedStatus = data;
   const { serverCounters = {}, pending = {}, seq = 0, client_id = '—', debug = [], configError, collectorStatus, deliveryError, inFlight } = data;
   const connected = collectorStatus?.state === 'connected';
   const pendingCount = sumCounts(pending);
@@ -179,6 +181,8 @@ function renderStatus(data = {}) {
   $('forcePush').disabled = pendingCount === 0 || data.available === false;
   $('reset').disabled = queued === 0 || data.available === false;
   renderCaptureState(data);
+  $('captureToggle').disabled = false;
+  $('export').disabled = false;
   renderPersistenceStatus(data);
   $('logState').textContent = debug.length ? `${debug.length} logged` : 'None';
   const log = $('logList');
@@ -201,6 +205,35 @@ function renderStatus(data = {}) {
     const row = textElement('li','Nothing observed since the browser started.');
     row.className = 'none';
     log.appendChild(row);
+  }
+}
+
+function renderUnavailableStatus() {
+  // A missing worker reply says nothing about whether recording or storage changed.
+  if (lastConfirmedStatus) {
+    renderCaptureState(lastConfirmedStatus);
+    $('captureState').textContent += ' · stale';
+    $('captureHeld').textContent += ' · stale';
+    $('logState').textContent = `${lastConfirmedStatus.debug?.length || 0} logged · stale`;
+  } else {
+    $('captureState').textContent = 'Unknown · status unavailable';
+    $('captureHeld').textContent = 'Unknown';
+    $('logState').textContent = 'Unknown';
+  }
+  $('captureState').className = 'state bad';
+  $('persistenceStatus').textContent = 'Unavailable · check again';
+  $('persistenceStatus').className = 'v bad';
+  $('deliveryState').textContent = 'Unavailable';
+  $('deliveryState').className = 'state bad';
+  for (const id of ['captureToggle', 'clearCapture', 'forcePush', 'reset', 'export']) $(id).disabled = true;
+  $('registerHeading').textContent = 'Extension not responding';
+  $('registerTotal').textContent = '';
+  const register = $('register');
+  register.textContent = '';
+  for (const message of ['Check again to wake the background worker.', "If it still fails, reload the extension from the browser's Extensions page and reopen this popup."]) {
+    const row = textElement('div', message);
+    row.className = 'empty';
+    register.appendChild(row);
   }
 }
 
@@ -232,17 +265,14 @@ async function refresh({ showChecking = true } = {}){
   try {
     const resp = await sendMessageWithTimeout({ cmd: "get_status" }, 3000);
     if (generation !== refreshGeneration) return;
+    if (resp.ok === false) throw new Error(resp.error || 'status rejected');
+    if (typeof resp.captureEnabled !== 'boolean' || !Number.isFinite(resp.captureCount)) throw new Error('status reply incomplete');
     renderConnectionStatus(resp.collectorStatus, resp.configError);
     renderStatus(resp);
   } catch (e){
     if (generation !== refreshGeneration) return;
     renderConnectionStatus({ state: "unreachable", message: `Extension status check failed: ${e.message}` });
-    renderStatus({available:false});
-    $('registerHeading').textContent = 'Extension not responding';
-    const register = $('register'); register.textContent = '';
-    for (const message of ['Check again to wake the background worker.', "If it still fails, reload the extension from the browser's Extensions page and reopen this popup."]) {
-      const row = textElement('div',message); row.className = 'empty'; register.appendChild(row);
-    }
+    renderUnavailableStatus();
   }
 }
 

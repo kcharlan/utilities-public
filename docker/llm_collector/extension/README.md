@@ -170,6 +170,12 @@ The extension's `background.js` script is the core of the extension. It performs
     again every ten seconds while open, and **Check again** triggers an immediate
     retry. No connection polling runs while the popup is closed.
 
+    If the background worker cannot reply, the popup shows **Extension not
+    responding** and recovery instructions. Previously confirmed capture
+    values are marked **stale**; before the first reply they read **Unknown**.
+    Capture, delivery, and export controls stay disabled until a successful
+    status check restores current values.
+
 ## Full Request Capture
 
 For working out how a site sends prompts, `capture.js` records every request

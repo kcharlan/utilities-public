@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-16: Preserve confirmed popup state when status checks fail
+
+A failed or rejected worker status reply does not establish that capture is
+off or empty. Keep confirmed capture values explicitly stale, show unknown
+values before the first successful reply, and disable affected actions until
+recovery. Do not pass an empty synthetic payload through the success renderer.
+Regress both worker messaging failures and rejected or incomplete replies,
+including successful recovery without capture mutations.
+
+An outside focus outline can disappear behind a rounded fold's overflow clip.
+Use an inset outline and check collapsed summaries and full-width row buttons
+in light and dark Chromium. Scope error notice colors to each skin so a later
+skin-specific neutral selector cannot override the error tone.
+
 ## 2026-10-16: Verify extension popup typography and empty-state layout in Chromium
 
 Chromium's extension stylesheet can give `body` a relative font size even when

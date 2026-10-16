@@ -337,6 +337,54 @@ test('refresh failure renders recovery rows', async () => {
  const p=loadPopupStatusRenderer(); p.context.chrome.runtime.sendMessage=()=>{throw new Error('synthetic worker failure');};
  await p.context.refresh(); assert.equal(p.elements.registerHeading.textContent,'Extension not responding'); assert.match(p.elements.register.textContent,/Check again to wake/); assert.match(p.elements.register.textContent,/Extensions page/);
 });
+
+for (const failure of ['throw', 'reject', 'missing']) {
+  test(`${failure} status preserves confirmed capture and recovers without capture mutations`, async () => {
+    const messages = [];
+    let unavailable = false;
+    let count = 42;
+    const popup = loadPopupStatusRenderer({ send: async message => {
+      messages.push(message.cmd);
+      if (unavailable) return failure === 'missing' ? undefined : { ok: false, error: 'synthetic rejected status' };
+      return { ...connected, captureEnabled: true, captureCount: count,
+        capturePersistence: { state: 'ready' }, debugPersistence: { state: 'ready' } };
+    } });
+    await popup.context.refresh();
+    popup.elements.captureFold.open = true;
+    popup.elements.logFold.open = true;
+    const send = popup.context.chrome.runtime.sendMessage;
+    if (failure === 'throw') popup.context.chrome.runtime.sendMessage = () => { throw Error('synthetic worker failure'); };
+    else unavailable = true;
+    await popup.context.refresh();
+    assert.equal(popup.elements.captureState.textContent, 'On, 42 held · stale');
+    assert.equal(popup.elements.captureHeld.textContent, '42 requests · stale');
+    assert.equal(popup.elements.captureToggle.checked, true);
+    assert.match(popup.elements.persistenceStatus.textContent, /unavailable/i);
+    for (const id of ['captureToggle', 'clearCapture', 'reset', 'forcePush', 'export']) assert.equal(popup.elements[id].disabled, true, id);
+    assert.equal(popup.elements.registerHeading.textContent, 'Extension not responding');
+    assert.equal(popup.elements.registerTotal.textContent, '');
+    assert.match(popup.elements.register.textContent, /Check again to wake/);
+    assert.equal(popup.elements.captureFold.open, true);
+    assert.equal(popup.elements.logFold.open, true);
+    popup.context.chrome.runtime.sendMessage = send;
+    unavailable = false; count = 43;
+    await popup.context.refresh();
+    assert.equal(popup.elements.captureState.textContent, 'On, 43 held');
+    assert.equal(popup.elements.persistenceStatus.textContent, 'Working');
+    for (const id of ['captureToggle', 'clearCapture', 'reset', 'forcePush', 'export']) assert.equal(popup.elements[id].disabled, false, id);
+    assert.ok(messages.every(cmd => cmd === 'get_status'));
+  });
+}
+
+test('initial status failure shows unknown capture and disables affected controls', async () => {
+  const popup = loadPopupStatusRenderer({ send: async () => ({ ok: false, error: 'synthetic unavailable' }) });
+  await popup.context.refresh();
+  assert.match(popup.elements.captureState.textContent, /Unknown/);
+  assert.match(popup.elements.captureHeld.textContent, /Unknown/);
+  assert.ok(!popup.elements.captureState.textContent.includes('Off'));
+  assert.ok(!popup.elements.captureHeld.textContent.includes('0 requests'));
+  for (const id of ['captureToggle', 'clearCapture', 'reset', 'forcePush', 'export']) assert.equal(popup.elements[id].disabled, true, id);
+});
 test('popup renderer never uses HTML parsing',()=>{assert.ok(!readFileSync(require.resolve('./popup.js'),'utf8').includes('innerHTML'));});
 test('export download survives clipboard rejection and reports successful copy',async()=>{
  let rejects=false; const p=loadPopupStatusRenderer({send:async()=>({})},{writeText:async()=>{if(rejects)throw new Error('synthetic clipboard failure');}});
