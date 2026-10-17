@@ -33,3 +33,7 @@ acceptance:
 .PHONY: settings-prototype
 settings-prototype:
 	Tests/Acceptance/build-settings-prototype.sh
+
+.PHONY: snapshots
+snapshots:
+	Tests/Snapshots/build.sh

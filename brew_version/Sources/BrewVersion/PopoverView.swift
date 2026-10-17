@@ -6,88 +6,95 @@ struct PopoverView: View {
     let notifier: UserNotifier
     let openSettings: () -> Void
     let focusGeneration: UUID
-    @State private var search = SearchInput()
-    private var query: String { search.text }
-    @State private var selection = WatchRowSelection()
+    var openCustomInterval: (() -> Void)? = nil
+    @State var search = SearchInput()
+    @State var selection = WatchRowSelection()
     @State private var undo = WatchUndoAction()
     private var watches: [WatchEntry] {
         controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
     }
     private var title: String {
         let count = controller.amberCount
-        if count > 0 { return count == 1 ? "1 watched update" : "\(count) watched updates" }
-        let watched = watches.count
-        return watched == 1 ? "Watching 1 package" : "Watching \(watched) packages"
+        if count > 0 { return count == 1 ? "1 update" : "\(count) updates" }
+        return watches.isEmpty ? "Nothing watched yet" : "All up to date"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading) {
-                    Text(title).font(.headline)
-                    if let check = controller.state.lastCheck { Text("Checked \(check.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
-                    else { Text("Not checked yet").font(.caption).foregroundStyle(.secondary) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Text(controller.state.lastCheck.map { "Checked \($0.formatted(date: .omitted, time: .shortened))" } ?? "Not checked yet")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { Task { await controller.checkNow() } } label: { Image(systemName: "arrow.clockwise") }
-                    .accessibilityLabel("Check now").disabled(!controller.canSave || controller.isChecking)
+                Button { Task { await controller.checkNow() } } label: {
+                    if controller.isChecking { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
+                    else { Image(systemName: "arrow.clockwise") }
+                }.buttonStyle(.borderless).help("Check now").accessibilityLabel("Check now").disabled(!controller.canSave || controller.isChecking)
             }
             if let error = controller.persistenceError {
-                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11)).foregroundStyle(.red).textSelection(.enabled)
                 if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
-                else if let hint = PersistencePresentation(issue: controller.persistenceIssue).saveHint { Text(hint).font(.caption) }
+                else if let hint = PersistencePresentation(issue: controller.persistenceIssue).saveHint { Text(hint).font(.system(size: 11)) }
+            }
+            if let error = controller.catalogWriteError {
+                Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11)).foregroundStyle(.red).textSelection(.enabled)
             }
             NotificationIssueView(notifier: notifier)
-            SearchSection(controller: controller, undo: undo, input: search, focusGeneration: focusGeneration)
+            SearchSection(controller: controller, undo: undo, input: search, focusGeneration: focusGeneration, maximumHeight: listMaximum)
             if let removed = undo.removed {
                 HStack {
-                    Text("Stopped watching \(removed.entry.name.rawValue)").font(.caption)
+                    Text("Stopped watching \(removed.entry.name.rawValue)").font(.system(size: 11))
                     Button("Undo") { undo.restore(controller: controller) }.disabled(!controller.canSave)
                 }
-                if undo.retryRequired {
-                    Text("Undo couldn't be saved. Retry Undo before stopping another watch.")
-                        .font(.caption).foregroundStyle(.red)
-                }
+                if undo.retryRequired { Text("Undo couldn't be saved. Retry Undo before stopping another watch.").font(.system(size: 11)).foregroundStyle(.red) }
             }
-            if query.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Watching").font(.headline)
-                        Text("Checked every \(controller.state.interval.label), with alerts").font(.caption).foregroundStyle(.secondary)
-                        if watches.isEmpty { Text("Search for a formula or cask to start watching it.").foregroundStyle(.secondary).padding(.vertical, 12) }
+            if search.text.isEmpty {
+                ContentSizedScroll(maximum: listMaximum, initial: watches.isEmpty ? 112 : min(listMaximum, CGFloat(watches.count * 52 + 24))) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack { Text("Watching"); Spacer(); Text("\(watches.count)") }
+                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                            .help("Checked every \(controller.state.interval.label), with update alerts").padding(.bottom, 4)
+                        if watches.isEmpty {
+                            VStack(spacing: 5) {
+                                Image(systemName: "mug").font(.system(size: 28)).foregroundStyle(.tertiary)
+                                Text("Nothing watched yet").fontWeight(.medium)
+                                Text("Search above to add a formula or cask.").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                        }
                         ForEach(watches, id: \.name) { entry in
-                            WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove) { remove(entry.name) }
-                                .background(selection.name == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                            WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove, selected: selection.name == entry.name) { remove(entry.name) }
                                 .background(WatchRowKeyboard(focusRequest: selection.name == entry.name ? selection.focusRequest : nil) { remove(entry.name) })
-                                .contentShape(Rectangle())
-                                .onTapGesture { selection.select(entry.name) }
-                                .accessibilityElement(children: .contain)
-                                .accessibilityLabel("Watching \(entry.name.rawValue)")
+                                .contentShape(Rectangle()).onTapGesture { selection.select(entry.name) }
+                                .accessibilityElement(children: .contain).accessibilityLabel("Watching \(entry.name.rawValue)")
                                 .accessibilityAddTraits(selection.name == entry.name ? .isSelected : [])
                                 .accessibilityAction { selection.select(entry.name) }
                         }
                         OtherUpdatesSection(controller: controller, undo: undo)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(height: 390)
+                    }
+                }
             }
             Divider()
-            HStack {
-                IntervalMenu(controller: controller)
-                Spacer()
+            HStack(spacing: 8) {
+                IntervalMenu(controller: controller, openCustom: openCustomInterval ?? openSettings)
+                Spacer(minLength: 0)
+                Text(nextCheckText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).help(nextCheckText)
                 Button(action: openSettings) { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Brew Version").accessibilityLabel("Quit Brew Version")
-            }
-            Text(nextCheckText).font(.caption).foregroundStyle(.secondary)
-        }.padding(16).frame(width: 450)
+            }.buttonStyle(.borderless)
+        }.font(.system(size: 13)).padding(12).frame(width: 340)
+    }
+    private var listMaximum: CGFloat {
+        // Reserve room for warnings/recovery so only the package area scrolls.
+        max(100, 390 - (controller.persistenceError == nil ? 0 : 70) - (controller.catalogWriteError == nil ? 0 : 50) - (notifier.lastError == nil ? 0 : 60) - (undo.removed == nil ? 0 : 40))
     }
     private var nextCheckText: String {
         switch controller.nextAutomaticCheck {
-        case .blocked: "Automatic checks paused until state can be loaded"
+        case .blocked: "Checks paused"
         case .checking: "Checking now"
         case .ready: "Next check due"
         case .scheduled(let next): "Next check \(next.formatted(date: .omitted, time: .shortened))"
-        case .waitingForNetwork(let next):
-            if let next { "Offline: next check after \(next.formatted(date: .omitted, time: .shortened)) when connected" }
-            else { "Offline: next check when connected" }
+        case .waitingForNetwork: "Waiting for network"
         }
     }
     private func remove(_ name: PackageName) {

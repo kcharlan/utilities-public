@@ -3,8 +3,7 @@ import BrewVersionCore
 
 struct IntervalMenu: View {
     let controller: WatchController
-    @State private var custom = false
-    @State private var input = CustomIntervalInput()
+    var openCustom: () -> Void = {}
     var body: some View {
         Menu {
             Picker("Check interval", selection: Binding(get: { controller.state.interval }, set: { controller.setInterval($0) })) {
@@ -12,23 +11,12 @@ struct IntervalMenu: View {
                     Text(interval.label).tag(interval)
                 }
             }.pickerStyle(.inline)
-            Button("Custom…") { input.minutes = String(controller.state.interval.minutes); input.invalid = false; custom = true }
-        } label: { Text("Every \(controller.state.interval.label)") }
-        .disabled(!controller.canSave)
-        .sheet(isPresented: $custom) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Check interval").font(.headline)
-                TextField("Minutes", text: $input.minutes).accessibilityLabel("Minutes")
-                if input.invalid { Text(CheckInterval.validationMessage()).foregroundStyle(.red) }
-                HStack {
-                    Button("Cancel") { custom = false }.keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button("Save") { save() }.keyboardShortcut(.defaultAction)
-                }
-            }.padding(20).frame(width: 290)
-        }
+            Button("Custom…", action: openCustom)
+        } label: { Label(shortIntervalLabel(controller.state.interval), systemImage: "timer") }
+            .menuStyle(.borderlessButton).fixedSize().controlSize(.small).disabled(!controller.canSave)
+            .accessibilityLabel("Check every \(controller.state.interval.label)")
     }
-    private func save() {
-        if input.save(controller: controller) { custom = false }
-    }
+}
+func shortIntervalLabel(_ interval: CheckInterval) -> String {
+    interval.minutes % 60 == 0 ? "Every \(interval.label)" : "Every \(interval.minutes) min"
 }

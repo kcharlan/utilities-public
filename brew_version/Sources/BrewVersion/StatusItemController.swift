@@ -4,7 +4,7 @@ import Observation
 import BrewVersionCore
 
 @MainActor @Observable final class PopoverFocus { var generation = UUID() }
-private struct StatusContent: View {
+struct StatusContent: View {
     let controller: WatchController
     let notifier: UserNotifier
     let settings: SettingsWindowController
@@ -12,9 +12,16 @@ private struct StatusContent: View {
     let accessory: AnyView?
     var body: some View {
         VStack(spacing: 0) {
-            PopoverView(controller: controller, notifier: notifier, openSettings: settings.show, focusGeneration: focus.generation)
+            PopoverView(controller: controller, notifier: notifier, openSettings: settings.show, focusGeneration: focus.generation, openCustomInterval: settings.showCustomInterval)
             if let accessory { accessory }
         }
+    }
+    func makeHostingController() -> NSHostingController<StatusContent> {
+        let hosting = NSHostingController(rootView: self)
+        // NSPopover follows preferredContentSize as measured content changes;
+        // intrinsic view size alone does not publish that controller contract.
+        hosting.sizingOptions.insert(.preferredContentSize)
+        return hosting
     }
 }
 @MainActor protocol PopoverPresenting: AnyObject { func showPopover() }
@@ -30,12 +37,13 @@ private struct StatusContent: View {
         settings = SettingsWindowController(controller: controller, notifier: notifier)
         super.init()
         popover.behavior = .transient; popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: StatusContent(controller: controller, notifier: notifier, settings: settings, focus: focus, accessory: accessory))
+        popover.contentViewController = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: focus, accessory: accessory).makeHostingController()
         item.button?.target = self; item.button?.action = #selector(toggle)
         statusObservation = StatusObservation(controller: controller) { [weak self] presentation in
             guard let self else { return }
             let image = NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: presentation.accessibility)
             image?.isTemplate = true; self.item.button?.image = image
+            self.item.button?.contentTintColor = self.controller.amberCount > 0 ? .systemOrange : nil
             self.item.button?.setAccessibilityLabel(presentation.accessibility)
             self.item.button?.setAccessibilityHelp(presentation.accessibility)
             self.item.button?.toolTip = presentation.accessibility

@@ -15,6 +15,34 @@ private actor SearchTransport: HTTPTransport {
 private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
 
 @MainActor struct SearchInputTests {
+    @Test func matchingPrefixSuggestionsHideOnlyTheirExactNotFound() {
+        let name = PackageName("synthetic")!
+        let missing: LookupResult = .notFound(name)
+        #expect(visibleSearchResultIndices([missing], query: "synthetic", hasSuggestions: true).isEmpty)
+        #expect(visibleSearchResultIndices([missing], query: "synthetic", hasSuggestions: false) == [0])
+        #expect(visibleSearchResultIndices([missing], query: "synthetic other", hasSuggestions: true) == [0])
+        #expect(visibleSearchResultIndices([.failed(name, "Synthetic unreachable"), .invalid("INVALID")], query: "synthetic", hasSuggestions: true) == [0, 1])
+    }
+    @Test func keyboardSuggestionSelectionKeepsKindAndResultOffset() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-suggestion-keyboard-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let transport = SearchTransport()
+        let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
+        let name = PackageName("synthetic-shared")!
+        let suggestions: [(name: PackageName, kind: PackageKind)] = [(name, .formula), (name, .cask)]
+        #expect(searchChoice(selection: 0, suggestions: suggestions) == .suggestion(name, .formula))
+        #expect(searchChoice(selection: 1, suggestions: suggestions) == .suggestion(name, .cask))
+        #expect(searchChoice(selection: 3, suggestions: suggestions) == .result(1))
+        let input = SearchInput(waitForDebounce: {})
+        input.text = "synthetic"
+        input.select(name: name, kind: .cask)
+        let selected = searchSelectionForRequest(input.request, suggestions: suggestions)
+        #expect(selected == 1)
+        await input.watchChoice(searchChoice(selection: selected, suggestions: suggestions), undo: WatchUndoAction(), controller: controller)
+        #expect(controller.state.watched.first?.kind == .cask)
+        #expect(controller.state.watched.first?.lastListing?.version == "2-synthetic")
+        #expect(await transport.requests.allSatisfy { $0.path.contains("/cask/") })
+    }
     @Test func stalledSearchGatesTimeOut() async {
         do { try await HeldSearchTransport().entered(timeout: .zero); Issue.record("Expected held-lookup deadline") }
         catch { #expect(error is SearchGateTimeout) }
@@ -120,7 +148,7 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
         let view = NSHostingView(rootView: SearchResults(controller: controller, undo: WatchUndoAction(), query: input.text, selection: .constant(99), selectSuggestion: { _, _ in }).frame(width: 418))
         view.layoutSubtreeIfNeeded()
         #expect(controller.results.count == 100)
-        #expect(view.fittingSize.height == 300)
+        #expect(view.fittingSize.height == 380)
     }
 }
 

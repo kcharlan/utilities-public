@@ -10,6 +10,7 @@ import BrewVersionCore
     private let present: (NSWindow) -> Void
     private var ownedWindow: NSWindow?
     private var appearance: NSAppearance?
+    private let focus = SettingsFocus()
     init(controller: WatchController, notifier: UserNotifier, login: LoginItem = LoginItem(),
          activate: @escaping () -> Void = { NSApp.activate(ignoringOtherApps: true) },
          present: @escaping (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }) {
@@ -18,10 +19,18 @@ import BrewVersionCore
     }
     func show() {
         if ownedWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(controller: controller, notifier: notifier, login: login)))
+            let hosting = NSHostingController(rootView: SettingsView(controller: controller, notifier: notifier, login: login, focus: focus))
+            // A grouped Form is flexible vertically and reports only its footer
+            // as intrinsic height. The actual AppKit window owns its viewport.
+            hosting.sizingOptions = []
+            let window = NSWindow(contentViewController: hosting)
             window.title = "Brew Version Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
+            window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unifiedCompact
+            window.setContentSize(NSSize(width: 460, height: 440))
+            window.contentMinSize = NSSize(width: 460, height: 440)
             window.appearance = appearance
             window.delegate = self
             window.center()
@@ -30,6 +39,7 @@ import BrewVersionCore
         activate()
         if let ownedWindow { present(ownedWindow) }
     }
+    func showCustomInterval() { focus.requestInterval(); show() }
     func setAppearance(_ appearance: NSAppearance?) {
         self.appearance = appearance
         ownedWindow?.appearance = appearance

@@ -49,4 +49,12 @@ import BrewVersionCore
               case .found(let listing, _, false) = controller.results[index] else { return }
         await undo.watch(listing.name, kind: listing.kind, controller: controller)
     }
+    func watchChoice(_ choice: SearchChoice, undo: WatchUndoAction, controller: WatchController) async {
+        switch choice {
+        case .suggestion(let name, let kind):
+            select(name: name, kind: kind)
+            await watchSelected(0, undo: undo, controller: controller)
+        case .result(let index): await watchSelected(index, undo: undo, controller: controller)
+        }
+    }
 }

@@ -115,9 +115,45 @@ import UserNotifications
             view.layoutSubtreeIfNeeded()
             let scrolls = nativeScrollViews(view)
             #expect(scrolls.count == 1)
-            #expect(scrolls.first?.frame.height == 390)
-            #expect(view.fittingSize.height > 390)
-            #expect(view.fittingSize.height < 800)
+            #expect((scrolls.first?.frame.height ?? 0) > 60)
+            #expect((scrolls.first?.frame.height ?? 800) < 390)
+            #expect(view.fittingSize.width == 340)
+            #expect(view.fittingSize.height < 560)
+        }
+    }
+    @Test func maintainedStatusHostKeepsViewportAcrossAppearanceAndRehosting() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-status-layout-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial; state.showOtherUpdates = false
+        state.watched = (0..<12).map { index in
+            let listing = Listing(name: PackageName("synthetic-host-\(index)")!, kind: .cask, version: "2.0")
+            return WatchEntry(name: listing.name, kind: .cask, lastListing: listing,
+                              installed: InstalledVersion(version: "1.0", source: .caskroomFallback))
+        }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let notifier = UserNotifier(service: NotificationServiceStub())
+        for _ in 0..<2 {
+            let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
+            let host = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: PopoverFocus(), accessory: nil).makeHostingController()
+            let popover = NSPopover(); popover.contentViewController = host
+            let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 560), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentViewController = host
+            for appearance in [NSAppearance.Name.darkAqua, .aqua, .darkAqua] {
+                PopoverAppearance.apply(NSAppearance(named: appearance), to: popover)
+                host.view.frame.size = host.view.fittingSize
+                window.setContentSize(host.view.fittingSize)
+                host.view.layoutSubtreeIfNeeded()
+                #expect(host.view.fittingSize.width == 340)
+                #expect(host.view.fittingSize.height <= 560)
+                #expect(host.preferredContentSize.width == 340)
+                #expect(host.preferredContentSize.height > 100)
+                #expect(host.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == appearance)
+                #expect((nativeScrollViews(host.view).first?.frame.height ?? 0) > 100)
+            }
+            window.contentViewController = nil
         }
     }
     @Test func watchRowNativeDeleteRoutesBothKeysAndPreservesSearchEditing() throws {
@@ -173,12 +209,23 @@ import UserNotifications
         #expect(commands.first(where: { $0.keyEquivalent == "q" })?.action == #selector(NSApplication.terminate(_:)))
         #expect(commands.first(where: { $0.keyEquivalent == "v" })?.action == #selector(NSText.paste(_:)))
         #expect(commands.first(where: { $0.keyEquivalent == "a" })?.action == #selector(NSText.selectAll(_:)))
+        let close = commands.first { $0.keyEquivalent == "w" }
+        #expect(close?.action == #selector(NSWindow.performClose(_:)))
+        #expect(close != nil && close?.target == nil)
         let undo = commands.first { $0.keyEquivalent == "z" && $0.keyEquivalentModifierMask == [.command] }
         let redo = commands.first { $0.keyEquivalent == "z" && $0.keyEquivalentModifierMask == [.command, .shift] }
         #expect(undo?.action == Selector(("undo:")))
         #expect(redo?.action == Selector(("redo:")))
         #expect(undo != nil && undo?.target == nil)
         #expect(redo != nil && redo?.target == nil)
+    }
+    @Test func commandOffersInstallOnlyForAbsentPackages() {
+        for kind in [PackageKind.formula, .cask] {
+            let listing = Listing(name: PackageName("synthetic-command")!, kind: kind, version: "2.0")
+            let flag = kind == .cask ? "--cask " : ""
+            #expect(packageCommand(listing, installed: nil) == "brew install \(flag)synthetic-command")
+            #expect(packageCommand(listing, installed: InstalledVersion(version: "1.0", source: .caskroomFallback)) == "brew upgrade \(flag)synthetic-command")
+        }
     }
     @Test func statusObservationPublishesAmberChanges() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-status-" + UUID().uuidString)
@@ -235,6 +282,13 @@ import UserNotifications
             activate: { activations += 1 }, present: { windows.append($0) })
         settings.setAppearance(NSAppearance(named: .darkAqua))
         settings.show(); settings.show()
+        #expect(windows[0].contentLayoutRect.height >= 400)
+        #expect(windows[0].contentLayoutRect.width == 460)
+        #expect(windows[0].contentMinSize.height >= 400)
+        windows[0].contentView?.layoutSubtreeIfNeeded()
+        let formScrolls = windows[0].contentView.map(nativeScrollViews) ?? []
+        #expect(!formScrolls.isEmpty)
+        #expect((formScrolls.first?.frame.height ?? 0) > 300)
         #expect(windows[0].effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         settings.setAppearance(NSAppearance(named: .aqua))
         #expect(windows[0].effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
