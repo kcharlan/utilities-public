@@ -19,6 +19,71 @@ func seedCatalog(_ directory: URL) async throws -> Catalog {
 }
 
 struct CatalogTests {
+    @Test(arguments: [false, true]) func validDownloadSurvivesUnwritableCacheAndReusesItsETags(_ seeded: Bool) async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true)
+        let blocked = seeded ? f.directory : f.directory.appendingPathComponent("synthetic-blocked-cache")
+        if seeded { _ = try await seedCatalog(blocked) }
+        else { try Data("synthetic file blocking directory".utf8).write(to: blocked) }
+        let transport = StubTransport([
+            catalogURL(.formula): [catalogResponse(200, syntheticFormulaList.replacingOccurrences(of: "\"2\"", with: "\"4\""), etag: "synthetic-new-formula"), catalogResponse(304), catalogResponse(500)],
+            catalogURL(.cask): [catalogResponse(200, syntheticCaskList, etag: "synthetic-new-cask"), catalogResponse(304)]])
+        let client = CatalogClient(transport: transport, cacheDirectory: blocked)
+        if seeded {
+            _ = try await client.cached()
+            let cacheFile = blocked.appendingPathComponent("catalog.json")
+            try FileManager.default.removeItem(at: cacheFile)
+            try FileManager.default.createDirectory(at: cacheFile, withIntermediateDirectories: false)
+        }
+        let result = try await client.load()
+        #expect(result.revalidated)
+        #expect(result.cacheWriteError?.contains("Couldn't save catalog cache") == true)
+        #expect(result.catalog.suggestions(prefix: "").count == 2)
+        #expect(result.catalog.listing(for: PackageName("synthetic-formula")!, kind: .formula)?.version == "4")
+        #expect(try await client.cached()?.suggestions(prefix: "").count == 2)
+        _ = try await client.load()
+        #expect(await transport.requests.map(\.etag) == [seeded ? "synthetic-formula-tag" : nil,
+            seeded ? "synthetic-cask-tag" : nil, "synthetic-new-formula", "synthetic-new-cask"])
+        let fallback = try await client.load()
+        #expect(!fallback.revalidated)
+        #expect(fallback.cacheWriteError != nil)
+        #expect(fallback.catalog.listing(for: PackageName("synthetic-formula")!, kind: .formula)?.version == "4")
+    }
+    @Test func exactlyHalfPreviousUsableCountIsAdmitted() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        func formulas(_ count: Int) -> String {
+            "[" + (0..<count).map { #"{"name":"synthetic-formula-\#($0)","versions":{"stable":"2"}}"# }.joined(separator: ",") + "]"
+        }
+        let transport = StubTransport([
+            catalogURL(.formula): [catalogResponse(200, formulas(6)), catalogResponse(200, formulas(3))],
+            catalogURL(.cask): [catalogResponse(200, syntheticCaskList), catalogResponse(304)]])
+        let client = CatalogClient(transport: transport, cacheDirectory: f.directory)
+        _ = try await client.load()
+        let result = try await client.load()
+        #expect(result.revalidated)
+        #expect(result.catalog.suggestions(prefix: "", limit: 100).count == 4)
+    }
+    @Test(arguments: [PackageKind.formula, .cask])
+    func suspiciousUsableCountPreservesBothListsAndETags(_ kind: PackageKind) async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let formulas = "[" + (0..<6).map { #"{"name":"synthetic-formula-\#($0)","versions":{"stable":"2"}}"# }.joined(separator: ",") + "]"
+        let casks = "[" + (0..<6).map { #"{"token":"synthetic-cask-\#($0)","version":"3"}"# }.joined(separator: ",") + "]"
+        let transport = StubTransport([
+            catalogURL(.formula): [catalogResponse(200, formulas, etag: "synthetic-formula-old"),
+                catalogResponse(200, kind == .formula ? syntheticFormulaList : formulas, etag: "synthetic-formula-new"), catalogResponse(304)],
+            catalogURL(.cask): [catalogResponse(200, casks, etag: "synthetic-cask-old"),
+                catalogResponse(200, kind == .cask ? syntheticCaskList : casks, etag: "synthetic-cask-new"), catalogResponse(304)]])
+        let client = CatalogClient(transport: transport, cacheDirectory: f.directory)
+        _ = try await client.load()
+        let before = try Data(contentsOf: f.directory.appendingPathComponent("catalog.json"))
+        let result = try await client.load()
+        #expect(!result.revalidated)
+        #expect(result.catalog.suggestions(prefix: "", limit: 100).count == 12)
+        #expect(try Data(contentsOf: f.directory.appendingPathComponent("catalog.json")) == before)
+        #expect(try await client.cached()?.suggestions(prefix: "", limit: 100).count == 12)
+        _ = try await client.load()
+        #expect(await transport.requests.suffix(2).map(\.etag) == ["synthetic-formula-old", "synthetic-cask-old"])
+    }
     @Test func decodesListsAndSkipsUnusableItems() async throws {
         let f = WatchFixture(); defer { f.clean() }
         let catalog = try await seedCatalog(f.directory)

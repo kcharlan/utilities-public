@@ -7,6 +7,22 @@ import Testing
 }
 
 extension WatchControllerTests {
+    @Test func catalogCacheWriteFailurePublishesMemoryAndWarnsWithoutRepeatingDailyFetch() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        try f.store.save(.initial)
+        let blocked = f.directory.appendingPathComponent("synthetic-blocked-cache")
+        try Data("synthetic file blocking directory".utf8).write(to: blocked)
+        let transport = catalogStub()
+        let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store,
+            notifier: RecordingNotifier(), catalogClient: CatalogClient(transport: transport, cacheDirectory: blocked))
+        await c.refreshCatalogIfDue()
+        #expect(c.catalog?.suggestions(prefix: "").count == 2)
+        #expect(c.catalogWriteError?.contains("Couldn't save catalog cache") == true)
+        #expect(c.state.lastCatalogFetch != nil)
+        await c.setNetworkAvailable(false); await c.setNetworkAvailable(true)
+        await c.refreshCatalogIfDue()
+        #expect(await transport.requests.count == 2)
+    }
     @Test(arguments: ["absent", "fresh", "overdue"])
     func catalogRefreshUsesSuccessfulFetchCadence(_ status: String) async throws {
         let f = WatchFixture(); defer { f.clean() }

@@ -7,13 +7,25 @@ import Testing
 private final class ControlledInstallation: InstalledReading, @unchecked Sendable {
     private let lock = NSLock()
     private let gate = DispatchSemaphore(value: 0)
+    private let lookupGate = DispatchSemaphore(value: 0)
     private var scans = 0
     private var mainActorScan = false
+    private var lookups = 0
     let reader: InstalledReader
     let blockedScan: Int
-    init(_ reader: InstalledReader, blockedScan: Int = 1) { self.reader = reader; self.blockedScan = blockedScan }
+    let blockedLookup: Int?
+    init(_ reader: InstalledReader, blockedScan: Int = 1, blockedLookup: Int? = nil) {
+        self.reader = reader; self.blockedScan = blockedScan; self.blockedLookup = blockedLookup
+    }
     var count: Int { lock.withLock { scans } }
     var scannedMainThread: Bool { lock.withLock { mainActorScan } }
+    var lookupCount: Int { lock.withLock { lookups } }
+    func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion? {
+        let captured = reader.installed(name, kind: kind, listing: listing)
+        let blocked = lock.withLock { lookups += 1; return lookups == blockedLookup }
+        if blocked && !Thread.isMainThread { _ = lookupGate.wait(timeout: .now() + 5) }
+        return captured
+    }
     func snapshot(listings: [Listing]) -> InstalledSnapshot {
         let captured = reader.snapshot(listings: listings)
         let first = lock.withLock {
@@ -23,10 +35,131 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
         if first && !Thread.isMainThread { _ = gate.wait(timeout: .now() + 5) }
         return captured
     }
-    func release() { gate.signal() }
+    func releaseLookup() { lookupGate.signal() }
+    func release() { gate.signal(); lookupGate.signal() }
 }
 
 @MainActor struct InstallationSnapshotTests {
+    @Test func olderTargetedReadCannotReplaceNewerInstalledObservation() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-watch/1", kind: .formula)
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let reader = ControlledInstallation(f.reader(), blockedLookup: 1)
+        let notifier = RecordingNotifier(store: store)
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2"), watchResponse("2")]]),
+            installed: reader, store: store, notifier: notifier)
+        let check = Task { await c.checkNow() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        let oldSearch = Task { await c.search(watchName.rawValue) }
+        while reader.lookupCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.lookupCount == 1)
+        try f.install("prefix/Cellar/synthetic-watch/2", kind: .formula)
+        await c.search(watchName.rawValue)
+        reader.releaseLookup(); await oldSearch.value
+        reader.release(); await check.value
+        #expect(store.load().state.watched[0].installed?.version == "2")
+        #expect(c.amberCount == 0)
+        #expect(await notifier.notices.isEmpty)
+    }
+    @Test func thirdCatalogCallerKeepsItsNewMetadataWithoutAThirdScan() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let bulk = StubTransport([
+            catalogURL(.formula): [catalogResponse(200, syntheticFormulaList.replacingOccurrences(of: "\"2\"", with: "\"4\""))],
+            catalogURL(.cask): [catalogResponse(200, syntheticCaskList)]])
+        let reader = ControlledInstallation(f.reader())
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]),
+            installed: reader, store: store, notifier: RecordingNotifier(),
+            catalogClient: CatalogClient(transport: bulk, cacheDirectory: directory))
+        let hydration = Task { await c.hydrateCatalog() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        try f.install("prefix/Cellar/synthetic-formula/3", kind: .formula)
+        await c.checkNow()
+        #expect(c.others.isEmpty)
+        await c.refreshCatalogIfDue()
+        #expect(c.others.first?.listing.version == "4")
+        #expect(c.others.first?.installed.version == "3")
+        reader.release(); await hydration.value
+        #expect(reader.count <= 2)
+        #expect(c.others.first?.listing.version == "4")
+        #expect(c.others.first?.installed.version == "3")
+    }
+    @Test(arguments: [2, 3]) func overlappingFreshCaskMetadataAdoptsNewerCapture(_ callers: Int) async throws {
+        let f = try InstallationFixture()
+        let name = PackageName("synthetic-pending-cask")!
+        try f.install("prefix/Caskroom/\(name)/1", kind: .cask)
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        try f.app("2")
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial
+        state.watched = [baseline(Listing(name: name, kind: .cask, version: "1"))]; try store.save(state)
+        let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let body = #"{"version":"2","auto_updates":true,"artifacts":[{"app":["Synthetic.app"]}]}"#
+        let reader = ControlledInstallation(f.reader())
+        let notifier = RecordingNotifier(store: store)
+        let c = WatchController(transport: StubTransport([watchURL(name, kind: .cask): [catalogResponse(200, body)]]),
+            installed: reader, store: store, notifier: notifier,
+            catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
+        let hydration = Task { await c.hydrateCatalog() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        try f.install("prefix/Cellar/synthetic-formula/3", kind: .formula)
+        await c.checkNow()
+        if callers == 3 { await c.hydrateCatalog() }
+        #expect(c.others.isEmpty)
+        reader.release(); await hydration.value
+        #expect(reader.count <= 2)
+        #expect(c.others.isEmpty)
+        #expect(store.load().state.watched[0].installed == InstalledVersion(version: "2", source: .appBundle))
+        #expect(c.amberCount == 0)
+        #expect(await notifier.notices.isEmpty)
+    }
+    @Test(arguments: [2, 3]) func overlappingHydrationsShareABoundedScan(_ callers: Int) async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let reader = ControlledInstallation(f.reader())
+        let c = WatchController(transport: StubTransport([:]), installed: reader,
+            store: WatchStore(fileURL: f.root.appendingPathComponent("state/state.json")),
+            notifier: RecordingNotifier(), catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
+        let first = Task { await c.hydrateCatalog() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        let followers = (1..<callers).map { _ in Task { await c.hydrateCatalog() } }
+        try await Task.sleep(for: .milliseconds(50))
+        reader.release(); await first.value
+        for follower in followers { await follower.value }
+        #expect(reader.count <= 2)
+        #expect(c.others.map(\.listing.name.rawValue) == ["synthetic-formula"])
+    }
+    @Test func searchAndAddReadOnlyTheirResultNames() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        try f.install("prefix/Cellar/synthetic-unrelated/1", kind: .formula)
+        let reads = ReceiptReads()
+        let reader = InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [f.root.appendingPathComponent("prefix")]),
+            applicationDirectories: [], readData: { url in reads.record(url); return try Data(contentsOf: url) })
+        let name = PackageName("synthetic-formula")!
+        let c = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2"), watchResponse("2")]]),
+            installed: reader, store: WatchStore(fileURL: f.root.appendingPathComponent("state/state.json")), notifier: RecordingNotifier())
+        await c.search(name.rawValue)
+        #expect(reads.count == 1)
+        guard case .found(_, let local, _) = c.results.first else { Issue.record("Missing lookup result"); return }
+        #expect(local?.version == "1")
+        await c.add(name, kind: .formula)
+        #expect(reads.count == 2)
+        #expect(c.state.watched[0].installed?.version == "1")
+    }
     @Test func otherUpdatesAdmitsEachReceiptOnce() async throws {
         let f = try InstallationFixture()
         try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
@@ -69,8 +202,10 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
         try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
         let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
         let reader = ControlledInstallation(f.reader())
-        let c = WatchController(transport: StubTransport([:]), installed: reader,
-                                store: WatchStore(fileURL: f.root.appendingPathComponent("state/state.json")),
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: reader,
+                                store: store,
                                 notifier: RecordingNotifier(), catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
         let hydration = Task { await c.hydrateCatalog() }
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -158,7 +293,7 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
         let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
         let body = #"{"version":"2","auto_updates":true,"artifacts":[{"app":["Synthetic.app"]}]}"#
         let transport = StubTransport([watchURL(name, kind: .cask): [.success(HTTPResponse(status: 200, body: Data(body.utf8), etag: "synthetic-pending"))]])
-        let reader = ControlledInstallation(f.reader(), blockedScan: 2)
+        let reader = ControlledInstallation(f.reader(), blockedScan: checking ? 2 : -1, blockedLookup: checking ? nil : 1)
         let cache = ListingCache()
         let notifier = RecordingNotifier(store: store)
         let c = WatchController(transport: transport, installed: reader, store: store, notifier: notifier,
@@ -170,17 +305,23 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
             if checking { await c.checkNow() } else { await c.add(name, kind: .cask) }
         }
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while reader.count < 2 && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(reader.count == 2)
+        while (checking ? reader.count < 2 : reader.lookupCount < 1) && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(checking ? reader.count == 2 : reader.lookupCount == 1)
         let gate = CacheExecutorGate()
         let blocker = Task.detached { await cache.holdExecutor(gate) }
         while !gate.started && ContinuousClock.now < deadline { await Task.yield() }
         try #require(gate.started)
         reader.release()
-        // The changed formula makes acceptance of this capture observable.
-        // On the buggy implementation the following cache await remains held.
-        while !c.others.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
-        try #require(c.others.isEmpty)
+        if checking {
+            // Only a full check updates Other updates; adding reads one name.
+            while !c.others.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(c.others.isEmpty)
+        } else {
+            while c.state.watched.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+            try #require(!c.state.watched.isEmpty)
+            #expect(reader.count == 1)
+            #expect(c.others.map(\.listing.name.rawValue) == ["synthetic-formula"])
+        }
         await c.hydrateCatalog()
         gate.release(); await blocker.value; await operation.value
         let entry = try #require(store.load().state.watched.first { $0.name == name })

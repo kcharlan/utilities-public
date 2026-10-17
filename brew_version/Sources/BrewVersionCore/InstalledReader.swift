@@ -24,6 +24,7 @@ public struct InstalledSnapshot: Sendable {
 
 public protocol InstalledReading: Sendable {
     func snapshot(listings: [Listing]) -> InstalledSnapshot
+    func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion?
 }
 
 public struct InstalledReader: InstalledReading {

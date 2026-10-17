@@ -1,6 +1,7 @@
 import Foundation
 
 public struct Catalog: Sendable {
+    let identity = UUID()
     let listings: [Listing]
     private let byKind: [PackageKind: [PackageName: Listing]]
     init(listings: [Listing]) {
@@ -24,6 +25,7 @@ public struct Catalog: Sendable {
 public struct CatalogFetch: Sendable {
     public let catalog: Catalog
     public let revalidated: Bool
+    public let cacheWriteError: String?
 }
 
 protocol CatalogCacheInput: AnyObject, Sendable {
@@ -38,6 +40,7 @@ public actor CatalogClient {
     private let cacheDirectory: URL
     private var cacheFile: URL { cacheDirectory.appendingPathComponent("catalog.json") }
     private var previous: CatalogIndex?
+    private var cacheWriteError: String?
     private var didReadCache = false
     private let openCacheFile: @Sendable (URL) throws -> any CatalogCacheInput
 
@@ -65,16 +68,21 @@ public actor CatalogClient {
             let cask = try await fetchList(.cask, previous: previous?.cask)
             let index = CatalogIndex(schema: 1, formula: formula, cask: cask)
             // Publish the two validated lists together: no partial refresh can poison a good pair.
-            try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDirectory.path)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            try encoder.encode(CatalogCacheEnvelope(index: index)).write(to: cacheFile, options: .atomic)
             self.previous = index
-            return CatalogFetch(catalog: index.catalog, revalidated: true)
+            cacheWriteError = nil
+            do {
+                try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDirectory.path)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                try encoder.encode(CatalogCacheEnvelope(index: index)).write(to: cacheFile, options: .atomic)
+            } catch {
+                cacheWriteError = "Couldn't save catalog cache: \(error.localizedDescription)"
+            }
+            return CatalogFetch(catalog: index.catalog, revalidated: true, cacheWriteError: cacheWriteError)
         } catch {
-            if let previous { return CatalogFetch(catalog: previous.catalog, revalidated: false) }
+            if let previous { return CatalogFetch(catalog: previous.catalog, revalidated: false, cacheWriteError: cacheWriteError) }
             throw error
         }
     }
@@ -89,6 +97,9 @@ public actor CatalogClient {
         }
         guard response.status == 200 else { throw CatalogError.http(response.status) }
         let listings = try Listing.decodeList(response.body, kind: kind)
+        if let previous, listings.count < previous.listings.count - listings.count {
+            throw CatalogError.suspiciousCount
+        }
         return CatalogListIndex(listings: listings, etag: response.etag)
     }
     private func readCache() -> CatalogIndex? {
@@ -111,7 +122,7 @@ public actor CatalogClient {
     }
 }
 
-private enum CatalogError: Error { case http(Int) }
+private enum CatalogError: Error { case http(Int), suspiciousCount }
 private struct CatalogCacheEnvelope: Codable {
     // sortedKeys keeps this bounded admission marker first; the entire file remains valid JSON.
     static let prefix = Data(#"{"format":"brew-version-catalog-v2","index":"#.utf8)

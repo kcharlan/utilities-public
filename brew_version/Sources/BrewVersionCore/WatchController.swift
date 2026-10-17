@@ -28,6 +28,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public private(set) var catalog: Catalog?
     public private(set) var others: [OtherUpdate] = []
     public private(set) var isRefreshingCatalog = false
+    public private(set) var catalogWriteError: String?
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
     public var nextAutomaticCheck: AutomaticCheckSchedule {
         guard canSave else { return .blocked }
@@ -43,7 +44,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private let transport: any HTTPTransport
     private let installed: (any InstalledReading)?
     private var installedUpdates: [OtherUpdate] = []
-    private var installationGeneration = UUID()
+    private var installationCapture: InstallationCapture?
+    private var installedCallers = 0
+    private var targetedVersions: [PackageKind: [PackageName: TargetedInstallation]] = [:]
+    private var installationRevision = 0
     private let store: WatchStore
     private let notifier: any Notifier
     private let now: () -> Date
@@ -87,7 +91,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         cache = ListingCache(entries: load.state.listingCache)
         client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
-        installationGeneration = UUID()
+        installationCapture = nil
+        targetedVersions = [:]
         recomputeOthers()
         Task { await self.refreshInstalled() }
     }
@@ -121,19 +126,18 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         do {
             let listing = try await scheduler.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto, client: client)
             found = listing
-            installation = await refreshInstalled(extraListings: [listing])
+            installation = await lookupInstalled([listing])
         } catch {
             entry.lastError = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
         }
-        let requestedCache = cache
-        let snapshot = requestedCache.snapshot()
+        let snapshot = cache.snapshot()
         guard canSave, !state.watched.contains(where: { $0.name == name }) else { return }
         if let listing = found {
             entry = evaluate(entry, listing: listing, installed: installation.installed(name, kind: listing.kind)).0
         }
         var candidate = state
         candidate.watched.append(entry)
-        candidate.listingCache = requestedCache === cache ? snapshot : state.listingCache
+        candidate.listingCache = snapshot
         if commit(candidate) {
             generations[name] = UUID()
             await notifier.requestAuthorization()
@@ -218,24 +222,92 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         others = installedUpdates.filter { !watched.contains($0.listing.name) }
     }
 
+    /// A group of overlapping callers shares one capture, plus at most one
+    /// replacement for new listing metadata. Late metadata uses targeted reads.
     @discardableResult private func refreshInstalled(extraListings: [Listing] = []) async -> InstalledSnapshot {
-        while true {
-            let generation = UUID(); installationGeneration = generation
-            let catalog = self.catalog
-            let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
-            let installed = self.installed
-            let (snapshot, updates) = await Task.detached {
-                let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
-                let updates = catalog.map { otherUpdates(catalog: $0, snapshot: snapshot, watched: []) } ?? []
-                return (snapshot, updates)
-            }.value
-            // A superseded scan cannot feed watch evaluation either. Retry from
-            // current filesystem state with this caller's listing metadata.
-            guard installationGeneration == generation else { continue }
-            installedUpdates = updates
-            recomputeOthers()
-            return snapshot
+        installedCallers += 1
+        defer {
+            installedCallers -= 1
+            if installedCallers == 0 { installationCapture = nil; targetedVersions = [:] }
         }
+        let requestedCatalog = catalog
+        let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
+        let requested = InstallationMetadata(listings)
+        let needsCapture = installationCapture.map { !$0.replacement && !$0.metadata.covers(requested) } ?? true
+        if needsCapture {
+            let replacing = installationCapture != nil
+            let installed = self.installed; let catalog = self.catalog
+            let capture = InstallationCapture(metadata: requested, revision: installationRevision,
+                catalogIdentity: catalog?.identity, replacement: replacing, task: Task.detached {
+                    let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
+                    let updates = catalog.map { otherUpdates(catalog: $0, snapshot: snapshot, watched: []) } ?? []
+                    return (snapshot, updates)
+                })
+            installationCapture = capture
+        }
+        var capture = installationCapture!
+        var result = await capture.task.value
+        // Adopt newer work instead of restarting the scan that superseded us.
+        if let newer = installationCapture, newer.id != capture.id {
+            capture = newer
+            result = await newer.task.value
+        }
+        if installationCapture?.id == capture.id, installationCapture?.published == false,
+           catalog?.identity == capture.catalogIdentity {
+            installedUpdates = result.1
+            capture.published = true
+            installationCapture = capture
+            recomputeOthers()
+        }
+        var snapshot = result.0
+        for versions in targetedVersions.values {
+            for value in versions.values where value.revision > capture.revision && requested.contains(value.listing) {
+                snapshot.versions[value.listing.kind, default: [:]][value.listing.name] = value.version
+            }
+        }
+        // A third caller may need a different cask's app artifacts. Resolve
+        // just that metadata rather than beginning a third full receipt scan.
+        let missing = requested.listings.values.flatMap { $0.values }.filter { !capture.metadata.contains($0) }
+        if !missing.isEmpty {
+            let targeted = await lookupInstalled(missing)
+            for listing in missing {
+                snapshot.versions[listing.kind, default: [:]][listing.name] = targeted.installed(listing.name, kind: listing.kind)
+            }
+        }
+        if capture.catalogIdentity != requestedCatalog?.identity {
+            let adjusted = snapshot
+            let updates = await Task.detached {
+                requestedCatalog.map { otherUpdates(catalog: $0, snapshot: adjusted, watched: []) } ?? []
+            }.value
+            if installationCapture?.id == capture.id, catalog?.identity == requestedCatalog?.identity {
+                installedUpdates = updates
+                recomputeOthers()
+            }
+        }
+        return snapshot
+    }
+
+    private func lookupInstalled(_ listings: [Listing]) async -> InstalledSnapshot {
+        let installed = self.installed
+        // Order observations when they start, so an older blocked read cannot
+        // replace the newer value already observed by another caller.
+        installationRevision += 1
+        let revision = installationRevision
+        let snapshot = await Task.detached {
+            var snapshot = InstalledSnapshot()
+            for listing in listings {
+                snapshot.versions[listing.kind, default: [:]][listing.name] = installed?.installed(
+                    listing.name, kind: listing.kind, listing: listing)
+            }
+            return snapshot
+        }.value
+        if installedCallers > 0 {
+            for listing in listings where (targetedVersions[listing.kind]?[listing.name]?.revision ?? -1) < revision {
+                targetedVersions[listing.kind, default: [:]][listing.name] = TargetedInstallation(
+                    listing: listing, version: snapshot.installed(listing.name, kind: listing.kind), revision: revision)
+            }
+        }
+        return snapshot
     }
 
     public func hydrateCatalog() async {
@@ -258,6 +330,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         lastCatalogAttempt = now()
         do {
             let result = try await catalogClient.load()
+            catalogWriteError = result.cacheWriteError
             // Merge only after the final await, preserving watch/settings commits made in flight.
             if result.revalidated {
                 var candidate = state
@@ -329,7 +402,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         let listings = found.compactMap { result -> Listing? in
             if case .found(let listing, _, _) = result { return listing }; return nil
         }
-        let installation = await refreshInstalled(extraListings: listings)
+        let installation = await lookupInstalled(listings)
         guard !Task.isCancelled, searchGeneration == generation else { return }
         results = found.map { result in
             guard case .found(let listing, _, _) = result else { return result }
@@ -338,7 +411,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     }
 
     public func checkNow() async {
-        guard canSave, networkAvailable, !isChecking else { return }
+        guard canSave, !isChecking else { return }
         isChecking = true
         lastCheckAttempt = now()
         defer { isChecking = false }
@@ -366,8 +439,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
         let listings = results.compactMap { try? $0.result.get() }
         let installation = await refreshInstalled(extraListings: listings)
-        let requestedCache = cache
-        let snapshot = requestedCache.snapshot()
+        let snapshot = cache.snapshot()
         // No suspension from here through commit: merge into the latest committed state.
         var candidate = state
         var notices: [Notice] = []
@@ -383,12 +455,12 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             case .failure(let error): candidate.watched[index].lastError = error.rowMessage
             }
         }
-        retryWatchesOnReconnect = !results.isEmpty && results.allSatisfy {
+        retryWatchesOnReconnect = results.contains {
             if case .failure(.unreachable) = $0.result { return true }
             return false
         }
         if !retryWatchesOnReconnect { candidate.lastCheck = now() }
-        candidate.listingCache = requestedCache === cache ? snapshot : state.listingCache
+        candidate.listingCache = snapshot
         guard commit(candidate) else { return }
         for notice in notices { await notifier.post(notice) }
     }
@@ -398,4 +470,29 @@ private struct CheckResult: Sendable {
     let name: PackageName
     let generation: UUID?
     let result: Result<Listing, LookupError>
+}
+
+private struct InstallationMetadata: Sendable {
+    var listings: [PackageKind: [PackageName: Listing]] = [:]
+    init(_ values: [Listing]) {
+        for listing in values { listings[listing.kind, default: [:]][listing.name] = listing }
+    }
+    func contains(_ listing: Listing) -> Bool { listings[listing.kind]?[listing.name] == listing }
+    func covers(_ other: Self) -> Bool { other.listings.values.allSatisfy { $0.values.allSatisfy(contains) } }
+}
+
+private struct InstallationCapture {
+    let id = UUID()
+    let metadata: InstallationMetadata
+    let revision: Int
+    let catalogIdentity: UUID?
+    let replacement: Bool
+    let task: Task<(InstalledSnapshot, [OtherUpdate]), Never>
+    var published = false
+}
+
+private struct TargetedInstallation {
+    let listing: Listing
+    let version: InstalledVersion?
+    let revision: Int
 }

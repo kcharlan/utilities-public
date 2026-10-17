@@ -72,13 +72,13 @@ public enum VersionOrder {
         (.pre, "pre[0-9]*"), (.rc, "rc[0-9]*"), (.patch, "p[0-9]*"),
         (.post, ".post[0-9]+"), (.numeric, "[0-9]+"), (.string, "[a-z]+")
     ]
+    private static let scanner = try! NSRegularExpression(
+        pattern: patterns.map { "(\($0.1))" }.joined(separator: "|"), options: .caseInsensitive)
     private static func tokens(_ value: String) -> [Token] {
-        let scanner = try! NSRegularExpression(pattern: patterns.map { "(?:\($0.1))" }.joined(separator: "|"), options: .caseInsensitive)
         return scanner.matches(in: value, range: NSRange(value.startIndex..., in: value)).map { match in
             let raw = String(value[Range(match.range, in: value)!])
-            let kind = patterns.first { _, pattern in
-                raw.range(of: "\\A(?:\(pattern))\\z", options: [.regularExpression, .caseInsensitive]) != nil
-            }?.0 ?? .string
+            let kind = patterns.indices.first { match.range(at: $0 + 1).location != NSNotFound }
+                .map { patterns[$0].0 } ?? .string
             return Token(kind: kind, value: raw)
         }
     }

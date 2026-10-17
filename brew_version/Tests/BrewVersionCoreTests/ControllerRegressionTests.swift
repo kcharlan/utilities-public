@@ -7,6 +7,33 @@ import Testing
 }
 
 @MainActor struct ControllerRegressionTests {
+    @Test func manualCheckBypassesOfflinePathWhileAutomaticCheckWaits() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        let transport = StubTransport([watchURL(): [watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: f.store,
+                                notifier: RecordingNotifier(), networkAvailable: false)
+        await c.checkIfDue()
+        #expect(await transport.requests.isEmpty)
+        await c.checkNow()
+        #expect(await transport.requests.count == 1)
+        #expect(c.state.watched[0].lastListing?.version == "2")
+    }
+    @Test func partialUnreachableCheckRetriesOnReconnect() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let other = PackageName("synthetic-other")!
+        var state = AppState.initial; state.watched = [baseline(), WatchEntry(name: other, kind: .formula)]
+        try f.store.save(state)
+        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")],
+            watchURL(other): [.failure(URLError(.notConnectedToInternet)), watchResponse("3")]])
+        let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier())
+        await c.checkNow()
+        #expect(c.state.watched[0].lastListing?.version == "2")
+        #expect(c.state.watched[1].lastError != nil)
+        await c.setNetworkAvailable(false); await c.setNetworkAvailable(true)
+        #expect(c.state.watched[1].lastListing?.version == "3")
+        #expect(c.state.watched[1].lastError == nil)
+    }
     @Test func nextAutomaticCheckUsesUnreachableAttemptAndReconnectPolicy() async throws {
         let f = WatchFixture(); defer { f.clean() }
         let clock = RetryClock()
