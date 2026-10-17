@@ -15,7 +15,13 @@ private actor SearchTransport: HTTPTransport {
 private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
 
 @MainActor struct SearchInputTests {
-    @Test func inFlightLookupRetainsPreviousRows() async {
+    @Test func stalledSearchGatesTimeOut() async {
+        do { try await HeldSearchTransport().entered(timeout: .zero); Issue.record("Expected held-lookup deadline") }
+        catch { #expect(error is SearchGateTimeout) }
+        do { try await DebounceGate().entered(1, timeout: .zero); Issue.record("Expected debounce deadline") }
+        catch { #expect(error is SearchGateTimeout) }
+    }
+    @Test func inFlightLookupRetainsPreviousRows() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-retained-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = HeldSearchTransport()
@@ -23,7 +29,8 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
         await controller.search("synthetic-old")
         let previous = controller.results
         let search = Task { await controller.search("synthetic-held") }
-        await transport.entered()
+        defer { search.cancel(); Task { await transport.release() } }
+        try await transport.entered()
         #expect(controller.results == previous)
         await transport.release()
         await search.value
@@ -37,13 +44,14 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
         let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
         await controller.search("synthetic-old")
         let clock = DebounceGate()
+        defer { clock.release() }
         let input = SearchInput(waitForDebounce: { await clock.wait() })
         input.text = "synthetic-a"
         let first = Task { await input.lookup(controller: controller) }
-        await clock.entered(1)
+        try await clock.entered(1)
         input.text = "synthetic-current"
         let current = Task { await input.lookup(controller: controller) }
-        await clock.entered(2)
+        try await clock.entered(2)
         #expect(controller.results.first == .found(Listing(name: PackageName("synthetic-old")!, kind: .formula, version: "1-synthetic"), installed: nil, watched: false))
         let submitted = Task { await input.watchSelected(0, undo: WatchUndoAction(), controller: controller) }
         await Task.yield()
@@ -54,15 +62,16 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
         #expect(await transport.requests.map(\.lastPathComponent) == ["synthetic-old.json", "synthetic-current.json", "synthetic-current.json"])
     }
 
-    @Test func editingAfterReturnExcludesStaleSubmission() async {
+    @Test func editingAfterReturnExcludesStaleSubmission() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-return-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
         let clock = DebounceGate()
+        defer { clock.release() }
         let input = SearchInput(waitForDebounce: { await clock.wait() })
         input.text = "synthetic-old"
         let submitted = Task { await input.watchSelected(0, undo: WatchUndoAction(), controller: controller) }
-        await clock.entered(1)
+        try await clock.entered(1)
         input.text = "synthetic-new"
         clock.release()
         await submitted.value
@@ -117,9 +126,13 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
 
 private actor HeldSearchTransport: HTTPTransport {
     var held: CheckedContinuation<Void, Never>?
-    func entered() async { while held == nil { await Task.yield() } }
+    private var isWaiting: Bool { held != nil }
+    func entered(timeout: Duration = .seconds(3)) async throws {
+        try await awaitSearchCondition(timeout: timeout) { await self.isWaiting }
+    }
     func release() { held?.resume(); held = nil }
     func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        try Task.checkCancellation()
         if url.lastPathComponent == "synthetic-held.json" { await withCheckedContinuation { held = $0 } }
         return .init(status: 200, body: Data(#"{"versions":{"stable":"1-synthetic"}}"#.utf8))
     }
@@ -128,6 +141,19 @@ private actor HeldSearchTransport: HTTPTransport {
 @MainActor private final class DebounceGate {
     var waits: [CheckedContinuation<Void, Never>] = []
     func wait() async { await withCheckedContinuation { waits.append($0) } }
-    func entered(_ count: Int) async { while waits.count < count { await Task.yield() } }
+    private var pendingCount: Int { waits.count }
+    func entered(_ count: Int, timeout: Duration = .seconds(3)) async throws {
+        try await awaitSearchCondition(timeout: timeout) { await self.pendingCount >= count }
+    }
     func release() { let pending = waits; waits = []; for wait in pending { wait.resume() } }
+}
+
+private struct SearchGateTimeout: Error {}
+private func awaitSearchCondition(timeout: Duration, condition: @Sendable () async -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while !(await condition()) {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw SearchGateTimeout() }
+        await Task.yield()
+    }
 }

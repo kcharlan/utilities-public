@@ -1,5 +1,45 @@
 # Lessons learned
 
+## 2026-10-17: Give hosted watching scroll views a positive intrinsic viewport
+
+A ScrollView with only maxHeight can collapse to zero in an AppKit-hosted
+popover even while accessibility still lists its rows. Use an explicit bounded
+watching viewport, keeping the footer outside it. Regress the complete maintained
+popover with saved watches, Other updates off and a custom interval under fresh
+hosting/reopen, inspecting the actual native scroll frame rather than only rows.
+
+## 2026-10-17: Apply appearance at the popover presentation boundary
+
+Changing NSApplication.appearance does not necessarily update a popover that
+inherits the status button's appearance. Apply a requested appearance to the
+popover, its hosted content and current window, and retain it for Settings windows
+created later. Test effective native appearance, then verify the real harness
+buttons visibly change both palettes; a pressed button alone establishes no effect.
+
+## 2026-10-17: Native focus appearance does not prove Delete command routing
+
+A SwiftUI row can show an editing focus ring while its onKeyPress handler never
+receives Backspace or forward Delete in an AppKit-hosted popover. Give the clicked
+row an explicit native responder for both hardware keys and deleteBackward:/
+deleteForward:. Keep the handler row-local so a search text editor remains its
+own responder, and avoid replaying old row clicks after a view rebuild. Exercise
+native key events and responder switching against persisted removal/Undo, then
+repeat the actual click/key gesture; offscreen routing alone is insufficient.
+
+## 2026-10-17: Preserve Undo and Redo when replacing app command menus
+
+Owning an AppKit lifecycle also means preserving standard editing commands.
+Install responder-chain undo: and redo: with Command-Z and Shift-Command-Z,
+leaving their targets nil so the focused text editor supplies its undo manager.
+Regress selectors, modifier masks and responder routing, not just menu titles.
+
+## 2026-10-17: Bound synchronization waits in controlled concurrency tests
+
+A yield loop waiting for a test gate can hang the suite when the action under
+test never reaches it. Give the condition a monotonic deadline, propagate a
+timeout failure and release pending continuations on test exit. Test the
+missing-signal timeout path without dropping the original behavior assertions.
+
 ## 2026-10-17: Own a menu bar app's Settings window explicitly
 
 A SettingsLink inside an AppKit-hosted popover depends on SwiftUI scene context.
@@ -18,9 +58,11 @@ and child-sheet semantics; verify their real timing with native input.
 ## 2026-10-17: Give click-selected watch rows editing focus
 
 Default keyboard navigation does not guarantee focus for plain focusable rows.
-Use editing focus and route Delete from the focused watch row only; a search
-field's Delete must keep editing its text. Renew search focus on every popover
-open. Action tests cannot establish the system's native focus behavior.
+Editing focus is necessary but, as the later native-routing lesson above records,
+does not establish key delivery in an AppKit-hosted popover. Route Delete from
+the focused watch row only; a search field's Delete must keep editing its text.
+Renew search focus on every popover open. Action tests cannot establish the
+system's native focus behavior.
 
 ## 2026-10-17: Native menu checks need selection state
 

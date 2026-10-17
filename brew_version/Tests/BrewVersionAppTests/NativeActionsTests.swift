@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Observation
 import ServiceManagement
 import Testing
@@ -36,6 +37,72 @@ import UserNotifications
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func appearanceAppliesToPopoverAndActualHostedContent() {
+        let popover = NSPopover()
+        popover.contentViewController = NSHostingController(rootView: Text("Synthetic appearance"))
+        for name in [NSAppearance.Name.darkAqua, .aqua] {
+            PopoverAppearance.apply(NSAppearance(named: name), to: popover)
+            #expect(popover.appearance?.name == name)
+            #expect(popover.contentViewController?.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == name)
+        }
+    }
+    @Test func fullPopoverKeepsWatchingViewportAfterFreshHostingWithOtherHidden() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-popover-layout-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial
+        state.interval = CheckInterval(minutes: 47)!
+        state.showOtherUpdates = false
+        state.watched = ["synthetic-formula", "synthetic-cask"].map { WatchEntry(name: PackageName($0)!, kind: .formula) }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let notifier = UserNotifier(service: NotificationServiceStub())
+        for _ in 0..<2 {
+            let view = NSHostingView(rootView: PopoverView(controller: controller, notifier: notifier, openSettings: {}, focusGeneration: UUID()))
+            view.frame.size = view.fittingSize
+            view.layoutSubtreeIfNeeded()
+            let scrolls = nativeScrollViews(view)
+            #expect(scrolls.count == 1)
+            #expect(scrolls.first?.frame.height == 390)
+            #expect(view.fittingSize.height > 390)
+            #expect(view.fittingSize.height < 800)
+        }
+    }
+    @Test func watchRowNativeDeleteRoutesBothKeysAndPreservesSearchEditing() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-delete-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        let entry = WatchEntry(name: PackageName("synthetic-delete")!, kind: .formula)
+        var state = AppState.initial; state.watched = [entry]
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let undo = WatchUndoAction()
+        let row = WatchRowKeyboardView()
+        row.remove = { _ = undo.remove(entry.name, controller: controller) }
+        for code: UInt16 in [51, 117] {
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: code))
+            row.keyDown(with: event)
+            #expect(controller.state.watched.isEmpty && store.load().state.watched.isEmpty)
+            undo.restore(controller: controller)
+            #expect(store.load().state.watched == [entry])
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView?.addSubview(row)
+        let search = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        search.string = "synthetic"
+        window.contentView?.addSubview(search)
+        #expect(window.makeFirstResponder(row))
+        #expect(window.firstResponder?.tryToPerform(#selector(NSResponder.deleteBackward(_:)), with: nil) == true)
+        #expect(controller.state.watched.isEmpty)
+        undo.restore(controller: controller)
+        #expect(window.makeFirstResponder(search))
+        search.setSelectedRange(NSRange(location: 9, length: 0))
+        #expect(window.firstResponder?.tryToPerform(#selector(NSResponder.deleteBackward(_:)), with: nil) == true)
+        #expect(search.string == "syntheti")
+        #expect(store.load().state.watched == [entry])
+        window.makeFirstResponder(nil)
+    }
     @Test func normalAppReopenShowsPopoverWithOrWithoutSettingsVisible() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-reopen-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -54,6 +121,12 @@ import UserNotifications
         #expect(commands.first(where: { $0.keyEquivalent == "q" })?.action == #selector(NSApplication.terminate(_:)))
         #expect(commands.first(where: { $0.keyEquivalent == "v" })?.action == #selector(NSText.paste(_:)))
         #expect(commands.first(where: { $0.keyEquivalent == "a" })?.action == #selector(NSText.selectAll(_:)))
+        let undo = commands.first { $0.keyEquivalent == "z" && $0.keyEquivalentModifierMask == [.command] }
+        let redo = commands.first { $0.keyEquivalent == "z" && $0.keyEquivalentModifierMask == [.command, .shift] }
+        #expect(undo?.action == Selector(("undo:")))
+        #expect(redo?.action == Selector(("redo:")))
+        #expect(undo != nil && undo?.target == nil)
+        #expect(redo != nil && redo?.target == nil)
     }
     @Test func statusObservationPublishesAmberChanges() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-status-" + UUID().uuidString)
@@ -108,7 +181,11 @@ import UserNotifications
         var activations = 0
         let settings = SettingsWindowController(controller: controller, notifier: UserNotifier(service: NotificationServiceStub()), login: login,
             activate: { activations += 1 }, present: { windows.append($0) })
+        settings.setAppearance(NSAppearance(named: .darkAqua))
         settings.show(); settings.show()
+        #expect(windows[0].effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        settings.setAppearance(NSAppearance(named: .aqua))
+        #expect(windows[0].effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
         #expect(windows.count == 2)
         #expect(windows[0] === windows[1])
         #expect(!windows[0].isReleasedWhenClosed)
@@ -178,6 +255,9 @@ import UserNotifications
         custom.minutes = "47"
         #expect(custom.validInterval?.minutes == 47)
     }
+}
+@MainActor private func nativeScrollViews(_ view: NSView) -> [NSScrollView] {
+    (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)
 }
 @MainActor private final class ChangeFlag { var changed = false }
 private struct QuietNotifier: Notifier { func post(_ notice: Notice) async {} }

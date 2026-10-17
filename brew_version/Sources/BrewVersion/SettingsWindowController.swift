@@ -9,6 +9,7 @@ import BrewVersionCore
     private let activate: () -> Void
     private let present: (NSWindow) -> Void
     private var ownedWindow: NSWindow?
+    private var appearance: NSAppearance?
     init(controller: WatchController, notifier: UserNotifier, login: LoginItem = LoginItem(),
          activate: @escaping () -> Void = { NSApp.activate(ignoringOtherApps: true) },
          present: @escaping (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }) {
@@ -21,12 +22,17 @@ import BrewVersionCore
             window.title = "Brew Version Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
+            window.appearance = appearance
             window.delegate = self
             window.center()
             ownedWindow = window
         }
         activate()
         if let ownedWindow { present(ownedWindow) }
+    }
+    func setAppearance(_ appearance: NSAppearance?) {
+        self.appearance = appearance
+        ownedWindow?.appearance = appearance
     }
     func windowDidBecomeKey(_ notification: Notification) { login.refresh() }
 }

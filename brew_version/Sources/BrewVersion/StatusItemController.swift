@@ -51,6 +51,11 @@ private struct StatusContent: View {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }
+    func setAppearance(_ appearance: NSAppearance?) {
+        NSApp.appearance = appearance
+        PopoverAppearance.apply(appearance, to: popover)
+        settings.setAppearance(appearance)
+    }
     func popoverShouldClose(_ popover: NSPopover) -> Bool {
         // A transient popover can close on mouse-down before the status button's
         // mouse-up action. Let that action own toggling so it cannot reopen it.

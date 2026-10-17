@@ -43,6 +43,15 @@ enum PopoverActions {
         if isShown { close() } else { show() }
     }
 }
+@MainActor enum PopoverAppearance {
+    static func apply(_ appearance: NSAppearance?, to popover: NSPopover) {
+        // Popovers inherit the status button's appearance unless overridden;
+        // changing only NSApplication.appearance need not update that content.
+        popover.appearance = appearance
+        popover.contentViewController?.view.appearance = appearance
+        popover.contentViewController?.view.window?.appearance = appearance
+    }
+}
 struct PersistencePresentation {
     let issue: PersistenceIssue?
     var saveHint: String? { issue == .saveFailure ? "Retry the failed action to save it." : nil }

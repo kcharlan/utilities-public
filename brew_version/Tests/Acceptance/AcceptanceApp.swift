@@ -30,8 +30,8 @@ import UserNotifications
             Text("Synthetic acceptance only").font(.caption)
             HStack {
                 Button("Advance release and check") { Task { await self.service.advance(); await self.controller.checkNow() } }
-                Button("Light") { NSApp.appearance = NSAppearance(named: .aqua) }
-                Button("Dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
+                Button("Light") { self.status?.setAppearance(NSAppearance(named: .aqua)) }
+                Button("Dark") { self.status?.setAppearance(NSAppearance(named: .darkAqua)) }
             }
             HStack {
                 Button("Delay next lookup") { Task { await self.service.delayNextLookup() } }

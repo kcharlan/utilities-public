@@ -284,3 +284,40 @@ pending for controller-owned CUA acceptance after scoped review. No GUI was
 launched for this source task, and no earlier diagnostic footprint is presented
 as final acceptance. The README lists every required native observation; the
 minimum supported runtime remains unavailable.
+
+## Native routing review follow-up
+
+Scoped review found that the replacement AppKit Edit menu omitted standard text
+Undo/Redo. Both now use nil-target responder-chain commands with Command-Z and
+Shift-Command-Z; regression coverage checks selectors, modifiers and routing.
+Controlled search-test gates now have cancellation-aware monotonic deadlines and
+release pending continuations on early exit; their no-signal timeout branches
+are tested without dropping the original search behavior assertions.
+
+Controller-owned native input on the preceding candidate showed a selected watch
+row's editing focus ring but no removal after either delete key. This supersedes
+the assumption that SwiftUI editing focus plus onKeyPress established Delete
+routing. A row-owned native view now takes first-responder ownership on that
+row's click, handles Backspace/forward Delete and standard delete commands,
+and routes removal through the existing saved-state Undo action. It never
+intercepts mouse hits or installs an app-wide key monitor; rebuilt rows do not
+replay old focus requests. Offscreen native-event/responder-switching tests
+verify persisted removal, Undo and search-text Delete safety. The live click/key
+gesture still requires a repeat against the corrected candidate.
+
+The same native run confirmed a collapsed Watching viewport with Other updates
+off, and ineffective harness Light controls. A full maintained-popover regression
+reproduced the zero-height scroll under fresh hosting; the Watching viewport now
+has an explicit 390-point height with its footer outside. Short lists retain
+blank viewport space. Harness appearance actions now set the actual popover,
+hosted content/current window and current/future Settings appearance; native
+effective-appearance tests cover both palettes. Live visibility and appearance
+checks must also be repeated against this corrected candidate.
+
+Fresh complete validation of all five corrections passes 164 Swift tests
+(131 core, 11 CLI, 22 app), all three isolated release/build cases, release and
+strict signatures, golden CLI help/version with empty stderr, the one-test
+synthetic acceptance service and signed harness, and the signed Settings
+prototype. Source, release plist and CLI remain 1.0.0. No automated category
+has a remaining failure or skip. No GUI was launched for this source round;
+actual native results and final release footprints remain controller-owned.

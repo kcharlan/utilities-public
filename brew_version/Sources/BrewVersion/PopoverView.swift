@@ -9,7 +9,7 @@ struct PopoverView: View {
     @State private var search = SearchInput()
     private var query: String { search.text }
     @State private var selected: PackageName?
-    @FocusState private var focusedWatch: PackageName?
+    @State private var watchFocusRequest = UUID()
     @State private var undo = WatchUndoAction()
     private var watches: [WatchEntry] {
         controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
@@ -58,13 +58,13 @@ struct PopoverView: View {
                         ForEach(watches, id: \.name) { entry in
                             WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove) { remove(entry.name) }
                                 .background(selected == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                                .contentShape(Rectangle()).focusable(interactions: .edit).focused($focusedWatch, equals: entry.name)
-                                .onTapGesture { selected = entry.name; focusedWatch = entry.name }
-                                .onKeyPress(.delete) { remove(entry.name); return .handled }
+                                .background(WatchRowKeyboard(focusRequest: selected == entry.name ? watchFocusRequest : nil) { remove(entry.name) })
+                                .contentShape(Rectangle())
+                                .onTapGesture { selected = entry.name; watchFocusRequest = UUID() }
                         }
                         OtherUpdatesSection(controller: controller, undo: undo)
                     }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 390)
+                }.frame(height: 390)
             }
             Divider()
             HStack {
