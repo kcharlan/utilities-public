@@ -11,6 +11,6 @@ struct ReleaseTests {
         #expect(plist["CFBundleIdentifier"] as? String == "local.utilities.brew-version")
         #expect(plist["CFBundleExecutable"] as? String == "BrewVersion")
         #expect(plist["LSUIElement"] as? Bool == true)
-        #expect(plist["LSMinimumSystemVersion"] as? String == "14.0")
+        #expect(plist["LSMinimumSystemVersion"] as? String == "27.0")
     }
 }

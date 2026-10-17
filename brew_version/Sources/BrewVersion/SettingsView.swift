@@ -40,6 +40,9 @@ struct SettingsView: View {
                     Text(login.description).font(.caption).foregroundStyle(.secondary)
                     if login.requiresApproval { Button("Open Login Items Settings") { login.openSettings() } }
                     if let error = login.error { InlineWarning(message: error) }
+                    Button("Send test notification") { Task { await notifier.sendTestNotification() } }
+                        .disabled(notifier.isSendingTestNotification)
+                        .help("Send a Brew Version test notification. Click it to open the popover.")
                     NotificationIssueView(notifier: notifier)
                     if let error = controller.persistenceError { InlineWarning(message: error) }
                     if let error = controller.catalogWriteError { InlineWarning(message: error) }

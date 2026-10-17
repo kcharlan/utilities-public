@@ -9,6 +9,10 @@ import {fileURLToPath} from 'node:url';
 const project=fileURLToPath(new URL('../..',import.meta.url));
 let scratch,app,command,held=[],harnessHomes=[];
 const run=(name,args)=>execFileSync(name,args,{stdio:'pipe',timeout:900000});
+function assertMinimumRuntime(executable) {
+  const metadata=run('vtool',['-show-build',executable]).toString();
+  assert.match(metadata,/\bminos 27\.0\b/,executable+'\n'+metadata);
+}
 before(()=>{
   scratch=fs.mkdtempSync(path.join(os.tmpdir(),'synthetic-brew-build-'));fs.chmodSync(scratch,0o700);
   for(const name of ['Package.swift','Makefile','Sources','Resources','Tests']) fs.cpSync(path.join(project,name),path.join(scratch,name),{recursive:true});
@@ -44,6 +48,11 @@ test('release preserves previous executable inodes and bytes for existing reader
     assert.deepEqual(bytes,old.bytes);assert.notDeepEqual(fs.readFileSync(old.executable),old.bytes);
   }
 });
+test('release plist and both Mach-O products require the supported runtime',()=>{
+  const info=JSON.parse(run('plutil',['-convert','json','-o','-',path.join(app,'Contents/Info.plist')]));
+  assert.equal(info.LSMinimumSystemVersion,'27.0');
+  for(const executable of [command,path.join(app,'Contents/MacOS/BrewVersion')]) assertMinimumRuntime(executable);
+});
 test('acceptance and prototype builders keep synthetic homes in OS temporary space',()=>{
   const temporary=fs.realpathSync(os.tmpdir()),home=path.join(scratch,'synthetic-home');
   fs.mkdirSync(home,{mode:0o700});
@@ -56,5 +65,14 @@ test('acceptance and prototype builders keep synthetic homes in OS temporary spa
     assert.equal(path.dirname(fs.realpathSync(directory)),temporary);
     harnessHomes.push(directory);
     assert.equal(fs.statSync(directory).mode & 0o7777,0o700);
+    const bundle=builder==='build.sh'?path.join(directory,'Brew Version Synthetic Acceptance.app'):value;
+    assertMinimumRuntime(path.join(bundle,'Contents/MacOS/Acceptance'));
   }
+});
+test('maintained snapshot builder uses the same supported runtime',()=>{
+  const output=run('zsh',[path.join(scratch,'Tests/Snapshots/build.sh')]).toString();
+  const directory=output.split('\n').find(line=>line.startsWith('Private snapshots: '))?.slice('Private snapshots: '.length);
+  assert.ok(directory,output);harnessHomes.push(directory);
+  const binaries=run('swift',['build','--package-path',path.join(directory,'package'),'-c','release','--show-bin-path']).toString().trim();
+  assertMinimumRuntime(path.join(binaries,'Snapshots'));
 });

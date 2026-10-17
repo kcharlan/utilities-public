@@ -21,7 +21,7 @@ cp "$project_dir/Tests/Acceptance/AcceptanceServiceTests.swift" "$package_dir/Te
 cat > "$package_dir/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "Acceptance", platforms: [.macOS(.v14)], products: [.executable(name: "Acceptance", targets: ["Acceptance"])], targets: [.target(name: "BrewVersionCore"), .executableTarget(name: "Acceptance", dependencies: ["BrewVersionCore"]), .testTarget(name: "AcceptanceServiceTests", dependencies: ["Acceptance", "BrewVersionCore"])], swiftLanguageModes: [.v6])
+let package = Package(name: "Acceptance", platforms: [.macOS("27.0")], products: [.executable(name: "Acceptance", targets: ["Acceptance"])], targets: [.target(name: "BrewVersionCore"), .executableTarget(name: "Acceptance", dependencies: ["BrewVersionCore"]), .testTarget(name: "AcceptanceServiceTests", dependencies: ["Acceptance", "BrewVersionCore"])], swiftLanguageModes: [.v6])
 SWIFT
 if ! $prototype; then swift test --package-path "$package_dir"; fi
 swift build --package-path "$package_dir" -c release --product Acceptance

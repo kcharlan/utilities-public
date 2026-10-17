@@ -80,6 +80,16 @@ test('buildInputs',()=>{
   for(const n of ['README.md','build/release/a','.build/a']) assert.equal(buildInput('brew_version/'+n),false,n);
   assert.equal(buildInput('other/Makefile'),false);
 });
+test('rejects the retired runtime contract before activation',t=>{
+  const f=fixture(t);
+  f.write('Resources/Info.plist',plist.toString().replace(/(<key>LSMinimumSystemVersion<\/key>\s*<string>)[^<]+/, (_match,prefix)=>prefix+'14.0'));
+  f.git('add','.');f.git('commit','--allow-empty','-qm','Use synthetic retired runtime contract');
+  const result=f.run();
+  assert.equal(result.status,1,result.stdout+result.stderr);
+  assert.match(result.stderr,/LSMinimumSystemVersion/);
+  assert.equal(fs.existsSync(f.target),false);
+  assert.equal(fs.existsSync(f.app),false);
+});
 test('firstDeployReplacesExistingScript',t=>{
   const f=fixture(t);fs.writeFileSync(f.target,'#!/bin/bash\necho synthetic previous\n',{mode:0o751});const old=snapshot(f.target);
   const saved=backupPath(succeeds(f.run()));assert.equal(snapshot(path.join(saved,'brew-version')).bytes,old.bytes);

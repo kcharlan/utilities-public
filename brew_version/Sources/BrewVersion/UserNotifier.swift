@@ -16,6 +16,14 @@ import BrewVersionCore
 }
 @MainActor @Observable final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate {
     var showPopover: (() -> Void)?
+    private(set) var isSendingTestNotification = false
+    func sendTestNotification() async {
+        guard !isSendingTestNotification else { return }
+        isSendingTestNotification = true
+        defer { isSendingTestNotification = false }
+        await post(Notice(name: PackageName("brew-version")!, title: "Brew Version test notification",
+                          body: "This is a test notification from Brew Version. Click to open the popover."))
+    }
     private let service: any NotificationService
     private var authorizationError: String?
     private var postingError: String?

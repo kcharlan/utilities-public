@@ -14,14 +14,20 @@ import UserNotifications
     var authorizationFailure: String?
     var postingFailure: String?
     var delivered: [String] = []
+    var requests: [UNNotificationRequest] = []
+    var authorizationRequests = 0
+    var postingGate: (@MainActor () async -> Void)?
     func authorizationStatus() async -> UNAuthorizationStatus { status }
     func requestAuthorization() async throws -> Bool {
+        authorizationRequests += 1
         if let authorizationFailure { throw SyntheticAuthorizationFailure(message: authorizationFailure) }
         if fail { throw CocoaError(.fileReadUnknown) }
         status = allowed ? .authorized : .denied
         return allowed
     }
     func post(_ request: UNNotificationRequest) async throws {
+        requests.append(request)
+        await postingGate?()
         if let postingFailure { throw SyntheticAuthorizationFailure(message: postingFailure) }
         if fail { throw CocoaError(.fileWriteUnknown) }
         delivered.append(request.content.title)
@@ -43,8 +49,94 @@ private struct SyntheticAuthorizationFailure: LocalizedError {
     var opens = 0
     func showPopover() { opens += 1 }
 }
+private struct ReopenCatalogTransport: HTTPTransport {
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        let json = url.path.contains("/cask")
+            ? #"[{"token":"synthetic-fallback","version":"2-synthetic","auto_updates":true,"artifacts":[{"app":["Synthetic Missing.app"]}]}]"#
+            : #"[{"name":"synthetic-catalog","versions":{"stable":"2-synthetic"}}]"#
+        return HTTPResponse(status: 200, body: Data(json.utf8))
+    }
+}
 
 @MainActor struct NativeActionsTests {
+    @Test func testNotificationUsesAuthorizationAndKeepsFailedRequestRetryable() async throws {
+        let service = NotificationServiceStub()
+        let notifier = UserNotifier(service: service)
+        await notifier.sendTestNotification()
+        #expect(service.authorizationRequests == 1)
+        #expect(service.requests.isEmpty)
+        #expect(notifier.lastError?.contains("Notifications are off") == true)
+        service.status = .authorized
+        service.postingFailure = "Synthetic test posting failed"
+        await notifier.retry()
+        let failed = try #require(service.requests.first)
+        #expect(failed.content.title == "Brew Version test notification")
+        #expect(failed.content.body == "This is a test notification from Brew Version. Click to open the popover.")
+        #expect(failed.trigger == nil)
+        #expect(notifier.lastError?.contains("Synthetic test posting failed") == true)
+        service.postingFailure = nil
+        await notifier.retry()
+        #expect(service.requests.count == 2)
+        #expect(service.requests.last?.content.title == failed.content.title)
+        #expect(service.requests.last?.content.body == failed.content.body)
+        #expect(notifier.lastError == nil)
+        #expect(!notifier.isSendingTestNotification)
+    }
+    @Test func testNotificationIgnoresDuplicateSendWhilePosting() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        service.postingGate = { await notifier.sendTestNotification() }
+        await notifier.sendTestNotification()
+        #expect(service.requests.count == 1)
+        #expect(!notifier.isSendingTestNotification)
+    }
+    @Test func retainedStatusContentKeepsBoundedPreferredSizeAcrossAttachment() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-retained-host-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        for count in [0, 3, 12] {
+            let fixture = home.appendingPathComponent("case-\(count)")
+            let store = WatchStore(fileURL: fixture.appendingPathComponent("state.json"))
+            var state = AppState.initial; state.showOtherUpdates = count == 3; state.otherUpdatesCollapsed = false
+            state.watched = (0..<count).map {
+                let listing = Listing(name: PackageName("synthetic-reopen-\($0)")!, kind: .formula, version: "2-synthetic")
+                return WatchEntry(name: listing.name, kind: .formula, lastListing: listing)
+            }
+            try store.save(state)
+            let prefix = fixture.appendingPathComponent("synthetic-prefix")
+            try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Cellar"), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Caskroom/synthetic-fallback/1-synthetic"), withIntermediateDirectories: true)
+            let controller = WatchController(transport: ReopenCatalogTransport(), installed: InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]), applicationDirectories: []), store: store, notifier: QuietNotifier(), catalogClient: CatalogClient(transport: ReopenCatalogTransport(), cacheDirectory: fixture.appendingPathComponent("catalog")))
+            if count == 3 { await controller.refreshCatalogIfDue(); #expect(controller.others.count == 1) }
+            let notifier = UserNotifier(service: NotificationServiceStub())
+            let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
+            let focus = PopoverFocus()
+            let host = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: focus, accessory: nil).makeHostingController()
+            let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 560), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.contentViewController = nil }
+            for cycle in 0..<4 {
+                focus.generation = UUID()
+                window.appearance = NSAppearance(named: cycle.isMultiple(of: 2) ? .aqua : .darkAqua)
+                host.viewWillAppear()
+                window.contentViewController = host
+                for _ in 0..<8 {
+                    host.view.layoutSubtreeIfNeeded()
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                #expect(host.preferredContentSize.width == 340)
+                #expect(host.preferredContentSize.height > 100 && host.preferredContentSize.height <= 560)
+                if count == 0 { #expect(host.preferredContentSize.height < 300) }
+                if count == 3 { #expect(host.preferredContentSize.height < 500) }
+                #expect((nativeScrollViews(host.view).first?.frame.height ?? 0) > 60)
+                host.viewDidAppear()
+                host.viewWillDisappear()
+                window.contentViewController = nil
+                host.viewDidDisappear()
+                controller.popoverClosed()
+                for _ in 0..<8 { try await Task.sleep(for: .milliseconds(25)) }
+            }
+        }
+    }
     @Test func notificationFailuresKeepOneSentenceBoundary() async {
         for (description, sentence) in [("Synthetic failure", "Synthetic failure."), ("Synthetic failure.", "Synthetic failure."), ("Synthetic failure!", "Synthetic failure!"), ("Synthetic failure?", "Synthetic failure?"), ("Synthetic failure.\n", "Synthetic failure.")] {
             let service = NotificationServiceStub()

@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "BrewVersion",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("27.0")],
     products: [
         .library(name: "BrewVersionCore", targets: ["BrewVersionCore"]),
         .library(name: "BrewVersionCLI", targets: ["BrewVersionCLI"]),

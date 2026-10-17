@@ -66,7 +66,7 @@ function diagnostic(command,expected) {
 function appDiagnostic(app,expected) {
   appTreeHash(app);
   const info=plist(fs.readFileSync(path.join(app,'Contents/Info.plist')));
-  for(const [key,value] of Object.entries({CFBundleShortVersionString:expected.version,CFBundleIdentifier:'local.utilities.brew-version',CFBundleExecutable:'BrewVersion',LSUIElement:true,LSMinimumSystemVersion:'14.0'})) {
+  for(const [key,value] of Object.entries({CFBundleShortVersionString:expected.version,CFBundleIdentifier:'local.utilities.brew-version',CFBundleExecutable:'BrewVersion',LSUIElement:true,LSMinimumSystemVersion:'27.0'})) {
     if(info[key]!==value) throw new Error('App Info.plist release contract mismatch: '+key);
   }
   execFileSync('codesign',['--verify','--strict',app],{stdio:'pipe',timeout:10000});
