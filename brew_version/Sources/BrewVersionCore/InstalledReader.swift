@@ -65,7 +65,8 @@ public struct InstalledReader: Sendable {
     // Receipt layout follows Homebrew at 19fe946b9a257cb41ebb5cef5c592ba7923d1f3b:
     // Tab.for_keg (tab/tab.rb), Cask::Tab.for_cask (cask/tab.rb),
     // Cask::Metadata#metadata_main_container_path and AbstractTab.create (tab.rb).
-    // Unlike Homebrew's empty-tab fallback, unknown provenance is never admitted.
+    // Legacy casks may lack a receipt; explicit invalid provenance is still rejected.
+    // Formulas always require an official receipt.
     private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix) -> String? {
         let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(name.rawValue)
         guard isDirectory(rack) else { return nil }
@@ -77,23 +78,32 @@ public struct InstalledReader: Sendable {
             if isSymbolicLink(opt), isDirectory(resolved),
                resolved.deletingLastPathComponent() == rack.resolvingSymlinksInPath().standardizedFileURL {
                 selected = resolved
-            } else { selected = highest(versions) }
-        } else { selected = highest(versions) }
+            } else { selected = highest(versions, kind: kind) }
+        } else { selected = highest(versions, kind: kind) }
         guard let selected else { return nil }
         let receiptDirectory = kind == .formula ? selected : rack.appendingPathComponent(".metadata")
         let receipt = receiptDirectory.appendingPathComponent("INSTALL_RECEIPT.json")
-        guard let data = try? Data(contentsOf: receipt),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let data: Data
+        do { data = try Data(contentsOf: receipt) }
+        catch {
+            if kind == .cask, (error as? CocoaError)?.code == .fileReadNoSuchFile,
+               !isSymbolicLink(receipt) { return selected.lastPathComponent }
+            return nil
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let source = object["source"] as? [String: Any],
               let tap = source["tap"] as? String,
               tap == (kind == .formula ? "homebrew/core" : "homebrew/cask") else { return nil }
         return selected.lastPathComponent
     }
-    private func highest(_ versions: [URL]) -> URL? {
+    private func highest(_ versions: [URL], kind: PackageKind) -> URL? {
         // Stable filename order makes equal or asymmetric upstream comparisons deterministic.
         versions.reduce(nil) { best, candidate in
             guard let best else { return candidate }
-            return VersionOrder.compare(candidate.lastPathComponent, best.lastPathComponent) == .orderedDescending ? candidate : best
+            let comparison = kind == .formula
+                ? FormulaVersion(keg: candidate.lastPathComponent).compare(FormulaVersion(keg: best.lastPathComponent))
+                : VersionOrder.compare(candidate.lastPathComponent, best.lastPathComponent)
+            return comparison == .orderedDescending ? candidate : best
         }
     }
 }

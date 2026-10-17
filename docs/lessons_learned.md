@@ -1,5 +1,91 @@
 # Lessons learned
 
+## 2026-10-17: Admit legacy casks only for absent receipts
+
+Caskroom version directories can predate install receipts. Admit those legacy
+casks in both lookup and inventory, preserving app-bundle lookup and the
+Caskroom fallback for self-updating packages. Absence is an explicit exception:
+existing malformed, unreadable, unknown or nonofficial receipts still exclude
+the installation, as do version-directory symlinks. Keep formula receipts
+mandatory and regress both admission paths with synthetic filesystem fixtures.
+
+## 2026-10-17: Never assume Unicode scanner and classifier agree
+
+Foundation's case-insensitive scanner can match Kelvin sign and long s through
+ASCII letter patterns while its anchored classifier finds no match. External
+folder and bundle versions must not trap on that disagreement. Fall back to a
+string token instead of force-unwrapping the classifier, and retain actual
+Unicode regressions beside the pinned upstream ASCII comparison matrix.
+
+## 2026-10-17: Compare formula revisions after upstream versions
+
+A formula keg suffix is a package revision, not another upstream version token.
+Comparing `1.0_2` directly with `1.0.1` misses the newer upstream release.
+Split only the last underscore followed entirely by ASCII digits, default to
+revision zero, compare upstream versions first and numeric revisions on a tie.
+Reuse this rule for status and highest-keg selection; preserve valid opt links,
+cask ordering, deterministic ties and arbitrary-precision revision comparison.
+
+## 2026-10-16: Merge awaited watch results into committed state
+
+A check must apply results to the current committed watch state after its final
+await. Capture each watch's generation when starting work and reject results
+for removed or restored generations, even when the package name matches again.
+Otherwise a late response can change an undone removal or overwrite a newer
+skip or interval. A controlled transport regression should hold requests while
+mutating all those fields, then inspect both persisted state and notifications.
+Persist candidates before publishing state or posting notices; retain the
+previous bytes and visible values on failed writes.
+
+## 2026-10-16: Bound and identify asynchronous menu bar searches
+
+Search, watched checks and additions need one shared lookup permit pool; separate
+per-operation limits exceed the intended request bound when UI actions overlap.
+Identify each query generation and publish only its current result. Derive the
+watched flag from committed state at publication and refresh it on successful
+watch mutations. Preserve a watched package's known kind during search instead
+of falling back to a formula-first lookup. Controlled transports can hold one
+query while a newer query or a watch mutation commits, without live inventory.
+
+An undo action must consume its saved entry only after the restore commits.
+Cancel its normal expiry after a failed restore so the user can retry; do not
+replace that pending recovery with another removal. Route a same-name Watch
+through restoration too, or a fresh add can strand the recovery as a duplicate
+and lose its saved acknowledgements. Test the actual app action against the
+real controller and failing atomic-replace seam, then retry successfully.
+
+## 2026-10-16: Retain validated recovery bytes until activation finishes
+
+A move-based native app activation can fail before the old bundle leaves its
+live path, including across filesystems. Do not delete a verified backup copy
+before that move succeeds: recovery then loses the app it needs to restore.
+Keep the validated copy through all command, app and receipt transitions, and
+inject failures both before moving the old app and after publishing each new
+artifact. Compare independent byte/type/full-mode snapshots after restoration;
+receipt hashes alone cannot prove that recovery preserved the original tree.
+
+## 2026-10-16: Preserve explicit search intent and bound native result content
+
+A catalog suggestion includes both name and kind. Preserve both in transient
+search intent, and include kind in the text task's identity: selecting a cask
+whose name already fills the field must requery even when the text is unchanged.
+Editing clears that explicit choice; existing name-only watches retain their
+known kind. Test the app's suggestion action through lookup and Watch against
+colliding synthetic formula/cask responses, plus cancellation and late results.
+
+Bound suggestions and multi-token results inside their own scroll viewport,
+with the input and footer outside it. Follow keyboard selection with scrollTo.
+For offscreen SwiftUI layout tests, separate presentation from its asynchronous
+query task: creating a host for the whole section can restart the task, clear
+results and accidentally measure empty content. Test the maintained presentation
+component with populated results and verify that removing the bound makes the
+test fail on real geometry. This does not establish native keyboard acceptance.
+
+Native executable diagnostics require successful exit, exact stdout and empty
+stderr. A signed executable can satisfy stdout while emitting an unexpected
+warning. Regress each flag at both build and installed activation boundaries,
+and compare the prior artifacts and retained recovery snapshots after failure.
+
 ## 2026-10-16: Keep catalog validation and persisted freshness separate
 
 Bulk catalog lists form one usable snapshot. Validate both before replacing
@@ -318,63 +404,3 @@ A declaration timestamp is not a scan timestamp. An inventory-only scan can have
 no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
-
-## 2026-10-16: Merge awaited watch results into committed state
-
-A check must apply results to the current committed watch state after its final
-await. Capture each watch's generation when starting work and reject results
-for removed or restored generations, even when the package name matches again.
-Otherwise a late response can change an undone removal or overwrite a newer
-skip or interval. A controlled transport regression should hold requests while
-mutating all those fields, then inspect both persisted state and notifications.
-Persist candidates before publishing state or posting notices; retain the
-previous bytes and visible values on failed writes.
-
-## 2026-10-16: Bound and identify asynchronous menu bar searches
-
-Search, watched checks and additions need one shared lookup permit pool; separate
-per-operation limits exceed the intended request bound when UI actions overlap.
-Identify each query generation and publish only its current result. Derive the
-watched flag from committed state at publication and refresh it on successful
-watch mutations. Preserve a watched package's known kind during search instead
-of falling back to a formula-first lookup. Controlled transports can hold one
-query while a newer query or a watch mutation commits, without live inventory.
-
-An undo action must consume its saved entry only after the restore commits.
-Cancel its normal expiry after a failed restore so the user can retry; do not
-replace that pending recovery with another removal. Route a same-name Watch
-through restoration too, or a fresh add can strand the recovery as a duplicate
-and lose its saved acknowledgements. Test the actual app action against the
-real controller and failing atomic-replace seam, then retry successfully.
-
-## 2026-10-16: Retain validated recovery bytes until activation finishes
-
-A move-based native app activation can fail before the old bundle leaves its
-live path, including across filesystems. Do not delete a verified backup copy
-before that move succeeds: recovery then loses the app it needs to restore.
-Keep the validated copy through all command, app and receipt transitions, and
-inject failures both before moving the old app and after publishing each new
-artifact. Compare independent byte/type/full-mode snapshots after restoration;
-receipt hashes alone cannot prove that recovery preserved the original tree.
-
-## 2026-10-16: Preserve explicit search intent and bound native result content
-
-A catalog suggestion includes both name and kind. Preserve both in transient
-search intent, and include kind in the text task's identity: selecting a cask
-whose name already fills the field must requery even when the text is unchanged.
-Editing clears that explicit choice; existing name-only watches retain their
-known kind. Test the app's suggestion action through lookup and Watch against
-colliding synthetic formula/cask responses, plus cancellation and late results.
-
-Bound suggestions and multi-token results inside their own scroll viewport,
-with the input and footer outside it. Follow keyboard selection with scrollTo.
-For offscreen SwiftUI layout tests, separate presentation from its asynchronous
-query task: creating a host for the whole section can restart the task, clear
-results and accidentally measure empty content. Test the maintained presentation
-component with populated results and verify that removing the bound makes the
-test fail on real geometry. This does not establish native keyboard acceptance.
-
-Native executable diagnostics require successful exit, exact stdout and empty
-stderr. A signed executable can satisfy stdout while emitting an unexpected
-warning. Regress each flag at both build and installed activation boundaries,
-and compare the prior artifacts and retained recovery snapshots after failure.

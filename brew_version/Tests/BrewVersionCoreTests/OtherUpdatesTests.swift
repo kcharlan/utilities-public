@@ -43,7 +43,14 @@ struct OtherUpdatesTests {
             default: break
             }
             let catalog = try await seedCatalog(f.root.appendingPathComponent("cache"))
-            #expect(otherUpdates(catalog: catalog, installed: f.reader(), watched: []).isEmpty, "\(kind) \(state)")
+            let updates = otherUpdates(catalog: catalog, installed: f.reader(), watched: [])
+            if kind == .cask && state == "missing" {
+                // The explicit legacy-cask absence exception still permits Other updates.
+                #expect(updates.map(\.listing.name.rawValue) == ["synthetic-cask"])
+                #expect(updates.first?.installed == .init(version: "1", source: .caskroomFallback))
+            } else {
+                #expect(updates.isEmpty, "\(kind) \(state)")
+            }
         }
     }
 }

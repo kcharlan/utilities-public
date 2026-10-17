@@ -37,7 +37,7 @@ struct InstalledReaderTests {
 
     @Test func provenance() throws {
         for kind in [PackageKind.formula, .cask] {
-            for state in ["admitted", "third-party", "missing", "unreadable", "malformed", "unknown", "wrong-kind"] {
+            for state in ["admitted", "third-party", "missing", "unreadable", "malformed", "unknown", "wrong-kind", "dangling-link"] {
                 let f = try InstallationFixture()
                 let name = kind == .formula ? formula : cask
                 let rack = kind == .formula ? "Cellar" : "Caskroom"
@@ -51,12 +51,16 @@ struct InstalledReaderTests {
                 case "unreadable": try f.fm.removeItem(at: receipt); try f.fm.createDirectory(at: receipt, withIntermediateDirectories: true)
                 case "malformed": try Data("synthetic malformed".utf8).write(to: receipt)
                 case "unknown": try Data("{\"source\":{}}".utf8).write(to: receipt)
+                case "dangling-link":
+                    try f.fm.removeItem(at: receipt)
+                    try f.fm.createSymbolicLink(atPath: receipt.path, withDestinationPath: "synthetic-absent-receipt")
                 default: break
                 }
                 try f.app("8.0.0")
                 let installed = f.reader().installed(name, kind: kind, listing: kind == .cask ? selfUpdating : nil)
-                #expect((installed != nil) == (state == "admitted"), "\(kind) \(state)")
-                #expect(f.reader().installedPackages().contains { $0.name == name && $0.kind == kind } == (state == "admitted"))
+                let admitted = state == "admitted" || (kind == .cask && state == "missing")
+                #expect((installed != nil) == admitted, "\(kind) \(state)")
+                #expect(f.reader().installedPackages().contains { $0.name == name && $0.kind == kind } == admitted)
             }
         }
     }
@@ -73,6 +77,50 @@ struct InstalledReaderTests {
         let f = try InstallationFixture()
         for version in ["1.9", "1.10", "0.9.0"] { try f.install("prefix/Cellar/synthetic-formula/\(version)", kind: .formula) }
         #expect(f.reader().installed(formula, kind: .formula, listing: nil)?.version == "1.10")
+    }
+    @Test func formulaKegRevisionOrdering() throws {
+        let cases: [([String], String, Int, UpdateStatus)] = [
+            (["1.0_1"], "1.0.1", 0, .updateAvailable(installed: "1.0_1")),
+            (["1.0_2"], "1.0.1", 0, .updateAvailable(installed: "1.0_2")),
+            (["1.0_1"], "1.0", 2, .updateAvailable(installed: "1.0_1")),
+            (["1.0_1"], "1.0", 1, .upToDate),
+            (["1.0_2", "1.0.1"], "1.0.1", 0, .upToDate),
+            (["1.0_2", "1.0_10"], "1.0", 10, .upToDate),
+            (["1.0.0_1", "1.0_01"], "1.0", 1, .upToDate)
+        ]
+        let expectedKegs = ["1.0_1", "1.0_2", "1.0_1", "1.0_1", "1.0.1", "1.0_10", "1.0.0_1"]
+        for (index, row) in cases.enumerated() {
+            let (versions, version, revision, status) = row
+            let f = try InstallationFixture()
+            for keg in versions { try f.install("prefix/Cellar/synthetic-formula/\(keg)", kind: .formula) }
+            let listing = Listing(name: formula, kind: .formula, version: version, revision: revision)
+            let installed = f.reader().installed(formula, kind: .formula, listing: listing)
+            #expect(installed?.version == expectedKegs[index])
+            #expect(updateStatus(listing: listing, installed: installed) == status)
+        }
+    }
+    @Test func legacyCaskWithoutReceipt() throws {
+        let f = try InstallationFixture()
+        try f.directory("prefix/Caskroom/synthetic-cask/1.0")
+        let reader = f.reader()
+        #expect(reader.installed(cask, kind: .cask, listing: nil) == .init(version: "1.0", source: .caskroom))
+        #expect(reader.installedPackages().contains { $0.name == cask && $0.kind == .cask })
+        #expect(reader.installed(cask, kind: .cask, listing: selfUpdating) == .init(version: "1.0", source: .caskroomFallback))
+        try f.app("2.3.0")
+        #expect(reader.installed(cask, kind: .cask, listing: selfUpdating) == .init(version: "2.3.0", source: .appBundle))
+    }
+    @Test func legacyCaskSymlinkIsNotInstalled() throws {
+        let f = try InstallationFixture()
+        try f.directory("synthetic-target")
+        let rack = try f.directory("prefix/Caskroom/synthetic-cask")
+        try f.fm.createSymbolicLink(at: rack.appendingPathComponent("1.0"), withDestinationURL: f.root.appendingPathComponent("synthetic-target"))
+        #expect(f.reader().installed(cask, kind: .cask, listing: selfUpdating) == nil)
+        #expect(f.reader().installedPackages().isEmpty)
+    }
+    @Test func caskHighestKeepsVersionTokenOrdering() throws {
+        let f = try InstallationFixture()
+        for version in ["1.0_2", "1.0.1"] { try f.install("prefix/Caskroom/synthetic-cask/\(version)", kind: .cask) }
+        #expect(f.reader().installed(cask, kind: .cask, listing: nil)?.version == "1.0_2")
     }
     @Test func aliasNameIsNotInstalled() throws {
         let f = try InstallationFixture()

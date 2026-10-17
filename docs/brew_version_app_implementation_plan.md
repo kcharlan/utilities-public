@@ -295,7 +295,7 @@ Subject `Add Swift brew-version command`. Follow Commit protocol.
 `VersionOrderTests.homebrewParity`: expand coverage across token classes and zero-token positions. Record an independently generated expected result for each ordered pair under test, using the pinned upstream commit below. Development may use `HOMEBREW_NO_AUTO_UPDATE=1 brew ruby` to generate/verify synthetic pair results; the shipped app and routine tests must not require brew.
 
 `InstalledReaderTests` build synthetic prefixes in a temporary directory:
-- `provenance`: formula receipts with `source.tap == "homebrew/core"` and cask receipts with `source.tap == "homebrew/cask"` are admitted. A receipt naming `synthetic-owner/synthetic-tap`, or a missing, unreadable, malformed or unknown-tap receipt, is excluded even when the short name matches a public listing. Assert nil from `installed` and absence from `installedPackages` for excluded installs; a matching app bundle must not bypass admission. Other reader fixtures create admitted receipts through the same fixture helper. This policy needs an explicit test because short-name catalog membership cannot establish provenance.
+- `provenance`: formula receipts with `source.tap == "homebrew/core"` and cask receipts with `source.tap == "homebrew/cask"` are admitted. Legacy casks without a receipt are explicitly admitted (the owner's correction overrides the previous unknown-provenance rule). Formula receipts remain required. An existing unreadable, malformed, unknown-tap, wrong-kind or third-party receipt excludes the installation even when its short name matches a public listing; dangling receipt symlinks are not the absence exception. Assert nil from `installed` and absence from `installedPackages` for excluded installs; a matching app bundle must not bypass admission. Reject version-folder symlinks. Other reader fixtures create admitted receipts through the same fixture helper.
 - `formulaFromOptLink`: `Cellar/synthetic-formula/` holds `1.0.0_1/` and `0.9.0/`, and `opt/synthetic-formula -> ../Cellar/synthetic-formula/1.0.0_1`. Result: `1.0.0_1`, source `.cellar`.
 - `formulaWithoutOptLinkUsesHighest`: with no `opt` link, the highest Cellar folder wins.
 - `aliasNameIsNotInstalled`: `opt/synthetic-alias -> ../Cellar/synthetic-formula/1.0.0` with no `Cellar/synthetic-alias`. `installed(synthetic-alias, .formula, …)` is `nil`, and `installedPackages()` leaves it out. An `opt` link only counts when it resolves inside `Cellar/NAME`.
@@ -322,8 +322,9 @@ Expected: the new types are missing.
 
 `VersionOrder.compare` must behave as `Version#<=>`, `Version#tokens`, `SCAN_PATTERN`, `Token.create`, the token subclass comparators and `Version#head?` do in [Homebrew version.rb at commit 19fe946b9a257cb41ebb5cef5c592ba7923d1f3b](https://github.com/Homebrew/brew/blob/19fe946b9a257cb41ebb5cef5c592ba7923d1f3b/Library/Homebrew/version.rb). Port those symbols as the semantic source; do not substitute a simplified token algorithm. Preserve arbitrary-precision numeric comparison without Swift integer overflow. `VersionOrderTests` owns the concrete parity examples.
 
-`installedForm`, used for comparison:
-- formula: `version`, plus `_REVISION` when `revision > 0`;
+`installedForm` renders formula release identity as `version`, plus `_REVISION`
+when `revision > 0`; it is display text, not a comparison operand. Comparison:
+- formula: split the installed keg at its last underscore only when the suffix is nonempty ASCII digits; otherwise use the whole version and revision zero. Compare the upstream versions with `VersionOrder`, then numeric revisions only on a version tie (Homebrew `PkgVersion` semantics). Reuse `FormulaVersion` for update status and highest-keg selection without a valid opt link. Keep numeric comparison arbitrary precision and deterministic filename order on ties;
 - cask whose installed source is `.appBundle`: `version` up to its first comma;
 - any other cask: `version`.
 

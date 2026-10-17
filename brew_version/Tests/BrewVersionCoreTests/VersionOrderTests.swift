@@ -3,6 +3,10 @@ import Testing
 @testable import BrewVersionCore
 
 struct VersionOrderTests {
+    @Test(arguments: ["1.0K", "1.0ſ"])
+    func externalUnicodeDoesNotTrap(_ version: String) {
+        #expect(VersionOrder.compare(version, "1.0") == .orderedDescending)
+    }
     @Test func cases() {
         let cases: [(String, String, ComparisonResult)] = [
             ("1.25.0_2", "1.25.0", .orderedDescending), ("23.1.3_1", "23.1.3_2", .orderedAscending),

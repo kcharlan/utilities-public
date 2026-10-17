@@ -115,6 +115,12 @@ Homebrew core/cask installations appear; these updates never notify or affect
 the watched update count. Self-updating casks retain their installed-version
 source, including the fallback to Homebrew's records.
 
+Formula versions compare the upstream version first and the numeric keg revision
+second, matching Homebrew's package version semantics. Legacy Caskroom version
+folders without an install receipt count as installed. An existing unreadable,
+malformed, unknown-tap or third-party receipt still excludes the cask, and version
+folder symlinks are excluded. Formula kegs always require an official core receipt.
+
 At startup, callers await `WatchController.hydrateCatalog()` to restore cached
 suggestions and Other updates even when a network refresh is not due. This API
 is async so reading and decoding bulk cache data runs away from the main actor.

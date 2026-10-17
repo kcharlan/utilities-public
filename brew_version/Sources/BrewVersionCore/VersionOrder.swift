@@ -78,7 +78,7 @@ public enum VersionOrder {
             let raw = String(value[Range(match.range, in: value)!])
             let kind = patterns.first { _, pattern in
                 raw.range(of: "\\A(?:\(pattern))\\z", options: [.regularExpression, .caseInsensitive]) != nil
-            }!.0
+            }?.0 ?? .string
             return Token(kind: kind, value: raw)
         }
     }

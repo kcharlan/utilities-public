@@ -3,6 +3,25 @@ import Testing
 
 struct UpdateStatusTests {
     let name = PackageName("synthetic-package")!
+    @Test func formulaRevisionFollowsUpstreamVersion() {
+        let cases: [(String, String, Int, UpdateStatus)] = [
+            ("1.0_1", "1.0.1", 0, .updateAvailable(installed: "1.0_1")),
+            ("1.0_2", "1.0.1", 0, .updateAvailable(installed: "1.0_2")),
+            ("1.0_1", "1.0", 2, .updateAvailable(installed: "1.0_1")),
+            ("1.0_1", "1.0", 1, .upToDate),
+            ("1.0.0_01", "1.0", 1, .upToDate),
+            ("1.0_10", "1.0", 2, .ahead),
+            ("1.0", "1.0", 0, .upToDate),
+            ("1_2_3", "1_2", 3, .upToDate),
+            ("1.0_2beta", "1.0_2beta", 0, .upToDate),
+            ("1.0_", "1.0_", 0, .upToDate),
+            ("1.0_99999999999999999999999999", "1.0", 2, .ahead)
+        ]
+        for (installed, version, revision, expected) in cases {
+            #expect(updateStatus(listing: .init(name: name, kind: .formula, version: version, revision: revision),
+                                 installed: .init(version: installed, source: .cellar)) == expected)
+        }
+    }
     @Test func versionsAndRevision() {
         let listing = Listing(name: name, kind: .formula, version: "1.0.0")
         #expect(updateStatus(listing: listing, installed: .init(version: "1.0.0", source: .cellar)) == .upToDate)
