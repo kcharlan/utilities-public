@@ -10,6 +10,7 @@ struct PopoverView: View {
     @State var search = SearchInput()
     @State var selection = WatchRowSelection()
     @State private var undo = WatchUndoAction()
+    @State private var warningHeight: CGFloat = 0
     private var watches: [WatchEntry] {
         controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
     }
@@ -32,15 +33,18 @@ struct PopoverView: View {
                     else { Image(systemName: "arrow.clockwise") }
                 }.buttonStyle(.borderless).help("Check now").accessibilityLabel("Check now").disabled(!controller.canSave || controller.isChecking)
             }
-            if let error = controller.persistenceError {
-                Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11)).foregroundStyle(.red).textSelection(.enabled)
-                if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
-                else if let hint = PersistencePresentation(issue: controller.persistenceIssue).saveHint { Text(hint).font(.system(size: 11)) }
+            if hasWarnings {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let error = controller.persistenceError {
+                        InlineWarning(message: error)
+                        if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
+                        else if let hint = PersistencePresentation(issue: controller.persistenceIssue).saveHint { Text(hint).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true) }
+                    }
+                    if let error = controller.catalogWriteError { InlineWarning(message: error) }
+                    NotificationIssueView(notifier: notifier)
+                }.background(GeometryReader { geometry in Color.clear.preference(key: WarningHeight.self, value: geometry.size.height) })
+                    .onPreferenceChange(WarningHeight.self) { warningHeight = $0 }
             }
-            if let error = controller.catalogWriteError {
-                Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11)).foregroundStyle(.red).textSelection(.enabled)
-            }
-            NotificationIssueView(notifier: notifier)
             SearchSection(controller: controller, undo: undo, input: search, focusGeneration: focusGeneration, maximumHeight: listMaximum)
             if let removed = undo.removed {
                 HStack {
@@ -84,9 +88,12 @@ struct PopoverView: View {
             }.buttonStyle(.borderless)
         }.font(.system(size: 13)).padding(12).frame(width: 340)
     }
+    private var hasWarnings: Bool { controller.persistenceError != nil || controller.catalogWriteError != nil || notifier.lastError != nil }
     private var listMaximum: CGFloat {
-        // Reserve room for warnings/recovery so only the package area scrolls.
-        max(100, 390 - (controller.persistenceError == nil ? 0 : 70) - (controller.catalogWriteError == nil ? 0 : 50) - (notifier.lastError == nil ? 0 : 60) - (undo.removed == nil ? 0 : 40))
+        // Measure wrapped warning copy rather than assuming a single-line label.
+        // Reserve a positive initial budget before the first geometry update.
+        let warnings = hasWarnings ? (warningHeight > 0 ? warningHeight : 120) + 10 : 0
+        return max(100, 390 - warnings - (undo.removed == nil ? 0 : 40))
     }
     private var nextCheckText: String {
         switch controller.nextAutomaticCheck {
@@ -100,4 +107,8 @@ struct PopoverView: View {
     private func remove(_ name: PackageName) {
         if undo.remove(name, controller: controller) { selection.clear() }
     }
+}
+private struct WarningHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

@@ -35,7 +35,7 @@ import BrewVersionCore
                 status = granted ? .authorized : .denied
             }
             authorizationError = status == .denied ? "Notifications are off. Allow Brew Version in System Settings, then retry notifications." : nil
-        } catch { authorizationError = "Notification authorization failed: \(error.localizedDescription). Retry notifications." }
+        } catch { authorizationError = failureMessage("Notification authorization failed", error: error) }
     }
     func post(_ notice: Notice) async {
         await requestAuthorization()
@@ -47,12 +47,17 @@ import BrewVersionCore
             postingError = nil; failedNotice = nil
         } catch {
             failedNotice = notice
-            postingError = "Couldn't post notification: \(error.localizedDescription). Retry notifications."
+            postingError = failureMessage("Couldn't post notification", error: error)
         }
     }
     func retry() async {
         await requestAuthorization()
         if authorizationError == nil, let notice = failedNotice { await post(notice) }
+    }
+    private func failureMessage(_ context: String, error: any Error) -> String {
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let separator = detail.last.map { ".!?…。！？".contains($0) } == true ? " " : ". "
+        return "\(context): \(detail)\(separator)Retry notifications."
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         await MainActor.run { self.showPopover?() }

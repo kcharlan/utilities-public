@@ -30,7 +30,7 @@ struct SettingsView: View {
                             Button("Apply", action: save).controlSize(.small).disabled(!controller.canSave)
                         }
                     }
-                    if input.invalid { Label(CheckInterval.validationMessage(), systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red) }
+                    if input.invalid { InlineWarning(message: CheckInterval.validationMessage()) }
                 }
                 Section("Other updates") {
                     Toggle("Show other updates on this Mac", isOn: Binding(get: { controller.state.showOtherUpdates }, set: { controller.setShowOtherUpdates($0) })).disabled(!controller.canSave)
@@ -39,10 +39,10 @@ struct SettingsView: View {
                     Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { login.setEnabled($0) }))
                     Text(login.description).font(.caption).foregroundStyle(.secondary)
                     if login.requiresApproval { Button("Open Login Items Settings") { login.openSettings() } }
-                    if let error = login.error { Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+                    if let error = login.error { InlineWarning(message: error) }
                     NotificationIssueView(notifier: notifier)
-                    if let error = controller.persistenceError { Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-                    if let error = controller.catalogWriteError { Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+                    if let error = controller.persistenceError { InlineWarning(message: error) }
+                    if let error = controller.catalogWriteError { InlineWarning(message: error) }
                 }
             }.formStyle(.grouped).toggleStyle(.switch)
             Text("Brew Version \(BrewVersionRelease.version)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.bottom, 14)
@@ -57,8 +57,22 @@ struct NotificationIssueView: View {
     let notifier: UserNotifier
     var body: some View {
         if let error = notifier.lastError {
-            Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+            InlineWarning(message: error)
             Button("Retry notifications") { Task { await notifier.retry() } }
         }
+    }
+}
+
+/// Warnings must keep their recovery instructions when a popover proposes a
+/// short height. Let their text grow vertically; the package list yields space.
+struct InlineWarning: View {
+    let message: String
+    var body: some View {
+        Label {
+            Text(message).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }.font(.system(size: 11)).foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).help(message)
     }
 }

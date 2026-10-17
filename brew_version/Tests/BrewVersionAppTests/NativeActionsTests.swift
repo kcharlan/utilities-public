@@ -11,17 +11,25 @@ import UserNotifications
     var status: UNAuthorizationStatus = .notDetermined
     var allowed = false
     var fail = false
+    var authorizationFailure: String?
+    var postingFailure: String?
     var delivered: [String] = []
     func authorizationStatus() async -> UNAuthorizationStatus { status }
     func requestAuthorization() async throws -> Bool {
+        if let authorizationFailure { throw SyntheticAuthorizationFailure(message: authorizationFailure) }
         if fail { throw CocoaError(.fileReadUnknown) }
         status = allowed ? .authorized : .denied
         return allowed
     }
     func post(_ request: UNNotificationRequest) async throws {
+        if let postingFailure { throw SyntheticAuthorizationFailure(message: postingFailure) }
         if fail { throw CocoaError(.fileWriteUnknown) }
         delivered.append(request.content.title)
     }
+}
+private struct SyntheticAuthorizationFailure: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 @MainActor private final class LoginServiceStub: LoginService {
     var status: SMAppService.Status = .notRegistered
@@ -37,6 +45,52 @@ import UserNotifications
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func notificationFailuresKeepOneSentenceBoundary() async {
+        for (description, sentence) in [("Synthetic failure", "Synthetic failure."), ("Synthetic failure.", "Synthetic failure."), ("Synthetic failure!", "Synthetic failure!"), ("Synthetic failure?", "Synthetic failure?"), ("Synthetic failure.\n", "Synthetic failure.")] {
+            let service = NotificationServiceStub()
+            service.authorizationFailure = description
+            let notifier = UserNotifier(service: service)
+            await notifier.requestAuthorization()
+            #expect(notifier.lastError == "Notification authorization failed: \(sentence) Retry notifications.")
+            service.authorizationFailure = nil; service.status = .authorized
+            service.postingFailure = description
+            await notifier.post(Notice(name: PackageName("synthetic-punctuation")!, title: "Synthetic notice", body: "Synthetic retry"))
+            #expect(notifier.lastError == "Couldn't post notification: \(sentence) Retry notifications.")
+        }
+    }
+    @Test func longNotificationWarningWrapsWithinMaintainedPopover() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-warning-layout-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let service = NotificationServiceStub()
+        service.authorizationFailure = "Synthetic authorization was refused. Open System Settings, choose Notifications, select Brew Version, enable notifications, then retry."
+        let notifier = UserNotifier(service: service)
+        await notifier.requestAuthorization()
+        let warning = try #require(notifier.lastError)
+        #expect(warning.contains("enable notifications"))
+        let notice = NSHostingView(rootView: VStack(alignment: .leading, spacing: 10) { NotificationIssueView(notifier: notifier) }.frame(width: 316))
+        notice.frame.size = notice.fittingSize
+        notice.layoutSubtreeIfNeeded()
+        #expect(notice.fittingSize.height > 70)
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial; state.showOtherUpdates = false
+        state.watched = (0..<12).map { WatchEntry(name: PackageName("synthetic-warning-\($0)")!, kind: .formula) }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
+        let host = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: PopoverFocus(), accessory: nil).makeHostingController()
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 560), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentViewController = host
+        defer { window.contentViewController = nil }
+        host.view.frame.size = host.view.fittingSize
+        host.view.layoutSubtreeIfNeeded()
+        #expect(host.view.fittingSize.width == 340)
+        #expect(host.view.fittingSize.height <= 560)
+        let scroll = try #require(nativeScrollViews(host.view).first)
+        #expect(scroll.frame.height > 80)
+        let viewport = scroll.convert(scroll.bounds, to: host.view)
+        let footerSpace = host.view.isFlipped ? host.view.bounds.maxY - viewport.maxY : viewport.minY - host.view.bounds.minY
+        #expect(footerSpace >= 30)
+    }
     @Test func sharedWatchSelectionRenewsNativeFocusWithoutStealingSearchEditing() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-accessible-rows-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

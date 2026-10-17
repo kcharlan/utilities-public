@@ -33,6 +33,9 @@ import BrewVersionCore
             let long = try await makeFixture(state: "long", home: home.appendingPathComponent("fixture-long-\(dark)"))
             let size = try render(AnyView(PopoverView(controller: long.controller, notifier: long.notifier, openSettings: {}, focusGeneration: UUID())), width: 340, dark: dark, to: nil)
             guard size.height <= 560, size.height > 400 else { fatalError("Long list lost its bounded viewport: \(size)") }
+            let warningLong = try await makeFixture(state: "long-warning", home: home.appendingPathComponent("fixture-long-warning-\(dark)"))
+            let warningSize = try render(AnyView(PopoverView(controller: warningLong.controller, notifier: warningLong.notifier, openSettings: {}, focusGeneration: UUID())), width: 340, dark: dark, to: nil)
+            guard warningSize.height <= 560, warningSize.height > 400 else { fatalError("Wrapped notification warning displaced the footer: \(warningSize)") }
             let palette = dark ? "dark" : "light"
             guard heights["empty-\(palette)"]! < heights["watching-\(palette)"]!, heights["empty-\(palette)"]! < 300 else { fatalError("Empty popover does not hug content") }
         }
@@ -105,14 +108,16 @@ import BrewVersionCore
 
     @MainActor private static func makeFixture(state: String, home: URL) async throws -> Fixture {
         let service = SnapshotTransport()
-        let notifier = UserNotifier(service: SnapshotNotifications())
+        let notificationFailure = state == "error" || state == "long-warning"
+        let notifier = UserNotifier(service: SnapshotNotifications(failAuthorization: notificationFailure))
+        if notificationFailure { await notifier.requestAuthorization() }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var saved = AppState.initial
         saved.lastCheck = Date(timeIntervalSince1970: 1_700_000_000)
         saved.showOtherUpdates = state == "other-updates"
         saved.otherUpdatesCollapsed = false
         if !["empty", "settings", "suggestions", "search-results"].contains(state) {
-            saved.watched = (state == "long" ? (0..<35).map { "synthetic-item-\($0)" } : ["synthetic-a", "synthetic-b", "synthetic-c"]).enumerated().map { index, text in
+            saved.watched = (state.hasPrefix("long") ? (0..<35).map { "synthetic-item-\($0)" } : ["synthetic-a", "synthetic-b", "synthetic-c"]).enumerated().map { index, text in
                 let kind: PackageKind = index == 1 ? .cask : .formula
                 let listing = Listing(name: PackageName(text)!, kind: kind, version: index == 2 ? "1.0.0" : "1.0.1")
                 return WatchEntry(name: listing.name, kind: kind, lastListing: listing,
@@ -153,9 +158,16 @@ private actor SnapshotTransport: HTTPTransport {
     }
 }
 @MainActor private struct SnapshotNotifications: NotificationService {
-    func authorizationStatus() async -> UNAuthorizationStatus { .authorized }
-    func requestAuthorization() async throws -> Bool { true }
+    var failAuthorization = false
+    func authorizationStatus() async -> UNAuthorizationStatus { failAuthorization ? .notDetermined : .authorized }
+    func requestAuthorization() async throws -> Bool {
+        if failAuthorization { throw SnapshotAuthorizationFailure() }
+        return true
+    }
     func post(_ request: UNNotificationRequest) async throws {}
+}
+private struct SnapshotAuthorizationFailure: LocalizedError {
+    var errorDescription: String? { "Synthetic authorization was refused. Open System Settings, choose Notifications, select Brew Version, enable notifications, then retry." }
 }
 @MainActor private struct SnapshotLogin: LoginService {
     var status: SMAppService.Status { .notRegistered }
