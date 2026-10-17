@@ -231,10 +231,12 @@ from a failed save; only the latter calls for retrying the failed action.
 
 AppKit owns the application delegate, status item, popover and Settings window;
 SwiftUI supplies their content. The Settings window is retained after closing,
-and the gear activates the app and brings that same window forward. Native
-acceptance on the current system remains pending for this final source. The
-minimum supported runtime is unavailable and remains a separate release gate.
-Automated tests, offscreen layout and signatures establish no native input result.
+and the gear activates the app and brings that same window forward. The
+[implementation record](docs/implementation_notes.md#native-acceptance-observations)
+lists observed current-system results and the remaining status-item, physical
+mouse-selection and notification-delivery/click gates. The minimum supported
+runtime is unavailable and remains a separate release gate. Automated tests,
+offscreen layout and signatures establish no native input result.
 
 Record each current-system check separately:
 
@@ -291,13 +293,14 @@ no simulation environment switch. Use normal OS notification controls for any
 permission changes; do not erase notification databases. Quit the harness,
 turn its login toggle off, and remove only its printed fresh home when finished.
 
-The pending native search gate also includes a large query: enter
+The native search checklist also includes a large query: enter
 `synthetic-formula synthetic-installed synthetic-01 synthetic-02 synthetic-03 synthetic-04 synthetic-05 synthetic-06 synthetic-07 synthetic-08 synthetic-09 synthetic-10 synthetic-11 synthetic-12 synthetic-13 synthetic-14 synthetic-15 synthetic-16 synthetic-17 synthetic-18 synthetic-19 synthetic-20`.
 The harness returns invented not-found rows for the numbered names. Arrow to
 the last row and back to the first; require each selection to stay visible,
 the input and footer to remain reachable, and Return/Command-C on the first
-row to watch/copy the expected synthetic formula. This live interaction gate
-remains pending; an offscreen layout test is separate evidence.
+row to watch/copy the expected synthetic formula. Record actual input and
+visibility observations separately from the offscreen layout test; the
+implementation record lists the completed observations and their limits.
 
 For the minimal Settings-only gate, run
 `make -C brew_version settings-prototype`; it prints a separately signed

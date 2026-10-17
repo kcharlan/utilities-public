@@ -17,8 +17,8 @@ and invoked the full read once each, despite returning no cached catalog.
 The corrected path rejects both during prefix admission. Additional cases
 cover truncated/unknown prefixes, admitted malformed payloads, unmarked slim
 refetch and typed restart hydration with ETags and memory-backed 304 reuse.
-Final legacy-present cold and slim-cache warm process footprints remain
-separate controller-owned runtime checks.
+Final legacy-present cold and slim-cache warm process measurements pass the
+idle target; exact results and the separate transient peak are recorded below.
 
 Fresh validation passes all 172 Swift tests (138 core, 11 CLI, 23 app), all
 three isolated release/build integration cases without skips, the signed
@@ -27,17 +27,147 @@ output with empty stderr, the one-test synthetic acceptance service and signed
 harness, and the signed Settings prototype. Source, built plist and CLI remain
 1.0.0. The repair does not publish or deploy a release.
 
-## Outstanding acceptance
+## Current acceptance and remaining release gates
 
-Final-source native UI is unverified. The desktop is now unlocked; the earlier
-locked-desktop limitation below is historical. The controller owns current-system
-Settings, status-button, search/keyboard/Undo, notification permission/delivery/click,
-Other updates, login and appearance checks. The minimum supported runtime is
-unavailable. Source/build/test success does not establish these runtime checks.
-Final cold-fetch and slim-cache idle footprint measurements also remain pending;
-earlier measurements are diagnostics of earlier source, not final acceptance.
+All requested source corrections are committed and reviewed. Real native input
+also exposed and corrected Delete routing, a collapsed Watching viewport,
+ineffective appearance controls and inaccessible merged watch rows. The earlier
+locked-desktop limitation and pending statements in the historical sections
+below describe earlier candidates; this section records the final outcomes.
 
-No live installation, deployment, push or merge was performed.
+Native acceptance is incomplete: actual status-button toggle/count accessibility,
+physical-coordinate row selection, notification delivery/click and the minimum
+macOS 14 runtime remain unverified. The login approval-required branch was not
+needed on this host. Automated coverage does not close these gates. Details,
+including the attempted routes and tool failures, follow below.
+
+No live installation, deployment, push or merge was performed. The version
+remains the unpublished initial release 1.0.0. Original saved state was restored
+byte-for-byte after acceptance; the new slim cache is retained. Production and
+launched temporary apps are quit, and Open at login is off.
+
+## Owner feedback resolution
+
+Each test name below refers to the retained complete suite. Live observations
+are listed separately so source coverage is not mistaken for native acceptance.
+
+| Item | Final change | Regression evidence |
+| --- | --- | --- |
+| Must 1: formula revisions | Compare upstream version first, then arbitrary-precision numeric revision; highest-keg selection shares that rule. Corrected the plan's installedForm contract. | `UpdateStatusTests.formulaRevisionFollowsUpstreamVersion`, `InstalledReaderTests.formulaKegRevisionOrdering`, including all four requested combinations. |
+| Must 2: memory/cache | Persist only typed Listing indexes and ETags; decode bulk responses off-main; reuse 304 indexes; reject empty/unusable 200s. Reject old envelopes with a bounded 44-byte admission read before payload allocation/decoding. | `CatalogRegressionTests.unusableSuccessRetainsValidPair`, `bulkyIgnoredMetadataDoesNotSurviveCacheOrRevalidation`, `oldRawCacheIsIgnoredAndReplaced`; all `CatalogCacheIOTests`, especially actual byte-count/whole-read assertions. Real final footprints below. |
+| Must 3: Settings/native | AppKit owns a reused Settings NSWindow and activation. Added native row responder, stable viewports, shared appearance propagation, standard Edit commands and individual accessible row selection. | `NativeActionsTests.settingsReuseRefreshAndLoginApprovalAction`, `watchRowNativeDeleteRoutesBothKeysAndPreservesSearchEditing`, `sharedWatchSelectionRenewsNativeFocusWithoutStealingSearchEditing`, `fullPopoverKeepsWatchingViewportAfterFreshHostingWithOtherHidden`, `appearanceAppliesToPopoverAndActualHostedContent`; itemized native results below. |
+| Must 4: failed checks | An unreachable check leaves success time unchanged; startup awaits the network gate; reconnect retries unreachable requests; failed saves keep an interval floor. Footer and scheduler share the actual retry deadline. | `ControllerRegressionTests.unreachableDoesNotBecomeSuccessfulCheck`, `startupWaitsForNetworkAndReconnectRetriesUnreachableImmediately`, `reconnectRetriesFailureDespiteRecentSuccessfulCheck`, `rejectedSaveBacksOffAutomaticChecksButManualRetryIsImmediate`, both reconnect/save regressions and both nextAutomaticCheck regressions; `SystemEventsTests.initialOfflineAndReconnectUseControllerRetryCadence`. |
+| Should 5: Unicode crash | Classification handles scanner matches outside ASCII without force-unwrapping a missing class. | `VersionOrderTests.externalUnicodeDoesNotTrap`; retained ordered-pair parity coverage. |
+| Should 6: legacy casks | Admit an actual Caskroom version directory when its receipt is absent; malformed, foreign and symlink cases retain their safeguards. | `InstalledReaderTests.legacyCaskWithoutReceipt`, `legacyCaskSymlinkIsNotInstalled` and provenance cases. |
+| Should 7: suggestions | Catalog suggestions load and survive independently of Other visibility, including hydrate/retry/refresh. | `WatchControllerCatalogTests.hiddenOtherUpdatesKeepsSuggestions`, `reenablingOtherUpdatesHydratesThenChecksDue`, `catalogRefreshUsesSuccessfulFetchCadence`; native Other-off observations below. |
+| Should 8: main-thread/no-op work | Retain one off-main installed snapshot, reject stale generations and preserve caller cask metadata; unrelated commits reuse results and unchanged state does not save. | `ControllerRegressionTests.noOpCloseAndSettingsDoNotWrite`; `InstallationSnapshotTests.otherUpdatesAdmitsEachReceiptOnce`, `blockedScanLeavesMainActorResponsiveAndUnrelatedCommitsDoNotScan`, stale-publication/concurrent-cache/caller-metadata regressions. |
+| Should 9: cross-volume update | Displace live app inside apps-directory staging; durable backup can be on another volume. | Installer `update succeeds when backup and apps are on different simulated devices`, plus genuine activation-move failure recovery. |
+| Should 10: recovery copy | Re-read and validate app, command, receipt and metadata before activation; print backup first; preserve primary, restoration and all cleanup errors with recovery path. | Eight backup payload corruption/failure cases, deploy/rollback compound recovery cases and six cleanup regressions in `deploy_brew_version.test.mjs`. |
+| Should 11: relaunch notice | Guidance follows actual replacement, including rollback, and is absent on already-current. Process override is explicitly `BREW_VERSION_DEPLOY_TEST_ONLY_PGREP`. | Installer `running app notice follows replacement and rollback but not already-current deployment`. |
+| Should 12: fleet inventory | Golden help is required before Brew Version native audit. | `test_native_brew_version_deployment` commits a synthetic inventory without golden help and requires source-inventory-unverified output. |
+| Should 13: docs/build | Root prerequisites surfaced; acceptance required and OS-temporary; removed obsolete OS/prose claims; release clears stale resources and publishes executables via temporary sibling plus rename. Lessons are newest first, including moved October 16 entries. | Three `Tests/ReleaseChecks/release.test.mjs` real-build cases check stale signed resources, held executable descriptors and both private harness homes; documentation inspection. |
+| Smaller 1: recovery hint | Hint is limited to an actual failed save, distinct from quarantine recovery/load failures. | `ControllerRegressionTests.recoveryWarningIsDistinctFromFailedSave`, `NativeActionsTests.nativeActionPolicies`. |
+| Smaller 2: notifications | Permission and posting failures are observable in popover/Settings; explicit retry retains the latest failed notice. | `NativeActionsTests.notificationDenialErrorAndPostingRetryAreObservable`; actual visible authorization error and real production consent prompt below. |
+| Smaller 3: search | Debounce 300 ms, retain rows during wait/transport; pending Return awaits the current text/kind intent and rejects stale intent. | `SearchInputTests.debounceRetainsResultsAndReturnWaitsForCurrentIntent`, `inFlightLookupRetainsPreviousRows`, `editingAfterReturnExcludesStaleSubmission`; actual delayed Return below. |
+| Smaller 4: homepage | Both action availability and execution require an absolute http/https URL with host. | `NativeActionsTests.homepageActionRejectsUnsafeSchemes`. |
+| Smaller 5: fallback note | Shared installed-source note appears in watched, search and Other rows. | `NativeActionsTests.nativeActionPolicies`; actual Other Watch and watched fallback note below. |
+| Smaller 6: login status | Refresh on Settings key-window callback; approval-required state exposes the normal system Login Items action. | `NativeActionsTests.settingsReuseRefreshAndLoginApprovalAction`; actual register/unregister below. |
+| Smaller 7: listing cache | Removal evicts conditional entries; search is not persisted; saves prune to watched identities; old suspended work cannot resurrect an entry after Undo. | `ControllerRegressionTests.removedAndSearchedListingsStayOutOfPersistedWatchCache`, `removalEvictsConditionalCacheBeforeReadding`; `InstallationSnapshotTests.removedAndRestoredWatchCannotRegainCacheFromSuspendedCheck`. |
+| Smaller 8: status accessibility | Observed watched-update count drives the status symbol, label/help and tooltip, including zero/one/many wording. | `NativeActionsTests.statusObservationPublishesAmberChanges`, `nativeActionPolicies`; actual status-item accessibility remains unverified. |
+
+## Real release memory acceptance
+
+Measured the final signed release from commit d208d95 with an empty watched
+list and the actual public catalog. The original 68,121,629-byte raw cache was
+left in place before the cold launch; it was not removed to improve the result.
+Both measurements used `footprint -f bytes --noCategories <pid>` at CPU 0.0%.
+All diagnostics and original state backups stay outside the public checkout.
+
+| Launch | Idle phys_footprint | Peak phys_footprint | Cache |
+| --- | ---: | ---: | --- |
+| Cold, legacy cache present, fresh catalog fetched | 47,989,888 bytes (45.77 MiB) | 225,543,344 bytes | Replaced by marked slim index, 3,397,362 bytes |
+| Second launch from that slim cache | 73,221,152 bytes (69.83 MiB) | 73,401,376 bytes | Same bytes and modification time; no bulk replacement |
+
+Both idle values meet the well-under-150-MB target. The cold download/decoding
+peak is reported separately and is not an idle result. The preceding candidate
+failed at 250,021,088 bytes idle when it decoded the legacy envelope before
+rejecting it; the bounded preflight repair and real-file regression close that
+specific failure. An earlier low-memory cold diagnostic that removed the old
+cache is not used as acceptance evidence.
+
+After normal native Quit, the original state was copied back atomically and
+`cmp` confirmed identical bytes. The runtime folder is mode 0700 and state file
+0600. The new cache remains for the next launch. Private temporary test watches
+and fabricated previous-release baselines are absent from the restored state.
+
+## Native acceptance observations
+
+All native input used the supported CUA interface on the unlocked current Mac.
+The final cache-only repair does not change UI sources. UI observations below
+use the corrected signed harness at f8faa40, with final production Settings,
+focus, version and Quit repeated at d208d95. Earlier failed candidates are
+described in historical sections only.
+
+| Required check | Observed result |
+| --- | --- |
+| Settings gear, activation/front, close/reopen | PASS on final production: gear opens Settings 1.0.0; normal reopen while Settings is open exposes the popover, gear brings Settings forward; close returns to focused popover; gear reopens Settings. Automated identity test separately proves the same NSWindow is retained. Actual status-button usability is not established. |
+| Search focus | PASS on first visible open and normal reopen; closing Settings returns to focused search. Production initial launch remains quiet. |
+| Search arrows, Return, Command-C | PASS: native Return watches the selected synthetic result; Command-C copied its version, verified by paste. Arrow navigation traversed 22 query results to both ends; input/footer controls remained reachable. |
+| Pending Return and explicit cask choice | PASS: a deliberately delayed lookup accepted Return for the current intent after completion. Explicit colliding cask suggestion watched the cask version rather than the formula version. |
+| Selected-row Delete and Undo | PASS through each named accessibility group's normal selection action: selected state/native row focus observed; both Backspace and forward Delete removed the row, Undo restored its saved amber/fallback state. Search Backspace edited the query without removing a watch. Physical coordinate mouse selection remains unverified: CUA returned `-10005 noWindowsAvailable` despite available AX/screenshot, after refreshed bindings, Settings round trip and both screenshot coordinate scales. Both selection routes share the tested focus action. |
+| Long results / Watching viewport | PASS for arrow scrolling to both ends and accessible input/footer controls. After hiding Other and reopening, watched rows remained visible in the corrected 390-point viewport. A cropped long-result capture does not establish every physical pixel of every row. |
+| Interval menu and Custom sheet | PASS: native current-interval checkmarks observed for preset 30 and custom 47; menu remained open without dismissing popover. Invalid 9 retained editable text and validation; valid Save and Cancel returned to the open popover with the expected value. |
+| Other visibility / Watch / fallback | PASS: Other off retained six suggestions; Other Watch added the synthetic fallback cask with the same visible source note and amber state in Watching. |
+| Light / Dark and editing | PASS: actual harness Light/Dark palettes changed after the appearance fix. Native Command-Z/Shift-Command-Z undo/redo query text. |
+| Notification permission and errors | PASS: final production context exposed the normal consent prompt and Allow was chosen. System Settings confirmed Allow on. Synthetic authorization failure was visible in both views. Deterministic authorization/post/retry tests pass; actual visible delivery and click remain unverified. |
+| Notification delivery/click | UNVERIFIED: a controlled fabricated prior-release baseline triggered a real check/update, without a posting error, but no visible notification-center window/banner was observable in either foreground or background attempts. Temporary and Persistent alert styles were tried; original Temporary restored. Normal Notification Center access timed out; Fn-N was unsupported (`keyNotFound("fn")`). No Focus/sharing changes, notification-database reset, signing/location changes or alternate UI automation were used. API acceptance is not delivery/click proof, and no cause is asserted. |
+| Open at login | PASS for actual harness register → Enabled → Off; no approval was required. Final production and harness Settings showed Off. Key-refresh/approval button behavior is covered by injected service tests; actual requiresApproval state and its OS action remain unverified on this host. |
+| Status mug/count/accessibility and same-click close | UNVERIFIED: own-app AX exposed application/Edit menus but no status button. SystemUIServer timed out (`-10005 timeoutReached`), including after normal keyboard status-area focus. No hidden input hooks or alternate UI technology were used. Source/policy/observation tests pass; these do not prove native status interaction. |
+| Quit / cleanup | PASS: normal Command-Q and read-only exact-executable process absence checks. Open at login off; original saved state restored; authorized notification permission remains enabled; alert style restored and System Settings returned to its original General panel. |
+| macOS 14 | UNVERIFIED: no minimum-supported-runtime host is available. Build deployment target and signatures do not establish runtime acceptance. |
+
+The remaining gates need native access that can address the actual status item,
+observe delivered notifications and run on macOS 14. Repeated inaccessible UI
+probes do not establish a pass. The branch is retained for review; no merge or
+deployment decision is implied by passing source and automated checks.
+
+## Final automated validation
+
+Final executable source is d208d95; subsequent edits update only this record
+and README acceptance wording. Complete Brew Version validation ran on that
+source with no test failures or skips:
+
+| Command/category | Result |
+| --- | --- |
+| `make -C brew_version test` | 172 Swift tests: 138 core, 11 CLI, 23 app; all 3 isolated real release/build integration cases pass |
+| `make -C brew_version release` | Both products build, sign and pass strict signature verification |
+| Signed `--help`, `-h`, `--version` | Golden help bytes match; version is `brew-version 1.0.0`; every flag exits 0 with empty stderr |
+| `make -C brew_version acceptance` | One synthetic service test and optimized signed harness pass |
+| `make -C brew_version settings-prototype` | Optimized signed maintained Settings prototype passes |
+
+Controller rechecked both strict signatures, all three CLI flags and source/
+built version declarations after the real memory/native run. Source constant,
+source plist, release plist, CLI and observed Settings all agree at 1.0.0.
+No live installed/deployed version is claimed. No automated assertion was
+weakened, coverage removed or retained acceptance replaced with invented data.
+
+After the final source repair, all six broad matrix commands were run again
+fresh, each exiting 0 with no failures or skips:
+
+| Working directory / command | Result |
+| --- | --- |
+| Root: `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_calculator_pages.test.mjs` | All 77 installer tests pass, including 39 Brew Version cases |
+| Root: `node --test tools/tests/check_static_deployments.test.mjs` | All 17 static-audit tests pass |
+| Root: `zsh tools/tests/test_check_local_deployments.zsh` | `check_local_deployments tests: PASS` |
+| `Calculation tools/backtest`: `npm test` | All 423 Node tests and all three original browser scenarios at both flat-file and isolated HTTP targets pass: six browser runs |
+| `Calculation tools/backtest`: `npm run test:synthetic` | All 267 Node tests and 78 invented compiler tests pass |
+| `Calculation tools/backtest`: `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` | All 79 compiler tests pass, including retained-input reproduction |
+
+Market Atlas reused the existing locked Node dependencies, managed Chromium,
+verified external data and prepared external compiler venv. Both npm drivers
+used that same venv and disabled bytecode. No acquisition, dependency/browser
+download, environment replacement, online build or installed-site acceptance
+occurred. Data-bearing logs remain in private mode-0700 OS temporary space.
 
 ## Decisions to preserve
 
@@ -60,7 +190,7 @@ No live installation, deployment, push or merge was performed.
 17. **Superseded by decision 32.** The original implementation retained SwiftUI SettingsLink pending runtime evidence. The owner subsequently required explicit AppKit window ownership independent of scene context.
 18. Failed Undo suspends normal expiry and blocks replacement removals until successful retry; same-name Watch restores the saved entry. Cost: another Stop watching action waits for recovery. Ordinary Undo still expires after five seconds.
 19. Preserve an explicitly selected suggestion's kind in transient `SearchInput`, including task identity when text is unchanged. Editing clears it; an existing watch's known kind takes precedence. Saved watches remain name-only identities. Cost: a colliding package of the other kind must be unwatched before switching kinds.
-20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout proves the bound, while live arrow navigation remains an unmet native gate.
+20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout establishes the bound; live arrow traversal is now observed separately above.
 21. Expose interval bounds once in `CheckInterval` and format the validation copy from them using the current locale. Cost: grouping follows system locale rather than always using English punctuation.
 22. Reject any stderr from signed CLI diagnostics for all three help/version flags, at build and activation. Cost: a future intentional CLI warning must be considered explicitly before changing this contract.
 23. Use the normal interval retry floor after transport or persistence failure. Reconnect bypasses transport backoff but preserves failed-save backoff. Cost: a reconnected machine with a save failure waits until that interval floor or a manual retry.
@@ -82,6 +212,11 @@ No live installation, deployment, push or merge was performed.
 38. Use native Picker tags for interval selection, including a custom current value; preserve invalid custom text and keep the sheet open after a failed save. Cost: custom current values add one temporary option to the menu.
 39. Render the same installed-source note in watched, search and Other rows; gate homepage availability and execution to absolute http/https URLs. Cost: nonweb homepage values have no action.
 40. Start production scheduling offline, await every path update in the controller, and reserve periodic/wake events for scheduledTick. The controller alone owns the reconnect tick and retry floor. Cost: automatic network work waits for the monitor's initial answer; disk hydration can proceed immediately.
+41. Continue the required memory repair after the final source-review wave when the real legacy-present cold measurement fails. Add bounded format admission before reading/decoding, using the same file descriptor. Cost: one further commit/review/runtime measurement and a one-time unconditional refetch for raw and earlier unmarked slim caches.
+42. Replace SwiftUI-only watch-row key handling with a row-owned native first responder after actual input showed a focus ring without Delete. It handles both hardware delete keys and standard delete commands without intercepting mouse hits or installing a global monitor. Cost: a small native responder bridge and renewed focus identity per selection.
+43. Give Watching an explicit 390-point viewport after native reproduction of its collapse with Other hidden; keep the footer outside. Cost: short/empty watch lists retain blank space.
+44. Give each watch an individually named accessibility group/default selection action, sharing the same renewed focus path as mouse input and preserving child actions. Cost: changed VoiceOver grouping and announcement order; actual named selection/Delete were inspected independently of offscreen tests.
+45. Present Next check from the scheduler's shared attempt/success/failed-save deadline rather than a separate last-success formula. Cost: footer wording now exposes offline and failed-save retry timing rather than a simple success-time estimate.
 
 The owner-required slim-cache, formula PkgVersion and legacy-cask receipt decisions
 supersede the original plan's raw cache/combined-version/receipt-only assumptions.
