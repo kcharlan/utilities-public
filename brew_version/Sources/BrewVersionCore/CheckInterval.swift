@@ -1,9 +1,14 @@
 import Foundation
 
 public struct CheckInterval: Codable, Hashable, Sendable {
+    public static let allowedMinutes = 10...1440
+    public static func validationMessage(locale: Locale = .current) -> String {
+        let format = IntegerFormatStyle<Int>.number.grouping(.automatic).locale(locale)
+        return "Enter \(allowedMinutes.lowerBound.formatted(format)) to \(allowedMinutes.upperBound.formatted(format)) minutes."
+    }
     public let minutes: Int
     public init?(minutes: Int) {
-        guard (10...1440).contains(minutes) else { return nil }
+        guard Self.allowedMinutes.contains(minutes) else { return nil }
         self.minutes = minutes
     }
     public static let presets = [10, 15, 30, 60, 120, 360].map { CheckInterval(minutes: $0)! }

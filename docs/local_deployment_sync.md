@@ -320,7 +320,8 @@ unstaged input bytes and builds an isolated admitted snapshot with
 `make -C <scratch>/brew_version release` (900-second limit). The expected
 version comes from admitted Info.plist bytes; CLI help comes from the admitted
 golden fixture. Built and installed command diagnostics check exact version
-and help output; bundle diagnostics check the release plist contract and
+and help stdout, successful exit and empty stderr for `--version`, `--help`
+and `-h`; bundle diagnostics check the release plist contract and
 strict signature verification. The installer never launches the app.
 
 The mode-0600 `<scripts>/.brew-version-native.json` receipt has exactly

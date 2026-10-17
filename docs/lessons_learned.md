@@ -356,3 +356,25 @@ Keep the validated copy through all command, app and receipt transitions, and
 inject failures both before moving the old app and after publishing each new
 artifact. Compare independent byte/type/full-mode snapshots after restoration;
 receipt hashes alone cannot prove that recovery preserved the original tree.
+
+## 2026-10-16: Preserve explicit search intent and bound native result content
+
+A catalog suggestion includes both name and kind. Preserve both in transient
+search intent, and include kind in the text task's identity: selecting a cask
+whose name already fills the field must requery even when the text is unchanged.
+Editing clears that explicit choice; existing name-only watches retain their
+known kind. Test the app's suggestion action through lookup and Watch against
+colliding synthetic formula/cask responses, plus cancellation and late results.
+
+Bound suggestions and multi-token results inside their own scroll viewport,
+with the input and footer outside it. Follow keyboard selection with scrollTo.
+For offscreen SwiftUI layout tests, separate presentation from its asynchronous
+query task: creating a host for the whole section can restart the task, clear
+results and accidentally measure empty content. Test the maintained presentation
+component with populated results and verify that removing the bound makes the
+test fail on real geometry. This does not establish native keyboard acceptance.
+
+Native executable diagnostics require successful exit, exact stdout and empty
+stderr. A signed executable can satisfy stdout while emitting an unexpected
+warning. Regress each flag at both build and installed activation boundaries,
+and compare the prior artifacts and retained recovery snapshots after failure.

@@ -203,7 +203,7 @@ public extension Notifier { func requestAuthorization() async {} }
         }
     }
     public func clearSearch() { searchGeneration = UUID(); results = [] }
-    public func search(_ text: String) async {
+    public func search(_ text: String, kind: PackageKind? = nil) async {
         guard !Task.isCancelled else { return }
         let generation = UUID(); searchGeneration = generation; results = []
         let tokens = tokenize(text)
@@ -218,7 +218,7 @@ public extension Notifier { func requestAuthorization() async {} }
                         if case .invalid(let value) = token { return (index, .invalid(value)) }
                         preconditionFailure()
                     }
-                    let kinds = knownKinds[name].map(KindPreference.init) ?? .auto
+                    let kinds = (knownKinds[name] ?? (tokens.count == 1 ? kind : nil)).map(KindPreference.init) ?? .auto
                     do { return (index, .found(try await scheduler.lookup(name, kinds: kinds, client: client), installed: nil, watched: false)) }
                     catch LookupError.notFound { return (index, .notFound(name)) }
                     catch { return (index, .failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }

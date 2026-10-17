@@ -36,7 +36,7 @@ import Testing
         try f.store.save(state)
         let transport = StubTransport([watchURL(kind: .cask): [watchResponse("1", kind: .cask)]])
         let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier())
-        await c.search(watchName.rawValue)
+        await c.search(watchName.rawValue, kind: .formula)
         #expect(await transport.requests.map(\.url) == [watchURL(kind: .cask)])
         guard case .found(let listing, _, true) = c.results.first else { Issue.record("Expected watched cask"); return }
         #expect(listing.kind == .cask)
@@ -45,13 +45,25 @@ import Testing
         let f = WatchFixture(); defer { f.clean() }
         let transport = ControlledWatchTransport()
         let c = WatchController(transport:transport,installed:nil,store:f.store,notifier:RecordingNotifier())
-        let old = Task { await c.search("synthetic-old") }
+        let old = Task { await c.search("synthetic-old", kind: .cask) }
         try await waitForRequests(1,on:transport)
         await c.search("Bad")
-        await transport.finish(watchURL(PackageName("synthetic-old")!))
+        await transport.finish(watchURL(PackageName("synthetic-old")!, kind: .cask))
         await old.value
         #expect(c.results == [.invalid("Bad")])
         c.clearSearch(); #expect(c.results.isEmpty)
+    }
+    @Test func cancelledSelectedKindSearchCannotPublish() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let transport = ControlledWatchTransport()
+        let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier())
+        let search = Task { await c.search(watchName.rawValue, kind: .cask) }
+        try await waitForRequests(1, on: transport)
+        search.cancel()
+        await transport.finish(watchURL(kind: .cask))
+        await search.value
+        #expect(c.results.isEmpty)
+        #expect(await transport.started == [watchURL(kind: .cask)])
     }
     @Test func pendingSearchUsesCommittedWatchState() async throws {
         let f = WatchFixture(); defer { f.clean() }

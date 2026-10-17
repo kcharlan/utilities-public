@@ -4,34 +4,64 @@ import BrewVersionCore
 struct SearchSection: View {
     let controller: WatchController
     let undo: WatchUndoAction
-    @Binding var query: String
+    @Bindable var input: SearchInput
+    private var query: String { input.text }
     @State private var selection = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Search formulae or casks", text: $query)
+            TextField("Search formulae or casks", text: $input.text)
                 .accessibilityLabel("Search formulae or casks")
                 .onChange(of: query) { _, _ in selection = 0 }
-                .task(id: query) {
-                    if query.isEmpty { controller.clearSearch() }
-                    else { await controller.search(query) }
-                }
+                .task(id: input.request) { await input.lookup(controller: controller) }
                 .onSubmit { watchSelected() }
                 .onKeyPress(.downArrow) { selection = min(selection + 1, max(0, controller.results.count - 1)); return .handled }
                 .onKeyPress(.upArrow) { selection = max(0, selection - 1); return .handled }
             if !query.isEmpty {
-                if tokenize(query).count == 1, let catalog = controller.catalog {
-                    ForEach(Array(catalog.suggestions(prefix: query.trimmingCharacters(in: .whitespacesAndNewlines)).enumerated()), id: \.offset) { _, item in
-                        Button("\(item.name.rawValue) · \(item.kind.rawValue)") { query = item.name.rawValue }.buttonStyle(.plain).font(.caption)
-                    }
-                }
-                ForEach(Array(controller.results.enumerated()), id: \.offset) { index, result in
-                    resultView(result).padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(index == selection ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                        .contentShape(Rectangle()).onTapGesture { selection = index }
+                SearchResults(controller: controller, undo: undo, query: query, selection: $selection) { name, kind in
+                    input.select(name: name, kind: kind)
                 }
                 Button("Copy selected version") { copySelected() }.keyboardShortcut("c", modifiers: .command).hidden().frame(height: 0)
             }
+        }
+    }
+    private func watchSelected() {
+        guard controller.canSave, controller.results.indices.contains(selection),
+              case .found(let listing, _, false) = controller.results[selection] else { return }
+        Task { await undo.watch(listing.name, kind: listing.kind, controller: controller) }
+    }
+    private func copySelected() {
+        guard controller.results.indices.contains(selection), case .found(let listing, _, _) = controller.results[selection] else { return }
+        copyText(ReleaseID(listing).displayVersion)
+    }
+}
+
+/// Keeps the input and popover footer outside the scrolling search content.
+struct SearchResults: View {
+    let controller: WatchController
+    let undo: WatchUndoAction
+    let query: String
+    @Binding var selection: Int
+    let selectSuggestion: (PackageName, PackageKind) -> Void
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if tokenize(query).count == 1, let catalog = controller.catalog {
+                        ForEach(Array(catalog.suggestions(prefix: query.trimmingCharacters(in: .whitespacesAndNewlines)).enumerated()), id: \.offset) { _, item in
+                            Button("\(item.name.rawValue) · \(item.kind.rawValue)") { selectSuggestion(item.name, item.kind) }.buttonStyle(.plain).font(.caption)
+                        }
+                    }
+                    ForEach(Array(controller.results.enumerated()), id: \.offset) { index, result in
+                        resultView(result).padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(index == selection ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle()).onTapGesture { selection = index }
+                            .id(index)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(height: 300)
+            .onChange(of: selection) { _, index in proxy.scrollTo(index) }
+            .onChange(of: controller.results) { _, _ in proxy.scrollTo(selection) }
         }
     }
     @ViewBuilder private func resultView(_ result: LookupResult) -> some View {
@@ -53,14 +83,5 @@ struct SearchSection: View {
         case .failed(let name, let error):
             VStack(alignment: .leading) { Text(name.rawValue); Text(error).font(.caption).foregroundStyle(.red) }
         }
-    }
-    private func watchSelected() {
-        guard controller.canSave, controller.results.indices.contains(selection),
-              case .found(let listing, _, false) = controller.results[selection] else { return }
-        Task { await undo.watch(listing.name, kind: listing.kind, controller: controller) }
-    }
-    private func copySelected() {
-        guard controller.results.indices.contains(selection), case .found(let listing, _, _) = controller.results[selection] else { return }
-        copyText(ReleaseID(listing).displayVersion)
     }
 }

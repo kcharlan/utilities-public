@@ -26,6 +26,13 @@ No live installation, deployment, push or merge was performed. Preserve this dis
 16. Use one four-request permit pool across checks, additions and search. Cost: large searches may queue behind checks; cancelled queued work drops before transport.
 17. Retain intended SwiftUI SettingsLink path pending actual runtime evidence; a locked desktop does not establish failure. Cost: the planned AppKit fallback may still be needed after an unlocked probe.
 18. Failed Undo suspends normal expiry and blocks replacement removals until successful retry; same-name Watch restores the saved entry. Cost: another Stop watching action waits for recovery. Ordinary Undo still expires after five seconds.
+19. Preserve an explicitly selected suggestion's kind in transient `SearchInput`, including task identity when text is unchanged. Editing clears it; an existing watch's known kind takes precedence. Saved watches remain name-only identities. Cost: a colliding package of the other kind must be unwatched before switching kinds.
+20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout proves the bound, while live arrow navigation remains an unmet native gate.
+21. Expose interval bounds once in `CheckInterval` and format the validation copy from them using the current locale. Cost: grouping follows system locale rather than always using English punctuation.
+22. Reject any stderr from signed CLI diagnostics for all three help/version flags, at build and activation. Cost: a future intentional CLI warning must be considered explicitly before changing this contract.
+23. Use the normal interval retry floor after catalog failure; omit the optional reconnect exemption. Cost: a reconnected machine may wait until that floor expires.
+24. Keep a Quit footer action for a Dock-less temporary app. Harness-only appearance and synthetic service injection remain outside production composition. Cost: extra footer width and a separately built acceptance entry point.
+25. Encode installer app-tree identity with sorted paths, entry types, full modes and content hashes, including directories/root. Derive expected version and golden help from admitted tracked inputs. Cost: metadata-only mode changes require a matching release; these checks establish identity, not compiler reproducibility.
 
 ## Validation record
 
@@ -44,9 +51,39 @@ The implementation task reviews are complete. Final whole-branch review is pendi
 
 Market Atlas used the owner's already prepared external data and compiler environment. No data acquisition, dependency/browser download, environment replacement or installed-site acceptance was performed. Data-bearing evidence remains outside the checkout.
 
-## Remaining recorded finding
+## Final review fix wave
 
-Two task-review improvements await final triage: custom interval error text duplicates domain bounds, and compiled installer diagnostics should reject unexpected stderr as well as assert exit status/stdout.
+All four accepted final-review findings are implemented; scoped re-review is
+pending. Suggestion kind now survives lookup and Watch, multi-name search has
+a bounded scrolling region, interval validation copy derives from domain bounds,
+and CLI activation rejects unexpected stderr.
+
+Regression evidence: removing explicit kind propagation resolves and watches the
+synthetic shared token as a formula instead of a cask. Removing the production
+search viewport produces 5,294-point offscreen content for 100 results instead
+of 300 points. Query-generation, cancellation and known-watch-kind regressions
+remain in the complete suite. Interval tests exercise bounds and US/German
+grouping. Six signed synthetic executable cases reject stderr from all three
+flags at build and activation and preserve prior artifacts and recovery copies.
+The transient action checks cancellation before both lookup and empty-query
+clearing; a cancelled empty task cannot erase a newer result.
+
+The initial offscreen whole-section probe measured cleared content because its
+query task restarted on hosting. The maintained `SearchResults` presentation is
+now tested directly with all 100 rows present, without starting that task.
+This establishes layout only. Native acceptance now explicitly includes a large
+multi-token query, arrow scrolling, reachable input/footer and Return/Command-C.
+The locked-desktop and unavailable macOS 14 gates remain unmet.
+
+Fresh automated validation for the fix wave (no skips): 121 Swift tests
+(104 core, 11 CLI, 6 app), 59 combined native/calculator installer tests and
+17 static-audit tests pass. Release build and strict signatures, the one-test
+synthetic acceptance service and signed harness, signed Settings prototype,
+and offline CLI help/version smoke checks pass. Source plist, release plist
+and CLI report the same initial release version. The complete fleet suite
+reports PASS. The installer-only change does not alter the shared
+static audit or its child runner, so Market Atlas's previously recorded complete
+results were not rerun or presented as fresh results for this wave.
 
 ## Installer recovery choice
 

@@ -3,7 +3,8 @@ import BrewVersionCore
 
 struct PopoverView: View {
     let controller: WatchController
-    @State private var query = ""
+    @State private var search = SearchInput()
+    private var query: String { search.text }
     @State private var selected: PackageName?
     @FocusState private var focusedWatch: PackageName?
     @State private var undo = WatchUndoAction()
@@ -33,7 +34,7 @@ struct PopoverView: View {
                 if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
                 else { Text("Retry the failed action to save it.").font(.caption) }
             }
-            SearchSection(controller: controller, undo: undo, query: $query)
+            SearchSection(controller: controller, undo: undo, input: search)
             if let removed = undo.removed {
                 HStack {
                     Text("Stopped watching \(removed.entry.name.rawValue)").font(.caption)

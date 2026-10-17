@@ -41,8 +41,8 @@ function fixture(t) {
   git('init','-q');git('config','user.name','Synthetic Tester');git('config','user.email','tester@example.invalid');
   write('Package.swift','// synthetic package\n');write('Resources/Info.plist',plist);write('Tests/BrewVersionCLITests/Fixtures/expected-help.txt',help);
   write('Makefile',`release:\n\tclang Sources/main.c -o synthetic-command\n\tmkdir -p 'build/release/Brew Version.app/Contents/MacOS' 'build/release/Brew Version.app/Contents/Resources'\n\tcp synthetic-command build/release/brew-version\n\tcp synthetic-command 'build/release/Brew Version.app/Contents/MacOS/BrewVersion'\n\tcp Resources/Info.plist 'build/release/Brew Version.app/Contents/Info.plist'\n\tcp Sources/main.c 'build/release/Brew Version.app/Contents/Resources/synthetic.txt'\n\tchmod 751 'build/release/Brew Version.app'\n\tchmod 711 'build/release/Brew Version.app/Contents/Resources'\n\tchmod 640 'build/release/Brew Version.app/Contents/Resources/synthetic.txt'\n\tcodesign --force --sign - --timestamp=none build/release/brew-version\n\tcodesign --force --sign - --timestamp=none 'build/release/Brew Version.app'\n\trm -rf "$$SYNTHETIC_EXPECTED_RELEASE/Brew Version.app"\n\tcp -pR build/release/. "$$SYNTHETIC_EXPECTED_RELEASE/"\n`);
-  function release(label,fail=false) {
-    write('Sources/main.c',`#include <stdio.h>\n#include <string.h>\nint main(int argc,char **argv){/* synthetic ${label} */ if(${fail?1:0} && strstr(argv[0],"/Scripts/")) return 1; if(argc==2 && !strcmp(argv[1],"--version")){puts("brew-version ${version}");return 0;} if(argc==2 && (!strcmp(argv[1],"--help") || !strcmp(argv[1],"-h"))){fputs(${JSON.stringify(help.toString())},stdout);return 0;}return 2;}\n`);
+  function release(label,fail=false,stderrFlag='',installedOnly=false) {
+    write('Sources/main.c',`#include <stdio.h>\n#include <string.h>\nint main(int argc,char **argv){/* synthetic ${label} */ if(${fail?1:0} && strstr(argv[0],"/Scripts/")) return 1; if(argc==2 && !strcmp(argv[1],${JSON.stringify(stderrFlag)}) && (${installedOnly?1:0} == 0 || strstr(argv[0],"/Scripts/"))) fputs("synthetic diagnostic warning\\n",stderr); if(argc==2 && !strcmp(argv[1],"--version")){puts("brew-version ${version}");return 0;} if(argc==2 && (!strcmp(argv[1],"--help") || !strcmp(argv[1],"-h"))){fputs(${JSON.stringify(help.toString())},stdout);return 0;}return 2;}\n`);
     git('add','.');git('commit','-qm','Synthetic '+label);
   }
   release('first');
@@ -52,6 +52,29 @@ function fixture(t) {
   return {base,repo,home,project,scripts,apps,expected,git,write,release,run,env,target:path.join(scripts,'brew-version'),receipt:path.join(scripts,'.brew-version-native.json'),app:path.join(apps,'Brew Version.app')};
 }
 const backupPath=r=>r.stdout.trim().split('rollback backup: ')[1].split('\n')[0];
+for (const flag of ['--version','--help','-h']) {
+  for (const installedOnly of [false,true]) {
+    test(`rejects unexpected stderr from ${flag} during ${installedOnly?'activation':'build'} and preserves recovery`,t=>{
+      const f=fixture(t);
+      const saved=backupPath(succeeds(f.run()));
+      const before=active(f),recovery=snapshot(saved);
+      f.release('noisy',false,flag,installedOnly);
+      const r=f.run();
+      assert.equal(r.status,1,r.stdout);
+      assert.match(r.stderr,/unexpected stderr/i);
+      assertActiveDeployment(f,before);
+      assert.deepEqual(snapshot(saved),recovery);
+      if(installedOnly) {
+        const copies=fs.readdirSync(path.dirname(saved)).filter(n=>path.join(path.dirname(saved),n)!==saved);
+        assert.equal(copies.length,1);
+        const backup=path.join(path.dirname(saved),copies[0]);
+        assert.equal(snapshot(path.join(backup,'brew-version')).bytes,before[0].bytes);
+        assert.deepEqual(snapshot(path.join(backup,'Brew Version.app')),before[2]);
+        assert.equal(snapshot(path.join(backup,'receipt.json')).bytes,before[1].bytes);
+      }
+    });
+  }
+}
 test('buildInputs',()=>{
   for(const n of ['Package.swift','Makefile','Sources/a.swift','Tests/a.txt','Resources/a']) assert.equal(buildInput('brew_version/'+n),true,n);
   for(const n of ['README.md','build/release/a','.build/a']) assert.equal(buildInput('brew_version/'+n),false,n);

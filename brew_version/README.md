@@ -146,6 +146,11 @@ space-separated names, rejects invalid names, and suggests catalog prefixes.
 Select a result with the arrow keys or click; Return watches it, and Command-C
 copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
+Selecting a catalog suggestion preserves its formula/cask kind through lookup
+and Watch. An existing watch retains its known kind; editing the search clears
+the suggestion choice. Suggestions and results share a 300-point scrolling
+region that keeps the search field and footer reachable. Arrow selection scrolls
+the selected result into view.
 
 Watching sorts updates first, then names. Amber rows offer the upgrade command
 to copy and a skip action. The app never executes an upgrade. A row's context
@@ -209,6 +214,14 @@ contains `synthetic-installed`, from a private invented Homebrew receipt.
 no simulation environment switch. Use normal OS notification controls for any
 permission changes; do not erase notification databases. Quit the harness,
 turn its login toggle off, and remove only its printed fresh home when finished.
+
+The pending native search gate also includes a large query: enter
+`synthetic-formula synthetic-installed synthetic-01 synthetic-02 synthetic-03 synthetic-04 synthetic-05 synthetic-06 synthetic-07 synthetic-08 synthetic-09 synthetic-10 synthetic-11 synthetic-12 synthetic-13 synthetic-14 synthetic-15 synthetic-16 synthetic-17 synthetic-18 synthetic-19 synthetic-20`.
+The harness returns invented not-found rows for the numbered names. Arrow to
+the last row and back to the first; require each selection to stay visible,
+the input and footer to remain reachable, and Return/Command-C on the first
+row to watch/copy the expected synthetic formula. This live interaction gate
+remains pending; an offscreen layout test is separate evidence.
 
 For the minimal Settings-only gate, run
 `make -C brew_version settings-prototype`; it prints a separately signed

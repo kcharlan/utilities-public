@@ -53,8 +53,14 @@ function expectations(inputs) {
 function diagnostic(command,expected) {
   const bytes=fs.readFileSync(command);
   if(bytes.length<4 || ![0xfeedfacf,0xfeedface,0xcafebabe,0xbebafeca,0xcefaedfe,0xcffaedfe,0xcafebabf,0xbfbafeca].includes(bytes.readUInt32LE(0))) throw new Error('Expected a native Mach-O command');
-  if(execFileSync(command,['--version'],{timeout:10000}).toString()!=='brew-version '+expected.version+'\n') throw new Error('Command version activation check failed');
-  for(const flag of ['--help','-h']) if(!execFileSync(command,[flag],{timeout:10000}).equals(expected.help)) throw new Error('Command help activation check failed');
+  for(const flag of ['--version','--help','-h']) {
+    const result=spawnSync(command,[flag],{timeout:10000});
+    if(result.error) throw result.error;
+    if(result.status!==0 || result.signal) throw new Error('Command '+flag+' activation check failed');
+    if(result.stderr.length) throw new Error('Command '+flag+' activation check returned unexpected stderr');
+    const output=flag==='--version'?Buffer.from('brew-version '+expected.version+'\n'):expected.help;
+    if(!result.stdout.equals(output)) throw new Error('Command '+flag+' activation output check failed');
+  }
   execFileSync('codesign',['--verify','--strict',command],{stdio:'pipe',timeout:10000});
 }
 function appDiagnostic(app,expected) {

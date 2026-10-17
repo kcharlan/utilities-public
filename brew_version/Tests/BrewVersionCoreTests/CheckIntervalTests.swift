@@ -3,6 +3,11 @@ import Testing
 @testable import BrewVersionCore
 
 struct CheckIntervalTests {
+    @Test func exposedBoundsAndValidationMessage() {
+        #expect(CheckInterval.allowedMinutes == 10...1440)
+        #expect(CheckInterval.validationMessage(locale: Locale(identifier: "en_US")) == "Enter 10 to 1,440 minutes.")
+        #expect(CheckInterval.validationMessage(locale: Locale(identifier: "de_DE")) == "Enter 10 to 1.440 minutes.")
+    }
     @Test func rangePresetsLabelsAndSchedule() {
         #expect(CheckInterval(minutes: 9) == nil)
         #expect(CheckInterval(minutes: 10) != nil)

@@ -21,7 +21,7 @@ struct IntervalMenu: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Check interval").font(.headline)
                 TextField("Minutes", text: $minutes).accessibilityLabel("Minutes")
-                if invalid { Text("Enter 10 to 1,440 minutes.").foregroundStyle(.red) }
+                if invalid { Text(CheckInterval.validationMessage()).foregroundStyle(.red) }
                 HStack {
                     Button("Cancel") { custom = false }.keyboardShortcut(.cancelAction)
                     Spacer()
