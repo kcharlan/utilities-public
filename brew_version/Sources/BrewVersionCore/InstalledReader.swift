@@ -16,46 +16,73 @@ public struct InstalledVersion: Equatable, Codable, Sendable {
     public init(version: String, source: InstalledSource) { self.version = version; self.source = source }
 }
 
-public struct InstalledReader: Sendable {
+public struct InstalledSnapshot: Sendable {
+    var versions: [PackageKind: [PackageName: InstalledVersion]] = [:]
+    public init() {}
+    public func installed(_ name: PackageName, kind: PackageKind) -> InstalledVersion? { versions[kind]?[name] }
+}
+
+public protocol InstalledReading: Sendable {
+    func snapshot(listings: [Listing]) -> InstalledSnapshot
+}
+
+public struct InstalledReader: InstalledReading {
     private let prefixes: [HomebrewPrefix]
     private let applicationDirectories: [URL]
+    private let readData: @Sendable (URL) throws -> Data
     public init(prefixes: [HomebrewPrefix], applicationDirectories: [URL]) {
+        self.init(prefixes: prefixes, applicationDirectories: applicationDirectories, readData: { try Data(contentsOf: $0) })
+    }
+    init(prefixes: [HomebrewPrefix], applicationDirectories: [URL], readData: @escaping @Sendable (URL) throws -> Data) {
         self.prefixes = prefixes
         self.applicationDirectories = applicationDirectories
+        self.readData = readData
     }
 
     public func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion? {
         for prefix in prefixes {
             guard let version = admittedVersion(name, kind: kind, prefix: prefix) else { continue }
-            if kind == .formula { return .init(version: version, source: .cellar) }
-            if let listing, listing.autoUpdates {
-                for directory in applicationDirectories {
-                    for app in listing.appNames where app == (app as NSString).lastPathComponent && app.hasSuffix(".app") {
-                        let plist = directory.appendingPathComponent(app).appendingPathComponent("Contents/Info.plist")
-                        if let data = try? Data(contentsOf: plist),
-                           let object = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                           let version = object["CFBundleShortVersionString"] as? String,
-                           !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            return .init(version: version, source: .appBundle)
-                        }
-                    }
-                }
-                return .init(version: version, source: .caskroomFallback)
-            }
-            return .init(version: version, source: .caskroom)
+            return resolvedVersion(version, kind: kind, listing: listing)
         }
         return nil
     }
 
+    private func resolvedVersion(_ version: String, kind: PackageKind, listing: Listing?) -> InstalledVersion {
+        if kind == .formula { return .init(version: version, source: .cellar) }
+        if let listing, listing.autoUpdates {
+            for directory in applicationDirectories {
+                for app in listing.appNames where app == (app as NSString).lastPathComponent && app.hasSuffix(".app") {
+                    let plist = directory.appendingPathComponent(app).appendingPathComponent("Contents/Info.plist")
+                    if let data = try? readData(plist),
+                       let object = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                       let version = object["CFBundleShortVersionString"] as? String,
+                       !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return .init(version: version, source: .appBundle)
+                    }
+                }
+            }
+            return .init(version: version, source: .caskroomFallback)
+        }
+        return .init(version: version, source: .caskroom)
+    }
+
     public func installedPackages() -> [(name: PackageName, kind: PackageKind)] {
-        var result: [(name: PackageName, kind: PackageKind)] = []
+        snapshot(listings: []).versions.flatMap { kind, versions in versions.keys.map { ($0, kind) } }
+    }
+
+    /// Admit each rack once, retaining its selected version and provenance for
+    /// both watch evaluation and Other updates. No second receipt pass is needed.
+    public func snapshot(listings: [Listing]) -> InstalledSnapshot {
+        var byKind: [PackageKind: [PackageName: Listing]] = [:]
+        for listing in listings { byKind[listing.kind, default: [:]][listing.name] = listing }
+        var result = InstalledSnapshot()
         for prefix in prefixes {
             for kind in [PackageKind.formula, .cask] {
                 for rack in directories(prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom")) {
                     guard let name = PackageName(rack.lastPathComponent),
-                          !result.contains(where: { $0.name == name && $0.kind == kind }),
-                          admittedVersion(name, kind: kind, prefix: prefix) != nil else { continue }
-                    result.append((name, kind))
+                          result.versions[kind]?[name] == nil,
+                          let version = admittedVersion(name, kind: kind, prefix: prefix) else { continue }
+                    result.versions[kind, default: [:]][name] = resolvedVersion(version, kind: kind, listing: byKind[kind]?[name])
                 }
             }
         }
@@ -84,7 +111,7 @@ public struct InstalledReader: Sendable {
         let receiptDirectory = kind == .formula ? selected : rack.appendingPathComponent(".metadata")
         let receipt = receiptDirectory.appendingPathComponent("INSTALL_RECEIPT.json")
         let data: Data
-        do { data = try Data(contentsOf: receipt) }
+        do { data = try readData(receipt) }
         catch {
             if kind == .cask, (error as? CocoaError)?.code == .fileReadNoSuchFile,
                !isSymbolicLink(receipt) { return selected.lastPathComponent }

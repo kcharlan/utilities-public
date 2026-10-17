@@ -1,7 +1,7 @@
 import Foundation
 
 public struct Catalog: Sendable {
-    private let listings: [Listing]
+    let listings: [Listing]
     private let byKind: [PackageKind: [PackageName: Listing]]
     init(listings: [Listing]) {
         var byKind: [PackageKind: [PackageName: Listing]] = [:]
@@ -26,81 +26,81 @@ public struct CatalogFetch: Sendable {
     public let revalidated: Bool
 }
 
-public struct CatalogClient: Sendable {
+public actor CatalogClient {
     private let transport: any HTTPTransport
     private let cacheDirectory: URL
     private var cacheFile: URL { cacheDirectory.appendingPathComponent("catalog.json") }
+    private var previous: CatalogIndex?
+    private var didReadCache = false
 
     public init(transport: any HTTPTransport, cacheDirectory: URL) {
         self.transport = transport; self.cacheDirectory = cacheDirectory
     }
-    public static func makeTransport() -> URLSessionTransport {
+    public nonisolated static func makeTransport() -> URLSessionTransport {
         URLSessionTransport(requestTimeout: 10, resourceTimeout: 120)
     }
     public func cached() throws -> Catalog? { readCache()?.catalog }
 
     public func load() async throws -> CatalogFetch {
-        // Bulk JSON decoding and disk I/O must never inherit the UI actor.
-        try await Task.detached { try await self.fetch() }.value
+        try await fetch()
     }
     private func fetch() async throws -> CatalogFetch {
         let previous = readCache()
         do {
-            let formula = try await fetchList(.formula, previous: previous?.bytes.formula)
-            let cask = try await fetchList(.cask, previous: previous?.bytes.cask)
-            let bytes = CatalogBytes(formula: formula.bytes, cask: cask.bytes)
-            let catalog = Catalog(listings: formula.listings + cask.listings)
+            let formula = try await fetchList(.formula, previous: previous?.formula)
+            let cask = try await fetchList(.cask, previous: previous?.cask)
+            let index = CatalogIndex(schema: 1, formula: formula, cask: cask)
             // Publish the two validated lists together: no partial refresh can poison a good pair.
             try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDirectory.path)
-            try JSONEncoder().encode(bytes).write(to: cacheFile, options: .atomic)
-            return CatalogFetch(catalog: catalog, revalidated: true)
+            try JSONEncoder().encode(index).write(to: cacheFile, options: .atomic)
+            self.previous = index
+            return CatalogFetch(catalog: index.catalog, revalidated: true)
         } catch {
             if let previous { return CatalogFetch(catalog: previous.catalog, revalidated: false) }
             throw error
         }
     }
-    private func fetchList(_ kind: PackageKind, previous: CatalogListBytes?) async throws -> (bytes: CatalogListBytes, listings: [Listing]) {
+    private func fetchList(_ kind: PackageKind, previous: CatalogListIndex?) async throws -> CatalogListIndex {
         let url = URL(string: "https://formulae.brew.sh/api/\(kind.rawValue).json")!
         var response = try await transport.get(url, ifNoneMatch: previous?.etag)
         if response.status == 304, previous == nil {
             response = try await transport.get(url, ifNoneMatch: nil)
         }
         if response.status == 304, let previous {
-            return (previous, try decodeList(previous.data, kind: kind))
+            return previous
         }
         guard response.status == 200 else { throw CatalogError.http(response.status) }
-        let listings = try decodeList(response.body, kind: kind)
-        return (CatalogListBytes(data: response.body, etag: response.etag), listings)
+        let listings = try Listing.decodeList(response.body, kind: kind)
+        return CatalogListIndex(listings: listings, etag: response.etag)
     }
-    private func readCache() -> (bytes: CatalogBytes, catalog: Catalog)? {
+    private func readCache() -> CatalogIndex? {
+        guard !didReadCache else { return previous }
+        didReadCache = true
         guard let data = try? Data(contentsOf: cacheFile),
-              let bytes = try? JSONDecoder().decode(CatalogBytes.self, from: data),
-              let formula = try? decodeList(bytes.formula.data, kind: .formula),
-              let cask = try? decodeList(bytes.cask.data, kind: .cask) else { return nil }
-        return (bytes, Catalog(listings: formula + cask))
-    }
-    private func decodeList(_ data: Data, kind: PackageKind) throws -> [Listing] {
-        guard let objects = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            throw CatalogError.invalidList
-        }
-        return objects.compactMap { object in
-            guard let listing = Listing.decodeItem(object, kind: kind),
-                  !listing.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return listing
-        }
+              let index = try? JSONDecoder().decode(CatalogIndex.self, from: data), index.schema == 1,
+              index.formula.valid(kind: .formula), index.cask.valid(kind: .cask) else { return nil }
+        previous = index
+        return index
     }
 }
 
-private enum CatalogError: Error { case http(Int), invalidList }
-private struct CatalogListBytes: Codable, Sendable {
-    let data: Data
+private enum CatalogError: Error { case http(Int) }
+private struct CatalogListIndex: Codable, Sendable {
+    let listings: [Listing]
     let etag: String?
+    func valid(kind: PackageKind) -> Bool {
+        !listings.isEmpty && listings.allSatisfy {
+            $0.kind == kind && !$0.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (kind == .cask || $0.revision >= 0)
+        }
+    }
 }
-private struct CatalogBytes: Codable, Sendable {
-    let formula: CatalogListBytes
-    let cask: CatalogListBytes
+private struct CatalogIndex: Codable, Sendable {
+    let schema: Int
+    let formula: CatalogListIndex
+    let cask: CatalogListIndex
+    var catalog: Catalog { Catalog(listings: formula.listings + cask.listings) }
 }
 
 public struct OtherUpdate: Equatable, Sendable {
@@ -109,10 +109,13 @@ public struct OtherUpdate: Equatable, Sendable {
 }
 
 public func otherUpdates(catalog: Catalog, installed: InstalledReader, watched: Set<PackageName>) -> [OtherUpdate] {
-    installed.installedPackages().compactMap { package -> OtherUpdate? in
-        guard !watched.contains(package.name),
-              let listing = catalog.listing(for: package.name, kind: package.kind),
-              let local = installed.installed(package.name, kind: package.kind, listing: listing),
+    otherUpdates(catalog: catalog, snapshot: installed.snapshot(listings: catalog.listings), watched: watched)
+}
+
+public func otherUpdates(catalog: Catalog, snapshot: InstalledSnapshot, watched: Set<PackageName>) -> [OtherUpdate] {
+    catalog.listings.compactMap { listing -> OtherUpdate? in
+        guard !watched.contains(listing.name),
+              let local = snapshot.installed(listing.name, kind: listing.kind),
               case .updateAvailable = updateStatus(listing: listing, installed: local) else { return nil }
         return OtherUpdate(listing: listing, installed: local)
     }.sorted {

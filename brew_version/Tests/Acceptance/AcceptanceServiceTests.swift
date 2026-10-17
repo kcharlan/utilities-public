@@ -18,6 +18,6 @@ struct AcceptanceServiceTests {
         let catalog = try await CatalogClient(transport: service, cacheDirectory: home).load().catalog
         let installed = try #require(catalog.listing(for: PackageName("synthetic-installed")!, kind: .formula))
         #expect(installed.version == "2.0-synthetic")
-        #expect(catalog.suggestions(prefix: "synthetic").count == 1)
+        #expect(catalog.suggestions(prefix: "synthetic").count == 2)
     }
 }

@@ -1,5 +1,71 @@
 # Lessons learned
 
+## 2026-10-17: Keep catalog caches proportional to the fields the app uses
+
+Persist decoded Listing indexes and ETags, not raw JSON encoded as base64.
+Typed decoding can discard large bottle/dependency metadata without constructing
+a full Foundation object graph. Hold the indexes in an actor, read disk once,
+and reuse decoded listings on 304. Regress cache size with large invented ignored
+metadata and corrupt disk after loading to prove memory-backed revalidation.
+
+## 2026-10-17: An empty bulk success must not erase a good catalog
+
+HTTP 200 does not establish a usable catalog. Reject lists with zero usable
+items and replace formula/cask indexes only after both validate. Preserve the
+prior pair and ETags after partial, malformed, empty or failed refreshes.
+Synthetic successful fixtures must contain usable items too.
+
+## 2026-10-17: Scope a visibility setting to its own content
+
+Other updates and prefix suggestions share the catalog but have different
+visibility contracts. Turning off installed updates must leave suggestions
+available during hydration, reload and refresh. Gate the installed section,
+not the shared catalog resource.
+
+## 2026-10-17: Capture installed state once away from the main actor
+
+Inventory admission and installed-version lookup must share a single receipt
+pass. Capture an installation snapshot off-main, reuse it for watched checks
+and Other updates, and generation-check publication after suspension. A blocked
+scan regression should prove UI state can change while it waits; a receipt-read
+counter catches accidental inventory-plus-lookup passes.
+
+## 2026-10-17: Avoid persistence and scans for unchanged state
+
+Compare a normalized candidate with committed state before saving. Closing an
+already acknowledged popover or selecting the current setting must not write.
+Filter a captured installation snapshot after watch or visibility changes;
+interval, skip and close commits do not require fresh filesystem inventory.
+
+## 2026-10-17: Track successful checks separately from transport attempts
+
+An entirely unreachable check must retain its previous successful timestamp.
+Keep a separate attempt clock to bound retries, and let reconnect bypass that
+transport floor even if a recent manual failure followed a successful check.
+Start automatic scheduling behind a network gate until the path monitor answers.
+
+## 2026-10-17: Failed saves need their own automatic retry floor
+
+A successful request followed by rejected persistence must not repeat each
+minute. Bound automatic requests by the configured interval from the failed
+save, including across reconnects, while permitting an immediate manual retry.
+Apply the same rule to catalog timestamps; injected clocks and request counts
+prove cadence without sleeping or changing successful-check timestamps.
+
+## 2026-10-17: Prune conditional caches at watch lifecycle boundaries
+
+Persist only entries whose names are watched. Removal must evict the in-memory
+conditional cache too, and an in-flight old cache snapshot must not be merged
+after that boundary changes, even when Undo restores the same name. Regress
+both saved bytes and outgoing ETags; search-only entries must never accumulate
+in saved watch state.
+
+## 2026-10-17: Expose persistence recovery kinds separately from message text
+
+Setting aside corrupt state successfully is a recovery warning, not a failed
+save. Expose explicit recovery-warning, blocked-load and failed-save states so
+UI retry hints follow the actual recovery action without parsing error prose.
+
 ## 2026-10-17: Admit legacy casks only for absent receipts
 
 Caskroom version directories can predate install receipts. Admit those legacy

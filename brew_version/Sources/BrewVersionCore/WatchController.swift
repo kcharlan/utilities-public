@@ -7,9 +7,13 @@ public protocol Notifier: Sendable {
 }
 public extension Notifier { func requestAuthorization() async {} }
 
+public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, saveFailure }
+
 @MainActor @Observable public final class WatchController {
     public private(set) var state: AppState
     public private(set) var persistenceError: String?
+    public private(set) var persistenceIssue: PersistenceIssue?
+    public private(set) var networkAvailable: Bool
     public private(set) var canSave: Bool
     public private(set) var isChecking = false
     public private(set) var results: [LookupResult] = []
@@ -21,7 +25,9 @@ public extension Notifier { func requestAuthorization() async {} }
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
 
     private let transport: any HTTPTransport
-    private let installed: InstalledReader?
+    private let installed: (any InstalledReading)?
+    private var installedUpdates: [OtherUpdate] = []
+    private var installationGeneration = UUID()
     private let store: WatchStore
     private let notifier: any Notifier
     private let now: () -> Date
@@ -31,12 +37,17 @@ public extension Notifier { func requestAuthorization() async {} }
     private var pendingAdds: Set<PackageName> = []
     private let catalogClient: CatalogClient?
     private var lastCatalogAttempt: Date?
+    private var lastCheckAttempt: Date?
+    private var lastFailedSave: Date?
+    private var retryWatchesOnReconnect = false
 
-    public init(transport: any HTTPTransport, installed: InstalledReader?, store: WatchStore,
+    public init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
                 notifier: any Notifier, now: @escaping () -> Date = Date.init,
-                catalogClient: CatalogClient? = nil) {
+                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true) {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
+        persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
+        self.networkAvailable = networkAvailable
         self.transport = transport; self.installed = installed; self.store = store
         self.notifier = notifier; self.now = now
         self.catalogClient = catalogClient
@@ -49,23 +60,30 @@ public extension Notifier { func requestAuthorization() async {} }
         guard !isChecking, !isRefreshingCatalog, pendingAdds.isEmpty else { return }
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
+        persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
         cache = ListingCache(entries: load.state.listingCache)
         client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
-        if !state.showOtherUpdates { catalog = nil }
+        installationGeneration = UUID()
         recomputeOthers()
+        Task { await self.refreshInstalled() }
     }
 
     @discardableResult private func commit(_ candidate: AppState) -> Bool {
         guard canSave else { return false }
+        var candidate = candidate
+        let watched = Set(candidate.watched.map(\.name))
+        candidate.listingCache = candidate.listingCache.filter { watched.contains($0.value.listing.name) }
+        guard candidate != state else { return true }
         do {
             try store.save(candidate)
-            state = candidate; persistenceError = nil
+            state = candidate; persistenceError = nil; persistenceIssue = nil
             refreshSearchWatchState()
             recomputeOthers()
             return true
         } catch {
             persistenceError = "Couldn't save state: \(error.localizedDescription)"
+            persistenceIssue = .saveFailure; lastFailedSave = now()
             return false
         }
     }
@@ -77,14 +95,17 @@ public extension Notifier { func requestAuthorization() async {} }
         var entry = WatchEntry(name: name, kind: kind)
         do {
             let listing = try await scheduler.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto, client: client)
-            entry = evaluate(entry, listing: listing, installed: installed?.installed(name, kind: listing.kind, listing: listing)).0
+            let snapshot = await refreshInstalled(extraListings: [listing])
+            entry = evaluate(entry, listing: listing, installed: snapshot.installed(name, kind: listing.kind)).0
         } catch {
             entry.lastError = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
         }
-        let snapshot = await cache.snapshot()
+        let requestedCache = cache
+        let snapshot = await requestedCache.snapshot()
         guard canSave, !state.watched.contains(where: { $0.name == name }) else { return }
         var candidate = state
-        candidate.watched.append(entry); candidate.listingCache = snapshot
+        candidate.watched.append(entry)
+        candidate.listingCache = requestedCache === cache ? snapshot : state.listingCache
         if commit(candidate) {
             generations[name] = UUID()
             await notifier.requestAuthorization()
@@ -97,6 +118,10 @@ public extension Notifier { func requestAuthorization() async {} }
         let entry = candidate.watched.remove(at: index)
         guard commit(candidate) else { return nil }
         generations.removeValue(forKey: name)
+        // Replace the cache boundary synchronously: in-flight lookups can finish
+        // into their old actor, but cannot resurrect a removed watch's ETag.
+        cache = ListingCache(entries: state.listingCache)
+        client = HomebrewClient(transport: transport, cache: cache)
         return (entry, index)
     }
     @discardableResult public func restore(_ entry: WatchEntry, at index: Int) -> Bool {
@@ -131,36 +156,70 @@ public extension Notifier { func requestAuthorization() async {} }
         var candidate = state; candidate.interval = interval; commit(candidate)
     }
     public func checkIfDue() async {
-        guard CheckSchedule.isDue(lastCheck: state.lastCheck, interval: state.interval, now: now()) else { return }
+        guard automaticRequestsAllowed,
+              CheckSchedule.isDue(lastCheck: lastCheckAttempt, interval: state.interval, now: now()),
+              retryWatchesOnReconnect || CheckSchedule.isDue(lastCheck: state.lastCheck, interval: state.interval, now: now()) else { return }
         await checkNow()
     }
 
+    private var automaticRequestsAllowed: Bool {
+        networkAvailable && CheckSchedule.isDue(lastCheck: lastFailedSave, interval: state.interval, now: now())
+    }
+
+    /// The app starts with networkAvailable=false until its path monitor answers.
+    /// Reconnection bypasses transport-failure backoff, never failed-save backoff.
+    public func setNetworkAvailable(_ available: Bool) async {
+        let reconnect = !networkAvailable && available
+        networkAvailable = available
+        guard reconnect else { return }
+        if retryWatchesOnReconnect { lastCheckAttempt = nil }
+        lastCatalogAttempt = nil
+        await scheduledTick()
+    }
+
     private func recomputeOthers() {
-        guard state.showOtherUpdates, let catalog, let installed else { others = []; return }
-        others = otherUpdates(catalog: catalog, installed: installed, watched: Set(state.watched.map(\.name)))
+        guard state.showOtherUpdates else { others = []; return }
+        let watched = Set(state.watched.map(\.name))
+        others = installedUpdates.filter { !watched.contains($0.listing.name) }
+    }
+
+    @discardableResult private func refreshInstalled(extraListings: [Listing] = []) async -> InstalledSnapshot {
+        let generation = UUID(); installationGeneration = generation
+        let catalog = self.catalog
+        let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
+        let installed = self.installed
+        let (snapshot, updates) = await Task.detached {
+            let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
+            let updates = catalog.map { otherUpdates(catalog: $0, snapshot: snapshot, watched: []) } ?? []
+            return (snapshot, updates)
+        }.value
+        if installationGeneration == generation {
+            installedUpdates = updates
+            recomputeOthers()
+        }
+        return snapshot
     }
 
     public func hydrateCatalog() async {
-        guard state.showOtherUpdates, let catalogClient else { return }
-        let cached = await Task.detached { try? catalogClient.cached() }.value
-        guard state.showOtherUpdates else { return }
+        guard let catalogClient else { return }
+        let cached = try? await catalogClient.cached()
         // A refresh may have completed while disk hydration was suspended.
         if catalog == nil { catalog = cached }
-        recomputeOthers()
+        await refreshInstalled()
     }
 
     public func refreshCatalogIfDue() async {
-        guard canSave, state.showOtherUpdates, let catalogClient, !isRefreshingCatalog else { return }
+        guard canSave, automaticRequestsAllowed, let catalogClient, !isRefreshingCatalog,
+              CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: state.interval, now: now()) else { return }
         isRefreshingCatalog = true
         defer { isRefreshingCatalog = false }
         if catalog == nil { await hydrateCatalog() }
-        guard state.showOtherUpdates,
+        guard automaticRequestsAllowed,
               catalog == nil || (state.lastCatalogFetch.map({ $0.addingTimeInterval(86400) <= now() }) ?? true),
               CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: state.interval, now: now()) else { return }
         lastCatalogAttempt = now()
         do {
             let result = try await catalogClient.load()
-            guard state.showOtherUpdates else { return }
             // Merge only after the final await, preserving watch/settings commits made in flight.
             if result.revalidated {
                 var candidate = state
@@ -168,7 +227,7 @@ public extension Notifier { func requestAuthorization() async {} }
                 guard commit(candidate) else { return }
             }
             catalog = result.catalog
-            recomputeOthers()
+            await refreshInstalled()
         } catch {
             // Existing content survives an offline or invalid first refresh. The attempt
             // clock bounds retries; only a successful persisted fetch advances the daily clock.
@@ -188,7 +247,7 @@ public extension Notifier { func requestAuthorization() async {} }
         if on {
             Task { await self.hydrateCatalog(); await self.refreshCatalogIfDue() }
         } else {
-            catalog = nil; others = []
+            others = []
         }
     }
 
@@ -229,15 +288,21 @@ public extension Notifier { func requestAuthorization() async {} }
             return rows.sorted { $0.0 < $1.0 }.map(\.1)
         }
         guard !Task.isCancelled, searchGeneration == generation else { return }
+        let listings = found.compactMap { result -> Listing? in
+            if case .found(let listing, _, _) = result { return listing }; return nil
+        }
+        let snapshot = await refreshInstalled(extraListings: listings)
+        guard !Task.isCancelled, searchGeneration == generation else { return }
         results = found.map { result in
             guard case .found(let listing, _, _) = result else { return result }
-            return .found(listing, installed: installed?.installed(listing.name, kind: listing.kind, listing: listing), watched: state.watched.contains { $0.name == listing.name })
+            return .found(listing, installed: snapshot.installed(listing.name, kind: listing.kind), watched: state.watched.contains { $0.name == listing.name })
         }
     }
 
     public func checkNow() async {
-        guard canSave, !isChecking else { return }
+        guard canSave, networkAvailable, !isChecking else { return }
         isChecking = true
+        lastCheckAttempt = now()
         defer { isChecking = false }
         let client = self.client
         let scheduler = self.scheduler
@@ -261,7 +326,10 @@ public extension Notifier { func requestAuthorization() async {} }
             }
             return results
         }
-        let snapshot = await cache.snapshot()
+        let requestedCache = cache
+        let snapshot = await requestedCache.snapshot()
+        let listings = results.compactMap { try? $0.result.get() }
+        let installation = await refreshInstalled(extraListings: listings)
         // No suspension from here through commit: merge into the latest committed state.
         var candidate = state
         var notices: [Notice] = []
@@ -270,14 +338,19 @@ public extension Notifier { func requestAuthorization() async {} }
                   let index = candidate.watched.firstIndex(where: { $0.name == result.name }) else { continue }
             switch result.result {
             case .success(let listing):
-                let local = installed?.installed(result.name, kind: listing.kind, listing: listing)
+                let local = installation.installed(result.name, kind: listing.kind)
                 let (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local)
                 candidate.watched[index] = entry
                 if let notice { notices.append(notice) }
             case .failure(let error): candidate.watched[index].lastError = error.rowMessage
             }
         }
-        candidate.lastCheck = now(); candidate.listingCache = snapshot
+        retryWatchesOnReconnect = !results.isEmpty && results.allSatisfy {
+            if case .failure(.unreachable) = $0.result { return true }
+            return false
+        }
+        if !retryWatchesOnReconnect { candidate.lastCheck = now() }
+        candidate.listingCache = requestedCache === cache ? snapshot : state.listingCache
         guard commit(candidate) else { return }
         for notice in notices { await notifier.post(notice) }
     }

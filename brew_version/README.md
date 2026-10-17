@@ -92,9 +92,11 @@ The release version comes from the tracked Info.plist through
 The app core persists chosen watches, release acknowledgements, skipped releases,
 check interval and conditional listing cache in `state.json` under
 `~/Library/Application Support/Brew Version/`. The directory is private (0700)
-and the file is private (0600). Each mutation writes atomically before the
+and the file is private (0600). Changed state writes atomically before the
 visible state changes; notifications follow a successful save. A failed save
-keeps the previous state and can be retried.
+keeps the previous state and can be retried. Closing an already acknowledged
+popover or choosing the current setting does not write. Saved conditional
+listing entries are limited to watched names; removing a watch evicts its cache.
 
 Unreadable or invalid saved state is moved to `state.json.bad` before starting
 fresh. Existing recovery files are preserved with unique suffixes. If that move
@@ -105,7 +107,11 @@ and whole-minute custom intervals from 10 minutes to 24 hours. A first lookup
 sets a baseline without notifying. Installed updates stay amber unless skipped;
 new releases for uninstalled packages stay amber across polls and restarts until
 the popover closes. Checks use at most four concurrent lookups and retain settings and
-watch changes made while the network is busy.
+watch changes made while the network is busy. An entirely unreachable check
+does not advance the last successful check. Automatic failures retry no sooner
+than the chosen interval; reconnect retries an unreachable check promptly.
+Failed saves retain that interval floor across reconnects; manual checks can
+retry immediately.
 
 ## Catalog and Other updates
 
@@ -127,14 +133,19 @@ is async so reading and decoding bulk cache data runs away from the main actor.
 `scheduledTick()` independently starts watched checks and catalog refreshes;
 the catalog is fetched when absent or 24 hours after successful revalidation.
 Failed attempts use the watched interval as an in-memory retry floor, without
-changing the last successful catalog timestamp. Disabling Other updates skips
-catalog I/O and clears its visible content; enabling hydrates and checks cadence.
+changing the last successful catalog timestamp. Disabling Other updates clears
+only that section; prefix suggestions still hydrate and refresh on the same
+cadence. Installation snapshots run away from the main actor, admit each receipt
+once, and are reused when filtering watches or changing unrelated settings.
 
 The catalog cache lives under `~/Library/Caches/Brew Version/`. Its
-`catalog.json` snapshot contains both raw lists and their ETags, replaced
-atomically only after both responses validate. A partial, invalid or failed
-download retains the previous snapshot as stale content. A 304 response uses
-validated cached bytes; without them, the client retries unconditionally.
+`catalog.json` snapshot contains a versioned pair of slim Listing indexes and
+their ETags, replaced atomically only after both responses validate. Legacy raw
+cache envelopes are ignored and replaced on the next successful refresh.
+Unknown API metadata is discarded during typed decoding away from the main
+actor. A partial, invalid, empty or failed download retains the previous pair
+as stale content. A 304 response reuses the decoded listings; without a valid
+index, the client retries unconditionally. Each client reads its disk cache once.
 The bulk transport uses a 10-second idle timeout and a 120-second total timeout.
 Catalog timestamps and the visibility/collapse settings use the same atomic
 state-save boundary as watches, retaining committed values when saving fails.
@@ -184,8 +195,9 @@ The app composes its state and cache paths under the current user's home:
 `~/Library/Application Support/Brew Version/state.json` and
 `~/Library/Caches/Brew Version/`. Removing the app leaves both folders; delete
 them by hand if the saved watches and catalog are no longer wanted.
-Persistence errors appear in the popover; a blocked load disables mutations
-and refresh until Retry succeeds. After a failed save, retry that action.
+Persistence problems appear in the popover; a blocked load disables mutations
+and refresh until Retry succeeds. A recovered quarantine warning is distinct
+from a failed save; only the latter calls for retrying the failed action.
 
 ### Settings and native acceptance gates
 

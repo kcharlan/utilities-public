@@ -22,7 +22,7 @@ No live installation, deployment, push or merge was performed. Preserve this dis
 12. Reject inconsistent nested saved values and listing/name mismatches. Cost: incompatible manual edits are quarantined rather than partly admitted.
 13. Use a narrow internal I/O seam for failure tests. Cost: a new failure category may require another seam; no production simulation switch exists.
 14. Make hydrateCatalog async so cache I/O/decoding is off MainActor and startup can await content. This changes the plan's synchronous signature. Cost: callers must await hydration.
-15. Atomically cache both raw catalog lists and ETags in one envelope. Cost: a hypothetical external cache reader would need that schema; no such consumer exists.
+15. Atomically cache both slim Listing indexes and ETags in a versioned envelope. Ignore the legacy raw/base64 format. Cost: the first launch with an old cache fetches fresh lists; no external cache consumer exists.
 16. Use one four-request permit pool across checks, additions and search. Cost: large searches may queue behind checks; cancelled queued work drops before transport.
 17. Retain intended SwiftUI SettingsLink path pending actual runtime evidence; a locked desktop does not establish failure. Cost: the planned AppKit fallback may still be needed after an unlocked probe.
 18. Failed Undo suspends normal expiry and blocks replacement removals until successful retry; same-name Watch restores the saved entry. Cost: another Stop watching action waits for recovery. Ordinary Undo still expires after five seconds.
@@ -30,7 +30,7 @@ No live installation, deployment, push or merge was performed. Preserve this dis
 20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout proves the bound, while live arrow navigation remains an unmet native gate.
 21. Expose interval bounds once in `CheckInterval` and format the validation copy from them using the current locale. Cost: grouping follows system locale rather than always using English punctuation.
 22. Reject any stderr from signed CLI diagnostics for all three help/version flags, at build and activation. Cost: a future intentional CLI warning must be considered explicitly before changing this contract.
-23. Use the normal interval retry floor after catalog failure; omit the optional reconnect exemption. Cost: a reconnected machine may wait until that floor expires.
+23. Use the normal interval retry floor after transport or persistence failure. Reconnect bypasses transport backoff but preserves failed-save backoff. Cost: a reconnected machine with a save failure waits until that interval floor or a manual retry.
 24. Keep a Quit footer action for a Dock-less temporary app. Harness-only appearance and synthetic service injection remain outside production composition. Cost: extra footer width and a separately built acceptance entry point.
 25. Encode installer app-tree identity with sorted paths, entry types, full modes and content hashes, including directories/root. Derive expected version and golden help from admitted tracked inputs. Cost: metadata-only mode changes require a matching release; these checks establish identity, not compiler reproducibility.
 
@@ -90,3 +90,34 @@ results were not rerun or presented as fresh results for this wave.
 ## Installer recovery choice
 
 Keep a validated copy of the old app before moving the live old bundle. Retain that copy if the move fails, including cross-device failure. The extra temporary copy costs disk I/O and protects the restoration path; failed activation must not destroy its own backup.
+
+## Catalog and scheduling follow-up
+
+The cache now persists schema-1 slim Listing indexes with each list's ETag.
+`CatalogClient` is an actor: `cached()` requires `await`, disk hydration runs once
+per client, and 304 reuses decoded indexes. Bulk and individual API responses
+share typed Listing field decoding; ignored API metadata is not retained.
+Empty or unusable successful lists preserve the previous pair. The synthetic
+acceptance service now supplies a usable cask list instead of treating `[]` as
+a valid successful catalog.
+
+Other updates visibility no longer controls catalog suggestions. Installation
+snapshots and update derivation run off-main with stale-generation rejection;
+watch filtering uses the retained derived list. Each rack is admitted once,
+including the previously corrected legacy-cask and formula-revision behavior.
+Unchanged state does not save. Conditional listing persistence is pruned to
+watched names, and removal replaces the cache boundary so suspended old work
+cannot reintroduce a removed watch's ETag after Undo.
+
+The controller exposes `PersistenceIssue` separately from its message. Recovery
+warnings, blocked loads and failed saves have distinct values. Its new
+`networkAvailable` initializer argument and async `setNetworkAvailable(_:)`
+support startup gating and immediate unreachable-check retries on reconnect,
+while failed saves retain an automatic interval floor. App/SystemEvents and
+retry-hint UI wiring is part of the following native-UI task.
+
+Fresh validation: 144 Swift tests pass (127 core, 11 CLI, 6 app), the signed
+release and strict signatures pass, CLI help matches the golden fixture with
+empty stderr, and source/built plist/CLI versions agree at 1.0.0. The synthetic
+acceptance service's one test and signed harness build pass. No GUI was launched
+for this core task; release footprint and native acceptance are separate gates.

@@ -25,15 +25,17 @@ extension WatchControllerTests {
         #expect(c.catalog?.suggestions(prefix: "").count == 2)
         #expect(c.state.lastCatalogFetch == clock.date)
     }
-    @Test func hiddenOtherUpdatesSkipsDownload() async throws {
+    @Test func hiddenOtherUpdatesKeepsSuggestions() async throws {
         let f = WatchFixture(); defer { f.clean() }
         var state = AppState.initial; state.showOtherUpdates = false; try f.store.save(state)
         let transport = catalogStub()
         let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: RecordingNotifier(),
                                 catalogClient: CatalogClient(transport: transport, cacheDirectory: f.directory.appendingPathComponent("catalog")))
         await c.hydrateCatalog(); await c.scheduledTick()
-        #expect(await transport.requests.isEmpty)
-        #expect(c.catalog == nil && c.others.isEmpty)
+        #expect(await transport.requests.count == 2)
+        #expect(c.catalog?.suggestions(prefix: "synthetic").count == 2 && c.others.isEmpty)
+        c.retryLoad()
+        #expect(c.catalog?.suggestions(prefix: "synthetic").count == 2)
     }
     @Test func restartHydratesBeforeDue() async throws {
         let f = try InstallationFixture()
@@ -112,7 +114,7 @@ extension WatchControllerTests {
         c.setOtherUpdatesCollapsed(true)
         #expect(f.store.load().state.otherUpdatesCollapsed)
         c.setShowOtherUpdates(false)
-        #expect(c.catalog == nil && c.others.isEmpty)
+        #expect(c.catalog?.suggestions(prefix: "synthetic").count == 2 && c.others.isEmpty)
     }
     @Test func catalogPersistenceFailureKeepsCommittedState() async throws {
         let f = WatchFixture(); defer { f.clean() }

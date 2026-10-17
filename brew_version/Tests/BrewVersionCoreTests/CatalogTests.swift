@@ -44,12 +44,12 @@ struct CatalogTests {
         _ = try await seedCatalog(f.directory)
         let transport = StubTransport([:])
         let client = CatalogClient(transport: transport, cacheDirectory: f.directory)
-        #expect(try client.cached()?.suggestions(prefix: "").count == 2)
+        #expect(try await client.cached()?.suggestions(prefix: "").count == 2)
         #expect(await transport.requests.isEmpty)
         for file in try FileManager.default.contentsOfDirectory(at: f.directory, includingPropertiesForKeys: nil) {
             try Data("synthetic corrupt cache".utf8).write(to: file)
         }
-        #expect(try client.cached() == nil)
+        #expect(try await CatalogClient(transport: transport, cacheDirectory: f.directory).cached() == nil)
     }
     @Test func revalidationOutcome() async throws {
         let f = WatchFixture(); defer { f.clean() }
@@ -83,7 +83,7 @@ struct CatalogTests {
         _ = try await seedCatalog(f.directory)
         let files = try FileManager.default.contentsOfDirectory(at: f.directory, includingPropertiesForKeys: nil)
         let before = try files.map { try Data(contentsOf: $0) }
-        let transport = StubTransport([catalogURL(.formula): [catalogResponse(200, "[]", etag: "synthetic-new")],
+        let transport = StubTransport([catalogURL(.formula): [catalogResponse(200, syntheticFormulaList, etag: "synthetic-new")],
                                        catalogURL(.cask): [catalogResponse(200, invalid)]])
         let result = try await CatalogClient(transport: transport, cacheDirectory: f.directory).load()
         #expect(!result.revalidated && result.catalog.suggestions(prefix: "").count == 2)

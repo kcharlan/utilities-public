@@ -24,42 +24,103 @@ public struct Listing: Codable, Equatable, Sendable {
     }
 
     public static func decode(_ data: Data, kind: PackageKind, name: PackageName) throws -> Listing {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let listing = decodeObject(object, kind: kind, name: name)
+        guard let fields = try? JSONDecoder().decode(ListingFields.self, from: data),
+              let listing = fields.listing(kind: kind, name: name)
         else { throw LookupError.invalidVersion(kind, name) }
         return listing
     }
 
     public static func decodeItem(_ object: [String: Any], kind: PackageKind) -> Listing? {
-        guard let rawName = object[kind == .formula ? "name" : "token"] as? String,
-              let name = PackageName(rawName) else { return nil }
-        return decodeObject(object, kind: kind, name: name)
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let fields = try? JSONDecoder().decode(ListingFields.self, from: data) else { return nil }
+        return fields.listing(kind: kind)
     }
-
-    private static func decodeObject(_ object: [String: Any], kind: PackageKind, name: PackageName) -> Listing? {
-        let rawVersion = kind == .formula ? (object["versions"] as? [String: Any])?["stable"] : object["version"]
-        guard let version = rawVersion as? String, !version.isEmpty else { return nil }
-        return Listing(name: name, kind: kind, version: version,
-                       revision: object["revision"] as? Int ?? 0,
-                       autoUpdates: object["auto_updates"] as? Bool ?? false,
-                       summary: object["desc"] as? String,
-                       homepage: (object["homepage"] as? String).flatMap(URL.init(string:)),
-                       appNames: kind == .cask ? appNames(object["artifacts"]) : [])
+    static func decodeList(_ data: Data, kind: PackageKind) throws -> [Listing] {
+        let decoder = JSONDecoder()
+        decoder.userInfo[.listingKind] = kind
+        let listings = try decoder.decode(ListingList.self, from: data).listings
+        guard !listings.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        return listings
     }
+}
 
-    private static func appNames(_ artifacts: Any?) -> [String] {
-        guard let artifacts = artifacts as? [Any] else { return [] }
-        return artifacts.compactMap { artifact in
-            guard let object = artifact as? [String: Any], let args = object["app"] as? [Any] else { return nil }
-            // Homebrew Relocated#initialize stores a target in the app argument list;
-            // artifacts_list may also serialize a resolved sibling target.
-            let argumentTarget = args.dropFirst().compactMap { ($0 as? [String: Any])?["target"] }.first
-            let paths = [object["target"], argumentTarget, args.first]
-            return paths.compactMap { value -> String? in
-                guard let path = value as? String, !path.isEmpty else { return nil }
-                let component = (path as NSString).lastPathComponent
-                return component.isEmpty || component == "/" ? nil : component
-            }.first
+private extension CodingUserInfoKey {
+    static let listingKind = CodingUserInfoKey(rawValue: "listingKind")!
+}
+private struct ListingList: Decodable {
+    let listings: [Listing]
+    init(from decoder: any Decoder) throws {
+        var items = try decoder.unkeyedContainer()
+        let kind = decoder.userInfo[.listingKind] as! PackageKind
+        var result: [Listing] = []
+        while !items.isAtEnd {
+            let item = try items.superDecoder()
+            guard let fields = try? ListingFields(from: item) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if let listing = fields.listing(kind: kind) { result.append(listing) }
         }
+        listings = result
+    }
+}
+
+// Decode only fields used by Listing. Unknown bottle/dependency metadata never
+// becomes a Foundation object graph or a persisted copy of the API response.
+private struct ListingFields: Decodable {
+    let name: String?, token: String?, version: String?, stable: String?
+    let revision: Int, autoUpdates: Bool
+    let summary: String?, homepage: String?
+    let appNames: [String]
+    enum Keys: String, CodingKey { case name, token, version, versions, stable, revision, auto_updates, desc, homepage, artifacts }
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        name = try? c.decode(String.self, forKey: .name)
+        token = try? c.decode(String.self, forKey: .token)
+        version = try? c.decode(String.self, forKey: .version)
+        stable = (try? c.nestedContainer(keyedBy: Keys.self, forKey: .versions)).flatMap { try? $0.decode(String.self, forKey: .stable) }
+        revision = (try? c.decode(Int.self, forKey: .revision)) ?? 0
+        autoUpdates = (try? c.decode(Bool.self, forKey: .auto_updates)) ?? false
+        summary = try? c.decode(String.self, forKey: .desc)
+        homepage = try? c.decode(String.self, forKey: .homepage)
+        var names: [String] = []
+        if var artifacts = try? c.nestedUnkeyedContainer(forKey: .artifacts) {
+            while !artifacts.isAtEnd {
+                let item = try artifacts.superDecoder()
+                if let artifact = try? AppArtifact(from: item), let name = artifact.name { names.append(name) }
+            }
+        }
+        appNames = names
+    }
+    func listing(kind: PackageKind, name explicitName: PackageName? = nil) -> Listing? {
+        guard let name = explicitName ?? (kind == .formula ? name : token).flatMap(PackageName.init),
+              let version = kind == .formula ? stable : version,
+              !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              kind == .cask || revision >= 0 else { return nil }
+        return Listing(name: name, kind: kind, version: version, revision: revision,
+                       autoUpdates: autoUpdates, summary: summary, homepage: homepage.flatMap(URL.init(string:)),
+                       appNames: kind == .cask ? appNames : [])
+    }
+}
+private struct AppArtifact: Decodable {
+    let name: String?
+    enum Keys: String, CodingKey { case app, target }
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        guard var args = try? c.nestedUnkeyedContainer(forKey: .app) else { name = nil; return }
+        var source: String?, argumentTarget: String?
+        var index = 0
+        while !args.isAtEnd {
+            let argument = try args.superDecoder()
+            if index == 0 { source = try? argument.singleValueContainer().decode(String.self) }
+            else if argumentTarget == nil, let target = try? argument.container(keyedBy: Keys.self) {
+                argumentTarget = try? target.decode(String.self, forKey: .target)
+            }
+            index += 1
+        }
+        name = [(try? c.decode(String.self, forKey: .target)), argumentTarget, source].compactMap { path -> String? in
+            guard let path, !path.isEmpty else { return nil }
+            let component = (path as NSString).lastPathComponent
+            return component.isEmpty || component == "/" ? nil : component
+        }.first
     }
 }

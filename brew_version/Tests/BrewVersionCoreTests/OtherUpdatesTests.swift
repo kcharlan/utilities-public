@@ -20,7 +20,7 @@ struct OtherUpdatesTests {
     @Test func unversionedIsExcluded() async throws {
         let f = try InstallationFixture()
         try f.install("prefix/Caskroom/synthetic-cask/1", kind: .cask)
-        let stub = StubTransport([catalogURL(.formula): [catalogResponse()], catalogURL(.cask): [catalogResponse(200, #"[{"token":"synthetic-cask","version":"latest"}]"#)]])
+        let stub = StubTransport([catalogURL(.formula): [catalogResponse(200, syntheticFormulaList)], catalogURL(.cask): [catalogResponse(200, #"[{"token":"synthetic-cask","version":"latest"}]"#)]])
         let catalog = try await CatalogClient(transport: stub, cacheDirectory: f.root.appendingPathComponent("cache")).load().catalog
         #expect(otherUpdates(catalog: catalog, installed: f.reader(), watched: []).isEmpty)
     }
