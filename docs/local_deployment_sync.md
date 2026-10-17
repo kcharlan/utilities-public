@@ -354,6 +354,14 @@ fail, the error includes both failures and the retained backup path. Stop and
 recover from that backup after resolving the reported filesystem problem; do
 not discard it or repeatedly deploy over the unresolved state. Backups are retained.
 
+Cleanup attempts cover every owned staging and build directory even if another
+cleanup fails. Reported errors retain the original activation/restoration
+evidence, the recovery backup path and each failed cleanup path. If activation
+completed and only cleanup failed, the selected release stays active; the
+installer returns status 1 and explicitly reports completion with cleanup
+failures. This applies to rollback too. Inspect the reported release and paths
+before retrying; a cleanup failure does not mean the prior release was restored.
+
 Deploy, audit and rollback preserve `~/Library/Application Support/Brew Version/`
 and `~/Library/Caches/Brew Version/`. A running app is detected with
 `pgrep -f "Brew Version.app/Contents/MacOS/BrewVersion"` (test override:

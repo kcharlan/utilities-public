@@ -38,6 +38,7 @@ No live installation, deployment, push or merge was performed.
 28. Print running-app relaunch guidance only after replacement, including explicit rollback. Name the process-detector override BREW_VERSION_DEPLOY_TEST_ONLY_PGREP. Cost: tests must use the explicit override name.
 29. Add standalone Node release integration checks after Swift Testing, building only in private OS temporary space and invoking release rather than test. Hold old executable descriptors and rebuild signed stale bundles. Cost: two isolated release builds plus synthetic acceptance/prototype builds per full test run.
 30. Make synthetic acceptance a required category and use plain mktemp -d for both harnesses. Require golden help at the fleet inventory boundary too. Cost: operators clean up the printed temporary homes after native acceptance.
+31. Collect cleanup failures through the installer operation boundary, including staging, restoration and shared atomic-file publication. Attempt all remaining cleanup, then report primary errors, every failed path and the durable backup. A completed deploy or rollback with cleanup failure retains the selected release and exits 1 with an explicit completion message. Cost: failed scratch paths remain for operator cleanup and an otherwise valid deployment still needs attention.
 
 ## Historical validation record
 
@@ -201,3 +202,31 @@ disabled. No data, dependency or browser acquisition occurred. Data-bearing
 logs stay in a fresh mode-0700 OS temporary directory outside the checkout.
 Native UI interactions and final cold/cache memory measurements remain
 controller-owned acceptance after the following UI task.
+
+### Cleanup recovery review follow-up
+
+Cleanup in an installer finally block could replace activation/restoration
+errors and skip the remaining cleanup. Six signed synthetic regressions were
+RED before the fix: compound deploy and rollback failures, completed deploy
+and rollback with cleanup-only failure, failed app staging copy, and atomic
+publication with failed staging cleanup. Cleanup now accumulates through the
+operation boundary, including shared `atomicFile`, which serves every native
+installer. Every owned cleanup is attempted, and the final error retains the
+primary failures, each failed cleanup path and the durable backup path.
+
+Cleanup-only failure after completed deploy or rollback keeps the selected
+release active, returns status 1, and reports that activation completed. It
+does not undo successful rollback merely because removing its staging folder
+failed. A strengthened atomic-publication regression also requires the backup
+path after successful restoration; the operation boundary supplies it.
+
+Fresh full follow-up validation passes without skips: 148 Swift tests and
+3 release integration tests, signed release and CLI help/version checks, the
+one-test synthetic acceptance service and both signed harness builds,
+77 combined installer tests (39 Brew Version), 17 static tests and the complete
+fleet suite. Market Atlas passes 423 Node tests and six original browser runs,
+267 synthetic Node plus 78 compiler tests, and all 79 full compiler tests.
+Prepared external data, locked Node dependencies, managed Chromium and the
+prepared venv were reused without acquisition or environment changes. Source,
+release plist and CLI remain 1.0.0. No GUI, live deployment or final memory
+acceptance was performed by this follow-up.

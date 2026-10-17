@@ -198,3 +198,68 @@ test('running app notice follows replacement and rollback but not already-curren
   f.release('second');const saved=backupPath(succeeds(f.run()));
   assert.match(succeeds(f.run('--rollback',saved)).stdout,/Quit and reopen Brew Version to use/);
 });
+
+function cleanupFaults(f,{operation='deploy',activation=false,copy=false,atomic=false}={}) {
+  const attempts=path.join(f.base,'synthetic-cleanup-attempts.jsonl');
+  inject(f,`const fs=require('node:fs'),path=require('node:path');
+    const mkdir=fs.mkdtempSync,remove=fs.rmSync,rename=fs.renameSync,copy=fs.copyFileSync;
+    const directories=new Map();let appStages=0,scriptStages=0,activations=0;
+    fs.mkdtempSync=(prefix,...args)=>{const directory=mkdir(prefix,...args);
+      if(path.dirname(prefix)===${JSON.stringify(f.apps)})directories.set(directory,++appStages===1?${JSON.stringify(operation==='deploy'?'outer-stage':'rollback-stage')}:'restore-stage');
+      else if(path.basename(prefix)==='brew-version-build-')directories.set(directory,'scratch');
+      else if(path.dirname(prefix)===${JSON.stringify(f.scripts)})directories.set(directory,++scriptStages===1?'atomic-stage':'restore-atomic-stage');
+      return directory;};
+    fs.rmSync=(directory,...args)=>{const label=directories.get(directory);
+      if(label){fs.appendFileSync(${JSON.stringify(attempts)},JSON.stringify({label,directory})+'\\n');
+        if(${atomic?"label==='atomic-stage'":"!label.includes('atomic')"})throw Object.assign(Error('synthetic '+label+' cleanup error'),{code:'EIO'});}
+      return remove(directory,...args);};
+    fs.renameSync=(a,b)=>{
+      if(${activation?'true':'false'}&&b===${JSON.stringify(f.app)})throw Error(++activations===1?'synthetic original activation error':'synthetic restoration error');
+      if(${atomic?'true':'false'}&&b===${JSON.stringify(f.target)}&&++activations===1)throw Error('synthetic atomic publication error');
+      return rename(a,b);};
+    fs.copyFileSync=(a,b,...args)=>{if(${copy?'true':'false'}&&String(b).startsWith(${JSON.stringify(f.apps+path.sep)})&&String(b).endsWith('/Resources/synthetic.txt'))throw Error('synthetic app staging copy error');return copy(a,b,...args);};`);
+  return ()=>fs.readFileSync(attempts,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+}
+function assertCleanupEvidence(r,attempts,labels) {
+  const cleanup=attempts.filter(entry=>labels.includes(entry.label));
+  assert.deepEqual(cleanup.map(entry=>entry.label),labels);
+  for(const entry of cleanup) {
+    assert.ok(r.stderr.includes('synthetic '+entry.label+' cleanup error'),r.stderr);
+    assert.ok(r.stderr.includes(entry.directory),r.stderr);
+  }
+}
+for(const operation of ['deploy','rollback']) {
+  test(`${operation} preserves activation and restoration errors through every cleanup failure`,t=>{
+    const f=fixture(t);succeeds(f.run());f.release('second');const saved=backupPath(succeeds(f.run())),before=active(f);f.release('third');
+    const attempts=cleanupFaults(f,{operation,activation:true});
+    const r=operation==='deploy'?f.run():f.run('--rollback',saved);
+    assert.equal(r.status,1);assert.match(r.stderr,/synthetic original activation error/);assert.match(r.stderr,/synthetic restoration error/);
+    assertCleanupEvidence(r,attempts(),operation==='deploy'?['restore-stage','outer-stage','scratch']:['rollback-stage','restore-stage']);
+    const backup=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(backup,r.stdout);assert.ok(r.stderr.includes(backup),r.stderr);
+    assert.deepEqual(snapshot(path.join(backup,'Brew Version.app')),before[2]);
+    assert.equal(snapshot(path.join(backup,'brew-version')).bytes,before[0].bytes);
+    assert.equal(snapshot(path.join(backup,'receipt.json')).bytes,before[1].bytes);
+  });
+  test(`${operation} reports completed activation separately from cleanup failures`,t=>{
+    const f=fixture(t);succeeds(f.run());const first=active(f);f.release('second');const saved=backupPath(succeeds(f.run()));
+    const attempts=cleanupFaults(f,{operation});
+    const r=operation==='deploy'?f.run('--rebuild'):f.run('--rollback',saved);
+    assert.equal(r.status,1);assert.match(r.stderr,new RegExp(operation==='deploy'?'Deployment completed':'Rollback completed'));
+    assert.match(r.stderr,/cleanup/i);assert.doesNotMatch(r.stderr,/activation failed|restoration failed|deployment failed/i);
+    assertCleanupEvidence(r,attempts(),operation==='deploy'?['outer-stage','scratch']:['rollback-stage']);
+    const backup=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(backup,r.stdout);assert.ok(r.stderr.includes(backup),r.stderr);
+    if(operation==='rollback')assertActiveDeployment(f,first);
+    else {assert.deepEqual(snapshot(f.app),snapshot(path.join(f.expected,'Brew Version.app')));assertActiveDeployment(f,active(f));delete f.env.NODE_OPTIONS;succeeds(f.run('--audit'));}
+  });
+}
+test('failed app staging copy retains its error while attempting stage and scratch cleanup',t=>{
+  const f=fixture(t);succeeds(f.run());const before=active(f);f.release('second');const attempts=cleanupFaults(f,{copy:true});
+  const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic app staging copy error/);
+  assertCleanupEvidence(r,attempts(),['outer-stage','scratch']);assertActiveDeployment(f,before);
+});
+test('atomic publication error survives atomic cleanup failure and successful recovery',t=>{
+  const f=fixture(t);succeeds(f.run());const before=active(f);f.release('second');const attempts=cleanupFaults(f,{atomic:true});
+  const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic atomic publication error/);
+  assertCleanupEvidence(r,attempts(),['atomic-stage']);assertActiveDeployment(f,before);
+  const backup=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(backup,r.stdout);assert.ok(r.stderr.includes(backup),r.stderr);
+});

@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup} from './deployment_files.mjs';
 
 export const buildInput = name => ['brew_version/Package.swift','brew_version/Makefile'].includes(name) || /^brew_version\/(Resources|Sources|Tests)\//.test(name);
 export function sourceInventory(repo, snapshot, requireStaged = false) {
@@ -114,32 +114,36 @@ function readBackup(directory) {
   if(state.appTreeHash!==null) {value.app=path.join(directory,'Brew Version.app');if(appTreeHash(value.app)!==state.appTreeHash) throw new Error('Backup app hash mismatch');}
   return value;
 }
-function stageApp(source,apps) {
+function stageApp(source,apps,cleanupErrors) {
   const directory=fs.mkdtempSync(path.join(apps,'.brew-version-stage-'));
   try {const candidate=path.join(directory,'Brew Version.app');copyTree(source,candidate);if(appTreeHash(candidate)!==appTreeHash(source)) throw new Error('App staging identity mismatch');return {directory,candidate};}
-  catch(error) {fs.rmSync(directory,{recursive:true,force:true});throw error;}
+  catch(error) {cleanupErrors.push(...cleanupDirectories([directory]));throw error;}
 }
-function restore(saved,command,app,receipt,apps) {
+function restore(saved,command,app,receipt,apps,cleanupErrors) {
   let staged;
   try {
-    if(saved.app) staged=stageApp(saved.app,apps);
+    if(saved.app) staged=stageApp(saved.app,apps,cleanupErrors);
     if(exists(app)) fs.rmSync(app,{recursive:true});
     if(staged) fs.renameSync(staged.candidate,app);
     for(const [key,file] of [['command',command],['receipt',receipt]]) {
       if(saved[key]) atomicFile(file,saved[key].bytes,saved[key].mode,'.brew-version-stage-');else if(exists(file)) fs.unlinkSync(file);
     }
-  } finally {if(staged) fs.rmSync(staged.directory,{recursive:true,force:true});}
+  } finally {if(staged) cleanupErrors.push(...cleanupDirectories([staged.directory]));}
 }
 function relaunchNotice(version) {
   const r=spawnSync(process.env.BREW_VERSION_DEPLOY_TEST_ONLY_PGREP || 'pgrep',['-f','Brew Version.app/Contents/MacOS/BrewVersion'],{stdio:'pipe',timeout:10000});
   if(r.status===0) console.log('Quit and reopen Brew Version to use '+version+'.');
 }
-function recover(error,directory,command,app,receipt,apps) {
-  try {restore(readBackup(directory),command,app,receipt,apps);}
+function recover(error,directory,command,app,receipt,apps,cleanupErrors) {
+  try {restore(readBackup(directory),command,app,receipt,apps,cleanupErrors);}
   catch(restorationError) {
-    throw new AggregateError([error,restorationError], 'Activation failed: '+error.message+'; restoration failed: '+restorationError.message+'; Recovery backup: '+directory);
+    throw new AggregateError([error,restorationError], 'Activation failed: '+error.message+'; restoration failed: '+restorationError.message);
   }
   throw error;
+}
+function finishOperation(primary,cleanupErrors,completedMessage,backup) {
+  try {finishCleanup(primary,cleanupErrors,completedMessage,backup);}
+  catch(error) {if(!primary) error.deploymentCompleted=true;throw error;}
 }
 export function main(argv=process.argv.slice(2)) {
   let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR || path.join(os.homedir(),'Library/Scripts')),apps=path.resolve(process.env.UTILITIES_APPS_DIR || path.join(os.homedir(),'Applications'));
@@ -161,9 +165,13 @@ export function main(argv=process.argv.slice(2)) {
     const saved=readBackup(rollback);fs.mkdirSync(scripts,{recursive:true});fs.mkdirSync(apps,{recursive:true});
     const current=backup(command,app,receipt,repo);
     console.log('Recovery backup: '+current);
-    try {restore(saved,command,app,receipt,apps);} catch(error) {recover(error,current,command,app,receipt,apps);}
-    console.log('Brew Version rollback restored; rollback backup: '+current);
-    if(saved.app) relaunchNotice('the restored release');return;
+    const cleanupErrors=[];let primary;
+    try {
+      try {restore(saved,command,app,receipt,apps,cleanupErrors);} catch(error) {recover(error,current,command,app,receipt,apps,cleanupErrors);}
+      console.log('Brew Version rollback restored; rollback backup: '+current);
+      if(saved.app) relaunchNotice('the restored release');
+    } catch(error) {primary=error;}
+    finishOperation(primary,cleanupErrors,'Rollback completed, but cleanup failed',current);return;
   }
   const inputs=sourceInventory(repo,snapshot,!audit),expected=expectations(inputs);
   if(audit) {verify(inputs,expected,command,app,receipt);console.log('OK: brew-version native deployment');return;}
@@ -178,7 +186,7 @@ export function main(argv=process.argv.slice(2)) {
     execFileSync('make',['--version'],{stdio:'pipe',timeout:10000});
   } catch {throw new Error('Swift 6 and Xcode Command Line Tools plus make are required; see brew_version/README.md Requirements');}
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'brew-version-build-'));
-  let staged;
+  const cleanupErrors=[];let staged,saved,primary;
   try {
     for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});}
     const env={...process.env,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''};
@@ -188,7 +196,7 @@ export function main(argv=process.argv.slice(2)) {
     const bytes=fs.readFileSync(builtCommand),treeHash=appTreeHash(builtApp);
     if(sourceInventory(repo,undefined,true).sourceHash!==inputs.sourceHash) throw new Error('Native inputs changed during build');
     fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});
-    staged=stageApp(builtApp,apps);const saved=backup(command,app,receipt,repo);
+    staged=stageApp(builtApp,apps,cleanupErrors);saved=backup(command,app,receipt,repo);
     console.log('Recovery backup: '+saved);
     try {
       atomicFile(command,bytes,0o755,'.brew-version-stage-');diagnostic(command,expected);
@@ -202,10 +210,12 @@ export function main(argv=process.argv.slice(2)) {
       fs.renameSync(staged.candidate,app);appDiagnostic(app,expected);
       atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expected.version,commandHash:sha(bytes),commandMode:0o755,appTreeHash:treeHash})+'\n'),0o600,'.brew-version-stage-');
       verify(inputs,expected,command,app,receipt);diagnostic(command,expected);
-    } catch(error) {recover(error,saved,command,app,receipt,apps);}
+    } catch(error) {recover(error,saved,command,app,receipt,apps,cleanupErrors);}
     console.log('Brew Version deployed; rollback backup: '+saved);relaunchNotice(expected.version);
-  } finally {if(staged)fs.rmSync(staged.directory,{recursive:true,force:true});fs.rmSync(scratch,{recursive:true,force:true});}
+  } catch(error) {primary=error;}
+  finally {cleanupErrors.push(...cleanupDirectories([...(staged?[staged.directory]:[]),scratch]));}
+  finishOperation(primary,cleanupErrors,'Deployment completed, but cleanup failed',saved);
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
-  try {main();} catch(error) {console.error('Brew Version deployment failed: '+error.message);process.exitCode=1;}
+  try {main();} catch(error) {console.error((error.deploymentCompleted?'Brew Version operation completed with cleanup failures: ':'Brew Version deployment failed: ')+error.message);process.exitCode=1;}
 }

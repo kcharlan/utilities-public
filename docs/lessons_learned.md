@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-17: Cleanup must preserve the failure that required recovery
+
+A throwing finally block replaces an earlier activation or restoration error;
+force removal suppresses missing paths, not I/O or permission errors. Collect
+each cleanup failure and attempt every remaining owned directory before
+reporting the primary error, all cleanup paths and the durable backup path.
+Apply the same rule inside atomic file publication, before the installer can
+observe the error. Cleanup-only failure after completed activation must retain
+the selected release, report that outcome explicitly and exit nonzero; it must
+not trigger a second rollback. Inject compound failures for deploy and rollback,
+compare retained backups and live artifacts, and assert every cleanup attempt.
+
 ## 2026-10-17: Keep native activation moves on the destination device
 
 Copying to a backup under HOME can cross volumes safely; renaming the live app
