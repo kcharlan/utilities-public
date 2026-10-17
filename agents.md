@@ -54,8 +54,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
 - `brew_version` (Swift command line, from repository root; see its README):
-  - `make -C brew_version test` (complete Swift Testing suite; no skips).
+  - `make -C brew_version test` (complete Swift Testing suite and isolated release build integration tests; no skips).
   - `make -C brew_version release` (signed CLI/app release and signature verification).
+  - `make -C brew_version acceptance` (synthetic service test and signed harness build in a fresh private OS temporary directory; no GUI launch or real state/inventory).
   - `brew_version/build/release/brew-version --help` and `brew_version/build/release/brew-version --version` (offline CLI smoke checks).
   - Native GUI and macOS 14 runtime acceptance remain separate release gates described in the project README.
   - Deployment changes require all Static deployment/fleet audit tooling commands below, including the Brew Version installer suite and affected Market Atlas suites. Real deployment needs separate authorization.

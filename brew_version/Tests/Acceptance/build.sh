@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
-acceptance_home="$(mktemp -d "$HOME/.brew-version-acceptance.XXXXXX")"
+acceptance_home="$(mktemp -d)"
 chmod 700 "$acceptance_home"
 package_dir="$acceptance_home/package"
 mkdir -p "$package_dir/Sources/BrewVersionCore" "$package_dir/Sources/Acceptance"

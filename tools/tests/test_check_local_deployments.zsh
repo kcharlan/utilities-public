@@ -1659,6 +1659,13 @@ test_native_brew_version_deployment() {
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'brew required source missing'
   assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt
+  git -C "$FIXTURE_REPO" commit -qm 'Omit synthetic required help input'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew required help missing'
+  assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
+  assert_not_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
 }
 test_native_brew_version_deployment
 

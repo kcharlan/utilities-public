@@ -47,7 +47,7 @@ function fixture(t) {
   }
   release('first');
   const expected=path.join(base,'independent-release');fs.mkdirSync(expected);
-  const env={...process.env,HOME:home,TMPDIR:base,BREW_VERSION_DEPLOY_PGREP:"/usr/bin/false",SYNTHETIC_EXPECTED_RELEASE:expected};
+  const env={...process.env,HOME:home,TMPDIR:base,BREW_VERSION_DEPLOY_TEST_ONLY_PGREP:"/usr/bin/false",SYNTHETIC_EXPECTED_RELEASE:expected};
   const run=(...args)=>spawnSync(process.execPath,[script,'--repo',repo,'--scripts-dir',scripts,'--apps-dir',apps,...args],{encoding:'utf8',env});
   return {base,repo,home,project,scripts,apps,expected,git,write,release,run,env,target:path.join(scripts,'brew-version'),receipt:path.join(scripts,'.brew-version-native.json'),app:path.join(apps,'Brew Version.app')};
 }
@@ -128,7 +128,7 @@ test('refusesDestinationsInsideRepo including symlinked ancestors',t=>{
   const f=fixture(t);for(const option of ['--scripts-dir','--apps-dir']){assert.equal(f.run(option,f.repo).status,1);const link=path.join(f.base,'synthetic-link-'+option);fs.symlinkSync(f.apps,link);assert.equal(f.run(option,path.join(link,'nested')).status,1);}
 });
 test('refusesUnstagedChanges',t=>{const f=fixture(t);fs.appendFileSync(path.join(f.project,'Sources/main.c'),'// drift');assert.match(f.run().stderr,/working bytes differ/);});
-test('runningAppGetsRelaunchNotice',t=>{const f=fixture(t),pgrep=path.join(f.base,'synthetic-pgrep');fs.writeFileSync(pgrep,'#!/bin/sh\nexit 0\n',{mode:0o755});f.env.BREW_VERSION_DEPLOY_PGREP=pgrep;assert.match(succeeds(f.run()).stdout,new RegExp('Quit and reopen Brew Version to use '+version.replaceAll('.','\\.')+'\\.'));});
+test('runningAppGetsRelaunchNotice',t=>{const f=fixture(t),pgrep=path.join(f.base,'synthetic-pgrep');fs.writeFileSync(pgrep,'#!/bin/sh\nexit 0\n',{mode:0o755});f.env.BREW_VERSION_DEPLOY_TEST_ONLY_PGREP=pgrep;assert.match(succeeds(f.run()).stdout,new RegExp('Quit and reopen Brew Version to use '+version.replaceAll('.','\\.')+'\\.'));});
 test('bundleWithSymlinkIsRefused',t=>{const f=fixture(t);f.write('Makefile',fs.readFileSync(path.join(f.project,'Makefile'),'utf8')+"\tln -s Info.plist 'build/release/Brew Version.app/Contents/synthetic-link'\n");f.git('add','.');const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/symlink|unsupported/i);assert.equal(fs.existsSync(f.target),false);});
 test('appTreeHash uses sorted root, entry types, full modes and empty directory content',t=>{
   const f=fixture(t),tree=path.join(f.base,'synthetic-tree');fs.mkdirSync(tree,{mode:0o751});fs.mkdirSync(path.join(tree,'z'),{mode:0o711});fs.writeFileSync(path.join(tree,'a'),'synthetic',{mode:0o640});fs.writeFileSync(path.join(tree,'z.b'),'synthetic sibling',{mode:0o600});fs.writeFileSync(path.join(tree,'z/n'),'synthetic nested',{mode:0o600});
@@ -136,14 +136,65 @@ test('appTreeHash uses sorted root, entry types, full modes and empty directory 
   const expected=sha(Buffer.from(records.map(([n,type,mode,bytes])=>[n,type,mode,sha(Buffer.from(bytes)),''].join('\0')).join('')));
   assert.equal(appTreeHash(tree),expected);
 });
-test('failed move of prior app retains validated backup for restoration',t=>{
+test('failed activation move of prior app retains validated backup for restoration',t=>{
   const f=fixture(t);succeeds(f.run());const expected=active(f);f.release('second');
-  const hook=path.join(f.base,'synthetic-move-failure.cjs');fs.writeFileSync(hook,`const fs=require('node:fs');const original=fs.renameSync;fs.renameSync=function(a,b){if(a===${JSON.stringify(f.app)})throw Object.assign(Error('synthetic cross-device move'),{code:'EXDEV'});return original(a,b);};`);
-  f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic cross-device move/);assertActiveDeployment(f,expected);
+  const hook=path.join(f.base,'synthetic-move-failure.cjs');fs.writeFileSync(hook,`const fs=require('node:fs');const original=fs.renameSync;fs.renameSync=function(a,b){if(a===${JSON.stringify(f.app)})throw Object.assign(Error('synthetic activation move failure'),{code:'EACCES'});return original(a,b);};`);
+  f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic activation move failure/);assertActiveDeployment(f,expected);
 });
 test('missing and drifted command or app rebuild the complete release together',t=>{
   const f=fixture(t);succeeds(f.run());
   for(const mutate of [()=>fs.unlinkSync(f.target),()=>fs.appendFileSync(f.target,'synthetic drift'),()=>fs.rmSync(f.app,{recursive:true}),()=>fs.appendFileSync(path.join(f.app,'Contents/Resources/synthetic.txt'),'synthetic drift')]) {
     mutate();assert.match(succeeds(f.run()).stdout,/rollback backup:/);assert.deepEqual(snapshot(f.target),snapshot(path.join(f.expected,'brew-version')));assert.deepEqual(snapshot(f.app),snapshot(path.join(f.expected,'Brew Version.app')));assertActiveDeployment(f,active(f));succeeds(f.run('--audit'));
   }
+});
+
+function inject(f, source) {
+  const hook=path.join(f.base,'synthetic-io-hook.cjs');
+  fs.writeFileSync(hook,source);
+  f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
+}
+test('update succeeds when backup and apps are on different simulated devices',t=>{
+  const f=fixture(t);succeeds(f.run());f.release('other-device');
+  // Model devices by their containing directory, rather than rejecting every app move.
+  inject(f,`const fs=require('node:fs'),path=require('node:path');const rename=fs.renameSync;
+    const device=p=>path.resolve(p).startsWith(${JSON.stringify(f.apps+path.sep)})?2:1;
+    fs.renameSync=(a,b)=>{if(device(a)!==device(b))throw Object.assign(Error('synthetic EXDEV across device boundary'),{code:'EXDEV'});return rename(a,b);};`);
+  succeeds(f.run());assertActiveDeployment(f,active(f));
+  assert.deepEqual(snapshot(f.app),snapshot(path.join(f.expected,'Brew Version.app')));
+  assert.deepEqual(fs.readdirSync(f.apps),['Brew Version.app']);
+});
+for(const payload of ['app','command','receipt','metadata']) for(const failure of ['corrupt','fail']) {
+  test(`backup ${payload} ${failure} is rejected before any live mutation`,t=>{
+    const f=fixture(t);succeeds(f.run());const before=active(f);
+    const inodes=[f.target,f.receipt,f.app].map(p=>fs.statSync(p).ino);f.release('second');
+    const suffix=payload==='app'?'/Brew Version.app/Contents/Resources/synthetic.txt':payload==='command'?'/brew-version':payload==='receipt'?'/receipt.json':'/state.json';
+    inject(f,`const fs=require('node:fs');const copy=fs.copyFileSync,write=fs.writeFileSync;
+      const target=p=>String(p).includes('/.utilities-deploy-backups/')&&String(p).endsWith(${JSON.stringify(suffix)});
+      const after=p=>{if(target(p)){${failure==='fail'?"throw Error('synthetic backup write failure');":"write(p,'synthetic corrupt backup');"}}};
+      fs.copyFileSync=(a,b,...rest)=>{const result=copy(a,b,...rest);after(b);return result;};
+      fs.writeFileSync=(p,...rest)=>{const result=write(p,...rest);after(p);return result;};`);
+    const r=f.run();assert.equal(r.status,1,r.stdout);assert.match(r.stderr,/backup.*(hash mismatch|write failure)/i);
+    assertActiveDeployment(f,before);assert.deepEqual([f.target,f.receipt,f.app].map(p=>fs.statSync(p).ino),inodes);
+  });
+}
+for(const operation of ['deploy','rollback']) {
+  test(`${operation} recovery failure reports both errors and the retained backup`,t=>{
+    const f=fixture(t);succeeds(f.run());f.release('second');const saved=backupPath(succeeds(f.run()));
+    f.release('third');
+    inject(f,`const fs=require('node:fs');const rename=fs.renameSync;let attempts=0;
+      fs.renameSync=(a,b)=>{if(b===${JSON.stringify(f.app)})throw Error(++attempts===1?'synthetic original activation error':'synthetic restoration error');return rename(a,b);};`);
+    const r=operation==='deploy'?f.run():f.run('--rollback',saved);
+    assert.equal(r.status,1);assert.match(r.stderr,/synthetic original activation error/);assert.match(r.stderr,/synthetic restoration error/);
+    const backup=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(backup,r.stdout);
+    assert.ok(r.stderr.includes(backup),r.stderr);assert.ok(fs.existsSync(path.join(backup,'state.json')));
+    assert.ok(fs.existsSync(path.join(backup,'Brew Version.app/Contents/Resources/synthetic.txt')));
+  });
+}
+test('running app notice follows replacement and rollback but not already-current deployment',t=>{
+  const f=fixture(t),pgrep=path.join(f.base,'synthetic-pgrep');fs.writeFileSync(pgrep,'#!/bin/sh\nexit 0\n',{mode:0o755});
+  f.env.BREW_VERSION_DEPLOY_TEST_ONLY_PGREP=pgrep;
+  assert.match(succeeds(f.run()).stdout,/Quit and reopen/);
+  assert.doesNotMatch(succeeds(f.run()).stdout,/Quit and reopen/);
+  f.release('second');const saved=backupPath(succeeds(f.run()));
+  assert.match(succeeds(f.run('--rollback',saved)).stdout,/Quit and reopen Brew Version to use/);
 });

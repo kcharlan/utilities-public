@@ -93,9 +93,12 @@ function backup(command,app,receipt,repo) {
     fs.writeFileSync(path.join(directory,name),bytes,{mode:0o600});fs.chmodSync(path.join(directory,name),0o600);
     state[key]={mode,hash:sha(bytes)};
   }
-  // Copy first so all backup validation completes before any live activation.
+  // Capture source identity, then independently re-read every copied payload.
   if(exists(app)) {state.appTreeHash=appTreeHash(app);copyTree(app,path.join(directory,'Brew Version.app'));}
-  fs.writeFileSync(path.join(directory,'state.json'),JSON.stringify(state)+'\n',{mode:0o600});
+  const metadata=path.join(directory,'state.json'),bytes=Buffer.from(JSON.stringify(state)+'\n');
+  fs.writeFileSync(metadata,bytes,{mode:0o600});
+  if(!fs.readFileSync(metadata).equals(bytes)) throw new Error('Backup metadata hash mismatch');
+  readBackup(directory);
   return directory;
 }
 function readBackup(directory) {
@@ -128,8 +131,15 @@ function restore(saved,command,app,receipt,apps) {
   } finally {if(staged) fs.rmSync(staged.directory,{recursive:true,force:true});}
 }
 function relaunchNotice(version) {
-  const r=spawnSync(process.env.BREW_VERSION_DEPLOY_PGREP || 'pgrep',['-f','Brew Version.app/Contents/MacOS/BrewVersion'],{stdio:'pipe',timeout:10000});
+  const r=spawnSync(process.env.BREW_VERSION_DEPLOY_TEST_ONLY_PGREP || 'pgrep',['-f','Brew Version.app/Contents/MacOS/BrewVersion'],{stdio:'pipe',timeout:10000});
   if(r.status===0) console.log('Quit and reopen Brew Version to use '+version+'.');
+}
+function recover(error,directory,command,app,receipt,apps) {
+  try {restore(readBackup(directory),command,app,receipt,apps);}
+  catch(restorationError) {
+    throw new AggregateError([error,restorationError], 'Activation failed: '+error.message+'; restoration failed: '+restorationError.message+'; Recovery backup: '+directory);
+  }
+  throw error;
 }
 export function main(argv=process.argv.slice(2)) {
   let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR || path.join(os.homedir(),'Library/Scripts')),apps=path.resolve(process.env.UTILITIES_APPS_DIR || path.join(os.homedir(),'Applications'));
@@ -150,15 +160,17 @@ export function main(argv=process.argv.slice(2)) {
   if(rollback) {
     const saved=readBackup(rollback);fs.mkdirSync(scripts,{recursive:true});fs.mkdirSync(apps,{recursive:true});
     const current=backup(command,app,receipt,repo);
-    try {restore(saved,command,app,receipt,apps);} catch(error) {restore(readBackup(current),command,app,receipt,apps);throw error;}
-    console.log('Brew Version rollback restored; rollback backup: '+current);return;
+    console.log('Recovery backup: '+current);
+    try {restore(saved,command,app,receipt,apps);} catch(error) {recover(error,current,command,app,receipt,apps);}
+    console.log('Brew Version rollback restored; rollback backup: '+current);
+    if(saved.app) relaunchNotice('the restored release');return;
   }
   const inputs=sourceInventory(repo,snapshot,!audit),expected=expectations(inputs);
   if(audit) {verify(inputs,expected,command,app,receipt);console.log('OK: brew-version native deployment');return;}
   if(dry) {console.log('Dry run: validated tracked native build inputs; no files changed');return;}
   let current=false;
   if(!rebuild) try {verify(inputs,expected,command,app,receipt);diagnostic(command,expected);appDiagnostic(app,expected);current=true;} catch {}
-  if(current) {console.log('Brew Version already current; nothing changed');relaunchNotice(expected.version);return;}
+  if(current) {console.log('Brew Version already current; nothing changed');return;}
   try {
     execFileSync('xcrun',['--find','swift'],{stdio:'pipe',timeout:10000});
     const swift=execFileSync('xcrun',['swift','--version'],{encoding:'utf8',stdio:'pipe',timeout:10000});
@@ -177,19 +189,20 @@ export function main(argv=process.argv.slice(2)) {
     if(sourceInventory(repo,undefined,true).sourceHash!==inputs.sourceHash) throw new Error('Native inputs changed during build');
     fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});
     staged=stageApp(builtApp,apps);const saved=backup(command,app,receipt,repo);
+    console.log('Recovery backup: '+saved);
     try {
       atomicFile(command,bytes,0o755,'.brew-version-stage-');diagnostic(command,expected);
       // The existing app is moved, not overwritten; the verified copy protects recovery
       // even if moving or publishing the new bundle fails.
       if(exists(app)) {
-        const displaced=path.join(saved,'displaced-app');
+        const displaced=path.join(staged.directory,'displaced-app');
         fs.renameSync(app,displaced);
         fs.rmSync(displaced,{recursive:true});
       }
       fs.renameSync(staged.candidate,app);appDiagnostic(app,expected);
       atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expected.version,commandHash:sha(bytes),commandMode:0o755,appTreeHash:treeHash})+'\n'),0o600,'.brew-version-stage-');
       verify(inputs,expected,command,app,receipt);diagnostic(command,expected);
-    } catch(error) {restore(readBackup(saved),command,app,receipt,apps);throw error;}
+    } catch(error) {recover(error,saved,command,app,receipt,apps);}
     console.log('Brew Version deployed; rollback backup: '+saved);relaunchNotice(expected.version);
   } finally {if(staged)fs.rmSync(staged.directory,{recursive:true,force:true});fs.rmSync(scratch,{recursive:true,force:true});}
 }

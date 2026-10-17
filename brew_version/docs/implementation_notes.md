@@ -4,7 +4,7 @@
 
 Native UI is unverified. The permitted computer-use tool reported the Mac was locked and required manual unlocking. No alternative GUI route was used. Current-system Settings, search/keyboard/Undo, notification permission/delivery/click, Other updates, login status and light/dark checks remain open. The minimum supported macOS runtime is also unavailable. Source/build/test success does not establish these runtime checks.
 
-No live installation, deployment, push or merge was performed. Preserve this distinction in the final report.
+No live installation, deployment, push or merge was performed.
 
 ## Decisions to preserve
 
@@ -33,8 +33,16 @@ No live installation, deployment, push or merge was performed. Preserve this dis
 23. Use the normal interval retry floor after transport or persistence failure. Reconnect bypasses transport backoff but preserves failed-save backoff. Cost: a reconnected machine with a save failure waits until that interval floor or a manual retry.
 24. Keep a Quit footer action for a Dock-less temporary app. Harness-only appearance and synthetic service injection remain outside production composition. Cost: extra footer width and a separately built acceptance entry point.
 25. Encode installer app-tree identity with sorted paths, entry types, full modes and content hashes, including directories/root. Derive expected version and golden help from admitted tracked inputs. Cost: metadata-only mode changes require a matching release; these checks establish identity, not compiler reproducibility.
+26. Displace the live bundle inside apps-directory staging; retain the separately copied durable backup until recovery is no longer needed. Cost: both temporary staging and a retained backup consume space during activation.
+27. Validate every saved backup payload against captured source identities and publish the path before activation. Preserve both errors if recovery fails. Cost: another complete app-tree read and more explicit operator recovery evidence.
+28. Print running-app relaunch guidance only after replacement, including explicit rollback. Name the process-detector override BREW_VERSION_DEPLOY_TEST_ONLY_PGREP. Cost: tests must use the explicit override name.
+29. Add standalone Node release integration checks after Swift Testing, building only in private OS temporary space and invoking release rather than test. Hold old executable descriptors and rebuild signed stale bundles. Cost: two isolated release builds plus synthetic acceptance/prototype builds per full test run.
+30. Make synthetic acceptance a required category and use plain mktemp -d for both harnesses. Require golden help at the fleet inventory boundary too. Cost: operators clean up the printed temporary homes after native acceptance.
 
-## Validation record
+## Historical validation record
+
+The counts and review statements below describe their individual earlier waves;
+they are not current Task 10 validation or final whole-branch review evidence.
 
 The implementation task reviews, whole-branch review and scoped review of all
 four final fixes are complete. All four findings are addressed, with no new
@@ -89,7 +97,14 @@ results were not rerun or presented as fresh results for this wave.
 
 ## Installer recovery choice
 
-Keep a validated copy of the old app before moving the live old bundle. Retain that copy if the move fails, including cross-device failure. The extra temporary copy costs disk I/O and protects the restoration path; failed activation must not destroy its own backup.
+The earlier implementation retained a copy of the old app but did not validate
+the copied tree before activation. Task 10 now re-reads and validates the app,
+command, receipt and metadata against captured source identities before live
+mutation. It prints the recovery backup first. Displace the old live bundle
+inside the apps-directory staging folder so its move stays on the same device;
+the durable backup may live on another device. Retain that verified copy through
+activation and report both activation and restoration errors plus its path if
+recovery fails. The cost is extra disk I/O and a retained backup per attempt.
 
 ## Catalog and scheduling follow-up
 
@@ -148,3 +163,41 @@ Fresh validation passes 148 Swift tests (131 core, 11 CLI, 6 app), release and
 signature checks, CLI output/stderr checks, and synthetic acceptance service and
 signed harness build. Source, built plist and CLI remain 1.0.0; this core round
 does not publish a release or establish new native/footprint acceptance.
+
+## Installer and build follow-up validation
+
+Task 10 addresses review items Should 9–13. The backup/device/recovery choices
+above are exercised by signed synthetic lifecycle tests: a device-boundary
+EXDEV update succeeds, genuine activation failure restores the old release,
+corruption or failure of any backup payload leaves live artifacts untouched,
+and failed restoration preserves both errors and the recovery path. Running-app
+guidance covers replacement, already-current and explicit rollback paths.
+The fleet now rejects a committed source inventory missing golden help before
+running the native child audit.
+
+The release target clears the bounded old app bundle, then copies each
+executable to a unique temporary sibling before renaming. The full test target
+adds three isolated Node integration checks for stale signed resources, held
+executable inodes/bytes, and private OS-temporary acceptance/prototype homes.
+No production UI source changed in this task.
+
+Fresh Task 10 automated results, without skips:
+
+| Validation | Result |
+| --- | --- |
+| Complete Swift suite | 148 pass: 131 core, 11 CLI, 6 app |
+| Release build integration | 3 pass, including both synthetic harness builders |
+| Release / strict signatures / offline CLI | Pass; golden help and version have empty stderr |
+| Synthetic acceptance / Settings prototype | 1 service test passes; both signed builds pass; no GUI launch |
+| Four native/calculator installer suites | 71 pass, including 33 Brew Version cases |
+| Static audit / complete fleet suite | 17 pass / PASS |
+| Market Atlas complete | 423 Node tests and all six original browser runs pass |
+| Market Atlas synthetic / full compiler | 267 Node + 78 compiler / 79 compiler pass |
+
+Source plist, release plist and CLI agree at 1.0.0. This task did not deploy or
+publish a release. Market Atlas used only the prepared external data, locked
+Node dependencies, managed Chromium and prepared compiler venv, with bytecode
+disabled. No data, dependency or browser acquisition occurred. Data-bearing
+logs stay in a fresh mode-0700 OS temporary directory outside the checkout.
+Native UI interactions and final cold/cache memory measurements remain
+controller-owned acceptance after the following UI task.

@@ -13,7 +13,7 @@ the repository's `agents.md`.
 
 - macOS 14 or newer.
 - Xcode or the Command Line Tools providing Swift 6.
-- Node.js for deployment tooling.
+- Node.js for deployment tooling and release build integration tests.
 - Network access to Homebrew's HTTPS public API for lookups.
 
 The Swift package has no external dependencies. The CLI needs neither `curl`
@@ -34,8 +34,15 @@ make -C brew_version test
 ```
 
 The test target runs the complete Swift Testing suite, including transport,
-lookup, CLI parsing, output, timestamps, and watch behavior. Tests use synthetic
-responses; a live lookup is a separate acceptance check.
+lookup, CLI parsing, output, timestamps, and watch behavior, followed by the
+Node release build integration tests. Those tests build twice in private OS
+temporary space, check that stale signed resources disappear, and hold old
+executable file descriptors to verify their inodes and bytes survive a rebuild.
+They invoke release directly rather than recursively invoking the test target.
+The integration category also runs the acceptance and Settings prototype
+builders with an invented HOME, requiring their printed private homes to be
+children of the OS temporary root with mode 0700.
+Tests use synthetic responses; a live lookup is a separate acceptance check.
 
 To run the debug command from the repository root, resolve SwiftPM's binary
 directory (its layout varies by toolchain):
@@ -204,7 +211,7 @@ from a failed save; only the latter calls for retrying the failed action.
 The implementation retains a SwiftUI App with only a Settings scene and an
 AppKit status item/popover hosting SwiftUI. Its footer uses SettingsLink.
 A signed minimal prototype and the release bundle build successfully, but the
-current macOS 27.0.1 runtime Settings gate remains **unmet**: native automation
+current-system runtime Settings gate remains **unmet**: native automation
 reported that the Mac is locked and automatic unlock failed. This is no
 runtime evidence for or against the SettingsLink arrangement. Open, activate,
 close and reopen Settings while keeping the status item usable before release.
@@ -218,8 +225,9 @@ Watch, invalid and valid custom intervals, removal/Undo, Settings/login,
 and light/dark appearance. Automated Swift tests and signing checks do not
 establish those outcomes.
 
-`make -C brew_version acceptance` builds a separately identified, signed
-synthetic bundle in a fresh private home outside the checkout and prints its
+`make -C brew_version acceptance` is a required automated validation category.
+It builds a separately identified, signed synthetic bundle in a fresh private
+home created by `mktemp -d` in OS temporary space and prints its
 path. It copies the maintained production UI/notifier/core sources into a
 scratch Swift package, replacing only the application entry and services.
 It also runs a synthetic service test without launching a GUI. The harness

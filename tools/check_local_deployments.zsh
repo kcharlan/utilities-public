@@ -665,6 +665,7 @@ audit_native_deployment brew_version tools/deploy_brew_version.mjs \
   brew-version-source-inventory brew 'brew-version native' \
   'brew-version native deployment unverified (source, command, app or receipt drift)' \
   brew_version/Package.swift brew_version/Makefile brew_version/Resources/Info.plist \
+  brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt \
   tools/deploy_brew_version.mjs tools/deployment_files.mjs
 
 audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \

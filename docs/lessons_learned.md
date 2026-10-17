@@ -1,5 +1,57 @@
 # Lessons learned
 
+## 2026-10-17: Keep native activation moves on the destination device
+
+Copying to a backup under HOME can cross volumes safely; renaming the live app
+there cannot. Move the displaced bundle into the staging folder inside the
+apps directory. Model devices by path boundaries in regression injection so
+same-device renames succeed and only cross-device renames raise EXDEV. Retain
+a separate failure test for a genuinely failed same-device activation move.
+
+## 2026-10-17: Validate copied backup payloads before live mutation
+
+Hashing the source does not validate its copy. Re-read command, receipt,
+metadata and the complete app tree against their captured identities before
+activation. Corrupt each payload independently and assert the live bytes,
+modes and inodes remain untouched; write-failure tests alone miss silent damage.
+
+## 2026-10-17: Preserve activation and restoration error evidence
+
+Publish the durable recovery path before activation begins. If recovery fails,
+report the original activation error, the recovery error and that same retained
+backup path. Regress explicit rollback failure too: a second restore must not
+replace the error that explains why the first recovery became necessary.
+
+## 2026-10-17: Tie relaunch guidance to an actual bundle replacement
+
+A running app needs relaunch guidance after deployment or explicit rollback
+replaces its bundle. An already-current deployment needs no notice. Keep the
+process-detection override conspicuously test-only and run signed synthetic
+lifecycle cases for all three paths.
+
+## 2026-10-17: Admit every required native source input at the fleet boundary
+
+Installer-required golden help is also fleet-required source inventory. Remove
+it from a committed synthetic index to exercise the missing-required case;
+merely deleting a tracked working file only exercises generic source drift.
+Require the source-inventory diagnostic before the child installer is invoked.
+
+## 2026-10-17: Assemble releases without stale files or executable overwrites
+
+Clear the bounded prior app bundle before assembly, then copy executables to
+unique temporary siblings and rename them into place. A valid signature can
+seal stale resources, and signing after overwriting can conceal prior inode
+damage. Hold file descriptors to signed invented old executables across a real
+release build, checking both their bytes and new path identities. Run this
+integration category after Swift tests, outside SwiftPM's test process.
+
+## 2026-10-17: Put acceptance homes in private OS temporary space
+
+Required synthetic acceptance builds should use plain mktemp -d rather than
+adding homes to the owner's HOME. Keep their packages, invented inventory and
+runtime evidence inside that private directory and print the path for bounded
+cleanup. Building/signing the harness establishes no native interaction result.
+
 ## 2026-10-17: Preserve the metadata that gave a snapshot its meaning
 
 An installed cask snapshot depends on the caller's auto-updates flag and app
@@ -153,9 +205,11 @@ real controller and failing atomic-replace seam, then retry successfully.
 ## 2026-10-16: Retain validated recovery bytes until activation finishes
 
 A move-based native app activation can fail before the old bundle leaves its
-live path, including across filesystems. Do not delete a verified backup copy
-before that move succeeds: recovery then loses the app it needs to restore.
-Keep the validated copy through all command, app and receipt transitions, and
+live path. The original fix retained a backup copy but did not verify its copied
+bytes before activation; the later backup-validation fix closes that gap.
+Do not delete the retained backup before that move succeeds: recovery then
+loses the app it needs to restore. Validate and keep the copy through all
+command, app and receipt transitions, and
 inject failures both before moving the old app and after publishing each new
 artifact. Compare independent byte/type/full-mode snapshots after restoration;
 receipt hashes alone cannot prove that recovery preserved the original tree.

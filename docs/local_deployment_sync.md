@@ -336,21 +336,32 @@ changed inputs or `--rebuild` rebuild both release products together.
 Dry-run validates inputs and writes nothing.
 
 The app is copied into a `.brew-version-stage-*` directory inside the apps
-directory, checked, then renamed into place after saving the prior app.
+directory, checked, then renamed into place after saving the prior app. The old
+live app moves into that same staging directory, so an apps directory on a
+different volume from the backup home remains supported.
 Backups under `~/.utilities-deploy-backups/brew-version/copy-*` retain the
 previous command, receipt and app. Containers are 0700; saved command, receipt
 and metadata are 0600 with original modes and digests recorded. The saved
-app tree retains its original modes and its validated tree identity. These
+app tree retains its original modes. Every copied payload is re-read and hashed
+against its captured source identity, including the complete app tree and backup
+metadata, before any live artifact changes. The installer prints `Recovery backup:`
+before activation or rollback starts. These
 private saved modes are an exception to the generic backup-file normalization
 rule. Activation failure restores the prior command, app and receipt, including
 an absent prior app. Rollback validates the backup before saving the displaced
-release and restores prior bytes and modes. Backups are retained.
+release and restores prior bytes and modes. If activation and restoration both
+fail, the error includes both failures and the retained backup path. Stop and
+recover from that backup after resolving the reported filesystem problem; do
+not discard it or repeatedly deploy over the unresolved state. Backups are retained.
 
 Deploy, audit and rollback preserve `~/Library/Application Support/Brew Version/`
 and `~/Library/Caches/Brew Version/`. A running app is detected with
 `pgrep -f "Brew Version.app/Contents/MacOS/BrewVersion"` (test override:
-`BREW_VERSION_DEPLOY_PGREP`). It is never terminated; deploy prints
-`Quit and reopen Brew Version to use VERSION.` when running.
+`BREW_VERSION_DEPLOY_TEST_ONLY_PGREP`, reserved for isolated lifecycle tests).
+It is never terminated. After actual bundle replacement, deployment prints
+`Quit and reopen Brew Version to use VERSION.` when running. Rollback of an app
+prints the corresponding restored-release notice; an already-current deployment
+prints no relaunch notice.
 
 The lifecycle contract is exercised by
 [installer tests](../tools/tests/deploy_brew_version.test.mjs), including

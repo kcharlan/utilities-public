@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
-prototype_home="$(mktemp -d "$HOME/.brew-version-settings-prototype.XXXXXX")"
+prototype_home="$(mktemp -d)"
 chmod 700 "$prototype_home"
 app="$prototype_home/Settings Prototype.app"
 mkdir -p "$app/Contents/MacOS"
