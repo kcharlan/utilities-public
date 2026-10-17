@@ -116,15 +116,24 @@ function readBackup(directory) {
 }
 function stageApp(source,apps,cleanupErrors) {
   const directory=fs.mkdtempSync(path.join(apps,'.brew-version-stage-'));
-  try {const candidate=path.join(directory,'Brew Version.app');copyTree(source,candidate);if(appTreeHash(candidate)!==appTreeHash(source)) throw new Error('App staging identity mismatch');return {directory,candidate};}
+  try {
+    const candidate=source?path.join(directory,'Brew Version.app'):null;
+    if(source) {copyTree(source,candidate);if(appTreeHash(candidate)!==appTreeHash(source)) throw new Error('App staging identity mismatch');}
+    return {directory,candidate};
+  }
   catch(error) {cleanupErrors.push(...cleanupDirectories([directory]));throw error;}
+}
+function displaceApp(app,staged) {
+  if(exists(app)) fs.renameSync(app,path.join(staged.directory,'displaced-app'));
 }
 function restore(saved,command,app,receipt,apps,cleanupErrors) {
   let staged;
   try {
-    if(saved.app) staged=stageApp(saved.app,apps,cleanupErrors);
-    if(exists(app)) fs.rmSync(app,{recursive:true});
-    if(staged) fs.renameSync(staged.candidate,app);
+    if(saved.app || exists(app)) {
+      staged=stageApp(saved.app,apps,cleanupErrors);
+      displaceApp(app,staged);
+      if(staged.candidate) fs.renameSync(staged.candidate,app);
+    }
     for(const [key,file] of [['command',command],['receipt',receipt]]) {
       if(saved[key]) atomicFile(file,saved[key].bytes,saved[key].mode,'.brew-version-stage-');else if(exists(file)) fs.unlinkSync(file);
     }
@@ -202,11 +211,7 @@ export function main(argv=process.argv.slice(2)) {
       atomicFile(command,bytes,0o755,'.brew-version-stage-');diagnostic(command,expected);
       // The existing app is moved, not overwritten; the verified copy protects recovery
       // even if moving or publishing the new bundle fails.
-      if(exists(app)) {
-        const displaced=path.join(staged.directory,'displaced-app');
-        fs.renameSync(app,displaced);
-        fs.rmSync(displaced,{recursive:true});
-      }
+      displaceApp(app,staged);
       fs.renameSync(staged.candidate,app);appDiagnostic(app,expected);
       atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expected.version,commandHash:sha(bytes),commandMode:0o755,appTreeHash:treeHash})+'\n'),0o600,'.brew-version-stage-');
       verify(inputs,expected,command,app,receipt);diagnostic(command,expected);

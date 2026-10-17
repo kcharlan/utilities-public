@@ -153,14 +153,46 @@ function inject(f, source) {
   fs.writeFileSync(hook,source);
   f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
 }
+for(const priorApp of [true,false]) {
+  test(`rollback stages the displaced live inode before restoring ${priorApp?'a prior app':'an absent app'}`,t=>{
+    const f=fixture(t),empty=backupPath(succeeds(f.run()));
+    const first=active(f);f.release('second');const previous=backupPath(succeeds(f.run()));
+    const before=active(f),inode=fs.statSync(f.app).ino;
+    const evidence=path.join(f.base,'synthetic-displacement.json');
+    inject(f,`const fs=require('node:fs'),path=require('node:path');const rename=fs.renameSync,remove=fs.rmSync;
+      fs.rmSync=(p,...args)=>{if(p===${JSON.stringify(f.app)})throw Error('synthetic live bundle deletion forbidden');return remove(p,...args);};
+      fs.renameSync=(a,b)=>{const result=rename(a,b);if(a===${JSON.stringify(f.app)}){
+        if(path.dirname(path.dirname(b))!==${JSON.stringify(f.apps)})throw Error('synthetic displacement left apps volume');
+        fs.writeFileSync(${JSON.stringify(evidence)},JSON.stringify({inode:fs.statSync(b).ino,bytes:fs.readFileSync(path.join(b,'Contents/Resources/synthetic.txt')).toString('base64')}));}return result;};`);
+    const r=succeeds(f.run('--rollback',priorApp?previous:empty));
+    assert.deepEqual(JSON.parse(fs.readFileSync(evidence)),{inode,bytes:before[2].children.Contents.children.Resources.children['synthetic.txt'].bytes});
+    assertActiveDeployment(f,priorApp?first:[null,null,null]);
+    assert.deepEqual(fs.readdirSync(f.apps),priorApp?['Brew Version.app']:[]);
+    const recovery=backupPath(r);assert.deepEqual(snapshot(path.join(recovery,'Brew Version.app')),before[2]);
+  });
+}
+test('failed rollback displacement preserves the live inode and validated recovery backup',t=>{
+  const f=fixture(t);succeeds(f.run());f.release('second');const saved=backupPath(succeeds(f.run()));
+  const before=active(f),inode=fs.statSync(f.app).ino;
+  inject(f,`const fs=require('node:fs');const rename=fs.renameSync;
+    fs.renameSync=(a,b)=>{if(a===${JSON.stringify(f.app)})throw Error('synthetic rollback displacement failure');return rename(a,b);};`);
+  const r=f.run('--rollback',saved);assert.equal(r.status,1);assert.match(r.stderr,/synthetic rollback displacement failure/);
+  assertActiveDeployment(f,before);assert.equal(fs.statSync(f.app).ino,inode);
+  assert.deepEqual(fs.readdirSync(f.apps),['Brew Version.app']);
+  const recovery=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(recovery,r.stdout);
+  assert.deepEqual(snapshot(path.join(recovery,'Brew Version.app')),before[2]);assert.ok(r.stderr.includes(recovery),r.stderr);
+});
 test('update succeeds when backup and apps are on different simulated devices',t=>{
   const f=fixture(t);succeeds(f.run());f.release('other-device');
   // Model devices by their containing directory, rather than rejecting every app move.
   inject(f,`const fs=require('node:fs'),path=require('node:path');const rename=fs.renameSync;
     const device=p=>path.resolve(p).startsWith(${JSON.stringify(f.apps+path.sep)})?2:1;
     fs.renameSync=(a,b)=>{if(device(a)!==device(b))throw Object.assign(Error('synthetic EXDEV across device boundary'),{code:'EXDEV'});return rename(a,b);};`);
-  succeeds(f.run());assertActiveDeployment(f,active(f));
+  const saved=backupPath(succeeds(f.run()));assertActiveDeployment(f,active(f));
   assert.deepEqual(snapshot(f.app),snapshot(path.join(f.expected,'Brew Version.app')));
+  assert.deepEqual(fs.readdirSync(f.apps),['Brew Version.app']);
+  succeeds(f.run('--rollback',saved));
+  assert.deepEqual(snapshot(f.app),snapshot(path.join(saved,'Brew Version.app')));
   assert.deepEqual(fs.readdirSync(f.apps),['Brew Version.app']);
 });
 for(const payload of ['app','command','receipt','metadata']) for(const failure of ['corrupt','fail']) {
