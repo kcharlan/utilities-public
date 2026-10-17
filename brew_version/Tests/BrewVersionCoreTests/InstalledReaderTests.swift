@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BrewVersionCore
 
-private final class InstallationFixture {
+final class InstallationFixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-brew-\(UUID().uuidString)")
     let fm = FileManager.default
     init() throws { try fm.createDirectory(at: root, withIntermediateDirectories: true) }

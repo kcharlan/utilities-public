@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-16: Keep catalog validation and persisted freshness separate
+
+Bulk catalog lists form one usable snapshot. Validate both before replacing
+the cache; a successful first list cannot replace half of a good pair when the
+second fails. Conditional responses require validated prior bytes, and stale
+fallback content must not advance the successful-fetch clock. Track attempts
+separately to bound offline retries. Independent catalog and watched checks
+must merge into current committed state after their final await, with tests
+forcing both completion orders and state-save failures.
+
 ## 2026-10-16: Distinguish installation links from real version directories
 
 A cask can have a genuine `latest` version directory. Exclude version symlinks

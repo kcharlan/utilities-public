@@ -105,3 +105,29 @@ sets a baseline without notifying. Installed updates stay amber unless skipped;
 new releases for uninstalled packages stay amber across polls and restarts until
 the popover closes. Checks use at most four concurrent lookups and retain settings and
 watch changes made while the network is busy.
+
+## Catalog and Other updates
+
+The optional catalog client reads Homebrew's formula and cask bulk lists for
+prefix search suggestions and installed, unwatched updates. Only admitted
+Homebrew core/cask installations appear; these updates never notify or affect
+the watched update count. Self-updating casks retain their installed-version
+source, including the fallback to Homebrew's records.
+
+At startup, callers await `WatchController.hydrateCatalog()` to restore cached
+suggestions and Other updates even when a network refresh is not due. This API
+is async so reading and decoding bulk cache data runs away from the main actor.
+`scheduledTick()` independently starts watched checks and catalog refreshes;
+the catalog is fetched when absent or 24 hours after successful revalidation.
+Failed attempts use the watched interval as an in-memory retry floor, without
+changing the last successful catalog timestamp. Disabling Other updates skips
+catalog I/O and clears its visible content; enabling hydrates and checks cadence.
+
+The catalog cache lives under `~/Library/Caches/Brew Version/`. Its
+`catalog.json` snapshot contains both raw lists and their ETags, replaced
+atomically only after both responses validate. A partial, invalid or failed
+download retains the previous snapshot as stale content. A 304 response uses
+validated cached bytes; without them, the client retries unconditionally.
+The bulk transport uses a 10-second idle timeout and a 120-second total timeout.
+Catalog timestamps and the visibility/collapse settings use the same atomic
+state-save boundary as watches, retaining committed values when saving fails.

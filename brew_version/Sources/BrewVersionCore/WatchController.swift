@@ -10,6 +10,9 @@ public protocol Notifier: Sendable {
     public private(set) var persistenceError: String?
     public private(set) var canSave: Bool
     public private(set) var isChecking = false
+    public private(set) var catalog: Catalog?
+    public private(set) var others: [OtherUpdate] = []
+    public private(set) var isRefreshingCatalog = false
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
 
     private let transport: any HTTPTransport
@@ -21,25 +24,31 @@ public protocol Notifier: Sendable {
     private var client: HomebrewClient
     private var generations: [PackageName: UUID]
     private var pendingAdds: Set<PackageName> = []
+    private let catalogClient: CatalogClient?
+    private var lastCatalogAttempt: Date?
 
     public init(transport: any HTTPTransport, installed: InstalledReader?, store: WatchStore,
-                notifier: any Notifier, now: @escaping () -> Date = Date.init) {
+                notifier: any Notifier, now: @escaping () -> Date = Date.init,
+                catalogClient: CatalogClient? = nil) {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         self.transport = transport; self.installed = installed; self.store = store
         self.notifier = notifier; self.now = now
+        self.catalogClient = catalogClient
         let cache = ListingCache(entries: load.state.listingCache)
         self.cache = cache; client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
     }
 
     public func retryLoad() {
-        guard !isChecking, pendingAdds.isEmpty else { return }
+        guard !isChecking, !isRefreshingCatalog, pendingAdds.isEmpty else { return }
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         cache = ListingCache(entries: load.state.listingCache)
         client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
+        if !state.showOtherUpdates { catalog = nil }
+        recomputeOthers()
     }
 
     @discardableResult private func commit(_ candidate: AppState) -> Bool {
@@ -47,6 +56,7 @@ public protocol Notifier: Sendable {
         do {
             try store.save(candidate)
             state = candidate; persistenceError = nil
+            recomputeOthers()
             return true
         } catch {
             persistenceError = "Couldn't save state: \(error.localizedDescription)"
@@ -112,6 +122,67 @@ public protocol Notifier: Sendable {
     public func checkIfDue() async {
         guard CheckSchedule.isDue(lastCheck: state.lastCheck, interval: state.interval, now: now()) else { return }
         await checkNow()
+    }
+
+    private func recomputeOthers() {
+        guard state.showOtherUpdates, let catalog, let installed else { others = []; return }
+        others = otherUpdates(catalog: catalog, installed: installed, watched: Set(state.watched.map(\.name)))
+    }
+
+    public func hydrateCatalog() async {
+        guard state.showOtherUpdates, let catalogClient else { return }
+        let cached = await Task.detached { try? catalogClient.cached() }.value
+        guard state.showOtherUpdates else { return }
+        // A refresh may have completed while disk hydration was suspended.
+        if catalog == nil { catalog = cached }
+        recomputeOthers()
+    }
+
+    public func refreshCatalogIfDue() async {
+        guard canSave, state.showOtherUpdates, let catalogClient, !isRefreshingCatalog else { return }
+        isRefreshingCatalog = true
+        defer { isRefreshingCatalog = false }
+        if catalog == nil { await hydrateCatalog() }
+        guard state.showOtherUpdates,
+              catalog == nil || (state.lastCatalogFetch.map({ $0.addingTimeInterval(86400) <= now() }) ?? true),
+              CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: state.interval, now: now()) else { return }
+        lastCatalogAttempt = now()
+        do {
+            let result = try await catalogClient.load()
+            guard state.showOtherUpdates else { return }
+            // Merge only after the final await, preserving watch/settings commits made in flight.
+            if result.revalidated {
+                var candidate = state
+                candidate.lastCatalogFetch = now()
+                guard commit(candidate) else { return }
+            }
+            catalog = result.catalog
+            recomputeOthers()
+        } catch {
+            // Existing content survives an offline or invalid first refresh. The attempt
+            // clock bounds retries; only a successful persisted fetch advances the daily clock.
+        }
+    }
+
+    public func scheduledTick() async {
+        async let watches: Void = checkIfDue()
+        async let catalog: Void = refreshCatalogIfDue()
+        _ = await (watches, catalog)
+    }
+
+    public func setShowOtherUpdates(_ on: Bool) {
+        guard state.showOtherUpdates != on else { return }
+        var candidate = state; candidate.showOtherUpdates = on
+        guard commit(candidate) else { return }
+        if on {
+            Task { await self.hydrateCatalog(); await self.refreshCatalogIfDue() }
+        } else {
+            catalog = nil; others = []
+        }
+    }
+
+    public func setOtherUpdatesCollapsed(_ collapsed: Bool) {
+        var candidate = state; candidate.otherUpdatesCollapsed = collapsed; commit(candidate)
     }
 
     public func checkNow() async {
