@@ -222,3 +222,8 @@ for deploy, dry-run, read-only audit, rollback and fleet-audit commands. The
 installer builds admitted tracked inputs, installs the signed CLI and app as
 one release, and preserves watches and catalog state. It never opens or quits
 the app. Quit and reopen an already running app after deployment.
+
+## Implementation record
+
+The [implementation and acceptance record](docs/implementation_notes.md) lists
+decisions, deviations, automated validation and the outstanding native UI gates.
