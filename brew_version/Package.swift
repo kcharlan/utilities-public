@@ -15,7 +15,7 @@ let package = Package(
         .target(name: "BrewVersionCLI", dependencies: ["BrewVersionCore"]),
         .executableTarget(name: "brew-version", dependencies: ["BrewVersionCLI", "BrewVersionCore"]),
         .executableTarget(name: "BrewVersion", dependencies: ["BrewVersionCore"]),
-        .testTarget(name: "BrewVersionAppTests", dependencies: ["BrewVersion"]),
+        .testTarget(name: "BrewVersionAppTests", dependencies: ["BrewVersion", "BrewVersionCore"]),
         .testTarget(name: "BrewVersionCoreTests", dependencies: ["BrewVersionCore"]),
         .testTarget(name: "BrewVersionCLITests", dependencies: ["BrewVersionCLI", "BrewVersionCore"], resources: [.copy("Fixtures")])
     ],

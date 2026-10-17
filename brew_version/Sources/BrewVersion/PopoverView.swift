@@ -6,8 +6,7 @@ struct PopoverView: View {
     @State private var query = ""
     @State private var selected: PackageName?
     @FocusState private var focusedWatch: PackageName?
-    @State private var removed: (entry: WatchEntry, index: Int)?
-    @State private var undoGeneration = UUID()
+    @State private var undo = WatchUndoAction()
     private var watches: [WatchEntry] {
         controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
     }
@@ -34,7 +33,17 @@ struct PopoverView: View {
                 if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
                 else { Text("Retry the failed action to save it.").font(.caption) }
             }
-            SearchSection(controller: controller, query: $query)
+            SearchSection(controller: controller, undo: undo, query: $query)
+            if let removed = undo.removed {
+                HStack {
+                    Text("Stopped watching \(removed.entry.name.rawValue)").font(.caption)
+                    Button("Undo") { undo.restore(controller: controller) }.disabled(!controller.canSave)
+                }
+                if undo.retryRequired {
+                    Text("Undo couldn't be saved. Retry Undo before stopping another watch.")
+                        .font(.caption).foregroundStyle(.red)
+                }
+            }
             if query.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
@@ -42,19 +51,13 @@ struct PopoverView: View {
                         Text("Checked every \(controller.state.interval.label), with alerts").font(.caption).foregroundStyle(.secondary)
                         if watches.isEmpty { Text("Search for a formula or cask to start watching it.").foregroundStyle(.secondary).padding(.vertical, 12) }
                         ForEach(watches, id: \.name) { entry in
-                            WatchRowView(entry: entry, controller: controller) { remove(entry.name) }
+                            WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove) { remove(entry.name) }
                                 .background(selected == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
                                 .contentShape(Rectangle()).focusable().focused($focusedWatch, equals: entry.name)
                                 .onTapGesture { selected = entry.name; focusedWatch = entry.name }
                                 .onKeyPress(.delete) { remove(entry.name); return .handled }
                         }
-                        if let removed {
-                            HStack {
-                                Text("Stopped watching \(removed.entry.name.rawValue)").font(.caption)
-                                Button("Undo") { controller.restore(removed.entry, at: removed.index); self.removed = nil; undoGeneration = UUID() }.disabled(!controller.canSave)
-                            }
-                        }
-                        OtherUpdatesSection(controller: controller)
+                        OtherUpdatesSection(controller: controller, undo: undo)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(maxHeight: 390)
             }
@@ -72,9 +75,6 @@ struct PopoverView: View {
         .onDeleteCommand { if query.isEmpty, let selected { remove(selected) } }
     }
     private func remove(_ name: PackageName) {
-        guard let removal = controller.remove(name) else { return }
-        removed = removal; selected = nil
-        let generation = UUID(); undoGeneration = generation
-        Task { try? await Task.sleep(for: .seconds(5)); if undoGeneration == generation { removed = nil } }
+        if undo.remove(name, controller: controller) { selected = nil }
     }
 }

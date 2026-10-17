@@ -15,6 +15,7 @@ func statusText(_ listing: Listing, installed: InstalledVersion?) -> String {
 struct WatchRowView: View {
     let entry: WatchEntry
     let controller: WatchController
+    var canRemove = true
     let remove: () -> Void
     @State private var hovering = false
     var body: some View {
@@ -48,6 +49,6 @@ struct WatchRowView: View {
             if let homepage = listing.homepage { Button("Open homepage") { NSWorkspace.shared.open(homepage) } }
             if entry.isAmber { Button("Skip this version") { controller.skip(entry.name) }.disabled(!controller.canSave) }
         }
-        Button("Stop watching \(entry.name.rawValue)", action: remove).disabled(!controller.canSave)
+        Button("Stop watching \(entry.name.rawValue)", action: remove).disabled(!controller.canSave || !canRemove)
     }
 }

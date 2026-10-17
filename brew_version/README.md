@@ -153,6 +153,13 @@ and pressing Delete also removes it. Removal deletes its saved watch state;
 **Undo** restores it for five seconds. Closing the popover acknowledges unseen
 releases of packages that are not installed.
 
+If Undo cannot save, its recovery entry stays available until restoration
+succeeds. Retry Undo after correcting the save problem; further Stop watching
+actions stay disabled so they cannot replace that entry. Watching the same
+package from search or Other updates retries the saved restoration, preserving
+its acknowledgements and skipped version. The recovery line stays visible
+while searching too. The usual five-second expiry applies before a failure.
+
 Other updates on this Mac lists installed, unwatched updates and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. The interval menu accepts the presets or a whole

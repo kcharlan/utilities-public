@@ -99,11 +99,13 @@ public extension Notifier { func requestAuthorization() async {} }
         generations.removeValue(forKey: name)
         return (entry, index)
     }
-    public func restore(_ entry: WatchEntry, at index: Int) {
-        guard canSave, !state.watched.contains(where: { $0.name == entry.name }) else { return }
+    @discardableResult public func restore(_ entry: WatchEntry, at index: Int) -> Bool {
+        guard canSave, !state.watched.contains(where: { $0.name == entry.name }) else { return false }
         var candidate = state
         candidate.watched.insert(entry, at: min(max(index, 0), candidate.watched.count))
-        if commit(candidate) { generations[entry.name] = UUID() }
+        guard commit(candidate) else { return false }
+        generations[entry.name] = UUID()
+        return true
     }
     public func skip(_ name: PackageName) {
         guard canSave, let index = state.watched.firstIndex(where: { $0.name == name }),

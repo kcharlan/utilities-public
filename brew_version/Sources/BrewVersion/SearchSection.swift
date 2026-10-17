@@ -3,6 +3,7 @@ import BrewVersionCore
 
 struct SearchSection: View {
     let controller: WatchController
+    let undo: WatchUndoAction
     @Binding var query: String
     @State private var selection = 0
     var body: some View {
@@ -43,7 +44,7 @@ struct SearchSection: View {
                 }
                 Spacer()
                 if watched { Text("Watching").font(.caption) }
-                else { Button("Watch") { Task { await controller.add(listing.name, kind: listing.kind) } }.disabled(!controller.canSave) }
+                else { Button("Watch") { Task { await undo.watch(listing.name, kind: listing.kind, controller: controller) } }.disabled(!controller.canSave) }
             }
         case .invalid(let text):
             VStack(alignment: .leading) { Text(text); Text("Names use lowercase letters, numbers and @ + . _ -").font(.caption).foregroundStyle(.red) }
@@ -56,7 +57,7 @@ struct SearchSection: View {
     private func watchSelected() {
         guard controller.canSave, controller.results.indices.contains(selection),
               case .found(let listing, _, false) = controller.results[selection] else { return }
-        Task { await controller.add(listing.name, kind: listing.kind) }
+        Task { await undo.watch(listing.name, kind: listing.kind, controller: controller) }
     }
     private func copySelected() {
         guard controller.results.indices.contains(selection), case .found(let listing, _, _) = controller.results[selection] else { return }

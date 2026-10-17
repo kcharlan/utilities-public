@@ -3,6 +3,7 @@ import BrewVersionCore
 
 struct OtherUpdatesSection: View {
     let controller: WatchController
+    let undo: WatchUndoAction
     var body: some View {
         if controller.state.showOtherUpdates && !controller.others.isEmpty {
             Divider()
@@ -26,7 +27,7 @@ struct OtherUpdatesSection: View {
                             }
                         }
                         Spacer()
-                        Button("Watch") { Task { await controller.add(row.listing.name, kind: row.listing.kind) } }.disabled(!controller.canSave)
+                        Button("Watch") { Task { await undo.watch(row.listing.name, kind: row.listing.kind, controller: controller) } }.disabled(!controller.canSave)
                     }.padding(.vertical, 4)
                 }
             }

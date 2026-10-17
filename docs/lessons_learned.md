@@ -339,3 +339,10 @@ watched flag from committed state at publication and refresh it on successful
 watch mutations. Preserve a watched package's known kind during search instead
 of falling back to a formula-first lookup. Controlled transports can hold one
 query while a newer query or a watch mutation commits, without live inventory.
+
+An undo action must consume its saved entry only after the restore commits.
+Cancel its normal expiry after a failed restore so the user can retry; do not
+replace that pending recovery with another removal. Route a same-name Watch
+through restoration too, or a fresh add can strand the recovery as a duplicate
+and lose its saved acknowledgements. Test the actual app action against the
+real controller and failing atomic-replace seam, then retry successfully.
