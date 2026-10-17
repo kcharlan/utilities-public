@@ -36,25 +36,27 @@ No live installation, deployment, push or merge was performed. Preserve this dis
 
 ## Validation record
 
-The implementation task reviews are complete. Final whole-branch review is pending. These results describe the committed implementation before that review's fixes:
+The implementation task reviews, whole-branch review and scoped review of all
+four final fixes are complete. All four findings are addressed, with no new
+breakage identified. Native runtime acceptance remains outstanding.
 
 | Validation | Result |
 | --- | --- |
-| Complete Swift suite | 117 tests pass: 102 core, 11 CLI, 4 app |
+| Complete Swift suite | 121 tests pass: 104 core, 11 CLI, 6 app |
 | Release build and strict signatures | Pass for command and app; source, built plist and CLI version agree |
 | Synthetic acceptance service / signed harness / Settings prototype | Pass for service test and builds; no GUI launch |
-| All native/calculator installer suites | 53 tests pass, including 15 Brew Version cases |
+| All native/calculator installer suites | 59 tests pass, including 21 Brew Version cases |
 | Static audit / complete fleet suite | 17 static tests pass; fleet reports PASS |
 | Market Atlas complete suite | 423 Node tests and all six original browser runs pass |
 | Market Atlas synthetic suite | 267 Node tests and 78 compiler tests pass |
 | Full compiler discovery | 79 tests pass, including retained-input reproduction |
 
-Market Atlas used the owner's already prepared external data and compiler environment. No data acquisition, dependency/browser download, environment replacement or installed-site acceptance was performed. Data-bearing evidence remains outside the checkout.
+Market Atlas used the owner's already prepared external data and compiler environment. Its complete results precede the final native app/installer fixes, which did not change its code or the shared audit runner. No data acquisition, dependency/browser download, environment replacement or installed-site acceptance was performed. Data-bearing evidence remains outside the checkout.
 
 ## Final review fix wave
 
-All four accepted final-review findings are implemented; scoped re-review is
-pending. Suggestion kind now survives lookup and Watch, multi-name search has
+All four accepted final-review findings are implemented and the scoped
+re-review is clean. Suggestion kind now survives lookup and Watch, multi-name search has
 a bounded scrolling region, interval validation copy derives from domain bounds,
 and CLI activation rejects unexpected stderr.
 
