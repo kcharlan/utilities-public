@@ -150,8 +150,12 @@ once, and are reused when filtering watches or changing unrelated settings.
 
 The catalog cache lives under `~/Library/Caches/Brew Version/`. Its
 `catalog.json` snapshot contains a versioned pair of slim Listing indexes and
-their ETags, replaced atomically only after both responses validate. Legacy raw
-cache envelopes are ignored and replaced on the next successful refresh.
+their ETags, replaced atomically only after both responses validate. The JSON
+envelope starts with a fixed `brew-version-catalog-v2` format marker, checked
+with a bounded read before the remaining file is allocated or decoded. Legacy
+raw/base64 envelopes and earlier unmarked slim indexes are ignored without
+reading their payloads. They refetch once without old ETags and are replaced
+on the next successful refresh; saved watches are unaffected.
 Unknown API metadata is discarded during typed decoding away from the main
 actor. A partial, invalid, empty or failed download retains the previous pair
 as stale content. A 304 response reuses the decoded listings; without a valid

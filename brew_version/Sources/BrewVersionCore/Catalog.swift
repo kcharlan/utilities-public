@@ -26,15 +26,29 @@ public struct CatalogFetch: Sendable {
     public let revalidated: Bool
 }
 
+protocol CatalogCacheInput: AnyObject, Sendable {
+    func read(upToCount count: Int) throws -> Data?
+    func readToEnd() throws -> Data?
+    func close() throws
+}
+extension FileHandle: CatalogCacheInput {}
+
 public actor CatalogClient {
     private let transport: any HTTPTransport
     private let cacheDirectory: URL
     private var cacheFile: URL { cacheDirectory.appendingPathComponent("catalog.json") }
     private var previous: CatalogIndex?
     private var didReadCache = false
+    private let openCacheFile: @Sendable (URL) throws -> any CatalogCacheInput
 
     public init(transport: any HTTPTransport, cacheDirectory: URL) {
         self.transport = transport; self.cacheDirectory = cacheDirectory
+        self.openCacheFile = { try FileHandle(forReadingFrom: $0) }
+    }
+    init(transport: any HTTPTransport, cacheDirectory: URL,
+         openCacheFile: @escaping @Sendable (URL) throws -> any CatalogCacheInput) {
+        self.transport = transport; self.cacheDirectory = cacheDirectory
+        self.openCacheFile = openCacheFile
     }
     public nonisolated static func makeTransport() -> URLSessionTransport {
         URLSessionTransport(requestTimeout: 10, resourceTimeout: 120)
@@ -54,7 +68,9 @@ public actor CatalogClient {
             try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDirectory.path)
-            try JSONEncoder().encode(index).write(to: cacheFile, options: .atomic)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try encoder.encode(CatalogCacheEnvelope(index: index)).write(to: cacheFile, options: .atomic)
             self.previous = index
             return CatalogFetch(catalog: index.catalog, revalidated: true)
         } catch {
@@ -78,8 +94,17 @@ public actor CatalogClient {
     private func readCache() -> CatalogIndex? {
         guard !didReadCache else { return previous }
         didReadCache = true
-        guard let data = try? Data(contentsOf: cacheFile),
-              let index = try? JSONDecoder().decode(CatalogIndex.self, from: data), index.schema == 1,
+        guard let input = try? openCacheFile(cacheFile) else { return nil }
+        defer { try? input.close() }
+        // Reject raw/base64 and unmarked caches before allocating or decoding their payload.
+        // Use the same open file for preflight and decoding, including across atomic replacement.
+        guard var data = try? input.read(upToCount: CatalogCacheEnvelope.prefix.count),
+              data == CatalogCacheEnvelope.prefix,
+              let remaining = try? input.readToEnd() else { return nil }
+        data.append(remaining)
+        guard let envelope = try? JSONDecoder().decode(CatalogCacheEnvelope.self, from: data) else { return nil }
+        let index = envelope.index
+        guard index.schema == 1,
               index.formula.valid(kind: .formula), index.cask.valid(kind: .cask) else { return nil }
         previous = index
         return index
@@ -87,6 +112,13 @@ public actor CatalogClient {
 }
 
 private enum CatalogError: Error { case http(Int) }
+private struct CatalogCacheEnvelope: Codable {
+    // sortedKeys keeps this bounded admission marker first; the entire file remains valid JSON.
+    static let prefix = Data(#"{"format":"brew-version-catalog-v2","index":"#.utf8)
+    let format: String
+    let index: CatalogIndex
+    init(index: CatalogIndex) { self.format = "brew-version-catalog-v2"; self.index = index }
+}
 private struct CatalogListIndex: Codable, Sendable {
     let listings: [Listing]
     let etag: String?

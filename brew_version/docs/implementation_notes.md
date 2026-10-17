@@ -1,5 +1,32 @@
 # Brew Version implementation and acceptance record
 
+## Legacy cache admission repair
+
+Ignoring the old raw/base64 envelope after whole-file Data loading and decoding
+still allocated and scanned its payload. The cache now uses a valid JSON
+envelope whose sorted keys start with the fixed `brew-version-catalog-v2`
+marker. A 44-byte read admits this format before the remaining file is read or
+decoded, using the same file descriptor throughout. Raw envelopes and earlier
+unmarked schema-1 slim indexes refetch once without their ETags; saved watches
+are unaffected. The nested slim index keeps its schema and validation, typed
+bulk decoding, read-once actor hydration, 304 reuse and atomic pair replacement.
+
+A real-file I/O seam makes the allocation regression observable. With the old
+whole-read behavior, invented legacy envelopes read all 230 and 1,333,566 bytes
+and invoked the full read once each, despite returning no cached catalog.
+The corrected path rejects both during prefix admission. Additional cases
+cover truncated/unknown prefixes, admitted malformed payloads, unmarked slim
+refetch and typed restart hydration with ETags and memory-backed 304 reuse.
+Final legacy-present cold and slim-cache warm process footprints remain
+separate controller-owned runtime checks.
+
+Fresh validation passes all 172 Swift tests (138 core, 11 CLI, 23 app), all
+three isolated release/build integration cases without skips, the signed
+release and strict signatures, exact golden CLI `--help`/`-h` and version
+output with empty stderr, the one-test synthetic acceptance service and signed
+harness, and the signed Settings prototype. Source, built plist and CLI remain
+1.0.0. The repair does not publish or deploy a release.
+
 ## Outstanding acceptance
 
 Final-source native UI is unverified. The desktop is now unlocked; the earlier

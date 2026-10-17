@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-17: Reject legacy cache formats before reading their payloads
+
+Ignoring a decoded legacy envelope still allocates and scans its large base64
+payload, and freed allocator pages may remain in the process footprint. Put a
+fixed marker at the start of the valid JSON cache and check it with bounded I/O
+on the same descriptor before reading or decoding the remainder. Regress actual
+bytes read and full-read calls for small and large invented legacy envelopes;
+`cached() == nil` alone already passed with the allocation bug. An unmarked slim
+cache also refetches once. Preserve atomic pair replacement and typed 304 reuse,
+then measure the real legacy-present cold launch separately from tests.
+
 ## 2026-10-17: Present the scheduler's retry deadline rather than its success clock
 
 The last successful check alone cannot predict the next automatic request:
