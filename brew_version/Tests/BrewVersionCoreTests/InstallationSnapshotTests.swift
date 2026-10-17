@@ -40,6 +40,40 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
 }
 
 @MainActor struct InstallationSnapshotTests {
+    @Test func missingMetadataReadAdoptsNewerSearchBeforeCheckCommit() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-watch/1", kind: .formula)
+        let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let reader = ControlledInstallation(f.reader(), blockedLookup: 1)
+        let notifier = RecordingNotifier(store: store)
+        let bulk = StubTransport([
+            catalogURL(.formula): [catalogResponse(200, syntheticFormulaList.replacingOccurrences(of: "\"2\"", with: "\"4\""))],
+            catalogURL(.cask): [catalogResponse(200, syntheticCaskList)]])
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]),
+            installed: reader, store: store, notifier: notifier,
+            catalogClient: CatalogClient(transport: bulk, cacheDirectory: directory))
+        let hydration = Task { await c.hydrateCatalog() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        // A successful catalog refresh supplies the replacement capture. The
+        // fresh watch listing returned next is absent from both captures.
+        await c.refreshCatalogIfDue()
+        #expect(reader.count == 2)
+        let check = Task { await c.checkNow() }
+        while reader.lookupCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.lookupCount == 1)
+        try f.install("prefix/Cellar/synthetic-watch/2", kind: .formula)
+        await c.search(watchName.rawValue)
+        reader.releaseLookup(); await check.value
+        #expect(store.load().state.watched[0].installed?.version == "2")
+        #expect(c.amberCount == 0)
+        #expect(await notifier.notices.isEmpty)
+        reader.release(); await hydration.value
+        #expect(reader.count <= 2)
+    }
     @Test func olderTargetedReadCannotReplaceNewerInstalledObservation() async throws {
         let f = try InstallationFixture()
         try f.install("prefix/Cellar/synthetic-watch/1", kind: .formula)

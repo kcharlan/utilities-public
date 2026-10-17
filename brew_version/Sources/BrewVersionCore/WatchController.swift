@@ -252,19 +252,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             capture = newer
             result = await newer.task.value
         }
-        if installationCapture?.id == capture.id, installationCapture?.published == false,
-           catalog?.identity == capture.catalogIdentity {
-            installedUpdates = result.1
-            capture.published = true
-            installationCapture = capture
-            recomputeOthers()
-        }
         var snapshot = result.0
-        for versions in targetedVersions.values {
-            for value in versions.values where value.revision > capture.revision && requested.contains(value.listing) {
-                snapshot.versions[value.listing.kind, default: [:]][value.listing.name] = value.version
-            }
-        }
         // A third caller may need a different cask's app artifacts. Resolve
         // just that metadata rather than beginning a third full receipt scan.
         let missing = requested.listings.values.flatMap { $0.values }.filter { !capture.metadata.contains($0) }
@@ -274,15 +262,35 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                 snapshot.versions[listing.kind, default: [:]][listing.name] = targeted.installed(listing.name, kind: listing.kind)
             }
         }
+        var updates = result.1
         if capture.catalogIdentity != requestedCatalog?.identity {
             let adjusted = snapshot
-            let updates = await Task.detached {
+            updates = await Task.detached {
                 requestedCatalog.map { otherUpdates(catalog: $0, snapshot: adjusted, watched: []) } ?? []
             }.value
-            if installationCapture?.id == capture.id, catalog?.identity == requestedCatalog?.identity {
-                installedUpdates = updates
-                recomputeOthers()
+        }
+        // Reconcile only after the last suspension. A missing-metadata read or
+        // derived-list calculation may have yielded to a newer named lookup.
+        var changedListings: [Listing] = []
+        for versions in targetedVersions.values {
+            for value in versions.values where value.revision > capture.revision && requested.contains(value.listing) {
+                if snapshot.installed(value.listing.name, kind: value.listing.kind) != value.version,
+                   let listing = requestedCatalog?.listing(for: value.listing.name, kind: value.listing.kind) {
+                    changedListings.append(listing)
+                }
+                snapshot.versions[value.listing.kind, default: [:]][value.listing.name] = value.version
             }
+        }
+        if !changedListings.isEmpty {
+            // Repair only affected names and the retained update rows, without
+            // another full catalog calculation or a third filesystem scan.
+            let changed = InstallationMetadata(changedListings)
+            let retained = updates.filter { !changed.contains($0.listing) }.map(\.listing)
+            updates = otherUpdates(catalog: Catalog(listings: retained + changedListings), snapshot: snapshot, watched: [])
+        }
+        if installationCapture?.id == capture.id, catalog?.identity == requestedCatalog?.identity {
+            installedUpdates = updates
+            recomputeOthers()
         }
         return snapshot
     }
@@ -488,7 +496,6 @@ private struct InstallationCapture {
     let catalogIdentity: UUID?
     let replacement: Bool
     let task: Task<(InstalledSnapshot, [OtherUpdate]), Never>
-    var published = false
 }
 
 private struct TargetedInstallation {
