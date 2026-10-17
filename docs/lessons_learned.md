@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-16: Preserve upstream token semantics in version comparisons
+
+Homebrew's version ordering is asymmetric when zero tokens meet suffixes;
+do not assume reversing operands negates the result. Its post-release pattern
+also starts with a wildcard: `1post2` uses the first numeric run as the token
+revision. Generate both ordered expectations from pinned upstream methods,
+including wildcard and zero positions, before porting. Brew Version retains
+these synthetic parity cases in `VersionOrderTests.homebrewParity`.
+
 ## 2026-10-16: Preserve confirmed popup state when status checks fail
 
 A failed or rejected worker status reply does not establish that capture is
