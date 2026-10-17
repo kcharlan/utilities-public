@@ -26,6 +26,7 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
 
     private let transport: any HTTPTransport
     private let installed: (any InstalledReading)?
+    private var installation = InstalledSnapshot()
     private var installedUpdates: [OtherUpdate] = []
     private var installationGeneration = UUID()
     private let store: WatchStore
@@ -93,16 +94,20 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
         pendingAdds.insert(name)
         defer { pendingAdds.remove(name) }
         var entry = WatchEntry(name: name, kind: kind)
+        var found: Listing?
         do {
             let listing = try await scheduler.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto, client: client)
-            let snapshot = await refreshInstalled(extraListings: [listing])
-            entry = evaluate(entry, listing: listing, installed: snapshot.installed(name, kind: listing.kind)).0
+            found = listing
+            await refreshInstalled(extraListings: [listing])
         } catch {
             entry.lastError = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
         }
         let requestedCache = cache
         let snapshot = await requestedCache.snapshot()
         guard canSave, !state.watched.contains(where: { $0.name == name }) else { return }
+        if let listing = found {
+            entry = evaluate(entry, listing: listing, installed: installation.installed(name, kind: listing.kind)).0
+        }
         var candidate = state
         candidate.watched.append(entry)
         candidate.listingCache = requestedCache === cache ? snapshot : state.listingCache
@@ -183,21 +188,25 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
         others = installedUpdates.filter { !watched.contains($0.listing.name) }
     }
 
-    @discardableResult private func refreshInstalled(extraListings: [Listing] = []) async -> InstalledSnapshot {
-        let generation = UUID(); installationGeneration = generation
-        let catalog = self.catalog
-        let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
-        let installed = self.installed
-        let (snapshot, updates) = await Task.detached {
-            let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
-            let updates = catalog.map { otherUpdates(catalog: $0, snapshot: snapshot, watched: []) } ?? []
-            return (snapshot, updates)
-        }.value
-        if installationGeneration == generation {
+    private func refreshInstalled(extraListings: [Listing] = []) async {
+        while true {
+            let generation = UUID(); installationGeneration = generation
+            let catalog = self.catalog
+            let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
+            let installed = self.installed
+            let (snapshot, updates) = await Task.detached {
+                let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
+                let updates = catalog.map { otherUpdates(catalog: $0, snapshot: snapshot, watched: []) } ?? []
+                return (snapshot, updates)
+            }.value
+            // A superseded scan cannot feed watch evaluation either. Retry from
+            // current filesystem state with this caller's listing metadata.
+            guard installationGeneration == generation else { continue }
+            installation = snapshot
             installedUpdates = updates
             recomputeOthers()
+            return
         }
-        return snapshot
     }
 
     public func hydrateCatalog() async {
@@ -291,11 +300,11 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
         let listings = found.compactMap { result -> Listing? in
             if case .found(let listing, _, _) = result { return listing }; return nil
         }
-        let snapshot = await refreshInstalled(extraListings: listings)
+        await refreshInstalled(extraListings: listings)
         guard !Task.isCancelled, searchGeneration == generation else { return }
         results = found.map { result in
             guard case .found(let listing, _, _) = result else { return result }
-            return .found(listing, installed: snapshot.installed(listing.name, kind: listing.kind), watched: state.watched.contains { $0.name == listing.name })
+            return .found(listing, installed: installation.installed(listing.name, kind: listing.kind), watched: state.watched.contains { $0.name == listing.name })
         }
     }
 
@@ -326,10 +335,10 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
             }
             return results
         }
+        let listings = results.compactMap { try? $0.result.get() }
+        await refreshInstalled(extraListings: listings)
         let requestedCache = cache
         let snapshot = await requestedCache.snapshot()
-        let listings = results.compactMap { try? $0.result.get() }
-        let installation = await refreshInstalled(extraListings: listings)
         // No suspension from here through commit: merge into the latest committed state.
         var candidate = state
         var notices: [Notice] = []

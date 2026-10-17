@@ -121,3 +121,15 @@ release and strict signatures pass, CLI help matches the golden fixture with
 empty stderr, and source/built plist/CLI versions agree at 1.0.0. The synthetic
 acceptance service's one test and signed harness build pass. No GUI was launched
 for this core task; release footprint and native acceptance are separate gates.
+
+Scoped review found two asynchronous consumer gaps in that follow-up. A rejected
+installation capture could still reach watch evaluation, and an earlier cache
+snapshot could overwrite a concurrent addition. Superseded captures now retry
+before returning; watch/search publication reads the accepted installed snapshot
+after its final await. Checks capture conditional cache entries after the
+installation await and retain the cache-identity guard. Controlled regressions
+assert actual saved installed versions, amber state, notices and both saved
+ETags. Fresh fix-round validation passes 146 Swift tests (129 core, 11 CLI,
+6 app), release/signature and CLI checks, and the one-test synthetic acceptance
+service plus signed harness build. Native and final footprint gates remain
+separate from this fix round.

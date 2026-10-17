@@ -1,5 +1,23 @@
 # Lessons learned
 
+## 2026-10-17: Reject superseded snapshots at every consumer boundary
+
+Protecting publication of a derived update list is insufficient if a rejected
+filesystem snapshot is still returned to watch evaluation. Retry superseded
+captures and retain the accepted snapshot; consume it only after the caller's
+final await before persistence or notification. Regress a blocked check while
+a later search observes an installation change, then assert saved installed
+version, amber state and delivered notices, not only the Other updates list.
+
+## 2026-10-17: Capture mutable cache state after other asynchronous work
+
+A cache actor's identity can stay unchanged while another operation adds an
+entry. Taking its snapshot before a suspended installation scan lets an older
+check overwrite a newer add's saved ETag. Read the cache after the scan, retain
+the cache-identity guard, and merge without another await. A controlled blocked
+scan with a concurrent add must preserve both watches and both conditional
+entries in actual saved state.
+
 ## 2026-10-17: Keep catalog caches proportional to the fields the app uses
 
 Persist decoded Listing indexes and ETags, not raw JSON encoded as base64.

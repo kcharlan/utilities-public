@@ -100,6 +100,49 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
         #expect(c.state.watched[0] == removed.entry)
         #expect(store.load().state.listingCache.isEmpty)
     }
+    @Test func supersededCheckUsesCurrentInstallationForPersistenceAmberAndNotices() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-watch/1", kind: .formula)
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let reader = ControlledInstallation(f.reader())
+        let notifier = RecordingNotifier(store: store)
+        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: reader, store: store, notifier: notifier)
+        let check = Task { await c.checkNow() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        try f.install("prefix/Cellar/synthetic-watch/2", kind: .formula)
+        await c.search(watchName.rawValue)
+        guard case .found(_, let installed, _) = c.results.first else { Issue.record("Expected current installed search result"); reader.release(); await check.value; return }
+        #expect(installed?.version == "2")
+        reader.release(); await check.value
+        #expect(store.load().state.watched[0].installed?.version == "2")
+        #expect(c.amberCount == 0)
+        #expect(await notifier.notices.isEmpty)
+    }
+    @Test func concurrentAddCacheSurvivesAnOlderBlockedCheck() async throws {
+        let f = try InstallationFixture()
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial; state.watched = [baseline()]; try store.save(state)
+        let added = PackageName("synthetic-added")!
+        let transport = StubTransport([watchURL(): [watchResponse("2", etag: "synthetic-check")],
+                                       watchURL(added): [watchResponse("1", etag: "synthetic-add")]])
+        let reader = ControlledInstallation(f.reader())
+        let c = WatchController(transport: transport, installed: reader, store: store, notifier: RecordingNotifier())
+        let check = Task { await c.checkNow() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 1)
+        await c.add(added, kind: .formula)
+        #expect(store.load().state.listingCache[watchURL(added)]?.etag == "synthetic-add")
+        reader.release(); await check.value
+        let saved = store.load().state
+        #expect(saved.watched.map(\.name) == [watchName, added])
+        #expect(saved.listingCache[watchURL(added)]?.etag == "synthetic-add")
+        #expect(saved.listingCache[watchURL()]?.etag == "synthetic-check")
+    }
 }
 
 private final class ReceiptReads: @unchecked Sendable {
