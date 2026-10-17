@@ -59,6 +59,81 @@ private struct ReopenCatalogTransport: HTTPTransport {
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func successfulTestKeepsAuthorizationBlockedPackageRetryVisible() async {
+        let service = NotificationServiceStub(); service.status = .denied
+        let notifier = UserNotifier(service: service)
+        let package = Notice(name: PackageName("synthetic-authorization")!, title: "Synthetic authorization-blocked update", body: "Synthetic authorization retry body.")
+        await notifier.post(package)
+        service.status = .authorized
+        await notifier.sendTestNotification()
+        #expect(notifier.lastError != nil)
+        await notifier.retry()
+        #expect(service.requests.filter { $0.content.title == package.title && $0.content.body == package.body }.count == 1)
+        #expect(notifier.lastError == nil)
+    }
+    @Test func testNotificationPreservesFailedPackageRecoveryForEveryOutcome() async {
+        for outcome in ["success", "denied", "posting-failure"] {
+            let service = NotificationServiceStub(); service.status = .authorized
+            let notifier = UserNotifier(service: service)
+            let package = Notice(name: PackageName("synthetic-package")!, title: "Synthetic package update", body: "Synthetic package changed from 1-synthetic to 2-synthetic.")
+            service.postingFailure = "Synthetic package posting failed"
+            await notifier.post(package)
+            service.postingFailure = outcome == "posting-failure" ? "Synthetic test posting failed" : nil
+            service.status = outcome == "denied" ? .denied : .authorized
+            await notifier.sendTestNotification()
+            #expect(notifier.lastError?.contains("Synthetic package posting failed") == true)
+            service.postingFailure = nil; service.status = .authorized
+            await notifier.retry()
+            let packageRequests = service.requests.filter { $0.content.title == package.title }
+            #expect(packageRequests.count == 2)
+            #expect(packageRequests.last?.content.body == package.body)
+            #expect(notifier.lastError == nil)
+        }
+    }
+    @Test func completedTestNotificationCannotEraseOverlappingPackageFailure() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        let package = Notice(name: PackageName("synthetic-overlap")!, title: "Synthetic overlapping package update", body: "Synthetic package retry body.")
+        service.postingGate = {
+            service.postingGate = nil
+            service.postingFailure = "Synthetic overlapping package failure"
+            await notifier.post(package)
+            service.postingFailure = nil
+        }
+        await notifier.sendTestNotification()
+        #expect(notifier.lastError?.contains("Synthetic overlapping package failure") == true)
+        await notifier.retry()
+        #expect(service.requests.filter { $0.content.title == package.title && $0.content.body == package.body }.count == 2)
+        #expect(notifier.lastError == nil)
+    }
+    @Test func successfulPackageNotificationPreservesFailedTestRecovery() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        service.postingFailure = "Synthetic test failure"
+        await notifier.sendTestNotification()
+        service.postingFailure = nil
+        await notifier.post(Notice(name: PackageName("synthetic-other")!, title: "Synthetic other update", body: "Synthetic other body."))
+        #expect(notifier.lastError?.contains("Synthetic test failure") == true)
+        await notifier.retry()
+        #expect(service.requests.filter { $0.content.title == "Brew Version test notification" }.count == 2)
+        #expect(notifier.lastError == nil)
+    }
+    @Test func olderPackageCompletionCannotEraseNewerPackageFailure() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        let newer = Notice(name: PackageName("synthetic-newer")!, title: "Synthetic newer update", body: "Synthetic newer retry body.")
+        service.postingGate = {
+            service.postingGate = nil
+            service.postingFailure = "Synthetic newer package failure"
+            await notifier.post(newer)
+            service.postingFailure = nil
+        }
+        await notifier.post(Notice(name: PackageName("synthetic-older")!, title: "Synthetic older update", body: "Synthetic older body."))
+        #expect(notifier.lastError?.contains("Synthetic newer package failure") == true)
+        await notifier.retry()
+        #expect(service.requests.filter { $0.content.title == newer.title && $0.content.body == newer.body }.count == 2)
+        #expect(notifier.lastError == nil)
+    }
     @Test func testNotificationUsesAuthorizationAndKeepsFailedRequestRetryable() async throws {
         let service = NotificationServiceStub()
         let notifier = UserNotifier(service: service)

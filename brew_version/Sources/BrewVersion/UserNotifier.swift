@@ -22,13 +22,20 @@ import BrewVersionCore
         isSendingTestNotification = true
         defer { isSendingTestNotification = false }
         await post(Notice(name: PackageName("brew-version")!, title: "Brew Version test notification",
-                          body: "This is a test notification from Brew Version. Click to open the popover."))
+                          body: "This is a test notification from Brew Version. Click to open the popover."), kind: .test)
     }
     private let service: any NotificationService
     private var authorizationError: String?
-    private var postingError: String?
-    private var failedNotice: Notice?
-    var lastError: String? { [authorizationError, postingError].compactMap { $0 }.joined(separator: " ").nilIfEmpty }
+    private enum NoticeKind: Hashable { case package, test }
+    private struct FailedNotice { let notice: Notice; let postingError: String? }
+    // Diagnostics cannot replace or resolve a package alert's retry payload.
+    private var failures: [NoticeKind: FailedNotice] = [:]
+    private var latestPosts: [NoticeKind: UUID] = [:]
+    var lastError: String? {
+        let errors = [authorizationError, failures[.package]?.postingError, failures[.test]?.postingError].compactMap { $0 }
+        if errors.isEmpty, !failures.isEmpty { return "A notification is waiting to be retried. Retry notifications." }
+        return errors.joined(separator: " ").nilIfEmpty
+    }
     init(service: any NotificationService) { self.service = service; super.init() }
     override convenience init() {
         let service = NativeNotificationService()
@@ -46,21 +53,35 @@ import BrewVersionCore
         } catch { authorizationError = failureMessage("Notification authorization failed", error: error) }
     }
     func post(_ notice: Notice) async {
+        await post(notice, kind: .package)
+    }
+    private func post(_ notice: Notice, kind: NoticeKind) async {
+        // A late completion must not resolve a newer failure of the same kind.
+        let request = UUID()
+        latestPosts[kind] = request
         await requestAuthorization()
-        guard authorizationError == nil else { failedNotice = notice; return }
+        guard latestPosts[kind] == request else { return }
+        guard authorizationError == nil else {
+            failures[kind] = FailedNotice(notice: notice, postingError: failures[kind]?.postingError)
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = notice.title; content.body = notice.body; content.sound = .default
         do {
             try await service.post(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
-            postingError = nil; failedNotice = nil
+            if latestPosts[kind] == request { failures[kind] = nil }
         } catch {
-            failedNotice = notice
-            postingError = failureMessage("Couldn't post notification", error: error)
+            if latestPosts[kind] == request {
+                failures[kind] = FailedNotice(notice: notice, postingError: failureMessage("Couldn't post notification", error: error))
+            }
         }
     }
     func retry() async {
         await requestAuthorization()
-        if authorizationError == nil, let notice = failedNotice { await post(notice) }
+        guard authorizationError == nil else { return }
+        for kind in [NoticeKind.package, .test] {
+            if let failure = failures[kind] { await post(failure.notice, kind: kind) }
+        }
     }
     private func failureMessage(_ context: String, error: any Error) -> String {
         let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
