@@ -85,3 +85,23 @@ changes are covered by the named regression tests:
 
 The release version comes from the tracked Info.plist through
 `BrewVersionRelease.version`; a core test verifies that they agree.
+
+## Saved watches and checks
+
+The app core persists chosen watches, release acknowledgements, skipped releases,
+check interval and conditional listing cache in `state.json` under
+`~/Library/Application Support/Brew Version/`. The directory is private (0700)
+and the file is private (0600). Each mutation writes atomically before the
+visible state changes; notifications follow a successful save. A failed save
+keeps the previous state and can be retried.
+
+Unreadable or invalid saved state is moved to `state.json.bad` before starting
+fresh. Existing recovery files are preserved with unique suffixes. If that move
+fails, checking and mutations stay disabled until a load retry succeeds.
+
+Watches default to every 30 minutes, with presets from 10 minutes to 6 hours
+and whole-minute custom intervals from 10 minutes to 24 hours. A first lookup
+sets a baseline without notifying. Installed updates stay amber unless skipped;
+new releases for uninstalled packages stay amber across polls and restarts until
+the popover closes. Checks use at most four concurrent lookups and retain settings and
+watch changes made while the network is busy.

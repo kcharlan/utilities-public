@@ -9,7 +9,7 @@ public func updateStatus(listing: Listing, installed: InstalledVersion?) -> Upda
     if listing.kind == .cask && listing.version == "latest" { return .unversioned }
     let available: String
     if listing.kind == .formula {
-        available = listing.version + (listing.revision > 0 ? "_\(listing.revision)" : "")
+        available = installedForm(version: listing.version, revision: listing.revision)
     } else if installed.source == .appBundle {
         available = String(listing.version.prefix { $0 != "," })
     } else { available = listing.version }
@@ -18,4 +18,9 @@ public func updateStatus(listing: Listing, installed: InstalledVersion?) -> Upda
     case .orderedDescending: return .ahead
     case .orderedAscending: return .updateAvailable(installed: installed.version)
     }
+}
+
+// Formula releases and installed kegs share Homebrew's revision suffix.
+func installedForm(version: String, revision: Int) -> String {
+    version + (revision > 0 ? "_\(revision)" : "")
 }

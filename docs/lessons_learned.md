@@ -308,3 +308,14 @@ A declaration timestamp is not a scan timestamp. An inventory-only scan can have
 no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
+
+## 2026-10-16: Merge awaited watch results into committed state
+
+A check must apply results to the current committed watch state after its final
+await. Capture each watch's generation when starting work and reject results
+for removed or restored generations, even when the package name matches again.
+Otherwise a late response can change an undone removal or overwrite a newer
+skip or interval. A controlled transport regression should hold requests while
+mutating all those fields, then inspect both persisted state and notifications.
+Persist candidates before publishing state or posting notices; retain the
+previous bytes and visible values on failed writes.
