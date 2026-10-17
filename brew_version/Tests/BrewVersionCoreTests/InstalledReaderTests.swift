@@ -90,6 +90,21 @@ struct InstalledReaderTests {
         try f.fm.createSymbolicLink(atPath: f.root.appendingPathComponent("prefix/Caskroom/synthetic-cask/latest").path, withDestinationPath: "2.0.0")
         #expect(f.reader().installed(cask, kind: .cask, listing: nil) == .init(version: "2.0.0", source: .caskroom))
     }
+    @Test func realLatestCaskDirectoryIsInstalledAndUnversioned() throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Caskroom/synthetic-cask/latest", kind: .cask)
+        let listing = Listing(name: cask, kind: .cask, version: "latest")
+        let reader = f.reader()
+        let installed = reader.installed(cask, kind: .cask, listing: listing)
+        #expect(installed == .init(version: "latest", source: .caskroom))
+        #expect(reader.installedPackages().contains { $0.name == cask && $0.kind == .cask })
+        #expect(updateStatus(listing: listing, installed: installed) == .unversioned)
+        try f.app("2.3.0")
+        let selfUpdatingLatest = Listing(name: cask, kind: .cask, version: "latest", autoUpdates: true, appNames: ["Synthetic.app"])
+        let appInstalled = reader.installed(cask, kind: .cask, listing: selfUpdatingLatest)
+        #expect(appInstalled == .init(version: "2.3.0", source: .appBundle))
+        #expect(updateStatus(listing: selfUpdatingLatest, installed: appInstalled) == .unversioned)
+    }
     @Test func selfUpdatingCaskReadsAppBundle() throws {
         let f = try InstallationFixture()
         try f.install("prefix/Caskroom/synthetic-cask/2.0.0", kind: .cask)

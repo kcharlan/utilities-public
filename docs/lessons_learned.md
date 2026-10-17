@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-10-16: Distinguish installation links from real version directories
+
+A cask can have a genuine `latest` version directory. Exclude version symlinks
+by filesystem type, not by a reserved-looking basename; otherwise an admitted
+installation disappears from point lookup and inventory before app-bundle
+lookup or unversioned status evaluation. Cover both real `latest` directories
+and `latest` symlinks with synthetic installation fixtures.
+
 ## 2026-10-16: Preserve upstream token semantics in version comparisons
 
 Homebrew's version ordering is asymmetric when zero tokens meet suffixes;

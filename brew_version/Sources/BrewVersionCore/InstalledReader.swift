@@ -69,7 +69,7 @@ public struct InstalledReader: Sendable {
     private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix) -> String? {
         let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(name.rawValue)
         guard isDirectory(rack) else { return nil }
-        let versions = directories(rack).filter { $0.lastPathComponent != "latest" && !isSymbolicLink($0) }
+        let versions = directories(rack).filter { !isSymbolicLink($0) }
         let selected: URL?
         if kind == .formula {
             let opt = prefix.root.appendingPathComponent("opt").appendingPathComponent(name.rawValue)
