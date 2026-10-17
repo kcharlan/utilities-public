@@ -1,6 +1,182 @@
 # Brew Version implementation and acceptance record
 
-## Legacy cache admission repair
+## Final visual and correctness round
+
+The corrective wave after a081f38 is complete through executable commit
+13b99dd. Independent task reviews, their scoped fix reviews and the final
+whole-wave review found no remaining actionable source findings. This section
+supersedes the earlier layout, counts and current-gate statements below.
+Version 1.0.0 remains the unpublished initial release. No deployment, push,
+merge or history rewrite was performed.
+
+### Correctness feedback and regressions
+
+| Requested item | Implemented behavior | Retained regression evidence |
+| --- | --- | --- |
+| A1: overlapping installed scans | A concurrent caller group shares one capture and at most one replacement. Superseded callers adopt newer work; further missing listing metadata uses named reads. Exact cask metadata and later observations are reconciled after every await before publication and evaluation. | `InstallationSnapshotTests.overlappingHydrationsShareABoundedScan` and `overlappingFreshCaskMetadataAdoptsNewerCapture`, each with two and three callers; `thirdCatalogCallerKeepsItsNewMetadataWithoutAThirdScan`; `missingMetadataReadAdoptsNewerSearchBeforeCheckCommit`. |
+| A1: repeated regex compilation | Reuse one compiled `VersionOrder` scanner and capture alternatives for token classification. | Retained Homebrew ordering/parity and external Unicode tests, including the 2,704-pair comparison matrix. |
+| A2: search/add full rescans | Use the existing named installed reader only for result names, without inventory scanning or Other updates derivation. Preserve newer targeted observations and exact selected cask metadata. | `InstallationSnapshotTests.searchAndAddReadOnlyTheirResultNames`, `olderTargetedReadCannotReplaceNewerInstalledObservation` and retained caller-metadata cases. |
+| A3: manual check blocked offline | Manual Check now attempts HTTP regardless of path-monitor state. Automatic checks remain gated. | `ControllerRegressionTests.manualCheckBypassesOfflinePathWhileAutomaticCheckWaits`. |
+| A4: valid download lost on write failure | Publish both validated indexes and ETags in memory before persistence. Expose a distinct cache-write warning, retain it through transport fallback and advance successful-fetch cadence. Clear it after successful cache persistence. | `CatalogTests.validDownloadSurvivesUnwritableCacheAndReusesItsETags` with and without a prior pair; `WatchControllerCatalogTests.catalogCacheWriteFailurePublishesMemoryAndWarnsWithoutRepeatingDailyFetch`. |
+| A5: suspicious catalog shrink | Reject a refreshed list with fewer than half the previous usable items, preserving both lists, disk bytes and ETags atomically. Admit exactly half. | `CatalogTests.suspiciousUsableCountPreservesBothListsAndETags` for formula and cask; `exactlyHalfPreviousUsableCountIsAdmitted`. |
+| A5: partial unreachable reconnect | Any unreachable result retains reconnect retry, including batches with successful rows. Successful rows persist, while the batch does not advance the successful-check clock. Failed-save retry floors remain intact. | `ControllerRegressionTests.partialUnreachableCheckRetriesOnReconnect` and retained scheduler/persistence cases. |
+| A5: rollback removes live app | Activation and restoration share apps-volume staging displacement, including restoring a saved absence. Keep displaced trees until collected cleanup and retain validated durable recovery backups. | Installer tests forbid recursive deletion of the live path, compare displaced inode/bytes, inject failed displacement and exercise simulated cross-device rollback. All 42 Brew Version cases pass. |
+| A5: Close Window | Install standard nil-target `performClose:` on Command-W. | `NativeActionsTests.appKitLifecycleRetainsStandardQuitAndEditingCommands`; actual Settings close/reopen observed. |
+| A5: tautological cache identity | Remove reference comparisons that cannot fail. Read the current cache synchronously after the final await, preserving concurrent additions and removal/Undo boundaries. | Retained concurrent-cache, removal and restoration regressions; delayed installed-observation case above. |
+| A5: absent-package command | Copy install for absent packages and upgrade for installed ones, preserving `--cask` for casks. | `NativeActionsTests.commandOffersInstallOnlyForAbsentPackages` covers both kinds/states; actual absent-formula copy/paste verified. |
+
+The original scan-count regressions reproduced three full scans for two callers
+and 36 for three. Search/add receipt admissions were two/four instead of one/two.
+The scoped core review then exposed one final-suspension race: an older missing-
+metadata read could persist installed version 1 after a newer search observed 2,
+causing a false amber row and notice. The controlled saved-state/amber/notice
+regression failed before c228e96 and passes after final reconciliation.
+
+An older test that forced another scan for identical metadata was adjusted to
+request genuinely new metadata, retaining its stale-publication assertions.
+The add-side race now gates the targeted read rather than requiring a full
+scan; installed app version, zero amber and no-notice assertions remain intact.
+No assertions were removed to obtain a pass.
+
+### Native redesign and hosting repairs
+
+The maintained popover is 340 points wide, hugs short content and bounds long
+content to about 560 points. Only the package/results list scrolls. It uses
+system typography and material, 12-point outer padding, compact rounded search,
+counted/tooltipped section headers and a compact interval/next-check/icon footer.
+One shared row presents kind glyph, name, status/fallback source and a separate
+monospaced version column. Orange means a newer release; accent fill means
+selection. Borderless row actions appear on hover or selection and are hidden
+from hit testing and accessibility otherwise. Watch is a small native capsule.
+Suggestions and results share keyboard selection and preserve explicit kind.
+The Other disclosure respects Reduce Motion.
+
+Custom opens the reused AppKit Settings window with the minutes field focused;
+there is no popover sheet. Grouped Settings has labeled checking/Other/general
+sections, switches, native interval controls, stepper/validation, inline recovery
+warnings and a centered version footer. The window is 460 points wide with an
+explicit 440-point content/minimum height and compact transparent titlebar.
+
+Actual native checks found gaps hidden by separately sized offscreen content:
+the owned Settings window collapsed to its footer, and the popover host published
+zero preferred size despite a positive view fitting size. Tests now exercise
+the actual Settings controller and maintained StatusContent host factory through
+fresh hosts and appearance changes. Explicit window geometry and preferred-size
+publication corrected both contracts; the live full popover and Settings were
+then observed in both palettes. A separate review caught truncated recovery
+copy. Shared inline warnings now size vertically; their measured height reduces
+the list budget, retaining a reachable footer. A long-warning host regression
+failed at 568 points before the repair and passes within 560 afterward.
+Notification punctuation tests exercise actual authorization/posting errors
+with absent punctuation, period, exclamation, question and trailing newline.
+
+### Current native and visual acceptance
+
+All native input used CUA on synthetic, separately identified bundles. This
+round did not inspect or mutate owner state, cache or installed inventory,
+launch the production app, change notification settings or register login items.
+The earlier real-memory measurements below apply to d208d95, not this new UI
+source; no new footprint measurement is claimed.
+
+| Check | Actual observation in this round |
+| --- | --- |
+| Full popover and warnings | Complete header, list, footer and test-only accessory observed in Dark and Light after host sizing repair. Actual notification authorization error wraps completely, with Retry and footer visible. |
+| Settings and interval | Full grouped form in both palettes. Preset 30 has its native checkmark; Custom opens separate Settings with minutes selected. Invalid 9 retains validation; valid 47 Return updates the interval. Command-W closes normally; gear reopens. Login remains Off. |
+| Search, kind and pending Return | Compact suggestions without a false prefix error; Down highlights and Return watches the selected result. Explicit colliding cask resolves version `4.0-synthetic`. Delayed `synthetic-cask` Return completes as a watched cask. |
+| Long results / clipboard | Arrows traverse all 22 results to the fully visible last selection and back, with input/footer reachable. Copy/paste of the first selected version gives `1.0-synthetic`. Selected absent-formula amber row copies `brew install synthetic-formula`. |
+| Physical row selection and recovery | Actual pointer click selects a watch and reveals its actions; Backspace removes it; immediate Undo restores its saved amber/fallback state. This closes the earlier physical mouse-selection gate. Individually named accessibility selection and search-local Delete remain covered by prior native observations and retained regressions. |
+| Quit | Each launched candidate quit through normal Command-Q. Exact-executable process checks found no production, acceptance or Settings prototype app running. |
+| Still unverified | Actual status-item mug/count accessibility and same-click toggle; visible notification delivery and click; actual login approval-required branch; macOS 14 runtime. Earlier attempted routes and constraints are recorded below. Offscreen images and API success do not establish these results. |
+
+`make -C brew_version snapshots` builds the maintained sources and synthetic
+composition in fresh private OS temporary space. Offscreen NSHostingView/window
+appearances are set explicitly and drawing runs under
+`performAsCurrentDrawingAppearance`. Native material is supplied only at the
+render boundary. Painted-pixel, width, horizontal-content, positive-viewport,
+long-list and long-warning checks reject blank or collapsed captures.
+
+All fourteen final PNGs were inspected in both appearances by the controller
+and independent reviewer. Their names and logical sizes are:
+
+| State (`-light.png` and `-dark.png`) | Points |
+| --- | --- |
+| `empty` | 340 × 260 |
+| `watching` | 340 × 305 |
+| `other-updates` | 340 × 383 |
+| `search-results` | 340 × 303 |
+| `suggestions` | 340 × 338 |
+| `error` | 340 × 415 |
+| `settings` | 460 × 388 |
+
+The Settings render measures root content; the real owned window's 460 × 440
+contract is tested and observed separately. Final images show readable recovery
+guidance, correct sentence boundaries and complete rows/footer. Images remain
+outside Git, mode 0600 beneath a mode-0700 temporary directory; exact paths are
+provided in the completion handoff. No shell screen capture was used.
+
+### Final automated validation for this round
+
+All categories below passed on final executable source 13b99dd without failures,
+cancellations or skips. The broad matrix ran fresh after the last source change;
+source stayed unchanged throughout. Later wrap-up changes are prose only.
+
+| Command/category | Result |
+| --- | --- |
+| `make -C brew_version test` | 190 Swift tests: 150 core, 11 CLI, 29 app; all 3 isolated Node release/build integration cases |
+| `make -C brew_version release` | Signed CLI/app and strict signature verification |
+| Signed CLI `--help`, `-h`, `--version` | Exact golden help, version `brew-version 1.0.0`, exit 0 and empty stderr for each flag |
+| `make -C brew_version acceptance` | One synthetic service test and signed optimized harness |
+| `make -C brew_version settings-prototype` | Signed optimized maintained Settings prototype |
+| `make -C brew_version snapshots` | All 14 images, decoded-pixel and layout guards, both appearances |
+| Four root installer suites from the Validation Matrix | 80 cases, including 42 Brew Version cases |
+| `node --test tools/tests/check_static_deployments.test.mjs` | 17 cases |
+| `zsh tools/tests/test_check_local_deployments.zsh` | Complete PASS marker |
+| Market Atlas `npm test` | 423 Node tests plus 6 original browser runs: three flat-file and three isolated HTTP |
+| Market Atlas `npm run test:synthetic` | 267 Node plus 78 invented compiler tests |
+| Market Atlas prepared-venv full unittest discovery | 79 compiler tests including retained-input reproduction |
+
+The exact broad commands are the same as the earlier matrix table below. All
+six final external exit files contain 0; controller inspection confirmed the
+counts and complete fleet marker. Existing locked Node dependencies, managed
+Chromium, verified external data and prepared external compiler venv were reused.
+No data acquisition, dependency/browser download, environment replacement,
+online build or installed-site acceptance occurred. Private logs stay outside
+Git. The wrap-up independently rechecked golden CLI bytes/empty stderr, all
+four product/harness/prototype strict signatures and version declarations at
+1.0.0. No installed/deployed version is claimed.
+
+### Decisions and tradeoffs added in this round
+
+1. Supersede fixed 300/390-point viewports with content-measured lists inside
+   the 340-point popover. Cost: native measurement state and maximum-height tuning.
+2. Open Custom in the retained Settings window, with field focus. Cost: a separate
+   window for this edit; the old popover-sheet decision is superseded.
+3. Share at most two full captures per overlapping caller group, then target
+   missing metadata and reconcile after all awaits. Cost: explicit capture and
+   observation ordering state to preserve exact cask semantics.
+4. Keep validated catalogs/ETags in memory when disk writes fail and show the
+   failure. Cost: the new cache cannot survive restart until persistence succeeds.
+5. Reject usable counts below half the prior list. Cost: a legitimate large
+   catalog contraction retains old data until the guard is reconsidered.
+6. Suppress only a single-prefix NotFound when valid suggestions exist. Cost:
+   an exact nonexistent token with longer matches initially shows suggestions.
+7. Own the actual Settings viewport and popover preferred-size contract; measure
+   warning height. Cost: explicit AppKit geometry and layout regressions in
+   addition to standalone view rendering.
+8. Clip the native bordered Watch control to the requested capsule because the
+   shape modifier alone did not render it. Cost: one additional shape boundary.
+9. Partition core, installer and UI source ownership among subagents and merge
+   documentation centrally. Cost: coordinated commit windows and final settled
+   validation. Every bug has retained regression evidence and a newest-first
+   lessons entry.
+
+## Earlier owner-feedback round (historical)
+
+The following records describe earlier candidates and preserve their evidence.
+Use the current round above for final counts, layout and native gates. Memory
+figures below were measured on the stated earlier source, not remeasured here.
+
+### Legacy cache admission repair
 
 Ignoring the old raw/base64 envelope after whole-file Data loading and decoding
 still allocated and scanned its payload. The cache now uses a valid JSON
@@ -27,7 +203,7 @@ output with empty stderr, the one-test synthetic acceptance service and signed
 harness, and the signed Settings prototype. Source, built plist and CLI remain
 1.0.0. The repair does not publish or deploy a release.
 
-## Current acceptance and remaining release gates
+### Earlier acceptance and remaining release gates
 
 All requested source corrections are committed and reviewed. Real native input
 also exposed and corrected Delete routing, a collapsed Watching viewport,
@@ -35,11 +211,11 @@ ineffective appearance controls and inaccessible merged watch rows. The earlier
 locked-desktop limitation and pending statements in the historical sections
 below describe earlier candidates; this section records the final outcomes.
 
-Native acceptance is incomplete: actual status-button toggle/count accessibility,
+At this earlier checkpoint, actual status-button toggle/count accessibility,
 physical-coordinate row selection, notification delivery/click and the minimum
-macOS 14 runtime remain unverified. The login approval-required branch was not
-needed on this host. Automated coverage does not close these gates. Details,
-including the attempted routes and tool failures, follow below.
+macOS 14 runtime were unverified. The final visual round above closes physical
+row selection; the other gates remain open. The login approval-required branch
+was not needed on this host. Details of the earlier attempts follow below.
 
 No live installation, deployment, push or merge was performed. The version
 remains the unpublished initial release 1.0.0. Original saved state was restored
@@ -100,7 +276,7 @@ After normal native Quit, the original state was copied back atomically and
 0600. The new cache remains for the next launch. Private temporary test watches
 and fabricated previous-release baselines are absent from the restored state.
 
-## Native acceptance observations
+## Earlier native acceptance observations
 
 All native input used the supported CUA interface on the unlocked current Mac.
 The final cache-only repair does not change UI sources. UI observations below
@@ -114,7 +290,7 @@ described in historical sections only.
 | Search focus | PASS on first visible open and normal reopen; closing Settings returns to focused search. Production initial launch remains quiet. |
 | Search arrows, Return, Command-C | PASS: native Return watches the selected synthetic result; Command-C copied its version, verified by paste. Arrow navigation traversed 22 query results to both ends; input/footer controls remained reachable. |
 | Pending Return and explicit cask choice | PASS: a deliberately delayed lookup accepted Return for the current intent after completion. Explicit colliding cask suggestion watched the cask version rather than the formula version. |
-| Selected-row Delete and Undo | PASS through each named accessibility group's normal selection action: selected state/native row focus observed; both Backspace and forward Delete removed the row, Undo restored its saved amber/fallback state. Search Backspace edited the query without removing a watch. Physical coordinate mouse selection remains unverified: CUA returned `-10005 noWindowsAvailable` despite available AX/screenshot, after refreshed bindings, Settings round trip and both screenshot coordinate scales. Both selection routes share the tested focus action. |
+| Selected-row Delete and Undo | PASS through each named accessibility group's normal selection action: selected state/native row focus observed; both Backspace and forward Delete removed the row, Undo restored its saved amber/fallback state. Search Backspace edited the query without removing a watch. Physical coordinate selection was unverified at this checkpoint: CUA returned `-10005 noWindowsAvailable` despite available AX/screenshot, after refreshed bindings, Settings round trip and both screenshot coordinate scales. The final visual round above subsequently verifies the actual pointer gesture. |
 | Long results / Watching viewport | PASS for arrow scrolling to both ends and accessible input/footer controls. After hiding Other and reopening, watched rows remained visible in the corrected 390-point viewport. A cropped long-result capture does not establish every physical pixel of every row. |
 | Interval menu and Custom sheet | PASS: native current-interval checkmarks observed for preset 30 and custom 47; menu remained open without dismissing popover. Invalid 9 retained editable text and validation; valid Save and Cancel returned to the open popover with the expected value. |
 | Other visibility / Watch / fallback | PASS: Other off retained six suggestions; Other Watch added the synthetic fallback cask with the same visible source note and amber state in Watching. |
@@ -131,7 +307,7 @@ observe delivered notifications and run on macOS 14. Repeated inaccessible UI
 probes do not establish a pass. The branch is retained for review; no merge or
 deployment decision is implied by passing source and automated checks.
 
-## Final automated validation
+## Earlier automated validation
 
 Final executable source is d208d95; subsequent edits update only this record
 and README acceptance wording. Complete Brew Version validation ran on that
@@ -190,7 +366,7 @@ occurred. Data-bearing logs remain in private mode-0700 OS temporary space.
 17. **Superseded by decision 32.** The original implementation retained SwiftUI SettingsLink pending runtime evidence. The owner subsequently required explicit AppKit window ownership independent of scene context.
 18. Failed Undo suspends normal expiry and blocks replacement removals until successful retry; same-name Watch restores the saved entry. Cost: another Stop watching action waits for recovery. Ordinary Undo still expires after five seconds.
 19. Preserve an explicitly selected suggestion's kind in transient `SearchInput`, including task identity when text is unchanged. Editing clears it; an existing watch's known kind takes precedence. Saved watches remain name-only identities. Cost: a colliding package of the other kind must be unwatched before switching kinds.
-20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout establishes the bound; live arrow traversal is now observed separately above.
+20. **Superseded by the final visual round.** Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space.
 21. Expose interval bounds once in `CheckInterval` and format the validation copy from them using the current locale. Cost: grouping follows system locale rather than always using English punctuation.
 22. Reject any stderr from signed CLI diagnostics for all three help/version flags, at build and activation. Cost: a future intentional CLI warning must be considered explicitly before changing this contract.
 23. Use the normal interval retry floor after transport or persistence failure. Reconnect bypasses transport backoff but preserves failed-save backoff. Cost: a reconnected machine with a save failure waits until that interval floor or a manual retry.
@@ -209,12 +385,12 @@ occurred. Data-bearing logs remain in private mode-0700 OS temporary space.
 35. Debounce current search intent for 300 ms while retaining existing rows. Return awaits that same request and rejects it if text/kind changes. Cost: the old rows remain visible during the pending query; a pending Return does not act on them.
 36. Observe separate notification authorization and posting failures, retain the failed notice for an explicit retry, and expose actionable errors in both views. Inject only the system API boundary. The harness can fail one post at this boundary; its default permission, delivery and click path still uses the real system center. Cost: retry re-delivers the latest failed notice after permission/service recovery.
 37. Refresh login status when Settings becomes key and offer the system Login Items panel for requiresApproval. Keep registration errors as observed API results; do not infer signing limitations. Cost: a narrow service adapter is maintained for deterministic tests.
-38. Use native Picker tags for interval selection, including a custom current value; preserve invalid custom text and keep the sheet open after a failed save. Cost: custom current values add one temporary option to the menu.
+38. Use native Picker tags for interval selection, including a custom current value; preserve invalid custom text after a failed save. The final visual round moves this edit from a sheet to the retained Settings window. Cost: custom current values add one temporary option to the menu.
 39. Render the same installed-source note in watched, search and Other rows; gate homepage availability and execution to absolute http/https URLs. Cost: nonweb homepage values have no action.
 40. Start production scheduling offline, await every path update in the controller, and reserve periodic/wake events for scheduledTick. The controller alone owns the reconnect tick and retry floor. Cost: automatic network work waits for the monitor's initial answer; disk hydration can proceed immediately.
 41. Continue the required memory repair after the final source-review wave when the real legacy-present cold measurement fails. Add bounded format admission before reading/decoding, using the same file descriptor. Cost: one further commit/review/runtime measurement and a one-time unconditional refetch for raw and earlier unmarked slim caches.
 42. Replace SwiftUI-only watch-row key handling with a row-owned native first responder after actual input showed a focus ring without Delete. It handles both hardware delete keys and standard delete commands without intercepting mouse hits or installing a global monitor. Cost: a small native responder bridge and renewed focus identity per selection.
-43. Give Watching an explicit 390-point viewport after native reproduction of its collapse with Other hidden; keep the footer outside. Cost: short/empty watch lists retain blank space.
+43. **Superseded by the final visual round.** Give Watching an explicit 390-point viewport after native reproduction of its collapse with Other hidden; keep the footer outside. Cost: short/empty watch lists retain blank space.
 44. Give each watch an individually named accessibility group/default selection action, sharing the same renewed focus path as mouse input and preserving child actions. Cost: changed VoiceOver grouping and announcement order; actual named selection/Delete were inspected independently of offscreen tests.
 45. Present Next check from the scheduler's shared attempt/success/failed-save deadline rather than a separate last-success formula. Cost: footer wording now exposes offline and failed-save retry timing rather than a simple success-time estimate.
 

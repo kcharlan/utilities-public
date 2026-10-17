@@ -1,5 +1,141 @@
 # Lessons learned
 
+## 2026-10-17: Measure complete inline warnings before allocating list height
+
+A Label can truncate recovery guidance to one line in a narrow native popover
+while wrapping correctly in a grouped Form. Allow vertical text sizing and keep
+the full message available. Measure the warning stack's actual height when
+budgeting the package viewport instead of assuming a fixed warning allowance.
+Regress the maintained host with long copy, positive list height and a reachable
+footer, then inspect the actual warning and both rendered appearances.
+
+## 2026-10-17: Preserve localized error sentence boundaries
+
+Localized descriptions may already end in punctuation or whitespace. Blindly
+appending a period creates double punctuation or punctuation on another line.
+Normalize that shared authorization/posting message boundary while retaining the
+description and recovery instruction. Exercise real thrown errors with and
+without terminal punctuation rather than sanitizing only a screenshot fixture.
+
+## 2026-10-17: Choose copied package commands from installed state
+
+An amber watch can represent a new release of an uninstalled package. Copy
+install for that case and upgrade only for an installed package, retaining
+--cask for casks. Regress both kinds and both installation states, and verify the
+actual clipboard action rather than relabeling an unchanged upgrade command.
+
+## 2026-10-17: Preserve Close Window when owning native application menus
+
+An AppKit lifecycle must install the standard Command-W responder-chain action
+as well as Quit and Edit commands. Keep its target nil so the current window
+handles performClose:, and verify actual Settings close/reopen separately from
+menu item construction.
+
+## 2026-10-17: Publish popover host geometry, not only view fitting size
+
+A content-hugging SwiftUI view can measure correctly while its actual
+NSHostingController still publishes preferredContentSize zero. Opt the maintained
+popover host into preferred-content-size updates. Regress that same factory
+through fresh hosts and dark/light changes, including long content and a positive
+scroll viewport. Inspect the live popover too; a separately sized offscreen view
+does not establish the AppKit presentation contract.
+
+## 2026-10-17: Give an AppKit-owned grouped Form a real content area
+
+A flexible grouped Form inside NSWindow(contentViewController:) can collapse to
+zero height while accessibility still exposes every control. A footer alone may
+determine the initial window size. Give the owned window explicit content and
+minimum dimensions and prevent hosting from shrinking that contract. Test the
+actual window controller and form viewport, then open it natively; a renderer
+which supplies a generous initial frame can mask this bug.
+
+## 2026-10-17: Coalesce superseded filesystem captures instead of restarting them
+
+Two overlapping callers that each restart after a generation mismatch can keep
+invalidating each other. Retain the shared capture for the overlapping group,
+adopt its result or one replacement for new metadata, and resolve further missing
+names with targeted reads. Count actual full scans for two and three controlled
+callers, including different cask metadata; a stale-publication guard alone does
+not bound work.
+
+## 2026-10-17: Reconcile newer observations after the final suspension
+
+Rejecting an older targeted read's dictionary publication is insufficient if its
+caller still returns and persists the stale local result. Reconcile matching
+observations after every remaining await, including detached derivation work,
+then publish and evaluate without suspension. Regress the saved installed version,
+amber count and notice output under the exact delayed-read ordering.
+
+## 2026-10-17: Keep search installation reads targeted
+
+Search and Watch need installation information for their result names, not a full
+Cellar/Caskroom inventory and Other updates derivation. Preserve the concrete
+reader's named lookup through the protocol boundary, resolve exact listing
+metadata away from the main actor and count actual receipt admissions. Retain
+full inventory work for operations that require it.
+
+## 2026-10-17: Separate validated network data from cache persistence
+
+After both catalog lists validate, publish the slim pair and conditional ETags
+in memory even when writing the cache fails. Report that distinct failure without
+converting the successful fetch into an unsuccessful request. Retain the warning
+through later transport failures until persistence succeeds, so reconnect and
+interval handling do not repeatedly download the complete catalog.
+
+## 2026-10-17: Reject suspiciously shrunken successful catalog responses
+
+Nonempty is not enough to admit a refreshed bulk list. Compare usable item counts
+with the previous list and reject a drop below half, preserving both indexes,
+on-disk bytes and ETags atomically. Test each list independently and the exact
+half boundary so protection does not reject a valid boundary case.
+
+## 2026-10-17: Let an explicit check test HTTP despite the path monitor
+
+An unsatisfied NWPathMonitor result does not establish that an HTTP request
+cannot work, especially with VPN routing. Gate automatic work with path state,
+but let an explicit Check now attempt the request and show its actual result.
+Regress both manual bypass and the retained automatic gate.
+
+## 2026-10-17: Retain reconnect retries after partially successful checks
+
+A successful lookup in a batch must not erase unreachable results in other rows.
+Track any unreachable result for reconnect and keep the batch success clock
+unchanged while those results remain unreachable. Test one successful and one
+unreachable row followed by reconnect and require the failed row to recover
+while persistence retry floors remain intact.
+
+## 2026-10-17: Stage live bundle displacement during rollback too
+
+A validated backup does not justify deleting the live app in place. Explicit
+rollback and activation recovery must rename it into owned staging on the apps
+volume, including when the prior release intentionally had no app. Regress inode
+identity, forbid recursive deletion of the live path, inject displacement failure
+and model separate apps/backup devices. Delete displaced trees during collected
+cleanup after publication, preserving all recovery diagnostics.
+
+## 2026-10-17: Reuse the compiled version scanner
+
+Version comparison runs repeatedly while deriving installed updates. Keep the
+immutable NSRegularExpression compiled once and use capture alternatives for
+token classification instead of compiling a scanner per comparison or a regex
+per token. Preserve pinned Homebrew pair parity and external Unicode regressions.
+
+## 2026-10-17: Verify native control styling in rendered and live views
+
+A requested buttonBorderShape can still render as a rounded rectangle with the
+current macOS bordered style. Inspect the actual pixels and apply the intended
+capsule clipping to the native control when needed. Test content sizing through
+the maintained host and inspect every synthetic state in both appearances;
+source modifiers alone do not establish visual compliance.
+
+## 2026-10-17: Treat a matching typeahead prefix as a normal search state
+
+When a single valid prefix has catalog suggestions, its exact-token 404 is not
+a useful spelling error. Suppress only that row, retain invalid/network and
+multi-name failures, and navigate suggestions and results through one selection
+model. Preserve an explicit cask/formula choice through request changes and
+pending Return rather than resetting to the first suggestion.
+
 ## 2026-10-17: Reject legacy cache formats before reading their payloads
 
 Ignoring a decoded legacy envelope still allocates and scans its large base64

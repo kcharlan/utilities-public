@@ -44,6 +44,21 @@ builders with an invented HOME, requiring their printed private homes to be
 children of the OS temporary root with mode 0700.
 Tests use synthetic responses; a live lookup is a separate acceptance check.
 
+Render the maintained native views without reading owner state or showing windows:
+
+```sh
+make -C brew_version snapshots
+```
+
+This required visual category builds in a fresh mode-0700 OS temporary directory
+and prints its path. It writes fourteen mode-0600 PNGs: `empty`, `watching`,
+`other-updates`, `search-results`, `suggestions`, `error` and `settings`, each with
+`-light.png` and `-dark.png`. The renderer checks actual painted pixels, widths,
+content-hugging empty state, long-list bounds and native scroll viewports.
+Inspect every PNG, then check the real popover, menus and Settings in both
+appearances; offscreen rendering does not establish native input or activation.
+Keep the printed images outside the repository for review.
+
 To run the debug command from the repository root, resolve SwiftPM's binary
 directory (its layout varies by toolchain):
 
@@ -114,7 +129,7 @@ and whole-minute custom intervals from 10 minutes to 24 hours. A first lookup
 sets a baseline without notifying. Installed updates stay amber unless skipped;
 new releases for uninstalled packages stay amber across polls and restarts until
 the popover closes. Checks use at most four concurrent lookups and retain settings and
-watch changes made while the network is busy. An entirely unreachable check
+watch changes made while the network is busy. A check with any unreachable lookup
 does not advance the last successful check. Automatic failures retry no sooner
 than the chosen interval; reconnect retries an unreachable check promptly.
 Failed saves retain that interval floor across reconnects; manual checks can
@@ -147,6 +162,12 @@ changing the last successful catalog timestamp. Disabling Other updates clears
 only that section; prefix suggestions still hydrate and refresh on the same
 cadence. Installation snapshots run away from the main actor, admit each receipt
 once, and are reused when filtering watches or changing unrelated settings.
+Overlapping refresh callers share a capture and at most one replacement for
+new metadata; further missing names use targeted reads. Search and Watch read
+only their result names and do not rescan the full installation or recompute
+Other updates. Manual Check now attempts HTTP even when the path monitor reports
+offline; automatic checks retain that gate. Reconnect retries unreachable rows
+after mixed successful/failed checks too.
 
 The catalog cache lives under `~/Library/Caches/Brew Version/`. Its
 `catalog.json` snapshot contains a versioned pair of slim Listing indexes and
@@ -158,8 +179,12 @@ reading their payloads. They refetch once without old ETags and are replaced
 on the next successful refresh; saved watches are unaffected.
 Unknown API metadata is discarded during typed decoding away from the main
 actor. A partial, invalid, empty or failed download retains the previous pair
-as stale content. A 304 response reuses the decoded listings; without a valid
-index, the client retries unconditionally. Each client reads its disk cache once.
+as stale content. A list with fewer than half the previous usable item count
+is also rejected. If both lists validate but disk persistence fails, the new
+pair and ETags remain available in memory, with a visible cache-write warning;
+successful fetch cadence still advances. A 304 response reuses the decoded
+listings; without a valid index, the client retries unconditionally. Each client
+reads its disk cache once.
 The bulk transport uses a 10-second idle timeout and a 120-second total timeout.
 Catalog timestamps and the visibility/collapse settings use the same atomic
 state-save boundary as watches, retaining committed values when saving fails.
@@ -184,12 +209,13 @@ copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
 Selecting a catalog suggestion preserves its formula/cask kind through lookup
 and Watch. An existing watch retains its known kind; editing the search clears
-the suggestion choice. Suggestions and results share a 300-point scrolling
-region that keeps the search field and footer reachable. Arrow selection scrolls
-the selected result into view.
+the suggestion choice. Suggestions and results share a content-sized scrolling
+region bounded by the popover height, keeping the search field and footer
+reachable. Arrow selection scrolls the selected result into view.
 
-Watching sorts updates first, then names. Amber rows offer the upgrade command
-to copy and a skip action. The app never executes an upgrade. A row's context
+Watching sorts updates first, then names. Amber rows offer an upgrade command
+for installed packages or an install command for packages not installed, plus a
+skip action. The app only copies commands. A row's context
 menu and its hover ellipsis menu contain **Stop watching NAME**. Selecting a row
 and pressing Delete also removes it. Removal deletes its saved watch state;
 **Undo** restores it for five seconds. Closing the popover acknowledges unseen
@@ -211,6 +237,10 @@ Other updates on this Mac lists installed, unwatched updates and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. The interval menu accepts the presets or a whole
 number of minutes from 10 through 1,440; the footer shows the next check.
+**Custom…** opens Settings with its minutes field focused; enter a value and
+press Return or Apply. Invalid input remains editable with inline validation.
+The popover uses a 340-point layout that hugs short content; only the package
+list scrolls when needed. Hover or select a watch to reveal its icon actions.
 The Settings gear activates a reused AppKit-owned window containing the version,
 interval, Other updates toggle and Open at login, including the service's status
 and registration errors. The login status refreshes whenever that window becomes
@@ -232,11 +262,12 @@ from a failed save; only the latter calls for retrying the failed action.
 AppKit owns the application delegate, status item, popover and Settings window;
 SwiftUI supplies their content. The Settings window is retained after closing,
 and the gear activates the app and brings that same window forward. The
-[implementation record](docs/implementation_notes.md#native-acceptance-observations)
-lists observed current-system results and the remaining status-item, physical
-mouse-selection and notification-delivery/click gates. The minimum supported
-runtime is unavailable and remains a separate release gate. Automated tests,
-offscreen layout and signatures establish no native input result.
+[implementation record](docs/implementation_notes.md#current-native-and-visual-acceptance)
+lists observed current-system results, including physical row selection and
+Delete/Undo, and the remaining status-item and notification-delivery/click
+gates. The minimum supported runtime is unavailable and remains a separate
+release gate. Automated tests, offscreen layout and signatures establish no
+native input result.
 
 Record each current-system check separately:
 
@@ -251,8 +282,9 @@ Record each current-system check separately:
   establish the live accessibility tree or physical mouse gesture.
 - Long multi-token results scroll to both ends while input/footer stay reachable.
 - Current interval has a native checkmark, including a custom current value;
-  opening its menu preserves the popover. Custom invalid input remains editable;
-  valid Save and Cancel preserve the popover and the expected interval.
+  opening its menu preserves the popover. Custom opens Settings with the minutes
+  field focused and no popover sheet. Invalid input remains editable; valid
+  Apply/Return persists the interval. Command-W closes Settings normally.
 - Settings opens, activates, comes forward, closes and reopens as the same
   window, while the status item remains usable.
 - Other updates Watch and fallback source note; turning Other updates off
