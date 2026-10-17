@@ -2,7 +2,13 @@
 
 ## Outstanding acceptance
 
-Native UI is unverified. The permitted computer-use tool reported the Mac was locked and required manual unlocking. No alternative GUI route was used. Current-system Settings, search/keyboard/Undo, notification permission/delivery/click, Other updates, login status and light/dark checks remain open. The minimum supported macOS runtime is also unavailable. Source/build/test success does not establish these runtime checks.
+Final-source native UI is unverified. The desktop is now unlocked; the earlier
+locked-desktop limitation below is historical. The controller owns current-system
+Settings, status-button, search/keyboard/Undo, notification permission/delivery/click,
+Other updates, login and appearance checks. The minimum supported runtime is
+unavailable. Source/build/test success does not establish these runtime checks.
+Final cold-fetch and slim-cache idle footprint measurements also remain pending;
+earlier measurements are diagnostics of earlier source, not final acceptance.
 
 No live installation, deployment, push or merge was performed.
 
@@ -24,7 +30,7 @@ No live installation, deployment, push or merge was performed.
 14. Make hydrateCatalog async so cache I/O/decoding is off MainActor and startup can await content. This changes the plan's synchronous signature. Cost: callers must await hydration.
 15. Atomically cache both slim Listing indexes and ETags in a versioned envelope. Ignore the legacy raw/base64 format. Cost: the first launch with an old cache fetches fresh lists; no external cache consumer exists.
 16. Use one four-request permit pool across checks, additions and search. Cost: large searches may queue behind checks; cancelled queued work drops before transport.
-17. Retain intended SwiftUI SettingsLink path pending actual runtime evidence; a locked desktop does not establish failure. Cost: the planned AppKit fallback may still be needed after an unlocked probe.
+17. **Superseded by decision 32.** The original implementation retained SwiftUI SettingsLink pending runtime evidence. The owner subsequently required explicit AppKit window ownership independent of scene context.
 18. Failed Undo suspends normal expiry and blocks replacement removals until successful retry; same-name Watch restores the saved entry. Cost: another Stop watching action waits for recovery. Ordinary Undo still expires after five seconds.
 19. Preserve an explicitly selected suggestion's kind in transient `SearchInput`, including task identity when text is unchanged. Editing clears it; an existing watch's known kind takes precedence. Saved watches remain name-only identities. Cost: a colliding package of the other kind must be unwatched before switching kinds.
 20. Use a fixed 300-point search viewport for suggestions and results, with input/footer outside and selection-following scrolling. Cost: short queries retain blank viewport space. Offscreen layout proves the bound, while live arrow navigation remains an unmet native gate.
@@ -39,6 +45,21 @@ No live installation, deployment, push or merge was performed.
 29. Add standalone Node release integration checks after Swift Testing, building only in private OS temporary space and invoking release rather than test. Hold old executable descriptors and rebuild signed stale bundles. Cost: two isolated release builds plus synthetic acceptance/prototype builds per full test run.
 30. Make synthetic acceptance a required category and use plain mktemp -d for both harnesses. Require golden help at the fleet inventory boundary too. Cost: operators clean up the printed temporary homes after native acceptance.
 31. Collect cleanup failures through the installer operation boundary, including staging, restoration and shared atomic-file publication. Attempt all remaining cleanup, then report primary errors, every failed path and the durable backup. A completed deploy or rollback with cleanup failure retains the selected release and exits 1 with an explicit completion message. Cost: failed scratch paths remain for operator cleanup and an otherwise valid deployment still needs attention.
+
+32. AppKit owns application lifecycle and a retained Settings window hosting the maintained SettingsView. Gear activation, key-window login refresh and reuse after closing are explicit. The synthetic prototype uses that exact controller. Cost: the app owns window lifetime instead of a SwiftUI Settings scene.
+33. Production initial launch stays quiet, including at login; a normal user reopen shows its popover and renews search focus. Only the synthetic harness/prototype present their maintained UI at launch. No hidden automation flag or global shortcut exists. Cost: native tools must use the normal reopen route to inspect a windowless running release. AppKit composition explicitly retains standard Quit/Edit commands previously supplied by SwiftUI App.
+34. Keep transient popover semantics, but veto status-button transient dismissal and let the button's explicit close own the toggle. Native menus/panels are excluded by AppKit's transient contract; sheets retain their child-window lifetime. Cost: final native timing still requires actual input acceptance.
+35. Debounce current search intent for 300 ms while retaining existing rows. Return awaits that same request and rejects it if text/kind changes. Cost: the old rows remain visible during the pending query; a pending Return does not act on them.
+36. Observe separate notification authorization and posting failures, retain the failed notice for an explicit retry, and expose actionable errors in both views. Inject only the system API boundary. The harness can fail one post at this boundary; its default permission, delivery and click path still uses the real system center. Cost: retry re-delivers the latest failed notice after permission/service recovery.
+37. Refresh login status when Settings becomes key and offer the system Login Items panel for requiresApproval. Keep registration errors as observed API results; do not infer signing limitations. Cost: a narrow service adapter is maintained for deterministic tests.
+38. Use native Picker tags for interval selection, including a custom current value; preserve invalid custom text and keep the sheet open after a failed save. Cost: custom current values add one temporary option to the menu.
+39. Render the same installed-source note in watched, search and Other rows; gate homepage availability and execution to absolute http/https URLs. Cost: nonweb homepage values have no action.
+40. Start production scheduling offline, await every path update in the controller, and reserve periodic/wake events for scheduledTick. The controller alone owns the reconnect tick and retry floor. Cost: automatic network work waits for the monitor's initial answer; disk hydration can proceed immediately.
+
+The owner-required slim-cache, formula PkgVersion and legacy-cask receipt decisions
+supersede the original plan's raw cache/combined-version/receipt-only assumptions.
+Their implementation and regressions are recorded in the catalog follow-up below;
+Task 11 consumes those APIs without restoring the superseded behavior.
 
 ## Historical validation record
 
@@ -230,3 +251,36 @@ Prepared external data, locked Node dependencies, managed Chromium and the
 prepared venv were reused without acquisition or environment changes. Source,
 release plist and CLI remain 1.0.0. No GUI, live deployment or final memory
 acceptance was performed by this follow-up.
+
+## Native interaction source follow-up
+
+Task 11 implements the AppKit-owned reused Settings route, editing focus for
+watched rows, per-open search focus and status-button transient-dismissal
+ownership. The interval menu uses actual Picker selection, including custom
+current values; invalid or failed-save custom input remains available. Search
+retains results through a 300 ms debounce and transport, with Return awaiting
+its current text/kind intent. Changing intent rejects that pending submission.
+
+Notification authorization/denial/post errors are observable in both views and
+can retry the latest failed notice. Login status refreshes on Settings key-window
+callbacks, with an approval-settings action. Homepage actions admit only absolute
+http/https URLs at execution; all installed rows share the fallback note. Status
+accessibility tracks the observed watched-update count. Production starts network
+scheduling offline and forwards every path update to the controller's awaited
+network setter; startup hydrates disk without an extra ungated tick.
+
+Fresh automated validation passes 160 Swift tests (131 core, 11 CLI, 18 app),
+all three isolated release/build integration cases, signed release and strict
+signature verification, exact golden CLI help and version with empty stderr,
+the one-test synthetic acceptance service and signed harness, and the signed
+Settings prototype. Source plist, release plist and CLI agree at 1.0.0. No
+release was published or deployed. The full synthetic harness initially presents
+the maintained popover; the prototype opens the exact maintained AppKit Settings
+window. Offscreen window/action tests use injected presentation and OS service
+boundaries, so they do not establish native activation, input or registration.
+
+Current-system native checks and final cold/cache memory measurements remain
+pending for controller-owned CUA acceptance after scoped review. No GUI was
+launched for this source task, and no earlier diagnostic footprint is presented
+as final acceptance. The README lists every required native observation; the
+minimum supported runtime remains unavailable.

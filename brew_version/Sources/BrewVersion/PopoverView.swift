@@ -3,6 +3,9 @@ import BrewVersionCore
 
 struct PopoverView: View {
     let controller: WatchController
+    let notifier: UserNotifier
+    let openSettings: () -> Void
+    let focusGeneration: UUID
     @State private var search = SearchInput()
     private var query: String { search.text }
     @State private var selected: PackageName?
@@ -32,9 +35,10 @@ struct PopoverView: View {
             if let error = controller.persistenceError {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
                 if !controller.canSave { Button("Retry") { controller.retryLoad(); Task { await controller.hydrateCatalog(); await controller.scheduledTick() } } }
-                else { Text("Retry the failed action to save it.").font(.caption) }
+                else if let hint = PersistencePresentation(issue: controller.persistenceIssue).saveHint { Text(hint).font(.caption) }
             }
-            SearchSection(controller: controller, undo: undo, input: search)
+            NotificationIssueView(notifier: notifier)
+            SearchSection(controller: controller, undo: undo, input: search, focusGeneration: focusGeneration)
             if let removed = undo.removed {
                 HStack {
                     Text("Stopped watching \(removed.entry.name.rawValue)").font(.caption)
@@ -54,7 +58,7 @@ struct PopoverView: View {
                         ForEach(watches, id: \.name) { entry in
                             WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove) { remove(entry.name) }
                                 .background(selected == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                                .contentShape(Rectangle()).focusable().focused($focusedWatch, equals: entry.name)
+                                .contentShape(Rectangle()).focusable(interactions: .edit).focused($focusedWatch, equals: entry.name)
                                 .onTapGesture { selected = entry.name; focusedWatch = entry.name }
                                 .onKeyPress(.delete) { remove(entry.name); return .handled }
                         }
@@ -66,14 +70,13 @@ struct PopoverView: View {
             HStack {
                 IntervalMenu(controller: controller)
                 Spacer()
-                SettingsLink { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
+                Button(action: openSettings) { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Brew Version").accessibilityLabel("Quit Brew Version")
             }
             if let next = CheckSchedule.nextDue(lastCheck: controller.state.lastCheck, interval: controller.state.interval) {
                 Text("Next check \(next.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
             }
         }.padding(16).frame(width: 450)
-        .onDeleteCommand { if query.isEmpty, let selected { remove(selected) } }
     }
     private func remove(_ name: PackageName) {
         if undo.remove(name, controller: controller) { selected = nil }

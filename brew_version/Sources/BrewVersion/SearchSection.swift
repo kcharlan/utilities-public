@@ -5,12 +5,17 @@ struct SearchSection: View {
     let controller: WatchController
     let undo: WatchUndoAction
     @Bindable var input: SearchInput
+    @FocusState private var searchFocused: Bool
+    var focusGeneration = UUID()
     private var query: String { input.text }
     @State private var selection = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Search formulae or casks", text: $input.text)
                 .accessibilityLabel("Search formulae or casks")
+                .focused($searchFocused)
+                .onAppear { searchFocused = true }
+                .onChange(of: focusGeneration) { _, _ in searchFocused = true }
                 .onChange(of: query) { _, _ in selection = 0 }
                 .task(id: input.request) { await input.lookup(controller: controller) }
                 .onSubmit { watchSelected() }
@@ -25,9 +30,8 @@ struct SearchSection: View {
         }
     }
     private func watchSelected() {
-        guard controller.canSave, controller.results.indices.contains(selection),
-              case .found(let listing, _, false) = controller.results[selection] else { return }
-        Task { await undo.watch(listing.name, kind: listing.kind, controller: controller) }
+        let selected = selection
+        Task { await input.watchSelected(selected, undo: undo, controller: controller) }
     }
     private func copySelected() {
         guard controller.results.indices.contains(selection), case .found(let listing, _, _) = controller.results[selection] else { return }
@@ -71,6 +75,7 @@ struct SearchResults: View {
                 VStack(alignment: .leading) {
                     Text("\(listing.name.rawValue) · \(listing.kind.rawValue) · \(ReleaseID(listing).displayVersion)")
                     Text(statusText(listing, installed: installed)).font(.caption).foregroundStyle(.secondary)
+                    if let note = installedSourceNote(installed) { Text(note).font(.caption).foregroundStyle(.secondary) }
                 }
                 Spacer()
                 if watched { Text("Watching").font(.caption) }

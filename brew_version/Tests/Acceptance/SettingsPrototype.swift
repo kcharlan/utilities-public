@@ -1,26 +1,25 @@
-import SwiftUI
 import AppKit
-@MainActor @Observable final class SyntheticController { var showOtherUpdates = true }
-@main struct Prototype: App {
-    @NSApplicationDelegateAdaptor(Delegate.self) var delegate
-    var body: some Scene { Settings { Text("Synthetic Settings prototype").padding(40) } }
-}
-@MainActor final class Delegate: NSObject, NSApplicationDelegate {
-    var item: NSStatusItem!
-    let popover = NSPopover()
-    let controller = SyntheticController()
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "mug", accessibilityDescription: "Brew Version Settings prototype")
-        item.button?.target = self; item.button?.action = #selector(toggle)
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: VStack {
-            Text("Synthetic Settings prototype")
-            SettingsLink { Text("Settings…") }
-        }.padding(24))
+import BrewVersionCore
+
+@main struct Prototype {
+    @MainActor static func main() {
+        let app = NSApplication.shared
+        ApplicationMenu.install()
+        let delegate = PrototypeDelegate()
+        app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
     }
-    @objc func toggle() {
-        if popover.isShown { popover.performClose(nil) }
-        else { popover.show(relativeTo: item.button!.bounds, of: item.button!, preferredEdge: .minY) }
+}
+@MainActor final class PrototypeDelegate: NSObject, NSApplicationDelegate {
+    let notifier = UserNotifier()
+    private var settings: SettingsWindowController?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let controller = SyntheticEnvironment.makeController(service: SyntheticTransport(), notifier: notifier)
+        let settings = SettingsWindowController(controller: controller, notifier: notifier)
+        self.settings = settings
+        settings.show()
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settings?.show(); return true
     }
 }

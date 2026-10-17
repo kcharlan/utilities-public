@@ -163,10 +163,15 @@ Build the signed app and CLI with `make -C brew_version release` from the
 repository root. Products are `brew_version/build/release/Brew Version.app`
 and `brew_version/build/release/brew-version`. Signing is local ad hoc signing;
 the bundle includes Homebrew's license notice. Open the app to get a mug in
-the menu bar. A filled mug means a watched update is available.
+the menu bar. Initial launch stays quiet, including at login; opening the running
+app again shows its popover. A filled mug means a watched update is available; its accessibility label includes
+the number of watched updates.
 
 The popover shows the last check, refresh, and a search field. Search accepts
 space-separated names, rejects invalid names, and suggests catalog prefixes.
+Lookups wait about 300 ms after typing and retain the previous results until
+the current lookup completes. Return during that wait watches the selected
+result of the current query; editing again cancels that pending intent.
 Select a result with the arrow keys or click; Return watches it, and Command-C
 copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
@@ -194,8 +199,12 @@ Other updates on this Mac lists installed, unwatched updates and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. The interval menu accepts the presets or a whole
 number of minutes from 10 through 1,440; the footer shows the next check.
-Settings contains the version, interval, Other updates toggle and Open at
-login, including the service's status and registration errors. Turn Open at
+The Settings gear activates a reused AppKit-owned window containing the version,
+interval, Other updates toggle and Open at login, including the service's status
+and registration errors. The login status refreshes whenever that window becomes
+key; required approval offers **Open Login Items Settings**. Notification
+authorization and posting failures appear in both Settings and the popover,
+with **Retry notifications** after correcting the reported problem. Turn Open at
 login off before quitting a temporary build-folder copy.
 
 The app composes its state and cache paths under the current user's home:
@@ -208,22 +217,36 @@ from a failed save; only the latter calls for retrying the failed action.
 
 ### Settings and native acceptance gates
 
-The implementation retains a SwiftUI App with only a Settings scene and an
-AppKit status item/popover hosting SwiftUI. Its footer uses SettingsLink.
-A signed minimal prototype and the release bundle build successfully, but the
-current-system runtime Settings gate remains **unmet**: native automation
-reported that the Mac is locked and automatic unlock failed. This is no
-runtime evidence for or against the SettingsLink arrangement. Open, activate,
-close and reopen Settings while keeping the status item usable before release.
-If the exact arrangement fails, implement and validate the specified AppKit
-settings window fallback. macOS 14 runtime acceptance is also an outstanding
-release gate because that runtime is unavailable.
+AppKit owns the application delegate, status item, popover and Settings window;
+SwiftUI supplies their content. The Settings window is retained after closing,
+and the gear activates the app and brings that same window forward. Native
+acceptance on the current system remains pending for this final source. The
+minimum supported runtime is unavailable and remains a separate release gate.
+Automated tests, offscreen layout and signatures establish no native input result.
 
-All manual UI acceptance remains pending while the Mac is locked: mug,
-search/Return/Command-C, notification consent/delivery/click, Other updates
-Watch, invalid and valid custom intervals, removal/Undo, Settings/login,
-and light/dark appearance. Automated Swift tests and signing checks do not
-establish those outcomes.
+Record each current-system check separately:
+
+- Mug, amber update count and accessibility state; click the open status item
+  and require it to close and remain closed.
+- First-open and reopen search focus; arrows, Return, Command-C; Return while
+  lookup is pending; explicitly choose the cask for a colliding name.
+- Click a watched row and press Delete with default keyboard navigation; Undo
+  must restore its saved state. Delete in the search field must edit text.
+- Long multi-token results scroll to both ends while input/footer stay reachable.
+- Current interval has a native checkmark, including a custom current value;
+  opening its menu preserves the popover. Custom invalid input remains editable;
+  valid Save and Cancel preserve the popover and the expected interval.
+- Settings opens, activates, comes forward, closes and reopens as the same
+  window, while the status item remains usable.
+- Other updates Watch and fallback source note; turning Other updates off
+  preserves suggestions. Watched fallback rows also show their source note.
+- Notification prompt, delivery and notification click opening the popover;
+  authorization denial and posting errors are visible and retryable.
+- Login registration and any required approval; status refresh on window key;
+  Open Login Items Settings action. Record the actual status/error without
+  assuming that the signing method determines the result.
+- Light and dark appearances; turn Open at login off, quit both temporary
+  apps and the release, and verify that no login registration remains.
 
 `make -C brew_version acceptance` is a required automated validation category.
 It builds a separately identified, signed synthetic bundle in a fresh private
@@ -232,11 +255,23 @@ path. It copies the maintained production UI/notifier/core sources into a
 scratch Swift package, replacing only the application entry and services.
 It also runs a synthetic service test without launching a GUI. The harness
 uses no owner state, inventory, application folders or live HTTP requests.
-Search for `synthetic-formula` and press Return to establish its baseline.
+The harness immediately opens the maintained popover. Search for
+`synthetic-formula` and press Return to establish its baseline.
 **Advance release and check** changes its listing and checks again; click the
 delivered notification and require the popover to open. **Other updates**
-contains `synthetic-installed`, from a private invented Homebrew receipt.
-**Light** and **Dark** are harness appearance controls. The production app has
+contains `synthetic-installed`, from a private invented Homebrew receipt, and
+`synthetic-fallback`, an invented legacy self-updating cask whose app is absent.
+Watch that cask to check its fallback note in both sections. Search
+`synthetic-shared` and select the cask suggestion: its version is `4.0-synthetic`,
+while the formula is `3.0-synthetic`. `synthetic-cask` is another watchable cask;
+add two watches to exercise click/Delete/Undo without real inventory.
+**Light** and **Dark** are harness appearance controls. **Delay next lookup** holds the next individual
+synthetic lookup for two seconds, so type and press Return while it is pending.
+After real notification authorization, **Test posting failure** injects one
+harness-only service error through the maintained notifier. Require its error
+in the popover and Settings; **Retry notifications** must deliver the synthetic
+retry notice and clear the error. Normal prompt/delivery/click still uses the
+real system notification center. The production app has
 no simulation environment switch. Use normal OS notification controls for any
 permission changes; do not erase notification databases. Quit the harness,
 turn its login toggle off, and remove only its printed fresh home when finished.
@@ -251,8 +286,10 @@ remains pending; an offscreen layout test is separate evidence.
 
 For the minimal Settings-only gate, run
 `make -C brew_version settings-prototype`; it prints a separately signed
-prototype path in another fresh private home. This prototype also remains
-unlaunched under the locked-Mac constraint.
+prototype path in another fresh private home. It opens the exact maintained
+AppKit-owned Settings window at launch, using the same synthetic composition.
+Both builders share their source-copy/build/signing implementation; the
+prototype has no separate discarded Settings scene.
 
 ## Deployment
 

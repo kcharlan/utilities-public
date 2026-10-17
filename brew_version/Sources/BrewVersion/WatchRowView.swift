@@ -29,6 +29,7 @@ struct WatchRowView: View {
                 }
                 if let error = entry.lastError { Text(error).font(.caption).foregroundStyle(.red) }
                 else if let listing = entry.lastListing { Text(statusText(listing, installed: entry.installed)).font(.caption).foregroundStyle(.secondary) }
+                if let note = installedSourceNote(entry.installed) { Text(note).font(.caption).foregroundStyle(.secondary) }
                 if entry.isAmber, let listing = entry.lastListing {
                     HStack {
                         Button("Copy upgrade command") { copyText(upgradeCommand(listing)) }
@@ -46,7 +47,7 @@ struct WatchRowView: View {
     @ViewBuilder private var actions: some View {
         if let listing = entry.lastListing {
             Button("Copy upgrade command") { copyText(upgradeCommand(listing)) }
-            if let homepage = listing.homepage { Button("Open homepage") { NSWorkspace.shared.open(homepage) } }
+            if let homepage = listing.homepage, HomepageAction.isAvailable(homepage) { Button("Open homepage") { HomepageAction().open(homepage) } }
             if entry.isAmber { Button("Skip this version") { controller.skip(entry.name) }.disabled(!controller.canSave) }
         }
         Button("Stop watching \(entry.name.rawValue)", action: remove).disabled(!controller.canSave || !canRemove)

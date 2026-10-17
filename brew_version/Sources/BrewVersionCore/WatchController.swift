@@ -279,7 +279,7 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
     public func clearSearch() { searchGeneration = UUID(); results = [] }
     public func search(_ text: String, kind: PackageKind? = nil) async {
         guard !Task.isCancelled else { return }
-        let generation = UUID(); searchGeneration = generation; results = []
+        let generation = UUID(); searchGeneration = generation
         let tokens = tokenize(text)
         let client = self.client; let scheduler = self.scheduler
         let knownKinds = Dictionary(uniqueKeysWithValues: state.watched.compactMap { entry in

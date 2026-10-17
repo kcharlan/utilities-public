@@ -1,5 +1,87 @@
 # Lessons learned
 
+## 2026-10-17: Own a menu bar app's Settings window explicitly
+
+A SettingsLink inside an AppKit-hosted popover depends on SwiftUI scene context.
+Own and retain an NSWindow hosting the maintained Settings view; activate the
+application and bring that same window forward on every open. A prototype must
+use this exact path rather than a separate demonstration scene. Offscreen reuse
+tests do not establish actual window activation or native input acceptance.
+
+## 2026-10-17: Separate status-button toggles from transient dismissal
+
+A transient popover can dismiss on status-button mouse-down before its mouse-up
+action, making a toggle reopen it. Veto automatic dismissal for that button's
+native event and let its explicit close own the action. Preserve transient menu
+and child-sheet semantics; verify their real timing with native input.
+
+## 2026-10-17: Give click-selected watch rows editing focus
+
+Default keyboard navigation does not guarantee focus for plain focusable rows.
+Use editing focus and route Delete from the focused watch row only; a search
+field's Delete must keep editing its text. Renew search focus on every popover
+open. Action tests cannot establish the system's native focus behavior.
+
+## 2026-10-17: Native menu checks need selection state
+
+A checkmark image in a menu label is not a native selected menu item. Use a
+Picker with tagged intervals and include a custom current value among its
+options. Retain invalid custom input and keep its sheet open if saving fails.
+
+## 2026-10-17: Queue Return against current search intent
+
+Debouncing alone leaves Return able to watch retained rows from an old query.
+Retain results through both debounce and transport, share the active request,
+await its completion on Return and reject submissions after text or kind changes.
+Controlled waits must prove rapid typing suppresses intermediate requests and
+that pending Return watches only the current result.
+
+## 2026-10-17: Observe notification failures at their system boundary
+
+An unread lastError property hides permission denial and posting failures.
+Observe separate authorization and delivery errors in both app views; retain a
+failed notice for explicit retry after recovery. Inject the OS API boundary for
+denial, thrown errors and successful retry without a production simulation mode.
+
+## 2026-10-17: Revalidate homepage schemes when executing the action
+
+An external homepage URL is not automatically safe to open as a web page.
+Admit only absolute http/https URLs with a host, both when presenting the action
+and immediately before invoking the workspace. Exercise the actual action with
+synthetic file, script, mail, relative and web URLs.
+
+## 2026-10-17: Render installed-source qualifications consistently
+
+A self-updating cask's Caskroom fallback qualifies the installed version even
+after Watch moves it between sections. Reuse one source-note helper across
+watched, search and Other rows so changing presentation cannot hide that fact.
+
+## 2026-10-17: Refresh login approval when Settings becomes key
+
+Login Item approval can change in System Settings while the app stays open.
+Refresh the service on key-window callbacks and offer the system panel when
+approval is required. Record actual registration errors; a signing assumption
+does not establish that registration failed or succeeded.
+
+## 2026-10-17: Describe watched updates in the status item's accessibility
+
+Changing a mug image alone leaves assistive clients without its update state.
+Derive its symbol and accessibility description from the same observed amber
+count, and regress actual observation across skip/removal state changes.
+
+## 2026-10-17: Wire scheduling gates through the application boundary
+
+A gated controller cannot prevent an ungated app startup or a path adapter that
+drops offline events. Start unknown/offline, await every network update and let
+the controller alone schedule reconnect work. Exercise real controller retries
+through the event source, including initial offline, wake, periodic and reconnect.
+
+## 2026-10-17: Display persistence advice for its explicit failure kind
+
+Successful quarantine recovery and rejected saves need different advice. Render
+the failed-action save hint only for the controller's saveFailure state, while
+preserving the blocked-load Retry action and original diagnostic text.
+
 ## 2026-10-17: Cleanup must preserve the failure that required recovery
 
 A throwing finally block replaces an earlier activation or restoration error;

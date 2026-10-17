@@ -4,24 +4,22 @@ import BrewVersionCore
 struct IntervalMenu: View {
     let controller: WatchController
     @State private var custom = false
-    @State private var minutes = ""
-    @State private var invalid = false
+    @State private var input = CustomIntervalInput()
     var body: some View {
         Menu {
-            ForEach(CheckInterval.presets, id: \.self) { interval in
-                Button { controller.setInterval(interval) } label: {
-                    if controller.state.interval == interval { Label(interval.label, systemImage: "checkmark") }
-                    else { Text(interval.label) }
+            Picker("Check interval", selection: Binding(get: { controller.state.interval }, set: { controller.setInterval($0) })) {
+                ForEach(IntervalSelection(current: controller.state.interval).options, id: \.self) { interval in
+                    Text(interval.label).tag(interval)
                 }
-            }
-            Button("Custom…") { minutes = String(controller.state.interval.minutes); invalid = false; custom = true }
+            }.pickerStyle(.inline)
+            Button("Custom…") { input.minutes = String(controller.state.interval.minutes); input.invalid = false; custom = true }
         } label: { Text("Every \(controller.state.interval.label)") }
         .disabled(!controller.canSave)
         .sheet(isPresented: $custom) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Check interval").font(.headline)
-                TextField("Minutes", text: $minutes).accessibilityLabel("Minutes")
-                if invalid { Text(CheckInterval.validationMessage()).foregroundStyle(.red) }
+                TextField("Minutes", text: $input.minutes).accessibilityLabel("Minutes")
+                if input.invalid { Text(CheckInterval.validationMessage()).foregroundStyle(.red) }
                 HStack {
                     Button("Cancel") { custom = false }.keyboardShortcut(.cancelAction)
                     Spacer()
@@ -31,8 +29,6 @@ struct IntervalMenu: View {
         }
     }
     private func save() {
-        guard !minutes.isEmpty, minutes.utf8.allSatisfy({ (48...57).contains($0) }),
-              let number = Int(minutes), let interval = CheckInterval(minutes: number) else { invalid = true; return }
-        controller.setInterval(interval); custom = false
+        if input.save(controller: controller) { custom = false }
     }
 }

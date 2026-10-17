@@ -7,6 +7,13 @@ import BrewVersionCore
         didSet { if text != oldValue { selectedKind = nil } }
     }
     private var selectedKind: PackageKind?
+    @ObservationIgnored private var lookupTask: Task<Void, Never>?
+    private var activeRequest: Request?
+    private var completedRequest: Request?
+    private let waitForDebounce: @MainActor () async -> Void
+    init(waitForDebounce: @escaping @MainActor () async -> Void = { try? await Task.sleep(for: .milliseconds(300)) }) {
+        self.waitForDebounce = waitForDebounce
+    }
     struct Request: Equatable {
         let text: String
         let kind: PackageKind?
@@ -19,7 +26,27 @@ import BrewVersionCore
     func lookup(controller: WatchController) async {
         guard !Task.isCancelled else { return }
         let request = self.request
-        if request.text.isEmpty { controller.clearSearch() }
-        else { await controller.search(request.text, kind: request.kind) }
+        if activeRequest == request, let lookupTask { await lookupTask.value; return }
+        lookupTask?.cancel()
+        activeRequest = request
+        completedRequest = nil
+        let task = Task {
+            if !request.text.isEmpty { await waitForDebounce() }
+            guard !Task.isCancelled, self.request == request else { return }
+            if request.text.isEmpty { controller.clearSearch() }
+            else { await controller.search(request.text, kind: request.kind) }
+            guard !Task.isCancelled, self.request == request else { return }
+            completedRequest = request
+        }
+        lookupTask = task
+        await task.value
+    }
+    func watchSelected(_ index: Int, undo: WatchUndoAction, controller: WatchController) async {
+        let request = self.request
+        await lookup(controller: controller)
+        guard !Task.isCancelled, self.request == request, completedRequest == request,
+              controller.canSave, controller.results.indices.contains(index),
+              case .found(let listing, _, false) = controller.results[index] else { return }
+        await undo.watch(listing.name, kind: listing.kind, controller: controller)
     }
 }

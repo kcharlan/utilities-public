@@ -18,6 +18,12 @@ struct AcceptanceServiceTests {
         let catalog = try await CatalogClient(transport: service, cacheDirectory: home).load().catalog
         let installed = try #require(catalog.listing(for: PackageName("synthetic-installed")!, kind: .formula))
         #expect(installed.version == "2.0-synthetic")
-        #expect(catalog.suggestions(prefix: "synthetic").count == 2)
+        #expect(catalog.suggestions(prefix: "synthetic").count == 6)
+        let shared = PackageName("synthetic-shared")!
+        #expect(try await client.lookup(shared, kinds: .formula).version == "3.0-synthetic")
+        #expect(try await client.lookup(shared, kinds: .cask).version == "4.0-synthetic")
+        let fallback = try await client.lookup(PackageName("synthetic-fallback")!, kinds: .cask)
+        #expect(fallback.autoUpdates)
+        #expect(fallback.appNames == ["Synthetic Missing.app"])
     }
 }

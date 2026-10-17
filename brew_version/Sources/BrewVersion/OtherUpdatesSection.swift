@@ -22,8 +22,8 @@ struct OtherUpdatesSection: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("\(row.listing.name.rawValue) · \(row.listing.kind.rawValue) · \(ReleaseID(row.listing).displayVersion)")
                             Text(statusText(row.listing, installed: row.installed)).font(.caption).foregroundStyle(.secondary)
-                            if row.installed.source == .caskroomFallback {
-                                Text("Version from Homebrew's records; the app may have updated itself.").font(.caption).foregroundStyle(.secondary)
+                            if let note = installedSourceNote(row.installed) {
+                                Text(note).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Spacer()

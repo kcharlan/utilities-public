@@ -1,6 +1,11 @@
-import SwiftUI
+import AppKit
 
-@main struct BrewVersionApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    var body: some Scene { Settings { SettingsView(controller: delegate.controller) } }
+@main struct BrewVersionApp {
+    @MainActor static func main() {
+        let app = NSApplication.shared
+        ApplicationMenu.install()
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
+    }
 }
