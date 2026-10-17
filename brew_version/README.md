@@ -118,7 +118,10 @@ watch changes made while the network is busy. An entirely unreachable check
 does not advance the last successful check. Automatic failures retry no sooner
 than the chosen interval; reconnect retries an unreachable check promptly.
 Failed saves retain that interval floor across reconnects; manual checks can
-retry immediately.
+retry immediately. The next-check footer uses these same scheduler deadlines,
+including failed attempts and saves. While offline it describes the reconnect
+deadline instead: reconnect can bypass an unreachable request's delay, but
+cannot bypass a failed save's interval floor.
 
 ## Catalog and Other updates
 
@@ -188,6 +191,11 @@ and pressing Delete also removes it. Removal deletes its saved watch state;
 **Undo** restores it for five seconds. Closing the popover acknowledges unseen
 releases of packages that are not installed.
 
+Each watch is an individually named accessibility group, **Watching NAME**,
+with its child actions retained. Its default accessibility action selects the
+row and gives it the same native editing focus as clicking it; selected state
+is exposed to assistive technology. Delete in search continues editing text.
+
 If Undo cannot save, its recovery entry stays available until restoration
 succeeds. Retry Undo after correcting the save problem; further Stop watching
 actions stay disabled so they cannot replace that entry. Watching the same
@@ -231,7 +239,10 @@ Record each current-system check separately:
 - First-open and reopen search focus; arrows, Return, Command-C; Return while
   lookup is pending; explicitly choose the cask for a colliding name.
 - Click a watched row and press Delete with default keyboard navigation; Undo
-  must restore its saved state. Delete in the search field must edit text.
+  must restore its saved state. Verify each named accessibility group can be
+  selected independently, retains its child actions and announces selection.
+  Delete in the search field must edit text. Offscreen responder tests do not
+  establish the live accessibility tree or physical mouse gesture.
 - Long multi-token results scroll to both ends while input/footer stay reachable.
 - Current interval has a native checkmark, including a custom current value;
   opening its menu preserves the popover. Custom invalid input remains editable;

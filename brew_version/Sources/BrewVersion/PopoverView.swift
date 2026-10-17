@@ -8,8 +8,7 @@ struct PopoverView: View {
     let focusGeneration: UUID
     @State private var search = SearchInput()
     private var query: String { search.text }
-    @State private var selected: PackageName?
-    @State private var watchFocusRequest = UUID()
+    @State private var selection = WatchRowSelection()
     @State private var undo = WatchUndoAction()
     private var watches: [WatchEntry] {
         controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
@@ -57,10 +56,14 @@ struct PopoverView: View {
                         if watches.isEmpty { Text("Search for a formula or cask to start watching it.").foregroundStyle(.secondary).padding(.vertical, 12) }
                         ForEach(watches, id: \.name) { entry in
                             WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove) { remove(entry.name) }
-                                .background(selected == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                                .background(WatchRowKeyboard(focusRequest: selected == entry.name ? watchFocusRequest : nil) { remove(entry.name) })
+                                .background(selection.name == entry.name ? Color.accentColor.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                                .background(WatchRowKeyboard(focusRequest: selection.name == entry.name ? selection.focusRequest : nil) { remove(entry.name) })
                                 .contentShape(Rectangle())
-                                .onTapGesture { selected = entry.name; watchFocusRequest = UUID() }
+                                .onTapGesture { selection.select(entry.name) }
+                                .accessibilityElement(children: .contain)
+                                .accessibilityLabel("Watching \(entry.name.rawValue)")
+                                .accessibilityAddTraits(selection.name == entry.name ? .isSelected : [])
+                                .accessibilityAction { selection.select(entry.name) }
                         }
                         OtherUpdatesSection(controller: controller, undo: undo)
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -73,12 +76,21 @@ struct PopoverView: View {
                 Button(action: openSettings) { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Brew Version").accessibilityLabel("Quit Brew Version")
             }
-            if let next = CheckSchedule.nextDue(lastCheck: controller.state.lastCheck, interval: controller.state.interval) {
-                Text("Next check \(next.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
-            }
+            Text(nextCheckText).font(.caption).foregroundStyle(.secondary)
         }.padding(16).frame(width: 450)
     }
+    private var nextCheckText: String {
+        switch controller.nextAutomaticCheck {
+        case .blocked: "Automatic checks paused until state can be loaded"
+        case .checking: "Checking now"
+        case .ready: "Next check due"
+        case .scheduled(let next): "Next check \(next.formatted(date: .omitted, time: .shortened))"
+        case .waitingForNetwork(let next):
+            if let next { "Offline: next check after \(next.formatted(date: .omitted, time: .shortened)) when connected" }
+            else { "Offline: next check when connected" }
+        }
+    }
     private func remove(_ name: PackageName) {
-        if undo.remove(name, controller: controller) { selected = nil }
+        if undo.remove(name, controller: controller) { selection.clear() }
     }
 }

@@ -7,6 +7,43 @@ import Testing
 }
 
 @MainActor struct ControllerRegressionTests {
+    @Test func nextAutomaticCheckUsesUnreachableAttemptAndReconnectPolicy() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let clock = RetryClock()
+        var state = AppState.initial; state.watched = [baseline()]; state.lastCheck = clock.date
+        try f.store.save(state)
+        let transport = StubTransport([watchURL(): [.failure(URLError(.notConnectedToInternet)), watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier(), now: { clock.date })
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
+        clock.date.addTimeInterval(1800); await c.checkIfDue()
+        #expect(c.state.lastCheck == Date(timeIntervalSince1970: 1_000_000))
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_003_600)))
+        await c.setNetworkAvailable(false)
+        #expect(c.nextAutomaticCheck == .waitingForNetwork(notBefore: nil))
+        clock.date.addTimeInterval(60); await c.setNetworkAvailable(true)
+        #expect(await transport.requests.count == 2)
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_003_660)))
+    }
+    @Test(arguments: [false, true]) func nextAutomaticCheckRetainsFailedSaveDeadlineAcrossReconnect(previousSuccess: Bool) async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let clock = RetryClock()
+        var state = AppState.initial; state.watched = [baseline()]
+        if previousSuccess { state.lastCheck = clock.date.addingTimeInterval(-1800) }
+        try f.store.save(state)
+        let failures = IOFailures(); failures.operation = "replace"
+        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), now: { clock.date })
+        await c.checkIfDue()
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
+        await c.setNetworkAvailable(false)
+        #expect(c.nextAutomaticCheck == .waitingForNetwork(notBefore: Date(timeIntervalSince1970: 1_001_800)))
+        failures.operation = nil; clock.date.addTimeInterval(60); await c.setNetworkAvailable(true)
+        #expect(await transport.requests.count == 1)
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
+        clock.date.addTimeInterval(1740); await c.checkIfDue()
+        #expect(await transport.requests.count == 2)
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_003_600)))
+    }
     @Test func unreachableDoesNotBecomeSuccessfulCheck() async throws {
         let f = WatchFixture(); defer { f.clean() }
         var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
@@ -15,6 +52,7 @@ import Testing
         let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier(), now: { clock.date })
         await c.checkIfDue()
         #expect(c.state.lastCheck == nil)
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
         #expect(c.state.watched[0].lastError == "Couldn't reach Homebrew.")
         clock.date.addTimeInterval(60); await c.checkIfDue()
         #expect(await transport.requests.count == 1)

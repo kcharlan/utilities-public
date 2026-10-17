@@ -1,5 +1,16 @@
 import AppKit
 import SwiftUI
+import BrewVersionCore
+
+@MainActor @Observable final class WatchRowSelection {
+    private(set) var name: PackageName?
+    private(set) var focusRequest = UUID()
+    func select(_ name: PackageName) {
+        self.name = name
+        focusRequest = UUID()
+    }
+    func clear() { name = nil }
+}
 
 /// The clicked row owns native editing commands; the search field keeps its
 /// normal text responder. No app-wide key monitor or delete command is installed.
@@ -14,10 +25,7 @@ struct WatchRowKeyboard: NSViewRepresentable {
     }
     func updateNSView(_ view: WatchRowKeyboardView, context: Context) {
         view.remove = remove
-        if let focusRequest, view.focusRequest != focusRequest {
-            view.focusRequest = focusRequest
-            view.takeFocus()
-        }
+        view.updateFocusRequest(focusRequest)
     }
 }
 @MainActor final class WatchRowKeyboardView: NSView {
@@ -26,6 +34,12 @@ struct WatchRowKeyboard: NSViewRepresentable {
     override var acceptsFirstResponder: Bool { true }
     // The background must not intercept the row's buttons or SwiftUI click.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    func updateFocusRequest(_ request: UUID?) {
+        if let request, focusRequest != request {
+            focusRequest = request
+            takeFocus()
+        }
+    }
     func takeFocus() { window?.makeFirstResponder(self) }
     override func keyDown(with event: NSEvent) {
         if [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option]).isEmpty {

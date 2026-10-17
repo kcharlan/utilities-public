@@ -9,6 +9,12 @@ public extension Notifier { func requestAuthorization() async {} }
 
 public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, saveFailure }
 
+public enum AutomaticCheckSchedule: Equatable, Sendable {
+    case blocked, checking, ready
+    case scheduled(Date)
+    case waitingForNetwork(notBefore: Date?)
+}
+
 @MainActor @Observable public final class WatchController {
     public private(set) var state: AppState
     public private(set) var persistenceError: String?
@@ -23,6 +29,16 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
     public private(set) var others: [OtherUpdate] = []
     public private(set) var isRefreshingCatalog = false
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
+    public var nextAutomaticCheck: AutomaticCheckSchedule {
+        guard canSave else { return .blocked }
+        guard !isChecking else { return .checking }
+        if !networkAvailable {
+            let deadline = watchCheckDeadline(reconnecting: true).flatMap { $0 > now() ? $0 : nil }
+            return .waitingForNetwork(notBefore: deadline)
+        }
+        if let deadline = watchCheckDeadline(), deadline > now() { return .scheduled(deadline) }
+        return .ready
+    }
 
     private let transport: any HTTPTransport
     private let installed: (any InstalledReading)?
@@ -169,9 +185,16 @@ public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, save
     }
     public func checkIfDue() async {
         guard automaticRequestsAllowed,
-              CheckSchedule.isDue(lastCheck: lastCheckAttempt, interval: state.interval, now: now()),
-              retryWatchesOnReconnect || CheckSchedule.isDue(lastCheck: state.lastCheck, interval: state.interval, now: now()) else { return }
+              watchCheckDeadline().map({ $0 <= now() }) ?? true else { return }
         await checkNow()
+    }
+
+    /// All watch retry gates share this deadline, including its reconnect preview.
+    private func watchCheckDeadline(reconnecting: Bool = false) -> Date? {
+        [lastFailedSave,
+         reconnecting && retryWatchesOnReconnect ? nil : lastCheckAttempt,
+         retryWatchesOnReconnect ? nil : state.lastCheck]
+            .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: state.interval) }.max()
     }
 
     private var automaticRequestsAllowed: Bool {

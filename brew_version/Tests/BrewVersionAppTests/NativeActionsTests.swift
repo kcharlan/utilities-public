@@ -37,6 +37,58 @@ import UserNotifications
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func sharedWatchSelectionRenewsNativeFocusWithoutStealingSearchEditing() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-accessible-rows-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial; state.showOtherUpdates = false
+        state.watched = ["synthetic-first", "synthetic-second"].map { name in
+            var entry = WatchEntry(name: PackageName(name)!, kind: .formula)
+            entry.lastListing = Listing(name: entry.name, kind: .formula, version: "2-synthetic")
+            entry.installed = InstalledVersion(version: "1-synthetic", source: .cellar)
+            return entry
+        }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 450, height: 700), styleMask: [.borderless], backing: .buffered, defer: true)
+        defer { window.makeFirstResponder(nil) }
+        let selection = WatchRowSelection()
+        let undo = WatchUndoAction()
+        let search = NSTextView(frame: .zero); search.string = "synthetic"
+        window.contentView?.addSubview(search)
+        for entry in state.watched {
+            let row = WatchRowKeyboardView()
+            row.remove = { _ = undo.remove(entry.name, controller: controller) }
+            window.contentView?.addSubview(row)
+            // Mouse and default accessibility actions both call this selection.
+            selection.select(entry.name)
+            row.updateFocusRequest(selection.focusRequest)
+            #expect(selection.name == entry.name)
+            #expect(window.firstResponder === row)
+            #expect(window.firstResponder?.tryToPerform(#selector(NSResponder.deleteBackward(_:)), with: nil) == true)
+            #expect(!store.load().state.watched.contains { $0.name == entry.name })
+            undo.restore(controller: controller)
+            #expect(store.load().state.watched == state.watched)
+            #expect(window.makeFirstResponder(search))
+            search.setSelectedRange(NSRange(location: search.string.count, length: 0))
+            row.updateFocusRequest(selection.focusRequest)
+            #expect(window.firstResponder === search)
+            #expect(window.firstResponder?.tryToPerform(#selector(NSResponder.deleteBackward(_:)), with: nil) == true)
+            #expect(search.string == (entry.name.rawValue == "synthetic-first" ? "syntheti" : "synthet"))
+            #expect(store.load().state.watched == state.watched)
+            selection.select(entry.name)
+            row.updateFocusRequest(selection.focusRequest)
+            #expect(window.firstResponder === row)
+            let rebuiltRow = WatchRowKeyboardView()
+            rebuiltRow.focusRequest = selection.focusRequest
+            window.contentView?.addSubview(rebuiltRow)
+            #expect(window.makeFirstResponder(search))
+            rebuiltRow.updateFocusRequest(selection.focusRequest)
+            #expect(window.firstResponder === search)
+            selection.clear()
+            #expect(selection.name == nil)
+        }
+    }
     @Test func appearanceAppliesToPopoverAndActualHostedContent() {
         let popover = NSPopover()
         popover.contentViewController = NSHostingController(rootView: Text("Synthetic appearance"))

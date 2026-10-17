@@ -1,5 +1,24 @@
 # Lessons learned
 
+## 2026-10-17: Present the scheduler's retry deadline rather than its success clock
+
+The last successful check alone cannot predict the next automatic request:
+unreachable attempts and failed saves impose separate interval floors. Extract
+the existing watch gate deadline and use it for both scheduling and display.
+Preview reconnect using that same policy: transport backoff can be bypassed,
+failed-save backoff cannot. Regress first failures as well as failures following
+success with an injected clock; never adjust retries to fit incorrect UI text.
+
+## 2026-10-17: Make watched rows individually accessible through shared selection
+
+An accessible section's merged text is not an individually selectable row.
+Contain each row in a named accessibility group, retain its child actions,
+expose selected state and route its default action through the same selection
+and fresh native focus request as a mouse click. Native responder tests cover
+focus renewal, Delete/Undo and search safety; an offscreen SwiftUI host may not
+materialize the live accessibility tree, so verify that tree and its actions
+with actual assistive input separately.
+
 ## 2026-10-17: Give hosted watching scroll views a positive intrinsic viewport
 
 A ScrollView with only maxHeight can collapse to zero in an AppKit-hosted

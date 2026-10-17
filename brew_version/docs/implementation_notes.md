@@ -321,3 +321,40 @@ synthetic acceptance service and signed harness, and the signed Settings
 prototype. Source, release plist and CLI remain 1.0.0. No automated category
 has a remaining failure or skip. No GUI was launched for this source round;
 actual native results and final release footprints remain controller-owned.
+
+## Scheduler footer and accessible row follow-up
+
+The footer previously derived Next check only from the last successful check.
+After an unreachable scheduled attempt it could show the already elapsed
+deadline, and a first failed save could hide the retry time. The controller now
+exposes `nextAutomaticCheck` from the same `watchCheckDeadline` used by the
+automatic watch gate. It includes attempt and failed-save floors, and previews
+the actual reconnect policy while offline. Reconnect bypasses transport delay
+but retains persistence delay; retry cadence itself is unchanged. Fake-clock
+regressions assert explicit deadlines and actual request counts after first
+failures, failures following success, reconnect and subsequent success.
+
+Controller-owned native inspection found Watching's heading and both row texts
+merged into one accessible text target, so assistive input could not select a
+specific watch. Each row now contains its existing children in a named
+`Watching NAME` accessibility group, exposes selected state and offers a default
+selection action. Mouse and accessibility actions share `WatchRowSelection.select`
+and a fresh native focus request; Delete still uses the row-local responder and
+existing persistence/Undo path. The regression verifies renewed focus, saved
+removal/Undo, search-local Delete and no stale request replay after row rebuilds.
+Named live groups and their retained child actions still need actual AX-tree
+verification: an offscreen SwiftUI host did not materialize that live tree, so
+the automated responder result does not claim accessibility or mouse acceptance.
+
+The first-launch quiet behavior and fixed 390-point Watching / 300-point search
+viewports remain. The controller owns final native selection/Delete checks and
+cold/cache release footprints; the minimum supported runtime remains unavailable.
+
+Fresh validation passes 167 Swift tests (133 core, 11 CLI, 23 app), all three
+isolated release/build integration cases with no skips, signed release/strict
+signatures, exact golden `--help` and `-h`, and `--version` with empty stderr for
+all flags. Source and release plists and CLI agree at 1.0.0. The synthetic service
+test and signed harness, and the signed maintained Settings prototype, pass.
+This source wave did not deploy or publish a release. No shared installer/audit
+or Market Atlas consumer changed, so their preceding complete results remain
+historical evidence and were not redundantly rerun.
