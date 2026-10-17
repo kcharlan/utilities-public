@@ -346,3 +346,13 @@ replace that pending recovery with another removal. Route a same-name Watch
 through restoration too, or a fresh add can strand the recovery as a duplicate
 and lose its saved acknowledgements. Test the actual app action against the
 real controller and failing atomic-replace seam, then retry successfully.
+
+## 2026-10-16: Retain validated recovery bytes until activation finishes
+
+A move-based native app activation can fail before the old bundle leaves its
+live path, including across filesystems. Do not delete a verified backup copy
+before that move succeeds: recovery then loses the app it needs to restore.
+Keep the validated copy through all command, app and receipt transitions, and
+inject failures both before moving the old app and after publishing each new
+artifact. Compare independent byte/type/full-mode snapshots after restoration;
+receipt hashes alone cannot prove that recovery preserved the original tree.

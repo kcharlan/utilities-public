@@ -285,9 +285,78 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
+
+## Native Brew Version deployment
+
+Brew Version is a generated native release: the signed command installs at
+`~/Library/Scripts/brew-version` and the signed bundle at
+`~/Applications/Brew Version.app`. Node.js and Swift 6 from Xcode or Command
+Line Tools are required; see [project requirements](../brew_version/README.md#requirements).
+Deploy reviewed source from merged main after the native acceptance gates have
+been completed and live deployment has been authorized:
+
+```sh
+node tools/deploy_brew_version.mjs --dry-run
+node tools/deploy_brew_version.mjs
+node tools/deploy_brew_version.mjs --audit
+zsh tools/check_local_deployments.zsh
+node tools/deploy_brew_version.mjs --rollback /path/to/brew-version/copy-backup
+```
+
+`--repo DIR`, `--scripts-dir DIR` and `--apps-dir DIR` select explicit
+paths. Defaults honor `UTILITIES_SCRIPTS_DIR` and `UTILITIES_APPS_DIR`, then
+use the paths above. Fleet audit passes no apps override and honors that same
+apps environment/default. Destinations inside the repository or through
+symlinked ancestors are refused. `--source-inventory FILE` is audit-only and
+accepts the fleet's validated NUL-delimited index snapshot.
+
+The maintained [installer](../tools/deploy_brew_version.mjs) defines
+`buildInput` and `sourceInventory`: Package.swift, Makefile and all regular
+tracked Resources, Sources and Tests files supply the release. Deploy refuses
+unstaged input bytes and builds an isolated admitted snapshot with
+`make -C <scratch>/brew_version release` (900-second limit). The expected
+version comes from admitted Info.plist bytes; CLI help comes from the admitted
+golden fixture. Built and installed command diagnostics check exact version
+and help output; bundle diagnostics check the release plist contract and
+strict signature verification. The installer never launches the app.
+
+The mode-0600 `<scripts>/.brew-version-native.json` receipt has exactly
+`{schema: 1, sourceHash, version, commandHash, commandMode, appTreeHash}`.
+The command mode is 0755. `appTreeHash` covers sorted relative paths, entry
+types, full permission bits and content digests, including bundle root and
+directories; links and special files are refused. Read-only audit compares
+source and installed identity without executing or compiling either product;
+it prints `OK: brew-version native deployment` on success. A current deploy
+prints `already current; nothing changed`. Missing or drifted artifacts,
+changed inputs or `--rebuild` rebuild both release products together.
+Dry-run validates inputs and writes nothing.
+
+The app is copied into a `.brew-version-stage-*` directory inside the apps
+directory, checked, then renamed into place after saving the prior app.
+Backups under `~/.utilities-deploy-backups/brew-version/copy-*` retain the
+previous command, receipt and app. Containers are 0700; saved command, receipt
+and metadata are 0600 with original modes and digests recorded. The saved
+app tree retains its original modes and its validated tree identity. These
+private saved modes are an exception to the generic backup-file normalization
+rule. Activation failure restores the prior command, app and receipt, including
+an absent prior app. Rollback validates the backup before saving the displaced
+release and restores prior bytes and modes. Backups are retained.
+
+Deploy, audit and rollback preserve `~/Library/Application Support/Brew Version/`
+and `~/Library/Caches/Brew Version/`. A running app is detected with
+`pgrep -f "Brew Version.app/Contents/MacOS/BrewVersion"` (test override:
+`BREW_VERSION_DEPLOY_PGREP`). It is never terminated; deploy prints
+`Quit and reopen Brew Version to use VERSION.` when running.
+
+The lifecycle contract is exercised by
+[installer tests](../tools/tests/deploy_brew_version.test.mjs), including
+`assertActiveDeployment`'s independent bytes/type/full-mode snapshots,
+activation failure at command/app/receipt boundaries and rollback. The
+[fleet tests](../tools/tests/test_check_local_deployments.zsh)'s
+`test_native_brew_version_deployment` owns source, app and receipt drift cases.
 
 ## Storage Monitor deployment
 

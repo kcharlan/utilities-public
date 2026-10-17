@@ -42,6 +42,7 @@ This applies the global test rule (full suite, every category) to a monorepo:
 - Don't commit or open a PR with known test failures.
 
 ## Repo Shape (High-Level)
+- Native macOS: `brew_version` (Swift CLI and menu bar app; deliberate exception to UI Shapes).
 - Python/CLI/local web tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-json`, `doc_linearizer`, `div_conv`, etc.
 - Browser-first single-file apps: `web_games/gorilla`, `web_games/multibody_sim`, `web_games/rps_screen`, plus HTML calculators under `Calculation tools`.
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
@@ -52,6 +53,12 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
+- `brew_version` (Swift command line, from repository root; see its README):
+  - `make -C brew_version test` (complete Swift Testing suite; no skips).
+  - `make -C brew_version release` (signed CLI/app release and signature verification).
+  - `brew_version/build/release/brew-version --help` and `brew_version/build/release/brew-version --version` (offline CLI smoke checks).
+  - Native GUI and macOS 14 runtime acceptance remain separate release gates described in the project README.
+  - Deployment changes require all Static deployment/fleet audit tooling commands below, including the Brew Version installer suite and affected Market Atlas suites. Real deployment needs separate authorization.
 - `colophon` (from `colophon/`; see its README and `docs/development.md`):
   - `make` (release build; `SQLITE_PREFIX` selects an existing Homebrew SQLite prefix).
   - `make test` (all retained C units, standalone synthetic CLI/integration, Chromium browser cases, stable-sort and asset guards).
@@ -77,7 +84,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).
   - Installed browser acceptance requires separate live authorization and uses `http://127.0.0.1:7711/calculators/backtest/index.html`, checking response bytes as well as application behavior. Preserve the shared folder routing.
 - Static deployment/fleet audit tooling:
-  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs` (native and calculator-page installer lifecycles and shared filesystem helpers).
+  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_calculator_pages.test.mjs` (native and calculator-page installer lifecycles and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.

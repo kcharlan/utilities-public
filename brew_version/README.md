@@ -2,8 +2,8 @@
 
 Brew Version reads current formula and cask versions from Homebrew's public API.
 The Swift `brew-version` command supports one-time lookups and watching until a
-version changes. The shared core also supports the planned native menu bar app,
-which will watch chosen packages and notify about their updates without running
+version changes. The shared core also supports the native menu bar app,
+which watches chosen packages and notifies about their updates without running
 `brew` or upgrading packages.
 
 This native macOS app is a deliberate exception to the UI Shapes defaults in
@@ -20,8 +20,9 @@ The Swift package has no external dependencies. The CLI needs neither `curl`
 nor `jq`. The app bundle is named `Brew Version.app`, uses the
 `local.utilities.brew-version` bundle identifier and `BrewVersion` executable,
 and is a menu bar app without a Dock icon. The app is not sandboxed because it
-reads Homebrew installation folders and application bundles. App packaging and
-deployment are separate deliverables.
+reads Homebrew installation folders and application bundles. The release
+target packages and signs both products; deployment uses the repository
+installer.
 
 ## Build and test
 
@@ -213,3 +214,11 @@ For the minimal Settings-only gate, run
 `make -C brew_version settings-prototype`; it prints a separately signed
 prototype path in another fresh private home. This prototype also remains
 unlaunched under the locked-Mac constraint.
+
+## Deployment
+
+Use the [Native Brew Version deployment guide](../docs/local_deployment_sync.md#native-brew-version-deployment)
+for deploy, dry-run, read-only audit, rollback and fleet-audit commands. The
+installer builds admitted tracked inputs, installs the signed CLI and app as
+one release, and preserves watches and catalog state. It never opens or quits
+the app. Quit and reopen an already running app after deployment.
