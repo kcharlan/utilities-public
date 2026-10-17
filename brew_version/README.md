@@ -131,3 +131,78 @@ validated cached bytes; without them, the client retries unconditionally.
 The bulk transport uses a 10-second idle timeout and a 120-second total timeout.
 Catalog timestamps and the visibility/collapse settings use the same atomic
 state-save boundary as watches, retaining committed values when saving fails.
+
+## Menu bar app
+
+Build the signed app and CLI with `make -C brew_version release` from the
+repository root. Products are `brew_version/build/release/Brew Version.app`
+and `brew_version/build/release/brew-version`. Signing is local ad hoc signing;
+the bundle includes Homebrew's license notice. Open the app to get a mug in
+the menu bar. A filled mug means a watched update is available.
+
+The popover shows the last check, refresh, and a search field. Search accepts
+space-separated names, rejects invalid names, and suggests catalog prefixes.
+Select a result with the arrow keys or click; Return watches it, and Command-C
+copies its version. Only explicitly watched packages can notify. The first
+watch requests notification permission if the OS has not already decided it.
+
+Watching sorts updates first, then names. Amber rows offer the upgrade command
+to copy and a skip action. The app never executes an upgrade. A row's context
+menu and its hover ellipsis menu contain **Stop watching NAME**. Selecting a row
+and pressing Delete also removes it. Removal deletes its saved watch state;
+**Undo** restores it for five seconds. Closing the popover acknowledges unseen
+releases of packages that are not installed.
+
+Other updates on this Mac lists installed, unwatched updates and never alerts.
+Use Watch to move an item to Watching. Click its header to collapse the list,
+or turn it off in Settings. The interval menu accepts the presets or a whole
+number of minutes from 10 through 1,440; the footer shows the next check.
+Settings contains the version, interval, Other updates toggle and Open at
+login, including the service's status and registration errors. Turn Open at
+login off before quitting a temporary build-folder copy.
+
+The app composes its state and cache paths under the current user's home:
+`~/Library/Application Support/Brew Version/state.json` and
+`~/Library/Caches/Brew Version/`. Removing the app leaves both folders; delete
+them by hand if the saved watches and catalog are no longer wanted.
+Persistence errors appear in the popover; a blocked load disables mutations
+and refresh until Retry succeeds. After a failed save, retry that action.
+
+### Settings and native acceptance gates
+
+The implementation retains a SwiftUI App with only a Settings scene and an
+AppKit status item/popover hosting SwiftUI. Its footer uses SettingsLink.
+A signed minimal prototype and the release bundle build successfully, but the
+current macOS 27.0.1 runtime Settings gate remains **unmet**: native automation
+reported that the Mac is locked and automatic unlock failed. This is no
+runtime evidence for or against the SettingsLink arrangement. Open, activate,
+close and reopen Settings while keeping the status item usable before release.
+If the exact arrangement fails, implement and validate the specified AppKit
+settings window fallback. macOS 14 runtime acceptance is also an outstanding
+release gate because that runtime is unavailable.
+
+All manual UI acceptance remains pending while the Mac is locked: mug,
+search/Return/Command-C, notification consent/delivery/click, Other updates
+Watch, invalid and valid custom intervals, removal/Undo, Settings/login,
+and light/dark appearance. Automated Swift tests and signing checks do not
+establish those outcomes.
+
+`make -C brew_version acceptance` builds a separately identified, signed
+synthetic bundle in a fresh private home outside the checkout and prints its
+path. It copies the maintained production UI/notifier/core sources into a
+scratch Swift package, replacing only the application entry and services.
+It also runs a synthetic service test without launching a GUI. The harness
+uses no owner state, inventory, application folders or live HTTP requests.
+Search for `synthetic-formula` and press Return to establish its baseline.
+**Advance release and check** changes its listing and checks again; click the
+delivered notification and require the popover to open. **Other updates**
+contains `synthetic-installed`, from a private invented Homebrew receipt.
+**Light** and **Dark** are harness appearance controls. The production app has
+no simulation environment switch. Use normal OS notification controls for any
+permission changes; do not erase notification databases. Quit the harness,
+turn its login toggle off, and remove only its printed fresh home when finished.
+
+For the minimal Settings-only gate, run
+`make -C brew_version settings-prototype`; it prints a separately signed
+prototype path in another fresh private home. This prototype also remains
+unlaunched under the locked-Mac constraint.

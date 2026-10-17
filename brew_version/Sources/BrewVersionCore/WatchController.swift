@@ -3,13 +3,18 @@ import Observation
 
 public protocol Notifier: Sendable {
     func post(_ notice: Notice) async
+    func requestAuthorization() async
 }
+public extension Notifier { func requestAuthorization() async {} }
 
 @MainActor @Observable public final class WatchController {
     public private(set) var state: AppState
     public private(set) var persistenceError: String?
     public private(set) var canSave: Bool
     public private(set) var isChecking = false
+    public private(set) var results: [LookupResult] = []
+    private var searchGeneration = UUID()
+    private let scheduler = LookupScheduler()
     public private(set) var catalog: Catalog?
     public private(set) var others: [OtherUpdate] = []
     public private(set) var isRefreshingCatalog = false
@@ -56,6 +61,7 @@ public protocol Notifier: Sendable {
         do {
             try store.save(candidate)
             state = candidate; persistenceError = nil
+            refreshSearchWatchState()
             recomputeOthers()
             return true
         } catch {
@@ -70,7 +76,7 @@ public protocol Notifier: Sendable {
         defer { pendingAdds.remove(name) }
         var entry = WatchEntry(name: name, kind: kind)
         do {
-            let listing = try await client.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto)
+            let listing = try await scheduler.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto, client: client)
             entry = evaluate(entry, listing: listing, installed: installed?.installed(name, kind: listing.kind, listing: listing)).0
         } catch {
             entry.lastError = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
@@ -79,7 +85,10 @@ public protocol Notifier: Sendable {
         guard canSave, !state.watched.contains(where: { $0.name == name }) else { return }
         var candidate = state
         candidate.watched.append(entry); candidate.listingCache = snapshot
-        if commit(candidate) { generations[name] = UUID() }
+        if commit(candidate) {
+            generations[name] = UUID()
+            await notifier.requestAuthorization()
+        }
     }
 
     public func remove(_ name: PackageName) -> (entry: WatchEntry, index: Int)? {
@@ -185,19 +194,58 @@ public protocol Notifier: Sendable {
         var candidate = state; candidate.otherUpdatesCollapsed = collapsed; commit(candidate)
     }
 
+    private func refreshSearchWatchState() {
+        results = results.map { result in
+            guard case .found(let listing, let installed, _) = result else { return result }
+            return .found(listing, installed: installed, watched: state.watched.contains { $0.name == listing.name })
+        }
+    }
+    public func clearSearch() { searchGeneration = UUID(); results = [] }
+    public func search(_ text: String) async {
+        guard !Task.isCancelled else { return }
+        let generation = UUID(); searchGeneration = generation; results = []
+        let tokens = tokenize(text)
+        let client = self.client; let scheduler = self.scheduler
+        let knownKinds = Dictionary(uniqueKeysWithValues: state.watched.compactMap { entry in
+            entry.kind.map { (entry.name, $0) }
+        })
+        let found = await withTaskGroup(of: (Int, LookupResult).self, returning: [LookupResult].self) { group in
+            for (index, token) in tokens.enumerated() {
+                group.addTask {
+                    guard case .valid(let name) = token else {
+                        if case .invalid(let value) = token { return (index, .invalid(value)) }
+                        preconditionFailure()
+                    }
+                    let kinds = knownKinds[name].map(KindPreference.init) ?? .auto
+                    do { return (index, .found(try await scheduler.lookup(name, kinds: kinds, client: client), installed: nil, watched: false)) }
+                    catch LookupError.notFound { return (index, .notFound(name)) }
+                    catch { return (index, .failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }
+                }
+            }
+            var rows: [(Int, LookupResult)] = []
+            for await row in group { rows.append(row) }
+            return rows.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        guard !Task.isCancelled, searchGeneration == generation else { return }
+        results = found.map { result in
+            guard case .found(let listing, _, _) = result else { return result }
+            return .found(listing, installed: installed?.installed(listing.name, kind: listing.kind, listing: listing), watched: state.watched.contains { $0.name == listing.name })
+        }
+    }
+
     public func checkNow() async {
         guard canSave, !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
         let client = self.client
+        let scheduler = self.scheduler
         let requested = state.watched.map { ($0, generations[$0.name]) }
         let results = await withTaskGroup(of: CheckResult.self, returning: [CheckResult].self) { group in
-            var iterator = requested.makeIterator()
-            func enqueue(_ item: (WatchEntry, UUID?)) {
+            for item in requested {
                 group.addTask {
                     let (entry, generation) = item
                     do {
-                        let listing = try await client.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto)
+                        let listing = try await scheduler.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto, client: client)
                         return CheckResult(name: entry.name, generation: generation, result: .success(listing))
                     } catch {
                         return CheckResult(name: entry.name, generation: generation,
@@ -205,11 +253,9 @@ public protocol Notifier: Sendable {
                     }
                 }
             }
-            for _ in 0..<4 { if let item = iterator.next() { enqueue(item) } }
             var results: [CheckResult] = []
             for await result in group {
                 results.append(result)
-                if let item = iterator.next() { enqueue(item) }
             }
             return results
         }

@@ -329,3 +329,13 @@ skip or interval. A controlled transport regression should hold requests while
 mutating all those fields, then inspect both persisted state and notifications.
 Persist candidates before publishing state or posting notices; retain the
 previous bytes and visible values on failed writes.
+
+## 2026-10-16: Bound and identify asynchronous menu bar searches
+
+Search, watched checks and additions need one shared lookup permit pool; separate
+per-operation limits exceed the intended request bound when UI actions overlap.
+Identify each query generation and publish only its current result. Derive the
+watched flag from committed state at publication and refresh it on successful
+watch mutations. Preserve a watched package's known kind during search instead
+of falling back to a formula-first lookup. Controlled transports can hold one
+query while a newer query or a watch mutation commits, without live inventory.
