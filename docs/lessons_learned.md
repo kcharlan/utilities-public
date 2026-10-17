@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-17: Preserve the metadata that gave a snapshot its meaning
+
+An installed cask snapshot depends on the caller's auto-updates flag and app
+artifact names. A later scan without a pending add's metadata can legitimately
+read Caskroom while the caller requires the newer app-bundle version. Do not
+substitute a shared snapshot merely because it is newer. Consume the caller's
+accepted capture without another suspension; a small lock-protected immediate
+cache copy removes an unnecessary final actor hop. Keep cache get/store
+actor-bound and every mutable dictionary access under the private lock. Regress
+both add and check with real synthetic Caskroom/app-bundle fixtures and a held
+cache executor, asserting saved source/version, amber state and notices.
+
 ## 2026-10-17: Reject superseded snapshots at every consumer boundary
 
 Protecting publication of a derived update list is insufficient if a rejected

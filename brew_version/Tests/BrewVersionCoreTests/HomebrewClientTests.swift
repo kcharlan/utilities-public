@@ -25,6 +25,32 @@ struct HomebrewClientTests {
         .success(HTTPResponse(status: status, body: Data(body.utf8), etag: etag))
     }
 
+    @Test func concurrentStoresAndImmediateSnapshotsRetainEveryEntry() async {
+        let cache = ListingCache()
+        await withTaskGroup(of: Void.self) { group in
+            for worker in 0..<4 {
+                group.addTask {
+                    for index in 0..<40 {
+                        let name = PackageName("synthetic-cache-\(worker)-\(index)")!
+                        let url = watchURL(name)
+                        await cache.store(CachedListing(etag: name.rawValue,
+                            listing: Listing(name: name, kind: .formula, version: "1")), for: url)
+                        let snapshot = cache.snapshot()
+                        #expect(snapshot[url]?.listing.name == name)
+                        #expect(snapshot.values.allSatisfy { $0.etag == $0.listing.name.rawValue })
+                    }
+                }
+            }
+        }
+        let before = cache.snapshot()
+        #expect(before.count == 160)
+        let name = PackageName("synthetic-cache-0-0")!
+        await cache.store(CachedListing(etag: "synthetic-replacement",
+            listing: Listing(name: name, kind: .formula, version: "2")), for: watchURL(name))
+        #expect(before[watchURL(name)]?.listing.version == "1")
+        #expect(cache.snapshot()[watchURL(name)]?.listing.version == "2")
+    }
+
     @Test func formulaFound() async throws {
         let stub = StubTransport([url(.formula): [response(200, #"{"versions":{"stable":"1.2"},"revision":3}"#)]])
         let listing = try await HomebrewClient(transport: stub).lookup(name, kinds: .auto)
@@ -88,7 +114,7 @@ struct HomebrewClientTests {
         #expect(first.version == "1.2")
         #expect(second == first)
         #expect(await stub.requests == [.init(url: url(.formula), etag: nil), .init(url: url(.formula), etag: "synthetic-etag")])
-        #expect(await cache.snapshot()[url(.formula)] == CachedListing(etag: "synthetic-etag", listing: first))
+        #expect(cache.snapshot()[url(.formula)] == CachedListing(etag: "synthetic-etag", listing: first))
     }
 
     @Test func notModifiedWithoutCacheIsError() async {

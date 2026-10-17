@@ -133,3 +133,18 @@ ETags. Fresh fix-round validation passes 146 Swift tests (129 core, 11 CLI,
 6 app), release/signature and CLI checks, and the one-test synthetic acceptance
 service plus signed harness build. Native and final footprint gates remain
 separate from this fix round.
+
+A second scoped review found that a newer shared installation snapshot may lack
+a pending caller's cask auto-update/app-artifact metadata. The final cache await
+allowed that substitution to persist Caskroom version 1 instead of app-bundle
+version 2. Add and check now retain their exact accepted caller-metadata snapshot
+through commit without further suspension. `ListingCache.snapshot()` is a
+nonisolated synchronous value copy from small private NSLock-protected storage;
+get/store remain actor-bound, and no mutable storage escapes the lock. The
+internal cache dependency seam enables controlled actor-executor regression
+without a production simulation mode. Both real synthetic cask variants and
+concurrent stores/snapshots pass alongside all earlier race regressions.
+Fresh validation passes 148 Swift tests (131 core, 11 CLI, 6 app), release and
+signature checks, CLI output/stderr checks, and synthetic acceptance service and
+signed harness build. Source, built plist and CLI remain 1.0.0; this core round
+does not publish a release or establish new native/footprint acceptance.

@@ -10,14 +10,15 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
     private var scans = 0
     private var mainActorScan = false
     let reader: InstalledReader
-    init(_ reader: InstalledReader) { self.reader = reader }
+    let blockedScan: Int
+    init(_ reader: InstalledReader, blockedScan: Int = 1) { self.reader = reader; self.blockedScan = blockedScan }
     var count: Int { lock.withLock { scans } }
     var scannedMainThread: Bool { lock.withLock { mainActorScan } }
     func snapshot(listings: [Listing]) -> InstalledSnapshot {
         let captured = reader.snapshot(listings: listings)
         let first = lock.withLock {
             scans += 1; mainActorScan = mainActorScan || Thread.isMainThread
-            return scans == 1
+            return scans == blockedScan
         }
         if first && !Thread.isMainThread { _ = gate.wait(timeout: .now() + 5) }
         return captured
@@ -143,6 +144,65 @@ private final class ControlledInstallation: InstalledReading, @unchecked Sendabl
         #expect(saved.listingCache[watchURL(added)]?.etag == "synthetic-add")
         #expect(saved.listingCache[watchURL()]?.etag == "synthetic-check")
     }
+    @Test(arguments: [false, true])
+    func callerCaskMetadataSurvivesAnotherScanAtCacheCapture(_ checking: Bool) async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        try f.install("prefix/Caskroom/synthetic-pending-cask/1", kind: .cask)
+        try f.app("2")
+        let name = PackageName("synthetic-pending-cask")!
+        let store = WatchStore(fileURL: f.root.appendingPathComponent("state/state.json"))
+        var state = AppState.initial
+        if checking { state.watched = [baseline(Listing(name: name, kind: .cask, version: "1"))] }
+        try store.save(state)
+        let directory = f.root.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let body = #"{"version":"2","auto_updates":true,"artifacts":[{"app":["Synthetic.app"]}]}"#
+        let transport = StubTransport([watchURL(name, kind: .cask): [.success(HTTPResponse(status: 200, body: Data(body.utf8), etag: "synthetic-pending"))]])
+        let reader = ControlledInstallation(f.reader(), blockedScan: 2)
+        let cache = ListingCache()
+        let notifier = RecordingNotifier(store: store)
+        let c = WatchController(transport: transport, installed: reader, store: store, notifier: notifier,
+                                catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory), initialCache: cache)
+        await c.hydrateCatalog()
+        #expect(c.others.map(\.listing.name.rawValue) == ["synthetic-formula"])
+        try f.install("prefix/Cellar/synthetic-formula/2", kind: .formula)
+        let operation = Task {
+            if checking { await c.checkNow() } else { await c.add(name, kind: .cask) }
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while reader.count < 2 && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(reader.count == 2)
+        let gate = CacheExecutorGate()
+        let blocker = Task.detached { await cache.holdExecutor(gate) }
+        while !gate.started && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(gate.started)
+        reader.release()
+        // The changed formula makes acceptance of this capture observable.
+        // On the buggy implementation the following cache await remains held.
+        while !c.others.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(c.others.isEmpty)
+        await c.hydrateCatalog()
+        gate.release(); await blocker.value; await operation.value
+        let entry = try #require(store.load().state.watched.first { $0.name == name })
+        #expect(entry.installed == InstalledVersion(version: "2", source: .appBundle))
+        #expect(c.amberCount == 0)
+        #expect(await notifier.notices.isEmpty)
+    }
+}
+
+private final class CacheExecutorGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var value = false
+    var started: Bool { lock.withLock { value } }
+    func hold() {
+        lock.withLock { value = true }
+        _ = semaphore.wait(timeout: .now() + 5)
+    }
+    func release() { semaphore.signal() }
+}
+private extension ListingCache {
+    func holdExecutor(_ gate: CacheExecutorGate) { gate.hold() }
 }
 
 private final class ReceiptReads: @unchecked Sendable {

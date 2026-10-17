@@ -36,11 +36,24 @@ public struct CachedListing: Codable, Equatable, Sendable {
 }
 
 public actor ListingCache {
+    private let storage: ListingCacheStorage
+    public init(entries: [URL: CachedListing] = [:]) { storage = ListingCacheStorage(entries: entries) }
+    public func entry(for url: URL) -> CachedListing? { storage.entry(for: url) }
+    public func store(_ entry: CachedListing, for url: URL) { storage.store(entry, for: url) }
+    // Final controller merges need an immediate value snapshot, without an actor
+    // hop that could replace the caller's listing-dependent installation capture.
+    public nonisolated func snapshot() -> [URL: CachedListing] { storage.snapshot() }
+}
+
+// All mutable dictionary access stays under this lock. Returned dictionaries
+// have value semantics; no mutable reference or storage pointer escapes.
+private final class ListingCacheStorage: @unchecked Sendable {
+    private let lock = NSLock()
     private var entries: [URL: CachedListing]
-    public init(entries: [URL: CachedListing] = [:]) { self.entries = entries }
-    public func entry(for url: URL) -> CachedListing? { entries[url] }
-    public func store(_ entry: CachedListing, for url: URL) { entries[url] = entry }
-    public func snapshot() -> [URL: CachedListing] { entries }
+    init(entries: [URL: CachedListing]) { self.entries = entries }
+    func entry(for url: URL) -> CachedListing? { lock.withLock { entries[url] } }
+    func store(_ entry: CachedListing, for url: URL) { lock.withLock { entries[url] = entry } }
+    func snapshot() -> [URL: CachedListing] { lock.withLock { entries } }
 }
 
 public struct HomebrewClient: Sendable {
