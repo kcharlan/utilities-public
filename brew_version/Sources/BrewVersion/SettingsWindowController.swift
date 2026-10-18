@@ -32,7 +32,7 @@ import BrewVersionCore
             window.collectionBehavior.insert(.moveToActiveSpace)
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unifiedCompact
-            window.setContentSize(NSSize(width: 460, height: 440))
+            window.setContentSize(NSSize(width: 460, height: 600))
             window.contentMinSize = NSSize(width: 460, height: 440)
             window.appearance = appearance
             window.delegate = self

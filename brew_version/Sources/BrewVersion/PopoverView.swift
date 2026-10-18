@@ -28,10 +28,11 @@ struct PopoverView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { Task { await controller.checkNow() } } label: {
-                    if controller.isChecking { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
+                Button { Task { await controller.refreshNow() } } label: {
+                    if controller.isChecking || controller.isRefreshingCatalog { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
                     else { Image(systemName: "arrow.clockwise") }
-                }.buttonStyle(.borderless).help("Check now").accessibilityLabel("Check now").disabled(!controller.canSave || controller.isChecking)
+                }.buttonStyle(.borderless).help("Check now, including other updates")
+                    .accessibilityLabel("Check now").disabled(!controller.canSave || controller.isChecking)
             }
             if hasWarnings {
                 VStack(alignment: .leading, spacing: 10) {

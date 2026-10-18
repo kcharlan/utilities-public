@@ -145,7 +145,12 @@ The optional catalog client reads Homebrew's formula and cask bulk lists for
 prefix search suggestions and installed, unwatched updates. Only admitted
 Homebrew core/cask installations appear; these updates never notify or affect
 the watched update count. Self-updating casks retain their installed-version
-source, including the fallback to Homebrew's records.
+source, including the fallback to Homebrew's records. Like `brew outdated`,
+Other updates hides a self-updating cask whose installed version comes only
+from that fallback, because Homebrew's record is often older than the app
+itself. Settings **Include self-updating apps** (off by default, like
+`brew outdated --greedy`) lists them too; the section notes how many are hidden.
+A self-updating cask whose app version can be read still appears when behind.
 
 Formula versions compare the upstream version first and the numeric keg revision
 second, matching Homebrew's package version semantics. Legacy Caskroom version
@@ -156,10 +161,16 @@ folder symlinks are excluded. Formula kegs always require an official core recei
 At startup, callers await `WatchController.hydrateCatalog()` to restore cached
 suggestions and Other updates even when a network refresh is not due. This API
 is async so reading and decoding bulk cache data runs away from the main actor.
-`scheduledTick()` independently starts watched checks and catalog refreshes;
-the catalog is fetched when absent or 24 hours after successful revalidation.
-Failed attempts use the watched interval as an in-memory retry floor, without
-changing the last successful catalog timestamp. Disabling Other updates clears
+`scheduledTick()` independently starts watched checks and catalog refreshes.
+The catalog refreshes once at every launch, then on its own Other updates
+interval (Settings: 30 minutes to 24 hours, default 1 hour), separate from the
+watched interval because each refresh downloads Homebrew's full lists (about
+7 MB compressed). The popover's refresh button also refreshes the catalog when
+it is more than 10 minutes old, bypassing the path monitor's offline gate.
+Failed automatic attempts retry no sooner than every 10 minutes, without
+changing the last successful catalog timestamp. The Other updates header shows
+when the list was last updated, that it is updating, or why the last refresh
+failed while the previous list stays visible. Disabling Other updates clears
 only that section; prefix suggestions still hydrate and refresh on the same
 cadence. Installation snapshots run away from the main actor, admit each receipt
 once, and are reused when filtering watches or changing unrelated settings.
@@ -236,14 +247,16 @@ while searching too. The usual five-second expiry applies before a failure.
 
 Other updates on this Mac lists installed, unwatched updates and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
-or turn it off in Settings. The interval menu accepts the presets or a whole
+or turn it off in Settings. Below the header, the section shows when the list
+was last updated; set how often it refreshes in Settings. The interval menu accepts the presets or a whole
 number of minutes from 10 through 1,440; the footer shows the next check.
 **Custom…** opens Settings with its minutes field focused; enter a value and
 press Return or Apply. Invalid input remains editable with inline validation.
 The popover uses a 340-point layout that hugs short content; only the package
 list scrolls when needed. Hover or select a watch to reveal its icon actions.
 The Settings gear activates a reused AppKit-owned window containing the version,
-interval, Other updates toggle and Open at login, including the service's status
+interval, Other updates toggle, Other updates interval, Include self-updating
+apps and Open at login, including the service's status
 and registration errors. The login status refreshes whenever that window becomes
 key; required approval offers **Open Login Items Settings**. Notification
 authorization and posting failures appear in both Settings and the popover,

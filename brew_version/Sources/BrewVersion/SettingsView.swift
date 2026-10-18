@@ -34,6 +34,17 @@ struct SettingsView: View {
                 }
                 Section("Other updates") {
                     Toggle("Show other updates on this Mac", isOn: Binding(get: { controller.state.showOtherUpdates }, set: { controller.setShowOtherUpdates($0) })).disabled(!controller.canSave)
+                    Picker("Check every", selection: Binding(get: { controller.state.catalogInterval }, set: { controller.setCatalogInterval($0) })) {
+                        ForEach(IntervalSelection(current: controller.state.catalogInterval, presets: CheckInterval.catalogPresets).options, id: \.self) { interval in Text(interval.label).tag(interval) }
+                    }.pickerStyle(.menu).disabled(!controller.canSave || !controller.state.showOtherUpdates)
+                        .help("Each check downloads Homebrew's full package list, about 7 MB. The list also refreshes when the app opens.")
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("Include self-updating apps", isOn: Binding(get: { controller.state.includeSelfUpdating }, set: { controller.setIncludeSelfUpdating($0) }))
+                            .disabled(!controller.canSave || !controller.state.showOtherUpdates)
+                        Text("Also list apps that update themselves when their real installed version can't be read, like brew outdated --greedy.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    CatalogStatusLine(controller: controller)
                 }
                 Section("General") {
                     Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { login.setEnabled($0) }))

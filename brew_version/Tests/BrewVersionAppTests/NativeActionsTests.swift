@@ -172,6 +172,8 @@ private struct ReopenCatalogTransport: HTTPTransport {
             let fixture = home.appendingPathComponent("case-\(count)")
             let store = WatchStore(fileURL: fixture.appendingPathComponent("state.json"))
             var state = AppState.initial; state.showOtherUpdates = count == 3; state.otherUpdatesCollapsed = false
+            // The fixture's one other update is a self-updating cask with no readable app.
+            state.includeSelfUpdating = true
             state.watched = (0..<count).map {
                 let listing = Listing(name: PackageName("synthetic-reopen-\($0)")!, kind: .formula, version: "2-synthetic")
                 return WatchEntry(name: listing.name, kind: .formula, lastListing: listing)
@@ -520,6 +522,13 @@ private struct ReopenCatalogTransport: HTTPTransport {
         login.setEnabled(false)
         #expect(!login.enabled && login.error == nil)
     }
+    @Test func catalogAgeShowsDateOnlyWhenNotToday() {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let earlier = now.addingTimeInterval(-3600), yesterday = now.addingTimeInterval(-86400)
+        #expect(catalogTimestamp(earlier, now: now, calendar: calendar) == earlier.formatted(date: .omitted, time: .shortened))
+        #expect(catalogTimestamp(yesterday, now: now, calendar: calendar) == yesterday.formatted(date: .abbreviated, time: .shortened))
+    }
     @Test func settingsWindowOpensOnActiveSpace() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-settings-space-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -532,6 +541,8 @@ private struct ReopenCatalogTransport: HTTPTransport {
         // switching the user back to the Space where it was first shown.
         #expect(windows.first?.collectionBehavior.contains(.moveToActiveSpace) == true)
         #expect(windows.first?.collectionBehavior.contains(.canJoinAllSpaces) == false)
+        // Every Settings row, including the Other updates interval, fits without scrolling.
+        #expect((windows.first?.contentLayoutRect.height ?? 0) >= 581)
     }
     @Test func homepageActionRejectsUnsafeSchemes() {
         var opened: [URL] = []

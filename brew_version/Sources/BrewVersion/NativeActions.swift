@@ -43,7 +43,8 @@ func installedSourceNote(_ installed: InstalledVersion?) -> String? {
 }
 struct IntervalSelection {
     let current: CheckInterval
-    var options: [CheckInterval] { CheckInterval.presets.contains(current) ? CheckInterval.presets : CheckInterval.presets + [current] }
+    var presets = CheckInterval.presets
+    var options: [CheckInterval] { presets.contains(current) ? presets : presets + [current] }
 }
 @MainActor @Observable final class CustomIntervalInput {
     var minutes: String
