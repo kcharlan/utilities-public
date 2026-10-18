@@ -5,6 +5,17 @@ import Synchronization
 import Testing
 @testable import BrewVersion
 
+@MainActor struct StatusPanelSpaceTests {
+    @Test func panelOpensOnActiveSpaceAndOverFullScreenApps() {
+        // The panel is reused; it must appear on the user's current desktop
+        // (including a full-screen app's Space) rather than its first Space.
+        let behavior = StatusPanel().collectionBehavior
+        #expect(behavior.contains(.moveToActiveSpace))
+        #expect(behavior.contains(.fullScreenAuxiliary))
+        #expect(!behavior.contains(.canJoinAllSpaces))
+    }
+}
+
 struct StatusPanelGeometryTests {
     @Test func hiddenPlaceholdersDoNotBecomePlacedOnALowerDisplay() throws {
         let main = StatusScreen(frame: NSRect(x: 0, y: 0, width: 1440, height: 900), visibleFrame: NSRect(x: 0, y: 0, width: 1440, height: 876))

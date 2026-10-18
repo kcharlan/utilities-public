@@ -60,6 +60,9 @@ enum StatusPanelFrame {
         hidesOnDeactivate = false
         animationBehavior = .none
         level = .popUpMenu
+        // The panel is reused: show it on the current desktop, including a
+        // full-screen app's Space, instead of the Space it first appeared on.
+        collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         hasShadow = true
         isOpaque = false
         backgroundColor = .clear

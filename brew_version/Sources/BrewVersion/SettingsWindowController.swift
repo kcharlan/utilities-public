@@ -27,6 +27,9 @@ import BrewVersionCore
             window.title = "Brew Version Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
+            // The window is reused, so it keeps the Space it was first shown on.
+            // Bring it to the current Space instead of switching the user there.
+            window.collectionBehavior.insert(.moveToActiveSpace)
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unifiedCompact
             window.setContentSize(NSSize(width: 460, height: 440))
