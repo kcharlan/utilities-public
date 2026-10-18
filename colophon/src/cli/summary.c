@@ -1,4 +1,5 @@
 #include "summary.h"
+#include "corpus/provider.h"
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@ static void diagnostic(const char *name,__int128 count,bool *first) {
 }
 static int keys_order(const void *a,const void *b,void *unused){(void)unused;return str_compare(*(const Str *)a,*(const Str *)b);}
 static void provider_summary(Provider provider,const PayloadInputs *in) {
-    size_t sessions=0,agents=0,units=0;__int128 tokens=0;double sum=0.0,correction=0.0;bool available=provider==PROVIDER_CLAUDE||in->ledger->available;
+    size_t sessions=0,agents=0,units=0;__int128 tokens=0;double sum=0.0,correction=0.0;bool available=provider!=PROVIDER_CODEX||in->ledger->available;
     const Corpus *corpus=in->corpus;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
         const SessionModel *session=entry->value;if(session->provider!=provider)continue;if(str_equal(session->kind,STR_LIT("subagent")))agents++;else sessions++;
@@ -33,10 +34,14 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
         }
     }
     if(tokens<INT64_MIN||tokens>INT64_MAX)event_note("int128_payload_sum","summary.tokens",1);
-    size_t logs=provider==PROVIDER_CODEX?in->logs:in->claude?in->claude->logs:0;
-    size_t parsed=provider==PROVIDER_CODEX?in->parsed:in->claude?in->claude->parsed:0;
-    size_t cached=provider==PROVIDER_CODEX?in->cached:in->claude?in->claude->cached:0;
-    printf("colophon: %s: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",provider==PROVIDER_CODEX?"codex":"claude",sessions,agents,logs,parsed,cached);decimal(stdout,tokens,true);
+    size_t logs=0,parsed=0,cached=0;
+    switch(provider) {
+    case PROVIDER_CODEX: logs=in->logs;parsed=in->parsed;cached=in->cached;break;
+    case PROVIDER_CLAUDE: if(in->claude){logs=in->claude->logs;parsed=in->claude->parsed;cached=in->claude->cached;}break;
+    case PROVIDER_OPENCODE: break; /* Database counters arrive with integration. */
+    }
+    Str id=provider_id(provider);
+    printf("colophon: %.*s: %zu sessions · %zu subagents · %zu logs (%zu parsed, %zu cached) · ",(int)id.n,id.p,sessions,agents,logs,parsed,cached);decimal(stdout,tokens,true);
     fputs(" tokens · ",stdout);if(!units)fputs("no priced usage",stdout);else if(available)printf("$%.2f est.",sum+correction);else fputs("costs unavailable",stdout);
     fputc('\n',stdout);
 }

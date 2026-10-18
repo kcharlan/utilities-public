@@ -62,7 +62,7 @@ typedef struct {
 /* Production descriptors borrow canonical facts. Typed overrides borrow the
  * record arena; each spawn clock corresponds to one raw spawn in order. */
 AssemblyRecord assembly_record(const LogRecord *record);
-typedef enum { PROVIDER_CODEX, PROVIDER_CLAUDE } Provider;
+typedef enum { PROVIDER_CODEX, PROVIDER_CLAUDE, PROVIDER_OPENCODE } Provider;
 typedef struct {
   Str id, key, identity, title, title_full, title_source;
   Provider provider;
@@ -88,6 +88,7 @@ typedef struct {
   JScalar meta_id;
   const AssemblyRecord *input;
   bool archived, has_meta, is_subagent, has_link;
+  Str archive_reason; /* Corpus-arena owned; empty for existing providers. */
   Str log_path;
   SessionMeta meta;
   AssemblyRecord meta_input;

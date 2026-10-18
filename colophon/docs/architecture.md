@@ -32,8 +32,17 @@ own arenas and never occupy Codex `LogRecord` fields. After Codex subagent
 linking, `claude_corpus_add` checks canonical filename identities before
 insertion; workspace resolution then handles both providers. Exact primary
 record aliases are indexed separately, including collision-skipped records.
-Codex composition explicitly skips Claude records and initializes their
-empty usage summaries. The schema stays 1 with additive provider/source
+`corpus/provider.h` names Codex, Claude and OpenCode consistently in session
+rows and usage buckets. Its shared adoption/status/idle helpers preserve
+Claude's wide tool counts and independent map ownership; tool adoption uses
+the existing wide-count merger in `assemble.c`. Session archive reasons are
+corpus-arena strings, empty for Codex and Claude. Non-Codex subagents share
+the authored label/orphan serialization path.
+Codex composition explicitly skips all non-Codex records; provider composers
+author their own units and initialize summaries through shared aggregation.
+Only Codex cost refresh depends on ledger availability; other providers keep
+authored estimates, including priced zero, and count missing costs as unpriced.
+The schema stays 1 with additive provider/source
 fields. Rendering still precedes Codex cache commit; unopened caches are
 safe to destroy. Claude graph metadata and persistent retention are implemented;
 the page applies shared provider matching to overview, list, descendant and

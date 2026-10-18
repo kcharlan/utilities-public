@@ -1,4 +1,5 @@
 #include "compose.h"
+#include "corpus/provider.h"
 #include "model.h"
 #include "request_ledger.h"
 #include "parse/record.h"
@@ -354,7 +355,7 @@ Err compose_refresh_costs(Corpus *corpus,bool available) {
   bool codex_available=available;
   for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
     SessionModel *s=entry->value;Omap turns={0},buckets={0};Err error=ERR_SUCCESS;
-    available=s->provider==PROVIDER_CLAUDE?true:codex_available;
+    available=s->provider==PROVIDER_CODEX?codex_available:true;
     reset_cost(s->own_usage,available);reset_cost(s->outside_usage,available);
     for(size_t i=0;i<s->turn_count;i++){reset_cost(s->turns[i].usage,available);error=omap_put(&turns,s->turns[i].id,s->turns[i].usage);if(error.code)goto done;}
     for(size_t i=0;i<s->bucket_count;i++) {
@@ -508,6 +509,8 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   size_t rejected = 0;
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
+    if (s->provider != PROVIDER_CODEX)
+      continue;
     if (s->record_count > SIZE_MAX - count)
       return err_make(ERR_NOMEM, "composition record count overflow");
     count += s->record_count;
@@ -525,6 +528,8 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   size_t offset = 0;
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
+    if (s->provider != PROVIDER_CODEX)
+      continue;
     for (size_t i = 0; i < s->record_count; i++)
       records[offset++] = (LogRecord *)s->records[i];
   }
@@ -558,7 +563,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   for (OmapEntry *p = c->sessions.first; p; p = p->next) {
     SessionModel *s = p->value;
     Omap display = {0}, responses = {0}, mirrored = {0}, seen = {0}, file_responses = {0};
-    if (s->provider == PROVIDER_CLAUDE) {
+    if (s->provider != PROVIDER_CODEX) {
       continue;
     }
     FileMirrors *files = NULL;
@@ -868,7 +873,7 @@ void compose_buckets_json(JsonWriter *w, const SessionModel *s) {
     jsonw_raw(w, ",");
     jsonw_i128(w, b->usage.reasoning);
     jsonw_raw(w, ",");if(b->usage.has_cost)jsonw_double(w,b->usage.cost_usd);else jsonw_raw(w,"null");
-    jsonw_raw(w,",");jsonw_string(w,s->provider==PROVIDER_CLAUDE?STR_LIT("claude"):STR_LIT("codex"));jsonw_raw(w,"]");
+    jsonw_raw(w,",");jsonw_string(w,provider_id(s->provider));jsonw_raw(w,"]");
   }
   jsonw_raw(w, "]");
 }

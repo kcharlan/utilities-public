@@ -1,4 +1,5 @@
 #include "assemble.h"
+#include "provider.h"
 #include "price/compose.h"
 #include "parse/record.h"
 #include "parse/tools.h"
@@ -112,6 +113,11 @@ static Err aggregate_tools(Arena *arena, CorpusTools *out,
   out->image += source->image;
   TRY(count_merge(arena, &out->mcp, &source->mcp, true));
   return count_merge(arena, &out->other, &source->other, true);
+}
+Err corpus_turn_tools_adopt(Arena *arena, SessionModel *session,
+                           TurnModel *turn, const CorpusTools *source) {
+  TRY(aggregate_tools(arena, &turn->tools, source));
+  return aggregate_tools(arena, &session->tools, source);
 }
 static int record_order(const void *a, const void *b, void *ctx) {
   (void)ctx;

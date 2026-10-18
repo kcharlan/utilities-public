@@ -8,6 +8,7 @@
 #include "corpus/subagents.h"
 #include "corpus/titles.h"
 #include "corpus/turnstatus.h"
+#include "corpus/provider.h"
 #include "util/time.h"
 #include "testing/hooks.h"
 #include <stdalign.h>
@@ -437,44 +438,8 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       t->requests[0] = &r->requests[k];
       t->final_answer = r->answers[k];
       s->ordered_requests[j] = t->requests[0];
-      /* Copy wide tool maps into corpus ownership; record maps remain
-       * separately owned. */
-      CorpusTools *src = &r->tools[k];
-      t->tools.shell = src->shell;
-      t->tools.shell_failed = src->shell_failed;
-      t->tools.file_edits = src->file_edits;
-      t->tools.web = src->web;
-      s->tools.shell += src->shell;
-      s->tools.shell_failed += src->shell_failed;
-      s->tools.file_edits += src->file_edits;
-      s->tools.web += src->web;
-      Omap *from[] = {&src->mcp, &src->other},
-           *dest[] = {&t->tools.mcp, &t->tools.other},
-           *total[] = {&s->tools.mcp, &s->tools.other};
-      for (size_t m = 0; m < 2; m++)
-        for (OmapEntry *q = from[m]->first; q; q = q->next) {
-          __int128 *v;
-          TRY(alloc(&c->arena, 1, sizeof *v, alignof(__int128), (void **)&v));
-          *v = *(__int128 *)q->value;
-          TRY(omap_put(dest[m], q->key, v));
-          __int128 *sum = omap_get(total[m], q->key);
-          if (sum)
-            *sum += *v;
-          else {
-            TRY(alloc(&c->arena, 1, sizeof *sum, alignof(__int128),
-                      (void **)&sum));
-            *sum = *v;
-            TRY(omap_put(total[m], q->key, sum));
-          }
-        }
-      if (str_equal(t->status, STR_LIT("running")))
-        s->flags |= F_LIVE;
-      else if (str_equal(t->status, STR_LIT("abandoned")))
-        s->flags |= F_ABANDONED;
-      else if (str_equal(t->status, STR_LIT("aborted")))
-        s->flags |= F_ABORTED;
-      else if (str_equal(t->status, STR_LIT("interrupted")))
-        s->flags |= F_INTERRUPTED;
+      TRY(corpus_turn_tools_adopt(&c->arena, s, t, &r->tools[k]));
+      corpus_status_flags(s, t->status);
     }
     s->title_full = r->turn_count ? r->requests[0].text : r->id;
     s->title_source =
@@ -488,13 +453,7 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       s->title_source = STR_LIT("custom_title");
     }
     TRY(title_display(&c->arena, s->title_full, &s->title));
-    if (s->start_ms.present && s->end_ms.present) {
-      MaybeNum active;
-      TRY(active_interval_union(&c->arena, s->turns, s->turn_count, &active));
-      if (active.present)
-        s->idle_ms = (MaybeNum){
-            true, {.i = s->end_ms.value - s->start_ms.value - active.value.i}};
-    }
+    TRY(corpus_session_idle(&c->arena, s));
     TRY(omap_put(&c->sessions, s->id, s));
   }
   return ERR_SUCCESS;
