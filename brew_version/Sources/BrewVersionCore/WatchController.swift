@@ -131,7 +131,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         var found: Listing?
         var installation = InstalledSnapshot()
         do {
-            let listing = try await scheduler.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto, client: client)
+            let client = self.client
+            let listing = try await scheduler.run {
+                try await client.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto)
+            }
             found = listing
             installation = await lookupInstalled([listing])
         } catch {
@@ -442,7 +445,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                         preconditionFailure()
                     }
                     let kinds = (knownKinds[name] ?? (tokens.count == 1 ? kind : nil)).map(KindPreference.init) ?? .auto
-                    do { return (index, .found(try await scheduler.lookup(name, kinds: kinds, client: client), installed: nil, watched: false)) }
+                    do { return (index, .found(try await scheduler.run { try await client.lookup(name, kinds: kinds) }, installed: nil, watched: false)) }
                     catch LookupError.notFound { return (index, .notFound(name)) }
                     catch { return (index, .failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }
                 }
@@ -476,7 +479,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                 group.addTask {
                     let (entry, generation) = item
                     do {
-                        let listing = try await scheduler.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto, client: client)
+                        let listing = try await scheduler.run {
+                            try await client.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto)
+                        }
                         return CheckResult(name: entry.name, generation: generation, result: .success(listing))
                     } catch {
                         return CheckResult(name: entry.name, generation: generation,

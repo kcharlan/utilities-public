@@ -995,3 +995,12 @@ A declaration timestamp is not a scan timestamp. An inventory-only scan can have
 no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
+
+### Brew Version: validate tap cache identity before conditional requests
+
+Two locally named taps can point to the same GitHub repository and file. A URL-keyed
+listing cache therefore does not prove that its parsed package name and kind match
+the request. Reuse its ETag and accept a 304 only when both match; otherwise request
+the file unconditionally and treat a 304 as lacking a usable cache entry. Keep
+regressions for shared-remote aliases and mismatched cached kinds so conditional
+requests cannot return another package's identity or parsed metadata.

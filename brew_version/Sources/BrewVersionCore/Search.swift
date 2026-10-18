@@ -18,7 +18,7 @@ public enum LookupResult: Equatable, Sendable {
 actor LookupScheduler {
     private var active = 0
     private var waiting: [CheckedContinuation<Void, Never>] = []
-    func lookup(_ name: PackageName, kinds: KindPreference, client: HomebrewClient) async throws -> Listing {
+    func run<T: Sendable>(_ work: @Sendable () async throws -> T) async throws -> T {
         try Task.checkCancellation()
         if active == 4 { await withCheckedContinuation { waiting.append($0) } }
         else { active += 1 }
@@ -27,6 +27,6 @@ actor LookupScheduler {
             else { waiting.removeFirst().resume() }
         }
         try Task.checkCancellation()
-        return try await client.lookup(name, kinds: kinds)
+        return try await work()
     }
 }
