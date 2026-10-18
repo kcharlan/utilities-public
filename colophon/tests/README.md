@@ -79,3 +79,15 @@ retained/live response deduplication, last-known sidecars, extraction price
 snapshots and source byte/mode preservation. Immutable synthetic CLCD1 decoder
 inputs in `fixtures/claude_codec/` are copied to scratch before decoding. They
 are the narrow exception to the runtime-fixtures-in-scratch rule.
+
+OpenCode reader units use only the public, schema-only projection in
+`fixtures/opencode/` (Homebrew OpenCode 2.0.32). This DDL is a documented
+exception to runtime-fixtures-in-scratch; all invented rows, database/WAL
+files and canaries are created in fresh external scratch and removed by the
+fixture helper. Tests cover schema/migration rejection, optional columns,
+row-versus-payload identity/clocks, independent token/cost validity,
+authorizer exclusions, transaction staging/deduplication, lock timeout, WAL
+visibility and unchanged database/WAL bytes. Shared-memory side files retain
+SQLite's normal coordination allowance. Cancellation and partial-read failures
+use the existing test-only fault infrastructure; descriptor counts and map
+teardown are checked across repeated successful and failed reads.

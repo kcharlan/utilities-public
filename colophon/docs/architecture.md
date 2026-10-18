@@ -13,6 +13,7 @@ catalog/priority/pricing → payload/page:
 | `src/scan/` (including `logname.c`), `src/cache/` | Classify plain/compressed log names, discover logs, reuse or reparse native cache entries, stage and commit cache updates. |
 | `src/claude/` | Inspect source presence read-only, enumerate resolved search roots with provenance/completeness, parse Claude prompts/turns/tools, and insert provider-tagged sessions. Compose pinned Claude usage/advisor rows through file-local replacement and original-path winner reconciliation; a narrow C bridge delegates Foundation JSON validity and oversized number coercion to the system runtime. |
 | `src/meta/` | Load Codex metadata through read-only SQLite connections. |
+| `src/opencode/db.{c,h}` | Read OpenCode v2 snapshots through a credential-excluding SQLite authorizer, structural/migration guards and per-database staging. Own raw session/message/tool facts, row identity and clocks, independent token/cost validity and unknown/malformed diagnostics; no retained parse cache. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
