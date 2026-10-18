@@ -1,13 +1,13 @@
 import SwiftUI
 import BrewVersionCore
 
-struct OtherUpdatesSection: View {
+/// The Other updates title row, pinned at the top of the list while its rows scroll.
+struct OtherUpdatesHeader: View {
     let controller: WatchController
-    let undo: WatchUndoAction
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        if controller.state.showOtherUpdates {
-            Divider().padding(.vertical, 4)
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
                     controller.setOtherUpdatesCollapsed(!controller.state.otherUpdatesCollapsed)
@@ -18,10 +18,20 @@ struct OtherUpdatesSection: View {
                     Spacer()
                     Text("\(controller.others.count)")
                     Image(systemName: "chevron.right").rotationEffect(.degrees(controller.state.otherUpdatesCollapsed ? 0 : 90))
-                }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!controller.canSave)
                 .help("Installed packages Homebrew lists as newer, without alerts. Checked when the app opens and every \(controller.state.catalogInterval.label).")
                 .accessibilityLabel("Other updates, \(controller.others.count), \(controller.state.otherUpdatesCollapsed ? "collapsed" : "expanded")")
+        }
+    }
+}
+
+/// Everything under the Other updates title: its status line and rows.
+struct OtherUpdatesSection: View {
+    let controller: WatchController
+    let undo: WatchUndoAction
+    var body: some View {
+        if controller.state.showOtherUpdates {
             CatalogStatusLine(controller: controller)
             if !controller.state.otherUpdatesCollapsed {
                 if controller.others.isEmpty {

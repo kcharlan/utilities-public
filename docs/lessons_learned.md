@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-18: Give overlay scroll bars a gutter instead of widening a popover
+
+macOS overlay scroll bars draw on top of a scroll view's trailing edge, so
+Brew Version's section counts and collapse chevron sat under the scroll bar.
+Widening the popover only moves that edge. Extend the scroll view into the
+popover's existing side margin and pad its content by the same amount, so
+the scroll bar travels in empty space and content alignment is unchanged.
+For pinned list headers, use the panel's own behind-window material as the
+header background so rows vanish beneath it without a visible bar. Test the
+scroll view's frame against the popover edge, and compare a rendered header
+strip before and after scrolling, with a guard that the rows really moved.
+
 ## 2026-10-18: Record unreadable DSL fields before suppressing their blocks
 
 Brew Version's tap reader skipped a `version compute_version do` statement

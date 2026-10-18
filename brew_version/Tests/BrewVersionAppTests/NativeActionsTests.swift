@@ -331,6 +331,65 @@ private struct ReopenCatalogTransport: HTTPTransport {
             #expect(selection.name == nil)
         }
     }
+    /// Hosts a popover whose watch list must scroll, in an offscreen window.
+    private func scrollingPopover(_ name: String) throws -> (window: NSWindow, host: NSHostingView<PopoverView>, scroll: NSScrollView, cleanup: () -> Void) {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-\(name)-" + UUID().uuidString)
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial; state.showOtherUpdates = false
+        state.watched = (0..<16).map { index in
+            let listing = Listing(name: PackageName("synthetic-scroll-\(index)")!, kind: .formula, version: "2.0")
+            return WatchEntry(name: listing.name, kind: .formula, lastListing: listing)
+        }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let host = NSHostingView(rootView: PopoverView(controller: controller, notifier: UserNotifier(service: NotificationServiceStub()),
+                                                       openSettings: {}, focusGeneration: UUID()))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        host.layoutSubtreeIfNeeded()
+        let scroll = try #require(nativeScrollViews(host).first)
+        return (window, host, scroll, { window.contentView = nil; try? FileManager.default.removeItem(at: home) })
+    }
+    @Test func listScrollBarTravelsInPopoverMargin() throws {
+        let popover = try scrollingPopover("scroll-gutter"); defer { popover.cleanup() }
+        let frame = popover.scroll.convert(popover.scroll.bounds, to: popover.host)
+        // The scroll view starts with the content and reaches the popover's edge,
+        // so its scroll bar sits in the side margin rather than over the rows.
+        #expect(abs(frame.minX - 12) < 0.5)
+        #expect(abs(frame.maxX - 340) < 0.5)
+        #expect(ContentSizedScroll<EmptyView>.scrollerGutter == 12)
+    }
+    @Test func watchingHeaderStaysPinnedWhileRowsScroll() throws {
+        let popover = try scrollingPopover("pinned-header"); defer { popover.cleanup() }
+        let scroll = popover.scroll
+        // The header strip at the top of the list must look the same before and
+        // after scrolling: a pinned header stays, unpinned content would move.
+        func headerStrip() -> Data? {
+            let strip = NSRect(x: 0, y: scroll.contentView.isFlipped ? 0 : scroll.bounds.height - 18, width: scroll.bounds.width - 16, height: 18)
+            guard let rep = scroll.bitmapImageRepForCachingDisplay(in: strip) else { return nil }
+            scroll.cacheDisplay(in: strip, to: rep)
+            return rep.representation(using: .png, properties: [:])
+        }
+        func rowStrip() -> Data? {
+            let strip = NSRect(x: 0, y: scroll.contentView.isFlipped ? 60 : scroll.bounds.height - 78, width: scroll.bounds.width - 16, height: 18)
+            guard let rep = scroll.bitmapImageRepForCachingDisplay(in: strip) else { return nil }
+            scroll.cacheDisplay(in: strip, to: rep)
+            return rep.representation(using: .png, properties: [:])
+        }
+        let headerBefore = headerStrip(), rowsBefore = rowStrip()
+        let documentHeight = scroll.documentView?.frame.height ?? 0
+        #expect(documentHeight > scroll.contentView.bounds.height + 100)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.isFlipped ? 100 : max(0, documentHeight - scroll.contentView.bounds.height - 100)))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        popover.host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        popover.host.layoutSubtreeIfNeeded()
+        #expect(headerBefore != nil && headerStrip() == headerBefore)
+        // Guard against a vacuous pass: the rows below the header really moved.
+        #expect(rowStrip() != rowsBefore)
+    }
     @Test func fullPopoverKeepsWatchingViewportAfterFreshHostingWithOtherHidden() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-popover-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
