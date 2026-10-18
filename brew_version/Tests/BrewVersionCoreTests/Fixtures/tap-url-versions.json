@@ -1,0 +1,545 @@
+{
+  "homebrewCommit": "3073d6a8c34f71da054b000cfdbb62594a07c969",
+  "rows": [
+    {
+      "url": "https://example.invalid/synthetic-tool-v2042-07-08.tar.gz",
+      "tag": null,
+      "version": "2042-07-08",
+      "parserIndex": 0
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 1
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/releases/download/v4.5.6/synthetic-tool-9.0.1.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 2
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/SYNTHETIC_R45B06",
+      "tag": null,
+      "version": "R45B06",
+      "parserIndex": 3
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool_4_5_6.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 4
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-p78-src.tar.gz",
+      "tag": null,
+      "version": "4.5.6-p78",
+      "parserIndex": 5
+    },
+    {
+      "url": "https://example.invalid/v4.5.6-7.8.tar.gz",
+      "tag": null,
+      "version": "4.5.6-7.8",
+      "parserIndex": 6
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-v4.5.6",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-456-78.tar.gz",
+      "tag": null,
+      "version": "456-78",
+      "parserIndex": 8
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.post7.tar.gz",
+      "tag": null,
+      "version": "4.5.6.post7",
+      "parserIndex": 10
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6b7.tar.gz",
+      "tag": null,
+      "version": "4.5.6b7",
+      "parserIndex": 11
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-alpha7.tar.gz",
+      "tag": null,
+      "version": "4.5.6-alpha7",
+      "parserIndex": 12
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-win64.zip",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 13
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool.4.5.6%2Bopam.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 14
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool_4.5.6_i386.deb",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 15
+    },
+    {
+      "url": "https://registry.npmjs.org/@synthetic-owner/synthetic-tool/-/synthetic-tool-4.5.6-beta.7.tgz",
+      "tag": null,
+      "version": "4.5.6-beta.7",
+      "parserIndex": 16
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool4.5.6.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 17
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-v4.5.6b-src.tar.gz",
+      "tag": null,
+      "version": "4.5.6b",
+      "parserIndex": 18
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-complete.jar",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 19
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool_4.5.6b.orig.tar.gz",
+      "tag": null,
+      "version": "4.5.6b",
+      "parserIndex": 20
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6s.tar.gz",
+      "tag": null,
+      "version": "4.5.6s",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool_4.5.6_macosx.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 22
+    },
+    {
+      "url": "https://example.invalid/4.5.6/synthetic-tool.war",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool.v8d.tar.gz",
+      "tag": null,
+      "version": "8d",
+      "parserIndex": 24
+    },
+    {
+      "url": "https://example.invalid/get/synthetic-tool-4.5.6.tar.bz2/from/synthetic/mirror",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 25
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/releases/download/v7.8/synthetic-tool.tar.gz",
+      "tag": null,
+      "version": "7.8",
+      "parserIndex": 2
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/archive/refs/tags/v9.0.1.tar.gz",
+      "tag": null,
+      "version": "9.0.1",
+      "parserIndex": 17
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool_4.5.6_linux_arm64.tar.gz",
+      "tag": null,
+      "version": "64",
+      "parserIndex": 17
+    },
+    {
+      "url": "https://sourceforge.net/projects/synthetic-tool/files/synthetic-tool-4.5.6.tar.gz/download",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://sf.net/projects/synthetic-tool/files/synthetic-tool-7.8.zip/download",
+      "tag": null,
+      "version": "7.8",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool%2D4%2E5%2E6.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6+synthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.arm64_synthetic.bottle.7.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.synthetic.bottle.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool.tar.gz",
+      "tag": null,
+      "version": null,
+      "parserIndex": null
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "v4.5.6",
+      "version": "4.5.6",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool-4.5.6.git",
+      "tag": "synthetic-unversioned",
+      "version": null,
+      "parserIndex": null
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.7z",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.xz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.zst",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.zip/",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "",
+      "tag": null,
+      "version": null,
+      "parserIndex": null
+    },
+    {
+      "url": "https://example.invalid/.synthetic-tool-4.5.6",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://example.invalid/.synthetic-tool-4.5.6.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.",
+      "tag": null,
+      "version": "4.5.6.",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.cpio.bz2",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.pax.Z",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.lz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.bz2",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz?synthetic=7.8",
+      "tag": null,
+      "version": "7.8",
+      "parserIndex": 17
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz#synthetic",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%20synthetic.zip",
+      "tag": null,
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%2Bsynthetic.zip",
+      "tag": null,
+      "version": "4.5.6+synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool%2B4.5.6.zip",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 17
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-rc12.tar.gz",
+      "tag": null,
+      "version": "4.5.6-rc12",
+      "parserIndex": 5
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-RC12.tar.gz",
+      "tag": null,
+      "version": "4.5.6-RC12",
+      "parserIndex": 5
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-beta123.tar.gz",
+      "tag": null,
+      "version": "4.5.6-beta123",
+      "parserIndex": 12
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6_Final.zip",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 18
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-x64_64.zip",
+      "tag": null,
+      "version": "64.64",
+      "parserIndex": 4
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6-7.i686.rpm",
+      "tag": null,
+      "version": "4.5.6-7",
+      "parserIndex": 15
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.7.synthetic.bottle.tar.gz",
+      "tag": null,
+      "version": "4.5.6.7",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-٤.٥.٦.tar.gz",
+      "tag": null,
+      "version": null,
+      "parserIndex": null
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-%E2%98%83-4.5.6.zip",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 9
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/zipball/synthetic-4.5.6",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 1
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/releases/download/r_4.5.6/synthetic-tool.zip",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 2
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool////",
+      "tag": null,
+      "version": null,
+      "parserIndex": null
+    }
+  ],
+  "parsers": [
+    {
+      "index": 0,
+      "kind": "Version::StemParser",
+      "regex": "(?:^|[._-]?)v?(\\d{4}-\\d{2}-\\d{2})"
+    },
+    {
+      "index": 1,
+      "kind": "Version::UrlParser",
+      "regex": "github\\.com/.+/(?:zip|tar)ball/(?:v|\\w+-)?((?:\\d+[._-])+\\d*)$"
+    },
+    {
+      "index": 2,
+      "kind": "Version::UrlParser",
+      "regex": "github\\.com/.+/releases/download/(?:[rvV]_?)?((?:\\d+(?:\\.\\d+)+))/"
+    },
+    {
+      "index": 3,
+      "kind": "Version::UrlParser",
+      "regex": "[_-]([Rr]\\d+[AaBb]\\d*(?:-\\d+)?)"
+    },
+    {
+      "index": 4,
+      "kind": "Version::StemParser",
+      "regex": "((?:\\d+_)+\\d+)$"
+    },
+    {
+      "index": 5,
+      "kind": "Version::StemParser",
+      "regex": "[_-]((?:\\d+(?:\\.\\d+)+)-(?:p|P|rc|RC)?\\d+)(?:[._-](?i:bin|dist|stable|src|sources?|final|full))?$"
+    },
+    {
+      "index": 6,
+      "kind": "Version::StemParser",
+      "regex": "^v?((?:\\d+(?:\\.\\d+)+)(?:-(?:\\d+(?:\\.\\d+)*))+)"
+    },
+    {
+      "index": 7,
+      "kind": "Version::UrlParser",
+      "regex": "[-v]((?:\\d+(?:\\.\\d+)*))$"
+    },
+    {
+      "index": 8,
+      "kind": "Version::StemParser",
+      "regex": "-(\\d+-\\d+)"
+    },
+    {
+      "index": 9,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+)*))$"
+    },
+    {
+      "index": 10,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+)*)(?:.post\\d+)?)$"
+    },
+    {
+      "index": 11,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+)*)(?:[abc]|rc|RC)\\d*)$"
+    },
+    {
+      "index": 12,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+)*)-(?:alpha|beta|rc)\\d*)$"
+    },
+    {
+      "index": 13,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+){1,2}))-w(?:in)?(?:32|64)$"
+    },
+    {
+      "index": 14,
+      "kind": "Version::StemParser",
+      "regex": "\\.((?:\\d+(?:\\.\\d+){1,2}))\\+opam$"
+    },
+    {
+      "index": 15,
+      "kind": "Version::StemParser",
+      "regex": "[_-]((?:\\d+(?:\\.\\d+){1,2})(?:-\\d+)?)[._-](?:i[36]86|x86|x64(?:[_-](?:32|64))?)$"
+    },
+    {
+      "index": 16,
+      "kind": "Version::StemParser",
+      "regex": "[-.vV]?((?:\\d+(?:\\.\\d+)+)(?:[._-]?(?i:alpha|beta|pre|rc)\\.?\\d{,2}))"
+    },
+    {
+      "index": 17,
+      "kind": "Version::StemParser",
+      "regex": "((?:\\d+(?:\\.\\d+)*))$"
+    },
+    {
+      "index": 18,
+      "kind": "Version::StemParser",
+      "regex": "[-vV]((?:\\d+(?:\\.\\d+)+)[abc]?)(?:[._-](?i:bin|dist|stable|src|sources?|final|full))$"
+    },
+    {
+      "index": 19,
+      "kind": "Version::StemParser",
+      "regex": "-((?:\\d+(?:\\.\\d+)+))-"
+    },
+    {
+      "index": 20,
+      "kind": "Version::StemParser",
+      "regex": "_((?:\\d+(?:\\.\\d+)*)[abc]?)\\.orig$"
+    },
+    {
+      "index": 21,
+      "kind": "Version::StemParser",
+      "regex": "-v?(\\d[^-]+)"
+    },
+    {
+      "index": 22,
+      "kind": "Version::StemParser",
+      "regex": "_v?(\\d[^_]+)"
+    },
+    {
+      "index": 23,
+      "kind": "Version::UrlParser",
+      "regex": "/(?:[rvV]_?)?(\\d+\\.\\d+(?:\\.\\d+){,2})"
+    },
+    {
+      "index": 24,
+      "kind": "Version::StemParser",
+      "regex": "\\.v(\\d+[a-z]?)"
+    },
+    {
+      "index": 25,
+      "kind": "Version::UrlParser",
+      "regex": "[-.vV]?((?:\\d+(?:\\.\\d+)+)(?:[._-]?(?i:alpha|beta|pre|rc)\\.?\\d{,2})?)"
+    }
+  ]
+}
