@@ -68,14 +68,34 @@ Err opencode_store_add_database(OpencodeStore *s,Str path,bool primary) {
     OpencodeDatabase db={.path=absolute,.primary=primary,.status=OC_DB_SKIPPED};
     return APPEND(&s->arena,s->databases,s->database_count,s->database_capacity,db);
 }
-static Str sql_text(sqlite3_stmt *st,int col) {
-    if(sqlite3_column_type(st,col)!=SQLITE_TEXT)return (Str){0};
-    const char *p=(const char *)sqlite3_column_text(st,col);int n=sqlite3_column_bytes(st,col);
+static Err sql_text(sqlite3_stmt *st,int col,Str *out) {
+    *out=(Str){0};
+    if(sqlite3_column_type(st,col)!=SQLITE_TEXT)return ERR_SUCCESS;
+    sqlite3 *db=sqlite3_db_handle(st);
+#ifdef COLOPHON_TESTING
+    /* Force an actual SQLite conversion allocation failure at the selected
+     * boundary; statement preparation/step must succeed before this hook. */
+    sqlite3_int64 previous_limit=-1;
+    const char *query=sqlite3_sql(st);
+    bool force=(!strcmp(query,"SELECT id FROM migration ORDER BY id DESC LIMIT 1")&&cp_fault("opencode.migration.id.oom"))||
+        (!strcmp(query,"SELECT value FROM kv WHERE key='migration.v1-v2'")&&cp_fault("opencode.migration.phase.oom"));
+    if(force)previous_limit=sqlite3_hard_heap_limit64(1);
+#endif
+    const char *p=(const char *)sqlite3_column_text(st,col);
+    int code=sqlite3_errcode(db),n=0;
+    /* Check immediately: conversion OOM otherwise looks like SQL NULL, and a
+     * subsequent column operation or semantic rejection can hide the error. */
+    if(code!=SQLITE_NOMEM){n=sqlite3_column_bytes(st,col);code=sqlite3_errcode(db);}
+#ifdef COLOPHON_TESTING
+    if(previous_limit>=0)sqlite3_hard_heap_limit64(previous_limit);
+#endif
+    if(code==SQLITE_NOMEM)return err_make(ERR_NOMEM,"OpenCode SQLite text conversion allocation failed");
     Str value={p,(uint32_t)n};
-    return p&&str_utf8_scalar_valid(value)&&!memchr(p,0,(size_t)n)?value:(Str){0};
+    if(p&&str_utf8_scalar_valid(value)&&!memchr(p,0,(size_t)n))*out=value;
+    return ERR_SUCCESS;
 }
 static Err copy_cell(Arena *a,sqlite3_stmt *st,int col,Str *out) {
-    Str value=sql_text(st,col);return value.p?str_copy(a,value,out):ERR_SUCCESS;
+    Str value={0};TRY(sql_text(st,col,&value));return value.p?str_copy(a,value,out):ERR_SUCCESS;
 }
 static yyjson_val *get(yyjson_val *v,const char *key) { return obj_get_last(v,text(key)); }
 static Str js(yyjson_val *v) {
@@ -210,7 +230,10 @@ typedef struct { const char *name;const Column *columns;size_t count;Omap availa
 static Err schema_columns(sqlite3 *db,Table *table) {
     char sql[128];snprintf(sql,sizeof sql,"PRAGMA table_info(\"%s\")",table->name);
     sqlite3_stmt *st=NULL;Err e=prepare(db,sql,&st);int rc=SQLITE_DONE;
-    while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){Str name=sql_text(st,1);if(name.p)e=omap_put(&table->available,name,(void *)1);}
+    while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
+        Str name={0};e=sql_text(st,1,&name);
+        if(!e.code&&name.p)e=omap_put(&table->available,name,(void *)1);
+    }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);
     sqlite3_finalize(st);
     for(size_t i=0;!e.code&&i<table->count;i++)if(!table->columns[i].optional&&!omap_get(&table->available,text(table->columns[i].name)))
@@ -222,7 +245,9 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t 
     int rc=SQLITE_DONE;bool legacy=false;Omap found={0};
     static const char *const generations[]={"session","session_v2","session_message","session_share","session_inbox","session_pending"};
     while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
-        Str name=sql_text(st,0),kind=sql_text(st,1);
+        Str name={0},kind={0};e=sql_text(st,0,&name);
+        if(!e.code)e=sql_text(st,1,&kind);
+        if(e.code)break;
         if(equal(name,"session"))legacy=true;
         if(name.n>=7&&!memcmp(name.p,"session",7)){
             bool allowed=false;for(size_t i=0;i<sizeof generations/sizeof *generations;i++)if(equal(name,generations[i]))allowed=true;
@@ -241,18 +266,31 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t 
     }
     omap_destroy(&found);
     if(!e.code)e=prepare(db,"SELECT id FROM migration ORDER BY id DESC LIMIT 1",&st);
-    if(!e.code){rc=sqlite3_step(st);if(rc==SQLITE_ROW){Str id=sql_text(st,0);if(!id.n)e=err_make(ERR_INVALID,"invalid OpenCode migration id");else {e=str_copy(&info->arena,id,&info->latest_migration);info->untested=str_compare(id,STR_LIT("20261010180456_project_time_archived"))>0;}}else if(rc!=SQLITE_DONE)e=sql_error(db);}
+    if(!e.code){
+        rc=sqlite3_step(st);
+        if(rc==SQLITE_ROW){
+            Str id={0};e=sql_text(st,0,&id);
+            if(!e.code&&!id.n)e=err_make(ERR_INVALID,"invalid OpenCode migration id");
+            if(!e.code){e=str_copy(&info->arena,id,&info->latest_migration);info->untested=str_compare(id,STR_LIT("20261010180456_project_time_archived"))>0;}
+        }else if(rc!=SQLITE_DONE)e=sql_error(db);
+    }
     sqlite3_finalize(st);st=NULL;
     if(!e.code)e=prepare(db,"SELECT key FROM kv WHERE key LIKE 'migration.%'",&st);
-    while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW)if(!equal(sql_text(st,0),"migration.v1-v2"))e=err_make(ERR_INVALID,"unrecognized OpenCode migration key");
+    while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
+        Str key={0};e=sql_text(st,0,&key);
+        if(!e.code&&!equal(key,"migration.v1-v2"))e=err_make(ERR_INVALID,"unrecognized OpenCode migration key");
+    }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);st=NULL;
     if(!e.code&&legacy){
         e=prepare(db,"SELECT value FROM kv WHERE key='migration.v1-v2'",&st);
         if(!e.code){rc=sqlite3_step(st);if(rc==SQLITE_ROW){
-            JsonRead read=json_read(sql_text(st,0),STRICT,JSON_CONSTANTS_REJECT,"opencode.migration");
-            if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"OpenCode migration JSON allocation failed");
-            else if(read.status!=JSON_OK||!equal(js(get(yyjson_doc_get_root(read.doc),"phase")),"completed"))e=err_make(ERR_INVALID,"OpenCode v1 migration incomplete or malformed");
-            json_read_free(&read);
+            Str phase={0};e=sql_text(st,0,&phase);
+            if(!e.code){
+                JsonRead read=json_read(phase,STRICT,JSON_CONSTANTS_REJECT,"opencode.migration");
+                if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"OpenCode migration JSON allocation failed");
+                else if(read.status!=JSON_OK||!equal(js(get(yyjson_doc_get_root(read.doc),"phase")),"completed"))e=err_make(ERR_INVALID,"OpenCode v1 migration incomplete or malformed");
+                json_read_free(&read);
+            }
         }else if(rc==SQLITE_DONE)e=err_make(ERR_INVALID,"OpenCode v1 migration phase missing");else e=sql_error(db);}
         sqlite3_finalize(st);
     }
@@ -277,13 +315,14 @@ static Err read_sessions(sqlite3 *db,Table *tables,OpencodeStore *stage,Opencode
     while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
         if(stop&&cp_fault("opencode.cancel.sessions"))*stop=1;
         if(stop&&*stop){e=err_make(ERR_IO,"interrupted");break;}
-        Str id=sql_text(st,0);if(!id.n)continue;
+        Str id={0};e=sql_text(st,0,&id);if(e.code)break;if(!id.n)continue;
         OpencodeSession *s=NULL;e=arena_alloc(&stage->arena,sizeof *s,_Alignof(OpencodeSession),(void **)&s);if(e.code)break;
         memset(s,0,sizeof *s);s->database=info->path;s->database_index=index;s->primary=info->primary;s->provenance_complete=true;
         Str *strings[]={&s->id,&s->project_id,&s->parent_id,&s->fork_session_id,&s->directory,&s->title,&s->version,&s->agent};
         for(int i=0;!e.code&&i<8;i++)e=copy_cell(&stage->arena,st,i,strings[i]);
         if(e.code)break;
-        JsonRead read=json_read(sql_text(st,8),STRICT,JSON_CONSTANTS_REJECT,"opencode.session.model");
+        Str model_text={0};e=sql_text(st,8,&model_text);if(e.code)break;
+        JsonRead read=json_read(model_text,STRICT,JSON_CONSTANTS_REJECT,"opencode.session.model");
         if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"OpenCode model JSON allocation failed");
         else if(read.status==JSON_OK)e=model(&stage->arena,yyjson_doc_get_root(read.doc),&s->model_id,&s->provider_id);
         json_read_free(&read);if(e.code)break;
@@ -347,15 +386,18 @@ static Err parse_content(Arena *a,OpencodeSession *s,OpencodeMessage *m,yyjson_v
     return ERR_SUCCESS;
 }
 static Err parse_message(Arena *a,OpencodeSession *s,sqlite3_stmt *st) {
-    Str type=sql_text(st,2);OpencodeMessage m={0};
+    Str type={0};Err e=sql_text(st,2,&type);if(e.code)return e;
+    OpencodeMessage m={0};
     if(!message_kind(type,&m.kind)){
         s->provenance_complete=false;return increment(a,&s->unknown_message_types,type.p?type:STR_LIT("<missing>"),1);
     }
-    bool malformed=false;JsonRead read=json_read(sql_text(st,5),STRICT,JSON_CONSTANTS_ALLOW,"opencode.message");
-    Err e=ERR_SUCCESS;
+    Str payload={0};TRY(sql_text(st,5,&payload));
+    bool malformed=false;JsonRead read=json_read(payload,STRICT,JSON_CONSTANTS_ALLOW,"opencode.message");
     if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"OpenCode message JSON allocation failed");
     yyjson_val *v=read.status==JSON_OK?yyjson_doc_get_root(read.doc):NULL;
-    Str id=sql_text(st,0);
+    Str id={0};
+    if(!e.code)e=sql_text(st,0,&id);
+    if(e.code){json_read_free(&read);return e;}
     if(!yyjson_is_obj(v)||!id.n||!str_equal(js(get(v,"type")),type)||!js(get(v,"id")).n||sqlite3_column_type(st,3)!=SQLITE_INTEGER||sqlite3_column_int64(st,3)<0)malformed=true;
     if(!e.code&&!malformed){
         e=str_copy(a,id,&m.id);if(!e.code)e=str_copy(a,type,&m.type);m.seq=sqlite3_column_int64(st,3);
@@ -401,7 +443,8 @@ static Err read_messages(sqlite3 *db,Table *table,OpencodeStore *stage,volatile 
     while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
         if(cp_fault("opencode.read.messages")){e=err_make(ERR_IO,"OpenCode message read failed");break;}
         if(stop&&*stop){e=err_make(ERR_IO,"interrupted");break;}
-        OpencodeSession *s=omap_get(&stage->session_ids,sql_text(st,1));
+        Str id={0};e=sql_text(st,1,&id);
+        OpencodeSession *s=e.code?NULL:omap_get(&stage->session_ids,id);
         if(s)e=parse_message(&stage->arena,s,st);
     }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);return e;

@@ -15,6 +15,34 @@ static void read_store(OpencodeStore *s) { ASSERT_EQ(ERR_OK,opencode_store_read(
 static uint64_t count(const Omap *map,const char *key) {
     uint64_t *v=omap_get(map,(Str){key,(uint32_t)strlen(key)});return v?*v:0;
 }
+static void migration_conversion_oom(bool phase) {
+    OpencodeFixture f,good;opencode_fixture_open(&f);opencode_fixture_open(&good);
+    /* Rebuild only this synthetic scratch database in UTF-16. A large TEXT
+     * value requires a UTF-8 conversion allocation outside SQLite lookaside. */
+    ASSERT_EQ(SQLITE_OK,sqlite3_close(f.writer));f.writer=NULL;ASSERT_EQ(0,unlink(f.path));
+    ASSERT_EQ(SQLITE_OK,sqlite3_open(f.path,&f.writer));
+    opencode_fixture_sql(&f,"PRAGMA encoding='UTF-16le'");
+    char *schema=NULL;size_t schema_size=0;
+    ASSERT_EQ(ERR_OK,file_read_all("tests/fixtures/opencode/schema_v2.sql",&schema,&schema_size).code);
+    opencode_fixture_sql(&f,schema);free(schema);
+    char padding[16385];memset(padding,'x',sizeof padding-1);padding[sizeof padding-1]=0;
+    char *sql;
+    if(phase)sql=sqlite3_mprintf("INSERT INTO migration VALUES ('20261010180456_project_time_archived',1);CREATE TABLE session(id);INSERT INTO kv VALUES ('migration.v1-v2','{\"phase\":\"completed\",\"syntheticPadding\":\"%q\"}',1,1)",padding);
+    else sql=sqlite3_mprintf("INSERT INTO migration VALUES ('99999999999999_synthetic_%q',1)",padding);
+    ASSERT_TRUE(sql);opencode_fixture_sql(&f,sql);sqlite3_free(sql);
+    opencode_fixture_session(&good,"synthetic-good-sibling");
+    OpencodeStore control={0};add(&control,&f);read_store(&control);
+    ASSERT_EQ(OC_DB_OK,control.databases[0].status);opencode_store_destroy(&control);
+    OpencodeStore s={0};add(&s,&f);add(&s,&good);
+    ASSERT_EQ(0,setenv("COLOPHON_TEST_FAULT",phase?"opencode.migration.phase.oom":"opencode.migration.id.oom",1));
+    Err attempt=opencode_store_read(&s,NULL);
+    ASSERT_EQ(0,unsetenv("COLOPHON_TEST_FAULT"));
+    ASSERT_EQ(ERR_NOMEM,attempt.code);ASSERT_EQ(0,s.session_count);
+    ASSERT_EQ(0,s.databases[1].accepted_sessions);
+    opencode_store_destroy(&s);opencode_fixture_close(&f);opencode_fixture_close(&good);
+}
+TEST(opencode_db_migration_id_conversion_oom_is_fatal) { migration_conversion_oom(false); }
+TEST(opencode_db_migration_phase_conversion_oom_is_fatal) { migration_conversion_oom(true); }
 TEST(opencode_db_reads_v2_sessions_messages_and_archive) {
     OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
     opencode_fixture_session(&f,"synthetic-orphan-project");

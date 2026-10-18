@@ -4,6 +4,9 @@
   SQLite row identity and creation clock independently from payload display
   clocks. Token validation has signed-integer bounds; a finite recorded cost
   has a separate numeric contract and must survive invalid or missing tokens.
+- SQLite text conversion can allocate after a successful row step. Check
+  conversion errors immediately and propagate allocation failure before
+  treating an empty result as absent text or a schema/migration rejection.
 - Same-stem source copies need independent reader reconciliation: accounting
   winners do not identify the most complete transcript. Preserve prompt UUIDs,
   identified tools and answer clocks, then map file-local turn keys into a
