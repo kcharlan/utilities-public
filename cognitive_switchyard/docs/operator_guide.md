@@ -58,7 +58,7 @@ A successful run leaves the session `idle`. Ending an idle session (**End Sessio
 - `logs/session.log`
 - `RELEASE_NOTES.md` when generated
 
-Blocked or aborted sessions are not trimmed. Completed and aborted sessions that finished more than `retention_days` ago (`config.yaml`, default 30; `0` disables purging) are deleted, with their worktrees, when `start` or `serve` runs.
+Blocked or aborted sessions are not trimmed. Completed and aborted sessions that finished more than `retention_days` ago (`config.yaml`, default 30; `0` disables purging) are deleted, with their worktrees, when `start` or `serve` runs. The History view's **Purge All** deletes every completed and aborted session, with its worktree, immediately; idle sessions are kept.
 
 `RELEASE_NOTES.md` is derived from completed plan `## Operator Actions` sections before trimming. If no completed plan contains that section, no release-notes artifact is retained.
 

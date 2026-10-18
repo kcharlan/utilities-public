@@ -36,6 +36,7 @@ import pytest
 pytest.importorskip("playwright")
 
 import uvicorn  # noqa: E402
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
 
 from tools.testkit import (  # noqa: E402
     assert_react_19_import_map,
@@ -467,13 +468,8 @@ def runtime_home(tmp_path_factory) -> Path:
     return _setup_runtime(tmp_path)
 
 
-@pytest.fixture(scope="module")
-def server_url(runtime_home):
-    """Start a real uvicorn server in a thread and return its base URL."""
-    runtime_paths = build_runtime_paths(home=runtime_home)
-    store = initialize_state_store(runtime_paths)
-    app = create_app(store=store, runtime_paths=runtime_paths)
-
+def _serve_app(app, *, label: str = "Uvicorn"):
+    """Run ``app`` on a real uvicorn server in a thread and yield its base URL."""
     port = _find_free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     server = uvicorn.Server(config)
@@ -489,12 +485,32 @@ def server_url(runtime_home):
         except (ConnectionRefusedError, OSError):
             time.sleep(0.25)
     else:
-        raise RuntimeError(f"Uvicorn did not start on port {port}")
+        raise RuntimeError(f"{label} did not start on port {port}")
 
     yield f"http://127.0.0.1:{port}"
 
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def server_url(runtime_home):
+    """Start a real uvicorn server in a thread and return its base URL."""
+    runtime_paths = build_runtime_paths(home=runtime_home)
+    store = initialize_state_store(runtime_paths)
+    app = create_app(store=store, runtime_paths=runtime_paths)
+    yield from _serve_app(app)
+
+
+@pytest.fixture
+def fresh_server(tmp_path):
+    """A server with its own empty runtime, for tests that need a blank Setup form."""
+    runtime_home = _setup_runtime(tmp_path)
+    runtime_paths = build_runtime_paths(home=runtime_home)
+    store = initialize_state_store(runtime_paths)
+    app = create_app(store=store, runtime_paths=runtime_paths)
+    for url in _serve_app(app, label="Uvicorn (fresh)"):
+        yield {"url": url, "app": app, "store": store, "runtime_home": runtime_home}
 
 
 # ---------------------------------------------------------------------------
@@ -1435,6 +1451,85 @@ class TestDagView:
         )
         page.wait_for_selector(".react-flow", state="detached", timeout=SLOW_TIMEOUT)
 
+    def test_dag_nodes_show_task_titles_and_live_statuses(
+        self, fresh_server, page, browser_error_guard
+    ):
+        """DAG nodes carry real titles/statuses and follow live status changes.
+
+        Regression: the DAG payload had no title or status, so every node read
+        "Task" / "ready" and never changed color.
+        """
+        from cognitive_switchyard.models import BackendRuntimeEvent
+
+        store = fresh_server["store"]
+        runtime_home = fresh_server["runtime_home"]
+        session_id = "dag-status-001"
+        store.create_session(
+            session_id=session_id,
+            name="Synthetic DAG Status",
+            pack="claude-code",
+            created_at="2026-09-16T12:00:00Z",
+            config_json="{}",
+        )
+        for task_id, dependency in (("root", "none"), ("leaf", "root")):
+            source = _write_intake_plan(runtime_home, session_id, task_id, depends_on=dependency)
+            plan_text = source.read_text(encoding="utf-8")
+            store.upsert_ready_task_plan(
+                session_id=session_id,
+                plan=parse_task_plan(plan_text, source=source),
+                plan_text=plan_text,
+                created_at="2026-09-16T12:00:01Z",
+            )
+        store.project_task(session_id, "root", status="done", timestamp="2026-09-16T12:00:02Z")
+        store.update_session_status(session_id, status="running", started_at="2026-09-16T12:00:01Z")
+
+        page.goto(fresh_server["url"], wait_until="domcontentloaded")
+        page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
+        page.locator("button[aria-label='Open DAG']").click()
+        root_node = page.locator(".react-flow__node[data-id='root']")
+        leaf_node = page.locator(".react-flow__node[data-id='leaf']")
+        root_node.wait_for(timeout=SLOW_TIMEOUT)
+
+        assert root_node.locator(".secondary").inner_text() == "Task root"
+        assert root_node.locator(".status-badge").inner_text() == "done"
+        assert leaf_node.locator(".secondary").inner_text() == "Task leaf"
+        assert leaf_node.locator(".status-badge").inner_text() == "ready"
+
+        def leaf_border_color() -> str:
+            return leaf_node.evaluate("node => getComputedStyle(node).borderTopColor")
+
+        ready_border = leaf_border_color()
+        assert ready_border != root_node.evaluate("node => getComputedStyle(node).borderTopColor")
+
+        # A WebSocket task_status_change must recolor the open graph. Republish
+        # until the page's WebSocket is connected and the change lands.
+        event = BackendRuntimeEvent(
+            session_id=session_id,
+            message_type="task_status_change",
+            data={
+                "task_id": "leaf",
+                "old_status": "ready",
+                "new_status": "active",
+                "worker_slot": 0,
+                "notes": "",
+                "elapsed": 0,
+            },
+        )
+        for _ in range(20):
+            fresh_server["app"].state.controller._publish_runtime_event(event)
+            try:
+                page.wait_for_function(
+                    """() => document.querySelector(
+                        ".react-flow__node[data-id='leaf'] .status-badge"
+                    )?.textContent === 'active'""",
+                    timeout=500,
+                )
+                break
+            except PlaywrightTimeoutError:
+                continue
+        assert leaf_node.locator(".status-badge").inner_text() == "active"
+        assert leaf_border_color() != ready_border
+
 # ---------------------------------------------------------------------------
 # 11. SETTINGS CRUD
 # ---------------------------------------------------------------------------
@@ -1615,7 +1710,12 @@ class TestSessionDeletion:
         assert result["status"] == 200
 
     def test_purge_completed_sessions(self, server_url, runtime_home, page):
-        """DELETE /api/sessions purges all completed/aborted sessions."""
+        """DELETE /api/sessions purges completed/aborted sessions and keeps idle ones.
+
+        Idle sessions are reusable and keep their worktrees, and History's
+        "Purge All" confirmation counts only completed/aborted sessions, so the
+        run below must survive a purge while idle and go once it is ended.
+        """
         page.goto(server_url)
         page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
 
@@ -1637,6 +1737,19 @@ class TestSessionDeletion:
 
         # Small delay to let the session thread fully exit
         page.wait_for_timeout(500)
+
+        idle_purge = page.evaluate("""async () => {
+            await fetch('/api/sessions', { method: 'DELETE' });
+            const resp = await fetch('/api/sessions/purge-001');
+            return { status: resp.status, session: resp.ok ? (await resp.json()).session : null };
+        }""")
+        assert idle_purge["status"] == 200, "Purge All must keep idle sessions"
+        assert idle_purge["session"]["status"] == "idle"
+
+        page.evaluate("""async () => {
+            await fetch('/api/sessions/purge-001/end', { method: 'POST' });
+        }""")
+        _poll_session_status(page, "purge-001", {"completed"})
 
         result = page.evaluate("""async () => {
             const resp = await fetch('/api/sessions', { method: 'DELETE' });
@@ -1835,6 +1948,46 @@ class TestSessionConfig:
         assert result["session"]["name"] == "Config UI Test"
         assert result["session"]["pack"] == "claude-code"
         assert result["session"]["effective_runtime_config"]["worker_count"] == 2
+
+    def test_setup_form_sends_timeout_overrides(self, fresh_server, page, browser_error_guard):
+        """Setup's Advanced timeout fields reach the backend under its config keys.
+
+        Regression: the form collected the three timeouts but never sent them,
+        so every session silently ran with the pack's timeouts.
+        """
+        session_id = "timeout-ui-001"
+        page.goto(fresh_server["url"])
+        page.wait_for_selector("text=Create Session", timeout=SLOW_TIMEOUT)
+        page.locator("label:has-text('Session ID') ~ input").first.fill(session_id)
+        page.locator("button:has-text('Show Advanced')").click()
+        page.locator("label:has-text('Task Idle Timeout') ~ input").first.fill("90")
+        page.locator("label:has-text('Task Max Timeout') ~ input").first.fill("0")
+        page.locator("label:has-text('Session Max Timeout') ~ input").first.fill("3600")
+        with page.expect_response(
+            lambda response: response.url.endswith("/api/sessions")
+            and response.request.method == "POST",
+            timeout=SLOW_TIMEOUT,
+        ) as create_info:
+            page.locator("button:has-text('Create Session')").click()
+        assert create_info.value.status == 201
+        session = create_info.value.json()["session"]
+        assert session["id"] == session_id
+        assert session["config"]["task_idle"] == 90
+        assert session["config"]["task_max"] == 0
+        assert session["config"]["session_max"] == 3600
+        assert session["effective_runtime_config"]["timeouts"] == {
+            "task_idle": 90,
+            "task_max": 0,
+            "session_max": 3600,
+        }
+
+        # The locked draft reads the same keys back into the form.
+        page.reload()
+        page.wait_for_selector("button:has-text('Show Advanced')", timeout=SLOW_TIMEOUT)
+        page.locator("button:has-text('Show Advanced')").click()
+        assert page.locator("label:has-text('Task Idle Timeout') ~ input").first.input_value() == "90"
+        assert page.locator("label:has-text('Task Max Timeout') ~ input").first.input_value() == "0"
+        assert page.locator("label:has-text('Session Max Timeout') ~ input").first.input_value() == "3600"
 
 
 # ---------------------------------------------------------------------------
@@ -2713,27 +2866,7 @@ def server_url_planning(runtime_home_planning):
     runtime_paths = build_runtime_paths(home=runtime_home_planning)
     store = initialize_state_store(runtime_paths)
     app = create_app(store=store, runtime_paths=runtime_paths)
-
-    port = _find_free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    server = uvicorn.Server(config)
-
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    for _ in range(40):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
-        except (ConnectionRefusedError, OSError):
-            time.sleep(0.25)
-    else:
-        raise RuntimeError(f"Uvicorn (planning) did not start on port {port}")
-
-    yield f"http://127.0.0.1:{port}"
-
-    server.should_exit = True
-    thread.join(timeout=5)
+    yield from _serve_app(app, label="Uvicorn (planning)")
 
 
 class TestSetupFormPlannerValidation:

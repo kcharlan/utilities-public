@@ -486,9 +486,12 @@ accents. The design tokens live in the template's `:root` block.
 ### 6.2 UI views
 
 - **Setup:** two-step flow (Create Session, then Start Session); pack, counts,
-  repo root, branch (or create branch), and project directory; intake list with
-  Open Intake, Intake Terminal, Refresh, and per-file reveal; Run Preflight
-  showing the three preflight stages.
+  repo root, branch (or create branch), and project directory; Advanced
+  overrides for auto-fix and its attempts, poll interval, and the three
+  timeouts (sent as `task_idle`, `task_max`, `session_max`; blank keeps the
+  pack default, `0` means no limit); intake list with Open Intake, Intake
+  Terminal, Refresh, and per-file reveal; Run Preflight showing the three
+  preflight stages.
 - **Monitor:** pipeline strip (including Review and Verifying, with Rescan and
   Reprocess), phase log streams for planning, resolution, verification, and
   auto-fix, worker cards, task feed, verification and auto-fix status, and New
@@ -496,10 +499,12 @@ accents. The design tokens live in the template's `:root` block.
   `task_idle`; the server raises its alert at 80%.
 - **Task detail:** metadata, constraints, plan path, events, live or retained
   log, and Move or Reveal actions.
-- **DAG:** React Flow graph of `resolution.json` (double-click a node to open
-  the task).
+- **DAG:** React Flow graph of `resolution.json`. Each node shows its task
+  title and status, colored by status; `task_status_change` messages update
+  them while the view is open. Double-click a node to open the task.
 - **History and Settings:** completed and aborted sessions with release notes
-  and task outcomes; global settings from `config.yaml`.
+  and task outcomes, and Purge All, which deletes exactly those listed
+  sessions; global settings from `config.yaml`.
 
 ### 6.3 WebSocket protocol
 
@@ -534,7 +539,7 @@ them.
 | POST | `/api/repo-branches`, `/api/repo-create-branch` | List or create branches in a repo |
 | POST | `/api/sessions` | Create a session (201; 409 if it exists); creates the session worktree when requested |
 | GET | `/api/sessions` | List sessions |
-| DELETE | `/api/sessions` | Purge every idle, completed, and aborted session and its worktree |
+| DELETE | `/api/sessions` | Purge every completed and aborted session and its worktree; idle sessions are kept |
 | GET | `/api/sessions/{id}` | Session plus recent events |
 | DELETE | `/api/sessions/{id}` | Purge one `created`, `idle`, `completed`, or `aborted` session (409 otherwise or while its thread runs) |
 | POST | `/api/sessions/{id}/start` | Launch the pipeline in a background thread (202) |
@@ -546,7 +551,7 @@ them.
 | POST | `/api/sessions/{id}/force-reset` | Abort if needed, remove worktree and `switchyard-*` branches, delete rows and directory |
 | POST | `/api/sessions/{id}/preflight` | Run the three-stage preflight |
 | GET | `/api/sessions/{id}/dashboard` | Dashboard payload (same shape as `state_update`) |
-| GET | `/api/sessions/{id}/dag` | `resolution.json`, or a graph built from task rows |
+| GET | `/api/sessions/{id}/dag` | `resolution.json`, or a graph built from task rows, with each known task's `title` and `status` joined from the state store (or `summary.json` once ended) |
 | GET | `/api/sessions/{id}/intake` | Intake files with lock and snapshot flags |
 | POST | `/api/sessions/{id}/open-intake`, `/open-intake-terminal` | Open intake in the file manager or the configured terminal (204) |
 | POST | `/api/sessions/{id}/reveal-file?path=` | Reveal a session-relative file; path traversal rejected (204) |

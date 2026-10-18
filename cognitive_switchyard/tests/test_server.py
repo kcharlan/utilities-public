@@ -833,6 +833,8 @@ def test_session_dashboard_task_and_dag_endpoints_reflect_live_store_state(tmp_p
             "depends_on": ["001"],
             "anti_affinity": ["003"],
             "exec_order": 1,
+            "title": "Active task",
+            "status": "active",
         }
 
 
@@ -4248,3 +4250,104 @@ def test_serialize_intake_listing_filters_non_md_and_meta_files(tmp_path: Path) 
     assert filenames == ["real_task.md"], (
         f"Only non-meta .md files should appear in intake listing, got {filenames!r}"
     )
+
+
+def test_purge_all_deletes_only_completed_and_aborted_sessions(tmp_path: Path) -> None:
+    """DELETE /api/sessions must keep idle sessions and their worktrees.
+
+    History's "Purge All" confirmation counts only completed and aborted
+    sessions; the endpoint previously also deleted reusable idle sessions.
+    """
+    from unittest.mock import patch
+
+    store, runtime_paths = _build_store(tmp_path)
+    _write_runtime_pack(runtime_paths)
+    for session_id, status in (
+        ("purge-completed", "completed"),
+        ("purge-aborted", "aborted"),
+        ("purge-idle", "idle"),
+        ("purge-created", "created"),
+    ):
+        store.create_session(
+            session_id=session_id,
+            name=session_id,
+            pack="claude-code",
+            created_at="2026-03-11T10:00:00Z",
+        )
+        if status != "created":
+            store.update_session_status(
+                session_id,
+                status=status,
+                started_at="2026-03-11T10:01:00Z",
+                completed_at="2026-03-11T10:10:00Z" if status != "idle" else None,
+            )
+
+    app = create_app(store=store, runtime_paths=runtime_paths)
+    with TestClient(app) as client:
+        with patch("cognitive_switchyard.server.cleanup_session_worktree_if_needed") as mock_cleanup:
+            resp = client.delete("/api/sessions")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": 2}
+    assert sorted(call.args[0].id for call in mock_cleanup.call_args_list) == [
+        "purge-aborted",
+        "purge-completed",
+    ]
+    assert sorted(session.id for session in store.list_sessions()) == [
+        "purge-created",
+        "purge-idle",
+    ]
+
+
+def test_dag_endpoint_joins_task_titles_and_statuses(tmp_path: Path) -> None:
+    """GET /dag must label resolution.json nodes with the store's title and status."""
+    store, runtime_paths = _build_store(tmp_path)
+    _write_runtime_pack(runtime_paths)
+    session = store.create_session(
+        session_id="dag-join",
+        name="DAG Join",
+        pack="claude-code",
+        created_at="2026-03-09T10:00:00Z",
+    )
+    _register_task(store, session.id, task_id="001", title="First synthetic task")
+    _register_task(
+        store, session.id, task_id="002", title="Second synthetic task", depends_on=("001",)
+    )
+    store.project_task(session.id, "001", status="done", timestamp="2026-03-09T10:07:00Z")
+    app = create_app(store=store, runtime_paths=runtime_paths)
+    with TestClient(app) as client:
+        # Without resolution.json the graph comes from the store.
+        fallback = client.get(f"/api/sessions/{session.id}/dag").json()
+
+        runtime_paths.session_paths(session.id).resolution.write_text(
+            json.dumps(
+                {
+                    "resolved_at": "2026-03-09T10:05:30Z",
+                    "tasks": [
+                        {"task_id": "001", "depends_on": [], "anti_affinity": [], "exec_order": 1},
+                        {"task_id": "002", "depends_on": ["001"], "anti_affinity": [], "exec_order": 2},
+                        {"task_id": "999", "depends_on": [], "anti_affinity": [], "exec_order": 3},
+                    ],
+                    "groups": [],
+                    "conflicts": [],
+                    "notes": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        resolved = client.get(f"/api/sessions/{session.id}/dag").json()
+
+    expected = {
+        "001": ("First synthetic task", "done"),
+        "002": ("Second synthetic task", "ready"),
+    }
+    assert {t["task_id"]: (t["title"], t["status"]) for t in fallback["tasks"]} == expected
+    resolved_nodes = {t["task_id"]: t for t in resolved["tasks"]}
+    assert {
+        task_id: (resolved_nodes[task_id]["title"], resolved_nodes[task_id]["status"])
+        for task_id in expected
+    } == expected
+    assert resolved_nodes["002"]["depends_on"] == ["001"]
+    # A node the store does not know keeps only its graph fields.
+    assert "title" not in resolved_nodes["999"]
+    assert "status" not in resolved_nodes["999"]

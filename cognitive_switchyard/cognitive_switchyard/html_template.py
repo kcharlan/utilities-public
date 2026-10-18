@@ -1083,9 +1083,9 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                   auto_fix_enabled: config.auto_fix_enabled ?? true,
                   auto_fix_max_attempts: config.auto_fix_max_attempts ?? 2,
                   poll_interval: config.poll_interval ?? 0.05,
-                  task_idle_timeout: config.task_idle_timeout ?? "",
-                  task_max_timeout: config.task_max_timeout ?? "",
-                  session_max_timeout: config.session_max_timeout ?? ""
+                  task_idle_timeout: config.task_idle ?? "",
+                  task_max_timeout: config.task_max ?? "",
+                  session_max_timeout: config.session_max ?? ""
                 };
               }
 
@@ -1577,6 +1577,15 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                     intField("verification_interval", setupDraft.verification_interval);
                     intField("auto_fix_max_attempts", setupDraft.auto_fix_max_attempts);
                     floatField("poll_interval", setupDraft.poll_interval);
+                    // Timeouts accept 0 ("no limit"); a blank field keeps the pack default.
+                    const timeoutField = (key, val) => {
+                      if (val === "" || val === null || val === undefined) return;
+                      const n = parseInt(val, 10);
+                      if (n >= 0) config[key] = n;
+                    };
+                    timeoutField("task_idle", setupDraft.task_idle_timeout);
+                    timeoutField("task_max", setupDraft.task_max_timeout);
+                    timeoutField("session_max", setupDraft.session_max_timeout);
                     if (typeof setupDraft.auto_fix_enabled === "boolean") {
                       config.auto_fix_enabled = setupDraft.auto_fix_enabled;
                     }
@@ -2103,6 +2112,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                     {view === "dag" ? (
                       <DagView
                         dag={dag}
+                        liveTasks={tasks}
                         onBack={() => setView("monitor")}
                         onOpenTask={openTaskDetail}
                       />
@@ -4021,8 +4031,18 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 );
               }
 
-              function DagView({ dag, onBack, onOpenTask }) {
-                const tasks = dag?.tasks || [];
+              function DagView({ dag, liveTasks, onBack, onOpenTask }) {
+                // The DAG payload is fetched once; overlay the live task list
+                // (kept current over WebSocket) so labels and colors stay fresh.
+                const tasks = useMemo(() => {
+                  const liveById = new Map((liveTasks || []).map((task) => [task.task_id, task]));
+                  return (dag?.tasks || []).map((task) => {
+                    const live = liveById.get(task.task_id);
+                    return live
+                      ? { ...task, title: live.title ?? task.title, status: live.status ?? task.status }
+                      : task;
+                  });
+                }, [dag, liveTasks]);
                 const groups = dag?.groups || [];
 
                 // Topological layout: compute depth per node from dependencies
@@ -4191,6 +4211,16 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                 const allEdges = [...dependsEdges, ...antiAffinityEdges];
                 const [flowNodes, setFlowNodes] = useState(allNodes);
                 const [flowEdges, setFlowEdges] = useState(allEdges);
+                // flowNodes owns positions and selection after the first render;
+                // refresh only each task node's label and border on status changes.
+                const taskStateKey = JSON.stringify(tasks.map((task) => [task.task_id, task.title || "", task.status || ""]));
+                useEffect(() => {
+                  const graphNodesById = new Map(graphNodes.map((node) => [node.id, node]));
+                  setFlowNodes((currentNodes) => currentNodes.map((node) => {
+                    const next = graphNodesById.get(node.id);
+                    return next ? { ...node, data: next.data, style: next.style } : node;
+                  }));
+                }, [taskStateKey]);
                 return (
                   <div className="dag-shell">
                     <div className="page">

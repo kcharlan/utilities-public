@@ -1144,23 +1144,34 @@ def create_app(
     def get_dag(session_id: str) -> dict[str, Any]:
         _ensure_session_exists(store, session_id)
         session_paths = runtime_paths.session_paths(session_id)
+        session_tasks = _serialize_session_tasks(store, session_id)
         if session_paths.resolution.is_file():
-            return json.loads(session_paths.resolution.read_text(encoding="utf-8"))
-        return {
-            "resolved_at": None,
-            "tasks": [
-                {
-                    "task_id": task.task_id,
-                    "depends_on": list(task.depends_on),
-                    "anti_affinity": list(task.anti_affinity),
-                    "exec_order": task.exec_order,
-                }
-                for task in _list_session_tasks(store, session_id)
-            ],
-            "groups": [],
-            "conflicts": [],
-            "notes": None,
-        }
+            dag = json.loads(session_paths.resolution.read_text(encoding="utf-8"))
+        else:
+            dag = {
+                "resolved_at": None,
+                "tasks": [
+                    {
+                        "task_id": task["task_id"],
+                        "depends_on": task["depends_on"],
+                        "anti_affinity": task["anti_affinity"],
+                        "exec_order": task["exec_order"],
+                    }
+                    for task in session_tasks
+                ],
+                "groups": [],
+                "conflicts": [],
+                "notes": None,
+            }
+        # resolution.json records only the graph; join each node's current
+        # title and status so the DAG view can label and color it.
+        task_state = {task["task_id"]: task for task in session_tasks}
+        for node in dag.get("tasks", []):
+            state = task_state.get(node.get("task_id"))
+            if state is not None:
+                node["title"] = state["title"]
+                node["status"] = state["status"]
+        return dag
 
     @app.get("/api/sessions/{session_id}/dashboard")
     def get_dashboard(session_id: str) -> dict[str, Any]:
@@ -1352,9 +1363,11 @@ def create_app(
 
     @app.delete("/api/sessions")
     def purge_completed_sessions() -> dict[str, int]:
+        # Idle sessions are reusable and keep their worktrees, so History's
+        # "Purge All" removes only the finished sessions it lists and counts.
         deleted = 0
         for session in store.list_sessions():
-            if session.status in {"idle", "completed", "aborted"}:
+            if session.status in {"completed", "aborted"}:
                 cleanup_session_worktree_if_needed(session)
                 store.delete_session(session.id)
                 deleted += 1
