@@ -183,4 +183,46 @@ struct TapFileReaderTests {
         #expect(read("url dynamic_url\nurl 'https://example.invalid/synthetic-tool-4.5.6.zip'") == nil)
         #expect(read("version ENV['V']\nversion '4.5.6'") == nil)
     }
+
+    @Test func blockBearingVersionsNeverFallBackOrYieldToLaterVersions() {
+        for statement in ["version do", "version compute_version do", "version '4.5.6'.then do"] {
+            for laterVersion in ["", "version '7.8'"] {
+                let text = """
+                class SyntheticTool < Formula
+                  \(statement)
+                    version "1.2.3"
+                  end
+                  \(laterVersion)
+                  url "https://example.invalid/synthetic-tool-9.0.1.zip"
+                end
+                """
+                #expect(read(text) == nil, "Unreadable first version: \(statement); later: \(laterVersion)")
+            }
+        }
+    }
+
+    @Test func blockBearingFieldsRespectFirstStatementPrecedence() {
+        #expect(read("version '4.5.6'\nversion compute_version do\nversion '7.8'\nend")?.version == "4.5.6")
+        #expect(read("url compute_url do\nversion '7.8'\nend\nurl 'https://example.invalid/synthetic-tool-9.0.1.zip'") == nil)
+    }
+
+    @Test func blockBearingVersionsInIgnoredScopesDoNotCount() {
+        let text = """
+        class SyntheticTool < Formula
+          resource "synthetic-resource" do
+            version compute_version do
+              version "1.2.3"
+            end
+          end
+          on_intel do
+            version do
+              version "2.3.4"
+            end
+          end
+          url "https://example.invalid/synthetic-tool-9.0.1.zip"
+        end
+        """
+        #expect(read(text, arm64: true)?.version == "9.0.1")
+        #expect(read(text, arm64: false) == nil)
+    }
 }

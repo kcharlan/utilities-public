@@ -46,17 +46,21 @@ public enum TapFileReader {
                                     architecture: selected != nil, branchTaken: selected == true))
                 continue
             }
+            // Presence and first-statement precedence apply even when a field
+            // has an unreadable block argument. Record it before suppressing
+            // that block's body, while respecting the enclosing scope.
+            if counting {
+                let arguments = arguments(of: statement)
+                if command == "app" { apps.append(arguments) }
+                else if ["version", "url", "revision", "desc", "homepage", "auto_updates"].contains(command), fields[command] == nil {
+                    fields[command] = arguments
+                }
+            }
             if statement.contains(.word("do")) {
                 let allowed = statement == [.word(command), .word("do")] &&
                     (["stable", "on_macos"].contains(command) || command == (arm64 ? "on_arm" : "on_intel"))
                 scopes.append(Scope(active: counting && allowed, parentActive: counting))
                 continue
-            }
-            guard counting else { continue }
-            let arguments = arguments(of: statement)
-            if command == "app" { apps.append(arguments) }
-            else if ["version", "url", "revision", "desc", "homepage", "auto_updates"].contains(command), fields[command] == nil {
-                fields[command] = arguments
             }
         }
 

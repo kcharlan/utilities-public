@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-18: Record unreadable DSL fields before suppressing their blocks
+
+Brew Version's tap reader skipped a `version compute_version do` statement
+while entering its ignored block, then treated the explicit version as absent
+and accepted a later URL or literal version. Record first-field presence in
+the active package scope before handling its block. Preserve the unreadable
+arguments and suppress the body independently. Regress both URL fallback and
+later literal replacement, plus matching and ignored architecture scopes, so
+the correction cannot admit fields from a suppressed parent.
+
 ## 2026-10-18: Port regex anchors and filename suffix removal together
 
 Brew Version's Homebrew detector matched ordinary URLs but diverged after
