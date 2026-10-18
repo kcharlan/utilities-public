@@ -232,7 +232,7 @@ new_fixture() {
     "$FIXTURE_HOME/.config" \
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
-  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
@@ -244,6 +244,14 @@ new_fixture() {
   write_synthetic_file "$FIXTURE_REPO/storage_monitor/native/Makefile" 'invented native makefile'
   write_synthetic_file "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c" $'invented native source\n#define SMW_PROTOCOL 1'
   chmod 644 "$FIXTURE_REPO/storage_monitor/native/Makefile" "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c"
+
+  for native_input in Package.swift Makefile Sources/synthetic.swift Tests/BrewVersionCLITests/Fixtures/expected-help.txt; do
+    write_synthetic_file "$FIXTURE_REPO/brew_version/$native_input" "invented brew $native_input"
+    chmod 644 "$FIXTURE_REPO/brew_version/$native_input"
+  done
+  mkdir -p "$FIXTURE_REPO/brew_version/Resources"
+  cp "$REPO_UNDER_TEST/brew_version/Resources/Info.plist" "$FIXTURE_REPO/brew_version/Resources/Info.plist"
+  chmod 644 "$FIXTURE_REPO/brew_version/Resources/Info.plist"
 
   local mapping source_relative deployed_name source_file deployed_file
   for mapping in "${COPY_MAPPINGS[@]}"; do
@@ -318,6 +326,8 @@ new_fixture() {
   git -C "$FIXTURE_REPO" commit -qm "synthetic passing baseline"
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/native-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/storage-monitor-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/brew-version-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   local tracked_file
   for project in "${HOME_PROJECTS[@]}"; do
@@ -1602,6 +1612,63 @@ test_native_colophon_deployment() {
 }
 test_native_colophon_deployment
 
+test_native_brew_version_deployment() {
+  new_fixture
+  local before="$FIXTURE_ROOT/brew-before.snapshot" after="$FIXTURE_ROOT/brew-after.snapshot"
+  snapshot_fixture "$before"
+  run_audit
+  snapshot_fixture "$after"
+  assert_status 0 "$AUDIT_STATUS" 'brew native passing baseline'
+  assert_contains "$AUDIT_STDOUT" 'OK: brew-version native deployment'
+  assert_fixture_unchanged "$before" "$after"
+
+  local target
+  for target in Library/Scripts/brew-version "Applications/Brew Version.app/Contents/MacOS/BrewVersion"; do
+    new_fixture
+    target="$FIXTURE_HOME/$target"
+    print 'synthetic artifact drift' >> "$target"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'brew artifact bytes drift'
+    assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+    new_fixture
+  done
+  for target in "Brew Version.app/Contents/MacOS/BrewVersion" "Brew Version.app/Contents" "Brew Version.app"; do
+    new_fixture
+    chmod 711 "$FIXTURE_HOME/Applications/$target"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'brew app mode drift'
+    assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+    new_fixture
+  done
+  print 'synthetic drift' >> "$FIXTURE_REPO/brew_version/Sources/synthetic.swift"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew source drift'
+  assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+  new_fixture
+  rm "$FIXTURE_SCRIPTS/.brew-version-native.json"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew receipt missing'
+  assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached brew_version/Package.swift
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew source removed from index'
+  assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
+  new_fixture
+  rm "$FIXTURE_REPO/brew_version/Resources/Info.plist"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew required source missing'
+  assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt
+  git -C "$FIXTURE_REPO" commit -qm 'Omit synthetic required help input'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew required help missing'
+  assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
+  assert_not_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+}
+test_native_brew_version_deployment
+
 test_storage_monitor_deployment() {
   new_fixture
   local before="$FIXTURE_ROOT/storage-before.snapshot"
@@ -1659,7 +1726,8 @@ test_native_required_installers() {
   local mapping installer label
   for mapping in \
     'tools/deploy_colophon.mjs|colophon native' \
-    'tools/deploy_storage_monitor.mjs|storage_monitor'; do
+    'tools/deploy_storage_monitor.mjs|storage_monitor' \
+    'tools/deploy_brew_version.mjs|brew-version native'; do
     new_fixture
     installer="${mapping%%|*}"
     label="${mapping#*|}"

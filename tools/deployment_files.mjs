@@ -6,13 +6,32 @@ import {execFileSync} from 'node:child_process';
 export const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export function exists(file) { try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 
+export function cleanupDirectories(directories) {
+  const errors = [];
+  for (const directory of directories) {
+    try { fs.rmSync(directory, {recursive: true, force: true}); }
+    catch (error) { errors.push(new Error('Cleanup failed for ' + directory + ': ' + error.message, {cause: error})); }
+  }
+  return errors;
+}
+export function finishCleanup(primary, cleanupErrors, completedMessage, backup) {
+  if (!primary && !cleanupErrors.length) return;
+  if (primary && !cleanupErrors.length && !backup) throw primary;
+  const message = (primary ? primary.message : completedMessage)
+    + (cleanupErrors.length ? '; ' + cleanupErrors.map(error => error.message).join('; ') : '')
+    + (backup ? '; Recovery backup: ' + backup : '');
+  throw new AggregateError([...(primary ? [primary] : []), ...cleanupErrors], message);
+}
+
 export function atomicFile(target, bytes, mode, stagePrefix) {
   const staging = fs.mkdtempSync(path.join(path.dirname(target), stagePrefix));
+  let primary;
   try {
     const candidate = path.join(staging, 'candidate'); fs.writeFileSync(candidate, bytes, {mode}); fs.chmodSync(candidate, mode);
     if (!fs.readFileSync(candidate).equals(bytes) || (regular(candidate).mode & 0o7777) !== mode) throw new Error('Native staged bytes/mode mismatch');
     fs.renameSync(candidate, target);
-  } finally { fs.rmSync(staging, {recursive: true, force: true}); }
+  } catch (error) { primary = error; }
+  finishCleanup(primary, cleanupDirectories([staging]), 'File publication completed, but cleanup failed');
 }
 
 export function parseIndexSnapshot(file) {

@@ -1,0 +1,41 @@
+public let usageText = """
+Fetch current package versions directly from Homebrew's public API.
+
+USAGE
+  brew-version [OPTIONS] PACKAGE...
+
+OPTIONS
+  --watch [SECONDS]  Repeat until any package's version changes.
+                     Default: 300 seconds. Must be a positive integer.
+  --formula          Look up all packages as formulas only.
+  --cask             Look up all packages as casks only.
+  --version          Show the brew-version version.
+  -h, --help         Show this help.
+
+EXAMPLES
+  brew-version wget                         One package
+  brew-version firefox codexbar             Multiple packages
+  brew-version --cask docker                Force cask lookup
+  brew-version --watch firefox              Watch every 5 minutes
+  brew-version --watch 60 firefox codexbar   Watch every minute
+
+OUTPUT
+  One package:       version only
+  Multiple packages: package: version
+  Watch mode:        local date/time, package and version on each check
+
+  Watch checks immediately, then sleeps between checks. When a version
+  changes, it prints the old and new versions and exits successfully.
+  Lookup errors stop the command. Press Ctrl-C to stop watching.
+
+PACKAGE LOOKUP
+  Each package tries formula first, then cask, so mixed lists work.
+  --formula and --cask override this for the entire command.
+  Use canonical names such as wget, python@3.13 or google-chrome.
+  Third-party taps are not supported.
+
+EXIT CODES
+  0  Success (including a version change detected while watching)
+  1  Lookup error
+  2  Invalid arguments
+"""
