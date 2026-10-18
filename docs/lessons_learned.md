@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-17: Reused AppKit windows keep their original Space
+
+Brew Version keeps one Settings `NSWindow` alive across opens. Closing it only
+orders it out, so it stays on the desktop Space where it was first shown, and
+reopening it from the menu bar on another desktop switched the user back to
+that Space. Give a reused utility window `.moveToActiveSpace` so it comes to
+the user's current desktop instead; the reused status panel also needs
+`.fullScreenAuxiliary` to appear over a full-screen app. Offscreen and single-desktop acceptance
+cannot reveal this; test the window's collection behavior, and check native
+acceptance with at least two desktops.
+
 ## 2026-10-17: Check the native window's viewport after rapid content resizes
 
 A correct SwiftUI measurement and NSScrollView.documentVisibleRect can still

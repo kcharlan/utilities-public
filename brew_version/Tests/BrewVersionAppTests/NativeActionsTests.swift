@@ -520,6 +520,19 @@ private struct ReopenCatalogTransport: HTTPTransport {
         login.setEnabled(false)
         #expect(!login.enabled && login.error == nil)
     }
+    @Test func settingsWindowOpensOnActiveSpace() {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-settings-space-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: QuietNotifier())
+        var windows: [NSWindow] = []
+        let settings = SettingsWindowController(controller: controller, notifier: UserNotifier(service: NotificationServiceStub()),
+            login: LoginItem(service: LoginServiceStub()), activate: {}, present: { windows.append($0) })
+        settings.show()
+        // The reused window must follow the user's current Space instead of
+        // switching the user back to the Space where it was first shown.
+        #expect(windows.first?.collectionBehavior.contains(.moveToActiveSpace) == true)
+        #expect(windows.first?.collectionBehavior.contains(.canJoinAllSpaces) == false)
+    }
     @Test func homepageActionRejectsUnsafeSchemes() {
         var opened: [URL] = []
         let action = HomepageAction(open: { opened.append($0) })
