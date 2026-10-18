@@ -8,6 +8,236 @@ import re
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from test_opencode import database, CLOCK, SESSION as OPENCODE_SESSION
+import sqlite3
+
+
+def opencode_page(native, mutate=None):
+    database(native)
+    return source_page(native, mutate)
+
+
+def test_opencode_source_hash_descendants_actions_and_version(page, native):
+    def mutate(payload):
+        row = next(r for r in payload["sessions"] if r["provider"] == "opencode")
+        child = copy.deepcopy(row)
+        child.update(id="synthetic-opencode-child", kind="subagent", parent_id=row["id"], children=[])
+        foreign = copy.deepcopy(child)
+        foreign.update(id="synthetic-foreign-child", provider="claude")
+        row["children"] = [child["id"], foreign["id"]]
+        payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
+    payload = opencode_page(native, mutate)
+    assert payload["meta"]["version"] == "0.4.0"
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.0")
+        page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
+        reader = page.locator("[data-reader]")
+        expect(reader).to_have_attribute("data-provider", "opencode")
+        expect(reader.locator('[data-subagent-id="synthetic-foreign-child"]')).to_have_count(0)
+        expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy log path")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.syntheticCopied = text}, configurable: true})")
+        reader.get_by_role("button", name="Copy session ID", exact=True).click()
+        assert page.evaluate("window.syntheticCopied") == OPENCODE_SESSION
+        page.get_by_role("searchbox").fill("synthetic")
+        page.wait_for_timeout(250)
+        page.get_by_role("button", name="Claude", exact=True).click()
+        assert all(value in page.url for value in ["q=synthetic", "a=1", "h=0", "sort=cost", "p=all"]) and "&s=" not in page.url
+        for provider, visible in [("codex", False), ("claude", False), ("opencode", True)]:
+            page.goto(native.page.as_uri() + "#v=session&p=all&src=" + provider + "&s=synthetic-opencode-child")
+            expect(page.locator("[data-reader]")).to_have_count(int(visible))
+        assert requests == []
+
+
+def test_opencode_provider_shares_colors_ties_and_phone(page, native):
+    def mutate(payload):
+        for row in payload["sessions"]:
+            row["workspace"] = "synthetic-shared-workspace"
+            row["buckets"] = [[CLOCK // 900000, "synthetic-shared-model", "standard", 10, 0, 0, 0, 0, 1, row["provider"]]]
+            # A second day distinguishes a Claude/OpenCode tie from a three-way tie.
+            row["buckets"].append([(CLOCK + 86400000) // 900000, "synthetic-shared-model", "standard", 0 if row['provider'] == 'codex' else 10, 0, 0, 0, 0, 0, row['provider']])
+        payload["meta"]["sources"]["claude"]["token_data_from_ms"] = CLOCK + 100000
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + "#p=all")
+        for provider in ["codex", "claude", "opencode"]:
+            share = page.locator('[data-kpi="tokens"] [data-provider="' + provider + '"]')
+            value = 10 if provider == "codex" else 20
+            expect(share).to_have_attribute("data-share", str(value))
+            assert float(share.evaluate("e => parseFloat(e.style.width)")) == pytest.approx(value * 2, abs=.001)
+            expect(page.locator('.bar-fill[data-provider="' + provider + '"]')).to_have_count(1)
+        page.get_by_role("button", name="Calendar tokens", exact=True).click()
+        expect(page.locator('[data-day="2026-01-02"]')).to_have_attribute("data-provider", "codex")
+        expect(page.locator('[data-day="2026-01-03"]')).to_have_attribute("data-provider", "claude")
+        page.evaluate("window.__colophonTest.state.writeState({...window.__colophonTest.state.readState(), src:'opencode'})")
+        expect(page.locator('[data-day="2026-01-02"]')).to_have_attribute("data-provider", "opencode")
+        assert page.locator('.brand').evaluate("e => getComputedStyle(e).color") == "rgb(215, 166, 255)"
+        assert page.locator('[data-day="2026-01-02"]').evaluate("e => getComputedStyle(e).backgroundColor") in ["rgb(46, 33, 66)", "rgb(83, 58, 122)", "rgb(143, 104, 198)", "rgb(215, 166, 255)"]
+        expect(page.locator('[data-token-boundary]')).to_have_count(0)
+        page.set_viewport_size({"width": 375, "height": 812})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=native.root / "opencode-phone.png", full_page=True)
+        page.goto(native.page.as_uri() + "#p=custom&from=2025-01-01&to=2025-01-02&src=opencode")
+        for share in page.locator('.provider-shares span').all():
+            assert share.evaluate("e => e.style.width") == "0%"
+        assert requests == []
+
+
+@pytest.mark.parametrize('missing_cost', [False, True])
+def test_opencode_native_residual_outside_and_mixed_rate_tooltips(page, native, missing_cost):
+    path = database(native, tokens=30, cost=.5)
+    with sqlite3.connect(path) as db:
+        value = json.loads(db.execute("SELECT data FROM session_message WHERE type='assistant'").fetchone()[0])
+        value.update(tokens={'input': 10, 'output': 0}, cost=.25)
+        if missing_cost:
+            del value['cost']
+        db.execute("UPDATE session_message SET data=? WHERE type='assistant'", (json.dumps(value),))
+        db.execute("INSERT INTO migration VALUES ('99999999999999_synthetic_future',?)", (CLOCK,))
+    def mutate(payload):
+        shared = next(b[1] for r in payload['sessions'] if r['provider'] == 'opencode' for b in r['buckets'] if b[1] == 'synthetic-provider/synthetic-model')
+        for row in payload['sessions']:
+            if row['provider'] == 'opencode':
+                continue
+            row['buckets'] = [[CLOCK // 900000, shared, 'standard', 10, 0, 0, 0, 0, None, row['provider']]]
+            row['own_usage'].update(cost_usd=None, unpriced_tokens=10, priced_by=[])
+        claude = next(r for r in payload['sessions'] if r['provider'] == 'claude')
+        claude['own_usage']['priced_by'] = [['claude:synthetic-rate', 0, 'fast']]
+        payload['models']['claude:synthetic-rate'] = {'periods': [{'effective_from_ms': None, 'source': 'curated'}]}
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-session-id="' + OPENCODE_SESSION + '"]').click()
+        reader = page.locator('[data-reader]')
+        for locator in [reader.locator('[data-reader-stat="cost"]'), reader.locator('[data-turn-cost]').first, reader.locator('[data-outside-usage]')]:
+            title = locator.get_attribute('title')
+            assert 'OpenCode catalog estimate' in title and 'rate period unknown' not in title
+        if missing_cost:
+            assert 'unpriced' in reader.locator('[data-turn-cost]').first.get_attribute('title')
+        page.locator('.brand').click()
+        title = page.locator('[data-model]').filter(has_text='synthetic-provider/synthetic-model').get_attribute('title')
+        assert all(text in title for text in ['OpenCode catalog estimate', 'rate period unknown', 'unpriced', 'claude:synthetic-rate', 'fast']), title
+        assert requests == []
+
+
+def test_opencode_native_cross_session_overflow_preserves_individual_costs(page, native):
+    database(native, cost=1.2e308)
+    database(native, 'opencode-other.db', session='synthetic-other', cost=1.2e308)
+    assert native.build().returncode == 0
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#p=all&src=opencode')
+        expect(page.locator('[data-kpi="cost"] .kpi-value')).to_have_text('costs unavailable')
+        expect(page.locator('[data-cost-aggregate]')).to_contain_text('OpenCode total')
+        for row in native.payload()['sessions']:
+            assert row['own_usage']['cost_usd'] == 1.2e308
+        assert 'Infinity' not in page.locator('body').inner_text()
+        assert requests == []
+
+
+def test_opencode_zero_provider_shares_and_reader_overflow(page, native):
+    def mutate(payload):
+        for row in payload['sessions']:
+            row['workspace'] = 'synthetic-zero-workspace'
+            for turn in row['turns']:
+                turn.update(end_ms=turn['start_ms'], duration_ms=0)
+            row['buckets'] = [[CLOCK // 900000, 'synthetic-model', 'standard', 0, 0, 0, 0, 0, 0, row['provider']]]
+        row = next(r for r in payload['sessions'] if r['provider'] == 'opencode')
+        row['own_usage']['cost_usd'] = 1.2e308
+        child = copy.deepcopy(row)
+        child.update(id='synthetic-overflow-child', kind='subagent', children=[])
+        row['children'] = [child['id']]
+        payload['subagents'][child['id']] = child
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#p=all')
+        for selector in ['[data-kpi="tokens"] .provider-shares span', '.bar-fill']:
+            assert page.locator(selector).evaluate_all("nodes => nodes.length === 3 && nodes.every(e => e.style.width === '0%')")
+        page.goto(native.page.as_uri() + '#v=session&p=all&src=opencode&s=' + OPENCODE_SESSION)
+        expect(page.locator('[data-reader-stat="cost"] .reader-stat-value')).to_have_text('costs unavailable')
+        expect(page.locator('[data-cost-aggregate]')).to_contain_text('reader ' + OPENCODE_SESSION)
+        assert requests == []
+
+
+@pytest.mark.parametrize("status", ["disabled", "absent", "unsupported", "unreadable", "ok"])
+def test_opencode_source_states_structured_diagnostics_and_preview(page, native, status):
+    def mutate(payload):
+        payload["meta"]["sources"]["opencode"].update(status=status, databases=[
+            {"path": "/synthetic/good.db", "status": "ok", "reason": None, "primary": True, "untested": True, "latest_migration": "synthetic-future", "accepted_sessions": 1, "accepted_messages": 2},
+            {"path": "/synthetic/bad.db", "status": "unreadable", "reason": "Synthetic read failure"},
+            {"path": "/synthetic/opencode-next.db", "status": "skipped", "reason": "Synthetic preview skip"}])
+        payload["diagnostics"].update(opencode_unknown_message_types={"synthetic-future": 3},
+            opencode_requests_without_usage={"synthetic-provider": 2}, opencode_cost_without_tokens=1,
+            opencode_untested_schema=[{"path": "/synthetic/good.db", "latest_migration": "synthetic-future"}],
+            opencode_rollup_residuals={"synthetic-session": {"session": "synthetic-session", "database": "/synthetic/good.db", "input": 4, "cost": None, "date": CLOCK, "date_basis": "session_start"}})
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        footer = page.locator('#colophon-footer')
+        expect(footer.locator('[data-diagnostic="opencode_unknown_message_types"] summary')).to_contain_text("3")
+        expect(footer.locator('[data-diagnostic="opencode_requests_without_usage"] summary')).to_contain_text("2")
+        expect(footer.locator('[data-diagnostic="opencode_rollup_residuals"] summary')).to_contain_text("1")
+        footer.locator('[data-diagnostic="opencode_rollup_residuals"]').evaluate("e => e.open = true")
+        expect(footer).to_contain_text("date_basis: session_start")
+        expect(footer).to_contain_text("display convention")
+        footer.locator('[data-opencode-databases]').evaluate("e => e.open = true")
+        expect(footer).to_contain_text("/synthetic/opencode-next.db")
+        expect(footer).to_contain_text("Synthetic read failure")
+        assert "[object Object]" not in footer.text_content()
+        page.get_by_role('button', name="OpenCode" + (" · no data" if status != "ok" else ""), exact=True).click()
+        if status != "ok":
+            expected = {"disabled": "--no-opencode", "absent": "Checked", "unsupported": "unsupported", "unreadable": "unreadable"}[status]
+            expect(page.locator('.empty-state')).to_contain_text(expected)
+        assert requests == []
+
+
+@pytest.mark.parametrize("project_archived", [False, True])
+def test_opencode_native_database_archive_reader_and_estimates(page, native, project_archived):
+    path = database(native, archived=None if project_archived else CLOCK, project_archived=CLOCK if project_archived else None)
+    assert native.build().returncode == 0
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        row = page.locator('[data-session-id="' + OPENCODE_SESSION + '"]')
+        expect(row).to_contain_text("PROJECT ARCHIVED" if project_archived else "ARCHIVED")
+        row.click()
+        reader = page.locator('[data-reader]')
+        expect(reader).to_contain_text("Synthetic kite done")
+        expect(reader.locator('[data-reader-stat="cost"]')).to_contain_text("$0.25")
+        for locator in [reader.locator('[data-reader-stat="cost"]'), reader.locator('[data-turn-cost]').first]:
+            title = locator.get_attribute('title')
+            assert "OpenCode catalog estimate" in title and "rate period unknown" not in title
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth")
+        assert page.locator('[data-turn-card]').evaluate_all("nodes => nodes.every(e => e.getBoundingClientRect().right <= innerWidth)")
+        page.get_by_role('button', name='archived: shown', exact=True).click()
+        expect(page.locator('[data-list-row]')).to_have_count(0)
+        assert path.is_file() and requests == []
+
+
+def test_opencode_mixed_model_tooltips_and_finite_aggregate_overflow(page, native):
+    def mutate(payload):
+        for row in payload['sessions']:
+            row['buckets'] = [[CLOCK // 900000, 'synthetic-shared', 'standard', 10, 0, 0, 0, 0, 1.2e308, row['provider']]]
+            row['own_usage'].update(cost_usd=1.2e308, priced_by=[])
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#p=all')
+        expect(page.locator('[data-kpi="cost"] .kpi-value')).to_contain_text('costs unavailable')
+        expect(page.locator('[data-cost-aggregate]')).to_contain_text('cost aggregate unavailable')
+        model = page.locator('[data-model="synthetic-shared"]')
+        assert 'OpenCode catalog estimate' in model.get_attribute('title')
+        assert 'rate period unknown' in model.get_attribute('title')
+        assert 'Infinity' not in page.locator('body').inner_text()
+        assert page.locator('.provider-shares span').evaluate_all("nodes => nodes.every(e => !/NaN|Infinity/.test(e.style.width))")
+        page.get_by_role('button', name='OpenCode', exact=True).click()
+        assert 'rate period unknown' not in page.locator('[data-model="synthetic-shared"]').get_attribute('title')
+        assert 'unavailable' not in page.locator('[data-kpi="cost"] .kpi-value').inner_text()
+        assert requests == []
 
 def browser_page(**context_options):
     with sync_playwright() as playwright:

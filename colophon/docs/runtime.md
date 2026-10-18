@@ -16,21 +16,28 @@ window starts at or before the earliest session. The forward arrow stops at the
 current period, or for Custom once the range reaches the snapshot day. `[` and
 `]` step back and forward unless focus is in a text field.
 
-The page defaults to all sources. Its All/Codex/Claude segmented
-switch persists as `src=all|codex|claude` in the URL hash and retains the
+The page defaults to all sources. Its All/Codex/Claude/OpenCode segmented
+switch persists as `src=all|codex|claude|opencode` in the URL hash and retains the
 other filters. Switching away from a selected reader's provider closes that
 reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
-The snapshot log count always includes both sources, regardless of the switch.
+The snapshot log count always includes Codex and Claude logs, regardless of the
+switch; accepted OpenCode database counts are shown separately. The footer
+displays the embedded payload's release version (`colophon 0.4.0`).
 
-Codex uses green and Claude uses blue. In All, KPI share rules and workspace
+Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
-selected metric (ties use Codex). Model, recent and list rows carry provider
+selected metric (ties follow Codex, Claude, OpenCode order). Model, recent and list rows carry provider
 marks. Costs retain each provider's independent availability; a known subtotal
 also names unavailable providers. Absent/disabled sources remain selectable
-with a no-data label and explain the checked paths or `--no-claude` flag.
+with a no-data label and explain the checked paths or disabling flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
+The Claude boundary note appears only in Claude and All views. OpenCode's
+unsupported/unreadable views name database reasons. An expandable database
+footer preserves successful, failed and skipped-preview entries even when a
+sibling database succeeded. Structured diagnostics retain their contextual
+fields, count-map sums and residual-session counts.
 
 Claude history-only sessions are shown by default. The independent history-only
 toggle persists as `h=1|0` in the hash, like the archive toggle `a`; both apply
@@ -113,7 +120,14 @@ credential tables or unrelated key/value settings are read. Costs are OpenCode
 catalog estimates, not invoices. Source session/project archive precedence is
 reported as `archive_reason=session|project`; absolute source provenance is
 `opencode_database`. Rows expose `capabilities` permitting only Copy session ID.
-Continuation stays disabled until disposable CLI/database acceptance succeeds.
+Continuation stays disabled: disposable CLI/database acceptance is unmet.
+No empirical evidence currently establishes originating-database routing,
+existing-service behavior or a verified CLI launch mode for `OPENCODE_DB`.
+Copy session ID remains available for live, archived and subagent rows; OpenCode
+offers no Codex links or Copy log path. Project archives are labeled separately.
+Reader, turn, outside-turn and model tooltips identify OpenCode's recorded catalog
+estimates without inventing rate-period warnings. Mixed-provider models retain
+the other providers' real rate provenance, unknown-period and unpriced warnings.
 
 OpenCode source counters describe deduplicated accepted database facts and
 inserted display/accounting rows: excluded cross-provider collisions do not
@@ -129,7 +143,10 @@ does not prove event ownership or timing. Stderr summarizes list lengths,
 count-map sums and residual-session counts and prints per-database reasons,
 including skipped previews, even when aggregate status is ok. Finite request
 costs that overflow a provider total make that CLI total unavailable with a
-contextual diagnostic while preserving valid session costs.
+contextual diagnostic while preserving valid session costs. Page totals, daily
+cells, model totals and reader/list cost sums also check finite addition. An
+overflowing summary remains unavailable after later additions; the footer names
+the affected provider, day, model or reader. Other valid summaries stay visible.
 
 Default Claude search roots are `~/.config/claude/projects`,
 `~/.claude/projects`, the Desktop `local-agent-mode-sessions` and

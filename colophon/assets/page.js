@@ -4,20 +4,22 @@
   // --- data
   let data, currentState, searchTimer, earliestMs = null, dialShown = null;
   const controls = {};
+  const PROVIDERS = ["codex", "claude", "opencode"];
+  const PROVIDER_NAMES = {codex: "Codex", claude: "Claude", opencode: "OpenCode"};
   const usageProviders = new WeakMap();
   const providerOf = row => typeof row === "string" ? row : row.provider || "codex";
   const providerMatch = (row, state) => !state.src || state.src === "all" || providerOf(row) === state.src;
   function providerCosts(provider) {return data.meta.sources?.[provider]?.costs || data.meta.costs;}
   function costAvailability(rows) {
     const providers = [...new Set(rows.map(providerOf))];
-    if (!providers.length) providers.push(currentState.src === "claude" ? "claude" : "codex");
+    if (!providers.length) providers.push(...(PROVIDERS.includes(currentState.src) ? [currentState.src] : PROVIDERS.filter(provider => !sourceMissing(provider))));
     const unavailable = providers.filter(provider => !providerCosts(provider).available);
     return {any: providers.some(provider => providerCosts(provider).available), complete: !unavailable.length, unavailable};
   }
   function scopedCostRows(now, state = currentState) {const scoped = scope(data.sessions, state, now); return [...scoped.rows, ...scoped.agents];}
   function availableCostText(value, unpriced, rows) {
     const availability = costAvailability(rows);
-    return availability.any ? costText(value) + (unpriced ? " + unpriced" : "") + availability.unavailable.map(provider => " · " + provider + " costs unavailable").join("") : "costs unavailable";
+    return availability.any && value !== null ? costText(value) + (unpriced ? " + unpriced" : "") + availability.unavailable.map(provider => " · " + provider + " costs unavailable").join("") : "costs unavailable";
   }
   const periods = ["mtd", "qtd", "ytd", "7d", "30d", "90d", "all", "custom"];
   // Calendar periods step by whole months, quarters or years; `o` counts steps back from the current one.
@@ -114,7 +116,7 @@
       p: periods.includes(raw.p) ? raw.p : defaultPeriod,
       a: raw.a === "0" ? "0" : "1",
       h: raw.h === "0" ? "0" : "1",
-      src: ["codex", "claude", "all"].includes(raw.src) ? raw.src : "all",
+      src: [...PROVIDERS, "all"].includes(raw.src) ? raw.src : "all",
       sort: ["newest", "longest", "subtime", "tokens", "cost"].includes(raw.sort) ? raw.sort : "newest"
     };
     for (const key of ["from", "to", "day"]) if (parseDay(raw[key]) !== null) next[key] = raw[key];
@@ -241,6 +243,9 @@
     const sum = values.reduce((total, value) => total + value, 0);
     return valid(sum) ? sum : null;
   }
+  // Null is sticky: later valid costs must not repair an overflowing summary.
+  const addCost = (total, value) => total === null || value === null ? null : evidenceSum([total, value], true);
+  const bucketCosts = buckets => buckets.reduce((total, bucket) => bucket[8] === null ? total : addCost(total, bucket[8]), 0);
   const currencyMargin = (scale, operations) => Math.max(4 * operations * (Number.EPSILON * scale + Number.MIN_VALUE), 1e-9 * scale + 1e-9);
   function provesUsage(selected, total, turn, operations, currency = false) {
     if (evidenceSum([selected, total, turn], currency) === null || turn > total) return false;
@@ -310,7 +315,7 @@
       agent_ms: agents.reduce((sum, row) => sum + activeMs(turnIntervals(row, window)), 0), turns: turns.length,
       average_ms: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
       input, tokens: usage.reduce((sum, b) => sum + b[3] + b[6], 0), cached_share: input ? cached / input : null,
-      cost: usage.reduce((sum, b) => sum + (typeof b[8] === "number" && Number.isFinite(b[8]) ? b[8] : 0), 0),
+      cost: bucketCosts(usage),
       unpriced: usage.some(b => b[8] === null), aborted: turns.filter(t => t.status === "aborted").length,
       interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
       live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
@@ -344,7 +349,7 @@
       cell.tokens += bucket[3] + bucket[6];
       if (!cell.providers.includes(providerOf(row))) cell.providers.push(providerOf(row));
       if (bucket[8] === null) cell.unpriced = true;
-      else cell.cost += bucket[8];
+      else cell.cost = addCost(cell.cost, bucket[8]);
     }
     return [...days.values()];
   }
@@ -370,7 +375,7 @@
       if (!item.providers.includes(providerOf(row))) item.providers.push(providerOf(row));
       item.tokens += bucket[3] + bucket[6];
       if (bucket[8] === null) item.unpriced = true;
-      else item.cost += bucket[8];
+      else item.cost = addCost(item.cost, bucket[8]);
     }
     return [...items.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
   }
@@ -412,8 +417,8 @@
     return node;
   }
   function mountTopbar() {
-    controls.sources = ["all", "codex", "claude"].map(src => {
-      const name = src === "all" ? "All" : src === "codex" ? "Codex" : "Claude";
+    controls.sources = ["all", ...PROVIDERS].map(src => {
+      const name = src === "all" ? "All" : PROVIDER_NAMES[src];
       const missing = src !== "all" && data.meta.sources?.[src]?.status !== undefined && data.meta.sources[src].status !== "ok";
       return el("button", {type: "button", "data-source": src, text: name + (missing ? " · no data" : ""), onclick: () => act({src})});
     });
@@ -447,7 +452,7 @@
     const priceText = catalog.fetched_at_ms === null ? "catalog unavailable" : "catalog " + catalog.source_host + " " + localStamp(catalog.fetched_at_ms);
     document.getElementById("colophon-topbar").replaceChildren(
       el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
-      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? Object.values(data.meta.sources).reduce((sum, source) => sum + source.logs, 0) : data.meta.counts.logs) + " logs · " + priceText}),
+      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? PROVIDERS.reduce((sum, provider) => sum + (data.meta.sources[provider]?.logs || 0), 0) : data.meta.counts.logs) + " logs" + (data.meta.sources?.opencode ? " · " + data.meta.sources.opencode.databases.filter(db => db.status === "ok").length + " OpenCode databases" : "") + " · " + priceText}),
       el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "period-controls"}, controls.dial, el("div", {class: "periods", role: "group", "aria-label": "Period"}, ...controls.periods)), controls.archive, controls.history), controls.chips);
   }
   // --- period dial
@@ -530,9 +535,11 @@
       el("button", {class: "fchip", type: "button", text: label + ": " + currentState[key] + " ×", "aria-label": "Remove " + label + " filter", onclick: () => act({[key]: undefined})})));
   }
   const lineDiagnosticCategories = new Set(["malformed_lines", "truncated_lines", "recovered_lines"]);
+  const countMapDiagnostics = new Set(["unknown_record_types", "claude_unknown_record_types", "opencode_unknown_message_types", "opencode_unknown_content_types", "opencode_requests_without_usage"]);
   function diagnosticCount(key, value) {
     if (lineDiagnosticCategories.has(key)) return value.total;
-    if (key === "unknown_record_types" || key === "claude_unknown_record_types") return Object.values(value).reduce((sum, count) => sum + count, 0);
+    if (countMapDiagnostics.has(key)) return Object.values(value).reduce((sum, count) => sum + count, 0);
+    if (key === "opencode_rollup_residuals") return Object.keys(value).length;
     if (Array.isArray(value)) return value.length;
     if (typeof value === "number") return value;
     if (typeof value === "boolean") return Number(value);
@@ -540,12 +547,14 @@
   }
   function diagnosticItems(key, value) {
     if (lineDiagnosticCategories.has(key)) return value.files;
-    if (key === "unknown_record_types" || key === "claude_unknown_record_types") return Object.entries(value).map(([type, count]) => type + ": " + count);
+    if (countMapDiagnostics.has(key)) return Object.entries(value).map(([type, count]) => type + ": " + count);
+    if (key === "opencode_rollup_residuals") return Object.values(value);
     return Array.isArray(value) ? value : [value];
   }
   function diagnosticText(value) {
     if (typeof value === "string") return value;
-    if (value && typeof value === "object") return Object.entries(value).map(([key, entry]) => key + ": " + (Array.isArray(entry) ? entry.join(", ") : String(entry))).join(" · ");
+    if (Array.isArray(value)) return value.map(diagnosticText).join(", ");
+    if (value && typeof value === "object") return Object.entries(value).map(([key, entry]) => key + ": " + diagnosticText(entry)).join(" · ");
     return String(value);
   }
   function renderFooter() {
@@ -557,24 +566,45 @@
         el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
       if (key === "claude_unknown_record_types") row.append(el("p", {text: "Claude's log format may have changed"}));
+      const explanations = {
+        opencode_schema_errors: "OpenCode database schema is unsupported; these databases were skipped.",
+        opencode_untested_schema: "OpenCode schema is newer than the tested version; structural checks passed, but the format is untested.",
+        opencode_unknown_message_types: "OpenCode's message format may have changed; unknown messages are not interpreted.",
+        opencode_unknown_content_types: "OpenCode's content format may have changed; unknown parts are not interpreted.",
+        opencode_requests_without_usage: "Requests without usable token usage, including explicit zero usage. No tokens are inferred from session totals.",
+        opencode_cost_without_tokens: "Recorded cost is retained without inventing tokens or a model for these requests.",
+        opencode_rollup_residuals: "Positive session totals remaining after message usage. Session-start dating is a display convention; it does not establish title, compaction or revert ownership or an event date. Null cost remains unknown.",
+        opencode_rollup_shortfalls: "Message usage exceeds session totals. Usage is preserved, never subtracted; session-start dating is a display convention."
+      };
+      if (explanations[key]) row.append(el("p", {text: explanations[key]}));
       if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
       if (key === "page_size_over_limit") row.append(el("p", {text: "page size: " + diagnostic.page_size_bytes + " bytes"}));
       return row;
     });
-    document.getElementById("colophon-footer").replaceChildren(el("p", {text: "API-equivalent estimate (not billed)"}),
-      ...(currentState.src === "all" ? ["codex", "claude"].filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
+    const databases = data.meta.sources?.opencode?.databases || [];
+    const overflow = costAggregateFailures();
+    document.getElementById("colophon-footer").replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
+      ...(currentState.src === "all" ? PROVIDERS.filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
       ...tokenBoundaryNote(),
+      ...(databases.length ? [el("details", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
+      ...(overflow.length ? [el("p", {"data-cost-aggregate": "", text: "cost aggregate unavailable: " + overflow.join("; ") + ". Finite costs exceed the supported sum; valid individual costs are preserved."})] : []),
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
   }
   function tokenBoundaryNote() {
     const boundary = data.meta.sources?.claude?.token_data_from_ms;
-    if (currentState.src === "codex" || !validMs(boundary)) return [];
+    if (!["all", "claude"].includes(currentState.src) || !validMs(boundary)) return [];
     const days = calendar(data.sessions, currentState, data.meta.generated_at_ms);
     return days.length && boundary > parseDay(days[0].day) ? [el("p", {"data-token-boundary": "", text: "Claude token data starts " + localStamp(boundary)})] : [];
   }
   const sourceMissing = provider => data.meta.sources?.[provider] && data.meta.sources[provider].status !== "ok";
   function sourceAbsence(provider) {
     const source = data.meta.sources?.[provider];
+    if (source?.status === "disabled") return PROVIDER_NAMES[provider] + " disabled by --no-" + provider;
+    if (provider === "opencode") {
+      const databases = source?.databases || [];
+      if (["unsupported", "unreadable"].includes(source?.status)) return "OpenCode " + source.status + ": " + databases.filter(db => db.reason).map(db => db.path + ": " + db.reason).join(" · ");
+      return "No OpenCode data found. Checked " + [...databases.map(db => db.path), source?.data_dir].filter(Boolean).join(", ");
+    }
     if (provider === "claude") return source?.status === "disabled" ? "Claude disabled by --no-claude" : "No Claude data found. Checked " + [...(source?.roots || []), source?.history_path].filter(Boolean).join(", ");
     return "No Codex sessions found in " + (source?.home || data.meta.codex_home);
   }
@@ -582,7 +612,27 @@
   let calendarMetric = "sessions", workspaceMetric = "active_ms", expandedWorkspaces = false;
   const countText = value => new Intl.NumberFormat(undefined, {maximumFractionDigits: 1, notation: value >= 10000 ? "compact" : "standard"}).format(value);
   const durationText = value => value === null ? "unknown" : value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : value >= 60000 ? (value / 60000).toFixed(1) + "m" : (value / 1000).toFixed(1) + "s";
-  const costText = value => "$" + value.toFixed(2);
+  const costText = value => quantity(value) ? "$" + value.toFixed(2) : "costs unavailable";
+  function costAggregateFailures() {
+    const now = data.meta.generated_at_ms, failures = [];
+    const check = (state, context) => {
+      const {window, rows, agents} = scope(data.sessions, state, now), sums = new Map();
+      for (const row of [...rows, ...agents]) for (const bucket of windowBuckets(row, window)) {
+        if (bucket[8] === null) continue;
+        for (const key of ["total", "day " + localDayKey(bucket[0] * 900000), "model " + bucket[1]]) {
+          sums.set(key, addCost(sums.has(key) ? sums.get(key) : 0, bucket[8]));
+        }
+      }
+      for (const [key, value] of sums) if (value === null) failures.push(context + " " + key);
+    };
+    check(currentState, currentState.src === "all" ? "all providers" : PROVIDER_NAMES[currentState.src]);
+    if (currentState.src === "all") for (const src of PROVIDERS) check({...currentState, src}, PROVIDER_NAMES[src]);
+    if (currentState.s) {
+      const row = data.sessions.find(row => row.id === currentState.s) || data.subagents[currentState.s];
+      if (row && evidenceSum([row, ...descendants(row, data.subagents, currentState)].map(item => item.own_usage.cost_usd).filter(value => value !== null), true) === null) failures.push("reader " + row.id);
+    }
+    return failures;
+  }
   const metricText = (key, value) => ["active_ms", "agent_ms"].includes(key) ? durationText(value) : key === "cost" ? costText(value) : countText(value);
   function drill(patch) {act({v: "list", s: undefined, ...patch});}
   function panel(name, ...children) {return el("section", {class: "overview-panel"}, el("h2", {class: "section-label", text: "// " + name}), ...children);}
@@ -593,7 +643,7 @@
   }
   function renderKpis(now) {
     const totals = kpis(data.sessions, currentState, now), window = periodWindow(currentState.p, now, currentState);
-    const shares = Object.fromEntries(["codex", "claude"].map(src => [src, kpis(data.sessions, {...currentState, src}, now)]));
+    const shares = Object.fromEntries(PROVIDERS.map(src => [src, kpis(data.sessions, {...currentState, src}, now)]));
     const previous = previousWindow(currentState.p, window, now, currentState);
     const prior = previous ? kpis(data.sessions, {...currentState, _window: previous}, now) : null;
     const labels = {sessions: "sessions", active_ms: "your active time", agent_ms: "agent time", turns: "turns", tokens: "tokens", cost: "estimated cost", aborted: "aborted turns"};
@@ -609,10 +659,12 @@
         const [amount, ...notes] = value.split(" · ");
         tile.querySelector(".kpi-value").replaceChildren(el("span", {text: amount}), el("span", {class: "cost-note", text: " · " + notes.join(" · ")}));
       }
-      const providers = currentState.src === "all" ? ["codex", "claude"] : [currentState.src];
-      const shareTotal = providers.reduce((sum, provider) => sum + shares[provider][key], 0);
+      const providers = currentState.src === "all" ? PROVIDERS : [currentState.src];
+      // Scale before summing shares: individually finite costs may overflow their sum.
+      const maximum = Math.max(0, ...providers.map(provider => shares[provider][key] || 0));
+      const shareTotal = maximum ? providers.reduce((sum, provider) => sum + (shares[provider][key] || 0) / maximum, 0) : 0;
       tile.append(el("div", {class: "provider-shares", "aria-label": "Provider share"}, ...providers.map(provider =>
-        el("span", {"data-provider": provider, "data-share": shares[provider][key], title: (provider === "claude" ? "Claude" : "Codex") + ": " + metricText(key, shares[provider][key]), style: "width:" + (shareTotal ? shares[provider][key] / shareTotal * 100 : 0) + "%"}))));
+        el("span", {"data-provider": provider, "data-share": shares[provider][key], title: PROVIDER_NAMES[provider] + ": " + metricText(key, shares[provider][key]), style: "width:" + (shareTotal ? (shares[provider][key] || 0) / maximum / shareTotal * 100 : 0) + "%"}))));
       if (key === "turns") tile.append(el("p", {class: "kpi-sub", text: "avg " + durationText(totals.average_ms)}));
       if (key === "tokens") tile.append(el("p", {class: "kpi-sub", text: totals.cached_share === null ? "cached input: unknown" : (totals.cached_share * 100).toFixed(1) + "% cached input"}));
       if (key === "cost") tile.append(el("p", {class: "kpi-sub", text: "API-equivalent estimate (not billed)"}));
@@ -620,7 +672,7 @@
         el("button", {type: "button", class: "status-link", "data-status": "interrupted", text: totals.interrupted + " interrupted", onclick: () => drill({st: "interrupted", sort: "newest"})}),
         el("span", {text: " · "}), el("button", {type: "button", class: "status-link", "data-status": "abandoned", text: totals.abandoned + " abandoned", onclick: () => drill({st: "abandoned", sort: "newest"})})));
       if (totals.live[key]) tile.append(el("p", {class: "live", text: "LIVE · includes " + totals.live[key] + " running"}));
-      if (prior && (key !== "cost" || (costAvailability(scopedCostRows(now)).complete && costAvailability(scopedCostRows(now, {...currentState, _window: previous})).complete))) {
+      if (prior && (key !== "cost" || (totals.cost !== null && prior.cost !== null && costAvailability(scopedCostRows(now)).complete && costAvailability(scopedCostRows(now, {...currentState, _window: previous})).complete))) {
         const delta = totals[key] - prior[key];
         tile.append(el("p", {class: "kpi-delta", "data-value": delta, text: (delta >= 0 ? "▲ " : "▼ ") + metricText(key, Math.abs(delta)) + " " + comparisonText(previous)}));
       }
@@ -629,7 +681,7 @@
   }
   function renderCalendar(now) {
     const days = calendar(data.sessions, currentState, now), ramp = levels(days.map(day => day[calendarMetric]));
-    const byProvider = Object.fromEntries(["codex", "claude"].map(src => [src, new Map(calendar(data.sessions, {...currentState, src}, now).map(day => [day.day, day]))]));
+    const byProvider = Object.fromEntries(PROVIDERS.map(src => [src, new Map(calendar(data.sessions, {...currentState, src}, now).map(day => [day.day, day]))]));
     const toggle = el("div", {class: "metric-toggle"}, ...[["sessions", "sessions"], ["active_ms", "active time"], ["tokens", "tokens"], ["cost", "cost"]].map(([key, label]) =>
       el("button", {type: "button", text: label, "aria-label": "Calendar " + label, "aria-pressed": key === calendarMetric, onclick: () => {calendarMetric = key; render();}})));
     const grid = el("div", {class: "calendar-grid"});
@@ -637,7 +689,7 @@
     for (let n = 0; n < offset; n++) grid.append(el("span", {class: "heat-cell blank"}));
     days.forEach((day, n) => {
       const value = calendarMetric === "cost" ? availableCostText(day.cost, day.unpriced, day.providers) : metricText(calendarMetric, day[calendarMetric]);
-      const provider = currentState.src === "all" ? ((byProvider.claude.get(day.day)?.[calendarMetric] || 0) > (byProvider.codex.get(day.day)?.[calendarMetric] || 0) ? "claude" : "codex") : currentState.src;
+      const provider = currentState.src === "all" ? PROVIDERS.reduce((best, src) => (byProvider[src].get(day.day)?.[calendarMetric] || 0) > (byProvider[best].get(day.day)?.[calendarMetric] || 0) ? src : best, PROVIDERS[0]) : currentState.src;
       grid.append(el("button", {type: "button", class: "heat-cell", "data-day": day.day, "data-value": day[calendarMetric], "data-level": ramp[n],
         "data-provider": provider,
         title: day.day + " · " + value, "aria-label": day.day + " · " + value, onclick: () => drill({day: day.day})}));
@@ -675,7 +727,7 @@
   const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
   function renderWorkspaces(now) {
     const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
-    const byProvider = Object.fromEntries(["codex", "claude"].map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
+    const byProvider = Object.fromEntries(PROVIDERS.map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
     const maximum = rows.length ? rows[0][workspaceMetric] : 0;
     const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
       el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
@@ -687,7 +739,7 @@
     return result;
   }
   function workspaceFills(row, maximum, byProvider) {
-    const providers = currentState.src === "all" ? ["codex", "claude"] : [currentState.src];
+    const providers = currentState.src === "all" ? PROVIDERS : [currentState.src];
     const total = providers.reduce((sum, provider) => sum + (byProvider[provider].get(row.key)?.[workspaceMetric] || 0), 0);
     return providers.map(provider => {
       const value = byProvider[provider].get(row.key)?.[workspaceMetric] || 0;
@@ -698,11 +750,13 @@
     const {window, rows, agents} = scope(data.sessions, currentState, now), refs = new Map();
     const matching = [...rows, ...agents].filter(row => windowBuckets(row, window).some(bucket => bucket[1] === model));
     if (!costAvailability(matching).any) return "costs unavailable";
-    let unpriced = false, unknown = false;
+    let unpriced = false, unknown = false, recordedEstimate = false, rateBased = false;
     for (const row of [...rows, ...agents]) {
       const buckets = windowBuckets(row, window).filter(bucket => bucket[1] === model);
       if (!buckets.length) continue;
       unpriced ||= buckets.some(bucket => bucket[8] === null);
+      if (providerOf(row) === "opencode") {recordedEstimate = true; continue;}
+      rateBased = true;
       const recorded = row.own_usage.priced_by;
       if (!recorded.length) unknown = true;
       for (const ref of recorded) {
@@ -715,8 +769,8 @@
         refs.set(JSON.stringify(ref), label + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
       }
     }
-    return ["Recorded rate periods in matching sessions (all dates)", ...refs.values(),
-      ...(unknown || !refs.size ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : []), ...costAvailability(matching).unavailable.map(provider => provider + " costs unavailable")].join("\n");
+    return [...(rateBased ? ["Recorded rate periods in matching sessions (all dates)"] : []), ...(recordedEstimate ? ["OpenCode catalog estimate (not an invoice; recorded by OpenCode)"] : []), ...refs.values(),
+      ...(unknown || (rateBased && !refs.size) ? ["rate period unknown"] : []), ...(unpriced ? ["unpriced"] : []), ...costAvailability(matching).unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function renderModels(now) {
     return panel("models", ...models(data.sessions, currentState, now).map(row => el("button", {class: "model-row", type: "button", "data-provider": row.providers.length === 1 ? row.providers[0] : "all", "data-model": row.model, title: rateTooltip(row.model, now), onclick: () => drill({model: row.model})},
@@ -743,7 +797,7 @@
       list.append(el("div", {class: "recent-row", "data-session-id": row.id, "data-provider": providerOf(row),
         onclick: event => {if (!event.target.closest("button")) act({v: "session", s: row.id});}},
         el("span", {class: "recent-time", text: validMs(row.start_ms) ? localStamp(row.start_ms).slice(5) : "unknown"}),
-        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · ARCHIVED" : "") + (row.history_only ? " · HISTORY ONLY" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
+        el("button", {class: "session-title", type: "button", text: row.title + (row.archived ? " · " + archiveLabel(row) : "") + (row.history_only ? " · HISTORY ONLY" : ""), title: row.title_full, onclick: () => act({v: "session", s: row.id})}),
         el("span", {class: "recent-workspace", text: workspaceName(row.workspace), title: workspaceName(row.workspace)}), el("span", {class: "recent-metrics", text: durationText(own) + " · " + agents + " subagents", title: durationText(own) + " · " + agents + " subagents"})));
     }
     result.append(list, el("button", {type: "button", class: "view-all", "data-view-all": "", text: "view all " + scope(data.sessions, currentState, now).rows.length + " →", onclick: () => drill({sort: "newest"})}));
@@ -761,16 +815,17 @@
   const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
   const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
   function flagsLine(row) {
-    return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: "ARCHIVED"})] : []),
+    return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: archiveLabel(row)})] : []),
       ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
   }
+  const archiveLabel = row => row.archive_reason === "project" ? "PROJECT ARCHIVED" : "ARCHIVED";
   function listFigures(row) {
     const window = periodWindow(currentState.p, data.meta.generated_at_ms, currentState), children = descendants(row, data.subagents, currentState);
     const buckets = [row, ...children].flatMap(item => windowBuckets(item, window));
     return {active: activeMs(turnIntervals(row, window)), agents: children.length,
       subtime: children.reduce((sum, child) => sum + activeMs(turnIntervals(child, window)), 0),
       tokens: buckets.reduce((sum, bucket) => sum + bucket[3] + bucket[6], 0),
-      cost: costAvailability([row, ...children]).any ? buckets.reduce((sum, bucket) => sum + (quantity(bucket[8]) ? bucket[8] : 0), 0) : null,
+      cost: costAvailability([row, ...children]).any ? bucketCosts(buckets) : null,
       providers: [row, ...children].map(providerOf),
       unpriced: buckets.some(bucket => bucket[8] === null)};
   }
@@ -824,18 +879,21 @@
   function readerUsage(rows) {
     const tokens = rows.map(row => usageTokens(row.own_usage)), costs = rows.map(row => row.own_usage.cost_usd);
     return {tokens: evidenceSum(tokens), cost: evidenceSum(costs, true),
+      cost_overflow: evidenceSum(costs.filter(value => value !== null), true) === null,
       unpriced: rows.some(row => row.own_usage.unpriced_tokens > 0)};
   }
   function usageCostText(usage, provider = usageProviders.get(usage) || "codex") {
-    if (!providerCosts(provider).available) return "costs unavailable";
+    if (!providerCosts(provider).available || usage.cost_overflow) return "costs unavailable";
     return (quantity(usage.cost_usd) ? costText(usage.cost_usd) : "unknown") + (usage.unpriced_tokens > 0 ? " + unpriced" : "");
   }
   function usageRateTooltip(usages) {
     const availability = costAvailability(usages.map(usage => usageProviders.get(usage) || "codex"));
     if (!availability.any) return "costs unavailable · API-equivalent estimate (not billed)";
     const refs = new Map();
-    let unknown = false;
+    let unknown = false, recordedEstimate = false, rateBased = false;
     for (const usage of usages) {
+      if (usageProviders.get(usage) === "opencode") {recordedEstimate = true; continue;}
+      rateBased = true;
       if (usageTokens(usage) > 0 && !usage.priced_by.length) unknown = true;
       for (const ref of usage.priced_by) {
         const [key, index, role] = ref, pricing = data.models[key];
@@ -846,7 +904,7 @@
         refs.set(JSON.stringify(ref), (override ? override[1] + " (catalog rate used for priority turns of " + override[2] + ")\n" : "") + key + " · " + role + " · effective_from: " + effective + " · source: " + period.source);
       }
     }
-    return ["API-equivalent estimate (not billed)", ...refs.values(), ...(unknown || !refs.size ? ["rate period unknown"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
+    return ["API-equivalent estimate (not billed)", ...(recordedEstimate ? ["OpenCode catalog estimate (not an invoice; recorded by OpenCode)"] : []), ...refs.values(), ...(unknown || (rateBased && !refs.size) ? ["rate period unknown"] : []), ...(usages.some(usage => usage.unpriced_tokens > 0 || usage.cost_usd === null) ? ["unpriced"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
   function expandableText(text, label = "more") {
     const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
@@ -1011,19 +1069,21 @@
     const isSubagent = !row.kind || row.kind === "subagent" || row.kind === "orphan";
     const supports = action => action && action[lifecycle] && (!isSubagent || action.subagent);
     const claude = providerOf(row) === "claude";
+    const codex = providerOf(row) === "codex";
+    const capable = action => !row.capabilities || row.capabilities[action] === true;
     const usablePath = value => typeof value === "string" && value.startsWith("/") && !/[\x00-\x1f\x7f]/.test(value);
-    const canContinue = claude ? supports(data.meta.links.claude_continue_in_cli) && usablePath(row.cwd) && usablePath(row.resume_config_dir) &&
-      !row.history_only && !row.flags.includes("transcript_deleted") : supports(data.meta.links.continue_in_cli);
+    const canContinue = capable("continue_in_cli") && (claude ? supports(data.meta.links.claude_continue_in_cli) && usablePath(row.cwd) && usablePath(row.resume_config_dir) &&
+      !row.history_only && !row.flags.includes("transcript_deleted") : codex && supports(data.meta.links.continue_in_cli));
     // Claude CLI searches from cwd; CLAUDE_CONFIG_DIR chooses its session store.
     // https://code.claude.com/docs/en/cli-reference (--resume)
     // https://code.claude.com/docs/en/settings (CLAUDE_CONFIG_DIR)
     const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : "codex resume " + row.id;
     header.append(el("div", {class: "reader-buttons"},
-      ...(!claude && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+      ...(codex && capable("open_in_codex") && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
       ...(canContinue ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy(continuation())})] : []),
-      el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)}),
-      ...(!row.history_only && !row.flags.includes("transcript_deleted") ? [el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})] : [])), copyArea);
+      ...(capable("copy_session_id") ? [el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)})] : []),
+      ...((codex || claude) && capable("copy_log_path") && !row.history_only && !row.flags.includes("transcript_deleted") ? [el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})] : [])), copyArea);
     const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
       el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
     const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms ? row.end_ms - row.start_ms : null;
@@ -1034,8 +1094,8 @@
       stat("turns", "turns", unresolved ? null : row.turns.length, unresolved ? "withheld" : countText(row.turns.length), "your turns"),
       stat("subagents", "subagents", children.length, countText(children.length), durationText(agentMs) + " agent time"),
       stat("tokens", "tokens", full.tokens, full.tokens === null ? "unknown" : countText(full.tokens), "total (yours + subagents) · " + (own.tokens === null ? "unknown" : countText(own.tokens)) + " yours + " + (agent.tokens === null ? "unknown" : countText(agent.tokens)) + " subagents"),
-      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, unpriced_tokens: full.unpriced ? 1 : 0}, providerOf(row)),
-        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, unpriced_tokens: agent.unpriced ? 1 : 0}, providerOf(row)) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
+      stat("cost", "estimated cost", full.cost, usageCostText({cost_usd: full.cost, cost_overflow: full.cost_overflow, unpriced_tokens: full.unpriced ? 1 : 0}, providerOf(row)),
+        "total (yours + subagents) · API-equivalent estimate (not billed) · " + usageCostText(row.own_usage) + " yours + " + usageCostText({cost_usd: agent.cost, cost_overflow: agent.cost_overflow, unpriced_tokens: agent.unpriced ? 1 : 0}, providerOf(row)) + " subagents", usageRateTooltip([row, ...children].map(item => item.own_usage)))));
     if (unresolved) reader.append(el("p", {class: "reader-note", text: "history boundary unresolved — turn metrics withheld"}));
     else reader.append(renderTimeline(row, children, matched), ...row.turns.map(turn => renderTurn(turn, matched, visibleChildren)));
     if (Object.entries(row.outside_usage).some(([key, value]) => !["cost_usd", "priced_by"].includes(key) && quantity(value) && value > 0)) reader.append(el("p", {

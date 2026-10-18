@@ -12,12 +12,13 @@ vendored zstd 1.5.7 decoder in the executable.
 
 Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
 subagents, archive state and recorded catalog estimates to the native pipeline,
-payload and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
+payload, offline page and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
 selects one file and `--no-opencode` disables discovery. Sources are reread
-each run without a parse cache. The page's OpenCode controls and presentation
-are a separate integration step; continuation remains disabled.
+each run without a parse cache. The page retains database status/reasons,
+preview skips, missing usage and residual diagnostics. Continuation remains
+disabled: disposable CLI/database routing acceptance has not been established.
 
-The page's All/Codex/Claude switch preserves filters and uses green/blue
+The page's All/Codex/Claude/OpenCode switch preserves filters and uses green/blue/violet
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI
 origins with known cwd/config root; copying never runs the CLI. See

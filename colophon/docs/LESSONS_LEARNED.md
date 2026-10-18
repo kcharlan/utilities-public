@@ -186,6 +186,13 @@ creation: default-enabled SQLite providers can otherwise inspect a real home
 even during an offline smoke run. Strip environment overrides and set a fresh
 synthetic HOME as well as COLOPHON_HOME.
 
+Browser sums need independent finite checks across sessions and providers,
+including daily/model and reader summaries. Preserve valid individual costs,
+keep failed sums unavailable, and scale provider shares before summing their
+weights so overflow cannot create invalid CSS widths. Recorded OpenCode costs
+carry estimate provenance rather than a missing rate-period warning; mixed
+tooltips must still retain genuine warnings from other providers.
+
 Count inherited OpenCode messages before request-kind filtering. The diagnostic
 describes every copied row, including prompts, control messages and running
 compactions; request eligibility describes a narrower accounting population.
