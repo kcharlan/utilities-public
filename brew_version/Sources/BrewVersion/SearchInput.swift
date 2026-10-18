@@ -50,14 +50,22 @@ import BrewVersionCore
         await lookup(controller: controller)
         guard !Task.isCancelled, self.request == request, completedRequest == request,
               controller.canSave, controller.results.indices.contains(index),
-              case .found(let listing, _, false) = controller.results[index] else { return }
+              case .found(let listing, _, false) = controller.results[index],
+              request.name == nil || (listing.name == request.name && listing.kind == request.kind) else { return }
         await undo.watch(listing.name, kind: listing.kind, controller: controller)
     }
     func watchChoice(_ choice: SearchChoice, undo: WatchUndoAction, controller: WatchController) async {
         switch choice {
         case .suggestion(let name, let kind):
             select(name: name, kind: kind)
-            await watchSelected(0, undo: undo, controller: controller)
+            let request = self.request
+            await lookup(controller: controller)
+            guard !Task.isCancelled, self.request == request, completedRequest == request,
+                  let index = controller.results.firstIndex(where: {
+                      if case .found(let listing, _, false) = $0 { return listing.name == name && listing.kind == kind }
+                      return false
+                  }) else { return }
+            await watchSelected(index, undo: undo, controller: controller)
         case .result(let index): await watchSelected(index, undo: undo, controller: controller)
         }
     }

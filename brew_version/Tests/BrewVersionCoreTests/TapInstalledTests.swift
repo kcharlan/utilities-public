@@ -16,7 +16,7 @@ struct TapInstalledTests {
     @Test func tapInstallKeyedByFullName() throws {
         let f = try InstallationFixture()
         try f.install("prefix/Cellar/synthetic-shared/4.5.6", kind: .formula,
-                      tap: "SYNTHETIC-OWNER/homebrew-synthetic-tap")
+                      tap: "SYNTHETIC-OWNER/synthetic-tap")
         let r = reader(f, taps: [tap])
         let snapshot = r.snapshot(listings: [])
         #expect(snapshot.installed(full, kind: .formula) == .init(version: "4.5.6", source: .cellar))
@@ -49,7 +49,10 @@ struct TapInstalledTests {
             let wrongKind = kind == .formula ? "homebrew/cask" : "homebrew/core"
             for (receiptTap, tapped, expected): (String?, Bool, String?) in [
                 (officialTap, true, "official"), (wrongKind, true, nil),
-                ("SYNTHETIC-OWNER/homebrew-synthetic-tap", true, "tap"),
+                ("SYNTHETIC-OWNER/synthetic-tap", true, "tap"),
+                (officialTap.uppercased(), true, "official"),
+                ("homebrew/homebrew-\(kind == .formula ? "core" : "cask")", true, nil),
+                ("linuxbrew/core", true, nil),
                 (tap.description, false, nil), (nil, true, kind == .cask ? "official" : nil),
                 ("synthetic malformed/tap name", true, nil)
             ] {
@@ -86,13 +89,61 @@ struct TapInstalledTests {
 
     @Test func repeatedPrefixReceiptPreservesProvenance() throws {
         let f = try InstallationFixture()
-        let rawTap = "synthetic-owner/homebrew-homebrew-synthetic-tap"
-        try f.install("prefix/Cellar/synthetic-tool/4.5.6", kind: .formula, tap: rawTap)
-        let r = reader(f, taps: [TapName(rawTap)!])
+        // Homebrew tab.rb AbstractTab.create writes tap.name, already stripped
+        // once by Tap.fetch; a directory-style receipt was not writer-realistic.
+        let directoryTap = "synthetic-owner/homebrew-homebrew-synthetic-tap"
+        try f.install("prefix/Cellar/synthetic-tool/4.5.6", kind: .formula, tap: "synthetic-owner/homebrew-synthetic-tap")
+        let r = reader(f, taps: [TapName(directoryTap)!])
         let name = PackageName("synthetic-owner/homebrew-homebrew-synthetic-tap/synthetic-tool")!
         let different = PackageName("synthetic-owner/homebrew-synthetic-tap/synthetic-tool")!
         #expect(r.installed(name, kind: .formula, listing: nil)?.version == "4.5.6")
         #expect(r.snapshot(listings: []).installed(name, kind: .formula)?.version == "4.5.6")
         #expect(r.snapshot(listings: []).installed(different, kind: .formula) == nil)
     }
+
+    @Test func canonicalReceiptNeverAliasesAnotherTap() throws {
+        // AbstractTab.create stores Tap#name, not a directory/typed tap alias.
+        let canonical = TapName("synthetic-owner/homebrew-homebrew-synthetic-tap")!
+        for kind in [PackageKind.formula, .cask] {
+            for taps: Set<TapName> in [[canonical], [canonical, tap], [tap]] {
+                let f = try InstallationFixture()
+                let rack = kind == .formula ? "Cellar" : "Caskroom"
+                try f.install("prefix/\(rack)/synthetic-tool/4.5.6", kind: kind, tap: "synthetic-owner/homebrew-synthetic-tap")
+                let r = reader(f, taps: taps)
+                let expected = PackageName("synthetic-owner/homebrew-homebrew-synthetic-tap/synthetic-tool")!
+                let alias = PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!
+                let official = PackageName("synthetic-tool")!
+                let snapshot = r.snapshot(listings: [])
+                #expect(r.installed(expected, kind: kind, listing: nil)?.version == (taps.contains(canonical) ? "4.5.6" : nil))
+                #expect(snapshot.installed(expected, kind: kind)?.version == (taps.contains(canonical) ? "4.5.6" : nil))
+                for rejected in [alias, official] {
+                    #expect(r.installed(rejected, kind: kind, listing: nil) == nil)
+                    #expect(snapshot.installed(rejected, kind: kind) == nil)
+                }
+            }
+        }
+    }
+
+    @Test func receiptAdmissionCapturesTapMembershipOncePerOperation() throws {
+        let f = try InstallationFixture()
+        for (rack, kind) in [("Cellar", PackageKind.formula), ("Caskroom", .cask)] {
+            for short in ["synthetic-tool", "synthetic-app"] {
+                try f.install("prefix/\(rack)/\(short)/4.5.6", kind: kind, tap: tap.description)
+            }
+        }
+        let calls = TapProviderCalls()
+        let tap = self.tap
+        let r = InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [f.root.appendingPathComponent("prefix")]), applicationDirectories: [], tappedTaps: { calls.increment(); return [tap] })
+        #expect(r.installedPackages().count == 4)
+        #expect(calls.count == 1)
+        #expect(r.installed(PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!, kind: .formula, listing: nil)?.version == "4.5.6")
+        #expect(calls.count == 2)
+    }
+}
+
+private final class TapProviderCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func increment() { lock.lock(); defer { lock.unlock() }; value += 1 }
 }

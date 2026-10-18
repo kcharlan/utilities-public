@@ -9,13 +9,14 @@ implied by this record. Earlier approval below applies to its historical release
 
 | Automated check | Current result |
 | --- | --- |
-| `make -C brew_version test` | Passed: 243 core, 21 CLI and 72 app Swift tests; all 5 Node release integration cases; no skips. |
+| `make -C brew_version test` | Passed after final-review fixes: 245 core, 21 CLI and 74 app Swift tests; all 5 Node release integration cases; no skips. |
 | `make -C brew_version release` | Passed: release CLI/app builds and strict signature verification. |
 | `make -C brew_version acceptance` | Passed: 2 synthetic service tests and separately signed harness build; no GUI launched. |
 | `make -C brew_version settings-prototype` | Passed: separately signed maintained Settings prototype build; no GUI launched. |
-| `make -C brew_version snapshots` | Passed: all eighteen PNGs (nine states in both appearances), layout/pixel guards and bounded long-list checks. Every PNG was inspected visually. |
+| `make -C brew_version snapshots` | Passed after final-review fixes: eighteen PNGs and layout/pixel guards. Sixteen are byte-identical to the previously inspected set; both changed Other updates PNGs were inspected (only the refresh time changed). |
 | Signed CLI `--help` and `--version` | Passed offline; help matches the golden fixture and version reports 1.1.0. Source and built bundle plists match, including build 4. |
-| `node --test tools/tests/deploy_brew_version.test.mjs` | Passed: all 43 synthetic installer cases, no skips. |
+| Native/calculator installer suites | Passed: all 81 synthetic cases across Brew Version (43), Storage Monitor, Colophon and calculator-page installers; no skips. |
+| `node --test tools/tests/check_static_deployments.test.mjs` | Passed: all 17 cases, no skips. |
 | `zsh tools/tests/test_check_local_deployments.zsh` | Passed: `check_local_deployments tests: PASS`. |
 
 The final visual set includes `tap-watching` (official, amber tap and untapped
@@ -23,6 +24,32 @@ error rows) and `tap-suggestions` (tap kind/Installed labels), in light and dark
 All headers and footers are visible; errors wrap inside their rows. The
 version-dense tap row middle-truncates its secondary tap label; full identity
 remains available in help and accessibility. Rendering establishes layout only.
+
+Final review reproduced two source-identity defects. An explicit official
+suggestion/result or Other updates action could save a tap when the official
+source disappeared, because the final add repeated bare-name resolution.
+Explicit selections now use the shared exact-source search/add mode and match
+both name and kind. Raw free-text lookup/add retains official-first and unique
+tap fallback. The unchanged Undo restoration path retains all saved metadata.
+Behavioral regressions cover missing official suggestions, loss after displaying
+an official result, the shared Other updates Watch action, selected copy and an
+explicit cask choice alongside an existing formula watch. These failure cases
+have automated action evidence; no additional live native run was performed.
+
+Receipt provenance now validates canonical `source.tap` without typed prefix
+normalization. Pinned Homebrew commit
+`3073d6a8c34f71da054b000cfdbb62594a07c969` writes
+`formula_or_cask.tap&.name` in `Library/Homebrew/tab.rb:103` and `cask.tap&.name`
+in `Library/Homebrew/cask/tab.rb:56`; `tap.rb:302` lowercases the parsed name.
+Only case-folding is retained, and only canonical `homebrew/core` or
+`homebrew/cask` establishes official provenance. Three prior synthetic tests
+used directory aliases as receipt values; their fixtures were corrected to the
+writer format, with new rejection cases for unsupported official aliases.
+Formula/cask regressions cover repeated-prefix canonical taps alone, alongside
+the colliding normalized tap and after canonical source removal. Both read paths
+agree and never admit the installation as official or as the other tap.
+Each snapshot/point read captures tapped membership once; a four-receipt
+regression bounds provider calls without inspecting owner inventory.
 
 Native action regressions were written before UI edits and failed for missing
 row/status presentation, then passed. A further regression reproduced selecting
@@ -50,7 +77,7 @@ are invented and private; production has no simulation switch.
 | Login registration/approval, status refresh, settings handoff, logout/reboot and cleanup | Unmet: requires owner/system acceptance; no login registration changed. |
 | Deployment receipt, installed/running versions and installed login target | Unmet: no deployment authorized or performed. Verify agreement after separately approved deployment. |
 
-Controller native synthetic follow-up on the current signed harness observed
+Controller native synthetic follow-up on the preceding Task 9 signed harness observed
 an installed tap suggestion ranked first for `synthetic-shared`, separate
 official/tap rows, tap selection plus Return saving the full-name watch, an
 amber tap row and its full-name accessibility Watching group. The Copy upgrade

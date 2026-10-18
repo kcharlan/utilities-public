@@ -43,8 +43,9 @@ public struct InstalledReader: InstalledReading {
     }
 
     public func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion? {
+        let taps = tappedTaps()
         for prefix in prefixes {
-            guard let installation = admittedVersion(name, kind: kind, prefix: prefix),
+            guard let installation = admittedVersion(name, kind: kind, prefix: prefix, taps: taps),
                   installation.name == name else { continue }
             return resolvedVersion(installation.version, kind: kind, listing: listing)
         }
@@ -77,6 +78,7 @@ public struct InstalledReader: InstalledReading {
     /// Admit each rack once, retaining its selected version and provenance for
     /// both watch evaluation and Other updates. No second receipt pass is needed.
     public func snapshot(listings: [Listing]) -> InstalledSnapshot {
+        let taps = tappedTaps()
         var byKind: [PackageKind: [PackageName: Listing]] = [:]
         for listing in listings { byKind[listing.kind, default: [:]][listing.name] = listing }
         var result = InstalledSnapshot()
@@ -84,7 +86,7 @@ public struct InstalledReader: InstalledReading {
             for kind in [PackageKind.formula, .cask] {
                 for rack in directories(prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom")) {
                     guard let shortName = PackageName(rack.lastPathComponent),
-                          let installation = admittedVersion(shortName, kind: kind, prefix: prefix),
+                          let installation = admittedVersion(shortName, kind: kind, prefix: prefix, taps: taps),
                           result.versions[kind]?[installation.name] == nil else { continue }
                     let name = installation.name
                     result.versions[kind, default: [:]][name] = resolvedVersion(installation.version, kind: kind, listing: byKind[kind]?[name])
@@ -94,13 +96,16 @@ public struct InstalledReader: InstalledReading {
         return result
     }
 
-    // Receipt layout follows Homebrew at 19fe946b9a257cb41ebb5cef5c592ba7923d1f3b:
+    // Receipt layout/source writer verified in Homebrew at
+    // 3073d6a8c34f71da054b000cfdbb62594a07c969:
     // Tab.for_keg (tab/tab.rb), Cask::Tab.for_cask (cask/tab.rb),
     // Cask::Metadata#metadata_main_container_path and AbstractTab.create (tab.rb).
     // Legacy casks may lack a receipt; explicit invalid provenance is still rejected.
+    // AbstractTab.create stores canonical Tap#name. Only case is folded;
+    // typed/directory prefix aliases cannot establish receipt provenance.
     // Formulas always require a receipt. Both read paths use the receipt's
     // admitted identity, so a tap rack can never satisfy an official watch.
-    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix) -> (name: PackageName, version: String)? {
+    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix, taps: Set<TapName>) -> (name: PackageName, version: String)? {
         let shortName = name.shortName
         let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(shortName)
         guard isDirectory(rack) else { return nil }
@@ -129,16 +134,16 @@ public struct InstalledReader: InstalledReading {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let source = object["source"] as? [String: Any],
               let rawTap = source["tap"] as? String,
-              let tap = TapName(rawTap) else { return nil }
+              let tap = TapName(canonical: rawTap.lowercased()) else { return nil }
         let admittedName: PackageName?
         if tap.isOfficial {
             guard tap.description == (kind == .formula ? "homebrew/core" : "homebrew/cask") else { return nil }
             admittedName = PackageName(shortName)
         } else {
-            guard tappedTaps().contains(tap) else { return nil }
-            // Use the receipt input: composing with an already normalized tap
-            // would remove a second reserved repository prefix.
-            admittedName = PackageName("\(rawTap)/\(shortName)")
+            guard taps.contains(tap) else { return nil }
+            // AbstractTab.create writes Tap#name, already canonical. Never
+            // reinterpret a removed source as a different currently tapped one.
+            admittedName = PackageName(tap: tap, shortName: shortName)
         }
         guard let admittedName else { return nil }
         return (admittedName, selected.lastPathComponent)

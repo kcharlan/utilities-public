@@ -18,7 +18,66 @@ private actor SearchTransport: HTTPTransport {
 }
 private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
 
+private actor SourceLossTransport: HTTPTransport {
+    var missing = false
+    func removeOfficial() { missing = true }
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        if url.host == "raw.githubusercontent.com" {
+            return .init(status: 200, body: Data("class SyntheticShared < Formula\n version \"9.0.1\"\nend".utf8))
+        }
+        if missing { return .init(status: 404, body: Data()) }
+        let body = url.path.contains("/cask/") ? #"{"version":"7.8"}"# : #"{"versions":{"stable":"4.5.6"}}"#
+        return .init(status: 200, body: Data(body.utf8))
+    }
+}
+
 @MainActor struct SearchInputTests {
+    @Test func explicitSuggestionKindOverridesKnownWatchKind() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-choice-kind-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        let controller = WatchController(transport: SourceLossTransport(), installed: nil, store: store, notifier: SearchNotifier())
+        let name = PackageName("synthetic-shared")!
+        await controller.add(name, kind: .formula)
+        let input = SearchInput(waitForDebounce: {})
+        #expect(await input.version(for: .suggestion(name, .cask), controller: controller) == "7.8")
+        #expect(controller.state.watched.first?.kind == .formula)
+        #expect(store.load().state.watched.first?.kind == .formula)
+    }
+    @Test func explicitOfficialChoiceNeverWatchesOrCopiesTapAfterSourceLoss() async throws {
+        for action in ["suggestion", "result", "other-updates", "copy"] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-source-loss-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let prefix = home.appendingPathComponent("prefix")
+            let tap = prefix.appendingPathComponent("Library/Taps/synthetic-owner/homebrew-synthetic-tap")
+            for path in ["Cellar", "Library/Taps/synthetic-owner/homebrew-synthetic-tap/.git", "Library/Taps/synthetic-owner/homebrew-synthetic-tap/Formula"] {
+                try FileManager.default.createDirectory(at: prefix.appendingPathComponent(path), withIntermediateDirectories: true)
+            }
+            try Data("[remote \"origin\"]\nurl=https://github.com/synthetic-owner/homebrew-synthetic-tap.git\n".utf8).write(to: tap.appendingPathComponent(".git/config"))
+            try Data("# synthetic".utf8).write(to: tap.appendingPathComponent("Formula/synthetic-shared.rb"))
+            let index = TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]))
+            let transport = SourceLossTransport()
+            let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+            let controller = WatchController(transport: transport, installed: nil, store: store, notifier: SearchNotifier(), taps: { index })
+            let input = SearchInput(waitForDebounce: {})
+            let official = PackageName("synthetic-shared")!
+            let undo = WatchUndoAction()
+            if action == "result" {
+                input.select(name: official, kind: .formula)
+                await input.lookup(controller: controller)
+                #expect(controller.results.contains { if case .found(let listing, _, _) = $0 { return listing.name == official }; return false })
+            }
+            await transport.removeOfficial()
+            switch action {
+            case "suggestion": await input.watchChoice(.suggestion(official, .formula), undo: undo, controller: controller)
+            case "result": await input.watchChoice(.result(0), undo: undo, controller: controller)
+            case "other-updates": await undo.watch(official, kind: .formula, controller: controller)
+            default: #expect(await input.version(for: .suggestion(official, .formula), controller: controller) == nil)
+            }
+            #expect(controller.state.watched.isEmpty, "\(action) must not switch sources")
+            #expect(store.load().state.watched.isEmpty)
+        }
+    }
     @Test func copySuggestionVersionRejectsEditedOrCancelledIntent() async throws {
         for cancel in [false, true] {
             let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-copy-intent-" + UUID().uuidString)

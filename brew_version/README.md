@@ -132,6 +132,9 @@ the selected kind), then a unique tap match. Several tap matches produce an
 ambiguity error listing their sorted full names. Use `user/tap/name` to choose
 a source explicitly. A successful watch saves that resolved identity, so later
 checks never silently switch sources. A failed bare add saves no watch.
+Selecting a suggestion, search result or Other updates row chooses that exact
+source and kind, including the final Watch lookup. If the official package
+disappears, that choice never falls back to a tap.
 
 The local index reads tapped directories and Git origin configuration as text;
 the app and CLI never execute brew, git, Ruby or tap code. Only GitHub origins
@@ -213,6 +216,10 @@ folder symlinks are excluded. Formula kegs require a core or currently tapped
 receipt. Casks with receipts require the official cask tap or a currently tapped
 source; legacy receipt-free casks remain official. Receipt provenance separates
 official and tap identities even when their short names collide.
+Receipt `source.tap` is Homebrew's canonical tap name, not a typed or directory
+alias. Admission folds case but never strips another repository prefix or
+reassigns a removed source to another tapped repository. Tap membership is
+captured once for each snapshot or point read.
 
 At startup, callers await `WatchController.hydrateCatalog()` to restore cached
 suggestions and Other updates even when a network refresh is not due. This API
@@ -276,7 +283,9 @@ Select a result with the arrow keys or click; Return watches it, and Command-C
 copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
 Selecting a catalog suggestion preserves its formula/cask kind through lookup
-and Watch. An existing watch retains its known kind; editing the search clears
+and Watch. An explicit suggestion kind also controls its version lookup when
+the same name is already watched with another kind; the saved watch stays as
+chosen. Automatic search uses an existing watch's known kind. Editing clears
 the suggestion choice. Suggestions and results share a content-sized scrolling
 region bounded by the popover height, keeping the search field and footer
 reachable. Arrow selection scrolls the selected result into view.

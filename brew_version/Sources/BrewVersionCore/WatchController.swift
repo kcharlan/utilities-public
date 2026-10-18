@@ -141,7 +141,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
     }
 
-    public func add(_ name: PackageName, kind: PackageKind?) async {
+    /// Raw input may resolve a unique tap; a selected row must retain its source
+    /// through this final lookup even if the official package has disappeared.
+    public func add(_ name: PackageName, kind: PackageKind?, exactSource: Bool = false) async {
         guard canSave, !state.watched.contains(where: { $0.name == name }), !pendingAdds.contains(name) else { return }
         pendingAdds.insert(name)
         let search = searchGeneration
@@ -156,7 +158,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         do {
             let resolver = self.resolver
             let listing = try await scheduler.run {
-                try await resolver.resolveBare(name, kinds: kind.map(KindPreference.init) ?? .auto)
+                let kinds = kind.map(KindPreference.init) ?? .auto
+                return try await exactSource ? resolver.lookup(name, kinds: kinds) : resolver.resolveBare(name, kinds: kinds)
             }
             // Resolve first, then reserve the canonical identity without suspending.
             guard canSave, !state.watched.contains(where: { $0.name == listing.name }),
@@ -558,13 +561,13 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     }
     public func clearSearch() { searchGeneration = UUID(); results = [] }
     public func search(_ text: String, kind: PackageKind? = nil) async {
-        await search(tokens: tokenize(text), kind: kind)
+        await search(tokens: tokenize(text), kind: kind, exactSource: false)
     }
     /// Explicit UI choices already carry normalized source identity.
     public func search(_ name: PackageName, kind: PackageKind? = nil) async {
-        await search(tokens: [.valid(name)], kind: kind)
+        await search(tokens: [.valid(name)], kind: kind, exactSource: true)
     }
-    private func search(tokens: [SearchToken], kind: PackageKind?) async {
+    private func search(tokens: [SearchToken], kind: PackageKind?, exactSource: Bool) async {
         guard !Task.isCancelled else { return }
         let generation = UUID(); searchGeneration = generation
         let resolver = self.resolver; let scheduler = self.scheduler
@@ -578,7 +581,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                         if case .invalid(let value) = token { return (index, [.invalid(value)]) }
                         preconditionFailure()
                     }
-                    let kinds = (knownKinds[name] ?? (tokens.count == 1 ? kind : nil)).map(KindPreference.init) ?? .auto
+                    let kinds = (exactSource ? (kind ?? knownKinds[name]) : (knownKinds[name] ?? (tokens.count == 1 ? kind : nil))).map(KindPreference.init) ?? .auto
                     var rows: [LookupResult] = []
                     var officialMissing = false
                     do {
@@ -586,7 +589,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                         rows.append(.found(listing, installed: nil, watched: false))
                     } catch LookupError.notFound { officialMissing = true }
                     catch { rows.append(.failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }
-                    if name.tap == nil {
+                    if name.tap == nil && !exactSource {
                         for match in resolver.tapMatches(name, kinds: kinds) {
                             do {
                                 let listing = try await scheduler.run { try await resolver.lookup(match.name, kinds: KindPreference(match.kind)) }

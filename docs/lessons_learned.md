@@ -1042,3 +1042,25 @@ the transient request and route explicit selections through the same controller
 search pipeline using a valid token. Copy-version actions must resolve that
 same selected name and kind, rather than consulting only the official catalog.
 Keep debounce, cancellation and request-generation checks around both actions.
+
+## 2026-10-18: Keep explicit source intent through the final Watch lookup
+
+Brew Version displayed a chosen official result but used bare-name fallback
+again when Watch performed its second HTTP lookup. An official 404 then saved
+a tap watch. Share the search/add pipelines with an exact-source mode for
+suggestions, results and Other updates actions; reserve bare fallback for raw
+input. Match suggestions by name and kind, including when another kind is
+already watched. Preserve Undo restoration before issuing a fresh add.
+
+## 2026-10-18: Receipt provenance comes from the writer, not tap directory aliases
+
+At Homebrew commit 3073d6a8c34f71da054b000cfdbb62594a07c969,
+`Library/Homebrew/tab.rb`'s `AbstractTab.create` writes
+`formula_or_cask.tap&.name`; `cask/tab.rb` uses `cask.tap&.name` too.
+`tap.rb` constructs `@name` from parsed user/repository and lowercases it.
+Thus receipt `source.tap` is canonical already. Typed prefix normalization can
+strip another reserved prefix and assign a removed source to another tap.
+Validate canonical segments and compose package identities without aliases;
+fold case only, and admit official provenance only for canonical core/cask.
+Synthetic receipt fixtures must follow that writer format. Capture tapped
+membership once per snapshot/point read, rather than rescanning for each receipt.

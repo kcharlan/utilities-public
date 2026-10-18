@@ -25,7 +25,7 @@ public struct TapName: Hashable, Codable, Sendable, CustomStringConvertible {
     // Canonical repository names may still begin with a reserved prefix:
     // Homebrew removes only one prefix from typed/directory-derived input.
     // Reading a saved identity must validate it without normalizing it again.
-    fileprivate init?(canonical raw: String) {
+    init?(canonical raw: String) {
         let parts = raw.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let user = String(parts[0]), repo = String(parts[1])
@@ -66,6 +66,11 @@ public struct PackageName: Hashable, Codable, Sendable, CustomStringConvertible 
 
     public init?(_ raw: String) {
         self.init(raw, normalizeTap: true)
+    }
+
+    /// Compose an already canonical tap without applying typed-input aliases.
+    init?(tap: TapName, shortName: String) {
+        self.init("\(tap)/\(shortName)", normalizeTap: false)
     }
 
     private init?(_ raw: String, normalizeTap: Bool) {
