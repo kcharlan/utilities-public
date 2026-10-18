@@ -98,7 +98,9 @@ public func evaluate(_ entry: WatchEntry, listing: Listing, installed: Installed
     }
     guard entry.notifiedRelease != release else { return (next, nil) }
     next.notifiedRelease = release
-    return (next, Notice(name: entry.name, title: "\(entry.name) \(release.displayVersion) is on Homebrew", body: body))
+    let title = entry.name.tap.map { "\(entry.name.shortName) \(release.displayVersion) is in \($0)" }
+        ?? "\(entry.name) \(release.displayVersion) is on Homebrew"
+    return (next, Notice(name: entry.name, title: title, body: body))
 }
 
 public struct AppState: Codable, Equatable, Sendable {

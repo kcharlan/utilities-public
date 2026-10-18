@@ -7,6 +7,12 @@ public protocol Notifier: Sendable {
 }
 public extension Notifier { func requestAuthorization() async {} }
 
+public struct Suggestion: Equatable, Sendable {
+    public let name: PackageName
+    public let kind: PackageKind
+    public let installed: Bool
+}
+
 public enum PersistenceIssue: Sendable { case recoveryWarning, loadFailure, saveFailure }
 
 public enum AutomaticCheckSchedule: Equatable, Sendable {
@@ -25,6 +31,17 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public private(set) var results: [LookupResult] = []
     private var searchGeneration = UUID()
     private let scheduler = LookupScheduler()
+    public private(set) var tapIndex: TapIndex
+    public private(set) var tapCheckFailures = 0
+    public private(set) var tapUncheckable = 0
+    public private(set) var installedNames: [PackageKind: Set<PackageName>] = [:]
+    private let taps: @Sendable () -> TapIndex
+    private var tapListings: [PackageKind: [PackageName: Listing]] = [:]
+    private var combinedCatalog: Catalog?
+    private var pendingIdentities: Set<PackageName> = []
+    private var resolver: PackageResolver {
+        PackageResolver(client: client, tapClient: TapClient(transport: transport, cache: cache), taps: tapIndex)
+    }
     public private(set) var catalog: Catalog?
     public private(set) var others: [OtherUpdate] = []
     public private(set) var isRefreshingCatalog = false
@@ -70,14 +87,14 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
 
     public convenience init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
                 notifier: any Notifier, now: @escaping () -> Date = Date.init,
-                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true) {
+                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, taps: @escaping @Sendable () -> TapIndex = { .empty }) {
         self.init(transport: transport, installed: installed, store: store, notifier: notifier, now: now,
-                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil)
+                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil, taps: taps)
     }
 
     init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
          notifier: any Notifier, now: @escaping () -> Date = Date.init,
-         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?) {
+         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?, taps: @escaping @Sendable () -> TapIndex = { .empty }) {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
@@ -85,6 +102,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         self.transport = transport; self.installed = installed; self.store = store
         self.notifier = notifier; self.now = now
         self.catalogClient = catalogClient
+        self.taps = taps; tapIndex = taps()
         let cache = initialCache ?? ListingCache(entries: load.state.listingCache)
         self.cache = cache; client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
@@ -126,30 +144,56 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public func add(_ name: PackageName, kind: PackageKind?) async {
         guard canSave, !state.watched.contains(where: { $0.name == name }), !pendingAdds.contains(name) else { return }
         pendingAdds.insert(name)
-        defer { pendingAdds.remove(name) }
+        let search = searchGeneration
+        var reserved: PackageName?
+        defer {
+            pendingAdds.remove(name)
+            if let reserved { pendingIdentities.remove(reserved) }
+        }
         var entry = WatchEntry(name: name, kind: kind)
         var found: Listing?
         var installation = InstalledSnapshot()
         do {
-            let client = self.client
+            let resolver = self.resolver
             let listing = try await scheduler.run {
-                try await client.lookup(name, kinds: kind.map(KindPreference.init) ?? .auto)
+                try await resolver.resolveBare(name, kinds: kind.map(KindPreference.init) ?? .auto)
             }
+            // Resolve first, then reserve the canonical identity without suspending.
+            guard canSave, !state.watched.contains(where: { $0.name == listing.name }),
+                  !pendingIdentities.contains(listing.name) else { return }
+            pendingIdentities.insert(listing.name); reserved = listing.name
+            entry = WatchEntry(name: listing.name, kind: listing.kind)
             found = listing
             installation = await lookupInstalled([listing])
         } catch {
-            entry.lastError = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
+            let message = (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew."
+            if name.tap == nil {
+                if searchGeneration == search {
+                    results.removeAll { result in
+                        switch result {
+                        case .failed(let value, _), .notFound(let value): value == name
+                        case .found(let listing, _, _): listing.name == name
+                        case .invalid: false
+                        }
+                    }
+                    results.append(.failed(name, message))
+                }
+                return
+            }
+            guard !pendingIdentities.contains(name) else { return }
+            pendingIdentities.insert(name); reserved = name
+            entry.lastError = message
         }
         let snapshot = cache.snapshot()
-        guard canSave, !state.watched.contains(where: { $0.name == name }) else { return }
+        guard canSave, !state.watched.contains(where: { $0.name == entry.name }) else { return }
         if let listing = found {
-            entry = evaluate(entry, listing: listing, installed: installation.installed(name, kind: listing.kind)).0
+            entry = evaluate(entry, listing: listing, installed: installation.installed(entry.name, kind: listing.kind)).0
         }
         var candidate = state
         candidate.watched.append(entry)
         candidate.listingCache = snapshot
         if commit(candidate) {
-            generations[name] = UUID()
+            generations[entry.name] = UUID()
             await notifier.requestAuthorization()
         }
     }
@@ -255,13 +299,13 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             installedCallers -= 1
             if installedCallers == 0 { installationCapture = nil; targetedVersions = [:] }
         }
-        let requestedCatalog = catalog
-        let listings = (catalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
+        let requestedCatalog = combinedCatalog
+        let listings = (combinedCatalog?.listings ?? []) + state.watched.compactMap(\.lastListing) + extraListings
         let requested = InstallationMetadata(listings)
         let needsCapture = installationCapture.map { !$0.replacement && !$0.metadata.covers(requested) } ?? true
         if needsCapture {
             let replacing = installationCapture != nil
-            let installed = self.installed; let catalog = self.catalog
+            let installed = self.installed; let catalog = self.combinedCatalog
             let capture = InstallationCapture(metadata: requested, revision: installationRevision,
                 catalogIdentity: catalog?.identity, replacement: replacing, task: Task.detached {
                     let snapshot = installed?.snapshot(listings: listings) ?? InstalledSnapshot()
@@ -313,7 +357,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             let retained = updates.filter { !changed.contains($0.listing) }.map(\.listing)
             updates = otherUpdates(catalog: Catalog(listings: retained + changedListings), snapshot: snapshot, watched: [])
         }
-        if installationCapture?.id == capture.id, catalog?.identity == requestedCatalog?.identity {
+        if installationCapture?.id == capture.id, combinedCatalog?.identity == requestedCatalog?.identity {
+            installedNames = snapshot.versions.mapValues { Set($0.keys) }
             installedUpdates = updates
             recomputeOthers()
         }
@@ -347,7 +392,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard let catalogClient else { return }
         let cached = try? await catalogClient.cached()
         // A refresh may have completed while disk hydration was suspended.
-        if catalog == nil { catalog = cached }
+        if catalog == nil { catalog = cached; rebuildCombinedCatalog() }
         await refreshInstalled()
     }
 
@@ -358,6 +403,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     /// than Homebrew's API cache lifetime, Other updates too. It skips the network
     /// gate, since a path monitor can report offline while HTTP works.
     public func refreshNow() async {
+        tapIndex = taps()
         async let watches: Void = checkNow()
         async let catalog: Void = refreshCatalog(manual: true)
         _ = await (watches, catalog)
@@ -373,32 +419,114 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private func refreshCatalog(manual: Bool) async {
         // Failed automatic attempts retry no sooner than the shortest check interval.
         let retryFloor = CheckInterval(minutes: CheckInterval.allowedMinutes.lowerBound)!
-        guard canSave, let catalogClient, !isRefreshingCatalog,
+        guard canSave, !isRefreshingCatalog,
               manual || (automaticRequestsAllowed && CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: retryFloor, now: now()))
         else { return }
+        tapIndex = taps()
         isRefreshingCatalog = true
         defer { isRefreshingCatalog = false }
         if catalog == nil { await hydrateCatalog() }
         guard manual || automaticRequestsAllowed, catalogRefreshDue(manual: manual) else { return }
         lastCatalogAttempt = now()
-        do {
-            let result = try await catalogClient.load()
-            catalogWriteError = result.cacheWriteError
-            catalogRefreshError = result.refreshError
-            // Merge only after the final await, preserving watch/settings commits made in flight.
-            if result.revalidated {
-                var candidate = state
-                candidate.lastCatalogFetch = now()
-                guard commit(candidate) else { return }
-                launchCatalogRefreshDone = true
-            }
-            catalog = result.catalog
-            await refreshInstalled()
-        } catch {
-            // Existing content survives an offline or invalid first refresh. The attempt
-            // clock bounds retries; only a successful persisted fetch advances the fetch time.
-            catalogRefreshError = catalogRefreshMessage(error)
+        // Keep the discovery snapshot and its metadata replacement in the same
+        // overlap group as watched checks, including across the tap HTTP awaits.
+        installedCallers += 1
+        defer {
+            installedCallers -= 1
+            if installedCallers == 0 { installationCapture = nil; targetedVersions = [:] }
         }
+        if let catalogClient {
+            do {
+                let result = try await catalogClient.load()
+                catalogWriteError = result.cacheWriteError
+                catalogRefreshError = result.refreshError
+                // Merge only after the final await, preserving watch/settings commits made in flight.
+                if result.revalidated {
+                    var candidate = state
+                    candidate.lastCatalogFetch = now()
+                    // The other source still refreshes when saving the official timestamp fails.
+                    if commit(candidate) {
+                        launchCatalogRefreshDone = true
+                        catalog = result.catalog
+                        rebuildCombinedCatalog()
+                    }
+                } else {
+                    catalog = result.catalog
+                    rebuildCombinedCatalog()
+                }
+            } catch {
+                // Existing content survives an offline or invalid first refresh. The attempt
+                // clock bounds retries; only a successful persisted fetch advances the fetch time.
+                catalogRefreshError = catalogRefreshMessage(error)
+            }
+        }
+        await refreshTapListings()
+        await refreshInstalled()
+    }
+
+    private func rebuildCombinedCatalog() {
+        let values = (catalog?.listings ?? []) + tapListings.values.flatMap { $0.values }
+        let combined = Catalog(listings: values)
+        if combinedCatalog == nil || combined.listings != combinedCatalog?.listings {
+            combinedCatalog = combined
+        }
+    }
+
+    private func refreshTapListings() async {
+        guard installed != nil, !tapIndex.taps.isEmpty || !tapListings.isEmpty else { return }
+        let snapshot = await refreshInstalled()
+        let resolver = self.resolver; let scheduler = self.scheduler
+        let outcomes = await withTaskGroup(of: (PackageKind, PackageName, Result<Listing, LookupError>).self) { group in
+            for (kind, values) in snapshot.versions {
+                for name in values.keys where name.tap != nil {
+                    group.addTask {
+                        do {
+                            let listing = try await scheduler.run { try await resolver.lookup(name, kinds: KindPreference(kind)) }
+                            return (kind, name, .success(listing))
+                        } catch { return (kind, name, .failure((error as? LookupError) ?? .tapUnreachable(name))) }
+                    }
+                }
+            }
+            var outcomes: [(PackageKind, PackageName, Result<Listing, LookupError>)] = []
+            for await outcome in group { outcomes.append(outcome) }
+            return outcomes
+        }
+        tapCheckFailures = 0; tapUncheckable = 0
+        // Drop uninstalled rows, but retain the last listing for each failed source.
+        for kind in [PackageKind.formula, .cask] {
+            tapListings[kind] = tapListings[kind]?.filter { snapshot.versions[kind]?[$0.key] != nil }
+        }
+        for (kind, name, outcome) in outcomes {
+            switch outcome {
+            case .success(let listing): tapListings[kind, default: [:]][name] = listing
+            case .failure(.tapUnreachable), .failure(.tapHTTP): tapCheckFailures += 1
+            case .failure(.unreadableTapVersion), .failure(.unsupportedTapRemote), .failure(.notFoundInTap): tapUncheckable += 1
+            case .failure: break
+            }
+        }
+        rebuildCombinedCatalog()
+    }
+
+    public func suggestions(prefix: String, limit: Int = 8) -> [Suggestion] {
+        guard limit > 0 else { return [] }
+        let official = (catalog?.suggestions(prefix: prefix, limit: Int.max) ?? []).map {
+            Suggestion(name: $0.name, kind: $0.kind, installed: installedNames[$0.kind]?.contains($0.name) == true)
+        }
+        let tapEntries = prefix.contains("/")
+            ? tapIndex.suggestions(prefix: "").filter { $0.name.rawValue.hasPrefix(prefix) }
+            : tapIndex.suggestions(prefix: prefix)
+        var seen: [PackageKind: Set<PackageName>] = [:]
+        let entries = (official + tapEntries.map {
+            Suggestion(name: $0.name, kind: $0.kind, installed: installedNames[$0.kind]?.contains($0.name) == true)
+        }).filter { seen[$0.kind, default: []].insert($0.name).inserted }
+        return Array(entries.sorted {
+            if $0.installed != $1.installed { return $0.installed }
+            let a = $0.name.shortName == prefix, b = $1.name.shortName == prefix
+            if a != b { return a }
+            if ($0.name.tap == nil) != ($1.name.tap == nil) { return $0.name.tap == nil }
+            if $0.name != $1.name { return $0.name.rawValue < $1.name.rawValue }
+            return $0.kind.rawValue < $1.kind.rawValue
+        }.prefix(limit))
     }
 
     public func scheduledTick() async {
@@ -433,26 +561,40 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard !Task.isCancelled else { return }
         let generation = UUID(); searchGeneration = generation
         let tokens = tokenize(text)
-        let client = self.client; let scheduler = self.scheduler
+        let resolver = self.resolver; let scheduler = self.scheduler
         let knownKinds = Dictionary(uniqueKeysWithValues: state.watched.compactMap { entry in
             entry.kind.map { (entry.name, $0) }
         })
-        let found = await withTaskGroup(of: (Int, LookupResult).self, returning: [LookupResult].self) { group in
+        let found = await withTaskGroup(of: (Int, [LookupResult]).self, returning: [LookupResult].self) { group in
             for (index, token) in tokens.enumerated() {
                 group.addTask {
                     guard case .valid(let name) = token else {
-                        if case .invalid(let value) = token { return (index, .invalid(value)) }
+                        if case .invalid(let value) = token { return (index, [.invalid(value)]) }
                         preconditionFailure()
                     }
                     let kinds = (knownKinds[name] ?? (tokens.count == 1 ? kind : nil)).map(KindPreference.init) ?? .auto
-                    do { return (index, .found(try await scheduler.run { try await client.lookup(name, kinds: kinds) }, installed: nil, watched: false)) }
-                    catch LookupError.notFound { return (index, .notFound(name)) }
-                    catch { return (index, .failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }
+                    var rows: [LookupResult] = []
+                    var officialMissing = false
+                    do {
+                        let listing = try await scheduler.run { try await resolver.lookup(name, kinds: kinds) }
+                        rows.append(.found(listing, installed: nil, watched: false))
+                    } catch LookupError.notFound { officialMissing = true }
+                    catch { rows.append(.failed(name, (error as? LookupError)?.rowMessage ?? "Couldn't reach Homebrew.")) }
+                    if name.tap == nil {
+                        for match in resolver.tapMatches(name, kinds: kinds) {
+                            do {
+                                let listing = try await scheduler.run { try await resolver.lookup(match.name, kinds: KindPreference(match.kind)) }
+                                rows.append(.found(listing, installed: nil, watched: false))
+                            } catch { rows.append(.failed(match.name, (error as? LookupError)?.rowMessage ?? "Couldn't reach GitHub.")) }
+                        }
+                    }
+                    if officialMissing && rows.isEmpty { rows = [.notFound(name)] }
+                    return (index, rows)
                 }
             }
-            var rows: [(Int, LookupResult)] = []
+            var rows: [(Int, [LookupResult])] = []
             for await row in group { rows.append(row) }
-            return rows.sorted { $0.0 < $1.0 }.map(\.1)
+            return rows.sorted { $0.0 < $1.0 }.flatMap(\.1)
         }
         guard !Task.isCancelled, searchGeneration == generation else { return }
         let listings = found.compactMap { result -> Listing? in
@@ -471,7 +613,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         isChecking = true
         lastCheckAttempt = now()
         defer { isChecking = false }
-        let client = self.client
+        let resolver = self.resolver
         let scheduler = self.scheduler
         let requested = state.watched.map { ($0, generations[$0.name]) }
         let results = await withTaskGroup(of: CheckResult.self, returning: [CheckResult].self) { group in
@@ -480,7 +622,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                     let (entry, generation) = item
                     do {
                         let listing = try await scheduler.run {
-                            try await client.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto)
+                            try await resolver.lookup(entry.name, kinds: entry.kind.map(KindPreference.init) ?? .auto)
                         }
                         return CheckResult(name: entry.name, generation: generation, result: .success(listing))
                     } catch {
@@ -515,6 +657,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
         retryWatchesOnReconnect = results.contains {
             if case .failure(.unreachable) = $0.result { return true }
+            if case .failure(.tapUnreachable) = $0.result { return true }
             return false
         }
         if !retryWatchesOnReconnect { candidate.lastCheck = now() }

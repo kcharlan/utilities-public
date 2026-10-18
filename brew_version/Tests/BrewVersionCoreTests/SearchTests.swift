@@ -9,7 +9,7 @@ import Testing
     @Test func searchDeduplicatesAndRejectsInvalid() async {
         let f = WatchFixture(); defer { f.clean() }
         let name = PackageName("synthetic-formula")!
-        let transport = StubTransport([watchURL(name): [watchResponse("1")]])
+        let transport = StubTransport([watchURL(name): [watchResponse("1"), watchResponse("1")]])
         let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier())
         await c.search("synthetic-formula Bad synthetic-formula")
         #expect(c.results.count == 2)

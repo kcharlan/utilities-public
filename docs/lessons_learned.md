@@ -1004,3 +1004,14 @@ the request. Reuse its ETag and accept a 304 only when both match; otherwise req
 the file unconditionally and treat a 304 as lacking a usable cache entry. Keep
 regressions for shared-remote aliases and mismatched cached kinds so conditional
 requests cannot return another package's identity or parsed metadata.
+
+## 2026-10-18: Share tap discovery with the existing installation capture group
+
+Tap Other updates needs an installation snapshot before fetching its listings,
+then the fetched metadata before deriving its rows. A separate discovery scan
+bypasses the controller's capture coalescing: an overlapping watched check can
+then cause three full scans. Keep discovery, tap HTTP awaits and final combined
+catalog derivation in one existing capture group, allowing one metadata
+replacement and retaining the targeted-read revision reconciliation. Regress
+actual snapshot counts under a held refresh/check overlap, alongside kind-specific
+retained tap listings after later checks.
