@@ -3,6 +3,34 @@ import Testing
 @testable import BrewVersionCore
 
 struct TapNameTests {
+    @Test func repeatedPrefixesRetainCanonicalIdentity() throws {
+        let cases = [
+            ("synthetic-owner/homebrew-homebrew-synthetic-tap", "synthetic-owner/homebrew-synthetic-tap"),
+            ("synthetic-owner/linuxbrew-homebrew-synthetic-tap", "synthetic-owner/homebrew-synthetic-tap"),
+            ("synthetic-owner/homebrew-linuxbrew-synthetic-tap", "synthetic-owner/linuxbrew-synthetic-tap"),
+            ("homebrew/homebrew-homebrew-core", "homebrew/homebrew-core")
+        ]
+        for (raw, canonical) in cases {
+            let tap = try #require(TapName(raw))
+            #expect(tap.description == canonical)
+            #expect(!tap.isOfficial)
+            #expect(try JSONDecoder().decode(TapName.self, from: JSONEncoder().encode(tap)) == tap)
+            let package = try #require(PackageName("\(raw)/synthetic-tool"))
+            #expect(package.rawValue == "\(canonical)/synthetic-tool")
+            #expect(package.tap == tap)
+            #expect(package.tap?.description == canonical)
+            #expect(try JSONDecoder().decode(PackageName.self, from: JSONEncoder().encode(package)) == package)
+            var state = AppState.initial
+            state.watched = [WatchEntry(name: package)]
+            let f = WatchFixture(); defer { f.clean() }
+            try f.store.save(state)
+            let loaded = f.store.load()
+            #expect(loaded.problem == nil && loaded.canSave)
+            #expect(loaded.state.watched == state.watched)
+        }
+        #expect(PackageName("homebrew/homebrew-core/synthetic-tool") == nil)
+    }
+
     @Test func acceptsShortAndFullNames() throws {
         let short = try #require(PackageName("synthetic-tool"))
         #expect(short.tap == nil)

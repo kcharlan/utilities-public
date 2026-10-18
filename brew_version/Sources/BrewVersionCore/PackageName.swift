@@ -16,10 +16,20 @@ public struct TapName: Hashable, Codable, Sendable, CustomStringConvertible {
             repo.removeFirst(prefix.count)
             break
         }
-        guard Self.validSegment(user), Self.validSegment(repo) else { return nil }
         if ["homebrew", "linuxbrew"].contains(user), ["core", "homebrew"].contains(repo) {
             user = "homebrew"; repo = "core"
         }
+        self.init(canonical: "\(user)/\(repo)")
+    }
+
+    // Canonical repository names may still begin with a reserved prefix:
+    // Homebrew removes only one prefix from typed/directory-derived input.
+    // Reading a saved identity must validate it without normalizing it again.
+    fileprivate init?(canonical raw: String) {
+        let parts = raw.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        let user = String(parts[0]), repo = String(parts[1])
+        guard Self.validSegment(user), Self.validSegment(repo) else { return nil }
         self.user = user; self.repo = repo
     }
 
@@ -35,7 +45,7 @@ public struct TapName: Hashable, Codable, Sendable, CustomStringConvertible {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.singleValueContainer()
-        guard let tap = Self(try c.decode(String.self)) else {
+        guard let tap = Self(canonical: try c.decode(String.self)) else {
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "Invalid Homebrew tap name")
         }
         self = tap
@@ -50,16 +60,22 @@ public struct PackageName: Hashable, Codable, Sendable, CustomStringConvertible 
     public let rawValue: String
     public var tap: TapName? {
         let parts = rawValue.split(separator: "/")
-        return parts.count == 3 ? TapName(parts.prefix(2).joined(separator: "/")) : nil
+        return parts.count == 3 ? TapName(canonical: parts.prefix(2).joined(separator: "/")) : nil
     }
     public var shortName: String { String(rawValue.split(separator: "/").last!) }
 
     public init?(_ raw: String) {
+        self.init(raw, normalizeTap: true)
+    }
+
+    private init?(_ raw: String, normalizeTap: Bool) {
         let parts = raw.split(separator: "/", omittingEmptySubsequences: false)
         let short: String
         let tap: TapName?
         if parts.count == 3 {
-            guard let source = TapName(parts.prefix(2).joined(separator: "/")), !source.isOfficial else { return nil }
+            let rawTap = parts.prefix(2).joined(separator: "/")
+            guard let source = normalizeTap ? TapName(rawTap) : TapName(canonical: rawTap),
+                  !source.isOfficial else { return nil }
             tap = source; short = String(parts[2])
         } else if parts.count == 1 {
             tap = nil; short = raw
@@ -80,7 +96,7 @@ public struct PackageName: Hashable, Codable, Sendable, CustomStringConvertible 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(String.self)
-        guard let name = Self(raw) else {
+        guard let name = Self(raw, normalizeTap: false) else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid Homebrew package name")
         }
         self = name

@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-18: Separate typed normalization from canonical identity decoding
+
+Brew Version's tap normalizer removes one reserved repository prefix, matching
+Homebrew. Reusing it for a canonical accessor or Codable decode removed a
+second prefix, changed a package's identity, and could make a successfully saved
+watch unreadable when the second pass identified an official tap. Share segment
+validation while keeping typed normalization separate from canonical decoding.
+Regress repeated and mixed prefixes through accessors, both identity Codable
+roundtrips and actual watch-store save/load, including a reserved core alias.
+
 ## 2026-10-17: Refresh "at launch" means every launch, and match brew outdated
 
 Brew Version's spec said Other updates refreshes "when the app starts and once
