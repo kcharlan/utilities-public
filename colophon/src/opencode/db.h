@@ -58,9 +58,11 @@ typedef struct {
     bool corpus_accepted;
 } OpencodeSession;
 typedef struct OpencodeUsageReport OpencodeUsageReport;
+typedef struct { Str session, database, reason; } OpencodeDiagnostic;
 typedef struct {
     Arena arena;
-    bool discovered, discovery_complete;
+    bool discovered, discovery_complete, disabled, present;
+    Str data_dir;
     OpencodeDatabase *databases;
     size_t database_count, database_capacity;
     OpencodeSession **sessions;
@@ -68,6 +70,8 @@ typedef struct {
     Omap session_ids; /* Borrowed session pointers; owns its map nodes. */
     Omap unknown_message_types, unknown_content_types; /* arena uint64_t values */
     uint64_t malformed_messages, invalid_numbers, duplicate_sessions;
+    OpencodeDiagnostic *duplicates;
+    size_t duplicate_count, duplicate_capacity;
     OpencodeUsageReport *usage; /* Usage module owns nested report resources. */
     CorpusStrings corpus_collisions, orphaned_subagents, ambiguous_spawns, unknown_clocks;
 } OpencodeStore;

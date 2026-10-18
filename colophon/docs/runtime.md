@@ -69,7 +69,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.3.0`.
+runtime state. Version is currently `colophon 0.4.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -81,6 +81,54 @@ runtime state. Version is currently `colophon 0.3.0`.
 | `--claude-home PATH` | Select the Claude config root using the environment semantics above. |
 | `--claude-desktop-dir PATH` | Replace `~/Library/Application Support/Claude` for discovery. |
 | `--no-claude` | Disable Claude inputs and reconciliation. |
+| `--opencode-db PATH` | Select only this OpenCode database; expand tilde and resolve relative paths against cwd. Reject `:memory:`. |
+| `--no-opencode` | Disable OpenCode discovery and reads before inspecting source paths. |
+
+OpenCode discovery defaults to `~/.local/share/opencode`; nonempty
+`XDG_DATA_HOME` replaces `~/.local/share` (relative values resolve against cwd,
+without tilde expansion). `OPENCODE_DB` selects the primary database relative
+to that data directory, or as an absolute path. Empty `OPENCODE_DB` is a
+reported invalid candidate; `:memory:` suppresses both the primary and default
+`opencode.db`. Without a file flag, regular `opencode-*.db` siblings are added
+in ascending normalized path order, plus a distinct default `opencode.db`
+when primary is overridden. Normalized paths deduplicate, primary sessions
+win duplicate IDs, and successful siblings remain usable after a source failure.
+`opencode-next.db` is skipped even when explicitly selected: OpenCode migration
+owns that preview database. Desktop-specific discovery is not verified.
+
+Only structurally compatible v2 databases are read; legacy JSON, v1-only
+schemas and incomplete/unfamiliar migrations are unsupported. A newer known-shape
+migration produces an untested-schema warning. Database status and reasons
+remain in `meta.sources.opencode.databases`; aggregate status prefers any
+successful database, then unsupported, then unreadable, then absent. Disabled
+is independent. Unsupported or unreadable candidates can alone generate a
+diagnostic page. Empty directories, absent candidates and skipped previews
+alone do not establish source presence. OpenCode contributes no parse cache
+and does not cause an absent Codex cache to be opened during rebuild.
+
+OpenCode cost availability describes the recorded-estimate engine. It remains
+available independently of Codex history and Claude rates; missing request costs
+remain unpriced and explicit zero stays priced zero. No OpenCode model catalog,
+credential tables or unrelated key/value settings are read. Costs are OpenCode
+catalog estimates, not invoices. Source session/project archive precedence is
+reported as `archive_reason=session|project`; absolute source provenance is
+`opencode_database`. Rows expose `capabilities` permitting only Copy session ID.
+Continuation stays disabled until disposable CLI/database acceptance succeeds.
+
+OpenCode source counters describe deduplicated accepted database facts and
+inserted display/accounting rows: excluded cross-provider collisions do not
+count as sessions or requests; subagents include orphan children. Requests and
+inherited-message counts cover accounting-eligible assistant/finished-compaction
+messages. Diagnostic lists preserve session/database/reason context; unknown
+types and missing usage are count maps. Residuals are keyed by session and keep
+raw `input`, `output`, `reasoning`, `cache_read`, `cache_write`, nullable `cost`,
+nullable millisecond `date` and `date_basis=session_start`. Shortfalls preserve
+the same fields plus a reason. Residual dating is a display convention; it
+does not prove event ownership or timing. Stderr summarizes list lengths,
+count-map sums and residual-session counts and prints per-database reasons,
+including skipped previews, even when aggregate status is ok. Finite request
+costs that overflow a provider total make that CLI total unavailable with a
+contextual diagnostic while preserving valid session costs.
 
 Default Claude search roots are `~/.config/claude/projects`,
 `~/.claude/projects`, the Desktop `local-agent-mode-sessions` and
@@ -135,13 +183,16 @@ Legacy `meta.counts` remains Codex-only. Claude log/parse counters are additive
 under `meta.sources.claude`, independently of the legacy counts.
 
 Long flags accept unique prefixes. `--no` is now ambiguous between
-`--no-open` and `--no-claude`; `--claude` is ambiguous between the two Claude
+`--no-open`, `--no-claude` and `--no-opencode`; `--no-op` matches both
+`--no-open` and `--no-opencode`. `--o` matches `--offline`, `--output` and
+`--opencode-db`; `--claude` is ambiguous between the two Claude
 path flags. `--c` is also ambiguous between Codex and Claude path flags.
 Use the full flag names when scripting.
 
 Presence is decided before creating the runtime home. A readable source
-directory or a usable Claude history entry is sufficient. With neither,
-exit 1 names the Codex home, Claude roots and history path checked, and
+directory, a usable Claude history entry or a reportable OpenCode candidate
+is sufficient. With no source,
+exit 1 names the Codex home, Claude roots/history and OpenCode paths checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
 opening, recovery and replacement, including with `--rebuild`. Eligible Claude
 history entries render history-only sessions. Decodable retained records and eligible
@@ -181,8 +232,8 @@ compressed frames appear in `skipped_files` with reason `unreadable`, while
 the remaining logs are counted; a later run retries them. A zero-byte
 compressed file is an empty log.
 
-Metadata and priority trace SQLite databases are opened read-only with
-normal SQLite coordination. Metadata uses a 1,000 ms busy timeout; priority
+Metadata, priority trace and OpenCode SQLite databases are opened read-only with
+normal SQLite coordination. Metadata and OpenCode use a 1,000 ms busy timeout; priority
 tracing uses 250 ms. This is not
 immutable mode: SQLite may create or update
 coordination side files such as WAL shared-memory files when permitted.

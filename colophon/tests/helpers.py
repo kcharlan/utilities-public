@@ -56,6 +56,8 @@ class NativeRun:
         self.codex.mkdir()
         self.env = os.environ.copy()
         self.env.pop("CLAUDE_CONFIG_DIR", None)
+        self.env.pop("OPENCODE_DB", None)
+        self.env.pop("XDG_DATA_HOME", None)
         self.env.update(HOME=str(self.home), COLOPHON_HOME=str(self.runtime),
                         TMPDIR=str(root), COLOPHON_PRICING_URL="http://127.0.0.1:9/catalog.json")
         self.binary = Path(os.environ["COLOPHON_BIN"])

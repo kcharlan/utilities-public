@@ -479,6 +479,7 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
     for(size_t i=0;i<store->database_count;i++){
         if(stop&&*stop)return err_make(ERR_IO,"interrupted");
         OpencodeDatabase *info=&store->databases[i];struct stat st;
+        if(info->reason.n)continue; /* Discovery already classified this candidate. */
         if(stat(info->path.p,&st)<0){
             info->status=errno==ENOENT?OC_DB_ABSENT:OC_DB_UNREADABLE;
             TRY(str_copy(&store->arena,info->status==OC_DB_ABSENT?STR_LIT("database absent"):STR_LIT("database inaccessible"),&info->reason));continue;
@@ -494,7 +495,12 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
         info->status=OC_DB_OK;
         for(size_t j=0;!e.code&&j<stage.session_count;j++){
             OpencodeSession *s=stage.sessions[j];
-            if(omap_get(&store->session_ids,s->id)){store->duplicate_sessions++;continue;}
+            if(omap_get(&store->session_ids,s->id)){
+                OpencodeDiagnostic duplicate={s->id,info->path,STR_LIT("session already accepted from a higher-precedence database")};
+                e=APPEND(&store->arena,store->duplicates,store->duplicate_count,store->duplicate_capacity,duplicate);
+                if(e.code)break;
+                store->duplicate_sessions++;continue;
+            }
             e=APPEND(&store->arena,store->sessions,store->session_count,store->session_capacity,s);
             if(!e.code)e=omap_put(&store->session_ids,s->id,s);
             if(!e.code)e=merge_counts(&store->arena,&store->unknown_message_types,&s->unknown_message_types);

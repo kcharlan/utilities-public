@@ -15,6 +15,8 @@ catalog/priority/pricing → payload/page:
 | `src/meta/` | Load Codex metadata through read-only SQLite connections. |
 | `src/opencode/db.{c,h}` | Read OpenCode v2 snapshots through a credential-excluding SQLite authorizer, structural/migration guards and per-database staging. Own raw session/message/tool facts, row identity and clocks, independent token/cost validity and unknown/malformed diagnostics; no retained parse cache. |
 | `src/opencode/corpus.{c,h}` | Project accepted OpenCode sessions into shared display models. Keep row-clock fork exclusions and source TurnFacts in the store, map messages to display-turn keys for usage, and link an OpenCode-only acyclic parent graph. |
+| `src/opencode/scan.{c,h}` | Resolve default/environment/explicit paths, order/deduplicate database candidates, skip migration previews, and establish read-only source presence before runtime creation. |
+| `src/opencode/compose.{c,h}` | Author recorded usage/cost units and raw-component residuals, retaining contextual shortfalls and invalid-number facts. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
@@ -33,6 +35,13 @@ own arenas and never occupy Codex `LogRecord` fields. After Codex subagent
 linking, `claude_corpus_add` checks canonical filename identities before
 insertion; workspace resolution then handles both providers. Exact primary
 record aliases are indexed separately, including collision-skipped records.
+OpenCode discovery/read follows Claude alias inspection and precedes the source
+gate and runtime creation. Its corpus insertion follows Claude metadata and
+precedes shared workspace resolution; usage composition follows Claude pricing
+and precedes shared cost refresh. The store owns source arenas, duplicate and
+usage diagnostics and borrowed display provenance; it is destroyed after corpus
+teardown on every path. The payload exposes authoritative typed diagnostic
+shapes and accepted provider counters without changing legacy provider counts.
 `corpus/provider.h` names Codex, Claude and OpenCode consistently in session
 rows and usage buckets. Its shared adoption/status/idle helpers preserve
 Claude's wide tool counts and independent map ownership; tool adoption uses

@@ -91,3 +91,14 @@ visibility and unchanged database/WAL bytes. Shared-memory side files retain
 SQLite's normal coordination allowance. Cancellation and partial-read failures
 use the existing test-only fault infrastructure; descriptor counts and map
 teardown are checked across repeated successful and failed reads.
+
+`test_opencode.py` adds native CLI integration for primary/sorted-sibling and
+explicit path precedence, normalized duplicates, preview skips, environment
+semantics, source-only/mixed/disabled/absent/error-only builds, structured
+diagnostics, archive precedence, recorded and missing costs, finite provider
+aggregate overflow and collision-excluded counters. All SQLite rows and WAL
+files are invented under the case's scratch HOME through this project's
+venv sqlite3. Tests preserve database/WAL bytes, leave unopened Codex caches
+untouched across rebuild, and prevent credential/unrelated-kv canaries from
+entering runtime artifacts. The wrapper strips OpenCode environment overrides
+and mutation-checks all five real-home OpenCode read/write denies separately.

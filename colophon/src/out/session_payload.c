@@ -272,6 +272,10 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
     jsonw_raw(w, "{\"id\":");
     payload_reference(w, ids, s->id);
     jsonw_raw(w,",\"provider\":");string(w,provider_id(s->provider));
+    if(s->provider==PROVIDER_OPENCODE){
+      jsonw_raw(w,",\"opencode_database\":");string(w,s->opencode_database);
+      jsonw_raw(w,",\"capabilities\":{\"copy_session_id\":true,\"copy_log_path\":false,\"open_in_codex\":false,\"continue_in_cli\":false}");
+    }
     jsonw_raw(w,s->history_only?",\"history_only\":true":",\"history_only\":false");jsonw_raw(w,",\"resume_config_dir\":");string(w,s->resume_config_dir);
     if (!agents) {
       jsonw_raw(w, ",\"kind\":");

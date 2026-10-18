@@ -60,7 +60,7 @@ TEST(price_unicode_date_and_alias_rate_paths_survive_sanitized_owners) {
         jsonw_free(&writer);arena_destroy(&arena);
     }
 }
-TEST(summary_nonfinite_result_keeps_source_sum_format) {
+TEST(summary_nonfinite_result_is_unavailable_with_provider_context) {
     Corpus corpus={0};SessionModel session={.kind=STR_LIT("session")};
     UsageUnit units[2]={{.has_cost=true},{.has_cost=true,.cost_usd=1}};
     PriceEntry rates={.standard={.input={.is_float=true,.f=1e308}}};
@@ -68,10 +68,19 @@ TEST(summary_nonfinite_result_keeps_source_sum_format) {
     session.units=units;session.unit_count=2;ASSERT_EQ(ERR_OK,omap_put(&corpus.sessions,STR_LIT("synthetic-overflow"),&session).code);
     RuntimeLedger ledger={.available=true};PricingReport pricing={0};CatalogResult catalog={0};CodexMetadata metadata={0};ScanResult scan={0};CorpusStrings errors={0};
     PayloadInputs in={.corpus=&corpus,.ledger=&ledger,.pricing=&pricing,.catalog=&catalog,.metadata=&metadata,.scan=&scan,.workspace_errors=&errors};
-    FILE *capture=tmpfile();ASSERT_TRUE(capture!=NULL);fflush(stdout);int saved=dup(STDOUT_FILENO);ASSERT_TRUE(saved>=0);ASSERT_TRUE(dup2(fileno(capture),STDOUT_FILENO)>=0);
-    Err result=summary_run("synthetic-output",0,&in);fflush(stdout);ASSERT_TRUE(dup2(saved,STDOUT_FILENO)>=0);close(saved);
+    FILE *capture=tmpfile(),*diagnostics=tmpfile();ASSERT_TRUE(capture&&diagnostics);fflush(stdout);fflush(stderr);
+    int saved=dup(STDOUT_FILENO),saved_error=dup(STDERR_FILENO);ASSERT_TRUE(saved>=0&&saved_error>=0);
+    ASSERT_TRUE(dup2(fileno(capture),STDOUT_FILENO)>=0);ASSERT_TRUE(dup2(fileno(diagnostics),STDERR_FILENO)>=0);
+    Err result=summary_run("synthetic-output",0,&in);fflush(stdout);fflush(stderr);
+    ASSERT_TRUE(dup2(saved,STDOUT_FILENO)>=0);ASSERT_TRUE(dup2(saved_error,STDERR_FILENO)>=0);close(saved);close(saved_error);
     rewind(capture);char text[512];size_t n=fread(text,1,sizeof text-1,capture);text[n]=0;fclose(capture);omap_destroy(&corpus.sessions);
-    ASSERT_EQ(ERR_OK,result.code);ASSERT_TRUE(strstr(text,"$inf est.")!=NULL);
+    rewind(diagnostics);char reason[512];n=fread(reason,1,sizeof reason-1,diagnostics);reason[n]=0;fclose(diagnostics);
+    /* The new aggregate-failure contract replaces the old infinity-format
+     * expectation; unavailable output must preserve independently owned facts. */
+    ASSERT_EQ(ERR_OK,result.code);ASSERT_TRUE(strstr(text,"costs unavailable")!=NULL);
+    ASSERT_TRUE(strstr(text,"$inf")==NULL&&strstr(text,"$nan")==NULL);
+    ASSERT_TRUE(strstr(reason,"cost_aggregate_overflow: provider summary codex")!=NULL);
+    ASSERT_TRUE(isinf(units[0].cost_usd)&&units[0].has_cost);ASSERT_EQ(1,units[1].cost_usd);
 }
 static void *catalog_deep_owned(void *unused) {
     (void)unused;

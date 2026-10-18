@@ -10,6 +10,13 @@ request; unavailable Codex rates do not hide Claude estimates. The canonical sou
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 
+Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
+subagents, archive state and recorded catalog estimates to the native pipeline,
+payload and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
+selects one file and `--no-opencode` disables discovery. Sources are reread
+each run without a parse cache. The page's OpenCode controls and presentation
+are a separate integration step; continuation remains disabled.
+
 The page's All/Codex/Claude switch preserves filters and uses green/blue
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI
@@ -57,7 +64,8 @@ COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --c
 
 Without overrides, sources include `~/.codex`, Claude's config projects,
 Desktop embedded project stores and macOS cswap sessions. `--no-claude`
-disables Claude inspection. Either readable provider is sufficient; usable
+disables Claude inspection. Readable Codex/Claude input or a reportable
+OpenCode database is sufficient; usable
 Claude history supplies history-only sessions when transcript roots are absent
 or an entry has no matching transcript identity. They show remembered prompts
 without active time, tokens or cost, with a separate shown-by-default toggle.

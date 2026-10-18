@@ -177,3 +177,11 @@ Explicit valid zero-token/zero-cost requests count as missing usage but are
 exact facts: they do not alone make a token residual's zero cost unknown.
 See `tests/unit/test_opencode_usage.c` for synthetic overflow/isolation and
 zero-tuple regressions.
+
+Provider CLI totals need their own finite guard even when every session cost
+is valid. Check compensated-sum intermediates and the corrected total; retain
+valid per-session payload costs while marking only the overflowing provider
+summary unavailable. Discovery and test isolation must also precede runtime
+creation: default-enabled SQLite providers can otherwise inspect a real home
+even during an offline smoke run. Strip environment overrides and set a fresh
+synthetic HOME as well as COLOPHON_HOME.
