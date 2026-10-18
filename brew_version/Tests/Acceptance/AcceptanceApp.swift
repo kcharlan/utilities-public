@@ -40,6 +40,14 @@ import UserNotifications
                     Task { await self.notifier.post(Notice(name: PackageName("synthetic-notice")!, title: "Synthetic retry notice", body: "Synthetic notification retry acceptance.")) }
                 }
             }
+            HStack {
+                Button("Tap failures") { Task { await self.service.setTapFailures(true); SyntheticEnvironment.advanceRefreshClock(); await self.controller.refreshNow() } }
+                Button("Restore tap responses") { Task { await self.service.setTapFailures(false); SyntheticEnvironment.advanceRefreshClock(); await self.controller.refreshNow() } }
+            }
+            HStack {
+                Button("Remove tap") { Task { SyntheticEnvironment.setTapPresent(false); SyntheticEnvironment.advanceRefreshClock(); await self.controller.refreshNow() } }
+                Button("Restore tap") { Task { SyntheticEnvironment.setTapPresent(true); SyntheticEnvironment.advanceRefreshClock(); await self.controller.refreshNow() } }
+            }
         }.padding(10))
         let status = StatusItemController(controller: controller, notifier: notifier, accessory: controls)
         self.status = status

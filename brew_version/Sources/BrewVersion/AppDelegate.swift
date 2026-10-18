@@ -9,12 +9,13 @@ import BrewVersionCore
     override convenience init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let prefixes = HomebrewPrefix.detectAll(candidates: [URL(fileURLWithPath: "/opt/homebrew"), URL(fileURLWithPath: "/usr/local")])
-        let installed = prefixes.isEmpty ? nil : InstalledReader(prefixes: prefixes, applicationDirectories: [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")])
+        let installed = prefixes.isEmpty ? nil : InstalledReader(prefixes: prefixes, applicationDirectories: [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")], tappedTaps: { TapIndex.scan(prefixes: prefixes).taps })
         let notifier = UserNotifier()
         let controller = WatchController(transport: URLSessionTransport.standard(), installed: installed,
             store: WatchStore(fileURL: home.appendingPathComponent("Library/Application Support/Brew Version/state.json")),
             notifier: notifier,
-            catalogClient: CatalogClient(transport: CatalogClient.makeTransport(), cacheDirectory: home.appendingPathComponent("Library/Caches/Brew Version")), networkAvailable: false)
+            catalogClient: CatalogClient(transport: CatalogClient.makeTransport(), cacheDirectory: home.appendingPathComponent("Library/Caches/Brew Version")), networkAvailable: false,
+            taps: { TapIndex.scan(prefixes: prefixes) })
         self.init(controller: controller, notifier: notifier)
     }
     init(controller: WatchController, notifier: UserNotifier, status: (any PopoverPresenting)? = nil) {

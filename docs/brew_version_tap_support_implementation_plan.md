@@ -457,10 +457,10 @@ agents.md, docs/lessons_learned.md
 - **Other updates status:** `CatalogStatusLine` appends the Copy rows for `tapCheckFailures` and `tapUncheckable` when their counts are non-zero.
 - **App setup:** `AppDelegate` passes `taps:` and `tappedTaps:` closures over the same prefix list it already detects.
 
-- [ ] **Step 1: Write the failing tests:** `tapRowTitleAndCommand` and `tapStatusCopy` in `NativeActionsTests`.
-- [ ] **Step 2: Run** `swift test --package-path brew_version --filter NativeActionsTests`. Expected: failures. **Step 3: Implement.**
-- [ ] **Step 4: Add snapshot states.** In `Snapshots.swift`, add a watching state with official, amber tap and untapped-error rows, and a tap-suggestion state. Update the state list and count there (`Snapshots.swift`, near its "Validated" output), in `brew_version/README.md`'s Build and test section and in `agents.md`'s Validation Matrix entry.
-- [ ] **Step 5: Docs and release.**
+- [x] **Step 1: Write the failing tests:** `tapRowTitleAndCommand` and `tapStatusCopy` in `NativeActionsTests`.
+- [x] **Step 2: Run** `swift test --package-path brew_version --filter NativeActionsTests`. Expected: failures. **Step 3: Implement.**
+- [x] **Step 4: Add snapshot states.** In `Snapshots.swift`, add a watching state with official, amber tap and untapped-error rows, and a tap-suggestion state. Update the state list and count there (`Snapshots.swift`, near its "Validated" output), in `brew_version/README.md`'s Build and test section and in `agents.md`'s Validation Matrix entry.
+- [x] **Step 5: Docs and release.**
   - **README:** add a "Taps" section covering every Decision, including Rollback safety. Update the overview, Requirements network bullet, Command usage name grammar and lookup policy, Compatibility with the bash command, and the installed-receipt rules in Catalog and Other updates. Replace the Command usage prohibition on third-party taps with a reference to Taps.
   - **Lessons learned:** add an entry on porting Homebrew's URL version detection with a generated parity corpus.
   - **Version:** set the release version in `Info.plist` and `Release.swift`.
@@ -469,7 +469,13 @@ agents.md, docs/lessons_learned.md
   - `brew_version/build/release/brew-version --help` and `--version`, the latter reporting the release version;
   - `node --test tools/tests/deploy_brew_version.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh`.
   - Complete and record the README's Settings and native acceptance gates separately from the automated targets, including tap rows, suggestions, commands and status copy. Owner-dependent or unavailable checks remain unmet release gates; do not report them as passed from offscreen rendering or the harness build.
-- [ ] **Step 7: Commit** "Show tap packages in Brew Version and prepare the release".
+- [x] **Step 7: Commit** "Show tap packages in Brew Version and prepare the release".
+
+Step 6 is partial: automated results and all eighteen visual inspections are
+recorded in `brew_version/docs/implementation_notes.md`; the current native,
+Settings, owner-dependent notification/login and deployment gates remain
+explicitly unmet pending separate acceptance. Historical release approval is
+not approval of version 1.1.0.
 
 ---
 

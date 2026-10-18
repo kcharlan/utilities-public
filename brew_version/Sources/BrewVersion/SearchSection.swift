@@ -6,8 +6,8 @@ enum SearchChoice: Equatable {
     case result(Int)
 }
 @MainActor func catalogPrefixChoices(controller: WatchController, query: String) -> [(name: PackageName, kind: PackageKind)] {
-    guard tokenize(query).count == 1, let catalog = controller.catalog else { return [] }
-    return catalog.suggestions(prefix: query.trimmingCharacters(in: .whitespacesAndNewlines))
+    guard tokenize(query).count == 1 else { return [] }
+    return controller.suggestions(prefix: query.trimmingCharacters(in: .whitespacesAndNewlines)).map { ($0.name, $0.kind) }
 }
 func searchChoice(selection: Int, suggestions: [(name: PackageName, kind: PackageKind)], resultIndices: [Int]? = nil) -> SearchChoice {
     if suggestions.indices.contains(selection) { return .suggestion(suggestions[selection].name, suggestions[selection].kind) }
@@ -67,12 +67,9 @@ struct SearchSection: View {
         Task { await input.watchChoice(choice, undo: undo, controller: controller) }
     }
     private func copySelected() {
-        switch searchChoice(selection: selection, suggestions: suggestions, resultIndices: resultIndices) {
-        case .suggestion(let name, let kind):
-            if let listing = controller.catalog?.listing(for: name, kind: kind) { copyText(ReleaseID(listing).displayVersion) }
-        case .result(let index):
-            guard controller.results.indices.contains(index), case .found(let listing, _, _) = controller.results[index] else { return }
-            copyText(ReleaseID(listing).displayVersion)
+        let choice = searchChoice(selection: selection, suggestions: suggestions, resultIndices: resultIndices)
+        Task {
+            if let version = await input.version(for: choice, controller: controller) { copyText(version) }
         }
     }
 }
@@ -93,7 +90,8 @@ struct SearchResults: View {
                     if !suggestions.isEmpty {
                         ForEach(Array(suggestions.enumerated()), id: \.offset) { index, item in
                             Button { selectSuggestion(item.name, item.kind) } label: {
-                                PackageRow(name: item.name, kind: item.kind, compact: true, selected: index == selection)
+                                PackageRow(name: item.name, kind: item.kind, compact: true,
+                                           suggestionInstalled: controller.installedNames[item.kind]?.contains(item.name) == true, selected: index == selection)
                             }.buttonStyle(.plain).accessibilityLabel("\(item.name.rawValue), \(item.kind.rawValue) suggestion").id(index)
                         }
                     }

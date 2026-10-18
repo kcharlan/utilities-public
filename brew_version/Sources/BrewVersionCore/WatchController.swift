@@ -558,9 +558,15 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     }
     public func clearSearch() { searchGeneration = UUID(); results = [] }
     public func search(_ text: String, kind: PackageKind? = nil) async {
+        await search(tokens: tokenize(text), kind: kind)
+    }
+    /// Explicit UI choices already carry normalized source identity.
+    public func search(_ name: PackageName, kind: PackageKind? = nil) async {
+        await search(tokens: [.valid(name)], kind: kind)
+    }
+    private func search(tokens: [SearchToken], kind: PackageKind?) async {
         guard !Task.isCancelled else { return }
         let generation = UUID(); searchGeneration = generation
-        let tokens = tokenize(text)
         let resolver = self.resolver; let scheduler = self.scheduler
         let knownKinds = Dictionary(uniqueKeysWithValues: state.watched.compactMap { entry in
             entry.kind.map { (entry.name, $0) }

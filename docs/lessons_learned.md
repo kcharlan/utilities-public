@@ -1015,3 +1015,30 @@ catalog derivation in one existing capture group, allowing one metadata
 replacement and retaining the targeted-read revision reconciliation. Regress
 actual snapshot counts under a held refresh/check overlap, alongside kind-specific
 retained tap listings after later checks.
+
+## 2026-10-18: Port Homebrew version detection against a generated corpus
+
+Generate synthetic URL/tag expectations with the pinned Homebrew implementation
+before porting parser order, stem handling and regex behavior. Keep the source
+commit in the port and corpus, cover every parser family and negative cases,
+and compare the generated expectations in Swift tests. Handpicked happy paths
+miss suffix removal and regex-anchor differences between Ruby and Foundation.
+
+## 2026-10-18: Resolve directory links without changing tap remote paths
+
+Foundation directory enumeration needs a resolved URL for a selected Formula
+directory symlink. Rebuild each enumerated child under the lexical URL so the
+GitHub request keeps its repository-relative Formula path. Preserve Git config
+casing semantics separately: section/key names are case-insensitive, while the
+remote subsection name `origin` is case-sensitive. Regress links and mixed-case
+config independently instead of lowercasing the whole config before parsing.
+
+## 2026-10-18: Preserve parsed package identity through suggestion actions
+
+Homebrew tap-prefix normalization is not idempotent for repeated reserved
+prefixes. A suggestion already owns a canonical PackageName; converting it to
+text and parsing it again can select a different tap. Preserve the object in
+the transient request and route explicit selections through the same controller
+search pipeline using a valid token. Copy-version actions must resolve that
+same selected name and kind, rather than consulting only the official catalog.
+Keep debounce, cancellation and request-generation checks around both actions.

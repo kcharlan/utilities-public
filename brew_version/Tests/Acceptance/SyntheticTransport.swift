@@ -4,9 +4,17 @@ import BrewVersionCore
 actor SyntheticTransport: HTTPTransport {
     private var version = "1.0-synthetic"
     private var delayNext = false
+    private var tapFailures = false
+    func setTapFailures(_ enabled: Bool) { tapFailures = enabled }
     func advance() { version = "2.0-synthetic" }
     func delayNextLookup() { delayNext = true }
     func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        if url.host == "raw.githubusercontent.com" {
+            if tapFailures, url.lastPathComponent == "synthetic-tool.rb" { return .init(status: 503, body: Data()) }
+            if tapFailures, url.lastPathComponent == "synthetic-shared.rb" { return .init(status: 200, body: Data("version synthetic_dynamic_value".utf8)) }
+            let source = url.path.contains("/Casks/") ? "cask \"synthetic-app\" do\n version \"7.8\"\nend" : "class SyntheticTool < Formula\n version \"4.5.6\"\nend"
+            return .init(status: 200, body: Data(source.utf8))
+        }
         if url.path == "/api/formula.json" {
             return .init(status: 200, body: Data("[{\"name\":\"synthetic-installed\",\"versions\":{\"stable\":\"2.0-synthetic\"}},{\"name\":\"synthetic-formula\",\"versions\":{\"stable\":\"\(version)\"}},{\"name\":\"synthetic-shared\",\"versions\":{\"stable\":\"3.0-synthetic\"}}]".utf8))
         }
