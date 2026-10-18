@@ -31,19 +31,22 @@ public struct InstalledReader: InstalledReading {
     private let prefixes: [HomebrewPrefix]
     private let applicationDirectories: [URL]
     private let readData: @Sendable (URL) throws -> Data
-    public init(prefixes: [HomebrewPrefix], applicationDirectories: [URL]) {
-        self.init(prefixes: prefixes, applicationDirectories: applicationDirectories, readData: { try Data(contentsOf: $0) })
+    private let tappedTaps: @Sendable () -> Set<TapName>
+    public init(prefixes: [HomebrewPrefix], applicationDirectories: [URL], tappedTaps: @escaping @Sendable () -> Set<TapName> = { [] }) {
+        self.init(prefixes: prefixes, applicationDirectories: applicationDirectories, readData: { try Data(contentsOf: $0) }, tappedTaps: tappedTaps)
     }
-    init(prefixes: [HomebrewPrefix], applicationDirectories: [URL], readData: @escaping @Sendable (URL) throws -> Data) {
+    init(prefixes: [HomebrewPrefix], applicationDirectories: [URL], readData: @escaping @Sendable (URL) throws -> Data, tappedTaps: @escaping @Sendable () -> Set<TapName> = { [] }) {
         self.prefixes = prefixes
         self.applicationDirectories = applicationDirectories
         self.readData = readData
+        self.tappedTaps = tappedTaps
     }
 
     public func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion? {
         for prefix in prefixes {
-            guard let version = admittedVersion(name, kind: kind, prefix: prefix) else { continue }
-            return resolvedVersion(version, kind: kind, listing: listing)
+            guard let installation = admittedVersion(name, kind: kind, prefix: prefix),
+                  installation.name == name else { continue }
+            return resolvedVersion(installation.version, kind: kind, listing: listing)
         }
         return nil
     }
@@ -80,10 +83,11 @@ public struct InstalledReader: InstalledReading {
         for prefix in prefixes {
             for kind in [PackageKind.formula, .cask] {
                 for rack in directories(prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom")) {
-                    guard let name = PackageName(rack.lastPathComponent),
-                          result.versions[kind]?[name] == nil,
-                          let version = admittedVersion(name, kind: kind, prefix: prefix) else { continue }
-                    result.versions[kind, default: [:]][name] = resolvedVersion(version, kind: kind, listing: byKind[kind]?[name])
+                    guard let shortName = PackageName(rack.lastPathComponent),
+                          let installation = admittedVersion(shortName, kind: kind, prefix: prefix),
+                          result.versions[kind]?[installation.name] == nil else { continue }
+                    let name = installation.name
+                    result.versions[kind, default: [:]][name] = resolvedVersion(installation.version, kind: kind, listing: byKind[kind]?[name])
                 }
             }
         }
@@ -94,14 +98,16 @@ public struct InstalledReader: InstalledReading {
     // Tab.for_keg (tab/tab.rb), Cask::Tab.for_cask (cask/tab.rb),
     // Cask::Metadata#metadata_main_container_path and AbstractTab.create (tab.rb).
     // Legacy casks may lack a receipt; explicit invalid provenance is still rejected.
-    // Formulas always require an official receipt.
-    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix) -> String? {
-        let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(name.rawValue)
+    // Formulas always require a receipt. Both read paths use the receipt's
+    // admitted identity, so a tap rack can never satisfy an official watch.
+    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix) -> (name: PackageName, version: String)? {
+        let shortName = name.shortName
+        let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(shortName)
         guard isDirectory(rack) else { return nil }
         let versions = directories(rack).filter { !isSymbolicLink($0) }
         let selected: URL?
         if kind == .formula {
-            let opt = prefix.root.appendingPathComponent("opt").appendingPathComponent(name.rawValue)
+            let opt = prefix.root.appendingPathComponent("opt").appendingPathComponent(shortName)
             let resolved = opt.resolvingSymlinksInPath().standardizedFileURL
             if isSymbolicLink(opt), isDirectory(resolved),
                resolved.deletingLastPathComponent() == rack.resolvingSymlinksInPath().standardizedFileURL {
@@ -115,14 +121,27 @@ public struct InstalledReader: InstalledReading {
         do { data = try readData(receipt) }
         catch {
             if kind == .cask, (error as? CocoaError)?.code == .fileReadNoSuchFile,
-               !isSymbolicLink(receipt) { return selected.lastPathComponent }
+               !isSymbolicLink(receipt), let officialName = PackageName(shortName) {
+                return (officialName, selected.lastPathComponent)
+            }
             return nil
         }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let source = object["source"] as? [String: Any],
-              let tap = source["tap"] as? String,
-              tap == (kind == .formula ? "homebrew/core" : "homebrew/cask") else { return nil }
-        return selected.lastPathComponent
+              let rawTap = source["tap"] as? String,
+              let tap = TapName(rawTap) else { return nil }
+        let admittedName: PackageName?
+        if tap.isOfficial {
+            guard tap.description == (kind == .formula ? "homebrew/core" : "homebrew/cask") else { return nil }
+            admittedName = PackageName(shortName)
+        } else {
+            guard tappedTaps().contains(tap) else { return nil }
+            // Use the receipt input: composing with an already normalized tap
+            // would remove a second reserved repository prefix.
+            admittedName = PackageName("\(rawTap)/\(shortName)")
+        }
+        guard let admittedName else { return nil }
+        return (admittedName, selected.lastPathComponent)
     }
     private func highest(_ versions: [URL], kind: PackageKind) -> URL? {
         // Stable filename order makes equal or asymmetric upstream comparisons deterministic.
