@@ -25,9 +25,9 @@ corroborated alternating transitions and stable on-screen geometry. A subsequent
 Finder-reopen check exposed an already-visible session-start case. Adopting
 that session fixed Finder reopening, but the owner's follow-up again found
 missed closing clicks; its trace showed immediate close/reopen sessions. The
-status correction therefore remains unaccepted while native-session ownership
-and the popover's independent transient tracker are isolated. Production
-integration, retained controller regressions and final review are in progress.
+status correction was still unaccepted at that stage, while native-session
+ownership and the popover's independent transient tracker were isolated. The
+integrated replacement and subsequent physical results are recorded below.
 
 The owner also recalled a CodexBar click fix. Its actual historical patch and
 upstream [menu-card repair](https://github.com/steipete/CodexBar/commit/7465c6a11674d4cacb97b8f023dd9ad8fc70e446)
@@ -40,7 +40,7 @@ after native dismissal. A mouse-down-only candidate also failed intermittently:
 a fresh click during an unfinished close was treated as another close because
 the popover still reported itself shown. Ten successful physical cycles followed
 by another failure did not establish acceptance. The controller's logical
-presentation and close-completion boundary remain under investigation.
+presentation and close-completion boundary required the replacement below.
 No CodexBar implementation was copied.
 
 The chosen replacement architecture keeps the existing rich content in an
@@ -141,6 +141,77 @@ completions by request identity. Its full Brew suite passed, and scoped independ
 review found that interference addressed with no new findings. The status
 interaction correction is integrated, and its physical results are recorded
 above; an icon press after a notification-click opening remains unexercised.
+
+### Retained panel geometry and scoped closeout review
+
+Subsequent live acceptance reproduced the clipped header after search results
+and notification warnings changed the retained panel's height. This was a real
+viewport defect despite passing maintained-view snapshots. Passive synchronous
+setter traces showed AppKit translating a temporary root/parent height mismatch
+into an autoresizing constraint, then applying that offset again when the
+window's frame view caught up. A 534-point window ended up with a 609-point root
+and scroll view, hiding 75 points at the top. The scroll view's own
+documentVisibleRect still reported enough space and concealed that ancestor
+clipping from the earlier assertions.
+
+The correction gives the window, material and viewport one sizing contract:
+the root has no translated autoresizing mask and is pinned to the window's
+public contentLayoutGuide; the scroll view is pinned to the material's edges.
+The independently measured hosted document and small-screen outer scrolling
+remain. A resize-delegate repair and a lazy fitting-size experiment both failed
+live and were discarded. No delayed correction, frame clamp or click-lifecycle
+replacement was retained. The regression replays the captured late frame write
+after ordinary resize handling, then requires normal parent layout to restore
+the actual window size and full hosted visibility. It failed all three geometry
+assertions before the correction; it is a recorded-boundary replay, rather than
+a claim that a hidden window naturally reproduces the live framework order.
+
+The same scoped review found two other edge cases. Actual other-application
+workspace activation now dismisses the panel even when the pointer rests on its
+icon, while preserving the recorded icon-focus-before-begin exception and
+excluding this app and MenuBarAgent. The controller regressions inject isolated
+workspace notification centers. Four recorded hidden-item placeholder
+rectangles now use the first-screen fallback even when they overlap a lower
+display's menu bar.
+Public geometry supplies no reliable placed flag: an actual anchor exactly
+equal to one of those rectangles deliberately gets that fallback and no icon
+hit region; other negative-origin and tall placements still qualify normally.
+
+On the corrected private synthetic build, live CUA checks kept the complete
+rounded header and footer through empty state, six suggestions, explicit cask
+lookup/add, the actual authorization warning, search clear, list collapse/expand
+and repeated search, in both appearances. Passive geometry then agreed at
+534 points for window, root and scroll, with hosted visible origin zero.
+A menu bar manager and its helper were running at that final geometry check and
+were not quit or reconfigured. This establishes the observed content-resize
+path; CUA app-window input does not establish physical MenuBarAgent icon input.
+The earlier owner-performed status-click results above remain distinct from
+this check. The new workspace-activation route has callback-order regressions;
+its actual physical icon/keyboard-switch combination has not been repeated.
+
+The final maintained synthetic build, without diagnostic tracing, also passed
+that exact search/cask/warning/clear sequence, followed by light-mode
+collapse/expand and repeated search, then dark-mode clear. Both synthetic apps
+were quit through their normal Quit control and their process absence checked.
+The definitive `make -C brew_version test release acceptance settings-prototype
+snapshots` passed 226 Swift tests (150 core, 11 CLI, 65 app), all 5 isolated
+release/build checks and the synthetic service case, without failures or skips.
+Both release signatures passed strict verification; help and short help matched
+the golden fixture, version output was exactly `brew-version 1.0.0` with empty
+stderr, and actual release binary minimum versions were 27.0. All fourteen final
+light/dark snapshot PNGs were byte-identical to the set inspected earlier that
+day. Scoped independent re-review found no remaining source findings.
+
+Remaining current-system release checks are the physical status/count
+accessibility route on this final build, the new workspace-activation route's
+physical input ordering, one icon press after a notification-click opening,
+actual launch after login and the approval-required login branch. The owner
+deferred logout/reboot; no such action was performed. The approval-required
+service state was unavailable on this host. Notification Center delivery/click
+and persisted Open at login were already owner-confirmed above; banner display
+is a separate OS presentation condition. The supported minimum is macOS 27,
+not the historical macOS 14 requirement. These commits update the PR and local
+builds; they do not install, deploy, publish a release or merge the PR.
 
 ## Earlier final visual and correctness round
 

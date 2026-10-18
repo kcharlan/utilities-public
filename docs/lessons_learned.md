@@ -1,5 +1,26 @@
 # Lessons learned
 
+## 2026-10-17: Check the native window's viewport after rapid content resizes
+
+A correct SwiftUI measurement and NSScrollView.documentVisibleRect can still
+hide a header. In the live Brew Version panel, successive measured resizes ran
+before AppKit updated contentLayoutRect; its later resize applied an old delta
+to an already-sized root. A 534-point window contained a 609-point root and
+scroll view, hiding the first 75 points. Offscreen warning-growth tests passed
+because the scroll view reported its own oversized viewport. Compare the root,
+scroll view and hosted visible region with the actual window too. Read passive
+frames without forcing layout, retain the observed boundary order as a failing
+regression, and verify the same content transitions in the live panel. Repairing
+the root in windowDidResize passed a boundary replay but failed live because a
+later framework write could still undo it. Trace synchronous setters as well as
+notifications before deciding which layer owns viewport sizing.
+
+The synchronous setter stack showed the layout engine applying a translated
+autoresizing constraint's stale root/parent height offset after the resize
+delegate returned. Making the root follow the window's public content layout
+guide and pinning the scroll view to that root removes the second sizing owner.
+Removing an unused fitting-size read alone did not resolve the live defect.
+
 ## 2026-10-17: macOS 27 status items are hosted out of process
 
 MenuBarAgent draws status items and forwards their clicks; the app owns no
