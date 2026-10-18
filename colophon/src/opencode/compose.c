@@ -78,8 +78,8 @@ static Err session(OpencodeStore *store,Corpus *c,OpencodeSession *raw,SessionMo
     bool incomplete=!raw->provenance_complete||raw->malformed_messages||raw->unknown_message_types.size||raw->unknown_content_types.size;
     for(size_t i=0;i<raw->message_count;i++) {
         const OpencodeMessage *m=ordered[i];
-        if(!eligible(m))continue;
         if(m->inherited){r->inherited++;continue;}
+        if(!eligible(m))continue;
         r->requests++;
         bool usable=m->tokens_valid&&positive(m->tokens);
         bool valid_cost=m->cost_valid&&isfinite(m->cost)&&m->cost>=0;

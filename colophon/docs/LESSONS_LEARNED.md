@@ -185,3 +185,9 @@ summary unavailable. Discovery and test isolation must also precede runtime
 creation: default-enabled SQLite providers can otherwise inspect a real home
 even during an offline smoke run. Strip environment overrides and set a fresh
 synthetic HOME as well as COLOPHON_HOME.
+
+Count inherited OpenCode messages before request-kind filtering. The diagnostic
+describes every copied row, including prompts, control messages and running
+compactions; request eligibility describes a narrower accounting population.
+When integration exposes a counter mismatch, check the specified population
+against both projection and composition before changing a regression expectation.

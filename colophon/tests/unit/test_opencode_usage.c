@@ -86,6 +86,22 @@ TEST(opencode_usage_fork_inheritance) {
     SETUP(2);s.fork_session_id=STR_LIT("synthetic-parent");m[0].row_created_ms=(MaybeMs){true,500};m[1].row_created_ms=(MaybeMs){true,2000};
     SessionModel *p=run(&store,&c,&s);ASSERT_EQ(1,p->unit_count);ASSERT_EQ(1,store.usage->inherited);ASSERT_EQ(1,store.usage->requests);DONE();
 }
+TEST(opencode_usage_inherited_diagnostic_counts_every_message_kind) {
+    SETUP(8);s.fork_session_id=STR_LIT("synthetic-parent");
+    m[0].kind=OC_MSG_USER;m[0].id=STR_LIT("synthetic-copied-user");
+    m[2].kind=OC_MSG_SYSTEM;m[3].kind=OC_MSG_IDLE;
+    m[4].kind=OC_MSG_COMPACTION;m[4].status=STR_LIT("running");
+    m[5].kind=OC_MSG_COMPACTION;m[5].status=STR_LIT("completed");
+    for(size_t i=0;i<6;i++)m[i].row_created_ms=(MaybeMs){true,500};
+    m[6].kind=OC_MSG_COMPACTION;m[6].status=STR_LIT("running");
+    m[6].row_created_ms=m[7].row_created_ms=(MaybeMs){true,2000};
+    SessionModel *p=run(&store,&c,&s);
+    ASSERT_EQ(6,store.usage->inherited);ASSERT_EQ(1,store.usage->requests);
+    ASSERT_EQ(0,store.usage->missing_usage);ASSERT_EQ(0,store.usage->cost_only);
+    ASSERT_EQ(1,p->unit_count);ASSERT_EQ(18,p->own_usage->input);
+    ASSERT_EQ(10,p->own_usage->output);ASSERT_EQ(0.25,p->own_usage->cost_usd);
+    ASSERT_EQ(0,p->turn_count);DONE();
+}
 TEST(opencode_usage_codex_ledger_independence) {
     SETUP(1);SessionModel *p=run(&store,&c,&s);ASSERT_TRUE(p->own_usage->has_cost);ASSERT_EQ(0.25,p->own_usage->cost_usd);DONE();
 }

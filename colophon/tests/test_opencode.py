@@ -384,10 +384,10 @@ def test_opencode_orphans_and_inherited_messages_keep_context_and_accepted_count
     payload = native.payload()
     orphan, = payload["diagnostics"]["opencode_orphaned_subagents"]
     assert orphan["session"] == SESSION and orphan["database"] == str(path) and orphan["reason"]
-    assert payload["diagnostics"]["opencode_inherited_messages"] == 1
+    assert payload["diagnostics"]["opencode_inherited_messages"] == 2
     assert source(payload)["sessions"] == 1 and source(payload)["subagents"] == 1
     assert source(payload)["requests"] == 1
-    assert "opencode_inherited_messages=1" in result.stderr
+    assert "opencode_inherited_messages=2" in result.stderr
     assert "opencode: 1 sessions · 1 subagents" in result.stdout
 
 

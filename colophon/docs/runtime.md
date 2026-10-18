@@ -117,9 +117,10 @@ Continuation stays disabled until disposable CLI/database acceptance succeeds.
 
 OpenCode source counters describe deduplicated accepted database facts and
 inserted display/accounting rows: excluded cross-provider collisions do not
-count as sessions or requests; subagents include orphan children. Requests and
-inherited-message counts cover accounting-eligible assistant/finished-compaction
-messages. Diagnostic lists preserve session/database/reason context; unknown
+count as sessions or requests; subagents include orphan children. Requests cover
+accounting-eligible assistant/finished-compaction messages. Inherited-message
+counts cover all copied rows regardless of kind; they contribute no requests,
+tokens or costs. Diagnostic lists preserve session/database/reason context; unknown
 types and missing usage are count maps. Residuals are keyed by session and keep
 raw `input`, `output`, `reasoning`, `cache_read`, `cache_write`, nullable `cost`,
 nullable millisecond `date` and `date_basis=session_start`. Shortfalls preserve
