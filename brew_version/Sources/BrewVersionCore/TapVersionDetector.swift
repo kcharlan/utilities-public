@@ -105,14 +105,20 @@ public enum TapVersionDetector {
         } else {
             ext = ""
         }
-        return String(name.dropLast(ext.count))
+        // A \Z match can finish before a trailing LF. File.basename(name,
+        // extname) removes only a literal suffix, not a match near the end.
+        return name.hasSuffix(ext) ? String(name.dropLast(ext.count)) : name
     }
 
     private static func expression(_ pattern: String) -> NSRegularExpression {
         // Ruby's digit/word classes are ASCII for these version expressions.
         let pattern = pattern.replacingOccurrences(of: #"\d"#, with: "[0-9]")
             .replacingOccurrences(of: #"\w"#, with: "[A-Za-z0-9_]")
-        return try! NSRegularExpression(pattern: pattern)
+            // ICU's \Z accepts non-LF terminators even in Unix mode.
+            .replacingOccurrences(of: #"\Z"#, with: #"(?=\n?\z)"#)
+        // Ruby ^/$ are line anchors and its dot/anchors recognize only LF.
+        // ICU's default line terminators also include CR and Unicode separators.
+        return try! NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines, .useUnixLineSeparators])
     }
 
     private static func matches(_ regex: NSRegularExpression, _ value: String) -> Bool {

@@ -1,5 +1,18 @@
 # Lessons learned
 
+## 2026-10-18: Port regex anchors and filename suffix removal together
+
+Brew Version's Homebrew detector matched ordinary URLs but diverged after
+percent-decoding an LF: Ruby's `^`/`$` match line boundaries, while default
+Foundation expressions do not. Enable line anchors with Unix LF semantics,
+and translate Ruby's `\Z` explicitly: ICU still accepts CR and Unicode final
+terminators for `\Z` in Unix mode. A regex extension match before a trailing
+LF is not necessarily a literal filename suffix; Ruby's `File.basename`
+removes it only when the filename actually ends with it. Preserve that check
+instead of blindly dropping the captured length. Generate expected URL and
+tag results through the pinned upstream implementation for LF, CRLF, CR,
+NEL, Unicode line/paragraph separators, vertical tab and form feed.
+
 ## 2026-10-18: Separate typed normalization from canonical identity decoding
 
 Brew Version's tap normalizer removes one reserved repository prefix, matching

@@ -408,6 +408,246 @@
       "tag": null,
       "version": null,
       "parserIndex": null
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%0Asynthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%0Asynthetic",
+      "version": "4.5.6",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%0Av4.5.6-7.8",
+      "version": "4.5.6-7.8",
+      "parserIndex": 6
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%0Asynthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 1
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%0A",
+      "tag": null,
+      "version": "4.5.6.tar.gz\n",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%0D%0Asynthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6\r\nsynthetic.tar.gz",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%0D%0Asynthetic",
+      "version": "4.5.6\r\nsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%0D%0Av4.5.6-7.8",
+      "version": "4.5.6-7.8",
+      "parserIndex": 6
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%0D%0Asynthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%0D%0A",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%0Dsynthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6\rsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%0Dsynthetic",
+      "version": "4.5.6\rsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%0Dv4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%0Dsynthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%0D",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%C2%85synthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%C2%85synthetic",
+      "version": "4.5.6synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%C2%85v4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%C2%85synthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%C2%85",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%E2%80%A8synthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%E2%80%A8synthetic",
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%E2%80%A8v4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%E2%80%A8synthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%E2%80%A8",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%E2%80%A9synthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%E2%80%A9synthetic",
+      "version": "4.5.6 synthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%E2%80%A9v4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%E2%80%A9synthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%E2%80%A9",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%0Bsynthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6\u000bsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%0Bsynthetic",
+      "version": "4.5.6\u000bsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%0Bv4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%0Bsynthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%0B",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6%0Csynthetic.tar.gz",
+      "tag": null,
+      "version": "4.5.6\fsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic-tool-4.5.6%0Csynthetic",
+      "version": "4.5.6\fsynthetic",
+      "parserIndex": 21
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool.git",
+      "tag": "synthetic%0Cv4.5.6-7.8",
+      "version": "7.8",
+      "parserIndex": 7
+    },
+    {
+      "url": "https://github.com/synthetic-owner/synthetic-tool/tarball/v4.5.6%0Csynthetic",
+      "tag": null,
+      "version": "4.5.6",
+      "parserIndex": 23
+    },
+    {
+      "url": "https://example.invalid/synthetic-tool-4.5.6.tar.gz%0C",
+      "tag": null,
+      "version": "4.5.6.tar",
+      "parserIndex": 21
     }
   ],
   "parsers": [
