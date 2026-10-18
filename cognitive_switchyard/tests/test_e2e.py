@@ -790,6 +790,72 @@ class TestSessionCreationHappy:
         assert "locked" in body.lower() or "Start Session" in body
 
 
+class TestSetupPackDefaults:
+    """Untouched Setup fields leave verification and auto-fix to the pack.
+
+    Regression: the draft hard-coded verification_interval=4,
+    auto_fix_enabled=true and auto_fix_max_attempts=2 and always sent them,
+    so a pack's own values never applied to UI-created sessions.
+    """
+
+    @staticmethod
+    def _open_setup_for_pack(page, url: str, session_id: str, pack: str) -> None:
+        page.goto(url)
+        page.wait_for_selector("text=Create Session", timeout=SLOW_TIMEOUT)
+        page.locator("label:has-text('Session ID') ~ input").first.fill(session_id)
+        page.locator("label:has-text('Pack') ~ select").first.select_option(pack)
+        page.locator("button:has-text('Show Advanced')").click()
+
+    @staticmethod
+    def _create_and_capture_config(page) -> dict:
+        with page.expect_response(
+            lambda response: response.url.endswith("/api/sessions")
+            and response.request.method == "POST"
+        ) as response_info:
+            page.locator("button:has-text('Create Session')").click()
+        response = response_info.value
+        assert response.status == 201, response.text()
+        return response.request.post_data_json.get("config") or {}
+
+    def test_untouched_fields_use_pack_defaults(self, fresh_server, page, browser_error_guard):
+        # verify-enabled sets verification.interval: 1 and leaves auto_fix at
+        # the manifest defaults (disabled, 2 attempts).
+        self._open_setup_for_pack(page, fresh_server["url"], "pack-defaults-001", "verify-enabled")
+
+        interval_input = page.locator("label:has-text('Verification Interval') ~ input").first
+        auto_fix_select = page.locator("label:has-text('Auto-Fix') ~ select").first
+        attempts_input = page.locator("label:has-text('Auto-Fix Attempts') ~ input").first
+        assert interval_input.input_value() == ""
+        assert interval_input.get_attribute("placeholder") == "pack default (1)"
+        assert auto_fix_select.input_value() == ""
+        assert auto_fix_select.locator("option[value='']").inner_text() == "Pack default (Disabled)"
+        assert attempts_input.input_value() == ""
+        assert attempts_input.get_attribute("placeholder") == "pack default (2)"
+
+        config = self._create_and_capture_config(page)
+        for key in ("verification_interval", "auto_fix_enabled", "auto_fix_max_attempts"):
+            assert key not in config, f"untouched {key} must not be sent: {config}"
+
+        dashboard = page.evaluate(
+            "async () => (await fetch('/api/sessions/pack-defaults-001/dashboard')).json()"
+        )
+        effective = dashboard["effective_runtime_config"]
+        assert effective["verification_interval"] == 1
+        assert effective["auto_fix"] == {"enabled": False, "max_attempts": 2}
+
+    def test_operator_changes_are_sent(self, fresh_server, page, browser_error_guard):
+        self._open_setup_for_pack(page, fresh_server["url"], "pack-overrides-001", "verify-enabled")
+
+        page.locator("label:has-text('Verification Interval') ~ input").first.fill("3")
+        page.locator("label:has-text('Auto-Fix') ~ select").first.select_option("enabled")
+        page.locator("label:has-text('Auto-Fix Attempts') ~ input").first.fill("5")
+
+        config = self._create_and_capture_config(page)
+        assert config["verification_interval"] == 3
+        assert config["auto_fix_enabled"] is True
+        assert config["auto_fix_max_attempts"] == 5
+
+
 # ---------------------------------------------------------------------------
 # 3. SESSION CREATION — UNHAPPY PATH
 # ---------------------------------------------------------------------------

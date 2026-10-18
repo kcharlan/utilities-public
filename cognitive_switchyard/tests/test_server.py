@@ -446,6 +446,9 @@ def test_get_packs_and_pack_detail_serialize_runtime_manifests(tmp_path: Path) -
                     "max_planners": 2,
                     "planning_enabled": True,
                     "verification_enabled": False,
+                    "verification_interval": 4,
+                    "auto_fix_enabled": False,
+                    "auto_fix_max_attempts": 2,
                 }
             ]
         }
@@ -949,6 +952,9 @@ def test_root_bootstrap_payload_supports_setup_monitor_history_and_settings_view
                 "max_planners": 2,
                 "planning_enabled": True,
                 "verification_enabled": False,
+                "verification_interval": 4,
+                "auto_fix_enabled": False,
+                "auto_fix_max_attempts": 2,
             }
         ]
         assert [session["id"] for session in payload["sessions"]] == [

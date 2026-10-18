@@ -53,3 +53,9 @@
 - What went wrong: Three UI paths silently disagreed with the backend. Setup collected timeout overrides but never sent them (and read them back under keys the API never returns), History's Purge All confirmation counted only completed/aborted sessions while the endpoint also deleted idle ones, and the DAG endpoint returned `resolution.json` without the titles and statuses the view rendered, so every node read "Task" / "ready".
 - Pattern that caused it: API tests built request payloads by hand and asserted response shapes, while browser tests checked that views rendered, not what the UI sent or what each element showed. Neither side owned the contract between them.
 - Pattern to follow instead: For each form or view, add a browser test that drives the real control and asserts the request payload or the rendered values (`page.expect_response`, element text and colors), and keep confirmation counts and endpoint filters on one shared definition of the affected set.
+
+## UI Form Defaults Can Silently Override Pack Defaults
+
+- What went wrong: The Setup form prefilled verification interval 4, auto-fix enabled and 2 attempts, and always sent them, so a pack's own `verification.interval` and `auto_fix` settings never applied to UI-created sessions (the built-in `test-echo` pack's `auto_fix.enabled: false` was ignored).
+- Pattern that caused it: Hard-coding the backend's fallback values in the frontend draft instead of leaving override fields unset.
+- Pattern to follow instead: Start override fields blank, show the selected pack's value as the hint, and send a field only when the operator sets it, so the backend's pack-default merge stays the single source of defaults.

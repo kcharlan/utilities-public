@@ -1620,6 +1620,9 @@ def _serialize_pack_summary(manifest: PackManifest) -> dict[str, Any]:
         "max_planners": manifest.phases.planning.max_instances,
         "planning_enabled": manifest.phases.planning.enabled,
         "verification_enabled": manifest.verification.enabled,
+        "verification_interval": manifest.verification.interval,
+        "auto_fix_enabled": manifest.auto_fix.enabled,
+        "auto_fix_max_attempts": manifest.auto_fix.max_attempts,
     }
 
 

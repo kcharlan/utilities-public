@@ -1079,9 +1079,10 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                   branch: env.COGNITIVE_SWITCHYARD_BRANCH || "",
                   planner_count: config.planner_count ?? settings?.default_planners ?? 1,
                   worker_count: config.worker_count ?? selectedPackDraft?.max_workers ?? settings?.default_workers ?? 1,
-                  verification_interval: config.verification_interval ?? 4,
-                  auto_fix_enabled: config.auto_fix_enabled ?? true,
-                  auto_fix_max_attempts: config.auto_fix_max_attempts ?? 2,
+                  // Blank keeps the selected pack's value; the inputs show it as a placeholder.
+                  verification_interval: config.verification_interval ?? "",
+                  auto_fix_enabled: config.auto_fix_enabled === true ? "enabled" : config.auto_fix_enabled === false ? "disabled" : "",
+                  auto_fix_max_attempts: config.auto_fix_max_attempts ?? "",
                   poll_interval: config.poll_interval ?? 0.05,
                   task_idle_timeout: config.task_idle ?? "",
                   task_max_timeout: config.task_max ?? "",
@@ -1586,8 +1587,8 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                     timeoutField("task_idle", setupDraft.task_idle_timeout);
                     timeoutField("task_max", setupDraft.task_max_timeout);
                     timeoutField("session_max", setupDraft.session_max_timeout);
-                    if (typeof setupDraft.auto_fix_enabled === "boolean") {
-                      config.auto_fix_enabled = setupDraft.auto_fix_enabled;
+                    if (setupDraft.auto_fix_enabled === "enabled" || setupDraft.auto_fix_enabled === "disabled") {
+                      config.auto_fix_enabled = setupDraft.auto_fix_enabled === "enabled";
                     }
                     const payload = await requestJson("/api/sessions", {
                       method: "POST",
@@ -3494,6 +3495,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                                 className="text-input"
                                 type="number"
                                 min="1"
+                                placeholder={selectedPack ? `pack default (${selectedPack.verification_interval})` : "pack default"}
                                 disabled={draftExists}
                                 value={setupDraft.verification_interval}
                                 onChange={(event) => setSetupDraft((draft) => ({ ...draft, verification_interval: event.target.value }))}
@@ -3538,12 +3540,15 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                                 <select
                                   className="select-input"
                                   disabled={draftExists}
-                                  value={setupDraft.auto_fix_enabled ? "enabled" : "disabled"}
+                                  value={setupDraft.auto_fix_enabled}
                                   onChange={(event) => setSetupDraft((draft) => ({
                                     ...draft,
-                                    auto_fix_enabled: event.target.value === "enabled"
+                                    auto_fix_enabled: event.target.value
                                   }))}
                                 >
+                                  <option value="">
+                                    {selectedPack ? `Pack default (${selectedPack.auto_fix_enabled ? "Enabled" : "Disabled"})` : "Pack default"}
+                                  </option>
                                   <option value="enabled">Enabled</option>
                                   <option value="disabled">Disabled</option>
                                 </select>
@@ -3554,6 +3559,7 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                                   className="text-input"
                                   type="number"
                                   min="1"
+                                  placeholder={selectedPack ? `pack default (${selectedPack.auto_fix_max_attempts})` : "pack default"}
                                   disabled={draftExists}
                                   value={setupDraft.auto_fix_max_attempts}
                                   onChange={(event) => setSetupDraft((draft) => ({

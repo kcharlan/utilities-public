@@ -486,10 +486,12 @@ accents. The design tokens live in the template's `:root` block.
 ### 6.2 UI views
 
 - **Setup:** two-step flow (Create Session, then Start Session); pack, counts,
-  repo root, branch (or create branch), and project directory; Advanced
-  overrides for auto-fix and its attempts, poll interval, and the three
-  timeouts (sent as `task_idle`, `task_max`, `session_max`; blank keeps the
-  pack default, `0` means no limit); intake list with Open Intake, Intake
+  repo root, branch (or create branch), and project directory; verification
+  interval and Advanced auto-fix overrides, which start blank ("Pack default")
+  with the selected pack's value from `/api/packs` as the hint and are sent
+  only when the operator sets them; poll interval and the three timeouts (sent
+  as `task_idle`, `task_max`, `session_max`; blank keeps the pack default, `0`
+  means no limit); intake list with Open Intake, Intake
   Terminal, Refresh, and per-file reveal; Run Preflight showing the three
   preflight stages.
 - **Monitor:** pipeline strip (including Review and Verifying, with Rescan and
@@ -533,7 +535,7 @@ them.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | Embedded SPA |
-| GET | `/api/packs`, `/api/packs/{name}` | Pack list and detail |
+| GET | `/api/packs`, `/api/packs/{name}` | Pack list (with the Setup defaults: worker and planner limits, verification interval, auto-fix enabled and attempts) and detail |
 | POST | `/api/browse-directory` | Native folder picker |
 | POST | `/api/resolve-path` | Expand a path; report git status and branch |
 | POST | `/api/repo-branches`, `/api/repo-create-branch` | List or create branches in a repo |
