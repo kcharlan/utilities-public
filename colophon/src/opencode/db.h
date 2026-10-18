@@ -38,6 +38,10 @@ typedef struct {
     Str turn; /* Corpus-populated, never the copied payload id. */
     bool inherited;
 } OpencodeMessage;
+/* Derive display/usage time without changing raw facts or fork ownership. */
+static inline MaybeMs opencode_message_created(const OpencodeMessage *m) {
+    return m->created_ms.present ? m->created_ms : m->row_created_ms;
+}
 typedef struct {
     Str id, database, parent_id, fork_session_id, project_id, directory, title;
     Str agent, model_id, provider_id, version, idle_outcome;

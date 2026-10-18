@@ -479,3 +479,26 @@ def test_opencode_status_prefers_structural_rejection_over_unreadable(native):
     assert source(payload)["status"] == "unsupported"
     assert len(payload["diagnostics"]["opencode_schema_errors"]) == 1
     assert len(payload["diagnostics"]["opencode_unreadable_databases"]) == 1
+
+
+@pytest.mark.parametrize("payload_time,expected_creation,expected_usage", [
+    ({}, CLOCK + 1000, CLOCK + 2000),
+    ({"created": -1}, CLOCK + 1000, CLOCK + 2000),
+    ({"created": CLOCK + 60000}, CLOCK + 60000, CLOCK + 60000),
+    ({"completed": CLOCK + 900000}, CLOCK + 1000, CLOCK + 900000),
+])
+def test_opencode_effective_row_clock_fallback_reaches_turns_and_buckets(native, payload_time, expected_creation, expected_usage):
+    path = database(native)
+    with sqlite3.connect(path) as db:
+        for identity, text in db.execute("SELECT id,data FROM session_message").fetchall():
+            value = json.loads(text)
+            value["time"] = payload_time
+            db.execute("UPDATE session_message SET data=? WHERE id=?", (json.dumps(value), identity))
+    result = native.build("--no-claude")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["turns"][0]["start_ms"] == expected_creation
+    assert row["buckets"][0][0] == expected_usage // 900000
+    assert row["own_usage"]["input"] == 10
+    if payload_time.get("created") == -1:
+        assert native.payload()["diagnostics"]["opencode_invalid_numbers"]

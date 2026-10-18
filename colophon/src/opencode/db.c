@@ -352,22 +352,29 @@ static bool message_kind(Str type,OpencodeMessageKind *out) {
     for(size_t i=0;i<sizeof kinds/sizeof *kinds;i++)if(equal(type,kinds[i])){*out=(OpencodeMessageKind)i;return true;}
     return false;
 }
-static Err append_text(Arena *a,Str *out,Str piece) {
-    if(!piece.n)return ERR_SUCCESS;
-    if(piece.n>UINT32_MAX-out->n)return err_make(ERR_NOMEM,"OpenCode text too large");
-    char *p=NULL;TRY(arena_alloc(a,(size_t)out->n+piece.n+1,1,(void **)&p));
-    if(out->n)memcpy(p,out->p,out->n);memcpy(p+out->n,piece.p,piece.n);p[out->n+piece.n]=0;
-    *out=(Str){p,out->n+piece.n};return ERR_SUCCESS;
-}
 static Err parse_content(Arena *a,OpencodeSession *s,OpencodeMessage *m,yyjson_val *content,bool *malformed) {
     if(!yyjson_is_arr(content)){*malformed=true;return ERR_SUCCESS;}
     size_t i,max;yyjson_val *v;
+    size_t length=0,used=0;char *joined=NULL;
+    /* JSON owns the validated fragments until parse_message returns. Size
+     * once, then copy once: arena prefixes cannot be reclaimed individually. */
+    yyjson_arr_foreach(content,i,max,v){
+        if(!equal(js(get(v,"type")),"text"))continue;
+        Str part=js(get(v,"text"));
+        if(part.n>UINT32_MAX-length)return err_make(ERR_NOMEM,"OpenCode text too large");
+        length+=part.n;
+    }
+    if(length){
+        if(length==SIZE_MAX)return err_make(ERR_NOMEM,"OpenCode text too large");
+        TRY(arena_alloc(a,length+1,1,(void **)&joined));joined[length]=0;
+        m->text=(Str){joined,(uint32_t)length};
+    }
     yyjson_arr_foreach(content,i,max,v){
         Str type=js(get(v,"type"));
         if(!yyjson_is_obj(v)||!type.n){*malformed=true;continue;}
         if(equal(type,"text")){
             Str part=js(get(v,"text"));if(!part.p){*malformed=true;continue;}
-            TRY(append_text(a,&m->text,part));
+            if(part.n){memcpy(joined+used,part.p,part.n);used+=part.n;}
         }else if(equal(type,"reasoning")){
             if(!js(get(v,"text")).p)*malformed=true;
         }else if(equal(type,"tool")){

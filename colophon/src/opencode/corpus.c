@@ -21,7 +21,7 @@ static void latest(MaybeMs *out, MaybeMs value) {
     if(value.present && (!out->present || value.value>out->value)) *out=value;
 }
 static MaybeMs message_end(const OpencodeMessage *m) {
-    MaybeMs end=m->created_ms;
+    MaybeMs end=opencode_message_created(m);
     latest(&end,m->streamed_ms);latest(&end,m->completed_ms);
     return end;
 }
@@ -107,10 +107,10 @@ static Err project_session(OpencodeStore *store, OpencodeSession *r,
             TRY(alloc(&store->arena,1,sizeof *current,alignof(TurnFact),(void**)&current));
             char key[64];int n=snprintf(key,sizeof key,"opencode-turn-%zu",r->turn_count+1);
             TRY(str_copy(&store->arena,(Str){key,(uint32_t)n},&current->key));
-            current->turn_id=m->id;current->start_ms=m->created_ms;
+            current->turn_id=m->id;current->start_ms=opencode_message_created(m);
             current->has_start_rec=true;current->start_rec=i;
             current->end_kind=STR_LIT("open");
-            s->requests[r->turn_count]=(Request){.at_ms=m->created_ms,.text=m->text,
+            s->requests[r->turn_count]=(Request){.at_ms=opencode_message_created(m),.text=m->text,
                 .kind=STR_LIT("text"),.images=m->images};
             r->turns[r->turn_count++]=current;
         }

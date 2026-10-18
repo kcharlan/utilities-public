@@ -2,6 +2,10 @@
 #include "runner.h"
 #include "opencode_fixture.h"
 #include "opencode/db.h"
+#include "opencode/corpus.h"
+#include "opencode/compose.h"
+#include "out/jsonw.h"
+
 #include "util/fileio.h"
 #include <dirent.h>
 #include <pthread.h>
@@ -244,4 +248,68 @@ TEST(opencode_db_cancellation_and_cleanup) {
     opencode_fixture_sql(&f,"ALTER TABLE session_v2 DROP COLUMN tokens_input");
     for(int i=0;i<16;i++){OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(OC_DB_UNSUPPORTED,s.databases[0].status);opencode_store_destroy(&s);ASSERT_EQ(before,descriptors());}
     opencode_fixture_close(&f);
+}
+
+TEST(opencode_db_fragmented_text_has_linear_arena_retention) {
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-fragments");
+    JsonWriter w={0};jsonw_raw(&w,"{\"id\":\"synthetic-answer\",\"type\":\"assistant\",\"time\":{},\"content\":[");
+    char fragment[1025];memset(fragment,'x',1024);fragment[1024]=0;
+    const size_t fragments=128,total=fragments*1024;
+    for(size_t i=0;i<fragments;i++) {
+        if(i)jsonw_raw(&w,",");
+        memset(fragment,'a'+i%26,1024);
+        jsonw_raw(&w,"{\"type\":\"text\",\"text\":");jsonw_string(&w,(Str){fragment,1024});jsonw_raw(&w,"}");
+    }
+    jsonw_raw(&w,"]}");ASSERT_EQ(ERR_OK,w.error.code);
+    opencode_fixture_message(&f,"synthetic-answer","synthetic-fragments","assistant",1,w.data);jsonw_free(&w);
+    OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(1,s.session_count);
+    Str answer=s.sessions[0]->messages[0].text;ASSERT_EQ(total,answer.n);
+    for(size_t i=0;i<total;i++)ASSERT_EQ('a'+(i/1024)%26,answer.p[i]);
+    ASSERT_EQ(0,answer.p[total]);
+    ASSERT_TRUE(cp_test_arena_capacity(&s.databases[0].arena)<total*4+131072);
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
+}
+
+TEST(opencode_db_effective_clocks_reach_corpus_and_usage_without_changing_raw_facts) {
+    const char *clocks[]={"{}","{\"created\":-1}","{\"created\":3000}","{}","{\"created\":-1}","{\"created\":3000,\"completed\":4000}","{\"created\":3000}","{}","{\"created\":500}","{\"completed\":4000}"};
+    const char *rows[]={"2000","2000","2000","NULL","'invalid'","2000","500","500","2000","2000"};
+    const int64_t effective[]={2000,2000,3000,0,0,3000,3000,500,500,2000};
+    for(size_t k=0;k<10;k++) {
+        OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-clocks");
+        /* Nullable synthetic shape exercises absent row facts in structurally
+         * compatible databases without weakening the pinned schema fixture. */
+        opencode_fixture_sql(&f,"DROP TABLE session_message; CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,seq INTEGER,time_created,time_updated,data TEXT)");
+        char json[512];snprintf(json,sizeof json,"{\"id\":\"synthetic-user\",\"type\":\"user\",\"time\":%s,\"text\":\"Synthetic request\"}",clocks[k]);
+        opencode_fixture_message(&f,"synthetic-user","synthetic-clocks","user",1,json);
+        snprintf(json,sizeof json,"{\"id\":\"synthetic-answer\",\"type\":\"assistant\",\"time\":%s,\"content\":[],\"tokens\":{\"input\":1,\"output\":0},\"cost\":0,\"error\":{\"type\":\"aborted\"}}",clocks[k]);
+        opencode_fixture_message(&f,"synthetic-answer","synthetic-clocks","assistant",2,json);
+        char *sql=sqlite3_mprintf("UPDATE session_message SET time_created=%s",rows[k]);ASSERT_TRUE(sql);opencode_fixture_sql(&f,sql);sqlite3_free(sql);
+        if(k>=6)opencode_fixture_sql(&f,"UPDATE session_v2 SET fork_session_id='synthetic-parent'");
+        OpencodeStore s={0};Corpus c={0};add(&s,&f);read_store(&s);
+        OpencodeSession *raw=s.sessions[0];ASSERT_EQ(2,raw->message_count);
+        bool payload_valid=k==2||k==5||k==6||k==8;
+        ASSERT_EQ(payload_valid,raw->messages[0].created_ms.present);
+        ASSERT_EQ(k!=3&&k!=4,raw->messages[0].row_created_ms.present);
+        uint64_t diagnostics=raw->invalid_numbers;
+        ASSERT_EQ(ERR_OK,opencode_corpus_add(&s,9000,&c).code);ASSERT_EQ(ERR_OK,opencode_compose(&s,&c).code);
+        SessionModel *p=omap_get(&c.sessions,raw->id);ASSERT_TRUE(p);
+        ASSERT_EQ(diagnostics,raw->invalid_numbers);ASSERT_EQ(payload_valid,raw->messages[0].created_ms.present);
+        if(k==6||k==7) {
+            ASSERT_TRUE(raw->messages[0].inherited&&raw->messages[1].inherited);
+            ASSERT_EQ(0,p->turn_count);ASSERT_EQ(0,p->unit_count);ASSERT_EQ(2,s.usage->inherited);
+        } else {
+            ASSERT_EQ(1,p->turn_count);ASSERT_EQ(1,p->unit_count);
+            ASSERT_EQ(effective[k]!=0,p->requests[0].at_ms.present);
+            ASSERT_EQ(effective[k]!=0,p->turns[0].start_ms.present);
+            ASSERT_EQ(effective[k]!=0,p->units[0].at_ms.present);
+            if(effective[k]) {
+                ASSERT_EQ(effective[k],p->requests[0].at_ms.value);
+                ASSERT_EQ(effective[k],p->turns[0].start_ms.value.i);
+                ASSERT_EQ(k==5||k==9?4000:effective[k],p->units[0].at_ms.value);
+                ASSERT_EQ(k==5||k==9?4000:effective[k],p->end_ms.value);
+                ASSERT_EQ(k==5||k==9?4000:effective[k],p->turns[0].end_ms.value.i);
+            }
+        }
+        corpus_destroy(&c);opencode_store_destroy(&s);opencode_fixture_close(&f);
+    }
 }

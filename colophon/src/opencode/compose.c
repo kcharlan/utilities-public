@@ -97,7 +97,7 @@ static Err session(OpencodeStore *store,Corpus *c,OpencodeSession *raw,SessionMo
             if(!isfinite(next)){cost_sum_valid=false;TRY(invalid(store,raw,OC_USAGE_MESSAGE_COST_SUM));}
             else costs=next;
         }
-        MaybeMs at=m->completed_ms.present?m->completed_ms:m->created_ms;
+        MaybeMs at=m->completed_ms.present?m->completed_ms:opencode_message_created(m);
         TRY(unit(c,s,tokens,m,at,valid_cost,m->cost));
     }
     if(!cost_sum_valid)for(size_t i=0;i<s->unit_count;i++){s->units[i].has_cost=false;}
