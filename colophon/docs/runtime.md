@@ -16,21 +16,28 @@ window starts at or before the earliest session. The forward arrow stops at the
 current period, or for Custom once the range reaches the snapshot day. `[` and
 `]` step back and forward unless focus is in a text field.
 
-The page defaults to all sources. Its All/Codex/Claude segmented
-switch persists as `src=all|codex|claude` in the URL hash and retains the
+The page defaults to all sources. Its All/Codex/Claude/OpenCode segmented
+switch persists as `src=all|codex|claude|opencode` in the URL hash and retains the
 other filters. Switching away from a selected reader's provider closes that
 reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
-The snapshot log count always includes both sources, regardless of the switch.
+The snapshot log count always includes Codex and Claude logs, regardless of the
+switch; accepted OpenCode database counts are shown separately. The footer
+displays the embedded payload's release version (`colophon 0.4.0`).
 
-Codex uses green and Claude uses blue. In All, KPI share rules and workspace
+Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
-selected metric (ties use Codex). Model, recent and list rows carry provider
+selected metric (ties follow Codex, Claude, OpenCode order). Model, recent and list rows carry provider
 marks. Costs retain each provider's independent availability; a known subtotal
 also names unavailable providers. Absent/disabled sources remain selectable
-with a no-data label and explain the checked paths or `--no-claude` flag.
+with a no-data label and explain the checked paths or disabling flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
+The Claude boundary note appears only in Claude and All views. OpenCode's
+unsupported/unreadable views name database reasons. An expandable database
+footer preserves successful, failed and skipped-preview entries even when a
+sibling database succeeded. Structured diagnostics retain their contextual
+fields, count-map sums and residual-session counts.
 
 Claude history-only sessions are shown by default. The independent history-only
 toggle persists as `h=1|0` in the hash, like the archive toggle `a`; both apply
@@ -69,7 +76,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.3.0`.
+runtime state. Version is currently `colophon 0.4.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -81,6 +88,66 @@ runtime state. Version is currently `colophon 0.3.0`.
 | `--claude-home PATH` | Select the Claude config root using the environment semantics above. |
 | `--claude-desktop-dir PATH` | Replace `~/Library/Application Support/Claude` for discovery. |
 | `--no-claude` | Disable Claude inputs and reconciliation. |
+| `--opencode-db PATH` | Select only this OpenCode database; expand tilde and resolve relative paths against cwd. Reject `:memory:`. |
+| `--no-opencode` | Disable OpenCode discovery and reads before inspecting source paths. |
+
+OpenCode discovery defaults to `~/.local/share/opencode`; nonempty
+`XDG_DATA_HOME` replaces `~/.local/share` (relative values resolve against cwd,
+without tilde expansion). `OPENCODE_DB` selects the primary database relative
+to that data directory, or as an absolute path. Empty `OPENCODE_DB` is a
+reported invalid candidate; `:memory:` suppresses both the primary and default
+`opencode.db`. Without a file flag, regular `opencode-*.db` siblings are added
+in ascending normalized path order, plus a distinct default `opencode.db`
+when primary is overridden. Normalized paths deduplicate, primary sessions
+win duplicate IDs, and successful siblings remain usable after a source failure.
+`opencode-next.db` is skipped even when explicitly selected: OpenCode migration
+owns that preview database. Desktop-specific discovery is not verified.
+
+Only structurally compatible v2 databases are read; legacy JSON, v1-only
+schemas and incomplete/unfamiliar migrations are unsupported. A newer known-shape
+migration produces an untested-schema warning. Database status and reasons
+remain in `meta.sources.opencode.databases`; aggregate status prefers any
+successful database, then unsupported, then unreadable, then absent. Disabled
+is independent. Unsupported or unreadable candidates can alone generate a
+diagnostic page. Empty directories, absent candidates and skipped previews
+alone do not establish source presence. OpenCode contributes no parse cache
+and does not cause an absent Codex cache to be opened during rebuild.
+
+OpenCode cost availability describes the recorded-estimate engine. It remains
+available independently of Codex history and Claude rates; missing request costs
+remain unpriced and explicit zero stays priced zero. No OpenCode model catalog,
+credential tables or unrelated key/value settings are read. Costs are OpenCode
+catalog estimates, not invoices. Source session/project archive precedence is
+reported as `archive_reason=session|project`; absolute source provenance is
+`opencode_database`. Rows expose `capabilities` permitting only Copy session ID.
+Continuation stays disabled: disposable CLI/database acceptance is unmet.
+No empirical evidence currently establishes originating-database routing,
+existing-service behavior or a verified CLI launch mode for `OPENCODE_DB`.
+Copy session ID remains available for live, archived and subagent rows; OpenCode
+offers no Codex links or Copy log path. Project-only archives show `ARCHIVED (PROJECT)`;
+session archives show `ARCHIVED`, including when both archive flags are set.
+Reader, turn, outside-turn and model tooltips identify OpenCode's recorded catalog
+estimates without inventing rate-period warnings. Mixed-provider models retain
+the other providers' real rate provenance, unknown-period and unpriced warnings.
+
+OpenCode source counters describe deduplicated accepted database facts and
+inserted display/accounting rows: excluded cross-provider collisions do not
+count as sessions or requests; subagents include orphan children. Requests cover
+accounting-eligible assistant/finished-compaction messages. Inherited-message
+counts cover all copied rows regardless of kind; they contribute no requests,
+tokens or costs. Diagnostic lists preserve session/database/reason context; unknown
+types and missing usage are count maps. Residuals are keyed by session and keep
+raw `input`, `output`, `reasoning`, `cache_read`, `cache_write`, nullable `cost`,
+nullable millisecond `date` and `date_basis=session_start`. Shortfalls preserve
+the same fields plus a reason. Residual dating is a display convention; it
+does not prove event ownership or timing. Stderr summarizes list lengths,
+count-map sums and residual-session counts and prints per-database reasons,
+including skipped previews, even when aggregate status is ok. Finite request
+costs that overflow a provider total make that CLI total unavailable with a
+contextual diagnostic while preserving valid session costs. Page totals, daily
+cells, model totals and reader/list cost sums also check finite addition. An
+overflowing summary remains unavailable after later additions; the footer names
+the affected provider, day, model or reader. Other valid summaries stay visible.
 
 Default Claude search roots are `~/.config/claude/projects`,
 `~/.claude/projects`, the Desktop `local-agent-mode-sessions` and
@@ -135,13 +202,16 @@ Legacy `meta.counts` remains Codex-only. Claude log/parse counters are additive
 under `meta.sources.claude`, independently of the legacy counts.
 
 Long flags accept unique prefixes. `--no` is now ambiguous between
-`--no-open` and `--no-claude`; `--claude` is ambiguous between the two Claude
+`--no-open`, `--no-claude` and `--no-opencode`; `--no-op` matches both
+`--no-open` and `--no-opencode`. `--o` matches `--offline`, `--output` and
+`--opencode-db`; `--claude` is ambiguous between the two Claude
 path flags. `--c` is also ambiguous between Codex and Claude path flags.
 Use the full flag names when scripting.
 
 Presence is decided before creating the runtime home. A readable source
-directory or a usable Claude history entry is sufficient. With neither,
-exit 1 names the Codex home, Claude roots and history path checked, and
+directory, a usable Claude history entry or a reportable OpenCode candidate
+is sufficient. With no source,
+exit 1 names the Codex home, Claude roots/history and OpenCode paths checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
 opening, recovery and replacement, including with `--rebuild`. Eligible Claude
 history entries render history-only sessions. Decodable retained records and eligible
@@ -181,8 +251,8 @@ compressed frames appear in `skipped_files` with reason `unreadable`, while
 the remaining logs are counted; a later run retries them. A zero-byte
 compressed file is an empty log.
 
-Metadata and priority trace SQLite databases are opened read-only with
-normal SQLite coordination. Metadata uses a 1,000 ms busy timeout; priority
+Metadata, priority trace and OpenCode SQLite databases are opened read-only with
+normal SQLite coordination. Metadata and OpenCode use a 1,000 ms busy timeout; priority
 tracing uses 250 ms. This is not
 immutable mode: SQLite may create or update
 coordination side files such as WAL shared-memory files when permitted.

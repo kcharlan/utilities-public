@@ -177,3 +177,55 @@ implementation. For ccusage comparisons, its copy preference, sidechain
 selection and long-context behavior do not replace the primary-reference
 rules; parity is required only where those rules agree. The inherited
 Spec §15 difference 5 above applies solely to Codex model lookup.
+
+## OpenCode recorded usage
+
+`src/opencode/compose.c::opencode_compose` consumes the accepted v2 session
+projection from `src/opencode/db.h`; database facts remain unchanged. It counts
+non-inherited assistants and completed/failed compactions as requests. Missing,
+invalid and explicit all-zero token tuples count as missing usage by provider.
+A valid positive recorded cost without usable tokens remains a cost-only unit;
+zero-token/zero-cost rows need no unit. Positive-token recorded-zero rows are
+priced. OpenCode costs are catalog estimates recorded by OpenCode, independent
+of Colophon's Codex ledger and Claude pricing; no model catalog is consulted.
+
+Raw fresh input, cache read and cache write sum into unit input. Cache read and
+write also retain their separate fields; one-hour write is zero. Raw output
+plus reasoning becomes output, with reasoning also retained separately. Models
+retain `provider/model` identities or `opencode/unattributed`. Valid payload
+completion time wins for usage dating; otherwise valid payload creation falls
+back to SQLite row creation. Request starts and message-end fallback share
+that effective creation clock without changing raw clocks or row-only fork
+ownership. Leading usage and residuals have no display turn.
+Priority, fast and rate-period fields remain unset.
+
+Messages sum in sequence order in checked wide raw-component space. Invalid
+session rollup tokens disable token residuals; invalid rollup cost disables cost
+residuals. Negative component/cost differences are diagnosed as shortfalls and
+never remove message usage. Cost differences within absolute `1e-9` are zero.
+Positive differences become one unattributed residual dated at session start
+solely as a display convention (`date_basis=session_start`); an absent start
+stays untimed. Diagnostic residuals preserve raw components, nullable cost and
+the same display date. A positive cost difference has known cost. A token-only
+residual has known zero cost only with a valid matching rollup cost, valid
+eligible message costs and complete token attribution. Malformed/unknown rows,
+invalid/missing token tuples and cost-only units make attribution incomplete.
+An explicit valid zero tuple with recorded zero cost still counts as missing
+usage, but those exact facts do not make attribution incomplete.
+
+A nonfinite aggregate of otherwise finite message costs makes all costs in
+that session unavailable and suppresses its cost residual; tokens and raw facts
+survive. Typed report contexts in `src/opencode/compose.h` identify invalid
+rollups, component sums, cost sums and residual arithmetic. Shared refresh in
+`src/price/compose.c` independently guards session, turn and bucket cost sums,
+keeps each failed summary unavailable, and emits `cost_aggregate_overflow` with
+its schema context. Independently valid summaries and units remain available.
+Report resources live with the OpenCode store; its map nodes are destroyed
+before its arena. Integration owns diagnostic JSON and final cost refresh.
+
+`tests/unit/test_opencode_usage.c` covers these policies, including named
+mapping, compaction, missing usage, residual, rounding, overflow, inheritance and
+ledger-independence regressions. Rebuilding from surviving rollups can recover
+removed-message residuals; deleted sessions contribute nothing. Rollup equality
+holds for complete valid synthetic inputs without shortfalls and is not an
+assertion about malformed or incomplete sources.

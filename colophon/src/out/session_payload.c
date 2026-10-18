@@ -1,4 +1,5 @@
 #include "session_payload.h"
+#include "corpus/provider.h"
 #include "price/compose.h"
 #include "corpus/titles.h"
 #include "corpus/turnstatus.h"
@@ -270,7 +271,11 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
     }
     jsonw_raw(w, "{\"id\":");
     payload_reference(w, ids, s->id);
-    jsonw_raw(w,",\"provider\":");string(w,s->provider==PROVIDER_CLAUDE?STR_LIT("claude"):STR_LIT("codex"));
+    jsonw_raw(w,",\"provider\":");string(w,provider_id(s->provider));
+    if(s->provider==PROVIDER_OPENCODE){
+      jsonw_raw(w,",\"opencode_database\":");string(w,s->opencode_database);
+      jsonw_raw(w,",\"capabilities\":{\"copy_session_id\":true,\"copy_log_path\":false,\"open_in_codex\":false,\"continue_in_cli\":false}");
+    }
     jsonw_raw(w,s->history_only?",\"history_only\":true":",\"history_only\":false");jsonw_raw(w,",\"resume_config_dir\":");string(w,s->resume_config_dir);
     if (!agents) {
       jsonw_raw(w, ",\"kind\":");
@@ -284,6 +289,8 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
     string(w, s->title_source);
     jsonw_raw(w,
               s->archived ? ",\"archived\":true" : ",\"archived\":false");
+    jsonw_raw(w, ",\"archive_reason\":");
+    string(w, s->archive_reason);
     jsonw_raw(w, ",\"log_path\":");
     string(w, s->log_path);
     jsonw_raw(w, ",\"workspace\":");
@@ -374,7 +381,7 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
     payload_corpus_tools(w, &s->tools);
     jsonw_raw(w, ",\"children\":");
     payload_references(w, ids, &s->children);
-    if (agents || (s->provider == PROVIDER_CLAUDE && s->is_subagent)) {
+    if (agents || (s->provider != PROVIDER_CODEX && s->is_subagent)) {
       jsonw_raw(w, ",\"parent_id\":");
       payload_reference(w, ids, s->parent_id);
       jsonw_raw(w, ",\"depth\":");
@@ -387,7 +394,7 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
       Arena label_arena = {0};
       Str label = {0};
       e = title_humanize(&label_arena, s->agent_path, &label);
-      if (s->provider == PROVIDER_CLAUDE)
+      if (s->provider != PROVIDER_CODEX)
         label = s->agent_label;
       if (e.code)
         w->error = e;

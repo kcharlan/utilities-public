@@ -62,6 +62,13 @@ regression fail. Separate sandbox invocations avoid macOS's nested-sandbox
 restriction. Policy evaluation leaves real homes and source untouched; all
 mutation profiles and captured output live in trapped scratch directories.
 
+Both wrappers unset `OPENCODE_DB` and `XDG_DATA_HOME` as well as
+`CLAUDE_CONFIG_DIR`; per-case helpers remove them before intentional overrides.
+The profile denies real OpenCode data, state, config, cache and Desktop roots.
+Each of the five explicit read/write denies is independently mutation-tested
+under an existing synthetic ancestor in canonical scratch. Keep `HOME` and
+runtime isolated for every direct smoke run, including offline/rebuild runs.
+
 Optional Unicode maintenance uses
 `.venv/bin/python -B tools/gen_unicode.py src/gen` only as a deliberate
 maintainer action, with `PYTHONDONTWRITEBYTECODE=1` and Unicode 16.0.0.

@@ -31,6 +31,7 @@ typedef struct UsageSummary {
   __int128 input, cached, cache_write, output, reasoning;
   size_t count;
   bool has_cost;
+  bool cost_overflow; /* Summary-only failure; independently valid units survive. */
   double cost_usd;
   __int128 unpriced_tokens;
   struct PricedBy *priced_by;

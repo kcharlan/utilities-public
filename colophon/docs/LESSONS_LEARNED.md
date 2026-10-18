@@ -1,5 +1,12 @@
 # Lessons learned
 
+- OpenCode forks can copy a parent's payload message id and clocks. Keep the
+  SQLite row identity and creation clock independently from payload display
+  clocks. Token validation has signed-integer bounds; a finite recorded cost
+  has a separate numeric contract and must survive invalid or missing tokens.
+- SQLite text conversion can allocate after a successful row step. Check
+  conversion errors immediately and propagate allocation failure before
+  treating an empty result as absent text or a schema/migration rejection.
 - Same-stem source copies need independent reader reconciliation: accounting
   winners do not identify the most complete transcript. Preserve prompt UUIDs,
   identified tools and answer clocks, then map file-local turn keys into a
@@ -158,3 +165,57 @@ historical evidence, not available native acceptance commands.
   before touching their value pointer. Exercise malformed maps with recomputed
   checksums and truncated values. Test const encoders against read-only memory:
   comparing values alone misses writes that store the same value.
+
+## Recorded-cost aggregate overflow
+
+Finite request costs can still overflow a session, turn or bucket sum. Check
+addition before publishing the result; keep the affected summary unavailable
+through later additions, and keep independently valid units/summaries intact.
+OpenCode additionally suppresses all authored session costs and cost residuals
+when its message sum fails, while preserving recorded source facts and tokens.
+Explicit valid zero-token/zero-cost requests count as missing usage but are
+exact facts: they do not alone make a token residual's zero cost unknown.
+See `tests/unit/test_opencode_usage.c` for synthetic overflow/isolation and
+zero-tuple regressions.
+
+Provider CLI totals need their own finite guard even when every session cost
+is valid. Check compensated-sum intermediates and the corrected total; retain
+valid per-session payload costs while marking only the overflowing provider
+summary unavailable. Discovery and test isolation must also precede runtime
+creation: default-enabled SQLite providers can otherwise inspect a real home
+even during an offline smoke run. Strip environment overrides and set a fresh
+synthetic HOME as well as COLOPHON_HOME.
+
+Browser sums need independent finite checks across sessions and providers,
+including daily/model and reader summaries. Preserve valid individual costs,
+keep failed sums unavailable, and scale provider shares before summing their
+weights so overflow cannot create invalid CSS widths. Recorded OpenCode costs
+carry estimate provenance rather than a missing rate-period warning; mixed
+tooltips must still retain genuine warnings from other providers.
+
+Carry exact cross-task display strings into page regressions: project-only
+OpenCode archives use `ARCHIVED (PROJECT)`, while session archives use
+`ARCHIVED` even when the project is also archived. Assert native provenance
+and all three displayed locations (recent, list and reader), rather than
+locking a paraphrase into a new test.
+
+Count inherited OpenCode messages before request-kind filtering. The diagnostic
+describes every copied row, including prompts, control messages and running
+compactions; request eligibility describes a narrower accounting population.
+When integration exposes a counter mismatch, check the specified population
+against both projection and composition before changing a regression expectation.
+
+## OpenCode effective clocks and fragmented text
+
+Keep payload creation and SQLite row creation as independent raw facts. Derive
+one effective creation clock (valid payload first, otherwise row) for request
+starts, message-end fallback and usage dating; valid payload completion still
+wins for usage. Fork inheritance uses only row creation, even when a copied
+payload clock suggests different ownership. Test the DB-to-corpus/usage boundary
+and emitted buckets as well as the raw parser facts and numeric diagnostics.
+
+Arena allocations live until the complete store is destroyed. Joining fragments
+by allocating every cumulative prefix retains quadratic bytes. Validate and sum
+fragment lengths with overflow checks, allocate the final text once and copy
+each fragment once. Regress both exact output and arena capacity through the
+real database reader; content equality alone cannot detect this retention bug.

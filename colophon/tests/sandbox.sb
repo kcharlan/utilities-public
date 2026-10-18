@@ -25,3 +25,9 @@
 (allow network-inbound (local ip "localhost:*"))
 (allow network-outbound (remote ip "localhost:*"))
 (allow network* (local unix-socket) (remote unix-socket))
+; OpenCode-owned source, state and credentials are never real test inputs.
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.local/share/opencode")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.local/state/opencode")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.config/opencode")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.cache/opencode")))
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/Library/Application Support/ai.opencode.desktop")))

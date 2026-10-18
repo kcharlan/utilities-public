@@ -8,7 +8,7 @@ trap 'test_status=$?; rm -r -- "$test_scratch"; exit "$test_status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$test_scratch/home" "$test_scratch/runtime"
-unset CLAUDE_CONFIG_DIR
+unset CLAUDE_CONFIG_DIR OPENCODE_DB XDG_DATA_HOME
 run_profile() {
     profile=$1
     source_dir=$2
@@ -64,6 +64,28 @@ for target in '.claude' '.config/claude' 'Library/Application Support/Claude' '.
         exit 1
     fi
     echo "Claude protection mutation rejected as expected: $target"
+done
+export COLOPHON_TEST_POLICY_HOME="$test_scratch/synthetic-opencode-policy-home"
+mkdir "$COLOPHON_TEST_POLICY_HOME"
+COLOPHON_TEST_POLICY_HOME=$(CDPATH= cd -- "$COLOPHON_TEST_POLICY_HOME" && pwd -P)
+for target in '.local/share/opencode' '.local/state/opencode' '.config/opencode' '.cache/opencode' 'Library/Application Support/ai.opencode.desktop'; do
+    export COLOPHON_TEST_POLICY_TARGET="$target"
+    mkdir -p "$COLOPHON_TEST_POLICY_HOME/$target"
+    run_profile "$project_dir/tests/sandbox.sb" "$project_dir" \
+        tests/test_opencode.py -k sandbox_opencode_paths_denied -p no:cacheprovider
+    awk -v target="/$target" 'index($0, "\"" target "\"" ) == 0' "$project_dir/tests/sandbox.sb" \
+        > "$test_scratch/synthetic-unprotected-opencode.sb"
+    if run_profile "$test_scratch/synthetic-unprotected-opencode.sb" "$project_dir" \
+        tests/test_opencode.py -k sandbox_opencode_paths_denied -p no:cacheprovider \
+        > "$test_scratch/opencode-mutation.log" 2>&1; then
+        echo "OpenCode protection mutation unexpectedly passed: $target" >&2
+        exit 1
+    fi
+    if ! rg -q 'AssertionError: OpenCode source protection missing' "$test_scratch/opencode-mutation.log"; then
+        cat "$test_scratch/opencode-mutation.log" >&2
+        exit 1
+    fi
+    echo "OpenCode protection mutation rejected as expected: $target"
 done
 unset COLOPHON_TEST_POLICY_HOME COLOPHON_TEST_POLICY_TARGET
 run_profile "$project_dir/tests/sandbox.sb" "$project_dir" "$@"
