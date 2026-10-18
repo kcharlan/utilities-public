@@ -26,6 +26,8 @@ public struct CatalogFetch: Sendable {
     public let catalog: Catalog
     public let revalidated: Bool
     public let cacheWriteError: String?
+    /// Why the refresh fell back to the previous catalog, when it did.
+    public var refreshError: String? = nil
 }
 
 protocol CatalogCacheInput: AnyObject, Sendable {
@@ -82,7 +84,10 @@ public actor CatalogClient {
             }
             return CatalogFetch(catalog: index.catalog, revalidated: true, cacheWriteError: cacheWriteError)
         } catch {
-            if let previous { return CatalogFetch(catalog: previous.catalog, revalidated: false, cacheWriteError: cacheWriteError) }
+            if let previous {
+                return CatalogFetch(catalog: previous.catalog, revalidated: false, cacheWriteError: cacheWriteError,
+                                    refreshError: catalogRefreshMessage(error))
+            }
             throw error
         }
     }
@@ -123,6 +128,18 @@ public actor CatalogClient {
 }
 
 private enum CatalogError: Error { case http(Int), suspiciousCount }
+
+/// A short reason for the Other updates header when a catalog refresh fails.
+public func catalogRefreshMessage(_ error: any Error) -> String {
+    switch error {
+    case CatalogError.http(let status): "Homebrew returned HTTP \(status)."
+    case CatalogError.suspiciousCount: "Homebrew's list looked incomplete, so the previous one was kept."
+    case let error as URLError where error.code == .notConnectedToInternet: "You're offline."
+    case let error as URLError where error.code == .timedOut: "Homebrew didn't respond in time."
+    case is DecodingError, is CocoaError: "Homebrew's list couldn't be read."
+    default: "Couldn't reach Homebrew."
+    }
+}
 private struct CatalogCacheEnvelope: Codable {
     // sortedKeys keeps this bounded admission marker first; the entire file remains valid JSON.
     static let prefix = Data(#"{"format":"brew-version-catalog-v2","index":"#.utf8)

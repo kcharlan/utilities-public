@@ -29,6 +29,11 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public private(set) var others: [OtherUpdate] = []
     public private(set) var isRefreshingCatalog = false
     public private(set) var catalogWriteError: String?
+    /// Why the most recent catalog refresh failed; cleared by the next success.
+    public private(set) var catalogRefreshError: String?
+    /// Installed self-updating casks left out of Other updates because their
+    /// real version can't be read and `includeSelfUpdating` is off.
+    public private(set) var hiddenSelfUpdatingCount = 0
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
     public var nextAutomaticCheck: AutomaticCheckSchedule {
         guard canSave else { return .blocked }
@@ -57,6 +62,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private var pendingAdds: Set<PackageName> = []
     private let catalogClient: CatalogClient?
     private var lastCatalogAttempt: Date?
+    /// Each launch refreshes the catalog once, however recent the saved fetch is.
+    private var launchCatalogRefreshDone = false
     private var lastCheckAttempt: Date?
     private var lastFailedSave: Date?
     private var retryWatchesOnReconnect = false
@@ -187,6 +194,14 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard canSave else { return }
         var candidate = state; candidate.interval = interval; commit(candidate)
     }
+    public func setCatalogInterval(_ interval: CheckInterval) {
+        guard canSave else { return }
+        var candidate = state; candidate.catalogInterval = interval; commit(candidate)
+    }
+    public func setIncludeSelfUpdating(_ on: Bool) {
+        guard canSave else { return }
+        var candidate = state; candidate.includeSelfUpdating = on; commit(candidate)
+    }
     public func checkIfDue() async {
         guard automaticRequestsAllowed,
               watchCheckDeadline().map({ $0 <= now() }) ?? true else { return }
@@ -217,9 +232,16 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     }
 
     private func recomputeOthers() {
-        guard state.showOtherUpdates else { others = []; return }
+        guard state.showOtherUpdates else { others = []; hiddenSelfUpdatingCount = 0; return }
         let watched = Set(state.watched.map(\.name))
-        others = installedUpdates.filter { !watched.contains($0.listing.name) }
+        let candidates = installedUpdates.filter { !watched.contains($0.listing.name) }
+        // Match `brew outdated`: a self-updating cask whose app can't be read only
+        // has Homebrew's install record, which is often older than the real app.
+        let unreadable = candidates.filter { $0.listing.autoUpdates && $0.installed.source == .caskroomFallback }
+        hiddenSelfUpdatingCount = state.includeSelfUpdating ? 0 : unreadable.count
+        others = state.includeSelfUpdating ? candidates : candidates.filter {
+            !($0.listing.autoUpdates && $0.installed.source == .caskroomFallback)
+        }
     }
 
     /// A group of overlapping callers shares one capture, plus at most one
@@ -326,30 +348,53 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         await refreshInstalled()
     }
 
-    public func refreshCatalogIfDue() async {
-        guard canSave, automaticRequestsAllowed, let catalogClient, !isRefreshingCatalog,
-              CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: state.interval, now: now()) else { return }
+    /// Automatic refresh: once per launch, then on the Other updates interval.
+    public func refreshCatalogIfDue() async { await refreshCatalog(manual: false) }
+
+    /// The refresh button: checks watched packages and, when the catalog is older
+    /// than Homebrew's API cache lifetime, Other updates too. It skips the network
+    /// gate, since a path monitor can report offline while HTTP works.
+    public func refreshNow() async {
+        async let watches: Void = checkNow()
+        async let catalog: Void = refreshCatalog(manual: true)
+        _ = await (watches, catalog)
+    }
+
+    private func catalogRefreshDue(manual: Bool) -> Bool {
+        if catalog == nil { return true }
+        guard let fetched = state.lastCatalogFetch else { return true }
+        if manual { return now().timeIntervalSince(fetched) >= CheckInterval.manualCatalogFreshness }
+        return !launchCatalogRefreshDone || CheckSchedule.isDue(lastCheck: fetched, interval: state.catalogInterval, now: now())
+    }
+
+    private func refreshCatalog(manual: Bool) async {
+        // Failed automatic attempts retry no sooner than the shortest check interval.
+        let retryFloor = CheckInterval(minutes: CheckInterval.allowedMinutes.lowerBound)!
+        guard canSave, let catalogClient, !isRefreshingCatalog,
+              manual || (automaticRequestsAllowed && CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: retryFloor, now: now()))
+        else { return }
         isRefreshingCatalog = true
         defer { isRefreshingCatalog = false }
         if catalog == nil { await hydrateCatalog() }
-        guard automaticRequestsAllowed,
-              catalog == nil || (state.lastCatalogFetch.map({ $0.addingTimeInterval(86400) <= now() }) ?? true),
-              CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: state.interval, now: now()) else { return }
+        guard manual || automaticRequestsAllowed, catalogRefreshDue(manual: manual) else { return }
         lastCatalogAttempt = now()
         do {
             let result = try await catalogClient.load()
             catalogWriteError = result.cacheWriteError
+            catalogRefreshError = result.refreshError
             // Merge only after the final await, preserving watch/settings commits made in flight.
             if result.revalidated {
                 var candidate = state
                 candidate.lastCatalogFetch = now()
                 guard commit(candidate) else { return }
+                launchCatalogRefreshDone = true
             }
             catalog = result.catalog
             await refreshInstalled()
         } catch {
             // Existing content survives an offline or invalid first refresh. The attempt
-            // clock bounds retries; only a successful persisted fetch advances the daily clock.
+            // clock bounds retries; only a successful persisted fetch advances the fetch time.
+            catalogRefreshError = catalogRefreshMessage(error)
         }
     }
 

@@ -110,10 +110,37 @@ public struct AppState: Codable, Equatable, Sendable {
     public var lastCheck: Date?
     public var lastCatalogFetch: Date?
     public var listingCache: [URL: CachedListing]
+    /// How often Other updates refreshes Homebrew's full catalog.
+    public var catalogInterval: CheckInterval = .catalogStandard
+    /// Like `brew outdated --greedy`: also list self-updating casks whose
+    /// installed version can't be read from their app.
+    public var includeSelfUpdating = false
     public static let currentSchema = 1
     public static let initial = AppState(schema: currentSchema, watched: [], interval: .standard,
                                         showOtherUpdates: true, otherUpdatesCollapsed: false,
                                         lastCheck: nil, lastCatalogFetch: nil, listingCache: [:])
+}
+
+extension AppState {
+    private enum CodingKeys: String, CodingKey {
+        case schema, watched, interval, showOtherUpdates, otherUpdatesCollapsed, lastCheck, lastCatalogFetch,
+             listingCache, catalogInterval, includeSelfUpdating
+    }
+    // Settings added after 1.0.1 default when absent, so earlier saved state
+    // loads normally instead of being set aside as unreadable.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(schema: try c.decode(Int.self, forKey: .schema),
+                  watched: try c.decode([WatchEntry].self, forKey: .watched),
+                  interval: try c.decode(CheckInterval.self, forKey: .interval),
+                  showOtherUpdates: try c.decode(Bool.self, forKey: .showOtherUpdates),
+                  otherUpdatesCollapsed: try c.decode(Bool.self, forKey: .otherUpdatesCollapsed),
+                  lastCheck: try c.decodeIfPresent(Date.self, forKey: .lastCheck),
+                  lastCatalogFetch: try c.decodeIfPresent(Date.self, forKey: .lastCatalogFetch),
+                  listingCache: try c.decode([URL: CachedListing].self, forKey: .listingCache))
+        catalogInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .catalogInterval) ?? .catalogStandard
+        includeSelfUpdating = try c.decodeIfPresent(Bool.self, forKey: .includeSelfUpdating) ?? false
+    }
 }
 
 public struct StoreLoad: Sendable {

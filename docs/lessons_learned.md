@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-17: Refresh "at launch" means every launch, and match brew outdated
+
+Brew Version's spec said Other updates refreshes "when the app starts and once
+every 24 hours", but the build only refreshed when 24 hours had passed, so a
+relaunch kept a day-old catalog and missed releases `brew upgrade` installed.
+Treat a per-launch refresh as unconditional, give a bulk download its own
+user-set interval, and show the data's age so staleness is visible. When
+comparing with Homebrew, match its default semantics: `brew outdated` skips
+self-updating casks, whose Caskroom version is often older than the app.
+
 ## 2026-10-17: Reused AppKit windows keep their original Space
 
 Brew Version keeps one Settings `NSWindow` alive across opens. Closing it only
