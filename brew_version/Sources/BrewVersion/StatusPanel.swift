@@ -16,9 +16,19 @@ enum StatusPanelFrame {
     /// on the menu bar but can be taller than it, such as (1599, 1277.5, 22, 64)
     /// on a 39-point bar. Until the item is placed, or while a menu bar manager
     /// hides it, the window reports placeholder geometry such as (0, -39, 34, 39).
-    /// Only a rect centered within a screen's menu bar is a real icon position.
+    /// Known placeholders can overlap a lower display's menu bar. The public
+    /// visibility flag includes obscured items and supplies no placement proof.
+    /// Prefer fallback for these exact recorded rects, even if a real icon has
+    /// identical geometry; other anchors still qualify by their center.
     static func placedAnchor(_ anchor: NSRect?, screens: [StatusScreen]) -> (rect: NSRect, screen: StatusScreen)? {
         guard let anchor, anchor.width > 0, anchor.height > 0 else { return nil }
+        let placeholders = [
+            NSRect(x: 0, y: -39, width: 34, height: 39),
+            NSRect(x: 0, y: -30.5, width: 67, height: 22),
+            NSRect(x: 6, y: -32, width: 22, height: 64),
+            NSRect(x: 6, y: -51.5, width: 22, height: 64)
+        ]
+        guard !placeholders.contains(anchor) else { return nil }
         let center = NSPoint(x: anchor.midX, y: anchor.midY)
         guard let screen = screens.first(where: { $0.menuBar.contains(center) }) else { return nil }
         return (anchor, screen)
@@ -91,8 +101,14 @@ enum StatusPanelFrame {
         material.wantsLayer = true
         material.layer?.cornerRadius = 12
         material.layer?.masksToBounds = true
-        scroll.autoresizingMask = [.width, .height]
+        scroll.translatesAutoresizingMaskIntoConstraints = false
         material.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: material.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: material.bottomAnchor)
+        ])
         view = material
         hosting.measuredSizeChanged = { [weak self, weak hosting] size in
             guard let self, let hosting else { return }

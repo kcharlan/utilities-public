@@ -1,10 +1,27 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 import Synchronization
 import Testing
 @testable import BrewVersion
 
 struct StatusPanelGeometryTests {
+    @Test func hiddenPlaceholdersDoNotBecomePlacedOnALowerDisplay() throws {
+        let main = StatusScreen(frame: NSRect(x: 0, y: 0, width: 1440, height: 900), visibleFrame: NSRect(x: 0, y: 0, width: 1440, height: 876))
+        let below = StatusScreen(frame: NSRect(x: 0, y: -900, width: 1440, height: 900), visibleFrame: NSRect(x: 0, y: -900, width: 1440, height: 876))
+        for anchor in [NSRect(x: 0, y: -39, width: 34, height: 39), NSRect(x: 0, y: -30.5, width: 67, height: 22), NSRect(x: 6, y: -32, width: 22, height: 64), NSRect(x: 6, y: -51.5, width: 22, height: 64)] {
+            let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: anchor, screens: [main, below]))
+            #expect(frame == NSRect(x: 1100, y: 361, width: 340, height: 515))
+            #expect(!StatusPanelFrame.iconContains(NSPoint(x: anchor.midX, y: -12), anchor: anchor, screens: [main, below]))
+        }
+        // Real placements elsewhere on the lower bar, including tall windows,
+        // still use that display. Negative coordinates alone are not hidden.
+        for anchor in [NSRect(x: 1200, y: -24, width: 24, height: 24), NSRect(x: 1200, y: -44, width: 24, height: 64)] {
+            let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: anchor, screens: [main, below]))
+            #expect(frame == NSRect(x: 1042, y: -539, width: 340, height: 515))
+            #expect(StatusPanelFrame.iconContains(NSPoint(x: 1212, y: -12), anchor: anchor, screens: [main, below]))
+        }
+    }
     @Test func anchorsAndSizeChangesStayInsideSyntheticScreens() throws {
         let screens = [
             StatusScreen(frame: NSRect(x: 0, y: 0, width: 1200, height: 900), visibleFrame: NSRect(x: 0, y: 40, width: 1200, height: 830)),
@@ -79,6 +96,12 @@ private final class PanelItem: NSStatusItem {
     override var expandedInterfaceSession: NSStatusItemExpandedInterfaceSession? { session }
 }
 private final class PanelSession: NSStatusItemExpandedInterfaceSession { override func cancel() {} }
+private final class SyntheticActivatedApplication: NSRunningApplication, @unchecked Sendable {
+    let identifier: String
+    init(_ identifier: String) { self.identifier = identifier; super.init() }
+    override var processIdentifier: pid_t { 424242 }
+    override var bundleIdentifier: String? { identifier }
+}
 private final class PanelSaveCounter: Sendable {
     private let value = Mutex(0)
     var count: Int { value.withLock { $0 } }
@@ -88,6 +111,15 @@ private final class PanelSaveCounter: Sendable {
     var shown = false
     var shows = 0
     var hides = 0
+    override var contentViewController: NSViewController? {
+        get { super.contentViewController }
+        set {
+            super.contentViewController = newValue
+            // Match the root mask recorded by the live native resize trace
+            // without ordering this test window onto a screen.
+            newValue?.view.autoresizingMask = [.width, .height]
+        }
+    }
     override var isVisible: Bool { shown }
     override func makeKeyAndOrderFront(_ sender: Any?) { shown = true; shows += 1 }
     override func orderOut(_ sender: Any?) { shown = false; hides += 1 }
@@ -98,6 +130,8 @@ private final class PanelSaveCounter: Sendable {
     let item = PanelItem(anchor: NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 22, height: 22)))
     let panel = OffscreenStatusPanel()
     let notifications = NotificationCenter()
+    let workspaceNotifications = NotificationCenter()
+    let notificationService = NotificationServiceStub()
     var status: StatusItemController!
     var activations = 0
     var cancelCount = 0
@@ -124,13 +158,13 @@ private final class PanelSaveCounter: Sendable {
         }
         try store.save(state)
         let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
-        let notifier = UserNotifier(service: NotificationServiceStub())
+        let notifier = UserNotifier(service: notificationService)
         let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { [weak self] _ in
             guard let self else { return }
             settingsPresentations += 1
             visibleAtSettingsPresentation = panel.isVisible
         })
-        status = StatusItemController(controller: controller, notifier: notifier, item: item, panel: panel, settings: settings, notifications: notifications,
+        status = StatusItemController(controller: controller, notifier: notifier, item: item, panel: panel, settings: settings, notifications: notifications, workspaceNotifications: workspaceNotifications,
             screens: { [Self.screen] }, anchor: { Self.icon },
             pointer: { [weak self] in self?.pointer ?? .zero },
             now: { [weak self] in self?.clock ?? 0 },
@@ -273,7 +307,64 @@ private final class PanelSaveCounter: Sendable {
             #expect(fixture.panel.frame.height == expectedHeight)
             #expect(host.preferredContentSize.height > height)
             #expect(NSRect(x: -900, y: 140, width: 900, height: 630).contains(fixture.panel.frame))
+            let scroll = try #require(content.view.subviews.first as? NSScrollView)
+            #expect(content.view.frame.size == fixture.panel.contentLayoutRect.size)
+            #expect(scroll.frame.size == fixture.panel.contentLayoutRect.size)
+            if content.desiredContentSize.height <= 630 {
+                #expect(scroll.documentVisibleRect.contains(hosting.view.bounds))
+            }
         }
+    }
+    @Test func warningGrowthAndShrinkKeepTheWholeRootVisible() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let content = try #require(fixture.panel.contentViewController as? StatusPanelContentController)
+        let hosting = try #require(content.children.first as? StatusHostingController)
+        let root = hosting.rootView
+        hosting.rootView = StatusContent(controller: root.controller, notifier: root.notifier, settings: root.settings, focus: root.focus, accessory: AnyView(Color.clear.frame(height: 100)), dismiss: root.dismiss, sizeChanged: root.sizeChanged)
+        let scroll = try #require(content.view.subviews.first as? NSScrollView)
+        var unwarnedHeight: CGFloat = 0
+        for status in [UNAuthorizationStatus.authorized, .denied, .authorized, .denied, .authorized] {
+            fixture.notificationService.status = status
+            await root.notifier.requestAuthorization()
+            for _ in 0..<8 {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            #expect(content.desiredContentSize.height < 630)
+            #expect(content.view.frame.size == fixture.panel.contentLayoutRect.size)
+            #expect(scroll.frame.size == fixture.panel.contentLayoutRect.size)
+            if status == .authorized { unwarnedHeight = content.desiredContentSize.height }
+            else { #expect(content.desiredContentSize.height > unwarnedHeight + 20) }
+            #expect(scroll.documentVisibleRect.contains(hosting.view.bounds))
+            #expect(hosting.view.frame.size == content.desiredContentSize)
+        }
+    }
+    @Test func delayedParentResizeCannotExpandTheViewportPastItsWindow() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let content = try #require(fixture.panel.contentViewController as? StatusPanelContentController)
+        let scroll = try #require(content.view.subviews.first as? NSScrollView)
+        let hosting = try #require(content.children.first as? StatusHostingController)
+        let parent = try #require(content.view.superview)
+        // Live passive trace: SwiftUI changed the window 459 -> 386 -> 534
+        // before contentLayoutRect caught up. AppKit then added the stale
+        // 534-459 delta again to the root, leaving it 609pt inside 534pt.
+        for height in [459.0, 386.0, 534.0] {
+            fixture.panel.setFrame(NSRect(x: -400, y: 200, width: 340, height: height), display: false)
+        }
+        // Replay the captured late public frame write AFTER normal window
+        // resize handling. Layout ownership must restore the viewport; a
+        // delegate called before this write cannot repair it.
+        content.view.frame = NSRect(x: 0, y: 0, width: 340, height: 609)
+        parent.needsLayout = true
+        parent.layoutSubtreeIfNeeded()
+        #expect(content.view.frame == NSRect(x: 0, y: 0, width: 340, height: 534))
+        #expect(scroll.frame.size == NSSize(width: 340, height: 534))
+        #expect(hosting.view.visibleRect.minY == hosting.view.bounds.minY)
     }
     @Test func observerDoesNotRetainController() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
@@ -328,6 +419,8 @@ private final class PanelSaveCounter: Sendable {
             fixture.immediateCancel = immediate
             fixture.status.showPopover()
             fixture.pointAtIcon(); fixture.loseFocus()
+            fixture.workspaceNotifications.post(name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared,
+                userInfo: [NSWorkspace.applicationUserInfoKey: SyntheticActivatedApplication("com.apple.MenuBarAgent")])
             #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
             fixture.begin()
             #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
@@ -366,6 +459,37 @@ private final class PanelSaveCounter: Sendable {
         fixture.end()
         fixture.begin()
         #expect(fixture.panel.isVisible && fixture.panel.shows == 3 && fixture.panel.hides == 2)
+    }
+    @Test func keyboardApplicationSwitchDismissesWithPointerRestingOnIcon() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.status.showPopover()
+        fixture.pointAtIcon(); fixture.loseFocus()
+        let savesBefore = fixture.saves.count
+        fixture.workspaceNotifications.post(name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared,
+            userInfo: [NSWorkspace.applicationUserInfoKey: SyntheticActivatedApplication("test.synthetic.other-app")])
+        #expect(!fixture.panel.isVisible && fixture.panel.hides == 1)
+        #expect(fixture.saves.count == savesBefore + 1)
+        fixture.loseFocus()
+        #expect(fixture.panel.hides == 1 && fixture.saves.count == savesBefore + 1)
+        #expect(fixture.cancelCount == 0)
+    }
+    @Test func workspaceActivationPreservesOwnPanelAndCancelsANativeSessionForAnotherApp() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.pointAtIcon(); fixture.begin()
+        fixture.workspaceNotifications.post(name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared,
+            userInfo: [NSWorkspace.applicationUserInfoKey: NSRunningApplication.current])
+        #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+        fixture.immediateCancel = false
+        fixture.workspaceNotifications.post(name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared,
+            userInfo: [NSWorkspace.applicationUserInfoKey: SyntheticActivatedApplication("test.synthetic.other-app")])
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.end()
+        fixture.begin()
+        #expect(fixture.panel.isVisible && fixture.panel.shows == 2)
     }
 }
 @MainActor struct StatusIconPressTests {

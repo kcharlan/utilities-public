@@ -53,6 +53,7 @@ struct StatusContent: View {
     private let focus = PopoverFocus()
     private let settings: SettingsWindowController
     private let notifications: NotificationCenter
+    private let workspaceNotifications: NotificationCenter
     private let screens: () -> [StatusScreen]
     private let anchor: () -> NSRect?
     private let pointer: () -> NSPoint
@@ -70,6 +71,7 @@ struct StatusContent: View {
     init(controller: WatchController, notifier: UserNotifier, accessory: AnyView? = nil,
          item suppliedItem: NSStatusItem? = nil, panel suppliedPanel: StatusPanel? = nil,
          settings suppliedSettings: SettingsWindowController? = nil, notifications: NotificationCenter = .default,
+         workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
          screens: @escaping () -> [StatusScreen] = { NSScreen.screens.map { StatusScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) } },
          anchor: (() -> NSRect?)? = nil,
          pointer: @escaping () -> NSPoint = { NSEvent.mouseLocation },
@@ -89,6 +91,7 @@ struct StatusContent: View {
         panel = suppliedPanel ?? StatusPanel()
         settings = suppliedSettings ?? SettingsWindowController(controller: controller, notifier: notifier)
         self.notifications = notifications
+        self.workspaceNotifications = workspaceNotifications
         self.screens = screens
         self.pointer = pointer
         self.now = now
@@ -103,10 +106,21 @@ struct StatusContent: View {
         let content = StatusPanelContentController(hosting: hosting)
         content.sizeChanged = { [weak self] in self?.positionPanel() }
         panel.contentViewController = content
+        if let guide = panel.contentLayoutGuide {
+            // A measured resize can precede the window's frame-view layout.
+            // Explicit edges avoid capturing that temporary gap in translated
+            // autoresizing constraints and applying it again during layout.
+            content.view.autoresizingMask = []
+            content.view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([NSLayoutConstraint.Attribute.leading, .trailing, .top, .bottom].map {
+                NSLayoutConstraint(item: content.view, attribute: $0, relatedBy: .equal, toItem: guide, attribute: $0, multiplier: 1, constant: 0)
+            })
+        }
         item.expandedInterfaceDelegate = self
         panel.delegate = self
         panel.dismiss = { [weak self] in self?.dismiss() }
         notifications.addObserver(self, selector: #selector(applicationResignedActive), name: NSApplication.didResignActiveNotification, object: NSApp)
+        workspaceNotifications.addObserver(self, selector: #selector(workspaceActivatedApplication), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         globalMouseMonitor = monitorGlobalMouse { [weak self] type, location, time in
             if type == .leftMouseDown { self?.globalMouseDown(at: location, time: time) } else { self?.globalMouseUp(at: location) }
         }
@@ -122,6 +136,7 @@ struct StatusContent: View {
     }
     deinit {
         notifications.removeObserver(self)
+        workspaceNotifications.removeObserver(self)
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
     }
     func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
@@ -168,6 +183,15 @@ struct StatusContent: View {
         controller.popoverClosed()
     }
     @objc private func applicationResignedActive(_ notification: Notification) { focusLeft() }
+    @objc private func workspaceActivatedApplication(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              application.bundleIdentifier != "com.apple.MenuBarAgent" else { return }
+        // A real application activation is independent of the pointer. The
+        // status-item host can take focus before begin; leave that transition
+        // to the session, but dismiss a keyboard switch even over our icon.
+        dismiss()
+    }
     func windowDidResignKey(_ notification: Notification) {
         if !panel.isKeyWindow { focusLeft() }
     }
