@@ -5,6 +5,13 @@ public enum LookupError: Error, Equatable, Sendable {
     case http(status: Int, PackageName)
     case invalidVersion(PackageKind, PackageName)
     case notFound(PackageName, KindPreference)
+    case notTapped(TapName)
+    case unsupportedTapRemote(TapName)
+    case notFoundInTap(PackageName)
+    case unreadableTapVersion(PackageName)
+    case tapUnreachable(PackageName)
+    case tapHTTP(status: Int, PackageName)
+    case ambiguous(String, [PackageName])
 
     public var cliMessage: String {
         switch self {
@@ -12,6 +19,14 @@ public enum LookupError: Error, Equatable, Sendable {
         case .http(let status, let name): "Error: Homebrew returned HTTP \(status) for \(name)."
         case .invalidVersion(let kind, let name): "Error: no valid \(kind.rawValue) version returned for \(name)."
         case .notFound(let name, let preference): "Error: \(name) not found in Homebrew (\(preference.label))."
+        case .notTapped(let tap): "Error: \(tap) is not tapped."
+        case .unsupportedTapRemote(let tap): "Error: \(tap) is not hosted on GitHub."
+        case .notFoundInTap(let name): "Error: \(name) not found in \(name.tap!.description)."
+        case .unreadableTapVersion(let name): "Error: could not read a version for \(name)."
+        case .tapUnreachable(let name): "Error: could not reach GitHub for \(name)."
+        case .tapHTTP(let status, let name): "Error: GitHub returned HTTP \(status) for \(name)."
+        case .ambiguous(let name, let matches):
+            "Error: \(name) matches several taps: \(matches.map(\.rawValue).sorted().joined(separator: ", ")). Use the full name."
         }
     }
 
@@ -21,6 +36,13 @@ public enum LookupError: Error, Equatable, Sendable {
         case .http(let status, _): "Homebrew returned HTTP \(status)."
         case .invalidVersion: "Homebrew returned no usable version."
         case .notFound: "Not found in Homebrew."
+        case .notTapped(let tap): "\(tap) is no longer tapped."
+        case .unsupportedTapRemote: "Only taps hosted on GitHub can be checked."
+        case .notFoundInTap(let name): "Not found in \(name.tap!.description)."
+        case .unreadableTapVersion: "Can't read this tap's version."
+        case .tapUnreachable: "Couldn't reach GitHub."
+        case .tapHTTP(let status, _): "GitHub returned HTTP \(status)."
+        case .ambiguous(let name, _): "\(name) matches several taps. Use the full name."
         }
     }
 }
@@ -66,6 +88,7 @@ public struct HomebrewClient: Sendable {
     }
 
     public func lookup(_ name: PackageName, kinds: KindPreference) async throws -> Listing {
+        guard name.tap == nil else { throw LookupError.notFound(name, kinds) }
         for kind in kinds.candidates {
             // PackageName admits only URL-path-safe characters.
             let url = URL(string: "https://formulae.brew.sh/api/\(kind.rawValue)/\(name.rawValue).json")!

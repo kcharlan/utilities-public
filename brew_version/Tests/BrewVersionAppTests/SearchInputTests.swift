@@ -8,13 +8,117 @@ private actor SearchTransport: HTTPTransport {
     var requests: [URL] = []
     func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
         requests.append(url)
+        if url.host == "raw.githubusercontent.com" {
+            let version = url.path.contains("homebrew-homebrew-synthetic-tap/") ? "4.5.6" : "9.0.1"
+            return .init(status: 200, body: Data("class SyntheticTool < Formula\n version \"\(version)\"\nend".utf8))
+        }
         let body = url.path.contains("/cask/") ? #"{"version":"2-synthetic"}"# : #"{"versions":{"stable":"1-synthetic"}}"#
         return .init(status: 200, body: Data(body.utf8))
     }
 }
 private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
 
+private actor SourceLossTransport: HTTPTransport {
+    var missing = false
+    func removeOfficial() { missing = true }
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        if url.host == "raw.githubusercontent.com" {
+            return .init(status: 200, body: Data("class SyntheticShared < Formula\n version \"9.0.1\"\nend".utf8))
+        }
+        if missing { return .init(status: 404, body: Data()) }
+        let body = url.path.contains("/cask/") ? #"{"version":"7.8"}"# : #"{"versions":{"stable":"4.5.6"}}"#
+        return .init(status: 200, body: Data(body.utf8))
+    }
+}
+
 @MainActor struct SearchInputTests {
+    @Test func explicitSuggestionKindOverridesKnownWatchKind() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-choice-kind-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        let controller = WatchController(transport: SourceLossTransport(), installed: nil, store: store, notifier: SearchNotifier())
+        let name = PackageName("synthetic-shared")!
+        await controller.add(name, kind: .formula)
+        let input = SearchInput(waitForDebounce: {})
+        #expect(await input.version(for: .suggestion(name, .cask), controller: controller) == "7.8")
+        #expect(controller.state.watched.first?.kind == .formula)
+        #expect(store.load().state.watched.first?.kind == .formula)
+    }
+    @Test func explicitOfficialChoiceNeverWatchesOrCopiesTapAfterSourceLoss() async throws {
+        for action in ["suggestion", "result", "other-updates", "copy"] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-source-loss-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let prefix = home.appendingPathComponent("prefix")
+            let tap = prefix.appendingPathComponent("Library/Taps/synthetic-owner/homebrew-synthetic-tap")
+            for path in ["Cellar", "Library/Taps/synthetic-owner/homebrew-synthetic-tap/.git", "Library/Taps/synthetic-owner/homebrew-synthetic-tap/Formula"] {
+                try FileManager.default.createDirectory(at: prefix.appendingPathComponent(path), withIntermediateDirectories: true)
+            }
+            try Data("[remote \"origin\"]\nurl=https://github.com/synthetic-owner/homebrew-synthetic-tap.git\n".utf8).write(to: tap.appendingPathComponent(".git/config"))
+            try Data("# synthetic".utf8).write(to: tap.appendingPathComponent("Formula/synthetic-shared.rb"))
+            let index = TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]))
+            let transport = SourceLossTransport()
+            let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+            let controller = WatchController(transport: transport, installed: nil, store: store, notifier: SearchNotifier(), taps: { index })
+            let input = SearchInput(waitForDebounce: {})
+            let official = PackageName("synthetic-shared")!
+            let undo = WatchUndoAction()
+            if action == "result" {
+                input.select(name: official, kind: .formula)
+                await input.lookup(controller: controller)
+                #expect(controller.results.contains { if case .found(let listing, _, _) = $0 { return listing.name == official }; return false })
+            }
+            await transport.removeOfficial()
+            switch action {
+            case "suggestion": await input.watchChoice(.suggestion(official, .formula), undo: undo, controller: controller)
+            case "result": await input.watchChoice(.result(0), undo: undo, controller: controller)
+            case "other-updates": await undo.watch(official, kind: .formula, controller: controller)
+            default: #expect(await input.version(for: .suggestion(official, .formula), controller: controller) == nil)
+            }
+            #expect(controller.state.watched.isEmpty, "\(action) must not switch sources")
+            #expect(store.load().state.watched.isEmpty)
+        }
+    }
+    @Test func copySuggestionVersionRejectsEditedOrCancelledIntent() async throws {
+        for cancel in [false, true] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-copy-intent-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
+            let clock = DebounceGate()
+            defer { clock.release() }
+            let input = SearchInput(waitForDebounce: { await clock.wait() })
+            let pending = Task { await input.version(for: .suggestion(PackageName("synthetic-shared")!, .cask), controller: controller) }
+            try await clock.entered(1)
+            if cancel { pending.cancel() } else { input.text = "synthetic-edited" }
+            clock.release()
+            #expect(await pending.value == nil)
+            #expect(controller.state.watched.isEmpty)
+        }
+    }
+    @Test func tapSuggestionPreservesCanonicalIdentityAndCopiesItsVersion() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-choice-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let prefix = home.appendingPathComponent("prefix")
+        try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Cellar"), withIntermediateDirectories: true)
+        for repo in ["homebrew-homebrew-synthetic-tap", "homebrew-synthetic-tap"] {
+            let tap = prefix.appendingPathComponent("Library/Taps/synthetic-owner/\(repo)")
+            for path in [".git", "Formula"] { try FileManager.default.createDirectory(at: tap.appendingPathComponent(path), withIntermediateDirectories: true) }
+            try Data("[remote \"origin\"]\nurl=https://github.com/synthetic-owner/\(repo).git\n".utf8).write(to: tap.appendingPathComponent(".git/config"))
+            try Data("# synthetic".utf8).write(to: tap.appendingPathComponent("Formula/synthetic-tool.rb"))
+        }
+        let index = TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]))
+        let name = try #require(index.suggestions(prefix: "synthetic-tool").first { $0.name.rawValue == "synthetic-owner/homebrew-synthetic-tap/synthetic-tool" }?.name)
+        let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier(), taps: { index })
+        let input = SearchInput(waitForDebounce: {})
+        input.select(name: name, kind: .formula)
+        await input.lookup(controller: controller)
+        guard case .found(let listing, _, _) = controller.results.first else { Issue.record("Missing selected tap result"); return }
+        #expect(listing.name == name)
+        #expect(listing.version == "4.5.6")
+        #expect(await input.version(for: .suggestion(name, .formula), controller: controller) == "4.5.6")
+        await input.watchChoice(.suggestion(name, .formula), undo: WatchUndoAction(), controller: controller)
+        #expect(controller.state.watched.first?.name == name)
+        #expect(controller.state.watched.first?.lastListing?.version == "4.5.6")
+    }
     @Test func matchingPrefixSuggestionsHideOnlyTheirExactNotFound() {
         let name = PackageName("synthetic")!
         let missing: LookupResult = .notFound(name)
@@ -119,6 +223,7 @@ private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
         await input.lookup(controller: controller)
         guard case .found(let listing, _, false) = controller.results.first else { Issue.record("Expected cask suggestion result"); return }
         #expect(listing.kind == .cask)
+        #expect(await input.version(for: .suggestion(name, .cask), controller: controller) == "2-synthetic")
         await WatchUndoAction().watch(listing.name, kind: listing.kind, controller: controller)
         #expect(controller.state.watched.first?.kind == .cask)
         #expect(await transport.requests.allSatisfy { $0.path == "/api/cask/synthetic-shared.json" })

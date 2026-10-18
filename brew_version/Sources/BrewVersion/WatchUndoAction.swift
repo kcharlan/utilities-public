@@ -35,6 +35,6 @@ import BrewVersionCore
     }
     func watch(_ name: PackageName, kind: PackageKind, controller: WatchController) async {
         if removed?.entry.name == name { restore(controller: controller) }
-        else { await controller.add(name, kind: kind) }
+        else { await controller.add(name, kind: kind, exactSource: true) }
     }
 }

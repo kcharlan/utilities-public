@@ -25,6 +25,7 @@ struct PackageRow: View {
     var amber = false
     var error: String?
     var compact = false
+    var suggestionInstalled = false
     var selected = false
     var watched: Bool? = nil
     var canSave = true
@@ -33,6 +34,9 @@ struct PackageRow: View {
     var skip: (() -> Void)?
     var remove: (() -> Void)?
     @State private var hovering = false
+    var title: String { name.shortName }
+    var tapLabel: String? { name.tap?.description }
+    var accessibilityName: String { name.rawValue }
     private var actionsVisible: Bool { hovering || selected }
     private var commandTitle: String { installed == nil ? "Copy install command" : "Copy upgrade command" }
     var body: some View {
@@ -42,8 +46,9 @@ struct PackageRow: View {
                 .frame(width: 15).padding(.top, 2).accessibilityLabel(kind?.rawValue ?? "Package")
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(name.rawValue).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                        .help(name.rawValue).layoutPriority(1)
+                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                        .help(name.rawValue).accessibilityLabel(accessibilityName).layoutPriority(1)
+                    if let tapLabel { Text(tapLabel).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(name.rawValue) }
                     Spacer(minLength: 2)
                     if !compact, let listing {
                         HStack(spacing: 3) {
@@ -60,7 +65,7 @@ struct PackageRow: View {
                 HStack(alignment: .top, spacing: 4) {
                     VStack(alignment: .leading, spacing: 2) {
                         if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-                        else if compact { Text(kind?.rawValue ?? "Package").foregroundStyle(.secondary) }
+                        else if compact { Text((kind?.rawValue ?? "Package") + (suggestionInstalled ? " · Installed" : "")).foregroundStyle(.secondary) }
                         else if let listing { Text(statusText(listing, installed: installed)).foregroundStyle(.secondary) }
                         if let note = installedSourceNote(installed), !compact { Text(note).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                     }.font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .leading)

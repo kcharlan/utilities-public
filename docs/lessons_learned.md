@@ -1,5 +1,38 @@
 # Lessons learned
 
+## 2026-10-18: Record unreadable DSL fields before suppressing their blocks
+
+Brew Version's tap reader skipped a `version compute_version do` statement
+while entering its ignored block, then treated the explicit version as absent
+and accepted a later URL or literal version. Record first-field presence in
+the active package scope before handling its block. Preserve the unreadable
+arguments and suppress the body independently. Regress both URL fallback and
+later literal replacement, plus matching and ignored architecture scopes, so
+the correction cannot admit fields from a suppressed parent.
+
+## 2026-10-18: Port regex anchors and filename suffix removal together
+
+Brew Version's Homebrew detector matched ordinary URLs but diverged after
+percent-decoding an LF: Ruby's `^`/`$` match line boundaries, while default
+Foundation expressions do not. Enable line anchors with Unix LF semantics,
+and translate Ruby's `\Z` explicitly: ICU still accepts CR and Unicode final
+terminators for `\Z` in Unix mode. A regex extension match before a trailing
+LF is not necessarily a literal filename suffix; Ruby's `File.basename`
+removes it only when the filename actually ends with it. Preserve that check
+instead of blindly dropping the captured length. Generate expected URL and
+tag results through the pinned upstream implementation for LF, CRLF, CR,
+NEL, Unicode line/paragraph separators, vertical tab and form feed.
+
+## 2026-10-18: Separate typed normalization from canonical identity decoding
+
+Brew Version's tap normalizer removes one reserved repository prefix, matching
+Homebrew. Reusing it for a canonical accessor or Codable decode removed a
+second prefix, changed a package's identity, and could make a successfully saved
+watch unreadable when the second pass identified an official tap. Share segment
+validation while keeping typed normalization separate from canonical decoding.
+Regress repeated and mixed prefixes through accessors, both identity Codable
+roundtrips and actual watch-store save/load, including a reserved core alias.
+
 ## 2026-10-17: Refresh "at launch" means every launch, and match brew outdated
 
 Brew Version's spec said Other updates refreshes "when the app starts and once
@@ -962,3 +995,72 @@ A declaration timestamp is not a scan timestamp. An inventory-only scan can have
 no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
+
+### Brew Version: validate tap cache identity before conditional requests
+
+Two locally named taps can point to the same GitHub repository and file. A URL-keyed
+listing cache therefore does not prove that its parsed package name and kind match
+the request. Reuse its ETag and accept a 304 only when both match; otherwise request
+the file unconditionally and treat a 304 as lacking a usable cache entry. Keep
+regressions for shared-remote aliases and mismatched cached kinds so conditional
+requests cannot return another package's identity or parsed metadata.
+
+## 2026-10-18: Share tap discovery with the existing installation capture group
+
+Tap Other updates needs an installation snapshot before fetching its listings,
+then the fetched metadata before deriving its rows. A separate discovery scan
+bypasses the controller's capture coalescing: an overlapping watched check can
+then cause three full scans. Keep discovery, tap HTTP awaits and final combined
+catalog derivation in one existing capture group, allowing one metadata
+replacement and retaining the targeted-read revision reconciliation. Regress
+actual snapshot counts under a held refresh/check overlap, alongside kind-specific
+retained tap listings after later checks.
+
+## 2026-10-18: Port Homebrew version detection against a generated corpus
+
+Generate synthetic URL/tag expectations with the pinned Homebrew implementation
+before porting parser order, stem handling and regex behavior. Keep the source
+commit in the port and corpus, cover every parser family and negative cases,
+and compare the generated expectations in Swift tests. Handpicked happy paths
+miss suffix removal and regex-anchor differences between Ruby and Foundation.
+
+## 2026-10-18: Resolve directory links without changing tap remote paths
+
+Foundation directory enumeration needs a resolved URL for a selected Formula
+directory symlink. Rebuild each enumerated child under the lexical URL so the
+GitHub request keeps its repository-relative Formula path. Preserve Git config
+casing semantics separately: section/key names are case-insensitive, while the
+remote subsection name `origin` is case-sensitive. Regress links and mixed-case
+config independently instead of lowercasing the whole config before parsing.
+
+## 2026-10-18: Preserve parsed package identity through suggestion actions
+
+Homebrew tap-prefix normalization is not idempotent for repeated reserved
+prefixes. A suggestion already owns a canonical PackageName; converting it to
+text and parsing it again can select a different tap. Preserve the object in
+the transient request and route explicit selections through the same controller
+search pipeline using a valid token. Copy-version actions must resolve that
+same selected name and kind, rather than consulting only the official catalog.
+Keep debounce, cancellation and request-generation checks around both actions.
+
+## 2026-10-18: Keep explicit source intent through the final Watch lookup
+
+Brew Version displayed a chosen official result but used bare-name fallback
+again when Watch performed its second HTTP lookup. An official 404 then saved
+a tap watch. Share the search/add pipelines with an exact-source mode for
+suggestions, results and Other updates actions; reserve bare fallback for raw
+input. Match suggestions by name and kind, including when another kind is
+already watched. Preserve Undo restoration before issuing a fresh add.
+
+## 2026-10-18: Receipt provenance comes from the writer, not tap directory aliases
+
+At Homebrew commit 3073d6a8c34f71da054b000cfdbb62594a07c969,
+`Library/Homebrew/tab.rb`'s `AbstractTab.create` writes
+`formula_or_cask.tap&.name`; `cask/tab.rb` uses `cask.tap&.name` too.
+`tap.rb` constructs `@name` from parsed user/repository and lowercases it.
+Thus receipt `source.tap` is canonical already. Typed prefix normalization can
+strip another reserved prefix and assign a removed source to another tap.
+Validate canonical segments and compose package identities without aliases;
+fold case only, and admit official provenance only for canonical core/cask.
+Synthetic receipt fixtures must follow that writer format. Capture tapped
+membership once per snapshot/point read, rather than rescanning for each receipt.

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "watched": [{"name": "synthetic-tool", "kind": "formula", "unseenRelease": false}],
+  "interval": {"minutes": 30},
+  "showOtherUpdates": true,
+  "otherUpdatesCollapsed": false,
+  "listingCache": [],
+  "catalogInterval": {"minutes": 60},
+  "includeSelfUpdating": false
+}

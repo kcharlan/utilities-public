@@ -1,6 +1,7 @@
 # Brew Version
 
-Brew Version reads current formula and cask versions from Homebrew's public API.
+Brew Version reads current formula and cask versions from Homebrew's public API
+and packages in your taps from their GitHub repositories.
 The Swift `brew-version` command supports one-time lookups and watching until a
 version changes. The shared core also supports the native menu bar app,
 which watches chosen packages and notifies about their updates without running
@@ -15,7 +16,7 @@ the repository's `agents.md`.
   compatibility with earlier macOS versions is not promised.
 - Xcode or the Command Line Tools providing Swift 6 and the macOS 27 SDK.
 - Node.js for deployment tooling and release build integration tests.
-- Network access to Homebrew's HTTPS public API for lookups.
+- Network access to Homebrew's HTTPS public API and `raw.githubusercontent.com` for tap lookups.
 
 The Swift package has no external dependencies. The CLI needs neither `curl`
 nor `jq`. The app bundle is named `Brew Version.app`, uses the
@@ -52,8 +53,9 @@ make -C brew_version snapshots
 ```
 
 This required visual category builds in a fresh mode-0700 OS temporary directory
-and prints its path. It writes fourteen mode-0600 PNGs: `empty`, `watching`,
-`other-updates`, `search-results`, `suggestions`, `error` and `settings`, each with
+and prints its path. It writes eighteen mode-0600 PNGs: `empty`, `watching`,
+`other-updates`, `search-results`, `suggestions`, `error`, `settings`, `tap-watching`
+and `tap-suggestions`, each with
 `-light.png` and `-dark.png`. The renderer checks actual painted pixels, widths,
 content-hugging empty state, long-list bounds and native scroll viewports.
 Inspect every PNG, then check the real popover, menus and Settings in both
@@ -75,12 +77,13 @@ brew-version [OPTIONS] PACKAGE...
 ```
 
 - `--formula` or `--cask` forces all names to that kind. Otherwise each name
-  tries formula first, then cask.
+  tries official formula first, then official cask, then a unique tap match.
 - `--watch [SECONDS]` or `--watch=SECONDS` checks immediately, then repeats
   every 300 seconds by default, until any version changes.
 - `--version` prints the release version. `-h` and `--help` print full help.
 - Names use lowercase letters, digits and `@ + . _ -`, beginning with a letter
-  or digit. Third-party taps are not supported.
+  or digit. Tap packages use `user/tap/name`; tap segments use lowercase letters,
+  digits and `. _ -`, starting with a letter or digit. See Taps below.
 
 One name prints only its version; several names print `name: version`.
 Watch output includes local date, time, time zone, name and version on every
@@ -104,11 +107,64 @@ changes are covered by the named regression tests:
 - `UsageTests.expectedHelp`: adds version help, removes the external dependency
   requirement and calls exit code 1 a lookup error.
 - `RunCLITests.lookupWithoutDependencyTools`: removes `curl` and `jq` checks.
+- Tap lookups add source-qualified names and unique bare-name fallback; ambiguous
+  tap matches report sorted full names instead of choosing one.
 - `TransportTests.timeoutPolicy`: uses a 10-second idle request timeout and
   30-second total resource timeout for individual lookups.
 
 The release version comes from the tracked Info.plist through
 `BrewVersionRelease.version`; a core test verifies that they agree.
+
+## Taps
+
+Packages from locally added third-party taps work in search, watches, Other
+updates and the CLI. Tap names normalize case and Homebrew repository prefixes;
+official core/cask aliases use their ordinary short package names. A bare search
+shows the official match and every matching tapped package as separate rows.
+Suggestions include local tap names before any remote lookup, mark Installed
+by package kind, and order installed matches first, exact short names next,
+then official before tap and full-name order (up to eight rows). A query with
+slashes matches full-name prefixes. Rows show the short name and tap; tooltips,
+accessibility names and copied install/upgrade commands retain the full name.
+
+Adding a bare name chooses official formula, then official cask (restricted by
+the selected kind), then a unique tap match. Several tap matches produce an
+ambiguity error listing their sorted full names. Use `user/tap/name` to choose
+a source explicitly. A successful watch saves that resolved identity, so later
+checks never silently switch sources. A failed bare add saves no watch.
+Selecting a suggestion, search result or Other updates row chooses that exact
+source and kind, including the final Watch lookup. If the official package
+disappears, that choice never falls back to a tap.
+
+The local index reads tapped directories and Git origin configuration as text;
+the app and CLI never execute brew, git, Ruby or tap code. Only GitHub origins
+can be checked. Versions come from HTTPS files at
+`raw.githubusercontent.com/owner/repository/HEAD/path`, without waiting for
+`brew update`. Conditional requests use ETags; freshness remains subject to
+GitHub's HTTP caching. The app rescans taps on catalog refresh and manual
+refresh. Removing a tap leaves its watches with an explicit error and stops
+admitting its installed receipts; it never turns them into official installs.
+
+The text reader accepts literal versions and derives formula versions from a
+literal URL/tag using the pinned Homebrew URL detector when no explicit version
+exists. It reads stable/macOS and matching architecture scopes, ignores nested
+resources, bottles and other non-package scopes, and never evaluates dynamic
+Ruby. Unreadable explicit versions stay errors. Cask `:latest`, revision,
+auto-update and app metadata retain their existing semantics.
+
+Other updates checks installed tap packages on its catalog cadence through the
+shared four-request scheduler, independently of official catalog success. It
+retains previous tap listings when a source fails and reports separate counts:
+“Couldn't check N tap packages.” for HTTP/network failures and
+“N tap packages can't be checked.” for unsupported, missing or unreadable
+sources (with singular wording for one). These rows never notify or increase
+the watched amber count. Tap notifications use “NAME VERSION is in TAP”.
+
+Rollback safety: official watches/cache remain under the original `watched`
+and `listingCache` state keys; tap entries use `tapWatched` and
+`tapListingCache`. Version 1.0.2 can still load the official entries, but ignores
+the tap keys and drops them on its first save. Preserve a private state backup
+before rolling back if tap watches must be restored later.
 
 ## Saved watches and checks
 
@@ -143,7 +199,7 @@ cannot bypass a failed save's interval floor.
 
 The optional catalog client reads Homebrew's formula and cask bulk lists for
 prefix search suggestions and installed, unwatched updates. Only admitted
-Homebrew core/cask installations appear; these updates never notify or affect
+Homebrew core/cask and currently tapped installations appear; these updates never notify or affect
 the watched update count. Self-updating casks retain their installed-version
 source, including the fallback to Homebrew's records. Like `brew outdated`,
 Other updates hides a self-updating cask whose installed version comes only
@@ -155,8 +211,15 @@ A self-updating cask whose app version can be read still appears when behind.
 Formula versions compare the upstream version first and the numeric keg revision
 second, matching Homebrew's package version semantics. Legacy Caskroom version
 folders without an install receipt count as installed. An existing unreadable,
-malformed, unknown-tap or third-party receipt still excludes the cask, and version
-folder symlinks are excluded. Formula kegs always require an official core receipt.
+malformed or untapped-source receipt still excludes the cask, and version
+folder symlinks are excluded. Formula kegs require a core or currently tapped
+receipt. Casks with receipts require the official cask tap or a currently tapped
+source; legacy receipt-free casks remain official. Receipt provenance separates
+official and tap identities even when their short names collide.
+Receipt `source.tap` is Homebrew's canonical tap name, not a typed or directory
+alias. Admission folds case but never strips another repository prefix or
+reassigns a removed source to another tapped repository. Tap membership is
+captured once for each snapshot or point read.
 
 At startup, callers await `WatchController.hydrateCatalog()` to restore cached
 suggestions and Other updates even when a network refresh is not due. This API
@@ -220,7 +283,9 @@ Select a result with the arrow keys or click; Return watches it, and Command-C
 copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
 Selecting a catalog suggestion preserves its formula/cask kind through lookup
-and Watch. An existing watch retains its known kind; editing the search clears
+and Watch. An explicit suggestion kind also controls its version lookup when
+the same name is already watched with another kind; the saved watch stays as
+chosen. Automatic search uses an existing watch's known kind. Editing clears
 the suggestion choice. Suggestions and results share a content-sized scrolling
 region bounded by the popover height, keeping the search field and footer
 reachable. Arrow selection scrolls the selected result into view.
@@ -324,6 +389,10 @@ Record each current-system check separately:
   window, while the status item remains usable.
 - Other updates Watch and fallback source note; turning Other updates off
   preserves suggestions. Watched fallback rows also show their source note.
+- Tap rows show short name plus tap with full-name help/accessibility; verify
+  official and tap collisions, installed formula/cask suggestions, Return,
+  Command-C, full-name install/upgrade commands, untapped errors, and both
+  exact tap failure status lines with recovery in the synthetic harness.
 - Use Settings **Send test notification** to verify permission, visible delivery
   and a click opening the popover in the production app. Authorization denial
   and posting errors are visible and retryable.
@@ -398,3 +467,15 @@ the app. Quit and reopen an already running app after deployment.
 The [implementation and acceptance record](docs/implementation_notes.md) lists
 decisions, deviations, automated validation, owner release approval, skipped or
 deferred acceptance checks, and the known desktop-switching follow-up.
+
+Synthetic tap acceptance: search `synthetic-tool` or the full
+`synthetic-owner/synthetic-tap/synthetic-tool`; check Installed, tap labeling,
+full-name copied upgrade command and watch identity. `synthetic-app` supplies a
+tap cask (version `7.8`) and its `--cask` command; `synthetic-shared` collides
+with the official formula/cask. **Tap failures** injects one HTTP failure and
+one unreadable formula into the installed tap refresh; require both exact
+singular status lines. **Restore tap responses** clears both counts. These
+controls advance only the synthetic clock beyond the refresh floor. **Remove
+tap** parks the synthetic repository outside the tapped tree; a watched tap
+package must show the exact untapped error. **Restore tap** returns it. These
+controls extend the original synthetic cases; none exists in production.

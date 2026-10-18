@@ -59,6 +59,25 @@ private struct ReopenCatalogTransport: HTTPTransport {
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func tapRowTitleAndCommand() {
+        let name = PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!
+        let row = PackageRow(name: name, kind: .formula)
+        #expect(row.title == "synthetic-tool")
+        #expect(row.tapLabel == "synthetic-owner/synthetic-tap")
+        #expect(row.accessibilityName == name.rawValue)
+        for kind in [PackageKind.formula, .cask] {
+            let listing = Listing(name: name, kind: kind, version: "4.5.6")
+            let flag = kind == .cask ? "--cask " : ""
+            #expect(packageCommand(listing, installed: nil) == "brew install " + flag + name.rawValue)
+            #expect(packageCommand(listing, installed: .init(version: "1.0", source: .cellar)) == "brew upgrade " + flag + name.rawValue)
+        }
+        #expect(PackageRow(name: PackageName("synthetic-tool")!, kind: .formula).tapLabel == nil)
+    }
+    @Test func tapStatusCopy() {
+        #expect(tapStatusMessages(failures: 0, uncheckable: 0).isEmpty)
+        #expect(tapStatusMessages(failures: 1, uncheckable: 1) == ["Couldn't check 1 tap package.", "1 tap package can't be checked."])
+        #expect(tapStatusMessages(failures: 3, uncheckable: 2) == ["Couldn't check 3 tap packages.", "2 tap packages can't be checked."])
+    }
     @Test func successfulTestKeepsAuthorizationBlockedPackageRetryVisible() async {
         let service = NotificationServiceStub(); service.status = .denied
         let notifier = UserNotifier(service: service)

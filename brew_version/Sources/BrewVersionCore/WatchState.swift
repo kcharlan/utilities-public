@@ -98,7 +98,9 @@ public func evaluate(_ entry: WatchEntry, listing: Listing, installed: Installed
     }
     guard entry.notifiedRelease != release else { return (next, nil) }
     next.notifiedRelease = release
-    return (next, Notice(name: entry.name, title: "\(entry.name) \(release.displayVersion) is on Homebrew", body: body))
+    let title = entry.name.tap.map { "\(entry.name.shortName) \(release.displayVersion) is in \($0)" }
+        ?? "\(entry.name) \(release.displayVersion) is on Homebrew"
+    return (next, Notice(name: entry.name, title: title, body: body))
 }
 
 public struct AppState: Codable, Equatable, Sendable {
@@ -124,7 +126,7 @@ public struct AppState: Codable, Equatable, Sendable {
 extension AppState {
     private enum CodingKeys: String, CodingKey {
         case schema, watched, interval, showOtherUpdates, otherUpdatesCollapsed, lastCheck, lastCatalogFetch,
-             listingCache, catalogInterval, includeSelfUpdating
+             listingCache, catalogInterval, includeSelfUpdating, tapWatched, tapListingCache
     }
     // Settings added after 1.0.1 default when absent, so earlier saved state
     // loads normally instead of being set aside as unreadable.
@@ -140,6 +142,24 @@ extension AppState {
                   listingCache: try c.decode([URL: CachedListing].self, forKey: .listingCache))
         catalogInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .catalogInterval) ?? .catalogStandard
         includeSelfUpdating = try c.decodeIfPresent(Bool.self, forKey: .includeSelfUpdating) ?? false
+        watched += try c.decodeIfPresent([WatchEntry].self, forKey: .tapWatched) ?? []
+        listingCache.merge(try c.decodeIfPresent([URL: CachedListing].self, forKey: .tapListingCache) ?? [:]) { _, tap in tap }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schema, forKey: .schema)
+        try c.encode(watched.filter { $0.name.tap == nil }, forKey: .watched)
+        try c.encode(watched.filter { $0.name.tap != nil }, forKey: .tapWatched)
+        try c.encode(interval, forKey: .interval)
+        try c.encode(showOtherUpdates, forKey: .showOtherUpdates)
+        try c.encode(otherUpdatesCollapsed, forKey: .otherUpdatesCollapsed)
+        try c.encodeIfPresent(lastCheck, forKey: .lastCheck)
+        try c.encodeIfPresent(lastCatalogFetch, forKey: .lastCatalogFetch)
+        try c.encode(listingCache.filter { $0.value.listing.name.tap == nil }, forKey: .listingCache)
+        try c.encode(listingCache.filter { $0.value.listing.name.tap != nil }, forKey: .tapListingCache)
+        try c.encode(catalogInterval, forKey: .catalogInterval)
+        try c.encode(includeSelfUpdating, forKey: .includeSelfUpdating)
     }
 }
 

@@ -16,7 +16,7 @@ import BrewVersionCore
               (try FileManager.default.attributesOfItem(atPath: home.path)[.posixPermissions] as? NSNumber)?.intValue == 0o700 else { fatalError("Snapshots require a private OS temporary home") }
         var heights: [String: CGFloat] = [:]
         for dark in [false, true] {
-            for state in ["empty", "watching", "other-updates", "search-results", "suggestions", "error", "settings"] {
+            for state in ["empty", "watching", "other-updates", "search-results", "suggestions", "error", "settings", "tap-watching", "tap-suggestions"] {
                 let directory = home.appendingPathComponent("fixture-\(state)-\(dark)")
                 let fixture = try await makeFixture(state: state, home: directory)
                 let view: AnyView
@@ -40,8 +40,8 @@ import BrewVersionCore
             guard heights["empty-\(palette)"]! < heights["watching-\(palette)"]!, heights["empty-\(palette)"]! < 300 else { fatalError("Empty popover does not hug content") }
         }
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 14 else { fatalError("Expected fourteen PNGs") }
-        print("Validated fourteen maintained-view PNGs, both appearances, content-hugging empty state and bounded long lists.")
+        guard pngs.count == 18 else { fatalError("Expected eighteen PNGs") }
+        print("Validated eighteen maintained-view PNGs, both appearances, content-hugging empty state and bounded long lists.")
     }
 
     @MainActor private static func render(_ root: AnyView, width: CGFloat, dark: Bool, to destination: URL?) throws -> NSSize {
@@ -114,7 +114,7 @@ import BrewVersionCore
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var saved = AppState.initial
         saved.lastCheck = Date(timeIntervalSince1970: 1_700_000_000)
-        saved.showOtherUpdates = state == "other-updates"
+        saved.showOtherUpdates = state == "other-updates" || state == "tap-watching"
         saved.otherUpdatesCollapsed = false
         if !["empty", "settings", "suggestions", "search-results"].contains(state) {
             saved.watched = (state.hasPrefix("long") ? (0..<35).map { "synthetic-item-\($0)" } : ["synthetic-a", "synthetic-b", "synthetic-c"]).enumerated().map { index, text in
@@ -126,16 +126,35 @@ import BrewVersionCore
                     unseenRelease: index == 1, lastError: state == "error" && index == 2 ? "Couldn't reach Homebrew. Check your connection and try again." : nil)
             }
         }
+        if state == "tap-watching" {
+            let name = PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!
+            let listing = Listing(name: name, kind: .formula, version: "4.5.6")
+            saved.watched = [saved.watched[0], WatchEntry(name: name, kind: .formula, lastListing: listing,
+                installed: .init(version: "1.0-synthetic", source: .cellar), unseenRelease: true),
+                WatchEntry(name: PackageName("synthetic-owner/synthetic-tap/synthetic-app")!, kind: .cask,
+                           lastError: "synthetic-owner/synthetic-tap is no longer tapped.")]
+        }
+        if state == "tap-suggestions" { saved.watched = [] }
         try store.save(saved)
         let prefix = home.appendingPathComponent("synthetic-prefix")
         let keg = prefix.appendingPathComponent("Cellar/synthetic-d/1.0.0")
         try FileManager.default.createDirectory(at: keg, withIntermediateDirectories: true)
         try Data(#"{"source":{"tap":"homebrew/core"}}"#.utf8).write(to: keg.appendingPathComponent("INSTALL_RECEIPT.json"))
-        let controller = WatchController(transport: service, installed: InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]), applicationDirectories: []), store: store, notifier: notifier, catalogClient: CatalogClient(transport: service, cacheDirectory: home.appendingPathComponent("cache")))
-        if ["other-updates", "suggestions"].contains(state) { await controller.refreshCatalogIfDue() }
+        if state == "tap-suggestions" {
+            let tap = prefix.appendingPathComponent("Library/Taps/synthetic-owner/homebrew-synthetic-tap")
+            for path in [".git", "Formula", "Casks"] { try FileManager.default.createDirectory(at: tap.appendingPathComponent(path), withIntermediateDirectories: true) }
+            try Data("[remote \"origin\"]\nurl = https://github.com/synthetic-owner/homebrew-synthetic-tap.git\n".utf8).write(to: tap.appendingPathComponent(".git/config"))
+            for path in ["Formula/synthetic-tool.rb", "Casks/synthetic-app.rb"] { try Data("# synthetic discovery".utf8).write(to: tap.appendingPathComponent(path)) }
+            let installed = prefix.appendingPathComponent("Cellar/synthetic-tool/1.0-synthetic")
+            try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
+            try Data(#"{"source":{"tap":"synthetic-owner/synthetic-tap"}}"#.utf8).write(to: installed.appendingPathComponent("INSTALL_RECEIPT.json"))
+        }
+        let prefixes = HomebrewPrefix.detectAll(candidates: [prefix])
+        let controller = WatchController(transport: service, installed: InstalledReader(prefixes: prefixes, applicationDirectories: [], tappedTaps: { TapIndex.scan(prefixes: prefixes).taps }), store: store, notifier: notifier, catalogClient: CatalogClient(transport: service, cacheDirectory: home.appendingPathComponent("cache")), taps: { TapIndex.scan(prefixes: prefixes) })
+        if ["other-updates", "suggestions", "tap-suggestions"].contains(state) { await controller.refreshCatalogIfDue() }
         let input = SearchInput()
         if state == "search-results" { input.text = "synthetic-a synthetic-b synthetic-c"; await input.lookup(controller: controller) }
-        if state == "suggestions" { input.text = "synthetic"; await input.lookup(controller: controller) }
+        if state == "suggestions" || state == "tap-suggestions" { input.text = "synthetic"; await input.lookup(controller: controller) }
         let selection = WatchRowSelection()
         if state == "watching", let name = saved.watched.first?.name { selection.select(name) }
         return Fixture(controller: controller, notifier: notifier, input: input, selection: selection)

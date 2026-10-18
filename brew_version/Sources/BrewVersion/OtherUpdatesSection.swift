@@ -66,8 +66,18 @@ struct CatalogStatusLine: View {
             } else {
                 Text("Not updated yet").foregroundStyle(.secondary)
             }
+            ForEach(tapStatusMessages(failures: controller.tapCheckFailures, uncheckable: controller.tapUncheckable), id: \.self) { message in
+                Text(message).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
         }.font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+func tapStatusMessages(failures: Int, uncheckable: Int) -> [String] {
+    var messages: [String] = []
+    if failures > 0 { messages.append("Couldn't check \(failures) tap \(failures == 1 ? "package" : "packages").") }
+    if uncheckable > 0 { messages.append("\(uncheckable) tap \(uncheckable == 1 ? "package" : "packages") can't be checked.") }
+    return messages
 }
 
 /// Today's refreshes show only the time; older ones include the date.
