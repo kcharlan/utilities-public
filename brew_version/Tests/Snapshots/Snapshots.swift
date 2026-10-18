@@ -16,7 +16,7 @@ import BrewVersionCore
               (try FileManager.default.attributesOfItem(atPath: home.path)[.posixPermissions] as? NSNumber)?.intValue == 0o700 else { fatalError("Snapshots require a private OS temporary home") }
         var heights: [String: CGFloat] = [:]
         for dark in [false, true] {
-            for state in ["empty", "watching", "other-updates", "search-results", "suggestions", "error", "settings", "tap-watching", "tap-suggestions"] {
+            for state in ["empty", "watching", "other-updates", "search-results", "suggestions", "error", "settings", "tap-watching", "tap-suggestions", "scrolled"] {
                 let directory = home.appendingPathComponent("fixture-\(state)-\(dark)")
                 let fixture = try await makeFixture(state: state, home: directory)
                 let view: AnyView
@@ -26,7 +26,8 @@ import BrewVersionCore
                     view = AnyView(PopoverView(controller: fixture.controller, notifier: fixture.notifier, openSettings: {}, focusGeneration: UUID(), search: fixture.input, selection: fixture.selection))
                 }
                 let label = "\(state)-\(dark ? "dark" : "light")"
-                let size = try render(view, width: state == "settings" ? 460 : 340, dark: dark, to: home.appendingPathComponent(label + ".png"))
+                let size = try render(view, width: state == "settings" ? 460 : 340, dark: dark, to: home.appendingPathComponent(label + ".png"),
+                                      scrollOffset: state == "scrolled" ? 260 : nil)
                 heights[label] = size.height
             }
             // Exercise the maintained full popover with an unbounded list too.
@@ -40,11 +41,11 @@ import BrewVersionCore
             guard heights["empty-\(palette)"]! < heights["watching-\(palette)"]!, heights["empty-\(palette)"]! < 300 else { fatalError("Empty popover does not hug content") }
         }
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 18 else { fatalError("Expected eighteen PNGs") }
-        print("Validated eighteen maintained-view PNGs, both appearances, content-hugging empty state and bounded long lists.")
+        guard pngs.count == 20 else { fatalError("Expected twenty PNGs") }
+        print("Validated twenty maintained-view PNGs, both appearances, content-hugging empty state, bounded long lists and pinned list headers.")
     }
 
-    @MainActor private static func render(_ root: AnyView, width: CGFloat, dark: Bool, to destination: URL?) throws -> NSSize {
+    @MainActor private static func render(_ root: AnyView, width: CGFloat, dark: Bool, to destination: URL?, scrollOffset: CGFloat? = nil) throws -> NSSize {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
         // An offscreen content capture has no popover compositor behind its clear
         // pixels. Supply the native material only at this rendering boundary.
@@ -71,6 +72,14 @@ import BrewVersionCore
             if let document = scroll.documentView {
                 guard document.frame.width <= scroll.contentView.bounds.width + 0.5 else { fatalError("Horizontally clipped package content") }
             }
+        }
+        // A scrolled list shows its section header pinned above the rows beneath it.
+        if let scrollOffset, let list = nativeScrolls(view).first {
+            list.contentView.scroll(to: NSPoint(x: 0, y: scrollOffset))
+            list.reflectScrolledClipView(list.contentView)
+            view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            view.layoutSubtreeIfNeeded()
         }
         window.displayIfNeeded()
         view.display()
@@ -114,10 +123,10 @@ import BrewVersionCore
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var saved = AppState.initial
         saved.lastCheck = Date(timeIntervalSince1970: 1_700_000_000)
-        saved.showOtherUpdates = state == "other-updates" || state == "tap-watching"
+        saved.showOtherUpdates = ["other-updates", "tap-watching", "scrolled"].contains(state)
         saved.otherUpdatesCollapsed = false
         if !["empty", "settings", "suggestions", "search-results"].contains(state) {
-            saved.watched = (state.hasPrefix("long") ? (0..<35).map { "synthetic-item-\($0)" } : ["synthetic-a", "synthetic-b", "synthetic-c"]).enumerated().map { index, text in
+            saved.watched = ((state.hasPrefix("long") || state == "scrolled") ? (0..<35).map { "synthetic-item-\($0)" } : ["synthetic-a", "synthetic-b", "synthetic-c"]).enumerated().map { index, text in
                 let kind: PackageKind = index == 1 ? .cask : .formula
                 let listing = Listing(name: PackageName(text)!, kind: kind, version: index == 2 ? "1.0.0" : "1.0.1")
                 return WatchEntry(name: listing.name, kind: kind, lastListing: listing,
@@ -151,7 +160,7 @@ import BrewVersionCore
         }
         let prefixes = HomebrewPrefix.detectAll(candidates: [prefix])
         let controller = WatchController(transport: service, installed: InstalledReader(prefixes: prefixes, applicationDirectories: [], tappedTaps: { TapIndex.scan(prefixes: prefixes).taps }), store: store, notifier: notifier, catalogClient: CatalogClient(transport: service, cacheDirectory: home.appendingPathComponent("cache")), taps: { TapIndex.scan(prefixes: prefixes) })
-        if ["other-updates", "suggestions", "tap-suggestions"].contains(state) { await controller.refreshCatalogIfDue() }
+        if ["other-updates", "suggestions", "tap-suggestions", "scrolled"].contains(state) { await controller.refreshCatalogIfDue() }
         let input = SearchInput()
         if state == "search-results" { input.text = "synthetic-a synthetic-b synthetic-c"; await input.lookup(controller: controller) }
         if state == "suggestions" || state == "tap-suggestions" { input.text = "synthetic"; await input.lookup(controller: controller) }

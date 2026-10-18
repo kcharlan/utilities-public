@@ -53,9 +53,9 @@ make -C brew_version snapshots
 ```
 
 This required visual category builds in a fresh mode-0700 OS temporary directory
-and prints its path. It writes eighteen mode-0600 PNGs: `empty`, `watching`,
-`other-updates`, `search-results`, `suggestions`, `error`, `settings`, `tap-watching`
-and `tap-suggestions`, each with
+and prints its path. It writes twenty mode-0600 PNGs: `empty`, `watching`,
+`other-updates`, `search-results`, `suggestions`, `error`, `settings`, `tap-watching`,
+`tap-suggestions` and `scrolled` (a long list scrolled under its pinned header), each with
 `-light.png` and `-dark.png`. The renderer checks actual painted pixels, widths,
 content-hugging empty state, long-list bounds and native scroll viewports.
 Inspect every PNG, then check the real popover, menus and Settings in both
@@ -318,7 +318,9 @@ number of minutes from 10 through 1,440; the footer shows the next check.
 **Custom…** opens Settings with its minutes field focused; enter a value and
 press Return or Apply. Invalid input remains editable with inline validation.
 The popover uses a 340-point layout that hugs short content; only the package
-list scrolls when needed. Hover or select a watch to reveal its icon actions.
+list scrolls when needed. Its scroll bar travels in the popover's right margin, so
+it never covers counts, chevrons or row actions, and the "Watching" and "Other
+updates" headers stay pinned while their own rows scroll beneath them. Hover or select a watch to reveal its icon actions.
 The Settings gear activates a reused AppKit-owned window containing the version,
 interval, Other updates toggle, Other updates interval, Include self-updating
 apps and Open at login, including the service's status

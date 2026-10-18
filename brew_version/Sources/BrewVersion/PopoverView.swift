@@ -56,26 +56,38 @@ struct PopoverView: View {
             }
             if search.text.isEmpty {
                 ContentSizedScroll(maximum: listMaximum, initial: watches.isEmpty ? 112 : min(listMaximum, CGFloat(watches.count * 52 + 24))) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack { Text("Watching"); Spacer(); Text("\(watches.count)") }
-                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                            .help("Checked every \(controller.state.interval.label), with update alerts").padding(.bottom, 4)
-                        if watches.isEmpty {
-                            VStack(spacing: 5) {
-                                Image(systemName: "mug").font(.system(size: 28)).foregroundStyle(.tertiary)
-                                Text("Nothing watched yet").fontWeight(.medium)
-                                Text("Search above to add a formula or cask.").font(.system(size: 11)).foregroundStyle(.secondary)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                    // Each section's title stays pinned while its own rows scroll beneath it.
+                    LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                        Section {
+                            if watches.isEmpty {
+                                VStack(spacing: 5) {
+                                    Image(systemName: "mug").font(.system(size: 28)).foregroundStyle(.tertiary)
+                                    Text("Nothing watched yet").fontWeight(.medium)
+                                    Text("Search above to add a formula or cask.").font(.system(size: 11)).foregroundStyle(.secondary)
+                                }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                            }
+                            ForEach(watches, id: \.name) { entry in
+                                WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove, selected: selection.name == entry.name) { remove(entry.name) }
+                                    .background(WatchRowKeyboard(focusRequest: selection.name == entry.name ? selection.focusRequest : nil) { remove(entry.name) })
+                                    .contentShape(Rectangle()).onTapGesture { selection.select(entry.name) }
+                                    .accessibilityElement(children: .contain).accessibilityLabel("Watching \(entry.name.rawValue)")
+                                    .accessibilityAddTraits(selection.name == entry.name ? .isSelected : [])
+                                    .accessibilityAction { selection.select(entry.name) }
+                            }
+                        } header: {
+                            PinnedSectionHeader {
+                                HStack { Text("Watching"); Spacer(); Text("\(watches.count)") }
+                                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                    .help("Checked every \(controller.state.interval.label), with update alerts")
+                            }
                         }
-                        ForEach(watches, id: \.name) { entry in
-                            WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove, selected: selection.name == entry.name) { remove(entry.name) }
-                                .background(WatchRowKeyboard(focusRequest: selection.name == entry.name ? selection.focusRequest : nil) { remove(entry.name) })
-                                .contentShape(Rectangle()).onTapGesture { selection.select(entry.name) }
-                                .accessibilityElement(children: .contain).accessibilityLabel("Watching \(entry.name.rawValue)")
-                                .accessibilityAddTraits(selection.name == entry.name ? .isSelected : [])
-                                .accessibilityAction { selection.select(entry.name) }
+                        if controller.state.showOtherUpdates {
+                            Section {
+                                OtherUpdatesSection(controller: controller, undo: undo)
+                            } header: {
+                                PinnedSectionHeader { OtherUpdatesHeader(controller: controller) }
+                            }
                         }
-                        OtherUpdatesSection(controller: controller, undo: undo)
                     }
                 }
             }

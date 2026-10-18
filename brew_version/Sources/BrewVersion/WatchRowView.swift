@@ -124,6 +124,10 @@ struct WatchRowView: View {
 /// Explicit intrinsic height avoids a zero viewport in an AppKit host. The
 /// measurement then hugs short content while keeping large lists scrollable.
 struct ContentSizedScroll<Content: View>: View {
+    /// The popover's own side margin. The scroll view extends into it so the
+    /// scroll bar travels in empty space instead of over counts and chevrons,
+    /// while the content keeps its alignment with the rest of the popover.
+    static var scrollerGutter: CGFloat { 12 }
     var maximum: CGFloat = 390
     var initial: CGFloat = 120
     @ViewBuilder var content: () -> Content
@@ -132,9 +136,34 @@ struct ContentSizedScroll<Content: View>: View {
         ScrollView {
             content().frame(maxWidth: .infinity, alignment: .leading)
                 .background(GeometryReader { geometry in Color.clear.preference(key: ContentHeight.self, value: geometry.size.height) })
-        }.frame(height: min(maximum, max(1, measured ?? initial)))
+                .padding(.trailing, Self.scrollerGutter)
+        }.padding(.trailing, -Self.scrollerGutter)
+            .frame(height: min(maximum, max(1, measured ?? initial)))
             .onPreferenceChange(ContentHeight.self) { measured = $0 }
     }
+}
+
+/// A section header that stays at the top of its list while rows scroll
+/// beneath it. Its background is the panel's own behind-window material, so
+/// rows disappear under it without the header looking like a separate bar.
+struct PinnedSectionHeader<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        content().frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
+            .background(PopoverMaterial())
+    }
+}
+
+struct PopoverMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 private struct ContentHeight: PreferenceKey {
     static let defaultValue: CGFloat = 0
