@@ -286,6 +286,8 @@ audited_scopes=(
   "${direct_source_paths[@]}"
   model_sentinel/__main__.py
   model_sentinel/model_sentinel
+  brew_version
+  tools/deploy_brew_version.mjs
   colophon
   tools/deploy_colophon.mjs
   storage_monitor
@@ -618,6 +620,7 @@ audit_native_deployment() {
   local -A required_membership
   local source_ok=true source_path required
   local success="OK: $label deployment"
+  local -i success_bytes="$(LC_ALL=C printf '%s\n' "$success" | LC_ALL=C wc -c)"
   : > "$inventory"
   if [[ "$git_snapshot_ok" != true || "$git_head_ok" != true ]]; then
     source_ok=false
@@ -643,7 +646,7 @@ audit_native_deployment() {
   if [[ "$source_ok" != true ]]; then
     report_failure "$label source inventory unverified"
   elif node "$REPO_ROOT/$installer" --audit --repo "$REPO_ROOT" --scripts-dir "$SCRIPTS_DIR" --source-inventory "$inventory" > "$output.stdout" 2> "$output.stderr"; then
-    if [[ ! -s "$output.stderr" && "$(stat -f '%z' "$output.stdout")" == 31 && "$(cat "$output.stdout")" == "$success" ]]; then
+    if [[ ! -s "$output.stderr" && "$(stat -f '%z' "$output.stdout")" == "$success_bytes" && "$(cat "$output.stdout")" == "$success" ]]; then
       print -- "$success"
     else
       report_failure "$label child protocol unverified"
@@ -657,6 +660,13 @@ audit_native_deployment colophon tools/deploy_colophon.mjs \
   native-source-inventory native 'colophon native' \
   'colophon native deployment unverified (source, binary or receipt drift)' \
   colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs
+
+audit_native_deployment brew_version tools/deploy_brew_version.mjs \
+  brew-version-source-inventory brew 'brew-version native' \
+  'brew-version native deployment unverified (source, command, app or receipt drift)' \
+  brew_version/Package.swift brew_version/Makefile brew_version/Resources/Info.plist \
+  brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt \
+  tools/deploy_brew_version.mjs tools/deployment_files.mjs
 
 audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \
   storage-monitor-source-inventory storage storage_monitor \

@@ -1,5 +1,634 @@
 # Lessons learned
 
+## 2026-10-17: macOS 27 status items are hosted out of process
+
+MenuBarAgent draws status items and forwards their clicks; the app owns no
+status-bar window. Forwarded presses have event number 0 and unreliable
+press/release timing, and pressing the icon takes focus from the app before the
+expanded-interface session's begin arrives. Any second owner of the open/close
+decision races that session: a transient popover's own dismissal, a button
+action, a popover anchored to the button (which starts a session by itself),
+or dismissing on resign key/active while the pointer is on the icon. Let the
+session open a plain panel; hide synchronously, then cancel.
+
+The session does not close on a second press of its own item: that press
+reaches neither the app nor the session. A global mouse monitor does see it.
+Close only for a press that went down after the session began and went down
+and up on the item; the opening press precedes its begin, and NSEvent
+timestamps share `ProcessInfo.systemUptime`'s clock. The item's own window can
+be taller than the menu bar, so test placement by its center, not its edges.
+Check window ownership (`CGWindowListCopyWindowInfo`) and log what actually
+arrives (a local event monitor plus focus notifications) before trusting an
+in-process event model, and regress the recorded order, not an idealized one.
+
+## 2026-10-17: Verify status-item lifecycle ownership at the real boundary
+
+Refusing transient popover dismissal over a status button assumes its later
+action will arrive. AppKit can consume the gesture instead, leaving repeated
+clicks unable to close the interface. Removing that veto does not by itself
+resolve late actions or a fresh opening request during animated dismissal:
+isShown can remain true until close completion. Regress those callback orders
+through the real controller. Apple's macOS 27 expanded-interface lifecycle
+offers system tracking ownership, but its integration still requires actual
+input verification; an initial ten-click pass followed by failures is not
+acceptance. Helper toggle tests cannot establish native event delivery.
+
+## 2026-10-17: Keep diagnostic notification recovery independent
+
+A test notification must not clear or replace a failed package notification.
+Retain recovery by notice kind and guard asynchronous completions with request
+identity, rather than restoring a shared-state snapshot after an await. Test
+success, denial, posting failure and overlapping completion in both directions.
+Keep Retry visible for pending notices even after authorization recovers.
+
+## 2026-10-17: Observe native event paths without forcing layout
+
+App reopen and accessibility press do not reproduce a physical status-button
+gesture. Correlate actual actions and close callbacks before attributing a fix.
+A diagnostic fittingSize read can force layout and conceal the defect under
+investigation; passive logs should inspect already-loaded bounds and frames.
+Keep synthetic diagnostic labels visibly distinct, including when a menu bar
+manager hides them.
+
+## 2026-10-17: Verify deployment targets in generated binaries
+
+Changing the main package and plist leaves independently generated harness and
+snapshot packages behind. Inspect actual Mach-O minimum versions and bundle
+metadata for every maintained product, and regress installer rejection before
+activation when the supported-runtime contract changes.
+
+## 2026-10-17: Scope private-log permissions to the logs
+
+A process-wide umask 077 can change synthetic source fixture modes and create
+real source/index mismatches in installer tests. Keep the evidence parent private
+and logs mode 0600 while retaining the test commands' normal fixture umask.
+Diagnose and rerun the complete failed category without weakening mode checks.
+
+## 2026-10-17: Measure complete inline warnings before allocating list height
+
+A Label can truncate recovery guidance to one line in a narrow native popover
+while wrapping correctly in a grouped Form. Allow vertical text sizing and keep
+the full message available. Measure the warning stack's actual height when
+budgeting the package viewport instead of assuming a fixed warning allowance.
+Regress the maintained host with long copy, positive list height and a reachable
+footer, then inspect the actual warning and both rendered appearances.
+
+## 2026-10-17: Preserve localized error sentence boundaries
+
+Localized descriptions may already end in punctuation or whitespace. Blindly
+appending a period creates double punctuation or punctuation on another line.
+Normalize that shared authorization/posting message boundary while retaining the
+description and recovery instruction. Exercise real thrown errors with and
+without terminal punctuation rather than sanitizing only a screenshot fixture.
+
+## 2026-10-17: Choose copied package commands from installed state
+
+An amber watch can represent a new release of an uninstalled package. Copy
+install for that case and upgrade only for an installed package, retaining
+--cask for casks. Regress both kinds and both installation states, and verify the
+actual clipboard action rather than relabeling an unchanged upgrade command.
+
+## 2026-10-17: Preserve Close Window when owning native application menus
+
+An AppKit lifecycle must install the standard Command-W responder-chain action
+as well as Quit and Edit commands. Keep its target nil so the current window
+handles performClose:, and verify actual Settings close/reopen separately from
+menu item construction.
+
+## 2026-10-17: Publish popover host geometry, not only view fitting size
+
+A content-hugging SwiftUI view can measure correctly while its actual
+NSHostingController still publishes preferredContentSize zero. Opt the maintained
+popover host into preferred-content-size updates. Regress that same factory
+through fresh hosts and dark/light changes, including long content and a positive
+scroll viewport. Inspect the live popover too; a separately sized offscreen view
+does not establish the AppKit presentation contract.
+
+## 2026-10-17: Give an AppKit-owned grouped Form a real content area
+
+A flexible grouped Form inside NSWindow(contentViewController:) can collapse to
+zero height while accessibility still exposes every control. A footer alone may
+determine the initial window size. Give the owned window explicit content and
+minimum dimensions and prevent hosting from shrinking that contract. Test the
+actual window controller and form viewport, then open it natively; a renderer
+which supplies a generous initial frame can mask this bug.
+
+## 2026-10-17: Coalesce superseded filesystem captures instead of restarting them
+
+Two overlapping callers that each restart after a generation mismatch can keep
+invalidating each other. Retain the shared capture for the overlapping group,
+adopt its result or one replacement for new metadata, and resolve further missing
+names with targeted reads. Count actual full scans for two and three controlled
+callers, including different cask metadata; a stale-publication guard alone does
+not bound work.
+
+## 2026-10-17: Reconcile newer observations after the final suspension
+
+Rejecting an older targeted read's dictionary publication is insufficient if its
+caller still returns and persists the stale local result. Reconcile matching
+observations after every remaining await, including detached derivation work,
+then publish and evaluate without suspension. Regress the saved installed version,
+amber count and notice output under the exact delayed-read ordering.
+
+## 2026-10-17: Keep search installation reads targeted
+
+Search and Watch need installation information for their result names, not a full
+Cellar/Caskroom inventory and Other updates derivation. Preserve the concrete
+reader's named lookup through the protocol boundary, resolve exact listing
+metadata away from the main actor and count actual receipt admissions. Retain
+full inventory work for operations that require it.
+
+## 2026-10-17: Separate validated network data from cache persistence
+
+After both catalog lists validate, publish the slim pair and conditional ETags
+in memory even when writing the cache fails. Report that distinct failure without
+converting the successful fetch into an unsuccessful request. Retain the warning
+through later transport failures until persistence succeeds, so reconnect and
+interval handling do not repeatedly download the complete catalog.
+
+## 2026-10-17: Reject suspiciously shrunken successful catalog responses
+
+Nonempty is not enough to admit a refreshed bulk list. Compare usable item counts
+with the previous list and reject a drop below half, preserving both indexes,
+on-disk bytes and ETags atomically. Test each list independently and the exact
+half boundary so protection does not reject a valid boundary case.
+
+## 2026-10-17: Let an explicit check test HTTP despite the path monitor
+
+An unsatisfied NWPathMonitor result does not establish that an HTTP request
+cannot work, especially with VPN routing. Gate automatic work with path state,
+but let an explicit Check now attempt the request and show its actual result.
+Regress both manual bypass and the retained automatic gate.
+
+## 2026-10-17: Retain reconnect retries after partially successful checks
+
+A successful lookup in a batch must not erase unreachable results in other rows.
+Track any unreachable result for reconnect and keep the batch success clock
+unchanged while those results remain unreachable. Test one successful and one
+unreachable row followed by reconnect and require the failed row to recover
+while persistence retry floors remain intact.
+
+## 2026-10-17: Stage live bundle displacement during rollback too
+
+A validated backup does not justify deleting the live app in place. Explicit
+rollback and activation recovery must rename it into owned staging on the apps
+volume, including when the prior release intentionally had no app. Regress inode
+identity, forbid recursive deletion of the live path, inject displacement failure
+and model separate apps/backup devices. Delete displaced trees during collected
+cleanup after publication, preserving all recovery diagnostics.
+
+## 2026-10-17: Reuse the compiled version scanner
+
+Version comparison runs repeatedly while deriving installed updates. Keep the
+immutable NSRegularExpression compiled once and use capture alternatives for
+token classification instead of compiling a scanner per comparison or a regex
+per token. Preserve pinned Homebrew pair parity and external Unicode regressions.
+
+## 2026-10-17: Verify native control styling in rendered and live views
+
+A requested buttonBorderShape can still render as a rounded rectangle with the
+current macOS bordered style. Inspect the actual pixels and apply the intended
+capsule clipping to the native control when needed. Test content sizing through
+the maintained host and inspect every synthetic state in both appearances;
+source modifiers alone do not establish visual compliance.
+
+## 2026-10-17: Treat a matching typeahead prefix as a normal search state
+
+When a single valid prefix has catalog suggestions, its exact-token 404 is not
+a useful spelling error. Suppress only that row, retain invalid/network and
+multi-name failures, and navigate suggestions and results through one selection
+model. Preserve an explicit cask/formula choice through request changes and
+pending Return rather than resetting to the first suggestion.
+
+## 2026-10-17: Reject legacy cache formats before reading their payloads
+
+Ignoring a decoded legacy envelope still allocates and scans its large base64
+payload, and freed allocator pages may remain in the process footprint. Put a
+fixed marker at the start of the valid JSON cache and check it with bounded I/O
+on the same descriptor before reading or decoding the remainder. Regress actual
+bytes read and full-read calls for small and large invented legacy envelopes;
+`cached() == nil` alone already passed with the allocation bug. An unmarked slim
+cache also refetches once. Preserve atomic pair replacement and typed 304 reuse,
+then measure the real legacy-present cold launch separately from tests.
+
+## 2026-10-17: Present the scheduler's retry deadline rather than its success clock
+
+The last successful check alone cannot predict the next automatic request:
+unreachable attempts and failed saves impose separate interval floors. Extract
+the existing watch gate deadline and use it for both scheduling and display.
+Preview reconnect using that same policy: transport backoff can be bypassed,
+failed-save backoff cannot. Regress first failures as well as failures following
+success with an injected clock; never adjust retries to fit incorrect UI text.
+
+## 2026-10-17: Make watched rows individually accessible through shared selection
+
+An accessible section's merged text is not an individually selectable row.
+Contain each row in a named accessibility group, retain its child actions,
+expose selected state and route its default action through the same selection
+and fresh native focus request as a mouse click. Native responder tests cover
+focus renewal, Delete/Undo and search safety; an offscreen SwiftUI host may not
+materialize the live accessibility tree, so verify that tree and its actions
+with actual assistive input separately.
+
+## 2026-10-17: Give hosted watching scroll views a positive intrinsic viewport
+
+A ScrollView with only maxHeight can collapse to zero in an AppKit-hosted
+popover even while accessibility still lists its rows. Use an explicit bounded
+watching viewport, keeping the footer outside it. Regress the complete maintained
+popover with saved watches, Other updates off and a custom interval under fresh
+hosting/reopen, inspecting the actual native scroll frame rather than only rows.
+
+## 2026-10-17: Apply appearance at the popover presentation boundary
+
+Changing NSApplication.appearance does not necessarily update a popover that
+inherits the status button's appearance. Apply a requested appearance to the
+popover, its hosted content and current window, and retain it for Settings windows
+created later. Test effective native appearance, then verify the real harness
+buttons visibly change both palettes; a pressed button alone establishes no effect.
+
+## 2026-10-17: Native focus appearance does not prove Delete command routing
+
+A SwiftUI row can show an editing focus ring while its onKeyPress handler never
+receives Backspace or forward Delete in an AppKit-hosted popover. Give the clicked
+row an explicit native responder for both hardware keys and deleteBackward:/
+deleteForward:. Keep the handler row-local so a search text editor remains its
+own responder, and avoid replaying old row clicks after a view rebuild. Exercise
+native key events and responder switching against persisted removal/Undo, then
+repeat the actual click/key gesture; offscreen routing alone is insufficient.
+
+## 2026-10-17: Preserve Undo and Redo when replacing app command menus
+
+Owning an AppKit lifecycle also means preserving standard editing commands.
+Install responder-chain undo: and redo: with Command-Z and Shift-Command-Z,
+leaving their targets nil so the focused text editor supplies its undo manager.
+Regress selectors, modifier masks and responder routing, not just menu titles.
+
+## 2026-10-17: Bound synchronization waits in controlled concurrency tests
+
+A yield loop waiting for a test gate can hang the suite when the action under
+test never reaches it. Give the condition a monotonic deadline, propagate a
+timeout failure and release pending continuations on test exit. Test the
+missing-signal timeout path without dropping the original behavior assertions.
+
+## 2026-10-17: Own a menu bar app's Settings window explicitly
+
+A SettingsLink inside an AppKit-hosted popover depends on SwiftUI scene context.
+Own and retain an NSWindow hosting the maintained Settings view; activate the
+application and bring that same window forward on every open. A prototype must
+use this exact path rather than a separate demonstration scene. Offscreen reuse
+tests do not establish actual window activation or native input acceptance.
+
+## 2026-10-17: Separate status-button toggles from transient dismissal
+
+A transient popover can dismiss on status-button mouse-down before its mouse-up
+action, making a toggle reopen it. Veto automatic dismissal for that button's
+native event and let its explicit close own the action. Preserve transient menu
+and child-sheet semantics; verify their real timing with native input.
+
+## 2026-10-17: Give click-selected watch rows editing focus
+
+Default keyboard navigation does not guarantee focus for plain focusable rows.
+Editing focus is necessary but, as the later native-routing lesson above records,
+does not establish key delivery in an AppKit-hosted popover. Route Delete from
+the focused watch row only; a search field's Delete must keep editing its text.
+Renew search focus on every popover open. Action tests cannot establish the
+system's native focus behavior.
+
+## 2026-10-17: Native menu checks need selection state
+
+A checkmark image in a menu label is not a native selected menu item. Use a
+Picker with tagged intervals and include a custom current value among its
+options. Retain invalid custom input and keep its sheet open if saving fails.
+
+## 2026-10-17: Queue Return against current search intent
+
+Debouncing alone leaves Return able to watch retained rows from an old query.
+Retain results through both debounce and transport, share the active request,
+await its completion on Return and reject submissions after text or kind changes.
+Controlled waits must prove rapid typing suppresses intermediate requests and
+that pending Return watches only the current result.
+
+## 2026-10-17: Observe notification failures at their system boundary
+
+An unread lastError property hides permission denial and posting failures.
+Observe separate authorization and delivery errors in both app views; retain a
+failed notice for explicit retry after recovery. Inject the OS API boundary for
+denial, thrown errors and successful retry without a production simulation mode.
+
+## 2026-10-17: Revalidate homepage schemes when executing the action
+
+An external homepage URL is not automatically safe to open as a web page.
+Admit only absolute http/https URLs with a host, both when presenting the action
+and immediately before invoking the workspace. Exercise the actual action with
+synthetic file, script, mail, relative and web URLs.
+
+## 2026-10-17: Render installed-source qualifications consistently
+
+A self-updating cask's Caskroom fallback qualifies the installed version even
+after Watch moves it between sections. Reuse one source-note helper across
+watched, search and Other rows so changing presentation cannot hide that fact.
+
+## 2026-10-17: Refresh login approval when Settings becomes key
+
+Login Item approval can change in System Settings while the app stays open.
+Refresh the service on key-window callbacks and offer the system panel when
+approval is required. Record actual registration errors; a signing assumption
+does not establish that registration failed or succeeded.
+
+## 2026-10-17: Describe watched updates in the status item's accessibility
+
+Changing a mug image alone leaves assistive clients without its update state.
+Derive its symbol and accessibility description from the same observed amber
+count, and regress actual observation across skip/removal state changes.
+
+## 2026-10-17: Wire scheduling gates through the application boundary
+
+A gated controller cannot prevent an ungated app startup or a path adapter that
+drops offline events. Start unknown/offline, await every network update and let
+the controller alone schedule reconnect work. Exercise real controller retries
+through the event source, including initial offline, wake, periodic and reconnect.
+
+## 2026-10-17: Display persistence advice for its explicit failure kind
+
+Successful quarantine recovery and rejected saves need different advice. Render
+the failed-action save hint only for the controller's saveFailure state, while
+preserving the blocked-load Retry action and original diagnostic text.
+
+## 2026-10-17: Cleanup must preserve the failure that required recovery
+
+A throwing finally block replaces an earlier activation or restoration error;
+force removal suppresses missing paths, not I/O or permission errors. Collect
+each cleanup failure and attempt every remaining owned directory before
+reporting the primary error, all cleanup paths and the durable backup path.
+Apply the same rule inside atomic file publication, before the installer can
+observe the error. Cleanup-only failure after completed activation must retain
+the selected release, report that outcome explicitly and exit nonzero; it must
+not trigger a second rollback. Inject compound failures for deploy and rollback,
+compare retained backups and live artifacts, and assert every cleanup attempt.
+
+## 2026-10-17: Keep native activation moves on the destination device
+
+Copying to a backup under HOME can cross volumes safely; renaming the live app
+there cannot. Move the displaced bundle into the staging folder inside the
+apps directory. Model devices by path boundaries in regression injection so
+same-device renames succeed and only cross-device renames raise EXDEV. Retain
+a separate failure test for a genuinely failed same-device activation move.
+
+## 2026-10-17: Validate copied backup payloads before live mutation
+
+Hashing the source does not validate its copy. Re-read command, receipt,
+metadata and the complete app tree against their captured identities before
+activation. Corrupt each payload independently and assert the live bytes,
+modes and inodes remain untouched; write-failure tests alone miss silent damage.
+
+## 2026-10-17: Preserve activation and restoration error evidence
+
+Publish the durable recovery path before activation begins. If recovery fails,
+report the original activation error, the recovery error and that same retained
+backup path. Regress explicit rollback failure too: a second restore must not
+replace the error that explains why the first recovery became necessary.
+
+## 2026-10-17: Tie relaunch guidance to an actual bundle replacement
+
+A running app needs relaunch guidance after deployment or explicit rollback
+replaces its bundle. An already-current deployment needs no notice. Keep the
+process-detection override conspicuously test-only and run signed synthetic
+lifecycle cases for all three paths.
+
+## 2026-10-17: Admit every required native source input at the fleet boundary
+
+Installer-required golden help is also fleet-required source inventory. Remove
+it from a committed synthetic index to exercise the missing-required case;
+merely deleting a tracked working file only exercises generic source drift.
+Require the source-inventory diagnostic before the child installer is invoked.
+
+## 2026-10-17: Assemble releases without stale files or executable overwrites
+
+Clear the bounded prior app bundle before assembly, then copy executables to
+unique temporary siblings and rename them into place. A valid signature can
+seal stale resources, and signing after overwriting can conceal prior inode
+damage. Hold file descriptors to signed invented old executables across a real
+release build, checking both their bytes and new path identities. Run this
+integration category after Swift tests, outside SwiftPM's test process.
+
+## 2026-10-17: Put acceptance homes in private OS temporary space
+
+Required synthetic acceptance builds should use plain mktemp -d rather than
+adding homes to the owner's HOME. Keep their packages, invented inventory and
+runtime evidence inside that private directory and print the path for bounded
+cleanup. Building/signing the harness establishes no native interaction result.
+
+## 2026-10-17: Preserve the metadata that gave a snapshot its meaning
+
+An installed cask snapshot depends on the caller's auto-updates flag and app
+artifact names. A later scan without a pending add's metadata can legitimately
+read Caskroom while the caller requires the newer app-bundle version. Do not
+substitute a shared snapshot merely because it is newer. Consume the caller's
+accepted capture without another suspension; a small lock-protected immediate
+cache copy removes an unnecessary final actor hop. Keep cache get/store
+actor-bound and every mutable dictionary access under the private lock. Regress
+both add and check with real synthetic Caskroom/app-bundle fixtures and a held
+cache executor, asserting saved source/version, amber state and notices.
+
+## 2026-10-17: Reject superseded snapshots at every consumer boundary
+
+Protecting publication of a derived update list is insufficient if a rejected
+filesystem snapshot is still returned to watch evaluation. Retry superseded
+captures and retain the accepted snapshot; consume it only after the caller's
+final await before persistence or notification. Regress a blocked check while
+a later search observes an installation change, then assert saved installed
+version, amber state and delivered notices, not only the Other updates list.
+
+## 2026-10-17: Capture mutable cache state after other asynchronous work
+
+A cache actor's identity can stay unchanged while another operation adds an
+entry. Taking its snapshot before a suspended installation scan lets an older
+check overwrite a newer add's saved ETag. Read the cache after the scan, retain
+the cache-identity guard, and merge without another await. A controlled blocked
+scan with a concurrent add must preserve both watches and both conditional
+entries in actual saved state.
+
+## 2026-10-17: Keep catalog caches proportional to the fields the app uses
+
+Persist decoded Listing indexes and ETags, not raw JSON encoded as base64.
+Typed decoding can discard large bottle/dependency metadata without constructing
+a full Foundation object graph. Hold the indexes in an actor, read disk once,
+and reuse decoded listings on 304. Regress cache size with large invented ignored
+metadata and corrupt disk after loading to prove memory-backed revalidation.
+
+## 2026-10-17: An empty bulk success must not erase a good catalog
+
+HTTP 200 does not establish a usable catalog. Reject lists with zero usable
+items and replace formula/cask indexes only after both validate. Preserve the
+prior pair and ETags after partial, malformed, empty or failed refreshes.
+Synthetic successful fixtures must contain usable items too.
+
+## 2026-10-17: Scope a visibility setting to its own content
+
+Other updates and prefix suggestions share the catalog but have different
+visibility contracts. Turning off installed updates must leave suggestions
+available during hydration, reload and refresh. Gate the installed section,
+not the shared catalog resource.
+
+## 2026-10-17: Capture installed state once away from the main actor
+
+Inventory admission and installed-version lookup must share a single receipt
+pass. Capture an installation snapshot off-main, reuse it for watched checks
+and Other updates, and generation-check publication after suspension. A blocked
+scan regression should prove UI state can change while it waits; a receipt-read
+counter catches accidental inventory-plus-lookup passes.
+
+## 2026-10-17: Avoid persistence and scans for unchanged state
+
+Compare a normalized candidate with committed state before saving. Closing an
+already acknowledged popover or selecting the current setting must not write.
+Filter a captured installation snapshot after watch or visibility changes;
+interval, skip and close commits do not require fresh filesystem inventory.
+
+## 2026-10-17: Track successful checks separately from transport attempts
+
+An entirely unreachable check must retain its previous successful timestamp.
+Keep a separate attempt clock to bound retries, and let reconnect bypass that
+transport floor even if a recent manual failure followed a successful check.
+Start automatic scheduling behind a network gate until the path monitor answers.
+
+## 2026-10-17: Failed saves need their own automatic retry floor
+
+A successful request followed by rejected persistence must not repeat each
+minute. Bound automatic requests by the configured interval from the failed
+save, including across reconnects, while permitting an immediate manual retry.
+Apply the same rule to catalog timestamps; injected clocks and request counts
+prove cadence without sleeping or changing successful-check timestamps.
+
+## 2026-10-17: Prune conditional caches at watch lifecycle boundaries
+
+Persist only entries whose names are watched. Removal must evict the in-memory
+conditional cache too, and an in-flight old cache snapshot must not be merged
+after that boundary changes, even when Undo restores the same name. Regress
+both saved bytes and outgoing ETags; search-only entries must never accumulate
+in saved watch state.
+
+## 2026-10-17: Expose persistence recovery kinds separately from message text
+
+Setting aside corrupt state successfully is a recovery warning, not a failed
+save. Expose explicit recovery-warning, blocked-load and failed-save states so
+UI retry hints follow the actual recovery action without parsing error prose.
+
+## 2026-10-17: Admit legacy casks only for absent receipts
+
+Caskroom version directories can predate install receipts. Admit those legacy
+casks in both lookup and inventory, preserving app-bundle lookup and the
+Caskroom fallback for self-updating packages. Absence is an explicit exception:
+existing malformed, unreadable, unknown or nonofficial receipts still exclude
+the installation, as do version-directory symlinks. Keep formula receipts
+mandatory and regress both admission paths with synthetic filesystem fixtures.
+
+## 2026-10-17: Never assume Unicode scanner and classifier agree
+
+Foundation's case-insensitive scanner can match Kelvin sign and long s through
+ASCII letter patterns while its anchored classifier finds no match. External
+folder and bundle versions must not trap on that disagreement. Fall back to a
+string token instead of force-unwrapping the classifier, and retain actual
+Unicode regressions beside the pinned upstream ASCII comparison matrix.
+
+## 2026-10-17: Compare formula revisions after upstream versions
+
+A formula keg suffix is a package revision, not another upstream version token.
+Comparing `1.0_2` directly with `1.0.1` misses the newer upstream release.
+Split only the last underscore followed entirely by ASCII digits, default to
+revision zero, compare upstream versions first and numeric revisions on a tie.
+Reuse this rule for status and highest-keg selection; preserve valid opt links,
+cask ordering, deterministic ties and arbitrary-precision revision comparison.
+
+## 2026-10-16: Merge awaited watch results into committed state
+
+A check must apply results to the current committed watch state after its final
+await. Capture each watch's generation when starting work and reject results
+for removed or restored generations, even when the package name matches again.
+Otherwise a late response can change an undone removal or overwrite a newer
+skip or interval. A controlled transport regression should hold requests while
+mutating all those fields, then inspect both persisted state and notifications.
+Persist candidates before publishing state or posting notices; retain the
+previous bytes and visible values on failed writes.
+
+## 2026-10-16: Bound and identify asynchronous menu bar searches
+
+Search, watched checks and additions need one shared lookup permit pool; separate
+per-operation limits exceed the intended request bound when UI actions overlap.
+Identify each query generation and publish only its current result. Derive the
+watched flag from committed state at publication and refresh it on successful
+watch mutations. Preserve a watched package's known kind during search instead
+of falling back to a formula-first lookup. Controlled transports can hold one
+query while a newer query or a watch mutation commits, without live inventory.
+
+An undo action must consume its saved entry only after the restore commits.
+Cancel its normal expiry after a failed restore so the user can retry; do not
+replace that pending recovery with another removal. Route a same-name Watch
+through restoration too, or a fresh add can strand the recovery as a duplicate
+and lose its saved acknowledgements. Test the actual app action against the
+real controller and failing atomic-replace seam, then retry successfully.
+
+## 2026-10-16: Retain validated recovery bytes until activation finishes
+
+A move-based native app activation can fail before the old bundle leaves its
+live path. The original fix retained a backup copy but did not verify its copied
+bytes before activation; the later backup-validation fix closes that gap.
+Do not delete the retained backup before that move succeeds: recovery then
+loses the app it needs to restore. Validate and keep the copy through all
+command, app and receipt transitions, and
+inject failures both before moving the old app and after publishing each new
+artifact. Compare independent byte/type/full-mode snapshots after restoration;
+receipt hashes alone cannot prove that recovery preserved the original tree.
+
+## 2026-10-16: Preserve explicit search intent and bound native result content
+
+A catalog suggestion includes both name and kind. Preserve both in transient
+search intent, and include kind in the text task's identity: selecting a cask
+whose name already fills the field must requery even when the text is unchanged.
+Editing clears that explicit choice; existing name-only watches retain their
+known kind. Test the app's suggestion action through lookup and Watch against
+colliding synthetic formula/cask responses, plus cancellation and late results.
+
+Bound suggestions and multi-token results inside their own scroll viewport,
+with the input and footer outside it. Follow keyboard selection with scrollTo.
+For offscreen SwiftUI layout tests, separate presentation from its asynchronous
+query task: creating a host for the whole section can restart the task, clear
+results and accidentally measure empty content. Test the maintained presentation
+component with populated results and verify that removing the bound makes the
+test fail on real geometry. This does not establish native keyboard acceptance.
+
+Native executable diagnostics require successful exit, exact stdout and empty
+stderr. A signed executable can satisfy stdout while emitting an unexpected
+warning. Regress each flag at both build and installed activation boundaries,
+and compare the prior artifacts and retained recovery snapshots after failure.
+
+## 2026-10-16: Keep catalog validation and persisted freshness separate
+
+Bulk catalog lists form one usable snapshot. Validate both before replacing
+the cache; a successful first list cannot replace half of a good pair when the
+second fails. Conditional responses require validated prior bytes, and stale
+fallback content must not advance the successful-fetch clock. Track attempts
+separately to bound offline retries. Independent catalog and watched checks
+must merge into current committed state after their final await, with tests
+forcing both completion orders and state-save failures.
+
+## 2026-10-16: Distinguish installation links from real version directories
+
+A cask can have a genuine `latest` version directory. Exclude version symlinks
+by filesystem type, not by a reserved-looking basename; otherwise an admitted
+installation disappears from point lookup and inventory before app-bundle
+lookup or unversioned status evaluation. Cover both real `latest` directories
+and `latest` symlinks with synthetic installation fixtures.
+
+## 2026-10-16: Preserve upstream token semantics in version comparisons
+
+Homebrew's version ordering is asymmetric when zero tokens meet suffixes;
+do not assume reversing operands negates the result. Its post-release pattern
+also starts with a wildcard: `1post2` uses the first numeric run as the token
+revision. Generate both ordered expectations from pinned upstream methods,
+including wildcard and zero positions, before porting. Brew Version retains
+these synthetic parity cases in `VersionOrderTests.homebrewParity`.
+
 ## 2026-10-16: Preserve confirmed popup state when status checks fail
 
 A failed or rejected worker status reply does not establish that capture is
