@@ -37,6 +37,8 @@ Its runtime home holds only data (no venv):
   worktrees/
 ```
 
+Set `BENCH_RUNTIME_HOME` to use a different runtime home.
+
 Artifacts are kept by default. Repo-task runs keep their branches for inspection, clean up successful worktree checkouts automatically, and preserve failed attempts for debugging.
 Prompt-batch and plugin runs still store artifacts under `~/.benchmark_llm/runs/`. Repo-task runs store artifacts under the benchmark's configured `output_dir`.
 
@@ -93,6 +95,8 @@ examples/logic-mini/
 
 `cases.jsonl` contains prompt rows keyed by `id`. `answers.jsonl` contains hidden expected answers. `judge.yaml` defines the built-in judge.
 
+Prompt-batch runs require `--executor-command`. The runtime runs it once per case from the benchmark directory with a scrubbed environment containing `MODEL_ID`, `CASE_ID`, `TASK_PROMPT_TEXT`, and `TASK_METRICS_PATH`; the command's trimmed stdout is the model response.
+
 Example:
 
 ```yaml
@@ -116,6 +120,8 @@ judge_command: ./judge_model.sh
 rubric: |
   Grade semantic correctness, not formatting.
 ```
+
+`normalize` (`strip`, `lowercase`) applies to `exact_match`. A `regex` judge treats each hidden answer as a pattern searched in the raw response. The `judge_command` runs from the benchmark directory once per case and receives `BENCH_JUDGE_PROMPT` (the rubric plus prompt, expected answer, and response), `BENCH_CASE_PROMPT`, `BENCH_EXPECTED_ANSWER`, `BENCH_RESPONSE_TEXT`, `BENCH_JUDGE_CASE_ID`, and `BENCH_COMMAND_METRICS_PATH`. It must exit `0` and print a JSON object with `passed` (boolean) and optional `reason` (string) on stdout.
 
 ### 2. Repo-task
 
@@ -172,7 +178,9 @@ Limitations:
 - Scripts that ignore the contract (for example, `python3 -m venv` in a step) still create pinned venvs.
 - Failed and retried repo-task attempts keep their worktree for debugging (under `~/.benchmark_llm/worktrees/` by default). When an attempt stops before its validation step rebuilds `.venv`, a `.venv` the model created there stays pinned. Do not reuse such a venv; remove it or rebuild it from a stable interpreter.
 
-For model-execution steps, the runtime intentionally scrubs framework and test harness environment variables before invoking the executor. Use neutral task-oriented inputs such as `MODEL_ID`, `TASK_PROMPT_TEXT`, `TASK_PROMPT_PATH`, and `WORKSPACE_ROOT` inside model runner scripts.
+For model-execution steps, the runtime intentionally scrubs framework and test harness environment variables before invoking the executor. Use neutral task-oriented inputs such as `MODEL_ID`, `TASK_PROMPT_TEXT`, `TASK_PROMPT_PATH`, and `WORKSPACE_ROOT` inside model runner scripts. Repo-task model steps receive `MODEL_ID`, `WORKSPACE_ROOT`, `TASK_PROMPT_PATH`, and `TASK_METRICS_PATH`.
+
+Repo-task steps run from the benchmark directory. Non-model steps receive the full caller environment plus `BENCH_MODEL`, `BENCH_RUN_DIR` (the attempt directory), `BENCH_BENCHMARK_DIR`, `BENCH_WORKSPACE`, `BENCH_HIDDEN_DIR`, `BENCH_COMMAND_METRICS_PATH`, and `BENCH_BASE_PYTHON`.
 
 ## Metrics
 
@@ -246,6 +254,8 @@ class MyBenchmark(BenchmarkPlugin):
 `preflight` is optional. Plugin runs call it before creating the runtime layout or run
 directory, so plugins with strict placement requirements can reject unsafe paths without
 leaving artifacts behind. The other plugin phases run after the runtime layout exists.
+`prepare` and `summarize(ctx, score)` are also optional; `execute` and `judge` must be
+implemented. Plugins receive the full caller environment in `ctx.environ`.
 
 ## Repo-task Manifest
 

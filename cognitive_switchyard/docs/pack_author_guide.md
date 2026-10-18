@@ -1,6 +1,6 @@
 # Pack Author Guide
 
-Custom packs live under `~/.cognitive_switchyard/packs/<pack-name>`. Cognitive Switchyard loads only runtime packs from that directory, including built-in packs after bootstrap sync.
+Custom packs live under `~/.cognitive_switchyard/packs/<pack-name>`. Cognitive Switchyard loads only runtime packs from that directory, including built-in packs after bootstrap sync. Sync never overwrites a customized copy of a built-in pack; `reset-pack <name>` does. To start from a built-in pack, copy it to a new directory (and update `name` in its `pack.yaml`) rather than editing it in place if you want later built-in updates to keep arriving. Sessions select packs by directory name.
 
 ## Quick Start
 
@@ -214,11 +214,15 @@ Supported conventional hooks:
 
 | Hook | Trigger | Required |
 |------|---------|---------|
-| `scripts/execute` | Task execution (`executor: shell`) | Yes for shell executor |
 | `scripts/preflight` | Pre-session preflight check | Optional |
 | `scripts/isolate_start` | Before each task (isolation setup) | Optional |
 | `scripts/isolate_end` | After each task (isolation teardown) | Optional |
 | `scripts/resolve` | Resolution phase (`executor: script`) | Required for script resolver |
+
+The execution hook is not discovered by name: a shell-executor pack must set
+`phases.execution.command` (conventionally `scripts/execute`).
+Explicit `phases.resolution.script` and `isolation.setup`/`teardown` paths take
+precedence over the conventional names.
 
 ### Hook rules
 
@@ -269,4 +273,4 @@ Recommended loop:
 ./switchyard start --session author-test --pack my-pack
 ```
 
-If a successful session plan includes `## Operator Actions`, Cognitive Switchyard aggregates those sections into `RELEASE_NOTES.md` and writes it into the retained session artifacts. If no completed plan contains an `## Operator Actions` section, no `RELEASE_NOTES.md` is generated.
+If a completed task plan includes `## Operator Actions`, Cognitive Switchyard aggregates those sections into `RELEASE_NOTES.md` and writes it into the retained session artifacts when the operator ends the idle session. If no completed plan contains an `## Operator Actions` section, no `RELEASE_NOTES.md` is generated.

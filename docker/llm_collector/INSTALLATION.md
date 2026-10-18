@@ -43,10 +43,12 @@ To recreate only generated configuration from an existing complete secret env:
 ## 2. Start the Collector
 
 ```sh
-./llm_collector_container/up.sh
+cd llm_collector_container
+./up.sh
 ```
 
-The script loads the external secret env, builds the image, and starts
+Run `up.sh` and `down.sh` from `llm_collector_container/`; they invoke
+`docker compose` in the current directory. The script loads the external secret env, builds the image, and starts
 `llm-collector`. Compose publishes the service at `127.0.0.1:9000`, mounts the
 source tree for collector code, and mounts the configured external data
 directory at `/var/lib/llm_collector`.
@@ -67,9 +69,8 @@ set +a
 curl -fsS -H "X-API-KEY: $API_KEY" "$COLLECTOR_URL/counters"
 ```
 
-Use `llm_collector_container/down.sh` to stop the service and
-`llm_collector_container/update.sh` for an explicit clean dependency/base-image
-refresh followed by health checks.
+From the same directory, use `./down.sh` to stop the service and `./update.sh`
+for an explicit clean dependency/base-image refresh followed by health checks.
 
 ## 3. Load the Browser Extension
 
@@ -122,7 +123,8 @@ Then run:
 ./migrate.sh
 ```
 
-By default this deploys to `~/docker/llm_collector`. It runs all project tests,
+By default this deploys to `~/docker/llm_collector` and stores timestamped
+backups under `~/docker/llm_collector_migration_backups`. It runs all project tests,
 backs up deployed code plus external config/state, snapshots non-empty live
 counters, copies source while preserving local-only files, regenerates
 extension config, rebuilds the container, and validates health, authentication,

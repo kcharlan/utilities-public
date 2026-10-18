@@ -220,8 +220,10 @@ node --test tools/tests/deploy_calculator_pages.test.mjs
 the canonical [Colophon C17 project](../colophon/README.md) at `colophon/`.
 The Python application is retired; Git history retains its source. The fleet
 audit checks the generated executable and its receipt rather than comparing
-a launcher to the installed command. Runtime defaults remain `~/.codex` and `~/.colophon`;
-deployment does not read or migrate session data or editable runtime state.
+a launcher to the installed command. Runtime defaults read Codex (`~/.codex`),
+Claude Code (`~/.claude`) and OpenCode (`~/.local/share/opencode`) data and keep
+state in `~/.colophon`; deployment does not read or migrate session data or
+editable runtime state.
 
 Validate with the native project's full suite and the root deployment suites,
 then stage the reviewed native build inputs. From the repository root:
@@ -436,7 +438,7 @@ continues reporting drift until the reviewed native deployment is installed.
 Synthetic installer and fleet fixtures run with:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_calculator_pages.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 

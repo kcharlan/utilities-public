@@ -41,6 +41,13 @@ when the platform is `macOS` or contains `Mac`, and Meter elsewhere. If saving
 fails, the chosen skin still applies to the current popup and a notice explains
 that it could not be saved.
 
+Skins are CSS only, selected by `data-skin` on `<html>`; both share one static
+popup structure. Polling updates only text slots and row lists, so listeners
+stay bound and folds keep their open or closed state. `popup_appearance.js` is
+the first script in `popup.html`, loaded without `defer` before any styles, so
+the chosen skin is applied before the first paint; it must stay a separate file
+because the extension's Manifest V3 CSP blocks inline scripts.
+
 Both skins follow the system's light or dark setting. Open the menu with Enter
 or Space, move with the arrow keys, and select with Enter or Space. Escape or
 clicking outside closes it and returns focus to Appearance.
@@ -64,6 +71,10 @@ The extension currently supports tracking usage on the following platforms:
     `gemini.google.com`.
 *   **Abacus.ai:** `abacus.ai`
 *   **T3 Chat:** `t3.chat`
+*   **Browser calls to provider APIs:** `api.openai.com` chat completions,
+    responses, and completions, and Google `generateContent` /
+    `streamGenerateContent` calls on `generativelanguage.googleapis.com` and
+    other `googleapis.com` hosts. These are counted under the API hostname.
 
 ## Installation
 
@@ -274,8 +285,8 @@ A clipboard failure is reported after the successful download.
 
 The extension is designed to be easily customizable for different LLM providers. To add support for a new provider, you will need to modify the `background.js` file to:
 
-1. Add the required host permission and observation pattern if the existing
-   manifest/filter does not cover the provider.
+1. Add the host to `URL_FILTERS`, and to the manifest's `host_permissions` if
+   the existing entries do not cover it.
 2. Add a narrow host/path rule to `HOST_ALLOW`; add `HOST_DENY` rules for noisy
    endpoints where appropriate.
 3. Reload the extension and use its debug buffer to verify that one user send

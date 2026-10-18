@@ -115,7 +115,9 @@ fail on unexpected page or console errors.
 ./switchyard start --session my-session --pack claude-code
 ```
 
-The `serve` command starts a FastAPI server with the embedded React SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
+The `serve` command starts a FastAPI server (default `127.0.0.1:8100`; override with `--host`/`--port`) with the embedded React SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
+
+`start` creates the session if it does not exist (using `--pack`, or `default_pack` from `config.yaml`) and otherwise resumes it; resuming with a different `--pack` is refused. Both `start` and `serve` first delete completed and aborted sessions that finished more than `retention_days` ago.
 
 On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared cache, creates the runtime home at `~/.cognitive_switchyard/`, writes a default `config.yaml`, and syncs built-in packs. The launcher does not create or maintain a private bootstrap virtual environment.
 
@@ -124,7 +126,7 @@ On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared
 ```
 ~/.cognitive_switchyard/                # Runtime home
   cognitive_switchyard.db               # SQLite state store
-  config.yaml                           # Global settings (retention, worker counts, default pack)
+  config.yaml                           # Global settings (retention_days, default_planners, default_workers, default_pack, terminal_app)
   packs/                                # Runtime packs (built-in + custom)
     claude-code/
     codex-hybrid/
@@ -141,9 +143,16 @@ On first run, `./switchyard` (via uv) resolves its dependencies into uv's shared
       done/                             # Completed plans
       blocked/                          # Plans that need operator attention
       logs/                             # Session and worker logs
+        session.log
+        verify.log
         workers/                        # Per-slot logs
         tasks/                          # Per-task logs
+      resolution.json                   # Resolved constraint graph
+      summary.json                      # Written when an idle session is ended
+      RELEASE_NOTES.md                  # Aggregated "## Operator Actions" sections, when any exist
 ```
+
+A successful run leaves the session `idle` so it can be run again. Ending an idle session from the web UI (`POST /api/sessions/{id}/end`) marks it completed, writes `summary.json` and `RELEASE_NOTES.md`, and trims the session directory to `summary.json`, `resolution.json`, `logs/session.log`, and `RELEASE_NOTES.md`. Blocked or aborted sessions are not trimmed.
 
 ## Runner Packs
 
@@ -166,7 +175,7 @@ Built-in packs:
 | `codex` | Strict OpenAI Codex CLI driven software delivery | Shell executor, 3 max workers |
 | `test-echo` | Minimal test pack for pipeline validation | Shell echo script, 4 max workers |
 
-Packs are synced to the runtime directory on first run and can be refreshed with `./switchyard sync-packs` or reset individually with `./switchyard reset-pack <name>`.
+Built-in packs are synced to the runtime directory whenever `packs`, `sync-packs`, `init-pack`, `start`, or `serve` runs. Sync updates only runtime copies that still match the last deployed built-in content; a customized runtime copy (or one deployed before the `.builtin_hash` marker existed) is left alone. Use `./switchyard reset-pack <name>` or `reset-all-packs` to overwrite a runtime copy with the bundled version.
 
 ## Web UI
 
@@ -205,9 +214,11 @@ Session environment values are configured in the Setup view or inherited by the 
 |----------|--------|-------------|
 | `COGNITIVE_SWITCHYARD_REPO_ROOT` | Session/operator | Repository in which planning, execution, and verification run. For a UI-created isolated session, the backend rewrites this to the session worktree. |
 | `COGNITIVE_SWITCHYARD_BRANCH` | Session/operator | With `COGNITIVE_SWITCHYARD_REPO_ROOT`, requests a session worktree when the session is created through the web backend. |
+| `COGNITIVE_SWITCHYARD_SOURCE_REPO` | Web backend | Original repository root, recorded when the backend creates a session worktree; the built-in verifier can reuse its virtualenv. |
 | `COGNITIVE_SWITCHYARD_PROJECT_DIR` | Session/operator | Optional repository-relative subdirectory used by the built-in verification scripts in a monorepo. |
 | `COGNITIVE_SWITCHYARD_PACK_ROOT` | Orchestrator | Absolute path to the active runtime pack directory, available to hooks and verification commands. |
 | `COGNITIVE_SWITCHYARD_NO_BROWSER` | Server/operator | Set to a non-empty value to prevent `serve` from opening a browser. |
+| `COGNITIVE_SWITCHYARD_DEBUG` | Server/operator | Set to `1` to emit backend debug traces. |
 | `CLAUDE_CODE_WORKER_MODEL` | Operator (optional) | Overrides the `claude-code` pack's worker model (default `sonnet`). |
 | `CODEX_WORKER_MODEL` | Operator (optional) | Overrides the `codex` and `codex-hybrid` worker model (default `gpt-5.6-sol`). |
 | `CODEX_WORKER_REASONING_EFFORT` | Manifest/orchestrator | Passed to shell execution when `phases.execution.reasoning_effort` is configured. |
@@ -260,8 +271,9 @@ follow-up rather than being hidden by a global warning filter.
 
 ## Documentation
 
-- [Design Document](docs/cognitive_switchyard_design.md) -- Full specification
-- [Packet Loop Orchestrator Design](docs/codex_packet_loop_orchestrator_design.md) -- Design of the packet automation loop and its supported agent CLIs
+- [Architecture](docs/cognitive_switchyard_design.md) -- Pipeline, pack contract, state model, API, timeout and recovery reference
+- [Packet Loop Orchestrator Design](docs/codex_packet_loop_orchestrator_design.md) -- Design of `scripts/codex_packet_loop.zsh`, the packet automation loop used to build this project, and its supported agent CLIs
+- [Design-Doc Packetization Playbook](docs/design_doc_packetization_playbook.md) -- The packet loop's default bootstrap input. This copy is the older version used for this project's build; the maintained copy is [`coding/design_orch/docs/design_doc_packetization_playbook.md`](../coding/design_orch/docs/design_doc_packetization_playbook.md)
 - [Pack Author Guide](docs/pack_author_guide.md) -- How to create, validate, and iterate on custom runtime packs
 - [Operator Guide](docs/operator_guide.md) -- How to bootstrap, run, monitor, and troubleshoot local sessions
 - [Built-In Claude Code Pack Guide](docs/builtin_claude_code_pack.md) -- Claude Code pack prerequisites, prompts, and customization points

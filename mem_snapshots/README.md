@@ -30,8 +30,8 @@ macOS `top` sample, including the process table.
 ## Privacy
 
 Keep captured output out of this public repository. In particular, `top`
-output can contain usernames, process command lines, and local paths. Review
-and sanitize any snapshot before sharing it.
+output contains usernames and process names that can reveal installed
+applications. Review and sanitize any snapshot before sharing it.
 
 ## Optional extensions
 

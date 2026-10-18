@@ -1,6 +1,6 @@
 # RouterView Design
 
-> Last updated: 2026-09-16
+> Last updated: 2026-10-18
 
 ## Overview
 
@@ -124,6 +124,7 @@ Stores named dashboard view configurations.
 The active surface area is intentionally smaller than earlier versions:
 
 - analytics reads: summary, timeseries, breakdown, heatmap, generations, dimensions, export
+- status and configuration: health, settings read/update, saved-view listing
 - management writes: CSV import, purge, summary rebuild/refresh, timestamp rebuild, saved views
 
 There are no live ingestion routes and no websocket route.

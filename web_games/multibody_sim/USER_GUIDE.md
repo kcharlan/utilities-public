@@ -94,7 +94,7 @@ Notes:
 
 - Velocity arrows start at the body edge (not center).
 - Body ids are rendered directly on each object by default for faster camera/object selection; `Show object numbers` can hide them.
-- In user setup, a new body prefers `current body count + 1`; if that id is already in use, the app chooses the next unused id. Deleting all bodies resets numbering to `1`.
+- In user setup, a new body prefers `current body count + 1`; if that id is already in use, the app chooses the lowest unused id. Deleting all bodies resets numbering to `1`.
 - If your cursor is inside the body while setting velocity, velocity can resolve to zero.
 - Delete key does not remove a body while your cursor focus is inside a text/number input.
 
@@ -107,7 +107,7 @@ Notes:
 What to expect:
 
 - Bodies spawn with random mass/position/color.
-- Velocities are auto-generated (with special low-body logic for 3-4 body cases to improve interaction likelihood).
+- Velocities are auto-generated (with special low-body logic for 2-4 body cases to improve interaction likelihood).
 - Camera uses its selected subject mode; `Auto` tracks the system and is the default.
 - Simulation restarts automatically at cycle end.
 

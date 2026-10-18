@@ -42,7 +42,8 @@ invoke the script by its absolute path. Create the private output directory
 before running; the converter does not create it.
 
 The output file is replaced if it already exists. A missing or invalid input
-file, or an unwritable output path, is reported on standard output.
+file, or an unwritable output path, is reported on standard output; the script
+still exits with status 0, so check its message rather than the exit code.
 
 ## How It Works
 

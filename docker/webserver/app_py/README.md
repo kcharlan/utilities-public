@@ -47,7 +47,7 @@ directory. Regenerate the dependency lock from this `app_py` directory.
         ```bash
         uv pip compile --python-version 3.14 --universal --generate-hashes \
           requirements.txt --output-file requirements.lock
-        uvx pip-audit -r requirements.lock
+        uvx pip-audit --disable-pip --no-deps -r requirements.lock
         ```
     *   Review and commit both files together. The Docker build intentionally refuses distributions whose hashes are absent from the lock.
     *   After adding dependencies, rebuild the `app_py` service:

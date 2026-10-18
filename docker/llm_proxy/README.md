@@ -117,6 +117,21 @@ For T3 models that support extended thinking, the adapter streams
 `reasoning_content` deltas alongside regular `content` deltas, matching the
 OpenAI `reasoning_content` convention used by compatible clients.
 
+## Development and Tests
+
+Dependencies are locked in `uv.lock`; the image installs it with
+`uv sync --frozen --no-dev`. Run the test suite from this directory with the
+`dev` extra:
+
+```bash
+uv run --frozen --extra dev python -m pytest -q
+```
+
+`docker/propagate-updates.zsh refresh` (see
+[`docker/README.md`](../README.md#propagating-dependency-updates)) upgrades the
+lock within `pyproject.toml` ranges, audits it, test-builds the image and runs
+this suite.
+
 ## Design Reference
 
 See [`docs/design_document.md`](docs/design_document.md) for the implemented

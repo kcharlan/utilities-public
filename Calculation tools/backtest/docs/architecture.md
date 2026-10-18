@@ -70,7 +70,7 @@ The tax input is a flat effective rate on withdrawals, not a tax-bracket,
 account-type or cost-basis model. Spending uses beginning-year CPI; real ending
 wealth uses ending-year CPI. The simulation is annual, not a monthly cash-flow
 model. The strategies are fixed real spending, fixed portfolio percentage,
-Guyton–Klinger guardrails, and configurable barbell reserve spending/refill
+Guyton–Klinger guardrails, configurable barbell reserve spending/refill
 rules, and Josh Tbill full refill. The latter sizes spending at year start,
 harvests the year's stock dollar gain after fees, draws the remainder from
 bills (stocks cover shortages), and refills an empty bill sleeve at year end.

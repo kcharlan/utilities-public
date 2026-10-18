@@ -1,8 +1,11 @@
 # Market Atlas
 
 A standalone browser calculator comparing retirement withdrawal strategies over
-historical windows. Ordinary defaults are visibly synthetic examples; the
-configurable barbell reserve strategy is preserved. Scenario inputs and pinned
+historical windows: fixed real, fixed percentage, Guyton-Klinger guardrails,
+barbell reserve and Josh Tbill full refill. Window, Sweep and Lifestyle views,
+a parameter frontier, pinned comparisons and CSV exports are described in the
+[architecture](docs/architecture.md). Ordinary defaults are visibly synthetic
+examples; the configurable barbell reserve strategy is preserved. Scenario inputs and pinned
 comparisons stay in page memory. Only the appearance preference is stored in
 `localStorage` (`market-atlas-theme`). The runtime needs no backend or network.
 

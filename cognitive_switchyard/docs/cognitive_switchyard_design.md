@@ -1,31 +1,57 @@
-# Cognitive Switchyard -- Generic Task Orchestration Engine
+# Cognitive Switchyard Architecture
 
-## Design Document v0.1
+This is the architecture reference for Cognitive Switchyard: its boundaries, the
+contracts between the engine and runner packs, the state model, and the
+recovery guarantees. It records intent and invariants that are not obvious from
+any single module. For commands, operator workflow, and the full `pack.yaml`
+schema, use [`README.md`](../README.md), the
+[Operator Guide](operator_guide.md), and the
+[Pack Author Guide](pack_author_guide.md). Where this document and the code
+disagree, the code and its tests win; fix this document.
 
-**Date:** 2026-03-07
-**Status:** Implemented architecture; retained as the design reference
-
-This document records the system's architectural intent and invariants. For exact current commands, manifest fields, hook signatures, and operator behavior, use `README.md`, `docs/operator_guide.md`, and `docs/pack_author_guide.md`; those guides are maintained against the live implementation.
+Paths below are relative to the `cognitive_switchyard/` package unless stated
+otherwise.
 
 ---
 
-## 1. What Is Cognitive Switchyard
+## 1. Purpose and Boundaries
 
-Cognitive Switchyard is a single-user, local-first task orchestration engine that coordinates parallel execution of arbitrary workloads through a multi-phase pipeline. It manages task intake, planning, dependency resolution, parallel dispatch with constraint enforcement, execution, verification, and auto-fix -- with a real-time web UI for setup, monitoring, and management.
+Cognitive Switchyard is a single-user, local-first engine that runs a batch of
+work items through a multi-phase pipeline: intake, planning, dependency
+resolution, constrained parallel execution, verification, and auto-fix. A
+FastAPI server and an embedded React UI provide setup and live monitoring; the
+same pipeline also runs headless from the CLI.
 
-The engine is workload-agnostic. Workload-specific behavior is defined by **runner packs** -- pluggable configuration bundles that specify how each pipeline phase operates for a given task type (coding with Claude Code, video transcoding with ffmpeg, media downloading with youtube-dl, etc.).
+The engine is workload-agnostic. Workload-specific behavior lives in **runner
+packs**: directories whose manifest, prompts, and scripts define how each phase
+behaves for one kind of task. The bundled packs (`claude-code`, `codex-hybrid`,
+`codex`, `test-echo`) are coding and smoke-test workflows; nothing in the engine
+is coding-specific.
 
-### Core Principles
+### Core principles
 
-**Separation of concerns:** The orchestrator owns the *when* and *where* of execution. The pack owns the *how*.
+- **Separation of concerns.** The orchestrator owns *when* and *where* work runs
+  (scheduling, worker slots, state, recovery). The pack owns *how* (prompts,
+  isolation, execution, verification command).
+- **Filesystem as source of truth.** A task's state is the directory holding
+  its plan file. SQLite is a queryable projection that can be rebuilt from the
+  directories (section 5).
+- **Recoverable restart.** After a crash, kill, or power loss, starting or
+  resuming the same session reconciles persisted state and resumes incomplete
+  work (section 8). Hooks and executors that cause external side effects own
+  their own idempotency.
 
-**Recoverable restart:** If the orchestrator crashes, is killed, or the machine loses power, the user re-runs the same command and the session reconciles persisted state before resuming incomplete work. This applies to planning, resolution, and execution. Hooks and executors that produce external side effects must provide their own idempotency.
+### What it is not
 
-### What Cognitive Switchyard Is Not
-
-- Not a multi-tenant server. Single user, local machine.
-- Not a credential manager. The user's environment must have CLIs authenticated and tools installed. Cognitive Switchyard validates prerequisites at startup and reports failures -- it does not provision, authenticate, or inject secrets.
-- Not an agent framework. It *uses* supported agentic CLIs (currently Claude Code and Codex) as executors. It does not implement agent logic itself.
+- Not a multi-tenant or networked service. The server has no authentication
+  and no Host/Origin validation, and it can launch agents with permission
+  bypass enabled, so it must stay bound to `127.0.0.1` (the `serve` default).
+- Not a credential manager. Agent CLIs must already be installed and
+  authenticated; preflight reports missing prerequisites but never provisions
+  or injects secrets.
+- Not an agent framework. It invokes supported agent CLIs (Claude Code and
+  Codex) as subprocesses for planning, resolution, auto-fix, and, through pack
+  scripts, execution.
 
 ---
 
@@ -39,449 +65,370 @@ The engine is workload-agnostic. Workload-specific behavior is defined by **runn
                                  |
                             WebSocket + REST
                                  |
+                        +--------+--------+        CLI (switchyard start)
+                        |  FastAPI Server  |        runs the same pipeline
+                        |  SessionController|       in the foreground
                         +--------+--------+
-                        |  FastAPI Server  |
-                        |  (Python)        |
-                        +--------+--------+
-                                 |
+                                 | one background thread per running session
               +------------------+------------------+
               |                  |                   |
      +--------+-------+ +-------+--------+ +--------+-------+
      |  Orchestrator   | |  Pack Loader   | |  State Store   |
-     |  (scheduler,    | |  (registry,    | |  (SQLite +     |
-     |   dispatcher,   | |   lifecycle    | |   file dirs)   |
-     |   collector)    | |   hooks)       | |                |
+     |  planning +     | |  manifest,     | |  SQLite +      |
+     |  resolution,    | |  hook lookup,  | |  session dirs  |
+     |  scheduler,     | |  built-in sync | |                |
+     |  verification   | |                | |                |
      +--------+-------+ +-------+--------+ +--------+-------+
-              |                  |                   |
-              +------ calls -----+                   |
-              |                                      |
-     +--------+--------+                    +--------+--------+
-     |  Worker Slots    |                    |  Session Dirs   |
-     |  (subprocess     |                    |  (intake, ready,|
-     |   management)    |                    |   workers, done,|
-     +---------+--------+                    |   blocked, logs)|
-               |                             +-----------------+
-     +---------+---------+
-     | Pack Hooks        |
-     | (isolate_start,   |
-     |  execute,         |
-     |  verify,          |
-     |  isolate_end)     |
-     +-------------------+
+              |                  |
+     +--------+--------+  +------+-------------------------+
+     | Agent runtimes   |  | Pack scripts and commands      |
+     | (Claude / Codex  |  | isolate_start, execute,        |
+     |  CLI subprocess) |  | isolate_end, resolve,          |
+     +------------------+  | preflight, verification cmd    |
+                           +--------------------------------+
 ```
+
+Worker slots are subprocesses managed by `worker_manager.py`; agent phases
+(planner, resolver, fixer) run through `agent_runtime.py`. When a session is
+created through the web backend with `COGNITIVE_SWITCHYARD_REPO_ROOT` and
+`COGNITIVE_SWITCHYARD_BRANCH`, the server creates a session git worktree as a
+peer directory of the source repository and points the session's repo root at
+it, so workers never touch the original checkout. Worktree lifetime is
+described in the Operator Guide.
 
 ---
 
-## 3. Pipeline Phases
-
-### Phase Overview
+## 3. Pipeline and Run Lifecycle
 
 ```
 Intake --> Planning --> Staging --> Resolution --> Ready --> Execution --> Done
-                          |                                    |
-                        Review                              Blocked
-                      (human input)                     (needs escalation)
+              |                         |                       |
+              +-------> Review <--------+                    Blocked
+                     (human input)
+                                Verification / Auto-Fix gate dispatch
 ```
 
-Packs declare which phases they use. All phases are optional except Execution.
+All phases except execution are optional per pack.
 
-### 3.1 Intake
+### 3.1 Intake and runs
 
-**What:** Raw work items arrive as markdown files in the session's `intake/` directory.
+Work items are Markdown files placed in the session's `intake/` directory by
+the operator (any editor; the UI only lists, opens, and reveals them). The
+`intake/` directory also holds `NEXT_SEQUENCE` and, for packs that ship
+`prompts/intake.md`, a seeded `CLAUDE.md`; neither is a work item.
 
-**How it works:**
-- User creates `.md` files externally (any editor) and drops them into the intake directory.
-- The UI polls the backend for the intake directory contents and displays new items as they appear.
-- Intake items follow a template defined by the pack.
-- No in-UI editor. The UI is a monitor, not an authoring tool.
+Sessions are **multi-run**. A run plans and resolves the intake batch present
+at its start, executes it, and then leaves the session `idle`. Starting the
+session again from `idle` begins a new run if there is new intake, ready work,
+or blocked work. A session becomes `completed` only when the operator ends an
+idle session (section 5.1).
 
-**Intake is closed at session start.** Once the user clicks "Start," the orchestrator snapshots the current intake directory contents as the session's task set. Files dropped into the intake directory after session start are ignored for the current session. This is required because the resolution phase builds a constraint graph over the full task set -- adding tasks after resolution would invalidate dependency and anti-affinity mappings, potentially causing merge conflicts, missed dependencies, or constraint violations. The UI must communicate this clearly: after session start, the intake file list should show a "Session locked" indicator and any new files detected should appear grayed out with a note like "Will not be processed in current session."
+Intake is batch-oriented because resolution builds one constraint graph over
+the whole batch: adding tasks after resolution would invalidate dependency and
+anti-affinity decisions. The UI marks intake as locked once a session leaves
+`created`, and files that arrive later are processed by the next run.
 
-**Pack declares:** Intake template (`templates/intake.md`), file naming convention.
+An intake item whose ID prefix matches a plan already in `done/` aborts
+planning (duplicate work). An item whose ID is already live in `staging/`,
+`ready/`, `review/`, or a worker slot is skipped.
 
 ### 3.2 Planning (optional)
 
-**What:** Convert intake items into detailed execution plans.
+Planning turns intake items into execution plans.
 
-**When used:** Workloads where intake items need decomposition, analysis, or enrichment before execution. Coding tasks, complex multi-step workflows. Not needed for pre-specified batch jobs (ffmpeg transcodes, downloads).
+- Up to the effective planner count of planner agents run in parallel. Each
+  claims an item by atomic rename from `intake/` to `claimed/`.
+- The planner agent returns plan text; the orchestrator parses it and writes it
+  atomically to `staging/<id>.plan.md`, or to `review/` when the plan body
+  contains `## Questions for Review`. Unparseable output or a planner exception
+  produces a review plan that preserves the error for the operator.
+- Agent planning requires `COGNITIVE_SWITCHYARD_REPO_ROOT` in the session
+  environment and runs the agent there.
+- With planning disabled, intake files must already be `.plan.md` plans and
+  move straight to `staging/`.
 
-**How it works:**
-- Orchestrator launches 1-N planner agents in parallel.
-- Each planner claims an intake item (atomic file move to `claimed/`), reads it, reads any referenced context, and produces a plan file in `staging/`.
-- If the planner has questions, it writes the plan to `review/` for human input.
-- Pack provides the planner prompt and executor config.
-
-**Pack declares:** `phases.planning.enabled`, `phases.planning.executor` (agent type), `phases.planning.runtime` (`claude` or `codex`), `phases.planning.model`, `phases.planning.reasoning_effort` (optional), `phases.planning.prompt` (path to prompt file), `phases.planning.max_instances` (parallelism cap).
+Plans are Markdown with YAML front matter. `PLAN_ID` is required;
+`DEPENDS_ON`, `ANTI_AFFINITY`, `EXEC_ORDER`, and `FULL_TEST_AFTER` are the
+constraint fields (section 5.3).
 
 ### 3.3 Resolution (optional, recommended)
 
-**What:** Analyze all staged plans as a batch to determine dependencies (DEPENDS_ON), mutual exclusions (ANTI_AFFINITY), and execution order (EXEC_ORDER).
+Resolution analyzes all staged plans together and assigns `DEPENDS_ON`,
+`ANTI_AFFINITY`, and `EXEC_ORDER`. The resolver reads what planners surfaced
+(scope, inputs, outputs, declared dependencies); it does not need to
+understand the workload.
 
-**When used:** Any workload where tasks may have ordering constraints or shared resource conflicts. Recommended even when users declare dependencies -- the resolver validates and augments user declarations.
+| Executor | Behavior |
+|----------|----------|
+| `agent` (default) | Resolver agent returns `resolution.json` content. If the agent fails, every input plan moves to `review/`. |
+| `script` | The pack's `resolve` hook must write `resolution.json` at the session root. |
+| `passthrough` | Uses declared `DEPENDS_ON` verbatim, sets `EXEC_ORDER` from dependency depth, and flags unknown or circular dependencies. |
 
-**How it works:**
-- Orchestrator launches a resolver agent that reads ALL staged plans.
-- Resolver identifies constraint relationships by analyzing plan metadata: estimated scope (files, resources), stated dependencies, input/output relationships.
-- Resolver does NOT need to understand the domain -- it reads what planners surfaced. If Task A produces `audio.wav` and Task B needs `audio.wav`, the resolver infers the dependency from the plan content regardless of whether the workload is coding, transcoding, or anything else.
-- Resolver updates each plan's metadata header with constraints and writes a resolution report.
-- Resolved plans move to `ready/`. Unresolvable plans (circular deps, conflicts) stay in `staging/` with notes.
+For every task in the graph, the orchestrator rewrites the plan's front matter
+with the resolved constraints, writes it to `ready/`, and upserts its database
+row. Plans missing from the graph or named in a conflict (unknown or circular
+dependency) move to `review/`. Execution proceeds with whatever reached
+`ready/`.
 
-**Resolution modes (pack declares which):**
-- `agent` (default): LLM agent reads plans and infers constraints. Best for complex, interpretive workloads.
-- `script`: Pack provides a script that programmatically determines constraints. Best for workloads with mechanical dependency rules (file existence, sequential numbering).
-- `passthrough`: Trust user-declared dependencies only. Fastest, least safe. Use only for trivially independent batch jobs.
-
-User-declared dependencies are always honored. The resolver adds to them, never removes.
-
-**Pack declares:** `phases.resolution.enabled`, `phases.resolution.executor` (agent/script/passthrough), `phases.resolution.runtime` (`claude` or `codex`, for agent executor), `phases.resolution.model`, `phases.resolution.reasoning_effort` (optional), `phases.resolution.prompt` or `phases.resolution.script`.
+Declared dependencies are preserved verbatim only by `passthrough`. Agent and
+script resolvers are expected by their prompt or script contract to keep and
+extend declared dependencies; the engine uses their output as written.
 
 ### 3.4 Execution
 
-**What:** Dispatch tasks to parallel worker slots, enforce constraints, collect results.
+The orchestrator loop dispatches ready tasks into worker slots `0..N-1`, where
+N is the effective worker count (the session override capped at the pack's
+`max_workers`).
 
-**How it works:**
-1. Orchestrator polls for idle worker slots and eligible tasks.
-2. A task is eligible when:
-   - It is in `ready/` status.
-   - All DEPENDS_ON tasks are in `done/` status.
-   - No ANTI_AFFINITY tasks are currently in `active/` status.
-3. Orchestrator selects the next eligible task (lowest EXEC_ORDER, then lowest ID).
-4. Orchestrator calls the pack's `isolate_start` hook to create an isolated workspace for the task.
-5. Orchestrator calls the pack's `execute` hook, passing the task file and workspace path. This spawns the executor as a subprocess.
-6. Executor runs to completion. The orchestrator monitors the subprocess (PID), captures stdout/stderr to log files, and watches for progress markers.
-7. On completion, orchestrator reads the status sidecar file written by the executor.
-8. If successful, orchestrator calls the pack's `isolate_end` hook (merge/cleanup) and moves the task to `done/`.
-9. If failed, orchestrator enters the auto-fix loop (if enabled) or moves the task to `blocked/`.
+A task is eligible when it is `ready`, every `DEPENDS_ON` task is `done`, and
+no task in its own `ANTI_AFFINITY` list is `active`. Anti-affinity is checked
+only from the dispatching task's list, so resolvers should write it
+symmetrically. Among eligible tasks the lowest `(EXEC_ORDER, task_id)` wins.
 
-**Constraint enforcement:**
-- DEPENDS_ON (hard dependency): Task waits until all dependency tasks reach `done/`.
-- ANTI_AFFINITY (mutual exclusion): Task waits until no conflicting tasks are in `active/`. No ordering implied -- just "not at the same time."
-- EXEC_ORDER: Tiebreaker for dispatch priority when multiple tasks are eligible.
+For each dispatch:
 
-**Worker slots:** Configurable count per session. Each slot runs one task at a time. Slots are numbered 0 to N-1.
+1. `isolate_start` creates the task workspace and prints its path. With
+   `isolation.type: none`, both isolation hooks are skipped and the workspace
+   is the session root. A failing hook or empty output blocks the task.
+2. The plan moves to `workers/<N>/` and the pack's `execution.command` is
+   launched with the plan path and workspace. Output goes to
+   `logs/workers/<N>.log` and `logs/tasks/<task_id>.log`.
+3. Recovery metadata (`workers/<N>/recovery.json`) is written immediately after
+   launch, since it records the PID.
+4. On exit, the **status sidecar** decides the outcome (section 4.4). A missing
+   or invalid sidecar is a failure even with exit code 0.
+5. On success, `isolate_end` runs with `done` (merge). If it fails, the task is
+   blocked. Otherwise the task moves to `done/`.
+6. On failure or timeout, the task goes through task auto-fix when eligible
+   (section 3.6), otherwise `isolate_end` runs with `blocked` and the task moves
+   to `blocked/`.
 
-**Pack declares:** `phases.execution.enabled` (always true), `phases.execution.executor` (agent/shell), `phases.execution.model` (for agent executors), `phases.execution.reasoning_effort` (optional), `phases.execution.prompt` (for agent executors), `phases.execution.command` (for shell executors), `phases.execution.max_workers`. The current dispatcher implements shell-command execution; agent-backed workers are packaged as shell commands that invoke the desired CLI.
+The run ends when nothing is ready or active. With blocked tasks remaining, the
+loop returns and leaves them for the operator (retry, move, or a new run).
+Otherwise final verification runs if due, and the session becomes `idle`. If
+ready tasks exist but none can ever become eligible and no worker is active,
+the loop records a `session.deadlock` event and returns without changing the
+session status.
 
 ### 3.5 Verification (optional)
 
-**What:** Run a global verification suite after a batch of tasks completes.
+Verification runs the pack's `phases.verification.command` (a shell string,
+not a hook) with the session root as working directory, logging to
+`logs/verify.log`. It runs only when no task is active. Three triggers exist:
 
-**When used:** Workloads where individual task success doesn't guarantee overall system health. Coding tasks (full test suite), media pipelines (playlist validation), data processing (integrity checks).
+- **Interval:** every `interval` completed tasks. Dispatch is frozen in advance
+  when completed plus in-flight tasks would reach the interval, so the batch
+  drains before verification instead of overshooting it.
+- **Task-driven:** dispatching a `FULL_TEST_AFTER: yes` task freezes further
+  dispatch, and its completion requests verification. The scheduler delays such
+  tasks to coincide with the interval verification when it can.
+- **Final:** once per run before going idle, if the run completed any task.
 
-**How it works:**
-- Triggered every N completed tasks (configurable interval), or when a task requests it (FULL_TEST_AFTER: yes).
-- Orchestrator pauses new dispatches, waits for active workers to finish, then runs the pack's verify command.
-- If verification passes, dispatching resumes.
-- If verification fails, orchestrator launches a fixer agent (if auto-fix is enabled) or halts.
+A pass clears the freeze and resumes dispatch. A failure starts the
+verification auto-fix loop if auto-fix is enabled; otherwise the session moves
+to `paused`.
 
-**Pack declares:** `phases.verification.enabled`, `phases.verification.command`, `phases.verification.interval`.
+### 3.6 Auto-fix (optional)
 
-### 3.6 Auto-Fix (optional)
+Auto-fix runs the pack's fixer agent with bounded attempts
+(`auto_fix.max_attempts`) before escalating to the operator.
 
-**What:** Automatically attempt to fix task failures or verification failures before escalating to human.
-
-**How it works:**
-- First attempt: Fixer agent receives error context (status file, last N log lines, task file).
-- If first fix fails, second attempt receives enriched context (previous fixer's changes, actual verification output).
-- After max attempts exhausted, task moves to `blocked/` for human escalation.
-- Fixer result is independently verified (orchestrator re-runs tests, does not trust fixer's self-report).
-
-**Pack declares:** `auto_fix.enabled`, `auto_fix.max_attempts`, `auto_fix.runtime` (`claude` or `codex`), `auto_fix.model`, `auto_fix.reasoning_effort` (optional), `auto_fix.prompt`.
+- **Task failure:** applies only when auto-fix is enabled **and** verification
+  is enabled with a command. The task workspace is kept for the fixer; each
+  attempt gets the plan, status sidecar, worker log, verification log, failure
+  kind, and the previous attempt's summary and verification output. A fix
+  counts only if the verification command then passes; the orchestrator never
+  trusts the fixer's own report. Success runs `isolate_end` with `done`;
+  exhaustion runs it with `blocked` and blocks the task.
+- **Verification failure:** each attempt is followed by re-verification.
+  Exhausting the attempts moves the session to `paused`.
 
 ---
 
-## 4. Runner Pack Specification
+## 4. Runner Pack Contract
 
-### 4.1 Pack Directory Structure
+The [Pack Author Guide](pack_author_guide.md) is the maintained reference for
+the `pack.yaml` schema, defaults, validation, and conventional hook discovery.
+This section records the invocation contract the orchestrator guarantees.
+
+### 4.1 Pack layout
 
 ```
 packname/
-  pack.yaml                # Metadata, phase config, capabilities
-  prompts/                 # Agent prompts (if LLM-based phases)
-    planner.md
-    resolver.md
-    worker.md
-    fixer.md
-    system.md              # Shared rules for all agents in this pack
-  scripts/                 # Lifecycle hooks (any executable: .sh, .py, .zsh, etc.)
-    isolate_start           # Create isolated workspace for a task
-    isolate_end             # Merge results / cleanup workspace
-    execute                 # Run one task (for shell-based executors)
-    verify                  # Global verification command
-    resolve                 # Dependency resolution (for script-based resolution)
-    preflight               # Prerequisite checks (run at session start)
-  templates/               # Templates for intake items, plans, status files
-    intake.md
-    plan.md
-    status.md
+  pack.yaml       # Manifest
+  README.md
+  prompts/        # Agent prompts; prompts/intake.md is seeded into intake/CLAUDE.md
+  scripts/        # Hooks and helper scripts (any executable with a shebang)
+  templates/      # Intake, plan, and status templates for authors and agents
 ```
 
-**Script naming and execution:** Scripts in `scripts/` have no required file extension. They can be shell scripts (.sh, .zsh), Python scripts (.py), compiled binaries, or anything else that is executable. The orchestrator invokes them via `subprocess` using whatever interpreter the file's shebang line (`#!/usr/bin/env python3`, `#!/bin/bash`, etc.) specifies, or directly if the file is a compiled binary. Pack authors must ensure scripts have the executable bit set (`chmod +x`). The `pack.yaml` references scripts by their relative path (e.g., `scripts/isolate_start.py`, `scripts/verify.zsh`) -- the orchestrator does not assume any extension.
+Packs load only from `~/.cognitive_switchyard/packs/`. Built-in packs are
+copied there by sync on every stateful CLI command; sync replaces only runtime
+copies that still match their recorded `.builtin_hash`, so customized copies
+survive until `reset-pack` or `reset-all-packs`.
 
-### 4.2 pack.yaml Schema
+### 4.2 Manifest
 
-```yaml
-name: string                    # Pack identifier (kebab-case)
-description: string             # Human-readable description
-version: string                 # Semver
+See the Pack Author Guide for every field. Invariants the engine relies on:
 
-phases:
-  planning:
-    enabled: boolean            # Default: false
-    executor: agent             # "agent" only (planning is always LLM-driven)
-    runtime: string             # "claude" (default) | "codex"
-    model: string               # Model name (e.g., "opus", "sonnet")
-    reasoning_effort: string    # Optional: "low" | "medium" | "high" | "xhigh"
-    prompt: path                # Relative path to prompt file
-    max_instances: integer      # Max parallel planners (default: 1)
+- `phases.execution` is required and enabled. The worker dispatcher launches
+  `phases.execution.command`; `executor: agent` validates but is not wired into
+  dispatch, so agent-backed workers are shell commands that invoke a CLI.
+- Agent phases (`planning`, `resolution` with `executor: agent`, `auto_fix`)
+  select a runtime (`claude` or `codex`), a model, a prompt, and an optional
+  reasoning effort.
+- `timeouts` and `status` defaults apply per pack; session config can override
+  worker count, planner count, timeouts, auto-fix, verification interval, poll
+  interval, and environment.
 
-  resolution:
-    enabled: boolean            # Default: true
-    executor: string            # "agent" | "script" | "passthrough"
-    runtime: string             # "claude" (default) | "codex" for agent executor
-    model: string               # Model name (for agent executor)
-    reasoning_effort: string    # Optional: "low" | "medium" | "high" | "xhigh"
-    prompt: path                # Relative path to prompt file (for agent executor)
-    script: path                # Relative path to script (for script executor)
+### 4.3 Hook invocation contracts
 
-  execution:
-    enabled: true               # Always true
-    executor: string            # Schema: "agent" | "shell"; current dispatcher uses "shell"
-    model: string               # Model name (for agent executor)
-    reasoning_effort: string    # Optional: execution reasoning level
-    prompt: path                # Relative path to prompt file (for agent executor)
-    command: path               # Relative path to script (for shell executor)
-    max_workers: integer        # Default: 2
+| Hook | Arguments | CWD | When |
+|------|-----------|-----|------|
+| `preflight` | none | pack root | Session start, after prerequisite checks |
+| `isolate_start` | `slot task_id session_root` | session root | Before each dispatch; must print the workspace path |
+| `execute` (`execution.command`) | `plan_path workspace_path` | workspace | Per task, long-running |
+| `isolate_end` | `slot task_id workspace_path final_status` | workspace, or pack root if it no longer exists | After each task; `final_status` is `done` or `blocked` |
+| `resolve` | `session_root` | session root | Resolution with `executor: script`; must write `resolution.json` |
 
-  verification:
-    enabled: boolean            # Default: false
-    command: string             # Shell command to run (can reference session vars)
-    interval: integer           # Run every N completed tasks (default: 4)
+Hooks are executed directly (shebang or native binary), never through
+`sh -c`, with positional arguments and captured output. The verification
+command and `prerequisites[].check` strings are the exceptions: they run with
+`shell=True`.
 
-auto_fix:
-  enabled: boolean              # Default: false
-  max_attempts: integer         # Default: 2
-  runtime: string               # "claude" (default) | "codex"
-  model: string                 # Model name for fixer agent
-  reasoning_effort: string      # Optional: "low" | "medium" | "high" | "xhigh"
-  prompt: path                  # Relative path to fixer prompt
+**Preflight order.** Session start runs three stages and stops at the first
+failure: (1) an orchestrator-enforced recursive scan of `scripts/` for the
+executable bit, reporting a `chmod +x` fix command per file; (2) the manifest's
+`prerequisites` checks, run from the pack root; (3) the optional `preflight`
+hook. The scan cannot be delegated to the pack. It exists so a missing
+`chmod +x` fails up front instead of surfacing as "permission denied" deep in
+the pipeline. The UI runs the same preflight from its **Run Preflight**
+button.
 
-isolation:
-  type: string                  # "git-worktree" | "temp-directory" | "none"
-  setup: path                   # Relative path to isolation setup script (any executable, e.g., "scripts/isolate_start.py")
-  teardown: path                # Relative path to isolation teardown script (any executable)
+**Environment.** Hooks receive only the variables the orchestrator passes plus
+the parent environment minus `CLAUDECODE` and any inherited
+`COGNITIVE_SWITCHYARD_*` variables. The orchestrator passes the session
+environment, `COGNITIVE_SWITCHYARD_PACK_ROOT`, and
+`CODEX_WORKER_REASONING_EFFORT` when `phases.execution.reasoning_effort` is
+set. `isolate_end` also receives `SWITCHYARD_COMMIT_MSG`, built from the plan
+title and body, when a plan is available.
 
-prerequisites:                  # List of checks run at session start
-  - name: string                # Human-readable name (e.g., "Claude CLI")
-    check: string               # Shell command (exit 0 = pass, non-zero = fail)
+**Idempotency.** `isolate_start` must recreate a workspace left by an
+interrupted run. `isolate_end` must succeed when the work is already merged or
+cleaned up. `execute` is re-run from scratch in a fresh workspace after
+interruption; any external side effects it causes must be safe to repeat or
+accepted as repeatable.
 
-timeouts:
-  task_idle: integer              # Seconds with no stdout/stderr before killing a task (default: 420)
-  task_max: integer               # Max seconds a single task can run before being killed (default: 0 = no limit)
-  session_max: integer            # Max seconds for the entire session before aborting (default: 14400 = 4 hours)
+### 4.4 Status sidecar
 
-status:
-  progress_format: string       # Regex for progress markers (default: "##PROGRESS##")
-  sidecar_format: string        # "key-value" (default) | "json" | "yaml"
-```
-
-### 4.3 Lifecycle Hook Contracts
-
-All hooks are called by the orchestrator. The pack never runs itself.
-
-**Hook argument summary:**
-
-| Hook | Args | CWD | When |
-|------|------|-----|------|
-| `preflight` | (none) | session root | Once at session startup |
-| `isolate_start` | `[slot_number, task_id, session_root]` | session root | Before each task dispatch |
-| `isolate_end` | `[slot_number, task_id, workspace_path, final_status]` | `workspace_path` (falls back to pack root if missing) | After each task completion |
-| `resolve` | `[session_root]` | session root | During resolution (script executor only) |
-| `execute` | `[task_plan_path, workspace_path]` | workspace | Per task (long-running) |
-
-Note: verification is **not** a hook script. It is a shell command string configured in `pack.yaml:phases.verification.command` and run directly by the orchestrator via `subprocess.run(command, shell=True)`. Output is captured to `logs/verify.log`.
-
-**`preflight` (prerequisite checks)**
-- **Called by:** Orchestrator, at session startup before any dispatch.
-- **Arguments:** none
-- **CWD:** session root
-- **Behavior:** Runs each prerequisite check. Prints pass/fail per check.
-- **Exit code:** 0 = all prerequisites met, non-zero = at least one failed (session cannot start).
-
-**`isolate_start` (isolation setup)**
-- **Called by:** Orchestrator, before dispatching a task to a worker slot.
-- **Arguments:** `$1` = slot number, `$2` = task ID, `$3` = session workspace path
-- **CWD:** session root
-- **Stdout:** Must print the workspace path for the task (e.g., the worktree path, the temp directory path).
-- **Exit code:** 0 = success, non-zero = isolation setup failed (task moves to `blocked/`).
-- **Example (git-worktree):** Creates `.worktrees/worker_<slot>` with a new branch, prints the worktree path.
-- **Example (temp-directory):** Creates a temp dir under the session workspace, prints the path.
-
-**`isolate_end` (isolation teardown)**
-- **Called by:** Orchestrator, after task completion (success or failure).
-- **Arguments:** `$1` = slot number, `$2` = task ID, `$3` = workspace path (from isolate_start), `$4` = final_status ("done" | "blocked")
-- **CWD:** `workspace_path` if it exists, otherwise falls back to the pack root.
-- **Behavior on "done":** Merge results (e.g., squash merge the worktree branch). Print merge commit SHA if applicable.
-- **Behavior on "blocked":** Cleanup without merging. Preserve logs/artifacts for debugging.
-- **Exit code:** 0 = success, non-zero = merge/cleanup failed (escalate to human).
-
-**`resolve` (resolution via script executor)**
-- **Called by:** Orchestrator, during the resolution phase when `phases.resolution.executor` is `"script"`.
-- **Arguments:** `$1` = session root path
-- **CWD:** session root
-- **Contract:** Must write a valid `resolution.json` to the session root before exiting.
-- **Exit code:** 0 = success, non-zero = resolution failed.
-
-**`execute` (task executor, for shell/script-based executors)**
-- **Called by:** Orchestrator, within the isolated workspace.
-- **Arguments:** `$1` = task file path, `$2` = workspace path
-- **CWD:** workspace path
-- **Stdout/stderr:** Captured to log file by orchestrator.
-- **Progress:** Must emit progress lines to stdout. Two levels are supported:
-- **Phase progress (required):** `##PROGRESS## <task_id> | Phase: <name> | <N>/<total>` -- announces the current phase and position in the phase sequence.
-- **Detail progress (optional):** `##PROGRESS## <task_id> | Detail: <message>` -- freeform status text from the executor, surfaced directly on the worker card. Examples: `Detail: Processing chunk 3/9`, `Detail: Running test suite (47 passed)`, `Detail: Downloading 128MB/512MB`. The orchestrator does not parse or validate detail content -- it passes it through as-is to the UI. Executors can emit detail lines as often as they want; only the latest one is displayed.
-- **Execution reasoning hint (optional):** when `phases.execution.reasoning_effort` is set, the orchestrator exports it as `CODEX_WORKER_REASONING_EFFORT` for shell executors to consume.
-- **Status:** Must write a status sidecar file (path: same dir as task file, `.status` extension).
-- **Exit code:** 0 = success, non-zero = failure.
-
-**Executable-bit preflight (orchestrator-enforced, before pack preflight):**
-
-Before invoking the pack's own `preflight` hook, the orchestrator scans the pack's `scripts/` directory and checks every file for the executable bit. If any script lacks it, the orchestrator halts immediately and prints a diagnostic listing each non-executable file with the exact fix command:
-
-```
-ERROR: Pack 'claude-code' has non-executable scripts:
-
-  scripts/isolate_start.py  -- Run: chmod +x ~/.cognitive_switchyard/packs/claude-code/scripts/isolate_start.py
-  scripts/verify             -- Run: chmod +x ~/.cognitive_switchyard/packs/claude-code/scripts/verify
-
-Fix the permissions above and re-run.
-```
-
-This check is not delegable to the pack -- it runs unconditionally for every pack at every session start. The pack's own `preflight` hook (which validates external prerequisites like CLI availability) only runs after the executable-bit check passes. This prevents confusing "permission denied" errors deep in the pipeline when the real problem is a missing `chmod +x` after creating or copying scripts.
-
-In the UI Setup View, this appears as the first item in the preflight checklist (e.g., "Pack scripts executable: PASS/FAIL") before any pack-defined prerequisite checks.
-
-**Execution mechanism:** The orchestrator invokes all hook scripts via `subprocess.run()` (or `subprocess.Popen()` for long-running hooks like execute). It does not assume a shell interpreter -- scripts must either have a shebang line or be natively executable. The orchestrator passes arguments positionally and captures stdout/stderr. It never wraps calls in `bash -c` or `sh -c` unless the pack.yaml explicitly specifies an interpreter override.
-
-### 4.4 Status Sidecar Format (default: key-value)
+The executor writes `<task_id>.status` next to its plan file. Format is set by
+`status.sidecar_format` (`key-value` default, `json`, or `yaml`).
 
 ```
 STATUS: done | blocked
 COMMITS: <comma-separated SHAs or "none">
 TESTS_RAN: targeted | full | none
 TEST_RESULT: pass | fail | skip
-BLOCKED_REASON: <one-line reason, only if STATUS: blocked>
+BLOCKED_REASON: <one-line reason>
 NOTES: <freeform, optional>
 ```
 
-### 4.5 Pack Distribution
+`STATUS`, `COMMITS`, `TESTS_RAN`, and `TEST_RESULT` are required. `TESTS_RAN`
+matches by prefix (`targeted ...`, `full ...`). `BLOCKED_REASON` is required
+with `blocked` and rejected with `done`.
 
-- **Built-in packs** ship with Cognitive Switchyard source.
-- On first run, bootstrap copies built-in packs to `~/.cognitive_switchyard/packs/`.
-- Built-in updates replace an unchanged runtime copy. A customized or legacy runtime copy without a trusted built-in hash is preserved; use an explicit reset command to overwrite it.
-- `--reset-pack <name>` restores a single built-in pack to factory default.
-- `--reset-all-packs` restores all built-in packs.
-- Orchestrator loads packs exclusively from `~/.cognitive_switchyard/packs/`. No special built-in path at runtime.
-- Users can add custom packs by creating new directories in `~/.cognitive_switchyard/packs/`.
+### 4.5 Progress protocol
+
+Executors report progress on stdout using `status.progress_format`
+(default `##PROGRESS##`, treated as a regex):
+
+```
+##PROGRESS## <task_id> | Phase: <name> | <N>/<total>
+##PROGRESS## <task_id> | Detail: <freeform message>
+```
+
+Phase lines drive the worker card's segmented progress bar. Detail lines are
+passed to the UI unparsed, and only the latest is shown. A repeated identical
+detail line is treated as a heartbeat and does not reset the idle timer
+(section 7). Phase-level agent output (planning, resolution, verification,
+auto-fix) is streamed separately, with `##DETAIL## ` lines becoming phase detail
+updates.
 
 ---
 
-## 5. State Management
+## 5. State Model
 
-### 5.1 Storage Model
+### 5.1 Storage model
 
-**SQLite database** (`~/.cognitive_switchyard/cognitive_switchyard.db`) for queryable metadata:
-- Sessions (id, name, pack, config, status, created_at, completed_at)
-- Tasks (id, session_id, title, status, phase, worker_slot, depends_on, anti_affinity, exec_order, created_at, started_at, completed_at)
-- Worker slots (session_id, slot_number, status, current_task_id)
-- Events (session_id, timestamp, event_type, task_id, message) -- for session log
+The runtime home is `~/.cognitive_switchyard/` (directory layout in the
+README). `config.yaml` holds global settings (`retention_days`,
+`default_planners`, `default_workers`, `default_pack`, `terminal_app`) outside
+SQLite so they survive database resets.
 
-**File directories** for artifacts (per session):
-```
-~/.cognitive_switchyard/sessions/<session-id>/
-  intake/              # User input markdown files
-  claimed/             # Tasks claimed by planner
-  staging/             # Planned tasks awaiting resolution
-  review/              # Tasks needing human review
-  ready/               # Resolved tasks queued for dispatch
-  workers/             # Worker slot directories
-    0/                 # Worker slot 0 (plan + status sidecar live here during execution)
-    1/                 # Worker slot 1
-    ...
-  done/                # Successfully completed tasks
-  blocked/             # Failed/blocked tasks
-  logs/
-    session.log        # Main session log (orchestrator events)
-    verify.log         # Verification/auto-fix log
-    workers/           # Per-worker log files
-      0.log            # Worker 0 stdout/stderr
-      1.log            # Worker 1 stdout/stderr
-  summary.json         # Session completion summary (written at end)
-  resolution.json      # Task DAG from resolution phase
-  RELEASE_NOTES.md     # Aggregated operator actions (if any)
-```
+**SQLite** (`cognitive_switchyard.db`, stdlib `sqlite3`) holds:
 
-**Post-completion trimming (successful sessions only):**
+- `sessions`: id, name, pack, status, `config_json` (session overrides and
+  environment), timestamps, and `runtime_state_json` (run number, run timing,
+  verification and dispatch-freeze flags, auto-fix context and attempt).
+- `tasks`: keyed by `(session_id, task_id)`; title, status, worker slot,
+  constraints, `full_test_after`, `plan_relpath`, timestamps. Rows exist from
+  resolution onward; intake and claimed items are counted from the filesystem.
+- `worker_slots`: slot status and current task.
+- `events`: the session event log shown in the UI and kept in
+  `logs/session.log`.
 
-When a session completes successfully (all tasks done, no blocked), the orchestrator automatically trims the session directory down to minimal metadata. The retained structure is:
+**Per-session files** (`sessions/<id>/`): the state directories in 5.2, plus
+`resolution.json`, `logs/` (`session.log`, `verify.log`, `workers/<N>.log`,
+`tasks/<task_id>.log`), `workers/<N>/recovery.json` and status sidecars while a
+task runs, and, after End Session, `summary.json` and `RELEASE_NOTES.md`.
 
-```
-~/.cognitive_switchyard/sessions/<session-id>/
-  summary.json       # Session metadata: pack, config, timing, task count, final statuses
-  resolution.json    # Constraint graph (useful for post-hoc analysis)
-  logs/
-    session.log      # Orchestrator event log (compact record of what happened)
-```
+**End and trimming.** Ending an idle session marks it `completed`, writes
+`RELEASE_NOTES.md` (aggregated `## Operator Actions` sections from done plans,
+only when any exist) and `summary.json`, then trims the directory to those two
+files, `resolution.json`, and `logs/session.log`. The work product was already
+delivered by `isolate_end`. Blocked and aborted sessions are never trimmed. The
+History view reads the database for the list and `summary.json` for detail.
 
-Everything else is deleted: `intake/`, `claimed/`, `staging/`, `ready/`, `workers/`, `done/`, `blocked/`, worker logs, verification logs. The work product has already been delivered (merged, exported, etc.) by the pack's `isolate_end` hook, so these artifacts serve no further purpose.
+**Retention.** When `serve` or `start` runs, completed and aborted sessions
+whose `completed_at` is older than `retention_days` are deleted with their
+worktrees (`0` disables). Idle sessions are never auto-purged.
 
-**Failed/aborted sessions are not trimmed.** Their full directory structure is preserved for debugging and manual inspection. The user can purge them manually from the History View, or they expire via the retention policy.
-
-The `summary.json` file is written as the last step of session completion, before any trimming occurs. It contains everything the History View needs to render the session card (name, pack, timestamps, per-task final status, total duration, worker utilization stats). This means the History View never needs to scan the filesystem -- it reads from SQLite for the list and `summary.json` for detail drill-down.
-
-### 5.2 File-as-State Mapping
-
-Task status is determined by which directory contains its plan file:
+### 5.2 File-as-state mapping
 
 | Directory | Status | Meaning |
 |-----------|--------|---------|
 | `intake/` | intake | Raw, unclaimed |
-| `claimed/` | planning | Planner is working on it |
-| `staging/` | staged | Plan complete, awaiting resolution |
+| `claimed/` | planning | Claimed by a planner |
+| `staging/` | staged | Planned, awaiting resolution |
 | `review/` | review | Needs human input |
 | `ready/` | ready | Resolved, queued for dispatch |
-| `workers/<N>/` | active | Executing in worker slot N |
-| `done/` | done | Completed successfully |
-| `blocked/` | blocked | Failed, needs escalation |
+| `workers/<N>/` | active | Executing in slot N |
+| `done/` | done | Completed |
+| `blocked/` | blocked | Failed; needs operator action |
 
-The SQLite database mirrors this state for fast querying by the API/UI. The file system is the source of truth; the database is a read-optimized projection.
+The filesystem is the source of truth. A status change commits the database row
+first and then moves the file; if the process dies in between,
+`reconcile_filesystem_projection()` restores the row from the file location.
+Reconciliation also marks rows whose plan file has disappeared as `blocked`. It
+runs during recovery and on demand through the Rescan action
+(`POST /api/sessions/{id}/rescan`).
 
-### 5.3 Constraint Graph Format
+### 5.3 Constraint graph format
 
-Resolution output is stored as JSON (not markdown) for reliable parsing:
+Resolution output is JSON (`resolution.json`) for reliable parsing:
 
 ```json
 {
   "resolved_at": "2026-03-05T14:16:45Z",
   "tasks": [
-    {
-      "task_id": "038",
-      "depends_on": [],
-      "anti_affinity": [],
-      "exec_order": 1
-    },
-    {
-      "task_id": "040",
-      "depends_on": [],
-      "anti_affinity": ["041", "042", "044"],
-      "exec_order": 1
-    }
+    { "task_id": "038", "depends_on": [], "anti_affinity": [], "exec_order": 1 },
+    { "task_id": "040", "depends_on": [], "anti_affinity": ["041", "042"], "exec_order": 1 }
   ],
   "groups": [
     {
       "name": "schema-editor",
       "type": "anti_affinity",
-      "members": ["040", "041", "042", "044"],
+      "members": ["040", "041", "042"],
       "shared_resources": ["src/frontend/assets/js/schema-editor.js"]
     }
   ],
@@ -490,1022 +437,274 @@ Resolution output is stored as JSON (not markdown) for reliable parsing:
 }
 ```
 
+`tasks` is required, with `task_id` and `exec_order` required per task.
+`resolved_at`, `groups`, `conflicts`, and `notes` are optional. Agent output
+wrapped in a code fence is accepted. The orchestrator normalizes and rewrites
+the file after parsing.
+
+| Constraint | Semantics |
+|------------|-----------|
+| `DEPENDS_ON` | Hard dependency: wait until every listed task is `done` |
+| `ANTI_AFFINITY` | Mutual exclusion: never run while a listed task is `active`; no ordering implied |
+| `EXEC_ORDER` | Dispatch priority among eligible tasks (lower first) |
+| `FULL_TEST_AFTER` | Freeze dispatch while the task runs and verify after it completes |
+
 ---
 
-## 6. Web UI
-
-### 6.1 Technology Stack
-
-- **Backend:** Python FastAPI + uvicorn (uv-managed via a PEP 723 header)
-- **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
-- **CDN dependencies:** Exact direct URLs provide React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, Babel Standalone 8.0.5, Lucide Icons 1.46.0, and React Flow 12.11.6 (`@xyflow/react`) ESM, plus the matching React Flow stylesheet and Google Fonts. The exact URLs are maintained in `README.md` and enforced by static and browser tests. CDN-generated transitive dependencies are not fully locked, CDN responses are not byte-immutable, and startup therefore requires network access.
-- **One React peer graph:** The exact six-entry import map covers React, its production and development JSX-runtime subpaths, ReactDOM, ReactDOM Client, and react-is. React Flow's ESM wrapper externalizes React and ReactDOM, so all of its peer imports resolve through the same mapped React 19 graph.
-- **Styling:** Project-owned CSS embedded in the HTML template; no Tailwind runtime
-- **Real-time:** WebSocket for live state pushes
-- **Port:** Auto-scan from preferred default (e.g., 8100), never hardcoded
-
-### 6.2 Aesthetic Direction: Industrial Command Center
-
-**Tone:** Dark-theme operational dashboard. Bloomberg terminal meets modern DevOps monitoring. Authoritative, dense, functional.
-
-**Design principles (from frontend-design skill):**
-
-- **Typography:** Monospace or semi-monospace font for data display (e.g., JetBrains Mono, IBM Plex Mono). A distinctive display font for section headers (e.g., Instrument Sans, DM Sans, or similar). Never Inter, Roboto, Arial, or system defaults. Font pairing must be intentional and memorable.
-- **Color:** Deep charcoal or navy background (not pure black). High-contrast accent colors for status: green for done/healthy, amber for active/in-progress, red for blocked/error, blue for ready/queued, dim gray for idle. Dominant dark ground with sharp status accents. No pastel, no purple gradients.
-- **Motion:** Staggered reveal on page load. Smooth transitions on status changes (color fade, not jarring swap). Log lines animate in with a subtle slide. Progress bars use CSS transitions. Worker cards pulse subtly when active.
-- **Spatial composition:** Dense grid layout with clear information hierarchy. Worker cards as instrument panels. Pipeline flow as a horizontal strip with animated state transitions. Generous use of subtle borders and elevation (box-shadow) to separate zones.
-- **Background and texture:** Subtle noise or scan-line texture on the dark background for depth. Faint grid pattern behind the DAG view. Status colors glow slightly against the dark ground (box-shadow with color).
-
-**The memorable element:** The live pipeline flow strip where task counts animate between stages, combined with the worker cards showing real-time log tails scrolling past like terminal output. It should feel like watching a factory floor from a control room.
-
-### 6.3 UI Implementation Specification
-
-This section provides exact values for the implementing agent. Do not deviate from these specifications. Do not substitute fonts, colors, or layout values with "close enough" alternatives.
-
-#### 6.3.0 Design Tokens (CSS Custom Properties)
-
-All visual constants must be defined as CSS custom properties on `:root`. Every component references these tokens -- never hardcode values.
-
-```css
-:root {
-  /* === Background === */
-  --bg-base: #0f1117;           /* Main page background - very dark blue-gray */
-  --bg-surface: #161922;        /* Card/panel backgrounds */
-  --bg-surface-raised: #1c1f2e; /* Elevated surfaces (modals, dropdowns) */
-  --bg-surface-hover: #232738;  /* Hover state on interactive surfaces */
-  --bg-input: #0c0e14;          /* Input field backgrounds */
-  --bg-log: #0a0c10;            /* Log viewer background (darkest) */
-
-  /* === Text === */
-  --text-primary: #e8eaed;      /* Primary text - slightly warm white */
-  --text-secondary: #8b8fa3;    /* Secondary/dimmed text */
-  --text-muted: #4a4e63;        /* Very dimmed text (idle labels, timestamps) */
-  --text-inverse: #0f1117;      /* Text on bright backgrounds */
-
-  /* === Status Colors === */
-  --status-done: #34d399;       /* Green - completed/healthy */
-  --status-active: #f59e0b;     /* Amber - in progress */
-  --status-ready: #3b82f6;      /* Blue - queued/ready */
-  --status-blocked: #ef4444;    /* Red - error/blocked */
-  --status-staged: #a78bfa;     /* Purple - staged/planning */
-  --status-idle: #374151;       /* Dark gray - idle/inactive */
-  --status-review: #f97316;     /* Orange - needs human review */
-
-  /* === Status Glows (for box-shadow) === */
-  --glow-done: rgba(52, 211, 153, 0.15);
-  --glow-active: rgba(245, 158, 11, 0.15);
-  --glow-blocked: rgba(239, 68, 68, 0.25);
-  --glow-ready: rgba(59, 130, 246, 0.1);
-
-  /* === Borders === */
-  --border-subtle: #1e2231;     /* Default card/panel borders */
-  --border-medium: #2a2f42;     /* Stronger separation */
-  --border-focus: #3b82f6;      /* Focus ring color */
-
-  /* === Typography === */
-  --font-display: 'Space Grotesk', 'DM Sans', sans-serif;    /* Headers, labels */
-  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', monospace; /* Data, logs, IDs */
-  --font-body: 'DM Sans', 'Space Grotesk', sans-serif;       /* Body text */
-
-  /* === Font Sizes === */
-  --text-xs: 0.6875rem;    /* 11px - timestamps, fine print */
-  --text-sm: 0.75rem;      /* 12px - secondary labels */
-  --text-base: 0.8125rem;  /* 13px - body text (dense UI) */
-  --text-md: 0.875rem;     /* 14px - primary labels */
-  --text-lg: 1rem;         /* 16px - section headers */
-  --text-xl: 1.25rem;      /* 20px - page headers */
-  --text-2xl: 1.5rem;      /* 24px - view titles */
-
-  /* === Spacing === */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-
-  /* === Border Radius === */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-
-  /* === Transitions === */
-  --transition-fast: 150ms ease;
-  --transition-base: 250ms ease;
-  --transition-slow: 400ms ease;
-
-  /* === Z-index layers === */
-  --z-base: 0;
-  --z-cards: 10;
-  --z-sticky: 20;
-  --z-overlay: 30;
-  --z-modal: 40;
-  --z-tooltip: 50;
-
-  /* === Layout === */
-  --topbar-height: 48px;
-  --pipeline-strip-height: 44px;
-  --worker-card-min-height: 220px;
-  --log-tail-lines: 5;          /* Number of visible lines in worker card log tail */
-  --sidebar-width: 280px;       /* For views that use sidebar layout */
-}
-```
-
-#### 6.3.0.1 Google Fonts Import
-
-Load these fonts via the Google Fonts CDN in the HTML `<head>`. Both are required.
-
-```html
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-```
-
-#### 6.3.0.2 Background Texture
-
-Apply a subtle noise texture to the page background using CSS. This creates depth without an image file:
-
-```css
-body {
-  background-color: var(--bg-base);
-  background-image:
-    radial-gradient(ellipse at 20% 50%, rgba(59, 130, 246, 0.03) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.02) 0%, transparent 40%);
-}
-
-/* Subtle noise via SVG data URI (no external file) */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  pointer-events: none;
-  z-index: -1;
-}
-```
-
-#### 6.3.0.3 Animation Keyframes
-
-Define these globally. Components reference them by name.
-
-```css
-/* Pulsing glow for active worker cards */
-@keyframes pulse-active {
-  0%, 100% { box-shadow: 0 0 0 1px var(--status-active), 0 0 8px var(--glow-active); }
-  50% { box-shadow: 0 0 0 1px var(--status-active), 0 0 16px var(--glow-active); }
-}
-
-/* Red pulsing border for blocked/problem states */
-@keyframes pulse-error {
-  0%, 100% { box-shadow: 0 0 0 2px var(--status-blocked), 0 0 12px var(--glow-blocked); }
-  50% { box-shadow: 0 0 0 2px var(--status-blocked), 0 0 24px var(--glow-blocked); }
-}
-
-/* Subtle breathing for idle elements */
-@keyframes breathe {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.6; }
-}
-
-/* Log line slide-in */
-@keyframes log-slide-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* Count badge number change */
-@keyframes count-bump {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.15); }
-  100% { transform: scale(1); }
-}
-
-/* Staggered fade-in for page load */
-@keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* Progress bar segment fill */
-@keyframes segment-fill {
-  from { width: 0%; }
-  to { width: 100%; }
-}
-```
-
-#### 6.3.0.4 Component Specifications
-
-**Top Bar:**
-- Height: `var(--topbar-height)` (48px)
-- Background: `var(--bg-surface)` with 1px bottom border `var(--border-subtle)`
-- Position: fixed, top: 0, full width, z-index: `var(--z-sticky)`
-- Logo text: "COGNITIVE SWITCHYARD" in `var(--font-display)`, weight 700, size `var(--text-md)`, letter-spacing: 0.08em, uppercase, color `var(--text-primary)`
-- Session info: `var(--font-mono)`, size `var(--text-sm)`, color `var(--text-secondary)`
-- Control buttons: 28px height, `var(--radius-sm)` corners, `var(--font-body)` weight 500
-  - Pause: border 1px `var(--status-active)`, text `var(--status-active)`, bg transparent
-  - Resume: bg `var(--status-done)`, text `var(--text-inverse)`
-  - Abort: border 1px `var(--status-blocked)`, text `var(--status-blocked)`, bg transparent. On hover: bg `var(--status-blocked)`, text white
-
-**Pipeline Flow Strip:**
-- Height: `var(--pipeline-strip-height)` (44px)
-- Background: `var(--bg-surface)`
-- Bottom border: 1px `var(--border-subtle)`
-- Layout: flexbox, row, center-aligned, gap `var(--space-2)`
-- Each stage badge:
-  - Font: `var(--font-mono)`, size `var(--text-sm)`, weight 500
-  - Padding: 2px 10px
-  - Border-radius: `var(--radius-sm)`
-  - Background: stage-specific color at 15% opacity (e.g., `rgba(52, 211, 153, 0.15)` for done)
-  - Text color: stage-specific status color
-  - Separator arrows: `var(--text-muted)` color, `var(--font-body)` size `var(--text-xs)`
-- Blocked badge (when count > 0): `animation: pulse-error 2s ease-in-out infinite`
-- Count changes: `animation: count-bump 300ms ease`
-- DAG icon: Lucide `GitBranch` icon, 18px, `var(--text-secondary)`, hover `var(--text-primary)`
-
-**Worker Card:**
-- Min-height: `var(--worker-card-min-height)` (220px)
-- Background: `var(--bg-surface)`
-- Border: 1px `var(--border-subtle)`
-- Border-radius: `var(--radius-lg)`
-- Padding: `var(--space-4)`
-- Grid: 2 columns for 2-4 workers, 3 columns for 5-6. Gap: `var(--space-4)`
-- Card header:
-  - Slot label: `var(--font-mono)`, `var(--text-xs)`, `var(--text-muted)`, uppercase, letter-spacing 0.05em
-  - Task ID: `var(--font-mono)`, `var(--text-md)`, `var(--text-primary)`, weight 600
-  - Task title: `var(--font-body)`, `var(--text-sm)`, `var(--text-secondary)`, truncate with ellipsis, max 1 line
-  - Status badge: inline, padding 1px 6px, `var(--radius-sm)`, font `var(--text-xs)` weight 600 uppercase
-- Progress bar:
-  - Height: 6px
-  - Background: `var(--bg-input)`
-  - Border-radius: 3px
-  - Segments: divided into N equal parts (N = total phases). Completed segments filled with `var(--status-done)`. Current segment has animated fill using `var(--status-active)`. Future segments empty.
-  - Segment dividers: 1px `var(--bg-surface)` gap
-- Elapsed time: `var(--font-mono)`, `var(--text-xs)`, `var(--text-muted)`
-- Log tail:
-  - Background: `var(--bg-log)`
-  - Border-radius: `var(--radius-sm)`
-  - Padding: `var(--space-2)` `var(--space-3)`
-  - Font: `var(--font-mono)`, `var(--text-xs)`, line-height 1.5
-  - Color: `var(--text-secondary)`
-  - Max height: calc(var(--log-tail-lines) * 1.5 * var(--text-xs) * 16) -- approximately 5 lines
-  - Overflow: hidden (no scrollbar on card view)
-  - New lines: `animation: log-slide-in 200ms ease`
-- States:
-  - Idle: opacity 0.5, log tail shows "Waiting for task..." in `var(--text-muted)`, `animation: breathe 4s ease-in-out infinite`
-  - Active: full opacity, `animation: pulse-active 3s ease-in-out infinite`
-  - Problem: `animation: pulse-error 1.5s ease-in-out infinite`, additionally a small warning icon (Lucide `AlertTriangle`) appears in the card header, 14px, `var(--status-blocked)`
-- Click: `cursor: pointer`, entire card is clickable. Hover: `background: var(--bg-surface-hover)`, `transition: var(--transition-fast)`
-
-**Task Feed Row:**
-- Height: 36px
-- Border-bottom: 1px `var(--border-subtle)`
-- Padding: 0 `var(--space-4)`
-- Layout: flexbox, row, center-aligned
-- Task ID: `var(--font-mono)`, `var(--text-sm)`, `var(--text-primary)`, width 48px
-- Title: `var(--font-body)`, `var(--text-sm)`, `var(--text-secondary)`, flex 1, truncate
-- Status badge: same spec as worker card
-- Constraint icons: Lucide `Link` for deps (12px), Lucide `Shield` for anti-affinity (12px), `var(--text-muted)`, tooltip on hover showing constraint details
-- Time: `var(--font-mono)`, `var(--text-xs)`, `var(--text-muted)`, width 60px, right-aligned
-- Blocked row: background `rgba(239, 68, 68, 0.08)`, left border 3px solid `var(--status-blocked)`
-- Active row: left border 3px solid `var(--status-active)`
-- Hover: `background: var(--bg-surface-hover)`, `cursor: pointer`
-
-**Task Detail View (overlay):**
-- Background: `var(--bg-base)` (full page replacement, not modal)
-- Top: back button (Lucide `ArrowLeft` + "Back to Monitor"), `var(--font-body)`, `var(--text-sm)`, `var(--text-secondary)`, hover `var(--text-primary)`
-- Left panel (40% width):
-  - Padding: `var(--space-6)`
-  - Task ID: `var(--font-mono)`, `var(--text-xl)`, `var(--text-primary)`
-  - Status: large badge, padding 4px 12px, `var(--text-sm)` weight 600
-  - Metadata labels: `var(--font-body)`, `var(--text-xs)`, `var(--text-muted)`, uppercase, letter-spacing 0.05em
-  - Metadata values: `var(--font-mono)`, `var(--text-sm)`, `var(--text-primary)`
-  - Constraint section: DEPENDS_ON listed with status dot (green/gray/amber) + task ID. ANTI_AFFINITY listed with shield icon.
-  - Plan content: rendered markdown, `var(--font-body)`, `var(--text-base)`, headings in `var(--font-display)`
-  - Scrollable independently
-- Right panel (60% width):
-  - Background: `var(--bg-log)`
-  - Full height (minus topbar)
-  - Log content: `var(--font-mono)`, `var(--text-xs)`, line-height 1.6, `var(--text-secondary)`
-  - Progress lines (`##PROGRESS##`): background `rgba(245, 158, 11, 0.1)`, left border 2px `var(--status-active)`, full width
-  - Error lines (stderr, "ERROR", "FAIL"): color `var(--status-blocked)`
-  - Search bar: top of panel, `var(--bg-input)`, border 1px `var(--border-subtle)`, `var(--font-mono)` `var(--text-sm)`, Lucide `Search` icon
-  - Auto-scroll: default on. When user scrolls up, auto-scroll pauses. "Jump to latest" button appears (fixed bottom-right of log panel), bg `var(--status-active)`, text `var(--text-inverse)`, `var(--radius-md)`
-
-**DAG View:**
-- Full viewport below topbar
-- Background: `var(--bg-base)` with faint grid pattern:
-  ```css
-  background-image:
-    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-  background-size: 40px 40px;
-  ```
-- React Flow config:
-  - `fitView` on load
-  - Background: transparent (our CSS grid handles it)
-  - MiniMap: enabled, bottom-right, bg `var(--bg-surface)`, node colors match status
-  - Controls: enabled (zoom buttons), styled to match dark theme
-- Node styling (React Flow custom node):
-  - Width: 180px, min-height: 60px
-  - Background: `var(--bg-surface)`
-  - Border: 2px solid, color = status color
-  - Border-radius: `var(--radius-lg)`
-  - Padding: `var(--space-3)`
-  - Task ID: `var(--font-mono)`, `var(--text-md)`, weight 600, status color
-  - Title: `var(--font-body)`, `var(--text-xs)`, `var(--text-secondary)`, max 2 lines
-  - Status badge: bottom of node, same spec as elsewhere
-  - Active nodes: `animation: pulse-active 3s ease-in-out infinite`
-  - Blocked nodes: `animation: pulse-error 1.5s ease-in-out infinite`
-- Edge styling:
-  - DEPENDS_ON: `stroke: var(--text-muted)`, strokeWidth 2, animated (React Flow `animated` prop), markerEnd arrow
-  - ANTI_AFFINITY: `stroke: var(--status-staged)`, strokeWidth 1, strokeDasharray "6 4", no marker
-- Group backgrounds (anti-affinity clusters):
-  - Implemented as React Flow group nodes
-  - Background: status color at 5% opacity
-  - Border: 1px dashed, status color at 20% opacity
-  - Label: `var(--font-body)`, `var(--text-xs)`, `var(--text-muted)`, top-left of group
-- Back button: same as Task Detail View
-
-**Setup View:**
-- Layout: centered, max-width 640px, margin auto
-- Card: `var(--bg-surface)`, border 1px `var(--border-subtle)`, `var(--radius-xl)`, padding `var(--space-8)`
-- Title: "New Session" in `var(--font-display)`, `var(--text-2xl)`, `var(--text-primary)`, weight 700
-- Form labels: `var(--font-body)`, `var(--text-xs)`, `var(--text-muted)`, uppercase, letter-spacing 0.05em, margin-bottom `var(--space-1)`
-- Inputs: `var(--bg-input)`, border 1px `var(--border-subtle)`, `var(--radius-md)`, padding `var(--space-2)` `var(--space-3)`, `var(--font-mono)` `var(--text-base)`, `var(--text-primary)`. Focus: border-color `var(--border-focus)`, outline none
-- Pack selector: styled select or custom dropdown. Pack name in `var(--font-display)` weight 600, description below in `var(--text-xs)` `var(--text-secondary)`
-- Preflight checks: list with Lucide `CheckCircle` (green) or `XCircle` (red) icons, 16px. Check name in `var(--font-body)` `var(--text-sm)`. Failed checks: text `var(--status-blocked)`
-- Intake file list: `var(--bg-log)` background, `var(--radius-md)`, max-height 200px, scrollable. Each file: `var(--font-mono)` `var(--text-sm)`, Lucide `FileText` icon 14px
-- Start button: full width, height 44px, bg `var(--status-done)`, text `var(--text-inverse)`, `var(--font-display)` weight 700, `var(--text-md)`, `var(--radius-md)`, uppercase, letter-spacing 0.05em. Disabled state: opacity 0.3, cursor not-allowed. Hover: brightness 1.1
-- Advanced section: collapsible, toggle link in `var(--text-xs)` `var(--text-secondary)`, Lucide `ChevronDown`/`ChevronUp`
-
-**History View:**
-- Layout: full width, padding `var(--space-6)` horizontal
-- Title: "Session History" in `var(--font-display)`, `var(--text-xl)`, weight 600
-- Session cards: `var(--bg-surface)`, border 1px `var(--border-subtle)`, `var(--radius-lg)`, padding `var(--space-4)`, margin-bottom `var(--space-3)`
-- Session name: `var(--font-display)`, `var(--text-md)`, weight 600
-- Pack badge: inline, `var(--font-mono)`, `var(--text-xs)`, bg `var(--bg-surface-raised)`, padding 1px 6px, `var(--radius-sm)`
-- Stats: `var(--font-mono)`, `var(--text-sm)`, `var(--text-secondary)`. Green number for completed, red for blocked.
-- Date/duration: `var(--font-mono)`, `var(--text-xs)`, `var(--text-muted)`
-- Hover: `background: var(--bg-surface-hover)`, cursor pointer
-- Empty state: centered text "No sessions yet" in `var(--text-muted)`, Lucide `Inbox` icon 32px above
-
-#### 6.3.0.5 Page Load Animation Sequence
-
-When the Monitor View loads (or on initial page load), apply staggered `animation: fade-in-up 400ms ease forwards` with `opacity: 0` initial state:
-
-1. Top bar: delay 0ms
-2. Pipeline strip: delay 80ms
-3. Worker cards: delay 160ms, stagger 60ms per card (card 0 at 160ms, card 1 at 220ms, etc.)
-4. Task feed: delay 320ms
-
-This creates a cascading reveal from top to bottom.
-
-### 6.3.1 Views (Functional Specification)
-
-#### 6.3.1.1 Main Monitor View
-
-The primary view. Shown during active sessions.
-
-**Top bar (fixed):**
-- Session name, pack type badge, elapsed time (live counter)
-- Worker utilization: "3/4 active"
-- Controls: Pause, Resume, Abort (with confirmation)
-
-**Zone 1: Pipeline flow strip** (~50px height, full width)
-- Horizontal flow: `Intake(3) -> Planning(1) -> Staged(0) -> Ready(5) -> Active(2) -> Done(12) | Blocked(0)`
-- Each stage is a rounded badge with count. Count updates animate (number ticks up/down).
-- Blocked count uses red background and pulses if > 0.
-- Small DAG icon at right end of strip. Click opens full-page DAG view.
-
-**Zone 2: Worker cards** (main content area)
-- Grid of cards, one per configured worker slot. 2-across for 2-4 workers, 3-across for 5-6.
-- Each card contains:
-  - **Header:** Slot number, task ID + short title (truncated), status badge
-  - **Progress:** Segmented progress bar showing phases (segments defined by pack). Current phase highlighted/animated.
-  - **Detail line:** Single line of freeform progress text from the executor, displayed below the progress bar in `var(--font-mono)` at `var(--text-secondary)` color. Shows the latest `Detail:` progress message (e.g., "Processing chunk 3/9"). Hidden when no detail has been emitted. Updates in-place (no animation needed -- just text swap). This gives at-a-glance insight into what the executor is actually doing without reading logs.
-  - **Elapsed time** on current task.
-  - **Live tail:** 4-5 lines of latest log output, monospace, auto-scrolling. New lines slide in from bottom. Dimmed when idle.
-- **Card states:**
-  - Idle: Dimmed, no content beyond "idle" label
-  - Active: Normal brightness, log tail active, progress bar animating
-  - Problem (no progress for configurable threshold): Red border, pulsing glow. The card itself communicates the issue -- no toast/banner needed.
-- **Click** anywhere on an active card to drill into full-screen Task Detail View.
-
-**Zone 3: Task feed** (below worker cards, scrollable)
-- Compact list of all tasks in session, sorted: blocked (top, red), active, ready, done (bottom, green).
-- Each row: task ID, title (truncated), status badge, constraint icons (chain icon for deps, shield icon for anti-affinity), elapsed/completed time.
-- Click a row to drill into Task Detail View.
-- Blocked tasks show with red background highlight and are always pinned to top.
-
-#### 6.3.1.2 Task Detail View
-
-Full-screen overlay (or page navigation) triggered by clicking a worker card or task feed row.
-
-**Layout: two-column**
-
-**Left column (40%):**
-- Task metadata: ID, title, status, worker slot, elapsed time
-- Constraints: DEPENDS_ON (with status of each dependency), ANTI_AFFINITY list
-- Status sidecar: rendered key-value pairs (STATUS, COMMITS, TEST_RESULT, NOTES)
-- Fixer history (if applicable): attempt count, each attempt's outcome, diff summary
-- Plan content: rendered markdown of the full plan file
-
-**Right column (60%):**
-- Full streaming log output. Monospace, dark background, auto-scrolling.
-- Phase markers highlighted (different background color for `##PROGRESS##` lines).
-- Search/filter bar at top of log panel.
-- Log pauses auto-scroll when user scrolls up; "Jump to bottom" button appears.
-
-**Back button** returns to Main Monitor View.
-
-#### 6.3.1.3 DAG View
-
-Full-page view triggered by clicking the DAG icon in the pipeline strip.
-
-**Technology:** React Flow 12.11.6 (`@xyflow/react`, ESM via CDN) under the React 19.3.0 exact-version import map. Its CDN wrapper externalizes React and ReactDOM to the mapped peer graph. The adapter imports v12 named exports and uses immutable node/edge change application.
-
-**Layout:**
-- Interactive node graph filling the viewport.
-- Pan, zoom, and drag enabled.
-
-**Nodes:**
-- One node per task. Rounded rectangle.
-- Node content: Task ID (large), short title (small), status badge.
-- Node color by status: gray (ready), blue (active/animated border), green (done), red (blocked), yellow (staged).
-- Node border pulses for active tasks.
-
-**Edges:**
-- DEPENDS_ON: Solid directed arrows (A -> B means B depends on A).
-- ANTI_AFFINITY: Dashed undirected lines (A -- B means they cannot run concurrently).
-
-**Anti-affinity groups:** Tasks sharing anti-affinity are visually clustered. Group background with subtle tinted region and label (e.g., "schema-editor group").
-
-**Interaction:**
-- Click a node to see a tooltip with task summary, constraints, current phase.
-- Double-click a node to navigate to Task Detail View.
-
-**Back button** returns to Main Monitor View.
-
-#### 6.3.1.4 Setup View
-
-Shown when no session is active, or when creating a new session.
-
-**Layout: centered card**
-
-- **Pack selector:** Dropdown listing available packs from `~/.cognitive_switchyard/packs/`. Shows pack name and description.
-- **Session name:** Text input with auto-generated default (e.g., "coding-run-2026-03-07").
-- **Planner count:** Numeric stepper (1 to pack's `max_instances`). Only shown if pack has planning enabled. Since planners operate on independent intake items with no shared state, there are zero conflicts -- parallelism is limited only by machine resources and API rate limits.
-- **Worker count:** Numeric stepper (1 to pack's `max_workers`).
-- **Verification interval:** Numeric stepper (only shown if pack has verification enabled).
-- **Intake directory:** Shows the session's intake path. Instructions: "Drop .md files here to add tasks." Includes an "Open Folder" button (small, inline, icon-only is fine -- e.g., a folder icon from Lucide) that opens the intake directory in the OS file manager (Finder on macOS, Files on Linux). Backend endpoint: `GET /api/session/{id}/open-intake` calls `subprocess.Popen()` with the platform-appropriate command (`open` on macOS, `xdg-open` on Linux). This is a fire-and-forget call -- no response body needed, just 204.
-- **Preflight checks:** After pack selection, runs a two-stage preflight. Stage 1 (orchestrator-enforced): scans all pack scripts for executable bit -- if any lack it, shows red X with the exact `chmod +x` command per file. Stage 2 (pack-defined): runs the pack's own `preflight` hook to validate external prerequisites (CLI availability, auth status, etc.). Shows a checklist with green check / red X per item. Cannot start if any check in either stage fails.
-- **Intake file list:** Live-updating list of files detected in the intake directory. Shows filename, size, detected time. Each file row has a small "reveal" icon button (e.g., Lucide `external-link` or `folder-open`) that opens the OS file manager with that specific file selected (`open -R <path>` on macOS, `xdg-open <parent-dir>` on Linux). This lets the user jump straight to editing a specific intake file. After session starts, this list becomes read-only with a "Session locked -- intake closed" banner. Any new files detected post-start appear grayed out with strikethrough, labeled "Not in session." The reveal buttons are hidden in locked state.
-- **Start button:** Launches the pipeline. Disabled until at least one intake item exists and all preflight checks pass. Clicking Start snapshots the current intake as the session's fixed task set. No additional tasks can be added to a running session.
-
-**Session config overrides (expandable "Advanced" section):**
-- Poll interval
-- Auto-fix enabled/disabled
-- Auto-fix max attempts
-- Task idle timeout (seconds) -- kill a task if no stdout/stderr for this long. Default from pack.yaml (typically 300s).
-- Task max timeout (seconds) -- hard cap on any single task's wall-clock time. 0 = no limit. Default from pack.yaml.
-- Session max timeout (seconds) -- hard cap on total session wall-clock time. Default from pack.yaml (typically 14400s / 4 hours).
-- Custom environment variables (key-value pairs passed to executor)
-
-#### 6.3.1.5 History View
-
-Accessible from top navigation at all times.
-
-- List of past sessions: name, pack, date, duration, tasks completed/blocked.
-- Click a session to see its final state: dashboard summary, release notes (if generated), task list with final statuses.
-- Past session data is read-only (no editing task statuses, rerunning, etc.).
-- **Purge controls:** Each session row has a small trash icon button (requires confirmation modal: "Delete session <name> and all its artifacts? This cannot be undone."). Also a "Purge All" button at the top of the list with a confirmation modal showing the count of sessions to be deleted. Purge deletes both the SQLite rows and the session's filesystem directory (`~/.cognitive_switchyard/sessions/<id>/`).
-- **Retention indicator:** Below the session list, a muted-text line showing the current retention setting (e.g., "Auto-purge: sessions older than 30 days" or "Auto-purge: disabled"). Clicking it navigates to the Settings view (or opens an inline editor if no dedicated Settings view exists yet -- see Section 6.3.1.6 below).
-
-#### 6.3.1.6 Settings View
-
-Accessible from a gear icon in the top bar (right side, after nav links). Minimal for now -- this is where global orchestrator preferences live, distinct from per-session config overrides in the Setup View.
-
-- **Session retention:** Numeric input + unit dropdown (days). Default: 30 days. Set to 0 to disable auto-purge. Auto-purge runs on startup: any session (successful or failed/aborted) whose `completed_at` is older than the retention period is fully deleted (SQLite rows + session directory). Note: successful sessions are already trimmed to minimal metadata at completion time (see Section 5.1), so retention purge for those is just clearing the small summary + logs. Failed/aborted sessions retain full artifacts until either manual purge or retention expiry.
-- **Default planner count:** Numeric stepper. Pre-fills the Setup View's planner count field. Overridable per session.
-- **Default worker count:** Numeric stepper. Pre-fills the Setup View's worker count field. Overridable per session.
-- **Default pack:** Dropdown. Pre-selects the pack in Setup View. Overridable per session.
-- **Terminal app:** Text input. Name of the macOS terminal application to open when using "Open in Terminal" buttons (e.g., `"iTerm"`, `"Terminal"`). Default: `iTerm`.
-
-Settings are stored in `~/.cognitive_switchyard/config.yaml` (not SQLite -- survives DB resets). The file is created with defaults on first bootstrap. All five keys:
-
-```yaml
-# ~/.cognitive_switchyard/config.yaml
-retention_days: 30        # int — days to retain completed/aborted sessions (0 = disabled)
-default_planners: 3       # int — default planner count for new sessions
-default_workers: 3        # int — default worker count for new sessions
-default_pack: claude-code # str — default pack name for new sessions
-terminal_app: iTerm       # str — terminal app name ("iTerm", "Terminal")
-```
-
-### 6.4 Navigation
-
-**Top bar** (persistent across all views):
-- Left: Cognitive Switchyard logo/wordmark
-- Center: Session name + status (or "No active session")
-- Right: Navigation links -- Monitor, Setup, History, then a gear icon for Settings
-- Monitor link is only active when a session exists
-
-**View transitions:** Smooth fade or slide. No hard page reloads (SPA routing).
-
-### 6.5 WebSocket Protocol
-
-**Connection:** Client connects to `ws://localhost:<port>/ws` on page load.
-
-**Server pushes (JSON messages):**
-
-```json
-{
-  "type": "state_update",
-  "data": {
-    "session": { "status": "running", "elapsed": 1234 },
-    "pipeline": { "intake": 3, "planning": 1, "staged": 0, "ready": 5, "active": 2, "done": 12, "blocked": 0 },
-    "workers": [
-      { "slot": 0, "status": "active", "task_id": "023", "task_title": "Fix auth flow", "phase": "implementing", "phase_num": 3, "phase_total": 5, "detail": "Processing chunk 3/9", "elapsed": 342 },
-      { "slot": 1, "status": "active", "task_id": "025", "task_title": "Add export API", "phase": "entry-tests", "phase_num": 2, "phase_total": 5, "detail": null, "elapsed": 128 },
-      { "slot": 2, "status": "idle" },
-      { "slot": 3, "status": "idle" }
-    ]
-  }
-}
-```
-
-```json
-{
-  "type": "log_line",
-  "data": {
-    "worker_slot": 0,
-    "task_id": "023",
-    "line": "##PROGRESS## 023 | Phase: implementing | 3/5",
-    "timestamp": "2026-03-07T14:22:01Z"
-  }
-}
-```
-
-```json
-{
-  "type": "task_status_change",
-  "data": {
-    "task_id": "023",
-    "old_status": "active",
-    "new_status": "done",
-    "worker_slot": 0,
-    "notes": "3 commits merged"
-  }
-}
-```
-
-```json
-{
-  "type": "progress_detail",
-  "data": {
-    "worker_slot": 0,
-    "task_id": "023",
-    "detail": "Processing chunk 4/9",
-    "timestamp": "2026-03-07T14:22:15Z"
-  }
-}
-```
-
-Sent whenever the orchestrator parses a `Detail:` progress line from an executor's stdout. Lightweight and high-frequency-safe -- the UI just swaps the text on the worker card. No history is kept; only the latest detail matters.
-
-```json
-{
-  "type": "alert",
-  "data": {
-    "severity": "error",
-    "task_id": "025",
-    "worker_slot": 1,
-    "message": "No progress for 5 minutes"
-  }
-}
-```
-
-**Client sends (JSON messages):**
-
-```json
-{ "type": "subscribe_logs", "worker_slot": 0 }
-{ "type": "unsubscribe_logs", "worker_slot": 0 }
-```
-
-Log streaming is per-slot, opt-in. The main monitor view subscribes to the last ~5 lines per active worker (summary mode). The Task Detail View subscribes to full streaming for the selected worker.
-
-### 6.6 REST API Endpoints
+## 6. Server, API, and UI
+
+### 6.1 Frontend delivery
+
+The UI is a single embedded HTML string (`html_template.py`) served at `/`
+with a bootstrap JSON payload. There is no npm, bundler, or `node_modules`.
+
+- React 19 publishes no UMD builds, so the page uses browser ESM through an
+  exact six-entry import map covering React, its production and development
+  JSX-runtime subpaths, ReactDOM, ReactDOM Client, and react-is. Versions:
+  React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, served by esm.sh.
+- Babel Standalone 8.0.5 compiles the inline JSX as a module
+  (`data-type="module"`), so the app imports the mapped React bindings.
+- React Flow 12.11.6 (`@xyflow/react`) is imported as ESM with React and
+  ReactDOM externalized, so its peer imports resolve through the same mapped
+  React 19 graph instead of creating a second copy. The DAG view uses its v12
+  named exports.
+- Lucide icons load as a UMD script; Google Fonts and the React Flow stylesheet
+  are the only external stylesheets. Styling is project-owned CSS with color
+  tokens, with no Tailwind runtime.
+
+The exact URLs are listed in the README and enforced by static tests
+(`tests/test_html_template.py`) and browser tests (`tests/test_e2e.py`).
+Direct versions are pinned, but CDN-generated transitive dependencies are not
+fully locked and CDN responses are not byte-immutable, so startup needs network
+access. If offline startup or byte-reproducible delivery becomes a requirement,
+the migration path is locally built and served frontend assets. That is a
+frontend-only change that leaves the backend, packs, and orchestrator alone.
+
+Visual direction: a dense, dark operational dashboard with status-colored
+accents. The design tokens live in the template's `:root` block.
+
+### 6.2 UI views
+
+- **Setup:** two-step flow (Create Session, then Start Session); pack, counts,
+  repo root, branch (or create branch), and project directory; intake list with
+  Open Intake, Intake Terminal, Refresh, and per-file reveal; Run Preflight
+  showing the three preflight stages.
+- **Monitor:** pipeline strip (including Review and Verifying, with Rescan and
+  Reprocess), phase log streams for planning, resolution, verification, and
+  auto-fix, worker cards, task feed, verification and auto-fix status, and New
+  Run and End Session controls when idle. Worker cards warn at two-thirds of
+  `task_idle`; the server raises its alert at 80%.
+- **Task detail:** metadata, constraints, plan path, events, live or retained
+  log, and Move or Reveal actions.
+- **DAG:** React Flow graph of `resolution.json` (double-click a node to open
+  the task).
+- **History and Settings:** completed and aborted sessions with release notes
+  and task outcomes; global settings from `config.yaml`.
+
+### 6.3 WebSocket protocol
+
+Clients connect to `/ws`. Server messages are `{"type": ..., "data": ...}`:
+
+| Type | Target | Payload |
+|------|--------|---------|
+| `state_update` | all clients | Full dashboard payload, as returned by `GET /api/sessions/{id}/dashboard`: session (including run number and timing), pipeline counts and directories, workers, recent events, runtime state, effective runtime config, planning agents |
+| `log_line` | subscribers of `worker_slot` | `worker_slot`, `task_id`, `line`, `timestamp`, plus parsed phase fields for phase lines |
+| `log_line` (phase) | all clients | Same shape with `worker_slot: -1` and `task_id` like `__phase_verification__` |
+| `task_status_change` | all clients | `task_id`, `old_status`, `new_status`, `worker_slot`, `notes`, timing fields |
+| `progress_detail` | all clients | `worker_slot`, `task_id`, `detail`, `timestamp` |
+| `alert` | all clients | `severity`, `message`, and the task and slot when applicable |
+
+Clients send `{"type": "subscribe_logs", "worker_slot": N}` and
+`{"type": "unsubscribe_logs", "worker_slot": N}`. A subscriber receives every
+line for that slot. The server keeps the idle timer authoritative: worker idle
+state reaches clients through `state_update` snapshots (throttled to one per
+second when no new output arrives), not through client-side resets.
+
+### 6.4 REST API
+
+Routes are defined in `server.py` `create_app()`; `tests/test_server.py` covers
+them.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/` | Serve the React SPA (embedded HTML) |
-| POST | `/api/browse-directory` | Open OS file picker dialog, return selected path |
-| GET | `/api/packs` | List available packs |
-| GET | `/api/packs/{name}` | Pack details and config schema |
-| POST | `/api/repo-branches` | List git branches and current branch for a repo path |
-| POST | `/api/repo-create-branch` | Create new git branch from specified source branch |
-| POST | `/api/resolve-path` | Expand path (~, env vars), check if git repo, return branch info |
-| POST | `/api/sessions` | Create a new session |
-| GET | `/api/sessions` | List all sessions (active + history) |
-| DELETE | `/api/sessions` | Purge all idle/completed/aborted sessions. Returns count of deleted sessions. |
-| GET | `/api/sessions/{id}` | Session details and current state |
-| DELETE | `/api/sessions/{id}` | Purge a completed session (SQLite rows + session directory). Returns 409 if session is active. |
-| POST | `/api/sessions/{id}/abort` | Abort session (kill workers, cleanup) |
-| POST | `/api/sessions/{id}/cleanup-worktree` | Clean up session worktree if applicable (200) |
-| GET | `/api/sessions/{id}/dag` | Constraint graph (JSON) |
-| GET | `/api/sessions/{id}/dashboard` | Dashboard summary data |
-| POST | `/api/sessions/{id}/end` | End an idle session (202) |
-| POST | `/api/sessions/{id}/force-reset` | Nuclear reset: abort if running, clean worktree/branches, delete all rows/dirs |
-| GET | `/api/sessions/{id}/intake` | List intake directory contents (pre-start: live updating; post-start: frozen snapshot) |
-| POST | `/api/sessions/{id}/open-intake` | Open intake directory in OS file manager. Fire-and-forget (`open` on macOS, `xdg-open` on Linux). Returns 204. |
-| POST | `/api/sessions/{id}/open-intake-terminal` | Open intake directory in configured terminal app (204) |
-| POST | `/api/sessions/{id}/pause` | Pause dispatch (active workers continue) |
-| POST | `/api/sessions/{id}/preflight` | Run pack preflight checks (prerequisites, script permissions) |
-| POST | `/api/sessions/{id}/resume` | Resume dispatch |
-| POST | `/api/sessions/{id}/reveal-file` | Reveal a specific file in OS file manager (`open -R` on macOS). Accepts JSON body with `path` field (relative to session dir). Returns 204. Validates path is within session directory (no traversal). |
-| POST | `/api/sessions/{id}/start` | Begin orchestration |
-| GET | `/api/sessions/{id}/tasks` | Task list with status and constraints |
-| GET | `/api/sessions/{id}/tasks/{tid}` | Task detail (plan, status, log path) |
-| GET | `/api/sessions/{id}/tasks/{tid}/log` | Task log content (with offset/limit for pagination) |
-| POST | `/api/sessions/{id}/tasks/{tid}/retry` | Manually retry a blocked task |
-| GET | `/api/settings` | Current global settings (retention, defaults). |
-| PUT | `/api/settings` | Update global settings. Writes to `~/.cognitive_switchyard/config.yaml`. |
-| WS | `/ws` | WebSocket for live updates |
+| GET | `/` | Embedded SPA |
+| GET | `/api/packs`, `/api/packs/{name}` | Pack list and detail |
+| POST | `/api/browse-directory` | Native folder picker |
+| POST | `/api/resolve-path` | Expand a path; report git status and branch |
+| POST | `/api/repo-branches`, `/api/repo-create-branch` | List or create branches in a repo |
+| POST | `/api/sessions` | Create a session (201; 409 if it exists); creates the session worktree when requested |
+| GET | `/api/sessions` | List sessions |
+| DELETE | `/api/sessions` | Purge every idle, completed, and aborted session and its worktree |
+| GET | `/api/sessions/{id}` | Session plus recent events |
+| DELETE | `/api/sessions/{id}` | Purge one `created`, `idle`, `completed`, or `aborted` session (409 otherwise or while its thread runs) |
+| POST | `/api/sessions/{id}/start` | Launch the pipeline in a background thread (202) |
+| POST | `/api/sessions/{id}/pause`, `/resume`, `/abort` | Status control (202); resume from `idle` starts a new run |
+| POST | `/api/sessions/{id}/end` | End an idle session: complete, summarize, trim, clean up the worktree (202; 409 unless idle) |
+| POST | `/api/sessions/{id}/reprocess` | Re-run planning, resolution, and execution on existing files (202; `created`, `idle`, or `paused` with no active workers) |
+| POST | `/api/sessions/{id}/rescan` | Reconcile the database with the filesystem |
+| POST | `/api/sessions/{id}/cleanup-worktree` | Remove the session worktree after review |
+| POST | `/api/sessions/{id}/force-reset` | Abort if needed, remove worktree and `switchyard-*` branches, delete rows and directory |
+| POST | `/api/sessions/{id}/preflight` | Run the three-stage preflight |
+| GET | `/api/sessions/{id}/dashboard` | Dashboard payload (same shape as `state_update`) |
+| GET | `/api/sessions/{id}/dag` | `resolution.json`, or a graph built from task rows |
+| GET | `/api/sessions/{id}/intake` | Intake files with lock and snapshot flags |
+| POST | `/api/sessions/{id}/open-intake`, `/open-intake-terminal` | Open intake in the file manager or the configured terminal (204) |
+| POST | `/api/sessions/{id}/reveal-file?path=` | Reveal a session-relative file; path traversal rejected (204) |
+| GET | `/api/sessions/{id}/tasks`, `/tasks/{tid}` | Task list and detail |
+| GET | `/api/sessions/{id}/tasks/{tid}/log?offset=&limit=` | Paginated task log |
+| POST | `/api/sessions/{id}/tasks/{tid}/retry` | Move a task back to `ready` (202) |
+| POST | `/api/sessions/{id}/tasks/{tid}/move` | Move a task between allowed states (`{"target_status": ...}`; 409 if not allowed) |
+| GET, PUT | `/api/settings` | Read or write `config.yaml` |
+| WS | `/ws` | Live updates |
 
 ---
 
-## 7. Backend Architecture
+## 7. Timeout Model
 
-### 7.1 Module Structure
+Three independent limits protect against runaway work. Pack `timeouts` set the
+defaults; session config can override them.
 
-```
-cognitive_switchyard/
-  __init__.py              # Package constants: PACKAGE_NAME, RUNTIME_HOME
-  __main__.py              # CLI entry point, delegates to cli.main()
-  agent_runtime.py         # Claude and Codex runtime adapters for agent phases
-  cli.py                   # Entry point, argparse subcommands
-  config.py                # Global config, runtime paths, session directory structure
-  hook_runner.py           # Pack hook execution, preflight checks, script permission validation
-  html_template.py         # Embedded React SPA HTML string
-  models.py                # Dataclasses for packs, tasks, sessions, scheduling, recovery
-  orchestrator.py          # Main orchestration loop
-  pack_loader.py           # Pack discovery, validation, manifest loading, hook resolution
-  parsers.py               # Artifact parsing (plans, resolution graphs, progress, sidecars)
-  planning_runtime.py      # Planning and resolution phase execution with concurrent agents
-  recovery.py              # Session crash recovery, worker cleanup, task revert
-  runtime_env.py           # Runtime-home initialization and built-in pack sync
-  scheduler.py             # Constraint graph, eligibility checking, priority scheduling
-  server.py                # FastAPI app, routes, WebSocket handler
-  state.py                 # SQLite state store for sessions, tasks, workers, events
-  verification_runtime.py  # Verification command execution and auto-fix coordination
-  worker_manager.py        # Subprocess lifecycle, slot management, timeout enforcement
-```
+- **Task idle (`task_idle`, default 420 s).** A worker with no output for this
+  long is killed. Any output line resets the timer except a detail line
+  identical to the previous one (a heartbeat). The server raises a warning
+  alert at 80% of the limit.
+- **Task max (`task_max`, default 0 = unlimited).** Wall-clock cap per task,
+  with a warning alert at 80%.
+- **Stale execute.** If an agent's output file already contains its final
+  result line, the execute script has produced no output for 30 s, and no
+  status sidecar exists yet, the worker is killed. This catches wrappers that
+  hang after their agent exits.
+- **Session max (`session_max`, default 14400 s).** Measured from the start of
+  the current run's execution phase; planning, resolution, and idle time are
+  excluded. On expiry every worker is killed, its task is blocked, and the
+  session becomes `aborted` with full artifacts kept.
 
-### 7.2 Environment Management (uv)
-
-The `switchyard` launcher is a uv PEP 723 script; uv resolves the interpreter and dependencies from the launcher's inline-metadata header and caches the environment on first run. There is no hand-rolled venv, `bootstrap_state.json`, or `os.execv()` re-exec.
-
-Runtime-home setup (creating `~/.cognitive_switchyard/`, ensuring `config.yaml`, syncing built-in packs) lives in `runtime_env.py` and is invoked by stateful CLI handlers via `initialize_runtime_environment(settings)`; `default_runtime_settings()` resolves the already-parsed `--runtime-root`/`--builtin-packs-root` overrides. Informational commands such as `paths` compute those settings without creating runtime state.
-
-**Dependencies (declared in the `switchyard` PEP 723 header):**
-- fastapi
-- uvicorn
-- wsproto
-- aiosqlite
-- PyYAML
-
-`requirements.txt` is retained for the dev venv and `requirements-dev.txt`; the launcher header is authoritative for the runtime.
-
-### 7.3 Orchestrator Loop
-
-The orchestrator runs in a background thread (not blocking the FastAPI event loop). The main entry point is `execute_session()` in `orchestrator.py`.
-
-```python
-# Pseudocode for execute_session()
-while True:
-    # 1. Session timeout check (monotonic clock)
-    if config.session_max > 0 and monotonic_elapsed() >= config.session_max:
-        kill_all_workers(reason="session timeout")
-        db.update_session(status="aborted", reason=f"Session max timeout exceeded")
-        ws.broadcast(session_aborted)
-        return
-
-    # 2. Collect finished workers
-    for slot in worker_manager.active_slots():
-        if slot.is_finished():
-            result = slot.collect_result()   # reads status sidecar
-            db.write_recovery_metadata(slot)  # cleared after isolate_end
-            pack.isolate_end(slot, result.status)
-            db.update_task(result)
-            db.clear_recovery_metadata(slot)
-            ws.broadcast(task_status_change)
-            completed_since_verification += 1
-            if result.full_test_after:
-                verification_pending = True
-
-    # 3. Check session status (abort/pause short-circuits dispatch)
-    current_status = db.get_session_status()
-    if current_status == "aborted":
-        return
-    if current_status == "paused":
-        time.sleep(poll_interval)
-        continue
-
-    # 4. Verification interval management
-    if (not verification_pending
-            and config.verification_interval > 0
-            and completed_since_verification >= config.verification_interval):
-        verification_pending = True
-
-    # 5. Run pending verification (only when no active tasks)
-    if verification_pending and not worker_manager.has_active():
-        run_verification()  # may trigger auto_fix loop; sets status back to running
-        verification_pending = False
-        completed_since_verification = 0
-
-    # 6. Task dispatch loop
-    ready_tasks = db.get_eligible_tasks()
-    for task in scheduler.select_eligible(ready_tasks, db.active_tasks(), db.done_tasks()):
-        slot = worker_manager.next_idle_slot()
-        if slot is None:
-            break
-        workspace = pack.isolate_start(slot, task)
-        db.write_recovery_metadata(slot, task, workspace)  # written before dispatch
-        slot.dispatch(task, workspace)
-        db.update_task(task, status="active", worker_slot=slot.number)
-        ws.broadcast(task_status_change)
-
-    # 7. Deadlock detection
-    if db.has_ready_tasks() and not scheduler.any_eligible() and not worker_manager.has_active():
-        db.log_event("session.deadlock", "Ready tasks exist but none are eligible")
-        # session continues -- human must intervene
-
-    time.sleep(poll_interval)
-```
-
-Key differences from the initial pseudocode design:
-- No `watcher.check_intake()` step -- intake is closed at session start and handled before the execution phase begins.
-- Verification is interval-driven (`completed_since_verification >= verification_interval`), not checked per task completion.
-- Recovery metadata (`recovery.json`) is written **before** dispatch and cleared **after** `isolate_end` completes successfully.
-- Deadlock detection is explicit -- logged as a session event, not an automatic abort.
-
-### 7.4 Timeout Model
-
-Three independent timeout mechanisms protect against runaway tasks and sessions. All are configurable -- pack.yaml sets defaults, user overrides per session in the Advanced config panel.
-
-**Task idle timeout (`task_idle`, default: 420s).** If a task's subprocess produces no stdout or stderr for this many seconds, the orchestrator kills it (SIGTERM, 5s grace, SIGKILL) and moves it to `blocked/` with a reason like "Killed: no output for 420s." This catches hung processes, deadlocked agents, and network stalls. The "no progress" warning on the worker card fires at 80% of the threshold (336s at default) so the user sees it coming. Any output -- log lines, progress markers, even whitespace -- resets the idle timer.
-
-**Task hard timeout (`task_max`, default: 0 / disabled).** Absolute wall-clock cap on any single task. Useful for workloads with known upper bounds (e.g., "no single transcode should take more than 30 minutes"). When set to 0, tasks can run indefinitely (subject only to the idle timeout and session timeout). Killed tasks go to `blocked/` with reason "Killed: exceeded max task time."
-
-**Session timeout (`session_max`, default: 14400s / 4 hours).** Wall-clock cap on the entire session from start to completion. When exceeded, all active workers are killed and the session is marked `aborted` (not `completed`), preserving full artifacts for debugging. This is a safety net against forgetting a running session or infinite retry loops.
-
-**Kill sequence:** SIGTERM first, 5-second grace period for cleanup, then SIGKILL if the process is still alive. The orchestrator records the kill reason in both the task's DB row and the session event log.
-
-**Interaction between timeouts:** Task idle and task max are independent -- whichever fires first wins. Session timeout overrides both and kills everything. A task killed by idle or hard timeout is moved to `blocked/` and the session continues (other tasks keep running, the slot is freed for the next eligible task). A session timeout stops everything.
-
-### 7.5 WebSocket Manager
-
-```python
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-        self.log_subscriptions: dict[int, set[WebSocket]] = {}  # slot -> connections
-
-    async def broadcast_state(self, state: dict):
-        """Push full state update to all connected clients. Message type: state_update."""
-
-    async def send_log_line(self, slot: int, payload: dict):
-        """Push log line to clients subscribed to this slot. Message type: log_line."""
-
-    async def broadcast_task_status_change(self, payload: dict):
-        """Push task status change to all connected clients. Message type: task_status_change."""
-
-    async def broadcast_phase_log(self, payload: dict):
-        """Push phase log line to all connected clients. Message type: log_line."""
-
-    async def broadcast_progress_detail(self, payload: dict):
-        """Push progress detail update to all connected clients. Message type: progress_detail."""
-
-    async def broadcast_alert(self, payload: dict):
-        """Push alert to all connected clients. Message type: alert."""
-```
-
-**Server→client message types summary:**
-
-| Message Type | Broadcast Method | Payload | Target |
-|---|---|---|---|
-| `state_update` | `broadcast_state()` | Full session/dashboard state dict | All connections |
-| `log_line` | `send_log_line()` | Worker log line payload | Slot subscribers only |
-| `task_status_change` | `broadcast_task_status_change()` | Task status payload | All connections |
-| `log_line` (phase) | `broadcast_phase_log()` | Phase log payload | All connections |
-| `progress_detail` | `broadcast_progress_detail()` | Progress update payload | All connections |
-| `alert` | `broadcast_alert()` | Alert with `message` + `severity` | All connections |
-
-**Client→server messages:**
-
-```json
-{ "type": "subscribe_logs", "worker_slot": 0 }
-{ "type": "unsubscribe_logs", "worker_slot": 0 }
-```
-
-Log streaming is per-slot, opt-in. The main monitor view subscribes to the last ~5 lines per active worker (summary mode). The Task Detail View subscribes to full streaming for the selected worker.
+Kills send SIGTERM, wait a 5-second grace period, then SIGKILL. A task killed
+by idle, max, or stale-execute is handled like any task failure (auto-fix if
+eligible, otherwise blocked); the slot is freed and the run continues. The
+reason goes to the event log, the session log, and an error alert.
 
 ---
 
-## 8. Implementation Status
+## 8. Crash Recovery and Restart
 
-The core engine, state store, recovery logic, CLI, FastAPI/WebSocket backend, embedded React UI, pack tooling, and coding packs described by this design are implemented. The bundled `test-echo` pack provides an external-tool-free pipeline check; `claude-code`, `codex-hybrid`, and `codex` provide the supported coding workflows. Non-coding example packs remain future extensions rather than launch requirements.
+Idempotency is guaranteed for the orchestrator's own operations: file moves,
+state transitions, worker lifecycle, and dispatch decisions. It does not cover
+pack scripts or external tools. The orchestrator promises to re-dispatch an
+interrupted task cleanly into a fresh workspace; what happens inside that
+workspace is the pack's responsibility (section 4.3).
 
----
+The rule is: **incomplete work is reverted, completed work is preserved.**
 
-## 9. Current Implementation Mapping
+### 8.1 When recovery runs
 
-| Design area | Primary implementation |
-|-------------|------------------------|
-| Runtime paths and session directories | `config.py`, `runtime_env.py` |
-| Manifest schema and pack discovery | `pack_loader.py`, `models.py` |
-| Artifact formats and constraint parsing | `parsers.py`, `scheduler.py` |
-| Durable state and filesystem projection | `state.py` |
-| Planning and resolution | `planning_runtime.py`, `agent_runtime.py` |
-| Dispatch, worker lifecycle, and recovery | `orchestrator.py`, `worker_manager.py`, `recovery.py` |
-| Verification and auto-fix | `verification_runtime.py`, `orchestrator.py` |
-| HTTP, WebSocket, and UI | `server.py`, `html_template.py` |
-| Pack contracts in practice | `cognitive_switchyard/builtin_packs/`, `docs/pack_author_guide.md` |
+Recovery runs when a session in `running`, `paused`, `verifying`, or
+`auto_fixing` is re-entered by `switchyard start` or by Start or Resume in the
+UI. Starting the server does not recover sessions by itself. An unhandled
+exception in a session thread marks the session `aborted`.
 
----
+### 8.2 Execution recovery
 
-## 10. Crash Recovery and Idempotent Restart
+`recovery.py` `recover_execution_session()`:
 
-Every phase of the **orchestrator's** pipeline must be idempotent. If the process is interrupted at any point -- crash, SIGKILL, power loss, user Ctrl-C -- re-running the same command must resume cleanly without manual intervention.
+1. For each `workers/<N>/` holding a plan, read `recovery.json`
+   (`{"task_id", "workspace_path", "pid"}`) to locate the workspace.
+2. Classify by sidecar. `STATUS: done` means completed but uncollected: run
+   `isolate_end` with `done` (a failure is logged as a warning), project the
+   task to `done`, and clear the metadata.
+3. Anything else (no sidecar, `blocked`, or malformed) is incomplete: terminate
+   the recorded PID (SIGTERM, grace, SIGKILL), run `isolate_end` with
+   `blocked`, delete the sidecar, and return the task to **`ready`**, since the
+   failure was infrastructure, not the task. If `isolate_end` fails, the
+   workspace is force-removed only when it lies inside the session directory.
+4. `cleanup_orphaned_workspaces()` handles `recovery.json` files with no plan:
+   it terminates the PID and runs `isolate_end` with `blocked`, falling back to
+   removal. Steps 3 and 4 skip `isolate_end` when `isolation.type` is `none`.
+5. `reconcile_filesystem_projection()` brings the database in line with the
+   directories.
 
-**Scope of idempotency guarantee:** Idempotency is a property of the orchestrator, not of user-provided execution scripts. The orchestrator guarantees that its own operations (file moves, state transitions, worker lifecycle, dispatch decisions) are safe to repeat. It does NOT guarantee that the user's executor scripts, pack hooks, or external tools are idempotent. If a user's execute script performs non-idempotent operations (e.g., sending an email, charging a credit card, appending to a remote log without dedup), re-running after a crash may re-execute those operations. Pack authors who perform non-idempotent work in their executors must either: (a) build their own recovery/dedup logic into the executor or `isolate_end` hook, or (b) accept that crash recovery may re-trigger side effects. The orchestrator's contract is: "I will re-dispatch your task cleanly into a fresh isolation workspace" -- what happens inside that workspace is the pack's responsibility.
+`recovery.json` is written right after the worker process starts and cleared
+after `isolate_end` and the state projection commit. A crash between launch and
+that write leaves no metadata: the plan is still reverted to `ready`, but the
+process is not terminated by PID and `isolate_end` receives the session root as
+its workspace.
 
-### 10.1 Recovery Principle
+### 8.3 Planning and resolution recovery
 
-On startup, before entering the normal dispatch loop, the orchestrator runs a recovery pass. Recovery inspects the file-as-state directories and the SQLite database to detect incomplete operations, then rolls them back to the last consistent state. The rule is: **incomplete work is reverted, completed work is preserved.**
+- Every planning run first moves `claimed/` items back to `intake/`. Planning
+  is atomic per item: a plan lands complete in `staging/` or `review/`, or the
+  item returns to intake. Staged and review plans are kept.
+- Every resolution run first deletes `resolution.json`, moves each `ready/`
+  plan back to `staging/`, deletes its task row, and then re-resolves the whole
+  set. Re-running resolution is therefore always safe.
 
-### 10.2 Execution Phase Recovery
+### 8.4 Session state machine
 
-Managed by `recovery.py:recover_execution_session()` and `cleanup_orphaned_workspaces()`.
+| State | Meaning | On start or resume |
+|-------|---------|--------------------|
+| `created` | Draft; not started, or reset after planning or resolution stopped without ready work | Run preflight, planning, resolution, execution |
+| `planning` | Planners running | Re-enter planning; `claimed/` returns to intake |
+| `resolving` | Resolver running | Re-run resolution over staging plus ready |
+| `running` | Execution active | Execution recovery, then resume dispatch |
+| `paused` | Operator pause, or verification or auto-fix exhausted | Start re-enters as paused; Resume sets `running` and continues |
+| `verifying` | Verification command running | Recover, then replay verification |
+| `auto_fixing` | Fixer running | Recover, replay verification, then continue the fix loop from the next attempt |
+| `idle` | Run finished | New run if new intake, ready, or blocked work exists; End Session completes it |
+| `completed` | Ended by the operator; trimmed | Read-only history |
+| `aborted` | Operator abort, session timeout, or thread crash | Read-only history; artifacts kept |
 
-**`recover_execution_session()` — main recovery loop:**
+Pausing stops new dispatch. Active workers finish, and then the loop exits.
 
-1. **Scan worker slot directories** (`workers/<N>/`) for `*.plan.md` files. Any plan found here was in-flight at crash time.
+### 8.5 Idempotency by operation
 
-2. **Look up recovery metadata.** Each dispatched task has a `recovery.json` written to its slot directory containing `task_id`, `workspace_path`, and `pid`. The recovery pass reads this to locate the correct workspace.
-
-3. **Classify each worker result** by reading the status sidecar:
-   - `STATUS: done` → completed, not yet collected.
-   - Missing sidecar, `STATUS: blocked`, or malformed sidecar → incomplete.
-
-4. **Preserve completed tasks:**
-   - Run `isolate_end` hook with `final_status="done"` (merge).
-   - Update DB task status to `"done"`.
-   - Clear recovery metadata.
-
-5. **Revert incomplete tasks:**
-   - Terminate any stale PID (SIGTERM → 5s grace → SIGKILL).
-   - Run `isolate_end` hook with `final_status="blocked"` (cleanup without merge).
-   - If `isolate_end` fails, forcibly remove the workspace and log a warning.
-   - Delete the status sidecar if present.
-   - Update DB task status to `"ready"` (not `"blocked"`) — the failure was infrastructure, not task-level.
-   - The task will be re-dispatched on the next eligible cycle.
-   - Clear recovery metadata.
-
-6. **Reconcile filesystem with DB.** After the slot-by-slot pass, `reconcile_filesystem_projection()` scans all state directories and updates the DB to match the filesystem. The filesystem is the source of truth.
-
-**`cleanup_orphaned_workspaces()` — secondary cleanup:**
-
-Runs after the main loop. Scans worker slot directories for leftover `recovery.json` files whose corresponding plan file was never written or was lost (hard-crash edge case). For each:
-- Terminate any stale PID.
-- Run `isolate_end` with `final_status="blocked"`.
-- If `isolate_end` fails, forcibly remove the workspace directory.
-- Clear recovery metadata.
-
-**Recovery metadata format (`workers/<N>/recovery.json`):**
-
-```json
-{ "task_id": "023", "workspace_path": "/path/to/worktree", "pid": 12345 }
-```
-
-Written **before** dispatch, cleared **after** `isolate_end` completes successfully. If the orchestrator crashes between write and clear, the metadata survives and drives recovery.
-
-### 10.3 Planning Phase Recovery
-
-If planners were interrupted mid-planning:
-
-1. **Plans in `claimed/`.** These were being worked on by a planner. Move them back to `intake/`. The planner's partial work (if any) is discarded -- planning is atomic (either a complete plan lands in `staging/` or the intake item returns to `intake/`).
-
-2. **Plans in `staging/`.** These are complete and valid. Leave them. They will be picked up by the next resolution run.
-
-3. **Plans in `review/`.** These need human input. Leave them. They were already complete enough to surface questions.
-
-### 10.4 Resolution Phase Recovery
-
-Resolution is inherently idempotent. The resolver reads all plans in `staging/`, produces a constraint graph, and moves resolved plans to `ready/`. If interrupted:
-
-1. **Partial `resolution.json`.** Delete it. It will be regenerated on the next resolution run.
-2. **Plans partially moved to `ready/`.** Check each plan in `ready/` -- if it has constraint metadata (DEPENDS_ON, ANTI_AFFINITY, EXEC_ORDER), it was fully resolved. If not, move it back to `staging/`.
-3. Re-running resolution on already-resolved plans is safe -- it overwrites the constraint metadata with the same values.
-
-### 10.5 Session State Machine
-
-Sessions have explicit states that govern what the orchestrator does on startup:
-
-| State | Meaning | On restart |
-|-------|---------|------------|
-| `created` | Session exists but hasn't started | Show Setup View, wait for Start |
-| `idle` | Session started, between cycles, waiting for tasks or operator action | Resume from idle; re-enter dispatch loop |
-| `planning` | Planners are running | Recovery: move `claimed/` back to `intake/`, re-launch planners |
-| `resolving` | Resolver is running | Recovery: delete partial resolution, re-launch resolver |
-| `running` | Execution phase active | Recovery: collect completed, revert incomplete, resume dispatch |
-| `paused` | User paused dispatch | Resume as paused (don't auto-resume) |
-| `verifying` | Verification suite running | Recovery: re-run verification |
-| `auto_fixing` | Auto-fix agent is running after verification failure | Recovery: re-run auto-fix |
-| `completed` | All tasks done, session finished | No recovery needed, show results |
-| `aborted` | User aborted or session timeout exceeded | No recovery needed, show final state |
-
-The session state is persisted in SQLite. On restart, the orchestrator reads the state and enters the appropriate recovery path.
-
-### 10.6 Idempotency Guarantees by Operation
-
-| Operation | Idempotent? | How |
-|-----------|-------------|-----|
-| File move (intake -> claimed) | Yes | Atomic `os.rename()`. If file already gone, another planner claimed it -- skip. |
-| Plan write (planner -> staging) | Yes | Write to temp file, then atomic rename. Partial writes don't produce valid plan files. |
-| Resolution | Yes | Overwrites constraint metadata. Same input produces same output. |
-| Worker dispatch | Yes | Plan moves from `ready/` to `workers/<N>/`. If already in worker slot, skip. |
-| Status sidecar write | Yes | Written atomically by executor. Presence = completion signal. |
-| Isolation merge (isolate_end) | Idempotent if pack implements it correctly. | Pack contract requires `isolate_end` to be safe to call multiple times. If already merged, the hook must detect this (e.g., branch already deleted) and return success. |
-| Database updates | Yes | All writes are conditional (UPDATE WHERE status = expected_status). Race-safe. |
-
-### 10.7 Implementation Requirements for Pack Authors
-
-Pack lifecycle hooks MUST be idempotent:
-
-- `isolate_start`: If the workspace already exists from a previous interrupted run, clean it up and recreate. Do not fail with "already exists."
-- `isolate_end`: If the merge was already completed (e.g., branch already merged and deleted), return success. Do not fail with "branch not found."
-- `execute`: The orchestrator re-dispatches failed/interrupted tasks from scratch in a fresh isolation workspace -- it does not attempt to resume mid-step. The executor itself does not need to be idempotent *for orchestrator recovery purposes*. However, if the executor performs external side effects (API calls, file uploads, notifications, database writes outside the isolation workspace), the pack author is responsible for making those operations safe to repeat, or for accepting the consequences of re-execution. The orchestrator provides the clean workspace; the pack owns what happens inside it.
+| Operation | How |
+|-----------|-----|
+| Claim (intake to claimed) | Atomic `rename`; a missing file means another planner claimed it |
+| Plan, resolution, and recovery-metadata writes | Write to a temp file, then atomic rename |
+| Resolution | Recomputed from scratch on each run (8.3) |
+| Status change | Database commit, then file move; reconciliation repairs a crash in between |
+| Dispatch | One task per slot; dispatching to a busy slot is an error, not a skip |
+| Status sidecar | Written by the executor; its presence and validity signal completion |
+| `isolate_start` and `isolate_end` | Pack contract: safe to repeat (4.3) |
 
 ---
 
-## 11. Maintainer References
+## 9. Design Constraints and Deferred Items
 
-The live implementation and automated tests are the source of truth for current behavior. Start with these references when changing an architectural area:
+### Constraints
+
+- The frontend stays a single embedded HTML string with no build step; peer
+  ESM packages must externalize the import-mapped React (section 6.1).
+- The launcher `switchyard` is a uv PEP 723 script and the single entry point.
+  Its header is authoritative for runtime dependencies; `requirements.txt` and
+  `requirements-dev.txt` reproduce the development and test environment. There
+  is no private venv or bootstrap re-exec. Runtime-home setup is in
+  `runtime_env.py`.
+- The server port is scanned from the preferred default (`find_free_port()`,
+  20 ports from 8100), never hard-coded.
+- Remote execution is a pack concern: an execute hook may SSH or rsync
+  anywhere; the orchestrator only runs it and captures output.
+
+### Deferred
+
+- Multi-tenant or multi-user operation
+- Pack marketplace or sharing
+- CI/CD or webhook-triggered sessions
+- Mobile-first UI (responsive rules are best-effort; the console is
+  desktop-oriented)
+- Non-coding example packs
+
+---
+
+## 10. Maintainer References
 
 | Area | Implementation and contract tests |
 |------|-----------------------------------|
-| Pack parsing and hook safety | `pack_loader.py`, `hook_runner.py`, `tests/test_pack_loader.py`, `tests/test_hook_runner.py` |
+| Runtime paths and session directories | `config.py`, `runtime_env.py` |
+| Pack parsing, sync, and hook safety | `pack_loader.py`, `hook_runner.py`, `tests/test_pack_loader.py`, `tests/test_hook_runner.py` |
 | Scheduling and artifact formats | `scheduler.py`, `parsers.py`, `tests/test_scheduler.py`, `tests/test_parsers.py` |
 | Persistence and recovery | `state.py`, `recovery.py`, `tests/test_state_store.py`, `tests/test_recovery.py` |
-| Planning and agent runtimes | `planning_runtime.py`, `agent_runtime.py`, `tests/test_planning_runtime.py`, `tests/test_agent_runtime.py` |
-| Execution and verification | `orchestrator.py`, `worker_manager.py`, `verification_runtime.py`, their corresponding test modules |
+| Planning, resolution, and agent runtimes | `planning_runtime.py`, `agent_runtime.py`, `tests/test_planning_runtime.py`, `tests/test_agent_runtime.py` |
+| Execution, verification, and auto-fix | `orchestrator.py`, `worker_manager.py`, `verification_runtime.py`, and their test modules |
 | API and frontend contracts | `server.py`, `html_template.py`, `tests/test_server.py`, `tests/test_html_template.py`, `tests/test_e2e.py` |
-| Built-in pack behavior | `cognitive_switchyard/builtin_packs/`, `tests/test_builtin_verify_scripts.py` |
-
----
-
-## 12. Open Items and Future Considerations
-
-### Explicitly deferred
-- Multi-tenant / multi-user support
-- Pack marketplace / sharing
-- CI/CD integration (triggering Cognitive Switchyard from webhooks)
-- Mobile-first UI support; the current responsive rules are best-effort and the operator console remains desktop-oriented
-
-Note: Remote execution (SSH to other machines) is not an orchestrator concern. A pack's execute hook can SSH, rsync, or do whatever it wants -- the orchestrator just runs the hook and captures output. This is handled at the pack level, not the framework level.
-
-### Design constraints for implementing agents
-- All frontend code is in a single HTML string (no separate .js/.css files)
-- React and ReactDOM resolve through the exact six-entry React 19 import map; peer-dependent ESM packages must externalize those mapped peers.
-- Python backend uses only stdlib + fastapi + uvicorn + aiosqlite (minimal deps)
-- No npm install, no node_modules, no webpack/vite
-- Port selection must use the `find_free_port()` pattern (never hardcoded)
-- Self-bootstrapping: single entry point, no separate install step
-
-### React 19 / CDN Lifecycle Risk
-
-React 19 no longer publishes UMD builds, so the no-build UI uses browser ESM
-and an import map. Direct dependency URLs are exact-version pins, but esm.sh
-owns generated transitive routes and CDN responses are not byte-immutable.
-Runtime availability therefore still depends on the external CDNs and network.
-
-**Current loading boundary:** React 19 and ReactDOM are loaded through exact-version esm.sh import-map entries, Babel Standalone 8 compiles the inline JSX as a module, and React Flow v12 is imported as ESM with its React peers externalized. This preserves the no-build architecture while accepting a runtime network dependency and the fact that CDN-generated transitive routes and delivered bytes are not fully immutable. Moving to locally built frontend assets remains the migration path if offline startup or byte-reproducible delivery becomes a requirement.
-
-**Recommendation:** Keep direct CDN versions exact and maintain browser tests
-that assert a single React peer graph plus representative interactions. If the
-network or reproducibility boundary becomes unacceptable, move to locally
-built and served frontend assets; that remains a frontend-only change, leaving
-the backend, pack system, and orchestrator unaffected.
-
-### Maintained Delivery Documentation
-
-The implementation ships with the durable documentation and tooling that grew out of this design:
-
-- `docs/operator_guide.md` for bootstrap, session lifecycle, retention, and troubleshooting
-- `docs/pack_author_guide.md` for the manifest schema, hooks, validation, and local iteration
-- `docs/builtin_*_pack.md` plus pack-local READMEs for bundled pack behavior
-- `init-pack` and `validate-pack` CLI commands for scaffolding and validation
+| Built-in packs | `builtin_packs/`, `docs/builtin_*_pack.md`, `tests/test_builtin_verify_scripts.py` |

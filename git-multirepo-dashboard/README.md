@@ -169,7 +169,7 @@ The six SQLite tables are:
 - `dependencies` — parsed package and health data
 - `scan_log` — fleet scan lifecycle and counts
 
-The maintained design and API reference is [docs/git_dashboard_final_spec.md](docs/git_dashboard_final_spec.md).
+The maintained design and API reference is [docs/git_dashboard_final_spec.md](docs/git_dashboard_final_spec.md). Source comments that mention numbered packets refer to the original packetized build, planned with the [design-document packetization playbook](../coding/design_orch/docs/design_doc_packetization_playbook.md).
 
 ## Development
 

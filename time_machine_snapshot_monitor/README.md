@@ -82,6 +82,7 @@ response, ensuring the job exits before its next scheduled run.
 ## Commands
 
 ```bash
+~/Library/Scripts/tm-snapshot-monitor --check   # one alert-only check (default; what the LaunchAgent runs)
 ~/Library/Scripts/tm-snapshot-monitor --status
 ~/Library/Scripts/tm-snapshot-monitor --repair
 ~/Library/Scripts/tm-snapshot-monitor --test-notification

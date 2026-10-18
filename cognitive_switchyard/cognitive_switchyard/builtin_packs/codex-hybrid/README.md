@@ -19,7 +19,8 @@ with Codex handling execution.
   by the orchestrator. The built-in verifier runs from the effective target
   directory, prefers a worktree-local virtualenv, reuses the source repo's
   virtualenv for compatible worktree sessions, and otherwise bootstraps a
-  session-scoped verification env under the session root. It never falls back
-  to the switchyard bootstrap venv or naked PATH/Homebrew pytest.
+  session-scoped verification env under the session root (`verify_envs/`). It
+  never runs a bare PATH or Homebrew `pytest`. Projects without Python test
+  markers but with a `package.json` run `npm test` instead.
 - Default worker model is `gpt-5.6-sol` (override with `CODEX_WORKER_MODEL` env var).
 - Default worker reasoning effort is `high`.

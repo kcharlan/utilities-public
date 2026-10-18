@@ -1,7 +1,7 @@
 # Git Fleet: Current Design Reference
 
 **Status:** Implemented and maintained
-**Last reconciled with code:** 2026-07-26
+**Last reconciled with code:** 2026-10-18
 
 This document records the durable architecture and behavioral contracts of Git Fleet. It replaces the original implementation-oriented specification, whose bootstrap, schema, and milestone descriptions had diverged from the completed application. `git_dashboard.py` remains the executable source of truth.
 
@@ -24,6 +24,7 @@ The product is deliberately delivered as one executable Python file:
 git-multirepo-dashboard/
   git_dashboard.py
   README.md
+  docs/
   pytest.ini
   tests/
 ```

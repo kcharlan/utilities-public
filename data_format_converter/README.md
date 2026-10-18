@@ -72,10 +72,11 @@ tokenization contract. The page never reads an API key or uploads pasted data.
   use double rather than single quotes
   (`yaml_dump_accepts_whitespace_quote_change`). These byte-level exceptions
   preserve the parsed values.
-- The browser Playwright smoke test covers dependency initialization, one JSON
-  conversion, local token-source labels, and the no-OpenAI-request privacy
-  contract. The Python tests do not validate the HTML/JavaScript
-  implementation, and the browser suite is not a full interaction matrix.
+- The browser Playwright suite covers dependency initialization, one JSON
+  conversion, local token-source labels, the no-OpenAI-request privacy
+  contract, and the YAML compatibility cases above. The Python tests do not
+  validate the HTML/JavaScript implementation, and the browser suite is not a
+  full interaction matrix.
 
 ## Command-line interface
 
@@ -174,9 +175,10 @@ The pytest suite covers each Python converter, CLI success/error paths, default
 output naming, and cross-format round trips. TOML pairs containing null values
 are intentionally excluded because TOML has no null value.
 
-The Playwright suite loads the static page in Chromium and verifies that the
-pinned YAML and TOML browser dependencies initialize and perform a structured
-conversion:
+The Playwright suite serves this directory with a local `http-server` on
+`127.0.0.1:4175`, loads the static page in Chromium, verifies that the pinned
+YAML and TOML browser dependencies initialize and perform a structured
+conversion, and checks the YAML compatibility cases named above:
 
 ```sh
 npm ci

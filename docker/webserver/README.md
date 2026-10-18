@@ -130,7 +130,7 @@ This file configures how Nginx routes requests.
 
 *   **Static File Root:** The `root /usr/share/nginx/html;` directive specifies where Nginx looks for static files. This corresponds to your mounted `webroot`.
 *   **API Endpoints:**
-    *   `location /api/py/`: Routes requests to the Python FastAPI service (now on port 80).
+    *   `location /api/py/`: Routes requests to the Python FastAPI service on port 80.
     *   `location /api/node/`: Routes requests to the Node.js Express service.
     *   `location = /` returns `index.html` when present and only falls back to the file browser when no static landing page exists.
     * `location /` and `location @dynamic_index`: Serve existing paths

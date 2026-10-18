@@ -122,7 +122,7 @@ Run these commands from the private operational directory:
 ## Data Interpretation and Limitations
 
 - Both scripts parse with `iterparse` and clear XML elements, but they retain the selected health records in Python lists or DataFrames. Memory use therefore grows with the number of relevant records in the export.
-- `exercise_bouts.py` counts input lines to estimate progress, while its parser advances by XML events. Treat the progress percentage as approximate.
+- `exercise_bouts.py` counts input lines to estimate progress, while its parser advances by XML events; `extract_workout_stats.py`'s record scan assumes a fixed total of 5,000,000 XML elements. Treat both progress percentages as approximate.
 - Record values are summed as exported. `extract_workout_stats.py` divides walking/running distance totals by 1,000 before writing `distance_km`; `exercise_bouts.py` writes the summed exported values under the same heading without conversion. Check the `unit` attributes in your export before interpreting distance values.
 - `extract_workout_stats.py` strips timezone offsets from workout and record timestamps. `exercise_bouts.py` parses the export timestamps with their offsets, then interprets summary timestamps as `US/Eastern`. Exports recorded in another timezone may be labelled incorrectly.
 - If workouts overlap, the same health record can be included in more than one workout. Exercise bouts use the first overlapping workout found in `workout_summary.csv`.

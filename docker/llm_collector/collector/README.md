@@ -20,6 +20,8 @@ The collector exposes the following endpoints:
 *   `POST /reset`: Resets all usage counters to zero and creates a snapshot of the current totals. Requires a valid API key in the `X-API-KEY` header.
 *   `POST /flush`: Manually triggers a save of the current in-memory state to the `state.json` file. Requires a valid API key in the `X-API-KEY` header.
 
+Request bodies larger than 1 MiB are rejected with HTTP 413.
+
 ## API Data Format
 
 The `/add` endpoint expects a JSON payload with the following structure:
@@ -69,7 +71,7 @@ The collector preserves the extension's idempotency contract:
 
 The collector server authenticates requests using an API key. This key must be provided by clients in the `X-API-KEY` header.
 
-When running the collector, the API key is passed to the application via the `API_KEY` environment variable.
+When running the collector, the API key is passed to the application via the `API_KEY` environment variable. If `API_KEY` is empty or unset, the collector does not check the header at all; the Docker setup refuses to start without it.
 
 If you are running the server directly for development, you can set the environment variable in your shell:
 ```bash
@@ -82,20 +84,31 @@ The `reset_collector.sh` script and the browser extension are also clients of th
 
 ### Daily Bucket Timezone
 
-Accepted `/add` batches are assigned to a `daily_totals` bucket using their `ts` payload and the `BUCKET_TIMEZONE` environment variable. The default is `America/New_York`. Set `BUCKET_TIMEZONE` in `~/.config/llm_collector/secret.env` if you want daily usage to follow a different IANA timezone.
+Accepted `/add` batches are assigned to a `daily_totals` bucket using their `ts` payload and the `BUCKET_TIMEZONE` environment variable. The default is `America/New_York`. Set `BUCKET_TIMEZONE` in `~/.config/llm_collector/secret.env` if you want daily usage to follow a different IANA timezone. When `BUCKET_TIMEZONE` is unset, the collector falls back to `TZ`.
+
+### Other Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_ROOT` | process working directory | Base for the three path defaults below |
+| `STATE_PATH` | `$APP_ROOT/state.json` | Persisted counters and client sequences |
+| `SNAP_DIR` | `$APP_ROOT/snapshots` | Snapshot JSON and `snapshots.csv` |
+| `LOG_PATH` | `$APP_ROOT/collector.log` | Collector log |
+| `LOG_MAX_BYTES` | `10485760` | Rotate the log above this size; `0` disables rotation |
+| `LOG_BACKUP_COUNT` | `5` | Rotated log files kept |
 
 ## Installation
 
-1.  For direct development, create an isolated environment and install the required packages:
+1.  For direct development, use the project's Python 3.14 `.venv` set up as
+    described in [Development and tests](../README.md#development-and-tests).
+2.  Set the `API_KEY` environment variable to a synthetic development key, and
+    point `APP_ROOT` at a private directory outside this public checkout so
+    state, logs and snapshots are not written into the source tree.
+3.  Run the collector from this directory:
     ```
-    python3 -m venv ../.venv
-    ../.venv/bin/pip install -r requirements.txt
+    APP_ROOT="$(mktemp -d)" ../.venv/bin/python collector.py
     ```
-2.  Set the `API_KEY` environment variable to your desired API key.
-3.  Run the collector:
-    ```
-    ../.venv/bin/python collector.py
-    ```
+    The Flask development server listens on `0.0.0.0:9000`.
 
 ## Running with Docker
 

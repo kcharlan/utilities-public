@@ -16,6 +16,8 @@ Command-line tool that flattens a multi-page HTML documentation site, such as a 
 Table conversion favors readable cell text over HTML layout: column spans are
 expanded, but row spans and rich cell markup are not preserved. Internal link
 matching uses literal discovered page paths, without general URL normalization.
+Each page anchor is attached to the page's first `<h2>`, so links to a page
+without one point to a missing anchor.
 
 ## Dependencies
 
@@ -50,4 +52,4 @@ The script prints discovery and per-page progress. On success it creates:
 
 The assets directory is deleted and recreated on every run. Do not use an existing `assets/` directory beside the output for unrelated files. Copied assets are flattened to their base filenames, so source files with the same name can overwrite one another.
 
-Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, `.zip`, `.tgz`, `.png`, `.jpg`, `.jpeg`, and `.gif`. Local `<img>` sources are also copied regardless of extension. Remote URLs and embedded `data:` images are not copied.
+Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, `.zip`, `.tgz`, `.png`, `.jpg`, `.jpeg`, and `.gif`. Local `<img>` sources are also copied regardless of extension. Remote URLs are not copied, and embedded `data:` images are removed as decorative.

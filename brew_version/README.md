@@ -12,7 +12,7 @@ the repository's `agents.md`.
 
 ## Requirements
 
-- macOS 27 or newer. This first release targets the current major version;
+- macOS 27 or newer. Releases target the current major version;
   compatibility with earlier macOS versions is not promised.
 - Xcode or the Command Line Tools providing Swift 6 and the macOS 27 SDK.
 - Node.js for deployment tooling and release build integration tests.
@@ -41,6 +41,8 @@ Node release build integration tests. Those tests build twice in private OS
 temporary space, check that stale signed resources disappear, and hold old
 executable file descriptors to verify their inodes and bytes survive a rebuild.
 They invoke release directly rather than recursively invoking the test target.
+They also check that the release plist, both Mach-O products and the snapshot
+builder require the supported macOS 27 runtime.
 The integration category also runs the acceptance and Settings prototype
 builders with an invented HOME, requiring their printed private homes to be
 children of the OS temporary root with mode 0700.
@@ -259,7 +261,10 @@ is also rejected. If both lists validate but disk persistence fails, the new
 pair and ETags remain available in memory, with a visible cache-write warning;
 successful fetch cadence still advances. A 304 response reuses the decoded
 listings; without a valid index, the client retries unconditionally. Each client
-reads its disk cache once.
+reads its disk cache once. The slim cache, typed decoding and bounded format
+admission exist to keep idle memory well under the 150 MB target: 1.0.0
+measured about 46–70 MiB idle, with a higher transient peak during a cold
+catalog download.
 The bulk transport uses a 10-second idle timeout and a 120-second total timeout.
 Catalog timestamps and the visibility/collapse settings use the same atomic
 state-save boundary as watches, retaining committed values when saving fails.
@@ -310,11 +315,12 @@ package from search or Other updates retries the saved restoration, preserving
 its acknowledgements and skipped version. The recovery line stays visible
 while searching too. The usual five-second expiry applies before a failure.
 
-Other updates on this Mac lists installed, unwatched updates and never alerts.
+**Other updates** lists installed, unwatched updates on this Mac and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. Below the header, the section shows when the list
-was last updated; set how often it refreshes in Settings. The interval menu accepts the presets or a whole
-number of minutes from 10 through 1,440; the footer shows the next check.
+was last updated; set how often it refreshes in Settings. The footer's watch
+interval menu accepts the presets or a whole number of minutes from 10 through
+1,440; the footer shows the next check.
 **Custom…** opens Settings with its minutes field focused; enter a value and
 press Return or Apply. Invalid input remains editable with inline validation.
 The popover uses a 340-point layout that hugs short content; only the package
@@ -357,14 +363,23 @@ popover opened from Finder or a notification closes it. While the item is
 hidden or not yet placed, the popover opens at the top right of the menu-bar
 screen. The Settings window
 is retained after closing, and the gear activates the app and brings that same
-window forward. The
-[implementation record](docs/implementation_notes.md#current-release-acceptance-follow-up)
-lists observed current-system results, including physical row selection,
-Delete/Undo and production Notification Center delivery/click, together with
-the status-item follow-up. The minimum supported runtime is macOS 27, matching the current acceptance
-host. Earlier macOS 14 requirements in the original plan and historical records
-are superseded. Automated tests, offscreen layout and signatures establish no
-native input result.
+window forward. Both reused windows move to the current desktop Space when shown,
+and the panel also appears over a full-screen app.
+
+The panel replaced an `NSPopover` deliberately: an anchored popover joins the
+expanded-interface session as a second owner, and its own transient dismissal
+raced the forwarded clicks, so repeated presses were swallowed or reopened it.
+Keep one owner of open/close. The root lessons file records the observed event
+order and the panel's single sizing contract (root pinned to the window's
+content layout guide) under its 2026-10-17 Brew Version entries in
+[`docs/lessons_learned.md`](../docs/lessons_learned.md).
+
+The minimum supported runtime is macOS 27, matching the acceptance host.
+Automated tests, offscreen layout and signatures establish no native input
+result. Two gates have never been observed natively and rely on automated
+coverage only: the status item's update count through VoiceOver (waived by the
+owner for 1.0.0) and the login item's approval-required state (not reachable
+on the acceptance host).
 
 Record each current-system check separately:
 
@@ -446,8 +461,19 @@ The harness returns invented not-found rows for the numbered names. Arrow to
 the last row and back to the first; require each selection to stay visible,
 the input and footer to remain reachable, and Return/Command-C on the first
 row to watch/copy the expected synthetic formula. Record actual input and
-visibility observations separately from the offscreen layout test; the
-implementation record lists the completed observations and their limits.
+visibility observations separately from the offscreen layout test.
+
+Synthetic tap acceptance: search `synthetic-tool` or the full
+`synthetic-owner/synthetic-tap/synthetic-tool`; check Installed, tap labeling,
+full-name copied upgrade command and watch identity. `synthetic-app` supplies a
+tap cask (version `7.8`) and its `--cask` command; `synthetic-shared` collides
+with the official formula/cask. **Tap failures** injects one HTTP failure and
+one unreadable formula into the installed tap refresh; require both exact
+singular status lines. **Restore tap responses** clears both counts. These
+controls advance only the synthetic clock beyond the refresh floor. **Remove
+tap** parks the synthetic repository outside the tapped tree; a watched tap
+package must show the exact untapped error. **Restore tap** returns it. These
+controls extend the original synthetic cases; none exists in production.
 
 For the minimal Settings-only gate, run
 `make -C brew_version settings-prototype`; it prints a separately signed
@@ -463,21 +489,3 @@ for deploy, dry-run, read-only audit, rollback and fleet-audit commands. The
 installer builds admitted tracked inputs, installs the signed CLI and app as
 one release, and preserves watches and catalog state. It never opens or quits
 the app. Quit and reopen an already running app after deployment.
-
-## Implementation record
-
-The [implementation and acceptance record](docs/implementation_notes.md) lists
-decisions, deviations, automated validation, owner release approval, skipped or
-deferred acceptance checks, and the known desktop-switching follow-up.
-
-Synthetic tap acceptance: search `synthetic-tool` or the full
-`synthetic-owner/synthetic-tap/synthetic-tool`; check Installed, tap labeling,
-full-name copied upgrade command and watch identity. `synthetic-app` supplies a
-tap cask (version `7.8`) and its `--cask` command; `synthetic-shared` collides
-with the official formula/cask. **Tap failures** injects one HTTP failure and
-one unreadable formula into the installed tap refresh; require both exact
-singular status lines. **Restore tap responses** clears both counts. These
-controls advance only the synthetic clock beyond the refresh floor. **Remove
-tap** parks the synthetic repository outside the tapped tree; a watched tap
-package must show the exact untapped error. **Restore tap** returns it. These
-controls extend the original synthetic cases; none exists in production.

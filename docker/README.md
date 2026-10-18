@@ -52,6 +52,8 @@ docker/propagate-updates.zsh deploy
   never deletes or touches local-only files such as `.env`. It then runs the
   deployed `update.sh` for each selected stack that was running, confirms the
   stack is running again from `~/docker`, and leaves stopped stacks stopped.
+  A running stack without an `update.sh` (currently `n8n-poc`), or one running
+  from a Compose file outside `~/docker`, is reported as needing manual action.
   `llm_collector` is synchronized only by its own `migrate.sh`; when its
   deployed copy differs from source, deploy reports that and skips it.
 

@@ -28,8 +28,10 @@ The CLI runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using the 
 ./switchyard start --session demo --pack codex
 ./switchyard start --session demo --pack claude-code --name "My Session"
 ./switchyard serve                                        # Start the web UI server
-./switchyard serve --host 0.0.0.0 --port 8200            # Custom host/port (default: 127.0.0.1:8100)
+./switchyard serve --port 8200                            # Custom port (default: 127.0.0.1:8100)
 ```
+
+The server has no authentication and can launch agents with permission bypass enabled, so keep it bound to `127.0.0.1`.
 
 `serve` opens the UI in the default browser unless `COGNITIVE_SWITCHYARD_NO_BROWSER=1` is set. If the requested port is busy, the server scans the next 19 ports and uses the first available port.
 
@@ -43,20 +45,20 @@ The CLI runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using the 
 4. Run preflight.
 5. Start the session.
 6. Monitor active work in the UI or logs.
-7. Review retained artifacts after completion.
+7. When a run finishes, the session returns to `idle`; add intake and run again, or use **End Session** in the UI to complete it and keep only its history artifacts.
 
 Idle sessions retain their worktrees for further runs. A completed run retains its worktree for validation and merge review; use the completion card's cleanup action when that review is finished. Aborted sessions and explicitly ended idle sessions clean up their worktrees. Deleting, resetting, or purging a session also removes its worktree and cleans up the git worktree reference in the source repo.
 
 ## History and Retention
 
-Successful sessions are trimmed to the retained artifact set:
+A successful run leaves the session `idle`. Ending an idle session (**End Session** in the UI, `POST /api/sessions/{id}/end`) marks it completed, writes `summary.json` and `RELEASE_NOTES.md`, and trims it to the retained artifact set:
 
 - `summary.json`
 - `resolution.json`
 - `logs/session.log`
 - `RELEASE_NOTES.md` when generated
 
-Failed or aborted sessions are not trimmed.
+Blocked or aborted sessions are not trimmed. Completed and aborted sessions that finished more than `retention_days` ago (`config.yaml`, default 30; `0` disables purging) are deleted, with their worktrees, when `start` or `serve` runs.
 
 `RELEASE_NOTES.md` is derived from completed plan `## Operator Actions` sections before trimming. If no completed plan contains that section, no release-notes artifact is retained.
 

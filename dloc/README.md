@@ -8,9 +8,11 @@ number of source-code lines currently present in a repository.
 
 - Reads commit statistics from the repository containing the current working
   directory.
-- Aggregates insertions and deletions across all commits with the same author
-  date.
-- Writes a newest-first Markdown table to standard output.
+- Aggregates insertions and deletions across all commits reachable from the
+  current `HEAD` with the same author date. Merge commits contribute nothing
+  because `git log --shortstat` reports no diff for them by default.
+- Writes a newest-first Markdown table to standard output, with thousands
+  separators in the counts.
 
 ## Requirements
 

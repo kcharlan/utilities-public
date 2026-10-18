@@ -68,7 +68,11 @@ and operate this Mac's launchd jobs.
 - Creates or imports jobs, exports plist files, and validates plist XML before
   saving edits
 - Reads configured stdout/stderr files and recent macOS unified-log entries
-- Creates a timestamped backup before deleting a plist or saving plist edits
+- Creates a timestamped backup before deleting a plist or saving plist edits;
+  backups are listed and restored through the API (`/api/backups`), and a
+  restore copies the plist into `~/Library/LaunchAgents` and loads it there
+- Keeps interface settings (poll interval, Apple-job visibility, dark mode, and
+  confirmation prompts) in `config.json`
 
 The generated FastAPI API reference is available at `/docs` while the server
 is running.

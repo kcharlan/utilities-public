@@ -105,12 +105,12 @@ An Airtable-style grid with sticky headers. Each column header shows:
 
 ### Toolbar
 
-Above the grid, action buttons provide table-level operations:
+Icon buttons in the table header provide table-level operations; hover over each for its tooltip:
 
 | Button | Description |
 |--------|-------------|
-| **Clone** | Copies the table's schema as SQL into the SQL Console for review and execution |
-| **Rename** | Rename the current table |
+| **Clone** (copy icon) | Copies the table's schema as SQL into the SQL Console for review and execution |
+| **Rename** (pencil icon) | Rename the current table |
 | **Refresh** | Re-fetch the table data |
 | **Delete Table** | Drop the table (with confirmation) |
 
@@ -124,7 +124,7 @@ A search box above the grid filters the rows on the **currently loaded page** in
 |---------|-------------|
 | **Previous / Next** | Page navigation buttons (disabled at boundaries) |
 | **Page indicator** | Shows "3 / 10" style page position |
-| **Row range** | Shows "201–300 of 1,245 rows" |
+| **Row range** | Shows "201-300 of 1245" style row position |
 
 The UI page size is fixed at **100 rows**. The underlying table API accepts a maximum of 1,000 rows per request.
 
@@ -330,7 +330,7 @@ Buttons above the data grid handle import and export:
 
 | Format | Description |
 |--------|-------------|
-| **CSV** | Upload a UTF-8 CSV file (up to **50 MB**) to import rows into the current table. Headers must be valid identifiers and must name columns accepted by SQLite for the target table |
+| **CSV** (upload button labeled **Data**) | Upload a UTF-8 CSV file (up to **50 MB**) to import rows into the current table. Headers must be valid identifiers and must name columns accepted by SQLite for the target table |
 
 A success or error message appears after the import completes.
 

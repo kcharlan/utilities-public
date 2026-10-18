@@ -285,7 +285,7 @@ Key camera modifiers:
 - near-pair focus envelope:
   - `nearPairLockMultiplier`
   - `nearPairFocusEnvelopeFactor`
-  - extra `pad = 1.15`
+  - `nearPairEnvelopePadding = 1.15` (extra pad)
 - user run min span:
   - `userRunMinCameraSpan` prevents collapsing too tight immediately after start.
 - screensaver run min span floor:

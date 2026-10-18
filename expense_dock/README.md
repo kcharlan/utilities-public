@@ -34,7 +34,7 @@ Prerequisites:
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - A browser that can reach the frontend CDNs used by the embedded UI (esm.sh,
-  unpkg, Tailwind's CDN, and Google Fonts)
+  unpkg, jsDelivr for Tailwind, and Google Fonts)
 
 From this project directory, run the entrypoint directly:
 
@@ -134,7 +134,7 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 - Receipt filenames are normalized to `YYYY-MM-DD_Vendor_Amount_ShortPurpose.ext`
 - If the normalized receipt filename already exists in the target month folder, Expense Dock reuses it instead of uploading again
 - If the workbook already contains the same receipt link or receipt filename, the submission is treated as already logged (no duplicate row)
-- Large files use a resumable upload session; small files use a direct upload
+- Receipts larger than 4 MB use a resumable upload session; smaller files use a direct upload
 - Receipt uploads are limited to 100 MB
 - OneDrive operations target resolved shared-drive item IDs, not a local OneDrive sync folder
 - Help and instructions are available in the in-app Help modal

@@ -26,6 +26,8 @@ The compiler needs a ready external venv with the locked dependencies:
 export MARKET_ATLAS_TEST_PYTHON="<READY_COMPILER_VENV>/bin/python"
 ```
 
+When it is unset, the runners use `<DATA_HOME>/.venv/bin/python`.
+
 All Python runs inside that venv. Actual isolation, dependencies and imports
 are checked; a patch-version or CPU string alone is not an admission gate.
 See [data environment instructions](../data/README.md).
@@ -66,10 +68,6 @@ external boundaries, cold/warm/offline setup compatibility, private whole-tree
 backup, failed-copy restoration and no-write dry-run. Read-only audit fixtures
 cover source drift, a missing target, missing or empty installed data and
 leftover runtime material; the audit checks installed data for presence only.
-Withdrawn immutable runtime releases, receipt/state machines, AST import proofs,
-strict native metadata admission and exact restoration tests were retired
-when the port adopted the flat copy lifecycle. Application,
-financial, privacy and meaningful recovery coverage is retained.
 
 ## Root audit checks
 

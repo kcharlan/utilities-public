@@ -25,7 +25,9 @@ A browser-based artillery game inspired by the classic QBasic **Gorilla.BAS**. T
 - **Controls:**
   - Adjust **Angle** (0–180°) and **Velocity** (5–100).
   - Press the active player's **Throw** button or `Enter`.
-  - **R** key restarts the round.
+  - **R** key or **New Round** restarts the round; **Reset Scores** clears scores and session stats and starts a new round.
+  - **Stats** opens the session statistics; **Open Help** (in the settings sidebar) shows the rules.
+  - `Escape` closes an open Help, Stats, or Arcade game-over dialog.
 - **Strategy:** Account for **Wind** (indicated in the HUD) and **Gravity**.
 - **Arcade Mode:** You have limited lives. Survive as long as you can against the AI.
 

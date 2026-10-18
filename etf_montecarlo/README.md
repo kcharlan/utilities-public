@@ -21,6 +21,7 @@ The launcher never imports adjacent or legacy configuration. A copied launcher t
 
 [`config.example.json`](config.example.json) documents the schema with only `SYNTH1` and `SYNTH2` and zero placeholder shares. It is deliberately unusable: replace both symbols and every zero or blank setting only in your private `~/.etf_montecarlo/config.json`. Do not copy an edited config back into the repository.
 
+- `schema_version`: must be `1`.
 - `holdings`: 1–100 unique `symbol` and positive `shares` entries. Symbols are normalized to uppercase and may contain 1–32 letters, digits, `.`, `^`, `=`, or `-`; shares may not exceed 1 trillion.
 - `history.years`: 1–100 trailing years of dividend payments to use.
 - `simulation.trials`: 1–1,000,000 simulated annual-income draws. The holding count multiplied by the trial count may not exceed 50,000,000.

@@ -17,7 +17,10 @@ The loop:
 
 The script supports `bootstrap`, `plan`, `run`, `status`, `stop`, and
 `clear-stop` commands. Run `scripts/codex_packet_loop.zsh help` for the full
-environment-variable list.
+environment-variable list. The loop's stage contracts, cadences, timeout and
+retry policy, auto-commit rules, and artifact policy are described in
+[`cognitive_switchyard/docs/codex_packet_loop_orchestrator_design.md`](../../cognitive_switchyard/docs/codex_packet_loop_orchestrator_design.md);
+Cognitive Switchyard carries a near-identical copy of this script.
 
 ## Included files
 

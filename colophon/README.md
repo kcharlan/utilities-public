@@ -61,11 +61,13 @@ COLOPHON_HOME=/path/to/private/native-runtime ./colophon --no-open --codex-home 
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --rebuild --no-open --codex-home /path/to/codex-home
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --codex-home /path/to/codex-home --output /path/to/private/report.html
 COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --claude-home /path/to/claude-config
+COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --opencode-db /path/to/opencode.db
 ```
 
 Without overrides, sources include `~/.codex`, Claude's config projects,
-Desktop embedded project stores and macOS cswap sessions. `--no-claude`
-disables Claude inspection. Readable Codex/Claude input or a reportable
+Desktop embedded project stores, macOS cswap sessions and OpenCode v2
+databases under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`).
+`--no-claude` disables Claude inspection. Readable Codex/Claude input or a reportable
 OpenCode database is sufficient; usable
 Claude history supplies history-only sessions when transcript roots are absent
 or an entry has no matching transcript identity. They show remembered prompts

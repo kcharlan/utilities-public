@@ -21,7 +21,7 @@ and leaves the browser only through the popup's **Export**. See
 This can be useful for understanding relative request activity and usage
 patterns across supported interfaces.
 
-It currently supports tracking usage for **OpenAI (ChatGPT)**, **Perplexity**, **Google Gemini**, **Abacus.ai**, and **T3 Chat**.
+It currently supports tracking usage for **OpenAI (ChatGPT)**, **Perplexity**, **Google Gemini**, **Abacus.ai**, and **T3 Chat**, plus browser-made calls to the OpenAI and Google Generative Language APIs.
 
 ## Folder Structure
 
@@ -32,8 +32,13 @@ It currently supports tracking usage for **OpenAI (ChatGPT)**, **Perplexity**, *
 - `llm_collector_container/`: Docker build, Compose file, and lifecycle scripts.
 - `snapshots/`: Rollup utility, tests, and snapshot format reference. Live
   Docker snapshots are stored in the external data directory.
+- `tests/`: Shell tests for `local_config.sh`.
 - `setup.sh`: Creates or refreshes external local configuration and regenerates
   ignored `extension/config.local.js`.
+- `local_config.sh`: Shared loader for the external secret env and default
+  paths, sourced by the shell scripts.
+- `secret.env.template`: Synthetic template that `setup.sh` copies on first run.
+- `requirements-dev.txt`: Complete development and test dependencies.
 - `migrate.sh`: Safely deploys this source tree to a separate
   `~/docker/llm_collector` operational copy.
 - `reset_collector.sh`: Calls `/reset` with health checks, retries, and local
@@ -54,7 +59,8 @@ For a complete setup guide, see [Installation Guide](INSTALLATION.md).
 In brief:
 
 1.  **Run local setup**: From this project directory, run `./setup.sh`. This creates or updates `~/.config/llm_collector/secret.env`, generates a random API key if one does not already exist, creates the external data directory, and regenerates `extension/config.local.js`.
-2. **Start collector**: Run `llm_collector_container/up.sh`.
+2. **Start collector**: Run `./up.sh` from `llm_collector_container/` (the
+   script runs `docker compose` in the current directory).
 3. **Install extension**: Load the `extension` directory as an unpacked
    extension in a Chromium-based browser.
 

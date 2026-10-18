@@ -46,7 +46,7 @@ A sticky bar across the top of the page with backdrop blur. It contains all cont
 | Control | Description |
 |---------|-------------|
 | **Live indicator** | Green pulsing marker identifying the live-data view; fetch failures are reported separately in the error banner |
-| **Conference** | Dropdown: Eastern or Western |
+| **Conf** | Conference dropdown: Eastern or Western |
 | **Team** | Dropdown: all teams in the selected conference (sorted alphabetically) |
 | **Season** | Dropdown: current year and previous 2 years |
 | **Line** | Number input (1–15): the playoff cutoff position to analyze against (default: 9) |

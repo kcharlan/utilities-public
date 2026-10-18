@@ -76,11 +76,12 @@ For the sample layout, the script attempts to produce:
         └── brief.toml
 ```
 
-The generated command uses the source Markdown body as its `prompt`. If the
-Markdown starts with YAML frontmatter and contains a one-line `description:`,
-that description is used; otherwise the script generates a description from
-the category and filename. Description and prompt values are escaped as TOML
-basic strings, including embedded quotes and newlines.
+The generated command uses the source Markdown as its `prompt`. If the
+Markdown starts with YAML frontmatter, the frontmatter is removed from the
+prompt, and a one-line `description:` in it becomes the description; otherwise
+the script generates a description from the category and filename. Description
+and prompt values are escaped as TOML basic strings, including embedded quotes
+and newlines.
 
 ## Verify in Gemini CLI
 

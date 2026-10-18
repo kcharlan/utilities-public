@@ -49,16 +49,16 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `anduril_steps` – A calculator and solver for configuring "Stepped Ramp" brightness levels (1-150) on Anduril 2 flashlights.
 - `apple-health-extract` – Parse Apple Health `export.xml` to build workout summaries, heart‑rate detail, and incidental exercise bout analytics.
 - `benchmark-llm` – Filesystem-first LLM benchmark runner with three authoring rails: prompt-batch packages, scripted repo-task benchmarks with preserved git worktrees and command provenance, and Python plugin benchmarks via a small `benchsdk` API.
-- `brew_version` – Native macOS [Brew Version](brew_version/README.md) menu bar app and Swift CLI for watching Homebrew package versions. Building requires Xcode or Command Line Tools with Swift 6; deployment requires Node.js.
+- `brew_version` – Native macOS [Brew Version](brew_version/README.md) menu bar app and Swift CLI for watching Homebrew package versions, including third-party taps. Building requires macOS 27 and Xcode or Command Line Tools with Swift 6; deployment requires Node.js.
 - `Calculation tools` – Four standalone finance calculators, an [AI model timeline](Calculation%20tools/ai-model-timeline.html), and the independently maintained [Market Atlas backtest app](Calculation%20tools/backtest/README.md). Market Atlas keeps historical data and local builds outside the public repository; its canonical [installed app](http://127.0.0.1:7711/calculators/backtest/index.html) uses the explicit index route.
 - `Claude_plugin_converter` – Utilities for converting Claude-style plugins (skills and commands) to other CLI formats, currently supporting Gemini CLI.
 - `coding` – Curated coding orchestration reference assets. Contains `task_orch/` (legacy task orchestration scaffold, deprecated in favor of Cognitive Switchyard) and `design_orch/` (design-document packetization and implementation loop extracted from Git Fleet).
 - `cognitive_switchyard` – Local-first task orchestration engine with multi-phase pipeline (intake, planning, resolution, execution, verification, auto-fix), parallel worker dispatch, git worktree isolation, streaming phase logs, and a real-time React monitoring dashboard. Pluggable runner packs make it workload-agnostic.
-- `colophon` – Independently maintained macOS C17 [Codex session explorer](colophon/README.md), with embedded offline-page assets and standalone native/CLI/browser validation.
+- `colophon` – Independently maintained macOS C17 [session explorer](colophon/README.md) that compiles local Codex, Claude Code, and OpenCode sessions, token usage, and API-equivalent cost estimates into a private offline HTML page.
 - `data_format_converter` – A dual-interface utility for analyzing and converting text data formats (JSON, XML, YAML, TOON, TOML) with LLM token count analysis.
 - `div_conv` – Privacy-safe standalone converter for supported Fidelity dividend and Vanguard activity CSV exports, using local-only account/security mappings to produce cooked CSV and QIF output.
 - `dloc` – Daily Lines of Code utility that parses git history to report insertions, deletions, and net changes by date.
-- `docker` – Grouped home for containerized utilities (see `docker/README.md`).
+- `docker` – Grouped home for containerized utilities, plus `propagate-updates.zsh`, which refreshes and audits stack lockfiles and redeploys running stacks (see `docker/README.md`).
 - `docker/actual-data` – Docker helpers for Actual Budget. The current scripts mount the project directory as `/data`, so run them only from a private operational copy and never from a public working copy that could stage financial data.
 - `docker/docker-disk-compact` – macOS Zsh utility for reclaiming Docker Desktop disk space and measuring the real physical size of `Docker.raw`.
 - `docker/excalidraw` – Docker Compose setup for a local Excalidraw whiteboard instance.
@@ -69,8 +69,8 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `docker/webserver` - Local Docker Compose web stack with Nginx, FastAPI, Express, and a configurable file browser/reverse proxy.
 - `doc_linearizer` – Command-line tool that flattens multi-page HTML documentation sites into a single Markdown file, preserving TOC order, numbering, and assets.
 - `docpipe` – Fully local document conversion pipeline. Converts PDF, DOCX, PPTX, HTML, and XLSX to canonical Markdown + JSON for model ingestion.
+- `editdb` – Professional-grade, local web-based SQLite management utility with a React data grid, inline editing, schema changes, a SQL console, and CSV/JSON import and export.
 - `expense_dock` – uv-managed FastAPI + React SPA for OneDrive-based expense intake. Uploads receipts into `YYYY/YYYY-MM`, creates anonymous receipt links, appends the Excel tracker via download-edit-upload, and keeps retry/status state in a local workspace.
-- `editdb` – Professional-grade, local web-based SQLite management utility with a high-performance React data grid and automated schema migrations.
 - `etf_montecarlo` – Privacy-safe historical dividend-income bootstrap simulator whose holdings and run parameters live exclusively in private user-home configuration.
 - `git-multirepo-dashboard` – Local multi-repo git dashboard with fleet overview, branch staleness tracking, monorepo-aware dependency scanning, and fleet-wide analytics.
 - `harscope` – HAR file analyzer and sanitizer with waterfall timing, request inspection, secret detection, sequence diagrams, dashboard stats, and sanitized export.
@@ -80,14 +80,14 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `md-json` – Moneydance JSON export to CSV converter with account hierarchy resolution and split transaction handling.
 - `media-dater` – CLI wrapper for `exiftool` that safely renames image and video files by their creation date with collision handling and dry-run support.
 - `mem_snapshots` – Two manual shell commands for capturing macOS memory and process snapshots; scheduling is optional and not included.
-- `model_sentinel` – Local CLI tracker for authenticated LLM model lists across providers. Stores saved snapshots in SQLite, diffs additions/removals/metadata drift, serves an offline Activity/Models/Catalog history browser, and can run on a schedule via user-level `launchd`.
 - `mls-tracker` – uv-managed FastAPI + React SPA playoff tracker for both MLS conferences, with dynamic ESPN-sourced team branding, a configurable cutoff position, and planning-oriented clinch/elimination indicators that do not model fixtures or tiebreakers.
+- `model_sentinel` – Local CLI tracker for authenticated LLM model lists across providers. Stores saved snapshots in SQLite, diffs additions/removals/metadata drift, serves an offline Activity/Models/Catalog history browser, and can run on a schedule via user-level `launchd`.
 - `moneydance backup rotation` – Standalone shell script that prunes NAS-hosted Moneydance backups by retention day, with optional file and syslog logging.
 - `pdf-split` – Zsh utility that slices large PDFs into size-limited chunks using `qpdf`.
+- `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.
 - `router-log-analyzer` – Standalone NETGEAR and TP-Link Archer router log analyzer with SQLite-backed learning where stable router identity is available, baseline/policy imports, PDF or plain-text parsing, and text/Markdown/HTML/JSON reporting.
 - `routerview` – Self-hosted OpenRouter analytics dashboard for CSV imports, with calendar-aligned comparisons, cumulative cost tracking, saved views, and full export. Replaces the official OpenRouter Activity page without any live integration setup.
 - `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management. A native `getattrlistbulk` walker (C) indexes the volume; building and deploying it requires Xcode Command Line Tools and Node.js.
-- `reversible-skew` – Burrows-Wheeler/Move-to-Front experiment with reversible block-wise compression and passthrough heuristics.
 - `tax2` – Private built-page tax calculator with offline browser computation, QIF payments, and Markdown/CSV reference downloads.
 - `time_machine_snapshot_monitor` – Hourly alert-only macOS monitor for Time Machine local snapshots that remain mounted after backup activity stops, with an explicit safe-repair action, bounded logs, and user-level `launchd` installation.
 - `toggle_wifi` – macOS helper that briefly toggles Wi-Fi when invoked; wake detection or scheduling must be configured separately.
@@ -98,7 +98,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `video-scenes` – Setup and command reference for PySceneDetect scene-boundary workflows.
 - `web_games/gorilla` – Modern browser remake of the classic QBasic **Gorilla.BAS** artillery game with AI opponents and local multiplayer.
 - `web_games/multibody_sim` – Browser-based N-body gravity sandbox/screensaver with user setup mode, collision merges, trails/leads, and JSON save/load.
-- `web_games/rps_screen` – A browser-based Rock Paper Scissors particle simulation with elastic collision physics, auto-restart "screensaver" mode, and customizable game rules.
+- `web_games/rps_screen` – A browser-based Rock Paper Scissors particle simulation with elastic collision physics, auto-restart "screensaver" mode, and adjustable pass-through and save-chance options.
 - `worktree-helper` – Single-file, standard-library Python utility for managing `git worktree` through a curses TUI or CLI. The documented branch-based create flows work; orphan creation is currently unavailable because of a validation conflict.
 
 The runnable projects listed above include a local README with setup and usage guidance; nested example, test, and reference directories may also carry more narrowly scoped READMEs.
@@ -117,6 +117,13 @@ self-contained HTML for browser-only apps.
 Some utilities deliberately duplicate small helpers so copied commands remain
 independent of this checkout.
 
+Shared repository tooling lives in `tools/`: the native and calculator-page
+installers (`deploy_*.mjs`), the read-only fleet deployment audit
+(`check_local_deployments.zsh`), the uv launcher header guard
+(`check_uv_headers.py`), and the `testkit.py` browser and launcher test helpers.
+Their tests are in `tools/tests/`.
+
 Repository updates do not update installed copies. See the
 [deployment guide](docs/local_deployment_sync.md) for installation, verification,
-and rollback, and the [maintenance to-do list](docs/todo.md) for open follow-ups.
+and rollback, the [maintenance to-do list](docs/todo.md) for open follow-ups, and
+the [lessons learned](docs/lessons_learned.md) for cross-project pitfalls.

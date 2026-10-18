@@ -74,7 +74,8 @@ That builds a single-file executable zipapp at:
 ~/Library/Scripts/model-sentinel
 ```
 
-and seeds the runtime-home config files if they do not already exist:
+(pass a target path, such as `./install_standalone.sh "$HOME/bin/model-sentinel"`,
+to install elsewhere; `--check` accepts the same optional path) and seeds the runtime-home config files if they do not already exist:
 
 ```text
 ~/.model_sentinel/providers.env
@@ -142,6 +143,9 @@ The live config files are stored in the runtime home:
 ~/.model_sentinel/providers.env
 ~/.model_sentinel/settings.env
 ```
+
+Set `MODEL_SENTINEL_HOME` to use a different runtime home; the setup scripts,
+installers, and CLI all honor it.
 
 `providers.env` defines which providers exist, whether they are enabled, which
 environment variable each provider uses for credentials, and the default
@@ -409,7 +413,10 @@ artifact.
 ./model-sentinel browse --no-open --port 8110
 ```
 
-`browse` starts a local history browser over the existing SQLite database:
+`browse` starts a local history browser over the existing SQLite database. It
+binds to `127.0.0.1`, prefers port `8110`, and tries the next 19 ports if that
+one is busy; `--port 0` lets the OS choose. `--no-open` skips opening the
+browser, and `Ctrl-C` stops the server.
 
 - **Activity** is an event-first feed with a 180-day heatmap, provider and
   change facets, range presets, bulk-change groups, and raw-value detail.
@@ -706,6 +713,14 @@ Notifications are intentionally simple:
 - do not auto-open Finder or the report as a side effect of sending the notification
 - if `terminal-notifier` is installed, notification clicks can open the configured file or folder target
 - otherwise macOS falls back to a passive notification path without a reliable click-through action
+
+`settings.env` controls the policy: `MODEL_SENTINEL_NOTIFY_DEFAULT` turns
+notifications on or off, `MODEL_SENTINEL_NOTIFY_ON` selects `changes`,
+`errors`, `both`, or `never`, `MODEL_SENTINEL_NOTIFY_OPEN_TARGET` makes a click
+open the report `file` or its `folder`, and `MODEL_SENTINEL_NOTIFY_SOUND` names
+the sound. `scan --notify` or `scan --no-notify` overrides
+`MODEL_SENTINEL_NOTIFY_DEFAULT` for one run; neither overrides
+`MODEL_SENTINEL_NOTIFY_ON=never`.
 
 When notifications fire and you did not explicitly supply `--output`, Model Sentinel writes a report into the configured report directory so the alert has a concrete artifact to point at.
 

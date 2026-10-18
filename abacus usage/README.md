@@ -55,14 +55,16 @@ Missing dates remain blank.
 ```text
 usage: de-abacus.py [-h] [--no-zeros] [-v] input [output]
 
+Convert Abacus.AI JSON usage logs to CSV.
+
 positional arguments:
-  input           Path to input JSON file
-  output          Path to output CSV file (default: input_filename.csv)
+  input          Path to input JSON file
+  output         Path to output CSV file (default: input_filename.csv)
 
 options:
-  -h, --help      show this help message and exit
-  --no-zeros      Leave missing values empty instead of filling with 0
-  -v, --verbose   Enable verbose debug logging
+  -h, --help     show this help message and exit
+  --no-zeros     Leave missing values empty instead of filling with 0
+  -v, --verbose  Enable verbose debug logging
 ```
 
 Use `--no-zeros` to leave missing values blank instead:

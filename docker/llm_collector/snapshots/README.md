@@ -31,7 +31,7 @@ After a snapshot is successfully rolled up, it is renamed with a `.bak` suffix s
 The `snapshots.csv` file will have the following format:
 
 ```csv
-date,chat.openai.com,bard.google.com,...
+date,chat.openai.com,gemini.google.com,...
 YYYY-MM-DD,12345,67890,...
 ```
 
@@ -53,21 +53,23 @@ Where `<timestamp>` is a Unix timestamp in milliseconds representing the time th
 
 ## Format
 
-The snapshots are JSON files containing the collected usage data at the time of the reset. New snapshots include both the backwards-compatible `totals` object and the preferred `daily_totals` object.
+The snapshots are JSON files containing the collected usage data at the time of the reset. New snapshots include both the backwards-compatible `totals` object and the preferred `daily_totals` object, plus the `bucket_timezone` used for the daily buckets and a UTC `created_at` time. Rollup reads only `daily_totals`, or `totals` when `daily_totals` is absent or empty.
 
 ```json
 {
   "totals": {
     "chat.openai.com": 12345,
-    "bard.google.com": 67890
+    "gemini.google.com": 67890
   },
   "daily_totals": {
     "2026-04-25": {
       "chat.openai.com": 12345
     },
     "2026-04-26": {
-      "bard.google.com": 67890
+      "gemini.google.com": 67890
     }
-  }
+  },
+  "bucket_timezone": "America/New_York",
+  "created_at": "2026-04-27T04:00:00.000000+00:00"
 }
 ```
