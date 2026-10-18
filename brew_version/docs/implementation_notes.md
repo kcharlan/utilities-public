@@ -1,5 +1,31 @@
 # Brew Version implementation and acceptance record
 
+## Owner release approval — 2026-10-17
+
+The owner approved releasing version 1.0.0 and merging PR #57 with the
+following acceptance decisions. This approval supersedes the outstanding-gate
+language in the earlier investigation records below.
+
+| Check | Release disposition |
+| --- | --- |
+| Repeated physical status-item open/close | Owner confirmed reliable single-click opening and closing across multiple instances and windows. Closed. |
+| Actual Open at login | Owner confirmed startup after logout/login and after reboot. Closed. |
+| Live panel resizing and complete header/footer | Maintained synthetic build passed search, warning, clear, collapse/expand and both appearances; earlier record gives the separate native and regression evidence. Closed for the reproduced clipping path. |
+| Notification delivery and click opening | Owner previously confirmed Notification Center delivery and a notification click opening the app. Closed. |
+| Notification opening followed by one icon press to close | Owner explicitly deferred this check; a failure can be addressed later. Accepted release limitation. |
+| Status-item count accessibility / VoiceOver | Owner explicitly waived this check for this release. Skipped, not a passing result. |
+| Keyboard focus and desktop/Space behavior | Focus moves, but returning to the app or opening Settings from another desktop switches to desktop 1. Owner accepted this known bug for release and requested a separate follow-up. Not marked fixed. |
+| Login approval-required service state | Not observed on this host; retained automated coverage only. Recorded limitation, not a claimed native pass. |
+
+The desktop follow-up should reproduce opening Settings while another Space
+is active and switching back to the app after moving focus elsewhere. Expected
+behavior is to preserve the current Space, dismissing the panel when focus
+moves away. The observed switch to desktop 1 must be investigated separately;
+no cause or fix is asserted here. The owner will squash-merge PR #57 and delete
+its remote branch. Final local cleanup and deployment await a separate owner
+prompt after that merge. This change records approval; it performs neither
+merge nor deployment.
+
 ## Current release acceptance follow-up
 
 The owner found a real repeated-status-click defect after the earlier visual
@@ -202,7 +228,8 @@ stderr, and actual release binary minimum versions were 27.0. All fourteen final
 light/dark snapshot PNGs were byte-identical to the set inspected earlier that
 day. Scoped independent re-review found no remaining source findings.
 
-Remaining current-system release checks are the physical status/count
+Before the owner release approval above, outstanding current-system checks
+were the physical status/count
 accessibility route on this final build, the new workspace-activation route's
 physical input ordering, one icon press after a notification-click opening,
 actual launch after login and the approval-required login branch. The owner

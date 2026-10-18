@@ -383,4 +383,5 @@ the app. Quit and reopen an already running app after deployment.
 ## Implementation record
 
 The [implementation and acceptance record](docs/implementation_notes.md) lists
-decisions, deviations, automated validation and the outstanding native UI gates.
+decisions, deviations, automated validation, owner release approval, skipped or
+deferred acceptance checks, and the known desktop-switching follow-up.
