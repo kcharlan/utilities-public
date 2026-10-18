@@ -334,7 +334,7 @@ static int priced_order(const void *a,const void *b,void *unused) {
   return x->priority==y->priority?0:x->priority?-1:1;
 }
 static void reset_cost(UsageSummary *s,bool available) {
-  s->has_cost=available;s->cost_usd=0.0;s->unpriced_tokens=0;s->priced_count=0;
+  s->has_cost=available;s->cost_overflow=false;s->cost_usd=0.0;s->unpriced_tokens=0;s->priced_count=0;
 }
 static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool priority,bool fast) {
   if(!period.present)return ERR_SUCCESS;
@@ -342,9 +342,15 @@ static Err add_period(Arena *arena,UsageSummary *s,PricePeriod period,bool prior
   for(size_t i=0;i<s->priced_count;i++)if(!priced_order(&s->priced_by[i],&value,NULL))return ERR_SUCCESS;
   return record_append(arena,(void **)&s->priced_by,&s->priced_count,&s->priced_capacity,sizeof value,&value);
 }
-static Err sum_cost(Arena *arena,UsageSummary *s,const UsageUnit *unit,bool available) {
-  if(unit->has_cost)s->cost_usd+=unit->cost_usd;
-  else {s->has_cost=false;if(available)s->unpriced_tokens+=unit->input+unit->output;}
+static Err sum_cost(Arena *arena,UsageSummary *s,const UsageUnit *unit,bool available,const char *site) {
+  if(unit->has_cost&&!s->cost_overflow) {
+    double next=s->cost_usd+unit->cost_usd;
+    if(!isfinite(next)) {
+      s->has_cost=false;s->cost_overflow=true;
+      event_note("cost_aggregate_overflow",site,1);
+    } else s->cost_usd=next;
+  }
+  else if(!unit->has_cost) {s->has_cost=false;if(available)s->unpriced_tokens+=unit->input+unit->output;}
   TRY(add_period(arena,s,unit->period,false,false));TRY(add_period(arena,s,unit->priority_period,true,false));return add_period(arena,s,unit->fast_period,false,true);
 }
 static Err finish_cost(UsageSummary *s,const char *site) {
@@ -365,15 +371,15 @@ Err compose_refresh_costs(Corpus *corpus,bool available) {
       jsonw_free(&key);if(error.code)goto done;
     }
     for(size_t i=0;i<s->unit_count;i++) {
-      UsageUnit *u=&s->units[i];error=sum_cost(&corpus->usage_arena,s->own_usage,u,available);if(error.code)goto done;
+      UsageUnit *u=&s->units[i];error=sum_cost(&corpus->usage_arena,s->own_usage,u,available,"session.own_usage.cost_usd");if(error.code)goto done;
       UsageSummary *turn=u->display_turn.p?omap_get(&turns,u->display_turn):s->outside_usage;
-      if(turn){error=sum_cost(&corpus->usage_arena,turn,u,available);if(error.code)goto done;}
+      if(turn){error=sum_cost(&corpus->usage_arena,turn,u,available,u->display_turn.p?"turn.usage.cost_usd":"session.outside_usage.cost_usd");if(error.code)goto done;}
       MaybeMs bucket={.present=u->at_ms.present};if(bucket.present)floordiv_i64(u->at_ms.value,900000,&bucket.value);
       JsonWriter key={0};error=bucket_key(&key,bucket,u->model,u->priority_tier);
       UsageSummary *b=error.code?NULL:omap_get(&buckets,(Str){key.data,(uint32_t)key.length});jsonw_free(&key);
       if(error.code)goto done;
       if(!b){error=err_make(ERR_INVALID,"missing composed bucket");goto done;}
-      error=sum_cost(&corpus->usage_arena,b,u,available);if(error.code)goto done;
+      error=sum_cost(&corpus->usage_arena,b,u,available,"session.buckets.*.cost_usd");if(error.code)goto done;
     }
     error=finish_cost(s->own_usage,"session.own_usage.unpriced_tokens");if(error.code)goto done;
     error=finish_cost(s->outside_usage,"session.outside_usage.unpriced_tokens");if(error.code)goto done;

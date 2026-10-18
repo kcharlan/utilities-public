@@ -165,3 +165,15 @@ historical evidence, not available native acceptance commands.
   before touching their value pointer. Exercise malformed maps with recomputed
   checksums and truncated values. Test const encoders against read-only memory:
   comparing values alone misses writes that store the same value.
+
+## Recorded-cost aggregate overflow
+
+Finite request costs can still overflow a session, turn or bucket sum. Check
+addition before publishing the result; keep the affected summary unavailable
+through later additions, and keep independently valid units/summaries intact.
+OpenCode additionally suppresses all authored session costs and cost residuals
+when its message sum fails, while preserving recorded source facts and tokens.
+Explicit valid zero-token/zero-cost requests count as missing usage but are
+exact facts: they do not alone make a token residual's zero cost unknown.
+See `tests/unit/test_opencode_usage.c` for synthetic overflow/isolation and
+zero-tuple regressions.

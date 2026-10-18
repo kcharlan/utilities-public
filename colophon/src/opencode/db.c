@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "db.h"
+#include "compose.h"
 #include "meta/metadata.h"
 #include "parse/record.h"
 #include "testing/hooks.h"
@@ -523,6 +524,7 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
     return ERR_SUCCESS;
 }
 void opencode_store_destroy(OpencodeStore *s) {
+    opencode_usage_destroy(s);
     for(size_t i=0;i<s->session_count;i++)session_maps_destroy(s->sessions[i]);
     omap_destroy(&s->session_ids);omap_destroy(&s->unknown_message_types);omap_destroy(&s->unknown_content_types);
     for(size_t i=0;i<s->database_count;i++)arena_destroy(&s->databases[i].arena);
