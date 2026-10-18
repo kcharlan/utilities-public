@@ -193,6 +193,12 @@ weights so overflow cannot create invalid CSS widths. Recorded OpenCode costs
 carry estimate provenance rather than a missing rate-period warning; mixed
 tooltips must still retain genuine warnings from other providers.
 
+Carry exact cross-task display strings into page regressions: project-only
+OpenCode archives use `ARCHIVED (PROJECT)`, while session archives use
+`ARCHIVED` even when the project is also archived. Assert native provenance
+and all three displayed locations (recent, list and reader), rather than
+locking a paraphrase into a new test.
+
 Count inherited OpenCode messages before request-kind filtering. The diagnostic
 describes every copied row, including prompts, control messages and running
 compactions; request eligibility describes a narrower accounting population.

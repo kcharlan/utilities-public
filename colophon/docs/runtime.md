@@ -124,7 +124,8 @@ Continuation stays disabled: disposable CLI/database acceptance is unmet.
 No empirical evidence currently establishes originating-database routing,
 existing-service behavior or a verified CLI launch mode for `OPENCODE_DB`.
 Copy session ID remains available for live, archived and subagent rows; OpenCode
-offers no Codex links or Copy log path. Project archives are labeled separately.
+offers no Codex links or Copy log path. Project-only archives show `ARCHIVED (PROJECT)`;
+session archives show `ARCHIVED`, including when both archive flags are set.
 Reader, turn, outside-turn and model tooltips identify OpenCode's recorded catalog
 estimates without inventing rate-period warnings. Mixed-provider models retain
 the other providers' real rate provenance, unknown-period and unpriced warnings.

@@ -818,7 +818,7 @@
     return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: archiveLabel(row)})] : []),
       ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
   }
-  const archiveLabel = row => row.archive_reason === "project" ? "PROJECT ARCHIVED" : "ARCHIVED";
+  const archiveLabel = row => row.archive_reason === "project" ? "ARCHIVED (PROJECT)" : "ARCHIVED";
   function listFigures(row) {
     const window = periodWindow(currentState.p, data.meta.generated_at_ms, currentState), children = descendants(row, data.subagents, currentState);
     const buckets = [row, ...children].flatMap(item => windowBuckets(item, window));

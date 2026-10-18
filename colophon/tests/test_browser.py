@@ -194,22 +194,31 @@ def test_opencode_source_states_structured_diagnostics_and_preview(page, native,
         assert requests == []
 
 
-@pytest.mark.parametrize("project_archived", [False, True])
-def test_opencode_native_database_archive_reader_and_estimates(page, native, project_archived):
-    path = database(native, archived=None if project_archived else CLOCK, project_archived=CLOCK if project_archived else None)
+@pytest.mark.parametrize("session_archived,project_archived,label", [
+    (True, False, "ARCHIVED"), (False, True, "ARCHIVED (PROJECT)"), (True, True, "ARCHIVED")])
+def test_opencode_native_database_archive_reader_and_estimates(page, native, session_archived, project_archived, label):
+    path = database(native, archived=CLOCK if session_archived else None, project_archived=CLOCK if project_archived else None)
     assert native.build().returncode == 0
+    assert native.payload()['sessions'][0]['archive_reason'] == ('session' if session_archived else 'project')
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
         row = page.locator('[data-session-id="' + OPENCODE_SESSION + '"]')
-        expect(row).to_contain_text("PROJECT ARCHIVED" if project_archived else "ARCHIVED")
-        row.click()
+        expect(row.locator('.tag')).to_have_text(label)
+        page.locator('.brand').click()
+        recent = page.locator('.recent-row[data-session-id="' + OPENCODE_SESSION + '"]')
+        expect(recent.locator('.session-title')).to_have_text('Synthetic OpenCode kite · ' + label)
+        recent.locator('.session-title').click()
         reader = page.locator('[data-reader]')
+        expect(reader.locator('.reader-header .tag')).to_have_text(label)
         expect(reader).to_contain_text("Synthetic kite done")
         expect(reader.locator('[data-reader-stat="cost"]')).to_contain_text("$0.25")
         for locator in [reader.locator('[data-reader-stat="cost"]'), reader.locator('[data-turn-cost]').first]:
             title = locator.get_attribute('title')
             assert "OpenCode catalog estimate" in title and "rate period unknown" not in title
         expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy log path")).to_have_count(0)
+        expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
         page.set_viewport_size({"width": 375, "height": 812})
         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth")
         assert page.locator('[data-turn-card]').evaluate_all("nodes => nodes.every(e => e.getBoundingClientRect().right <= innerWidth)")
