@@ -34,24 +34,6 @@ struct StatusPresentation {
         } onChange: { [weak self] in Task { @MainActor in self?.observe() } }
     }
 }
-enum PopoverActions {
-    static func shouldAllowTransientClose(event: NSEvent.EventType?, mouseInButton: Bool) -> Bool {
-        let click = event.map { [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp].contains($0) } ?? false
-        return !(click && mouseInButton)
-    }
-    static func toggle(isShown: Bool, show: () -> Void, close: () -> Void) {
-        if isShown { close() } else { show() }
-    }
-}
-@MainActor enum PopoverAppearance {
-    static func apply(_ appearance: NSAppearance?, to popover: NSPopover) {
-        // Popovers inherit the status button's appearance unless overridden;
-        // changing only NSApplication.appearance need not update that content.
-        popover.appearance = appearance
-        popover.contentViewController?.view.appearance = appearance
-        popover.contentViewController?.view.window?.appearance = appearance
-    }
-}
 struct PersistencePresentation {
     let issue: PersistenceIssue?
     var saveHint: String? { issue == .saveFailure ? "Retry the failed action to save it." : nil }

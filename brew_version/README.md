@@ -11,8 +11,9 @@ the repository's `agents.md`.
 
 ## Requirements
 
-- macOS 14 or newer.
-- Xcode or the Command Line Tools providing Swift 6.
+- macOS 27 or newer. This first release targets the current major version;
+  compatibility with earlier macOS versions is not promised.
+- Xcode or the Command Line Tools providing Swift 6 and the macOS 27 SDK.
 - Node.js for deployment tooling and release build integration tests.
 - Network access to Homebrew's HTTPS public API for lookups.
 
@@ -246,8 +247,13 @@ interval, Other updates toggle and Open at login, including the service's status
 and registration errors. The login status refreshes whenever that window becomes
 key; required approval offers **Open Login Items Settings**. Notification
 authorization and posting failures appear in both Settings and the popover,
-with **Retry notifications** after correcting the reported problem. Turn Open at
-login off before quitting a temporary build-folder copy.
+with **Retry notifications** after correcting the reported problem. Settings
+also offers **Send test notification**, which sends a clearly labeled test
+through the same notification service without changing any watches. Allow
+notifications if macOS asks, look for the banner or Notification Center entry,
+then click it and confirm that the popover opens. A submitted request alone
+does not establish delivery. Turn Open at login off before quitting a temporary
+build-folder copy.
 
 The app composes its state and cache paths under the current user's home:
 `~/Library/Application Support/Brew Version/state.json` and
@@ -259,20 +265,36 @@ from a failed save; only the latter calls for retrying the failed action.
 
 ### Settings and native acceptance gates
 
-AppKit owns the application delegate, status item, popover and Settings window;
-SwiftUI supplies their content. The Settings window is retained after closing,
-and the gear activates the app and brings that same window forward. The
-[implementation record](docs/implementation_notes.md#current-native-and-visual-acceptance)
-lists observed current-system results, including physical row selection and
-Delete/Undo, and the remaining status-item and notification-delivery/click
-gates. The minimum supported runtime is unavailable and remains a separate
-release gate. Automated tests, offscreen layout and signatures establish no
+AppKit owns the application delegate, status item, the popover's panel and the
+Settings window; SwiftUI supplies their content. On macOS 27 the system's
+MenuBarAgent hosts the status item. A press on the closed item starts its
+expanded-interface session, whose begin shows the popover in an owned panel;
+the session's end hides it at once, without animation. A press on the item
+while the popover is open reaches neither the app nor the session, so a global
+mouse monitor recognizes that press and closes the popover. Escape, Settings
+and clicks elsewhere hide it and cancel the session. Pressing the icon of a
+popover opened from Finder or a notification closes it. While the item is
+hidden or not yet placed, the popover opens at the top right of the menu-bar
+screen. The Settings window
+is retained after closing, and the gear activates the app and brings that same
+window forward. The
+[implementation record](docs/implementation_notes.md#current-release-acceptance-follow-up)
+lists observed current-system results, including physical row selection,
+Delete/Undo and production Notification Center delivery/click, together with
+the status-item follow-up. The minimum supported runtime is macOS 27, matching the current acceptance
+host. Earlier macOS 14 requirements in the original plan and historical records
+are superseded. Automated tests, offscreen layout and signatures establish no
 native input result.
 
 Record each current-system check separately:
 
-- Mug, amber update count and accessibility state; click the open status item
-  and require it to close and remain closed.
+- Mug, amber update count and accessibility state. Press the status item
+  repeatedly, slowly and quickly; every press must open or close the popover
+  exactly once, with the whole popover, including header and footer, on-screen.
+  Reopen the app from Finder, or click a notification, then press the icon once:
+  the popover must close. Click outside the popover, then press the icon once:
+  it must open. Run these with the menu bar manager running; while it hides the
+  item, Finder reopening places the popover at the top right. One miss fails.
 - First-open and reopen search focus; arrows, Return, Command-C; Return while
   lookup is pending; explicitly choose the cask for a colliding name.
 - Click a watched row and press Delete with default keyboard navigation; Undo
@@ -289,13 +311,22 @@ Record each current-system check separately:
   window, while the status item remains usable.
 - Other updates Watch and fallback source note; turning Other updates off
   preserves suggestions. Watched fallback rows also show their source note.
-- Notification prompt, delivery and notification click opening the popover;
-  authorization denial and posting errors are visible and retryable.
+- Use Settings **Send test notification** to verify permission, visible delivery
+  and a click opening the popover in the production app. Authorization denial
+  and posting errors are visible and retryable.
 - Login registration and any required approval; status refresh on window key;
   Open Login Items Settings action. Record the actual status/error without
   assuming that the signing method determines the result.
 - Light and dark appearances; turn Open at login off, quit both temporary
   apps and the release, and verify that no login registration remains.
+
+Launching `build/release/Brew Version.app` directly is supported for testing.
+The installer is a separate deployment check; it does not repair popover layout.
+After rebuilding, quit the running copy and open the new build to test its code.
+Enabling Open at login on a temporary build registers that bundle location;
+disable it there before switching to the installed copy, then enable it from
+the installed app if desired. Logout/reboot acceptance can be recorded later;
+persisting the switch across Settings reopens establishes only its current state.
 
 `make -C brew_version acceptance` is a required automated validation category.
 It builds a separately identified, signed synthetic bundle in a fresh private

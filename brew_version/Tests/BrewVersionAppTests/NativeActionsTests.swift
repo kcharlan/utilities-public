@@ -7,7 +7,7 @@ import UserNotifications
 @testable import BrewVersionCore
 @testable import BrewVersion
 
-@MainActor private final class NotificationServiceStub: NotificationService {
+@MainActor final class NotificationServiceStub: NotificationService {
     var status: UNAuthorizationStatus = .notDetermined
     var allowed = false
     var fail = false
@@ -37,7 +37,7 @@ private struct SyntheticAuthorizationFailure: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 }
-@MainActor private final class LoginServiceStub: LoginService {
+@MainActor final class LoginServiceStub: LoginService {
     var status: SMAppService.Status = .notRegistered
     var fail = false
     var settingsOpened = false
@@ -310,15 +310,6 @@ private struct ReopenCatalogTransport: HTTPTransport {
             #expect(selection.name == nil)
         }
     }
-    @Test func appearanceAppliesToPopoverAndActualHostedContent() {
-        let popover = NSPopover()
-        popover.contentViewController = NSHostingController(rootView: Text("Synthetic appearance"))
-        for name in [NSAppearance.Name.darkAqua, .aqua] {
-            PopoverAppearance.apply(NSAppearance(named: name), to: popover)
-            #expect(popover.appearance?.name == name)
-            #expect(popover.contentViewController?.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == name)
-        }
-    }
     @Test func fullPopoverKeepsWatchingViewportAfterFreshHostingWithOtherHidden() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-popover-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -358,12 +349,12 @@ private struct ReopenCatalogTransport: HTTPTransport {
         for _ in 0..<2 {
             let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
             let host = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: PopoverFocus(), accessory: nil).makeHostingController()
-            let popover = NSPopover(); popover.contentViewController = host
             let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 560), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentViewController = host
             for appearance in [NSAppearance.Name.darkAqua, .aqua, .darkAqua] {
-                PopoverAppearance.apply(NSAppearance(named: appearance), to: popover)
+                // The status panel carries the appearance for its hosted content.
+                window.appearance = NSAppearance(named: appearance)
                 host.view.frame.size = host.view.fittingSize
                 window.setContentSize(host.view.fittingSize)
                 host.view.layoutSubtreeIfNeeded()
@@ -564,13 +555,8 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(StatusPresentation(amberCount: 0).accessibility == "Brew Version, no watched updates")
         #expect(StatusPresentation(amberCount: 1).accessibility == "Brew Version, 1 watched update available")
         #expect(StatusPresentation(amberCount: 3).accessibility == "Brew Version, 3 watched updates available")
-        #expect(!PopoverActions.shouldAllowTransientClose(event: .leftMouseDown, mouseInButton: true))
-        #expect(!PopoverActions.shouldAllowTransientClose(event: .leftMouseUp, mouseInButton: true))
-        #expect(PopoverActions.shouldAllowTransientClose(event: .keyDown, mouseInButton: true))
-        #expect(PopoverActions.shouldAllowTransientClose(event: .leftMouseDown, mouseInButton: false))
-        var shown = true
-        PopoverActions.toggle(isShown: shown, show: { shown = true }, close: { shown = false })
-        #expect(!shown)
+        // StatusPanelTests exercises session ownership; the former transient
+        // popover close veto consumed clicks before a button action arrived.
         #expect(installedSourceNote(InstalledVersion(version: "1-synthetic", source: .caskroomFallback)) != nil)
         #expect(installedSourceNote(InstalledVersion(version: "1-synthetic", source: .appBundle)) == nil)
         #expect(PersistencePresentation(issue: .recoveryWarning).saveHint == nil)
@@ -587,4 +573,4 @@ private struct ReopenCatalogTransport: HTTPTransport {
     (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)
 }
 @MainActor private final class ChangeFlag { var changed = false }
-private struct QuietNotifier: Notifier { func post(_ notice: Notice) async {} }
+struct QuietNotifier: Notifier { func post(_ notice: Notice) async {} }

@@ -293,8 +293,9 @@ zsh tools/tests/test_check_local_deployments.zsh
 
 Brew Version is a generated native release: the signed command installs at
 `~/Library/Scripts/brew-version` and the signed bundle at
-`~/Applications/Brew Version.app`. Node.js and Swift 6 from Xcode or Command
-Line Tools are required; see [project requirements](../brew_version/README.md#requirements).
+`~/Applications/Brew Version.app`. Node.js, macOS 27 and Swift 6 with the macOS 27
+SDK from Xcode or Command Line Tools are required; see
+[project requirements](../brew_version/README.md#requirements).
 Deploy reviewed source from merged main after the native acceptance gates have
 been completed and live deployment has been authorized:
 

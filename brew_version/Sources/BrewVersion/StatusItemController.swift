@@ -10,35 +10,106 @@ struct StatusContent: View {
     let settings: SettingsWindowController
     let focus: PopoverFocus
     let accessory: AnyView?
+    var dismiss: () -> Void = {}
+    var sizeChanged: (NSSize) -> Void = { _ in }
     var body: some View {
         VStack(spacing: 0) {
-            PopoverView(controller: controller, notifier: notifier, openSettings: settings.show, focusGeneration: focus.generation, openCustomInterval: settings.showCustomInterval)
+            PopoverView(controller: controller, notifier: notifier, openSettings: showSettings, focusGeneration: focus.generation, openCustomInterval: showCustomInterval)
             if let accessory { accessory }
-        }
+        }.fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: NSSize.self, of: { $0.size }, action: sizeChanged)
     }
-    func makeHostingController() -> NSHostingController<StatusContent> {
-        let hosting = NSHostingController(rootView: self)
-        // NSPopover follows preferredContentSize as measured content changes;
-        // intrinsic view size alone does not publish that controller contract.
+    func showSettings() { dismiss(); settings.show() }
+    func showCustomInterval() { dismiss(); settings.showCustomInterval() }
+    func makeHostingController() -> StatusHostingController {
+        let hosting = StatusHostingController(rootView: self)
+        hosting.dismiss = dismiss
+        var content = self
+        content.sizeChanged = { [weak hosting] in hosting?.measuredSizeChanged($0) }
+        hosting.rootView = content
+        // Retained hosting consumers can also read the preferred-size contract.
+        // The owned panel follows SwiftUI's measured content geometry.
         hosting.sizingOptions.insert(.preferredContentSize)
         return hosting
     }
 }
+@MainActor final class StatusHostingController: NSHostingController<StatusContent> {
+    var dismiss: () -> Void = {}
+    var measuredSizeChanged: (NSSize) -> Void = { _ in }
+    override func cancelOperation(_ sender: Any?) { dismiss() }
+}
 @MainActor protocol PopoverPresenting: AnyObject { func showPopover() }
-@MainActor final class StatusItemController: NSObject, NSPopoverDelegate, PopoverPresenting {
+
+/// On macOS 27 MenuBarAgent hosts the status item, so the expanded-interface
+/// session is the reliable record of a press that opens the panel: begin shows
+/// the panel, end hides it, and every owned dismissal hides the panel
+/// synchronously and then cancels the session it was showing. A press on the
+/// icon of an open panel reaches neither this app nor the session, so a global
+/// mouse monitor recognizes that one closing press.
+@MainActor final class StatusItemController: NSObject, @MainActor NSStatusItemExpandedInterfaceDelegate, NSWindowDelegate, PopoverPresenting {
     private let controller: WatchController
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let popover = NSPopover()
+    private let item: NSStatusItem
+    private let panel: StatusPanel
     private let focus = PopoverFocus()
     private let settings: SettingsWindowController
+    private let notifications: NotificationCenter
+    private let screens: () -> [StatusScreen]
+    private let anchor: () -> NSRect?
+    private let pointer: () -> NSPoint
+    private let activate: () -> Void
+    private let cancelSession: (NSStatusItemExpandedInterfaceSession) -> Void
+    private let now: () -> TimeInterval
     private var statusObservation: StatusObservation?
-    init(controller: WatchController, notifier: UserNotifier, accessory: AnyView? = nil) {
+    nonisolated(unsafe) private var globalMouseMonitor: Any?
+    /// The session whose presentation is visible; nil when the panel is hidden
+    /// or was opened by Finder or a notification without a session.
+    private var session: NSStatusItemExpandedInterfaceSession?
+    /// System uptime when the visible session began, on the NSEvent clock.
+    private var sessionBegan: TimeInterval = 0
+    private var iconPressStartedWhileOpen = false
+    init(controller: WatchController, notifier: UserNotifier, accessory: AnyView? = nil,
+         item suppliedItem: NSStatusItem? = nil, panel suppliedPanel: StatusPanel? = nil,
+         settings suppliedSettings: SettingsWindowController? = nil, notifications: NotificationCenter = .default,
+         screens: @escaping () -> [StatusScreen] = { NSScreen.screens.map { StatusScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) } },
+         anchor: (() -> NSRect?)? = nil,
+         pointer: @escaping () -> NSPoint = { NSEvent.mouseLocation },
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         monitorGlobalMouse: (@escaping @MainActor (NSEvent.EventType, NSPoint, TimeInterval) -> Void) -> Any? = { handle in
+             // Global events carry screen locations and uptime timestamps.
+             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+                 let type = event.type, location = event.locationInWindow, time = event.timestamp
+                 MainActor.assumeIsolated { handle(type, location, time) }
+             }
+         },
+         cancelSession: @escaping (NSStatusItemExpandedInterfaceSession) -> Void = { $0.cancel() },
+         activate: @escaping () -> Void = { NSApp.activate(ignoringOtherApps: true) }) {
         self.controller = controller
-        settings = SettingsWindowController(controller: controller, notifier: notifier)
+        let item = suppliedItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        self.item = item
+        panel = suppliedPanel ?? StatusPanel()
+        settings = suppliedSettings ?? SettingsWindowController(controller: controller, notifier: notifier)
+        self.notifications = notifications
+        self.screens = screens
+        self.pointer = pointer
+        self.now = now
+        self.cancelSession = cancelSession
+        self.activate = activate
+        self.anchor = anchor ?? {
+            guard let button = item.button, let window = button.window else { return nil }
+            return window.convertToScreen(button.convert(button.bounds, to: nil))
+        }
         super.init()
-        popover.behavior = .transient; popover.delegate = self
-        popover.contentViewController = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: focus, accessory: accessory).makeHostingController()
-        item.button?.target = self; item.button?.action = #selector(toggle)
+        let hosting = StatusContent(controller: controller, notifier: notifier, settings: settings, focus: focus, accessory: accessory, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
+        let content = StatusPanelContentController(hosting: hosting)
+        content.sizeChanged = { [weak self] in self?.positionPanel() }
+        panel.contentViewController = content
+        item.expandedInterfaceDelegate = self
+        panel.delegate = self
+        panel.dismiss = { [weak self] in self?.dismiss() }
+        notifications.addObserver(self, selector: #selector(applicationResignedActive), name: NSApplication.didResignActiveNotification, object: NSApp)
+        globalMouseMonitor = monitorGlobalMouse { [weak self] type, location, time in
+            if type == .leftMouseDown { self?.globalMouseDown(at: location, time: time) } else { self?.globalMouseUp(at: location) }
+        }
         statusObservation = StatusObservation(controller: controller) { [weak self] presentation in
             guard let self else { return }
             let image = NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: presentation.accessibility)
@@ -49,29 +120,89 @@ struct StatusContent: View {
             self.item.button?.toolTip = presentation.accessibility
         }
     }
-    @objc private func toggle() {
-        PopoverActions.toggle(isShown: popover.isShown, show: showPopover, close: { popover.close() })
+    deinit {
+        notifications.removeObserver(self)
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+    }
+    func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
+        if panel.isVisible && self.session == nil {
+            // Finder or a notification opened the panel without a session, so
+            // the system reports this press as an opening. The user pressed
+            // the icon of an open panel: close it.
+            hidePanel()
+            cancelSession(session)
+            return
+        }
+        self.session = session
+        sessionBegan = now()
+        presentPanel()
+    }
+    func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        // The property is cleared before the end callback. Ends for a session
+        // already dropped here, or for an older session after a newer begin,
+        // leave the current presentation alone.
+        guard let current = session, item.expandedInterfaceSession !== current else { return }
+        session = nil
+        hidePanel()
     }
     func showPopover() {
-        guard let button = item.button else { return }
-        NSApp.activate(ignoringOtherApps: true)
+        guard !panel.isVisible else { return }
+        activate()
+        presentPanel()
+    }
+    func dismiss() {
+        hidePanel()
+        guard let ending = session else { return }
+        session = nil
+        cancelSession(ending)
+    }
+    private func presentPanel() {
+        guard !panel.isVisible else { return }
         focus.generation = UUID()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        positionPanel()
+        panel.makeKeyAndOrderFront(nil)
+    }
+    private func hidePanel() {
+        guard panel.isVisible else { return }
+        panel.orderOut(nil)
+        controller.popoverClosed()
+    }
+    @objc private func applicationResignedActive(_ notification: Notification) { focusLeft() }
+    func windowDidResignKey(_ notification: Notification) {
+        if !panel.isKeyWindow { focusLeft() }
+    }
+    private func focusLeft() {
+        // Pressing the icon takes focus from this app before the system's
+        // matching begin or end arrives. That press belongs to the session;
+        // dismissing for it here would let the begin reopen the panel.
+        guard panel.isVisible, !onIcon(pointer()) else { return }
+        dismiss()
+    }
+    /// The press that opened the panel always went down before its begin
+    /// arrived, so only a press that started later, on the icon, closes it. A
+    /// Finder or notification opening has no session; its begin closes it.
+    func globalMouseDown(at location: NSPoint, time: TimeInterval) {
+        iconPressStartedWhileOpen = session != nil && time > sessionBegan && onIcon(location)
+    }
+    func globalMouseUp(at location: NSPoint) {
+        guard iconPressStartedWhileOpen else { return }
+        iconPressStartedWhileOpen = false
+        if session != nil && onIcon(location) { dismiss() }
+    }
+    private func onIcon(_ point: NSPoint) -> Bool {
+        StatusPanelFrame.iconContains(point, anchor: anchor(), screens: screens())
+    }
+    private func positionPanel() {
+        guard let view = panel.contentViewController?.view else { return }
+        let preferred = (panel.contentViewController as? StatusPanelContentController)?.desiredContentSize ?? .zero
+        let fitting = view.fittingSize
+        let size = NSSize(width: preferred.width > 0 ? preferred.width : fitting.width, height: preferred.height > 0 ? preferred.height : fitting.height)
+        guard let frame = StatusPanelFrame.make(contentSize: size, anchor: anchor(), screens: screens()) else { return }
+        panel.setFrame(frame, display: panel.isVisible)
     }
     func setAppearance(_ appearance: NSAppearance?) {
         NSApp.appearance = appearance
-        PopoverAppearance.apply(appearance, to: popover)
+        panel.appearance = appearance
         settings.setAppearance(appearance)
     }
-    func popoverShouldClose(_ popover: NSPopover) -> Bool {
-        // A transient popover can close on mouse-down before the status button's
-        // mouse-up action. Let that action own toggling so it cannot reopen it.
-        let overButton: Bool
-        if let button = item.button, let window = button.window {
-            overButton = button.bounds.contains(button.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil))
-        } else { overButton = false }
-        return PopoverActions.shouldAllowTransientClose(event: NSApp.currentEvent?.type, mouseInButton: overButton)
-    }
-    func popoverDidClose(_ notification: Notification) { controller.popoverClosed() }
 }

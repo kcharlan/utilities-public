@@ -1,6 +1,149 @@
 # Brew Version implementation and acceptance record
 
-## Final visual and correctness round
+## Current release acceptance follow-up
+
+The owner found a real repeated-status-click defect after the earlier visual
+round: first open/close works, but subsequent popovers can be clipped above the
+screen. Fresh-host renders and ordinary app-reopen checks did not establish
+this path. Passing automated suites or changing the deployment target alone
+did not close the defect.
+
+A later owner check found that the top appeared complete but repeated status
+presses were swallowed. Passive logging of the distinctly labeled synthetic
+TEST item correlated six such presses with our transient-close veto and no
+subsequent button action. The veto assumed AppKit would deliver that action.
+An outside click closed the popover normally. This establishes the click bug's
+cause; it does not establish the cause of the original clipped screenshot.
+The menu bar manager had hidden TEST initially, which was a diagnostic identity
+problem rather than evidence that the manager caused the app's click defect.
+
+A private candidate replaced manual target/action ownership with macOS 27's
+public expanded-interface delegate/session lifecycle. The owner then performed
+ten actual TEST status presses and confirmed that every click worked, with no
+clipping and the complete header/footer visible. Passive session/close logs
+corroborated alternating transitions and stable on-screen geometry. A subsequent
+Finder-reopen check exposed an already-visible session-start case. Adopting
+that session fixed Finder reopening, but the owner's follow-up again found
+missed closing clicks; its trace showed immediate close/reopen sessions. The
+status correction therefore remains unaccepted while native-session ownership
+and the popover's independent transient tracker are isolated. Production
+integration, retained controller regressions and final review are in progress.
+
+The owner also recalled a CodexBar click fix. Its actual historical patch and
+upstream [menu-card repair](https://github.com/steipete/CodexBar/commit/7465c6a11674d4cacb97b8f023dd9ad8fc70e446)
+use parent-view mouse-down/up ownership for controls inside a native menu.
+Its separate [shortcut repair](https://github.com/steipete/CodexBar/pull/1470)
+avoids queued reopening during menu tracking. These are relevant ownership
+examples, rather than a verified drop-in popover fix. A minimal always-allow
+close control still needed two clicks, and exposed a late mouse-up action
+after native dismissal. A mouse-down-only candidate also failed intermittently:
+a fresh click during an unfinished close was treated as another close because
+the popover still reported itself shown. Ten successful physical cycles followed
+by another failure did not establish acceptance. The controller's logical
+presentation and close-completion boundary remain under investigation.
+No CodexBar implementation was copied.
+
+The chosen replacement architecture keeps the existing rich content in an
+owned panel, using the expanded-interface session to show it and synchronously
+order it out. This follows Apple's documented custom-window lifecycle and
+removes the popover's separate tracker and animated-close state. Compared with
+another mouse-action workaround or a custom-view menu, it preserves the existing
+search and row controls while requiring explicit sizing, screen containment,
+keyboard and programmatic-opening regressions.
+
+The root cause was established afterwards from the retained private traces and
+the host itself. macOS 27's MenuBarAgent
+(`/System/Library/CoreServices/MenuBarAgent.app`, which registers the
+`com.apple.appkit.status-items` workspace) hosts status items: the app owns no
+status-bar window, and the button receives forwarded clicks. Every mouse event
+the button received had event number 0; one press/release pair was stamped
+1 µs apart and another release arrived 0.76 s after its press. In the
+always-allow control the popover dismissed itself on a forwarded mouse-up and
+the toggle action arrived 0.40–0.66 s later, against a 0.54–0.56 s close
+animation, so each close was a race; one of seven reopened. Every app-initiated
+popover show was followed 30–116 ms later by a session begin with no press
+(seven of seven), while app-initiated panel shows produced none: a popover
+anchored to the button joins the session itself, a second owner. The first
+panel candidate still failed the Finder-reopen close. Pressing the icon took
+focus from the app about 45 ms before the begin, the resign handlers hid the
+panel, and the begin reopened it. Placeholder anchors such as (0, −39) also
+placed that panel at the lower-left screen corner.
+
+The integrated controller therefore has one owner. Begin shows the panel and
+the session's end hides it. Owned dismissal (Escape, Settings, custom interval,
+focus moving elsewhere) hides synchronously, then cancels the session it was
+showing. Late or stale ends are ignored by session identity, so no request
+waits on an acknowledgment. A begin while a Finder- or notification-opened
+panel is visible closes it. Focus loss while the pointer is on the placed
+icon's menu-bar column is left to the session. An anchor counts as placed only
+when its center lies in a screen's menu bar: a placed item's window can be
+taller than the bar, such as (1599, 1277.5, 22, 64) on a 39-point bar.
+Otherwise the panel opens at the top right of the first screen. NSPopover,
+`PopoverActions` and `PopoverAppearance` are gone from production.
+
+The first physical round on that controller opened on every press but never
+closed on one. A passive TEST event log showed why: while a session shows the
+panel, a press on the item delivers no event, no focus change and no end to the
+app; only moving to another item or focusing another app ended the session.
+Other developers report the same macOS 27 behavior ("left-click while open no
+longer toggles (event is missing?)") in
+[Apple's developer forums](https://developer.apple.com/forums/thread/832823),
+and Apple's [WWDC26 guidance](https://developer.apple.com/videos/play/wwdc2026/289/)
+covers only begin, end and cancel. The press does reach MenuBarAgent, so a
+global left-mouse monitor (no permission needed for mouse events) recognizes
+it. A press closes the panel only when it went down after the session began and
+went down and up on the item's column. The opening press always goes down
+before its begin arrives, so it cannot close its own panel; event timestamps
+and `ProcessInfo.systemUptime` share one clock. Finder and notification
+openings have no session, so their closing press is still left to the begin.
+
+Results on the checkout, 2026-10-17: `make -C brew_version test` ran 221 Swift
+tests (150 core, 11 CLI, 60 app including 24 panel tests) and 5 release/build
+cases, all passing with none skipped. `make -C brew_version release` signed and
+verified both products; `--help` and `--version` (1.0.0) passed. `make -C
+brew_version acceptance` passed its service case and built the harness. `make
+-C brew_version snapshots` validated all fourteen PNGs, byte-identical to the
+inspected set from earlier that day. Removing the pointer check, the press time
+rule or the press close each makes its regressions fail. On a private synthetic
+TEST build of this source, with the menu bar manager running, the owner's
+physical round closed on 8 of 8 icon presses, including cycles of about half a
+second, with no reopen; every opening press was ignored by the close rule
+(begin arrived 50–85 ms after mouse-down, before mouse-up), and pressing a
+neighboring item closed it. A follow-up check reopened the running TEST app the
+way Finder does; one press on its icon closed the panel and it stayed closed.
+The log showed the recorded order: the press took focus from the app, the
+focus-loss handlers left the panel alone because the pointer was on the icon,
+the begin arrived 40 ms after mouse-down and closed the panel by cancelling its
+new session, and no reopen followed. The notification-click opening uses the
+same programmatic path but was not pressed in this round.
+
+The first release now targets macOS 27, matching the available development and
+acceptance host. All maintained package, bundle, generated harness/snapshot and
+installer contracts were changed together in 2bd713e. Actual binary metadata
+and retired-runtime rejection tests cover that policy. Earlier macOS 14 gates
+and compatibility promises below are historical and superseded. Version stays
+1.0.0 for this unpublished initial release; no OS installation is required.
+
+Settings now has an ordinary **Send test notification** action using the real
+notification service and click handler, without changing watched packages.
+The owner confirmed that these tests appear in Notification Center and clicking
+one opens Brew Version. Delivery and notification-click acceptance are therefore
+established on the current host. Pop-up banner presentation remains a separate
+OS-setting/delivery-condition investigation; API submission alone is never
+presented as delivered. The owner also confirmed that Open at login persists
+across repeated panel and Settings reopens; actual launch after login is deferred
+until a convenient login/reboot, without requiring one during development.
+
+An independent task review caught diagnostic interference with a failed package
+notification: the original test action could clear or replace its retry payload.
+Commit b436eb2 separates package and diagnostic recovery and guards asynchronous
+completions by request identity. Its full Brew suite passed, and scoped independent
+review found that interference addressed with no new findings. The status
+interaction correction is integrated, and its physical results are recorded
+above; an icon press after a notification-click opening remains unexercised.
+
+## Earlier final visual and correctness round
+
 
 The corrective wave after a081f38 is complete through executable commit
 13b99dd. Independent task reviews, their scoped fix reviews and the final

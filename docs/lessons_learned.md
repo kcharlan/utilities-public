@@ -1,5 +1,69 @@
 # Lessons learned
 
+## 2026-10-17: macOS 27 status items are hosted out of process
+
+MenuBarAgent draws status items and forwards their clicks; the app owns no
+status-bar window. Forwarded presses have event number 0 and unreliable
+press/release timing, and pressing the icon takes focus from the app before the
+expanded-interface session's begin arrives. Any second owner of the open/close
+decision races that session: a transient popover's own dismissal, a button
+action, a popover anchored to the button (which starts a session by itself),
+or dismissing on resign key/active while the pointer is on the icon. Let the
+session open a plain panel; hide synchronously, then cancel.
+
+The session does not close on a second press of its own item: that press
+reaches neither the app nor the session. A global mouse monitor does see it.
+Close only for a press that went down after the session began and went down
+and up on the item; the opening press precedes its begin, and NSEvent
+timestamps share `ProcessInfo.systemUptime`'s clock. The item's own window can
+be taller than the menu bar, so test placement by its center, not its edges.
+Check window ownership (`CGWindowListCopyWindowInfo`) and log what actually
+arrives (a local event monitor plus focus notifications) before trusting an
+in-process event model, and regress the recorded order, not an idealized one.
+
+## 2026-10-17: Verify status-item lifecycle ownership at the real boundary
+
+Refusing transient popover dismissal over a status button assumes its later
+action will arrive. AppKit can consume the gesture instead, leaving repeated
+clicks unable to close the interface. Removing that veto does not by itself
+resolve late actions or a fresh opening request during animated dismissal:
+isShown can remain true until close completion. Regress those callback orders
+through the real controller. Apple's macOS 27 expanded-interface lifecycle
+offers system tracking ownership, but its integration still requires actual
+input verification; an initial ten-click pass followed by failures is not
+acceptance. Helper toggle tests cannot establish native event delivery.
+
+## 2026-10-17: Keep diagnostic notification recovery independent
+
+A test notification must not clear or replace a failed package notification.
+Retain recovery by notice kind and guard asynchronous completions with request
+identity, rather than restoring a shared-state snapshot after an await. Test
+success, denial, posting failure and overlapping completion in both directions.
+Keep Retry visible for pending notices even after authorization recovers.
+
+## 2026-10-17: Observe native event paths without forcing layout
+
+App reopen and accessibility press do not reproduce a physical status-button
+gesture. Correlate actual actions and close callbacks before attributing a fix.
+A diagnostic fittingSize read can force layout and conceal the defect under
+investigation; passive logs should inspect already-loaded bounds and frames.
+Keep synthetic diagnostic labels visibly distinct, including when a menu bar
+manager hides them.
+
+## 2026-10-17: Verify deployment targets in generated binaries
+
+Changing the main package and plist leaves independently generated harness and
+snapshot packages behind. Inspect actual Mach-O minimum versions and bundle
+metadata for every maintained product, and regress installer rejection before
+activation when the supported-runtime contract changes.
+
+## 2026-10-17: Scope private-log permissions to the logs
+
+A process-wide umask 077 can change synthetic source fixture modes and create
+real source/index mismatches in installer tests. Keep the evidence parent private
+and logs mode 0600 while retaining the test commands' normal fixture umask.
+Diagnose and rerun the complete failed category without weakening mode checks.
+
 ## 2026-10-17: Measure complete inline warnings before allocating list height
 
 A Label can truncate recovery guidance to one line in a narrow native popover

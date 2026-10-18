@@ -1,0 +1,489 @@
+import AppKit
+import SwiftUI
+import Synchronization
+import Testing
+@testable import BrewVersion
+
+struct StatusPanelGeometryTests {
+    @Test func anchorsAndSizeChangesStayInsideSyntheticScreens() throws {
+        let screens = [
+            StatusScreen(frame: NSRect(x: 0, y: 0, width: 1200, height: 900), visibleFrame: NSRect(x: 0, y: 40, width: 1200, height: 830)),
+            StatusScreen(frame: NSRect(x: -1500, y: -400, width: 1000, height: 800), visibleFrame: NSRect(x: -1500, y: -360, width: 1000, height: 730))
+        ]
+        for screen in screens {
+            for anchor in [NSRect(x: screen.frame.minX, y: screen.frame.maxY - 22, width: 25, height: 22), NSRect(x: screen.frame.maxX - 25, y: screen.frame.maxY - 22, width: 25, height: 22), NSRect(x: 0, y: -50, width: 25, height: 22)] {
+                for height in [120.0, 540.0, 2000.0] {
+                    let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: height), anchor: anchor, screens: [screen]))
+                    #expect(screen.visibleFrame.contains(frame))
+                    #expect(frame.width == 340)
+                    let expectedHeight: CGFloat = min(CGFloat(height), screen.visibleFrame.height)
+                    #expect(frame.height == expectedHeight)
+                }
+            }
+        }
+    }
+    @Test func validAnchorCentersAndHiddenAnchorFallsBackToVisibleTopRight() throws {
+        let screen = StatusScreen(frame: NSRect(x: -1200, y: 200, width: 1000, height: 800), visibleFrame: NSRect(x: -1200, y: 240, width: 1000, height: 730))
+        let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 200), anchor: NSRect(x: -800, y: 978, width: 24, height: 22), screens: [screen]))
+        #expect(frame.midX == -788 && frame.maxY == 970)
+        let hidden = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 200), anchor: NSRect(x: 0, y: -40, width: 24, height: 22), screens: [screen]))
+        #expect(hidden.maxX == screen.visibleFrame.maxX && hidden.maxY == screen.visibleFrame.maxY)
+    }
+    @Test func placeholderAnchorsNeverPlaceThePanelAtTheScreenEdge() throws {
+        // Geometry recorded on the macOS 27 host: a 39-point menu bar, placed
+        // icons (one in a 64-point window that extends above the screen), and
+        // the placeholders an unplaced or hidden item reports. A placeholder
+        // once put the panel at the lower-left corner, and the tall placed
+        // window was once mistaken for a placeholder.
+        let main = StatusScreen(frame: NSRect(x: 0, y: 0, width: 2056, height: 1329), visibleFrame: NSRect(x: 0, y: 54, width: 2056, height: 1235))
+        let side = StatusScreen(frame: NSRect(x: 2056, y: 200, width: 1600, height: 900), visibleFrame: NSRect(x: 2056, y: 200, width: 1600, height: 876))
+        for placeholder in [NSRect(x: 0, y: -39, width: 34, height: 39), NSRect(x: 0, y: -30.5, width: 67, height: 22), NSRect(x: 6, y: -32, width: 22, height: 64), NSRect(x: 6, y: -51.5, width: 22, height: 64), NSRect.zero] {
+            #expect(StatusPanelFrame.placedAnchor(placeholder, screens: [main, side]) == nil)
+            let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: placeholder, screens: [main, side]))
+            #expect(frame.maxX == main.visibleFrame.maxX && frame.maxY == main.visibleFrame.maxY)
+        }
+        #expect(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: nil, screens: []) == nil)
+        for icon in [NSRect(x: 1203, y: 1290, width: 34, height: 39), NSRect(x: 831, y: 1298.5, width: 67, height: 22), NSRect(x: 1599, y: 1277.5, width: 22, height: 64)] {
+            let frame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: icon, screens: [main, side]))
+            #expect(frame.midX == icon.midX && frame.maxY == main.visibleFrame.maxY)
+        }
+        let sideIcon = NSRect(x: 3000, y: 1076, width: 34, height: 24)
+        let sideFrame = try #require(StatusPanelFrame.make(contentSize: NSSize(width: 340, height: 515), anchor: sideIcon, screens: [main, side]))
+        #expect(sideFrame.midX == sideIcon.midX && side.visibleFrame.contains(sideFrame))
+    }
+    @Test func iconSlotSpansTheMenuBarAndPlaceholdersHaveNone() {
+        let main = StatusScreen(frame: NSRect(x: 0, y: 0, width: 2056, height: 1329), visibleFrame: NSRect(x: 0, y: 54, width: 2056, height: 1235))
+        let icon = NSRect(x: 831, y: 1298.5, width: 67, height: 22)
+        for point in [NSPoint(x: 864, y: 1310), NSPoint(x: 832, y: 1328.9), NSPoint(x: 897, y: 1291)] {
+            #expect(StatusPanelFrame.iconContains(point, anchor: icon, screens: [main]))
+        }
+        for point in [NSPoint(x: 864, y: 1280), NSPoint(x: 820, y: 1310), NSPoint(x: 910, y: 1310)] {
+            #expect(!StatusPanelFrame.iconContains(point, anchor: icon, screens: [main]))
+        }
+        #expect(!StatusPanelFrame.iconContains(NSPoint(x: 17, y: -20), anchor: NSRect(x: 0, y: -39, width: 34, height: 39), screens: [main]))
+        let tall = NSRect(x: 1599, y: 1277.5, width: 22, height: 64)
+        #expect(StatusPanelFrame.iconContains(NSPoint(x: 1610, y: 1310), anchor: tall, screens: [main]))
+        #expect(!StatusPanelFrame.iconContains(NSPoint(x: 1610, y: 1280), anchor: tall, screens: [main]))
+        #expect(!StatusPanelFrame.iconContains(NSPoint(x: 1650, y: 1310), anchor: tall, screens: [main]))
+        // An auto-hidden menu bar reserves no visible frame; its icons still count.
+        let autoHidden = StatusScreen(frame: main.frame, visibleFrame: NSRect(x: 0, y: 54, width: 2056, height: 1275))
+        #expect(StatusPanelFrame.placedAnchor(NSRect(x: 900, y: 1305, width: 24, height: 24), screens: [autoHidden]) != nil)
+    }
+}
+
+private final class PanelItem: NSStatusItem {
+    let anchor: NSStatusBarButton
+    init(anchor: NSStatusBarButton) { self.anchor = anchor; super.init() }
+    override var button: NSStatusBarButton? { anchor }
+    var session: NSStatusItemExpandedInterfaceSession?
+    override var expandedInterfaceSession: NSStatusItemExpandedInterfaceSession? { session }
+}
+private final class PanelSession: NSStatusItemExpandedInterfaceSession { override func cancel() {} }
+private final class PanelSaveCounter: Sendable {
+    private let value = Mutex(0)
+    var count: Int { value.withLock { $0 } }
+    func record() { value.withLock { $0 += 1 } }
+}
+@MainActor private final class OffscreenStatusPanel: StatusPanel {
+    var shown = false
+    var shows = 0
+    var hides = 0
+    override var isVisible: Bool { shown }
+    override func makeKeyAndOrderFront(_ sender: Any?) { shown = true; shows += 1 }
+    override func orderOut(_ sender: Any?) { shown = false; hides += 1 }
+}
+@MainActor private final class PanelFixture {
+    static let screen = StatusScreen(frame: NSRect(x: -900, y: 100, width: 900, height: 700), visibleFrame: NSRect(x: -900, y: 140, width: 900, height: 630))
+    static let icon = NSRect(x: -50, y: 778, width: 22, height: 22)
+    let item = PanelItem(anchor: NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 22, height: 22)))
+    let panel = OffscreenStatusPanel()
+    let notifications = NotificationCenter()
+    var status: StatusItemController!
+    var activations = 0
+    var cancelCount = 0
+    var settingsPresentations = 0
+    var visibleAtSettingsPresentation = false
+    var immediateCancel = true
+    var pointer = NSPoint(x: -600, y: 400)
+    var clock: TimeInterval = 100
+    let store: WatchStore
+    let saves = PanelSaveCounter()
+    init(home: URL) throws {
+        _ = NSApplication.shared
+        let saves = self.saves
+        var io = WatchStoreIO.live
+        io.replace = { source, destination in
+            try WatchStoreIO.live.replace(source, destination)
+            saves.record()
+        }
+        store = WatchStore(fileURL: home.appendingPathComponent("synthetic-panel-state.json"), io: io)
+        var state = AppState.initial; state.showOtherUpdates = false
+        state.watched = (0..<3).map { index in
+            let listing = Listing(name: PackageName("synthetic-panel-\(index)")!, kind: .formula, version: "2-synthetic")
+            return WatchEntry(name: listing.name, kind: .formula, lastListing: listing, unseenRelease: true)
+        }
+        try store.save(state)
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        let notifier = UserNotifier(service: NotificationServiceStub())
+        let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { [weak self] _ in
+            guard let self else { return }
+            settingsPresentations += 1
+            visibleAtSettingsPresentation = panel.isVisible
+        })
+        status = StatusItemController(controller: controller, notifier: notifier, item: item, panel: panel, settings: settings, notifications: notifications,
+            screens: { [Self.screen] }, anchor: { Self.icon },
+            pointer: { [weak self] in self?.pointer ?? .zero },
+            now: { [weak self] in self?.clock ?? 0 },
+            // Tests call the monitor's entry points directly; no global
+            // monitor is installed and no desktop input is observed.
+            monitorGlobalMouse: { _ in nil },
+            cancelSession: { [weak self] _ in
+                guard let self else { return }; cancelCount += 1
+                if immediateCancel { end() }
+            }, activate: { [weak self] in self?.activations += 1 })
+    }
+    @discardableResult func begin() -> PanelSession {
+        let session = PanelSession(); item.session = session
+        item.expandedInterfaceDelegate?.statusItem(item, didBegin: session)
+        return session
+    }
+    func end() {
+        item.session = nil
+        item.expandedInterfaceDelegate?.statusItemDidEndExpandedInterfaceSession(item, animated: true)
+    }
+    static let onIcon = NSPoint(x: icon.midX, y: screen.frame.maxY - 1)
+    static let elsewhere = NSPoint(x: -600, y: 400)
+    /// A press seen by the global monitor: down at `time`, then up.
+    func press(down: NSPoint = onIcon, up: NSPoint = onIcon, at time: TimeInterval) {
+        status.globalMouseDown(at: down, time: time)
+        status.globalMouseUp(at: up)
+    }
+    func pointAtIcon() { pointer = NSPoint(x: Self.icon.midX, y: Self.screen.frame.maxY - 1) }
+    func pointElsewhere() { pointer = NSPoint(x: -600, y: 400) }
+    /// What a press elsewhere, or on the icon, does before the system's begin
+    /// or end: the application resigns active and the panel resigns key.
+    func loseFocus() {
+        notifications.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        status.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: panel))
+    }
+}
+@testable import BrewVersionCore
+@MainActor struct StatusPanelLifecycleTests {
+    @Test func repeatedNativeSessionsAndProgrammaticRequestsUseSameRetainedHost() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        let host = fixture.panel.contentViewController
+        for _ in 0..<6 {
+            fixture.begin(); #expect(fixture.panel.isVisible)
+            fixture.end(); #expect(!fixture.panel.isVisible)
+            #expect(fixture.panel.contentViewController === host)
+        }
+        fixture.status.showPopover(); fixture.status.showPopover()
+        #expect(fixture.activations == 1 && fixture.panel.isVisible)
+        // An end with no session shown here is a stale acknowledgment. It must
+        // not hide a Finder or notification opening; the next press closes it.
+        fixture.end(); #expect(fixture.panel.isVisible)
+        fixture.begin(); #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        #expect(fixture.panel.shows == 7 && fixture.panel.hides == 7)
+    }
+    @Test func ownedDismissalHidesAtOnceAndIgnoresLateAcknowledgment() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin(); fixture.immediateCancel = false
+        fixture.status.dismiss(); fixture.status.dismiss()
+        #expect(fixture.cancelCount == 1 && !fixture.panel.isVisible)
+        // No request waits for the acknowledgment, so a reopen is immediate
+        // and the late end of the cancelled session cannot take it away.
+        fixture.status.showPopover()
+        #expect(fixture.activations == 1 && fixture.panel.isVisible)
+        fixture.end()
+        #expect(fixture.panel.isVisible)
+        fixture.status.dismiss()
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+    }
+}
+
+@MainActor struct StatusPanelOwnershipTests {
+    @Test func lateOldEndCannotHideNewNativePresentation() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.immediateCancel = false
+        fixture.begin(); fixture.status.dismiss()
+        #expect(!fixture.panel.isVisible)
+        let newer = fixture.begin()
+        // Old cancel acknowledgment arrives after a new live SDK session.
+        fixture.item.expandedInterfaceDelegate?.statusItemDidEndExpandedInterfaceSession(fixture.item, animated: false)
+        #expect(fixture.panel.isVisible && fixture.item.session === newer)
+        fixture.status.dismiss()
+        #expect(fixture.cancelCount == 2 && !fixture.panel.isVisible && fixture.panel.hides == 2)
+        // Neither acknowledgment has a presentation left to hide.
+        fixture.end(); fixture.end()
+        #expect(fixture.panel.hides == 2)
+    }
+    @Test func programmaticOpeningSurvivesLateAcknowledgmentAndStillDismisses() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.immediateCancel = false
+        fixture.begin(); fixture.status.dismiss(); fixture.status.showPopover()
+        fixture.end()
+        #expect(fixture.panel.isVisible && fixture.activations == 1)
+        let host = try #require(fixture.panel.contentViewController?.children.first as? StatusHostingController)
+        host.cancelOperation(nil)
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.begin(); fixture.status.dismiss(); fixture.status.showPopover()
+        fixture.loseFocus()
+        #expect(!fixture.panel.isVisible)
+        fixture.end()
+        #expect(!fixture.panel.isVisible && fixture.activations == 2 && fixture.cancelCount == 2)
+    }
+    @Test func hostingEscapeAndPanelResignUseNativeCancel() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let host = try #require(fixture.panel.contentViewController?.children.first as? StatusHostingController)
+        host.cancelOperation(nil)
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.begin()
+        fixture.status.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: fixture.panel))
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 2)
+        #expect(fixture.panel.canBecomeKey && !fixture.panel.canBecomeMain)
+        #expect(fixture.panel.styleMask.contains(.nonactivatingPanel))
+    }
+    @Test func actualHostingPreferredSizeChangesRepositionRetainedPanel() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let content = try #require(fixture.panel.contentViewController as? StatusPanelContentController)
+        let host = try #require(content.children.first)
+        for height in [180.0, 560.0, 220.0] {
+            let hosting = host as! StatusHostingController
+            let root = hosting.rootView
+            hosting.rootView = StatusContent(controller: root.controller, notifier: root.notifier, settings: root.settings, focus: root.focus, accessory: AnyView(Color.clear.frame(height: height)), dismiss: root.dismiss, sizeChanged: root.sizeChanged)
+            hosting.view.layoutSubtreeIfNeeded()
+            await MainActor.run { RunLoop.current.run(until: Date().addingTimeInterval(0.03)) }
+            await Task.yield()
+            #expect(fixture.panel.frame.width == 340)
+            let expectedHeight = min(host.preferredContentSize.height, CGFloat(630))
+            #expect(fixture.panel.frame.height == expectedHeight)
+            #expect(host.preferredContentSize.height > height)
+            #expect(NSRect(x: -900, y: 140, width: 900, height: 630).contains(fixture.panel.frame))
+        }
+    }
+    @Test func observerDoesNotRetainController() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        weak var status: StatusItemController?
+        var notifications: NotificationCenter!
+        try autoreleasepool {
+            var fixture: PanelFixture? = try PanelFixture(home: home)
+            status = fixture?.status
+            notifications = fixture?.notifications
+            fixture = nil
+        }
+        #expect(status == nil)
+        notifications.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+    }
+    @Test func appearanceReachesPanelAndHostedContent() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        defer { fixture.status.setAppearance(nil) }
+        let host = try #require(fixture.panel.contentViewController?.children.first)
+        for name in [NSAppearance.Name.darkAqua, .aqua] {
+            fixture.status.setAppearance(NSAppearance(named: name))
+            #expect(fixture.panel.appearance?.name == name)
+            #expect(host.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == name)
+        }
+    }
+}
+@MainActor struct DirectPanelOpeningTests {
+    @Test func programmaticOpeningIsIdempotentAndFirstNativePressCloses() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.status.showPopover(); fixture.status.showPopover()
+        #expect(fixture.panel.isVisible)
+        #expect(fixture.item.session == nil)
+        fixture.begin()
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.begin()
+        #expect(fixture.panel.isVisible)
+        fixture.end()
+        #expect(!fixture.panel.isVisible)
+    }
+    @Test func pressingTheIconOfAProgrammaticPanelClosesItOnce() throws {
+        // Recorded order on the macOS 27 host: the press on the icon took focus
+        // from the app about 45 ms before the system's begin. Dismissing for
+        // that focus loss hid the panel, and the begin then reopened it.
+        for immediate in [true, false] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let fixture = try PanelFixture(home: home)
+            fixture.immediateCancel = immediate
+            fixture.status.showPopover()
+            fixture.pointAtIcon(); fixture.loseFocus()
+            #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+            fixture.begin()
+            #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+            if !immediate { fixture.end() }
+            #expect(!fixture.panel.isVisible && fixture.panel.shows == 1 && fixture.panel.hides == 1)
+            // The next press opens again.
+            fixture.begin()
+            #expect(fixture.panel.isVisible && fixture.panel.shows == 2)
+        }
+    }
+    @Test func focusLossFromPressingTheIconLeavesNativeSessionInCharge() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        for _ in 0..<3 {
+            fixture.pointElsewhere(); fixture.begin()
+            fixture.pointAtIcon(); fixture.loseFocus()
+            #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+            fixture.end()
+            #expect(!fixture.panel.isVisible)
+        }
+        #expect(fixture.panel.shows == 3 && fixture.panel.hides == 3)
+    }
+    @Test func focusMovingElsewhereClosesAndTheNextPressOpens() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.status.showPopover()
+        fixture.pointElsewhere(); fixture.loseFocus()
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 0)
+        fixture.begin()
+        #expect(fixture.panel.isVisible)
+        fixture.immediateCancel = false
+        fixture.loseFocus()
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.end()
+        fixture.begin()
+        #expect(fixture.panel.isVisible && fixture.panel.shows == 3 && fixture.panel.hides == 2)
+    }
+}
+@MainActor struct StatusIconPressTests {
+    // Recorded on the macOS 27 host: while a session shows the panel, a press
+    // on the icon delivered no event and no end, so it never closed.
+    @Test func pressingTheIconOfAnOpenNativePanelClosesIt() throws {
+        for immediate in [true, false] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let fixture = try PanelFixture(home: home)
+            fixture.immediateCancel = immediate
+            for cycle in 0..<4 {
+                fixture.clock = 100 + Double(cycle) * 10
+                fixture.begin()
+                #expect(fixture.panel.isVisible)
+                fixture.press(at: fixture.clock + 1)
+                #expect(!fixture.panel.isVisible && fixture.cancelCount == cycle + 1)
+                if !immediate { fixture.end() }
+                #expect(!fixture.panel.isVisible)
+            }
+            #expect(fixture.panel.shows == 4 && fixture.panel.hides == 4)
+        }
+    }
+    @Test func theOpeningPressNeverClosesItsOwnPanel() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        // The monitor sees the opening press before the begin arrives...
+        fixture.status.globalMouseDown(at: PanelFixture.onIcon, time: 99)
+        fixture.begin()
+        fixture.status.globalMouseUp(at: PanelFixture.onIcon)
+        #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+        fixture.end()
+        // ...or after it, still stamped before the session began.
+        fixture.clock = 200
+        fixture.begin()
+        fixture.press(at: 199.98)
+        #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+    }
+    @Test func onlyAPressOnTheIconCloses() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        // Dragging off the icon, or onto it from elsewhere, is not a press on it.
+        fixture.press(up: PanelFixture.elsewhere, at: 101)
+        fixture.press(down: PanelFixture.elsewhere, at: 102)
+        #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+        // An end before the release leaves nothing to close.
+        fixture.status.globalMouseDown(at: PanelFixture.onIcon, time: 103)
+        fixture.end()
+        fixture.status.globalMouseUp(at: PanelFixture.onIcon)
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 0 && fixture.panel.hides == 1)
+    }
+    @Test func programmaticPanelLeavesIconPressToItsBegin() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.status.showPopover()
+        fixture.press(at: 101)
+        #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
+        fixture.begin()
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1 && fixture.panel.hides == 1)
+    }
+}
+@MainActor struct StatusPanelKeyboardTests {
+    @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let search = NSSearchField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        fixture.panel.contentView?.addSubview(search)
+        _ = fixture.panel.makeFirstResponder(search)
+        // Constructing an event for an owned offscreen responder method does
+        // not send, post or synthesize desktop input.
+        let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        #expect(fixture.panel.performKeyEquivalent(with: escape))
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+    }
+}
+@MainActor struct StatusPanelIntegrationTests {
+    @Test func nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        for _ in 0..<6 { fixture.begin(); fixture.end() }
+        #expect(fixture.activations == 0 && fixture.panel.hides == 6)
+        #expect(fixture.saves.count == 2)
+        #expect(fixture.store.load().state.watched.allSatisfy { !$0.unseenRelease && $0.lastSeenRelease != nil })
+        fixture.end(); #expect(fixture.saves.count == 2 && fixture.panel.hides == 6)
+    }
+    @Test func settingsAndCustomIntervalCancelBeforePresentingOwnedSettings() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        let host = try #require(fixture.panel.contentViewController?.children.first as? StatusHostingController)
+        host.rootView.showSettings()
+        #expect(fixture.cancelCount == 1 && fixture.settingsPresentations == 1)
+        #expect(!fixture.visibleAtSettingsPresentation)
+        fixture.begin(); host.rootView.showCustomInterval()
+        #expect(fixture.cancelCount == 2 && fixture.settingsPresentations == 2)
+        #expect(!fixture.visibleAtSettingsPresentation)
+    }
+    @Test func applicationResignAndPendingNativeEndLeaveNoDelayedReopen() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        fixture.begin()
+        fixture.notifications.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+        fixture.immediateCancel = false
+        fixture.begin(); fixture.status.dismiss()
+        fixture.begin(); fixture.end()
+        // The cancelled session's late end arrives last and hides nothing.
+        fixture.end()
+        #expect(!fixture.panel.isVisible && fixture.panel.hides == 3)
+        fixture.begin(); #expect(fixture.panel.isVisible)
+    }
+}
