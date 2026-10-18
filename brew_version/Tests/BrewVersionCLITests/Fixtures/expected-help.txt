@@ -1,4 +1,4 @@
-Fetch current package versions directly from Homebrew's public API.
+Fetch current package versions from Homebrew's public API, or from GitHub for packages in your taps.
 
 USAGE
   brew-version [OPTIONS] PACKAGE...
@@ -31,7 +31,8 @@ PACKAGE LOOKUP
   Each package tries formula first, then cask, so mixed lists work.
   --formula and --cask override this for the entire command.
   Use canonical names such as wget, python@3.13 or google-chrome.
-  Third-party taps are not supported.
+  Packages from your taps work too, written as user/tap/name.
+  Use a full tap name to select a particular source.
 
 EXIT CODES
   0  Success (including a version change detected while watching)
