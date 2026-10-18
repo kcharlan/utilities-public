@@ -68,6 +68,7 @@ typedef struct {
   Provider provider;
   bool history_only;
   Str resume_config_dir;
+  Str opencode_database; /* Borrowed absolute source path, OpenCode only. */
   const LogRecord *record;
   const LogRecord **records;
   size_t record_count, record_capacity;

@@ -1,6 +1,7 @@
 #ifndef CP_OPENCODE_DB_H
 #define CP_OPENCODE_DB_H
 #include "model/logrecord.h"
+#include "corpus/assemble.h"
 #include "util/omap.h"
 #include <signal.h>
 #include <sqlite3.h>
@@ -50,6 +51,11 @@ typedef struct {
     size_t message_count, message_capacity;
     uint64_t malformed_messages, invalid_numbers;
     Omap unknown_message_types, unknown_content_types; /* arena uint64_t values */
+    /* Corpus projection facts live in the store arena. Rejected collisions
+     * remain unaccepted so usage must not attach to another provider's row. */
+    TurnFact **turns;
+    size_t turn_count;
+    bool corpus_accepted;
 } OpencodeSession;
 typedef struct OpencodeUsageReport OpencodeUsageReport;
 typedef struct {
@@ -63,6 +69,7 @@ typedef struct {
     Omap unknown_message_types, unknown_content_types; /* arena uint64_t values */
     uint64_t malformed_messages, invalid_numbers, duplicate_sessions;
     OpencodeUsageReport *usage; /* Usage module owns nested report resources. */
+    CorpusStrings corpus_collisions, orphaned_subagents, ambiguous_spawns, unknown_clocks;
 } OpencodeStore;
 /* Zero-initialize store; call read once; destroy on every result. Database paths
  * are owned absolute lexical paths. Precedence is add order, after successful
