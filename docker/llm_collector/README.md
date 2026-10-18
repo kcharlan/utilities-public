@@ -59,8 +59,9 @@ For a complete setup guide, see [Installation Guide](INSTALLATION.md).
 In brief:
 
 1.  **Run local setup**: From this project directory, run `./setup.sh`. This creates or updates `~/.config/llm_collector/secret.env`, generates a random API key if one does not already exist, creates the external data directory, and regenerates `extension/config.local.js`.
-2. **Start collector**: Run `./up.sh` from `llm_collector_container/` (the
-   script runs `docker compose` in the current directory).
+2. **Start collector**: Run `llm_collector_container/up.sh` (it works from any
+   directory; the script changes to its own directory before running
+   `docker compose`).
 3. **Install extension**: Load the `extension` directory as an unpacked
    extension in a Chromium-based browser.
 

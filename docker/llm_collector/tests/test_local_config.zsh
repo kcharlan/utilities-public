@@ -25,4 +25,33 @@ for shell_name in bash zsh; do
   ' shell-test "$PROJECT_DIR"
 done
 
+# Lifecycle scripts must run Compose from their own directory regardless of
+# the caller's working directory. A stub docker records where it was invoked.
+mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/elsewhere"
+cat >"$TEST_ROOT/bin/docker" <<'EOF'
+#!/bin/sh
+printf '%s|%s\n' "$PWD" "$*" >>"$DOCKER_STUB_LOG"
+EOF
+chmod +x "$TEST_ROOT/bin/docker"
+
+for script_name in up.sh down.sh; do
+  : >"$TEST_ROOT/docker.log"
+  (
+    cd "$TEST_ROOT/elsewhere"
+    HOME="$TEST_ROOT/home" \
+    XDG_CONFIG_HOME="$TEST_ROOT/config" \
+    XDG_STATE_HOME="$TEST_ROOT/state" \
+    PATH="$TEST_ROOT/bin:$PATH" \
+    DOCKER_STUB_LOG="$TEST_ROOT/docker.log" \
+    "$PROJECT_DIR/llm_collector_container/$script_name" >/dev/null
+  )
+  test -s "$TEST_ROOT/docker.log"
+  while IFS='|' read -r invoked_dir invoked_args; do
+    if [[ "$invoked_dir" != "$PROJECT_DIR/llm_collector_container" ]]; then
+      print -u2 -- "$script_name ran 'docker $invoked_args' in $invoked_dir"
+      exit 1
+    fi
+  done <"$TEST_ROOT/docker.log"
+done
+
 print -- "llm_collector local_config shell tests: PASS"

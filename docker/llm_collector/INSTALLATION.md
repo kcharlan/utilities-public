@@ -47,8 +47,8 @@ cd llm_collector_container
 ./up.sh
 ```
 
-Run `up.sh` and `down.sh` from `llm_collector_container/`; they invoke
-`docker compose` in the current directory. The script loads the external secret env, builds the image, and starts
+`up.sh`, `down.sh`, and `update.sh` can be run from any directory; each changes
+to `llm_collector_container/` before invoking `docker compose`. The script loads the external secret env, builds the image, and starts
 `llm-collector`. Compose publishes the service at `127.0.0.1:9000`, mounts the
 source tree for collector code, and mounts the configured external data
 directory at `/var/lib/llm_collector`.
@@ -69,8 +69,8 @@ set +a
 curl -fsS -H "X-API-KEY: $API_KEY" "$COLLECTOR_URL/counters"
 ```
 
-From the same directory, use `./down.sh` to stop the service and `./update.sh`
-for an explicit clean dependency/base-image refresh followed by health checks.
+Use `down.sh` to stop the service and `update.sh` (both in
+`llm_collector_container/`) for an explicit clean dependency/base-image refresh followed by health checks.
 
 ## 3. Load the Browser Extension
 

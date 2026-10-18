@@ -1456,6 +1456,13 @@ class TestUploadSizeLimit:
         finally:
             harscope_mod.MAX_HAR_BYTES = old_max
 
+    async def test_welcome_screen_states_server_limit(self, client):
+        from conftest import harscope_mod
+        resp = await client.get("/")
+        limit_mb = harscope_mod.MAX_HAR_BYTES // (1024 * 1024)
+        assert f"Maximum file size: {limit_mb} MB" in resp.text
+        assert "No file size limit" not in resp.text
+
     async def test_upload_non_utf8_explicit_error(self, client):
         resp = await client.post(
             "/api/upload",

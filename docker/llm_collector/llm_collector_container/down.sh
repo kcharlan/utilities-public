@@ -8,4 +8,5 @@ if ! load_llm_collector_env || [ -z "${API_KEY:-}" ]; then
   exit 1
 fi
 
+cd "$SCRIPT_DIR"
 docker compose down

@@ -1919,3 +1919,20 @@ def test_healthcheck_warns_when_provider_kind_has_no_registered_profile(
         "best-effort)."
     ) in captured.out
     assert "Provider 'openrouter'" not in captured.out
+
+
+@pytest.mark.parametrize("notify_flag", [None, True])
+def test_notify_flag_does_not_override_never_policy(notify_flag):
+    loaded = type(
+        "Loaded",
+        (),
+        {"settings": type("Settings", (), {"notify_default": True, "notify_on": "never"})()},
+    )()
+    args = Namespace(notify=notify_flag)
+    changed_and_failed = [
+        type("Result", (), {"status": "error", "change_count": 0})(),
+        type("Result", (), {"status": "ok", "change_count": 3})(),
+    ]
+
+    assert cli._should_notify(args=args, loaded=loaded, provider_results=changed_and_failed) is False
+    assert cli._should_notify_for_errors(args=args, loaded=loaded) is False

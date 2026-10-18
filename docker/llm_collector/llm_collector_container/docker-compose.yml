@@ -21,7 +21,7 @@ services:
       - ${LLM_COLLECTOR_DATA_DIR:?Run ../setup.sh first}:/var/lib/llm_collector:rw
     # Make sure the working directory is your repo root inside the container
     working_dir: /workspace/llm_collector
-    # Healthcheck (simple): hit /counters so Compose shows healthy once live
+    # Healthcheck (simple): hit /health so Compose shows healthy once live
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
       interval: 10s

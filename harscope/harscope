@@ -3059,7 +3059,7 @@ const WelcomeScreen = ({ onLoad, showToast }) => {
       >
         <Icon name="FileUp" size={48} className="text-gray-400 mx-auto mb-4" />
         <p className="text-gray-600 dark:text-gray-300 font-medium mb-1">Drop a .har file here or click to browse</p>
-        <p className="text-gray-400 dark:text-gray-500 text-sm">No file size limit</p>
+        <p className="text-gray-400 dark:text-gray-500 text-sm">Maximum file size: 200 MB</p>
         <input ref={fileRef} type="file" accept=".har" className="hidden" onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])} />
       </div>
 
