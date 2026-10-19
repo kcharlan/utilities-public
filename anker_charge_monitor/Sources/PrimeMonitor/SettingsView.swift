@@ -44,6 +44,8 @@ struct SettingsView: View {
     let login: LoginItem
     @State private var account: CredentialSettings
     static let intervals = ClosedInterval.allCases
+    static let textSizes = MenuBarTextSize.allCases
+    static func textSizeLabel(_ size: MenuBarTextSize) -> String { "\(size.rawValue) pt" + (size == .default ? " (standard)" : "") }
     static let countryOptions = Locale.Region.isoRegions.map(\.identifier).sorted()
     static func supportedChargers(_ chargers: [ChargerInfo]) -> [ChargerInfo] { chargers.filter { $0.model == "A2345" } }
     init(monitor: MonitorController, login: LoginItem) {
@@ -99,6 +101,12 @@ struct SettingsView: View {
                         ForEach(Self.intervals, id: \.self) { interval in Text(intervalLabel(interval)).tag(interval) }
                     }.pickerStyle(.menu)
                     Text("While the status panel is open: every 5 seconds.").font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Menu bar") {
+                    Picker("Text size", selection: Binding(get: { monitor.appState.menuBarTextSize ?? .default }, set: { monitor.setMenuBarTextSize($0) })) {
+                        ForEach(Self.textSizes, id: \.self) { size in Text(Self.textSizeLabel(size)).tag(size) }
+                    }.pickerStyle(.menu)
+                    Text("The icon scales with the text. Changes apply right away.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("General") {
                     Toggle("Launch at login", isOn: Binding(get: { login.enabled }, set: { login.setEnabled($0) }))

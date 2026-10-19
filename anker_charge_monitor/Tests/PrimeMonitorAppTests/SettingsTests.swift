@@ -76,6 +76,19 @@ private struct SettingsProvider: CredentialProvider {
         #expect(rig.controller.appState.closedInterval == .default)
         for interval in SettingsView.intervals { rig.controller.setClosedInterval(interval); #expect(rig.controller.appState.closedInterval == interval) }
     }
+    @Test func textSizePickerOffersEverySizeAndPersistsTheChoice() throws {
+        let rig = try ControllerRig(configured: false)
+        defer { try? FileManager.default.removeItem(at: rig.directory) }
+        #expect(SettingsView.textSizes == MenuBarTextSize.allCases)
+        #expect(SettingsView.textSizes.map(SettingsView.textSizeLabel) == ["10 pt", "11 pt", "12 pt", "13 pt (standard)"])
+        #expect(rig.controller.appState.menuBarTextSize == nil)
+        let store = StateStore(fileURL: rig.directory.appending(path: "state.json", directoryHint: .notDirectory))
+        for size in SettingsView.textSizes {
+            rig.controller.setMenuBarTextSize(size)
+            #expect(rig.controller.appState.menuBarTextSize == size)
+            #expect(store.load().state.menuBarTextSize == size)
+        }
+    }
     @Test func firstLaunchWithoutSecretsOpensSettings() async throws {
         for configured in [false, true] {
             let rig = try ControllerRig(configured: configured)

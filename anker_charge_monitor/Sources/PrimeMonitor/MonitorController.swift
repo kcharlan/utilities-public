@@ -422,6 +422,9 @@ import PrimeMonitorCore
         tracker.setClosedInterval(interval, at: now()); appState.closedInterval = interval
         persistState(); sendRequest(); schedulePoll(); updateStale()
     }
+    func setMenuBarTextSize(_ size: MenuBarTextSize) {
+        appState.menuBarTextSize = size; persistState()
+    }
     private func persistSecrets() {
         guard let active else { return }
         do { try secrets.save(active); persistenceProblem = nil }

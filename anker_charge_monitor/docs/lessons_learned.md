@@ -400,3 +400,11 @@ link and timers finish, then release it before retry/disconnect completes.
 Keep signed voltage/current/power wire integers through decoding and sum reported
 power fields. Display hundredths of watts and thousandths of volts and amps.
 Do not infer inactivity from zero reported watts or erase idle current.
+
+## 2026-10-19: Compare like-typed operands inside #expect
+
+`#expect(doubleValue == font.pointSize)` reported `13.0 == 13.0` as false,
+although the same comparison is true outside the macro. Convert both operands to
+one type (CGFloat for AppKit metrics) before `#expect`. New persisted settings
+stay optional in AppState: synthesized decoding rejects a missing non-optional
+key, and the store would then quarantine the user's whole saved state.

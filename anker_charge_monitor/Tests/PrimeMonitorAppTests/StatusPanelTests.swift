@@ -677,15 +677,54 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         await settle()
         let button = try #require(fixture.item.button)
         #expect(button.image?.isTemplate == true)
-        #expect(button.attributedTitle.string == " 43.21 W")
-        #expect(button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+        // The image–title gap replaces a leading space; a thin space separates the unit.
+        #expect(button.attributedTitle.string == "43.21\u{2009}W")
+        #expect(button.imagePosition == .imageLeading)
+        // Convert before #expect: its operand capture mis-compares mixed Double and CGFloat.
+        let standard = CGFloat(MenuBarTextSize.default.pointSize), menuBarFont = NSFont.menuBarFont(ofSize: 0).pointSize
+        #expect(standard == menuBarFont)
+        #expect(button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular))
         #expect(button.toolTip?.contains("Connected") == true)
         #expect(button.accessibilityLabel()?.contains("43.21 W") == true)
         await fixture.rig.events.send(.network(false)); await settle()
         #expect(button.contentTintColor == .secondaryLabelColor)
         #expect(button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
         #expect(button.toolTip?.contains("Network unavailable") == true)
-        #expect(button.attributedTitle.string == " 43.21 W")
+        #expect(button.attributedTitle.string == "43.21\u{2009}W")
         await fixture.rig.finish()
+    }
+    @Test func textSizeSettingResizesTheActualStatusButtonImmediately() async throws {
+        let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
+        await fixture.rig.start()
+        let reading = PortReading(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)
+        fixture.rig.backend.output.yield(.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading])))
+        await settle()
+        let button = try #require(fixture.item.button)
+        for size in MenuBarTextSize.allCases.reversed() {
+            fixture.rig.controller.setMenuBarTextSize(size); await settle()
+            #expect(button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.monospacedDigitSystemFont(ofSize: size.pointSize, weight: .regular))
+            #expect(button.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: size.pointSize, weight: .regular))
+            #expect(button.image?.isTemplate == true)
+            #expect(button.attributedTitle.string == "43.21\u{2009}W")
+        }
+        #expect(StateStore(fileURL: fixture.directory.appending(path: "state.json", directoryHint: .notDirectory)).load().state.menuBarTextSize == .pt10)
+        await fixture.rig.finish()
+    }
+    @Test func everyTextSizeIsNarrowerThanThePreviousLayout() {
+        func width(_ configure: (NSStatusBarButton) -> Void) -> CGFloat {
+            let button = NSStatusBarButton(frame: .zero); button.isBordered = false
+            configure(button); button.sizeToFit(); return button.frame.width
+        }
+        // The 0.1.1 layout: default-size symbol, leading space and a full space before the unit.
+        let previous = width { button in
+            button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil); button.imagePosition = .imageLeading
+            button.attributedTitle = NSAttributedString(string: " 43.21 W", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
+        }
+        let snapshot = ChargerSnapshot(receivedAt: Date(), readings: [.init(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)])
+        let widths = MenuBarTextSize.allCases.map { size in
+            width { StatusPresentation.make(status: .connected, snapshot: snapshot, isStale: false, now: Date(), textSize: size).apply(to: $0) }
+        }
+        #expect(widths.allSatisfy { $0 < previous - 4 })
+        #expect(zip(widths, widths.dropFirst()).allSatisfy { $0 < $1 })
     }
 }

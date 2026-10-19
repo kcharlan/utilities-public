@@ -5,6 +5,8 @@ struct AppState: Codable, Equatable {
     var charger: ChargerInfo?
     var closedInterval: ClosedInterval
     var credentials: CredentialSelection? = nil
+    /// Optional so state saved before 0.2.0 decodes; nil means the default size.
+    var menuBarTextSize: MenuBarTextSize? = nil
     static let initial = AppState(charger: nil, closedInterval: .default)
 }
 struct StateLoad {
