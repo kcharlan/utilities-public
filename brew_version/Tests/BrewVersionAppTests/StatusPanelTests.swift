@@ -214,6 +214,18 @@ private final class PanelSaveCounter: Sendable {
 }
 @testable import BrewVersionCore
 @MainActor struct StatusPanelLifecycleTests {
+    @Test func alertIconIsDrawnInItsOwnColoursWithoutButtonTint() throws {
+        // A template image tinted through contentTintColor renders black in
+        // the macOS 27 menu bar, which hides the alert on a dark bar.
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        let button = try #require(fixture.item.button)
+        let image = try #require(button.image)
+        #expect(button.contentTintColor == nil)
+        #expect(!image.isTemplate)
+        #expect(button.accessibilityLabel() == "Brew Version, 3 watched updates available")
+    }
     @Test func repeatedNativeSessionsAndProgrammaticRequestsUseSameRetainedHost() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

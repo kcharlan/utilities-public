@@ -653,6 +653,30 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(recovered.state.interval.minutes == 47)
         #expect(live.load().state.interval.minutes == 47)
     }
+    @Test func idleStatusIconIsTemplateMug() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        #expect(idle.isTemplate)
+        #expect(idle.accessibilityDescription == "Brew Version, no watched updates")
+    }
+    @Test func alertStatusIconFollowsBarAppearanceAndKeepsAmberDot() throws {
+        // macOS 27 renders a tinted template status image black, so the alert
+        // mug must carry its own colours and resolve them at draw time.
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let alert = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 2)))
+        #expect(!alert.isTemplate)
+        #expect(alert.accessibilityDescription == "Brew Version, 2 watched updates available")
+        #expect(alert.size.height == idle.size.height && alert.size.width > idle.size.width)
+        for (appearance, outlineIsLight) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
+            let pixels = try statusIconPixels(alert, appearance: appearance)
+            let amber = pixels.filter(\.isAmber), outline = pixels.filter { !$0.isAmber }
+            #expect(!amber.isEmpty, "no amber dot in \(appearance.rawValue)")
+            // The dot sits in the top-right corner, above and right of the mug's centre.
+            #expect(amber.allSatisfy { $0.x > alert.size.width / 2 && $0.y > alert.size.height / 2 })
+            let brightness = outline.map(\.brightness).reduce(0, +) / Double(max(outline.count, 1))
+            #expect(outline.count > amber.count, "no mug outline in \(appearance.rawValue)")
+            #expect(outlineIsLight ? brightness > 0.8 : brightness < 0.3, "outline brightness \(brightness) in \(appearance.rawValue)")
+        }
+    }
     @Test func nativeActionPolicies() {
         #expect(StatusPresentation(amberCount: 0).accessibility == "Brew Version, no watched updates")
         #expect(StatusPresentation(amberCount: 1).accessibility == "Brew Version, 1 watched update available")
@@ -670,6 +694,36 @@ private struct ReopenCatalogTransport: HTTPTransport {
         custom.minutes = "47"
         #expect(custom.validInterval?.minutes == 47)
     }
+}
+private struct IconPixel {
+    let x: CGFloat, y: CGFloat, red: Double, green: Double, blue: Double
+    var brightness: Double { (red + green + blue) / 3 }
+    var isAmber: Bool { red > 0.8 && (0.35...0.8).contains(green) && blue < 0.35 }
+}
+/// Draws `image` into a 2x bitmap the way the menu bar does, with `appearance`
+/// current, and returns its mostly opaque pixels in image points (y up).
+@MainActor private func statusIconPixels(_ image: NSImage, appearance: NSAppearance.Name) throws -> [IconPixel] {
+    let scale = 2.0, size = image.size
+    let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    rep.size = size
+    try #require(NSAppearance(named: appearance)).performAsCurrentDrawingAppearance {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+    }
+    var pixels: [IconPixel] = []
+    for row in 0..<rep.pixelsHigh {
+        for column in 0..<rep.pixelsWide {
+            guard let color = rep.colorAt(x: column, y: row)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.6 else { continue }
+            // Bitmap rows run top-down.
+            pixels.append(IconPixel(x: (Double(column) + 0.5) / scale, y: size.height - (Double(row) + 0.5) / scale,
+                                    red: color.redComponent, green: color.greenComponent, blue: color.blueComponent))
+        }
+    }
+    return pixels
 }
 @MainActor private func nativeScrollViews(_ view: NSView) -> [NSScrollView] {
     (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)

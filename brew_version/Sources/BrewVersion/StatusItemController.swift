@@ -126,9 +126,7 @@ struct StatusContent: View {
         }
         statusObservation = StatusObservation(controller: controller) { [weak self] presentation in
             guard let self else { return }
-            let image = NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: presentation.accessibility)
-            image?.isTemplate = true; self.item.button?.image = image
-            self.item.button?.contentTintColor = self.controller.amberCount > 0 ? .systemOrange : nil
+            self.item.button?.image = StatusIcon.image(for: presentation)
             self.item.button?.setAccessibilityLabel(presentation.accessibility)
             self.item.button?.setAccessibilityHelp(presentation.accessibility)
             self.item.button?.toolTip = presentation.accessibility

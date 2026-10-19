@@ -276,8 +276,10 @@ repository root. Products are `brew_version/build/release/Brew Version.app`
 and `brew_version/build/release/brew-version`. Signing is local ad hoc signing;
 the bundle includes Homebrew's license notice. Open the app to get a mug in
 the menu bar. Initial launch stays quiet, including at login; opening the running
-app again shows its popover. A filled mug means a watched update is available; its accessibility label includes
-the number of watched updates.
+app again shows its popover. An amber dot on the mug means a watched update is
+available, matching the dot on its row; its accessibility label includes the
+number of watched updates. The mug outline follows the menu bar's light or dark
+appearance.
 
 The popover shows the last check, refresh, and a search field. Search accepts
 space-separated names, rejects invalid names, and suggests catalog prefixes.

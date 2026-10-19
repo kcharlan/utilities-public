@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-19: Draw coloured menu bar icons yourself; don't tint template images
+
+Brew Version marked a watched update by setting `contentTintColor` on its
+template status image. The macOS 27 menu bar ignores that tint and draws the
+template image black, so the alert vanished on a dark bar. The button's
+`effectiveAppearance` is no guide either: it reported VibrantLight while the
+bar was dark. An `NSImage(size:flipped:drawingHandler:)` does get the bar's
+real appearance at draw time, so draw dynamic colours there. Choose ones
+that stay opaque: `labelColor` is only 70% black in VibrantLight, while
+`textColor` is opaque in all four appearances. To test, render the image into
+a bitmap under each appearance and check its pixels. To see real menu bar
+items, wrap a scratch harness in an ad hoc signed `.app`, because items from an
+unbundled binary never appear.
+
 ## 2026-10-18: Give overlay scroll bars a gutter instead of widening a popover
 
 macOS overlay scroll bars draw on top of a scroll view's trailing edge, so
