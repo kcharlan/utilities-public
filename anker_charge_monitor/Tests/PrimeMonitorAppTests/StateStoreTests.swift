@@ -44,4 +44,17 @@ import PrimeMonitorCore
         #expect(FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
         try store.save(value); #expect(store.load().state == value)
     }
+    @Test func stateSavedBeforeTextSizeLoadsWithoutQuarantine() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
+        try store.save(AppState(charger: appCharger, closedInterval: .m5))
+        // A 0.1.x file has no menuBarTextSize key at all.
+        #expect(!(try String(contentsOf: store.fileURL, encoding: .utf8)).contains("menuBarTextSize"))
+        let legacy = store.load()
+        #expect(legacy.problem == nil && legacy.state.charger == appCharger && legacy.state.menuBarTextSize == nil)
+        #expect(!FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
+        var sized = legacy.state; sized.menuBarTextSize = .pt11
+        try store.save(sized); #expect(store.load().state == sized)
+    }
 }

@@ -9,22 +9,29 @@ struct StatusPresentation: Equatable {
     let dimmed: Bool
     let tooltip: String
     let accessibility: String
+    var textSize: MenuBarTextSize = .default
 
+    /// Compact title: the button's own image–title gap replaces a leading
+    /// space, and a thin space separates the unit. The symbol matches the text size.
     @MainActor func apply(to button: NSButton) {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)
+        let size = CGFloat(textSize.pointSize)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
+            .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
         image?.isTemplate = true; button.image = image
+        button.imagePosition = .imageLeading
         button.contentTintColor = dimmed ? .secondaryLabelColor : nil
         button.setAccessibilityLabel(accessibility)
         button.setAccessibilityHelp(accessibility)
         button.toolTip = tooltip
-        button.attributedTitle = NSAttributedString(string: title.isEmpty ? "" : " " + title, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular), .foregroundColor: dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor])
+        button.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor])
     }
 
-    static func make(status: ConnectionStatus, snapshot: ChargerSnapshot?, isStale: Bool, now: Date) -> Self {
+    static func make(status: ConnectionStatus, snapshot: ChargerSnapshot?, isStale: Bool, now: Date, textSize: MenuBarTextSize = .default) -> Self {
         if status == .notConfigured {
-            return .init(symbol: "bolt.fill", title: "", dimmed: false, tooltip: "Open Settings to sign in", accessibility: "\(PrimeMonitorRelease.displayName), open Settings to sign in")
+            return .init(symbol: "bolt.fill", title: "", dimmed: false, tooltip: "Open Settings to sign in", accessibility: "\(PrimeMonitorRelease.displayName), open Settings to sign in", textSize: textSize)
         }
-        let title = snapshot.map { DisplayFormatter.watts(centi: $0.totalPowerCenti) } ?? ""
+        let title = snapshot.map { DisplayFormatter.watts(centi: $0.totalPowerCenti, separator: "\u{2009}") } ?? ""
+        let spoken = snapshot.map { DisplayFormatter.watts(centi: $0.totalPowerCenti) } ?? ""
         let reason: String
         let failed: Bool
         switch status {
@@ -38,7 +45,7 @@ struct StatusPresentation: Equatable {
         }
         let age = snapshot.map { "; updated " + DisplayFormatter.age(now.timeIntervalSince($0.receivedAt)) } ?? ""
         let tooltip = reason + age
-        return .init(symbol: failed ? "exclamationmark.triangle.fill" : "bolt.fill", title: title, dimmed: failed, tooltip: tooltip, accessibility: "\(PrimeMonitorRelease.displayName), " + (title.isEmpty ? "" : title + ", ") + tooltip)
+        return .init(symbol: failed ? "exclamationmark.triangle.fill" : "bolt.fill", title: title, dimmed: failed, tooltip: tooltip, accessibility: "\(PrimeMonitorRelease.displayName), " + (spoken.isEmpty ? "" : spoken + ", ") + tooltip, textSize: textSize)
     }
 }
 
@@ -53,7 +60,8 @@ struct StatusPresentation: Equatable {
     }
     private func observe() {
         withObservationTracking {
-            changed(.make(status: controller.status, snapshot: controller.snapshot, isStale: controller.isStale, now: controller.displayTime))
+            changed(.make(status: controller.status, snapshot: controller.snapshot, isStale: controller.isStale, now: controller.displayTime,
+                         textSize: controller.appState.menuBarTextSize ?? .default))
         } onChange: { [weak self] in Task { @MainActor in self?.observe() } }
     }
 }

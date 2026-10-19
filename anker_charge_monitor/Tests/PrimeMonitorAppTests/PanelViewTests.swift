@@ -27,7 +27,8 @@ let panelReadings = PortID.allCases.map {
         let view = PanelView(monitor: rig.controller, openSettings: {})
         #expect(view.alias == "Desk" && view.total == "43.21 W")
         #expect(view.updated(at: rig.clock.date.addingTimeInterval(8)) == "Updated 8 s ago")
-        #expect(view.total == StatusPresentation.make(status: .connected, snapshot: rig.controller.snapshot, isStale: false, now: rig.clock.date).title)
+        // Same total in both places; the menu bar only narrows the unit separator to a thin space.
+        #expect(view.total == StatusPresentation.make(status: .connected, snapshot: rig.controller.snapshot, isStale: false, now: rig.clock.date).title.replacingOccurrences(of: "\u{2009}", with: " "))
         await rig.finish()
     }
     @Test func staleShowsWarningAndKeepsValues() async throws {

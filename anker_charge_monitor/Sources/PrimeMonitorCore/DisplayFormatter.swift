@@ -1,7 +1,8 @@
 import Foundation
 
 public enum DisplayFormatter {
-    public static func watts(centi: Int) -> String { scaled(centi, divisor: 100, places: 2) + " W" }
+    /// The menu bar passes a thin space as the separator; other readings keep a full space.
+    public static func watts(centi: Int, separator: String = " ") -> String { scaled(centi, divisor: 100, places: 2) + separator + "W" }
     public static func volts(milli: Int) -> String { scaled(milli, divisor: 1000, places: 3) + " V" }
     public static func amps(milli: Int) -> String { scaled(milli, divisor: 1000, places: 3) + " A" }
 

@@ -15,15 +15,16 @@ import PrimeMonitorCore
               (try FileManager.default.attributesOfItem(atPath: home.path(percentEncoded: false))[.posixPermissions] as? NSNumber)?.intValue == 0o700 else { fatalError("Snapshots require a private OS temporary directory") }
         for dark in [false, true] {
             let palette = dark ? "dark" : "light"
-            for state in ["live", "stale", "error", "not-set-up"] {
-                let fixture = try await Fixture.make(state: state, directory: home.appending(path: "menu-\(state)-\(palette)", directoryHint: .isDirectory))
-                let presentation = StatusPresentation.make(status: fixture.monitor.status, snapshot: fixture.monitor.snapshot, isStale: fixture.monitor.isStale, now: Date())
+            for (state, size) in [("live", MenuBarTextSize.default), ("stale", .default), ("error", .default), ("not-set-up", .default), ("live", .pt10)] {
+                let name = size == .default ? state : "\(state)-\(size.rawValue)pt"
+                let fixture = try await Fixture.make(state: state, directory: home.appending(path: "menu-\(name)-\(palette)", directoryHint: .isDirectory))
+                let presentation = StatusPresentation.make(status: fixture.monitor.status, snapshot: fixture.monitor.snapshot, isStale: fixture.monitor.isStale, now: Date(), textSize: size)
                 let button = NSButton(frame: .zero)
-                button.isBordered = false; button.imagePosition = .imageLeading
+                button.isBordered = false
                 presentation.apply(to: button); button.sizeToFit()
                 let background = NSView(frame: NSRect(x: 0, y: 0, width: max(32, button.frame.width + 12), height: 30))
                 button.setFrameOrigin(NSPoint(x: 6, y: (30 - button.frame.height) / 2)); background.addSubview(button)
-                try capture(background, size: background.frame.size, dark: dark, to: home.appending(path: "menu-\(state)-\(palette).png", directoryHint: .notDirectory))
+                try capture(background, size: background.frame.size, dark: dark, to: home.appending(path: "menu-\(name)-\(palette).png", directoryHint: .notDirectory))
                 await fixture.monitor.stop()
             }
             for state in ["live", "stale", "signed-out", "choose-charger", "error", "session-ended"] {
@@ -47,8 +48,8 @@ import PrimeMonitorCore
             await fixture.monitor.stop()
         }
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 24 else { fatalError("Expected 24 PNGs, got \(pngs.count)") }
-        print("Validated 24 maintained-view PNGs: real status presentation, owned panel hosting and grouped Settings in both appearances.")
+        guard pngs.count == 26 else { fatalError("Expected 26 PNGs, got \(pngs.count)") }
+        print("Validated 26 maintained-view PNGs: real status presentation at standard and 10 pt, owned panel hosting and grouped Settings in both appearances.")
     }
 
     // Port: BV Snapshots.swift render, 579ebb7. Offscreen NSWindow capture,
