@@ -15,10 +15,42 @@ import Observation
 }
 struct StatusPresentation {
     let amberCount: Int
-    var symbol: String { amberCount > 0 ? "mug.fill" : "mug" }
     var accessibility: String {
         if amberCount == 0 { return "Brew Version, no watched updates" }
         return "Brew Version, \(amberCount) watched update\(amberCount == 1 ? "" : "s") available"
+    }
+}
+/// The menu bar mug. On macOS 27 the menu bar ignores a status button's
+/// `contentTintColor` and draws a tinted template image black, which vanishes
+/// on a dark bar. The alert mug therefore draws its own colours: its drawing
+/// handler runs in the bar's appearance, so the text-coloured outline follows
+/// light and dark, and the amber dot matches the dot on an amber watch row.
+@MainActor enum StatusIcon {
+    static let dotDiameter: CGFloat = 7
+    /// How far the dot extends past the mug's right edge.
+    static let dotOverhang: CGFloat = 3
+    static func image(for presentation: StatusPresentation) -> NSImage? {
+        guard let mug = NSImage(systemSymbolName: "mug", accessibilityDescription: presentation.accessibility) else { return nil }
+        guard presentation.amberCount > 0, let outline = mug.withSymbolConfiguration(.init(paletteColors: [.textColor])) else {
+            mug.isTemplate = true
+            return mug
+        }
+        let size = NSSize(width: mug.size.width + dotOverhang, height: mug.size.height)
+        let image = NSImage(size: size, flipped: false) { _ in
+            outline.draw(in: NSRect(origin: .zero, size: mug.size))
+            let dot = NSRect(x: size.width - dotDiameter, y: size.height - dotDiameter, width: dotDiameter, height: dotDiameter)
+            // Clear a thin ring so the dot reads apart from the mug's rim.
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: dot.insetBy(dx: -1, dy: -1)).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor.systemOrange.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = presentation.accessibility
+        return image
     }
 }
 @MainActor final class StatusObservation {
