@@ -47,6 +47,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 
 - `abacus usage` – Automates the extraction and processing of ChatLLM credit usage data from the Abacus.AI dashboard.
 - `anduril_steps` – A calculator and solver for configuring "Stepped Ramp" brightness levels (1-150) on Anduril 2 flashlights.
+- `anker_charge_monitor` – Native macOS [Anker Charge Monitor](anker_charge_monitor/README.md) menu bar app for A2345 six-port charger readings, with 1Password credentials kept in process memory. Requires macOS 27 and Swift 6; the Node.js deployment CLI installs its signed app at `/Applications/Anker Charge Monitor.app`.
 - `apple-health-extract` – Parse Apple Health `export.xml` to build workout summaries, heart‑rate detail, and incidental exercise bout analytics.
 - `benchmark-llm` – Filesystem-first LLM benchmark runner with three authoring rails: prompt-batch packages, scripted repo-task benchmarks with preserved git worktrees and command provenance, and Python plugin benchmarks via a small `benchsdk` API.
 - `brew_version` – Native macOS [Brew Version](brew_version/README.md) menu bar app and Swift CLI for watching Homebrew package versions, including third-party taps. Building requires macOS 27 and Xcode or Command Line Tools with Swift 6; deployment requires Node.js.
@@ -112,7 +113,8 @@ page, or local server live in [agents.md](agents.md).
 Standalone delivery takes several forms: uv-managed scripts for small Python
 tools, a packaged executable for multi-file apps such as
 [Model Sentinel](model_sentinel/README.md), native binaries such as
-[Colophon](colophon/README.md) and [Brew Version](brew_version/README.md), and
+[Colophon](colophon/README.md), [Brew Version](brew_version/README.md) and
+[Anker Charge Monitor](anker_charge_monitor/README.md), and
 self-contained HTML for browser-only apps.
 Some utilities deliberately duplicate small helpers so copied commands remain
 independent of this checkout.

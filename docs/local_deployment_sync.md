@@ -8,7 +8,7 @@ This repository is the canonical public source. Copies under `~/Library/Scripts`
 2. Back up every destination file that will be replaced.
 3. For direct copies and maintained source trees, copy only files tracked by Git. Never mirror a whole directory and never use `rsync --delete` against a live local project. Market Atlas is a narrow static-runtime exception: validated source and selected external local history supply exactly twelve copied runtime files. This does not authorize public data redistribution or copying its private inputs and recovery records into the repository.
 4. Preserve ignored/local-only configuration, databases, exports, generated tables, logs, venvs, and runtime state.
-5. After copying, compare the deployed artifact with its source and exercise the deployed command directly.
+5. After copying, compare the deployed artifact with its source and exercise documented offline diagnostics where available. App-only artifacts have no command diagnostic contract: never execute their GUI binary with `--help` or `--version` during an audit.
 6. For Docker, capture which stacks are running before maintenance and restore the same running/stopped state afterward.
 
 Run the read-only audit from the repository root:
@@ -287,9 +287,92 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_calculator_pages.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
+
+## Anker Charge Monitor app deployment
+
+The app-only generated artifact installs at
+`/Applications/Anker Charge Monitor.app`; there is no installed CLI command.
+Use Node.js, macOS 27 and Swift 6 with the macOS 27 SDK. Validate the complete
+[project suite](../anker_charge_monitor/README.md) and affected root/Market Atlas
+suites, review and merge, then deploy from validated merged main:
+
+```sh
+node tools/deploy_anker_charge_monitor.mjs --dry-run
+node tools/deploy_anker_charge_monitor.mjs
+node tools/deploy_anker_charge_monitor.mjs --audit
+zsh tools/check_local_deployments.zsh
+node tools/deploy_anker_charge_monitor.mjs --rollback /private/path/to/copy-backup
+```
+
+`make -C anker_charge_monitor install` and `deploy` invoke that same root CLI.
+Use `SIGN_IDENTITY='Exact Identity Name'` (or a complete 40-hex fingerprint) to
+override the default **CodexBar Local** selection. A missing or ambiguous
+identity fails before compilation or deployment mutation, with no ad-hoc
+fallback. Activation checks use strict codesign verification with the literal
+`=identifier "local.utilities.prime-monitor" and certificate leaf = H"FINGERPRINT"`
+requirement, along with actual plist name/display name/version/build, executable,
+bundle ID, agent/minimum-OS fields and the executable's macOS 27 minimum runtime.
+Ownership checks permit an older installed version from that same identity.
+
+`--repo DIR`, `--scripts-dir DIR`, `--apps-dir DIR`, `--rebuild` and audit-only
+`--source-inventory FILE` follow the native installer conventions. Scripts/apps
+overrides also honor `UTILITIES_SCRIPTS_DIR`/`UTILITIES_APPS_DIR`. The apps default
+is always `/Applications`, with no home-directory fallback. Explicit test
+destinations stay outside the checkout; symlink ancestors are rejected.
+
+The admitted inventory is tracked Package.swift, Makefile and every regular
+Sources, Resources, Tests and tools file under `anker_charge_monitor/`, plus
+`tools/deploy_anker_charge_monitor.mjs`, `tools/deployment_files.mjs` and the
+imported generic app hash owner `tools/deploy_brew_version.mjs`. It includes the
+actual release/installer/signing scripts. Working bytes and modes must equal
+the stage-zero index; missing, linked, sparse or unmerged inputs fail closed.
+Only those captured bytes are copied to private scratch for `make release`.
+Source identity is checked again after building. No runtime configuration,
+vault, session cache or secret-pattern contents are build inputs.
+
+`~/Library/Scripts/.anker-charge-monitor-native.json` is private mode 0600 and
+has exactly `{schema: 1, sourceHash, version, appTreeHash, signingIdentity}`.
+The generic app hash covers all sorted entry names/types, full permission bits
+and content digests, including the bundle root and empty directories. Audit
+compares that provenance, metadata and artifact identity without building,
+signing, executing the app, querying credentials or writing source/deployment.
+It prints exactly `OK: anker-charge-monitor native deployment`. Dry-run validates
+the admitted inputs without writing or querying signing identities.
+
+The project shell installer remains the one owner of app activation: it copies
+into a private stage on the apps volume, validates, displaces the previous
+whole bundle and renames the candidate. The root CLI adds private independent
+backups and receipt publication/recovery. Backups under
+`~/.utilities-deploy-backups/anker-charge-monitor/copy-*` retain the prior app
+under its original name, receipt bytes/mode and checked metadata. Containers
+are 0700, receipt/metadata files 0600, and app modes are retained. Saved app
+hashes and receipt bytes are re-read before activation. Readers of the previous
+executable remain valid; installers never quit or launch the app.
+
+Activation, receipt publication, rollback and cleanup failures return nonzero
+and restore the previous app/receipt, including an initially absent app.
+Rollback validates the saved hashes before backing up and displacing the
+current release. Both backup generations remain independent and retained.
+Errors report the retained recovery location, and include restoration failures
+if recovery cannot finish. A rollback to an older source intentionally causes
+the current-source audit to report drift until that source is deployed again.
+
+The same-directory legacy `Prime Monitor.app` migration retains ownership and
+signature checks; having both names present fails as ambiguous. A copy under
+`~/Applications` is a separate one-time operator retirement: privately back it
+up and remove it only after the new canonical installation is verified. The
+installer does not scan other users' applications. Internal product/executable,
+bundle ID and `~/Library/Application Support/Prime Monitor/` state stay intact.
+Quit/reopen when convenient to use the installed 0.1.1 release (build 2); restart
+clears the process-memory credential/session cache and normal authorization
+may be requested. Actual GUI behavior, 1Password/TCC approvals and native launch
+at login registration for the `/Applications` copy require operator checks.
+Synthetic tests establish none of those live outcomes. The separately authorized
+`make -C anker_charge_monitor live-check` contacts the real vault and service;
+its output belongs only in private storage.
 
 ## Native Brew Version deployment
 

@@ -288,6 +288,8 @@ audited_scopes=(
   model_sentinel/model_sentinel
   brew_version
   tools/deploy_brew_version.mjs
+  anker_charge_monitor
+  tools/deploy_anker_charge_monitor.mjs
   colophon
   tools/deploy_colophon.mjs
   storage_monitor
@@ -638,7 +640,7 @@ audit_native_deployment() {
     fi
   done
   for source_path in "${index_paths[@]}"; do
-    if [[ "$source_path" == "$scope"/* ]]; then
+    if [[ "$source_path" == "$scope"/* || -n "${required_membership[$source_path]-}" ]]; then
       [[ -z "${source_state_invalid[$source_path]-}" ]] || source_ok=false
       printf '%s\t%s\0' "${index_modes[$source_path]}" "$source_path" >> "$inventory"
     fi
@@ -673,6 +675,14 @@ audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \
   'storage_monitor deployment unverified (source, launcher, walker or receipt drift)' \
   storage_monitor/storage_monitor storage_monitor/native/Makefile \
   tools/deploy_storage_monitor.mjs tools/deployment_files.mjs
+
+audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.mjs \
+  anker-charge-monitor-source-inventory anker 'anker-charge-monitor native' \
+  'anker-charge-monitor native deployment unverified (source, app or receipt drift)' \
+  anker_charge_monitor/Package.swift anker_charge_monitor/Makefile \
+  anker_charge_monitor/Resources/Info.plist anker_charge_monitor/tools/install.sh \
+  anker_charge_monitor/tools/resolve_signing_identity.sh \
+  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"

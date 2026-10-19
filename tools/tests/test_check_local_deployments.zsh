@@ -233,6 +233,7 @@ new_fixture() {
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_anker_charge_monitor.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
@@ -252,6 +253,14 @@ new_fixture() {
   mkdir -p "$FIXTURE_REPO/brew_version/Resources"
   cp "$REPO_UNDER_TEST/brew_version/Resources/Info.plist" "$FIXTURE_REPO/brew_version/Resources/Info.plist"
   chmod 644 "$FIXTURE_REPO/brew_version/Resources/Info.plist"
+
+  for native_input in Package.swift Makefile Sources/synthetic.swift tools/install.sh tools/resolve_signing_identity.sh; do
+    write_synthetic_file "$FIXTURE_REPO/anker_charge_monitor/$native_input" "invented anker $native_input"
+    chmod 644 "$FIXTURE_REPO/anker_charge_monitor/$native_input"
+  done
+  mkdir -p "$FIXTURE_REPO/anker_charge_monitor/Resources"
+  cp "$REPO_UNDER_TEST/anker_charge_monitor/Resources/Info.plist" "$FIXTURE_REPO/anker_charge_monitor/Resources/Info.plist"
+  chmod 644 "$FIXTURE_REPO/anker_charge_monitor/Resources/Info.plist"
 
   local mapping source_relative deployed_name source_file deployed_file
   for mapping in "${COPY_MAPPINGS[@]}"; do
@@ -328,6 +337,7 @@ new_fixture() {
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/storage-monitor-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/brew-version-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/anker-charge-monitor-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   local tracked_file
   for project in "${HOME_PROJECTS[@]}"; do
@@ -363,6 +373,7 @@ run_audit() {
     env -i \
       HOME="$FIXTURE_HOME" \
       XDG_CONFIG_HOME="$FIXTURE_HOME/.config" \
+      UTILITIES_APPS_DIR="$FIXTURE_HOME/Applications" \
       TMPDIR="$FIXTURE_TMP" \
       PATH="$fixture_path" \
       LC_ALL=C \
@@ -1727,7 +1738,8 @@ test_native_required_installers() {
   for mapping in \
     'tools/deploy_colophon.mjs|colophon native' \
     'tools/deploy_storage_monitor.mjs|storage_monitor' \
-    'tools/deploy_brew_version.mjs|brew-version native'; do
+    'tools/deploy_brew_version.mjs|brew-version native' \
+    'tools/deploy_anker_charge_monitor.mjs|anker-charge-monitor native'; do
     new_fixture
     installer="${mapping%%|*}"
     label="${mapping#*|}"
@@ -1739,5 +1751,49 @@ test_native_required_installers() {
   done
 }
 test_native_required_installers
+
+test_native_anker_charge_monitor_deployment() {
+  local target source response
+  new_fixture
+  run_audit
+  assert_status 0 "$AUDIT_STATUS" 'synthetic anker baseline'
+  assert_contains "$AUDIT_STDOUT" 'OK: anker-charge-monitor native deployment'
+  for target in 'Applications/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor' 'Library/Scripts/.anker-charge-monitor-native.json'; do
+    new_fixture
+    print 'synthetic drift' >> "$FIXTURE_HOME/$target"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'anker artifact drift'
+    assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native deployment unverified'
+  done
+  for source in anker_charge_monitor/Sources/synthetic.swift anker_charge_monitor/tools/install.sh tools/deploy_anker_charge_monitor.mjs; do
+    new_fixture
+    print 'synthetic working drift' >> "$FIXTURE_REPO/$source"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'anker source drift'
+    assert_not_contains "$AUDIT_STDOUT" 'OK: anker-charge-monitor native deployment'
+    new_fixture
+    git -C "$FIXTURE_REPO" rm -q --cached "$source"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'anker source deletion'
+    assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native source inventory unverified'
+  done
+  new_fixture
+  print 'synthetic staged drift' >> "$FIXTURE_REPO/anker_charge_monitor/Sources/synthetic.swift"
+  git -C "$FIXTURE_REPO" add anker_charge_monitor/Sources/synthetic.swift
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'anker staged source drift'
+  assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native deployment unverified'
+  for response in \
+    "process.stdout.write('OK: anker-charge-monitor native deployment')" \
+    "console.log('OK: anker-charge-monitor native deployment'); console.error('synthetic warning')" \
+    "process.stdout.write('OK: anker-charge-monitor native deployment\\n\\n')"; do
+    new_fixture
+    print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_anker_charge_monitor.mjs"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'anker malformed child success'
+    assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native child protocol unverified'
+  done
+}
+test_native_anker_charge_monitor_deployment
 
 print -- "check_local_deployments tests: PASS"

@@ -1,5 +1,20 @@
 # Lessons learned
 
+## 2026-10-19: Keep app activation separate from deployment provenance
+
+An app-only deployer must not inherit CLI `--help`/`--version` probes: those
+arguments can launch a real GUI and its credential/cloud work. Reuse the
+existing whole-bundle activation owner, bind complete bundle bytes/modes and
+the selected signing certificate to a private receipt, and include the actual
+installer/signing scripts in the exact Git-index build inventory. Exercise
+receipt and cleanup failures after activation as transaction failures too;
+restore the prior app and receipt while retaining independent recovery copies.
+Audit the canonical `/Applications` destination without silently falling back
+to a home copy. Launch-at-login registration remains a separate native check.
+When staging an admitted source snapshot, explicitly restore each indexed file
+mode after creation: writeFile's requested mode is reduced by the caller's
+umask. A private synthetic build checks exact 0644/0755 inputs under umask 077.
+
 ## 2026-10-19: Draw coloured menu bar icons yourself; don't tint template images
 
 Brew Version marked a watched update by setting `contentTintColor` on its
