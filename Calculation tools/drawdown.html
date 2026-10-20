@@ -35,6 +35,18 @@
     --glow-warm: light-dark(rgba(184,134,42,0.04), rgba(221,174,82,0.035));
     --glow-cool: light-dark(rgba(44,74,62,0.04), rgba(140,194,168,0.03));
     --shadow: light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.5));
+    --waterline-short-1: light-dark(#E1D4C6, #2D221B);
+    --waterline-short-2: light-dark(#D9C7BA, #392921);
+    --waterline-short-3: light-dark(#D0B8AB, #473128);
+    --waterline-short-4: light-dark(#C7AA9D, #55392F);
+    --waterline-short-5: light-dark(#BD998C, #654237);
+    --waterline-short-6: light-dark(#B2877A, #774C40);
+    --waterline-long-1: light-dark(#DBD7C9, #26271F);
+    --waterline-long-2: light-dark(#CECCBE, #2D3128);
+    --waterline-long-3: light-dark(#BEC0B2, #343C32);
+    --waterline-long-4: light-dark(#AFB4A6, #3C483D);
+    --waterline-long-5: light-dark(#9EA699, #455649);
+    --waterline-long-6: light-dark(#8B978A, #4F6556);
     --series-cash: var(--positive);
     --series-floor: var(--accent);
     --focus-ring: var(--accent-strong);
@@ -650,6 +662,151 @@
     color: var(--text-subtle);
   }
 
+  /* ============ WATERLINE ============ */
+  .waterline { margin-bottom: 32px; }
+  .waterline-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 14px 0 12px;
+    border-top: 1.5px solid var(--text);
+  }
+  .waterline-hint strong { font-weight: 500; color: var(--text); }
+  .waterline-legend {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: var(--fs-2xs);
+    color: var(--text-subtle);
+  }
+  .waterline-legend[hidden] { display: none; }
+  .waterline-ramp { display: flex; width: 168px; height: 10px; border: 1px solid var(--rule); }
+  .waterline-ramp span { flex: 1; }
+  .waterline-ramp span + span.waterline-band--long-1 { box-shadow: inset 2px 0 0 var(--text); }
+  .waterline-legend-contour {
+    display: inline-block;
+    width: 18px;
+    border-top: 1px solid var(--text-subtle);
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .waterline-plot {
+    position: relative;
+    height: clamp(360px, 46vw, 620px);
+    background: var(--surface-raised);
+    border: 1px solid var(--rule);
+  }
+  .waterline-svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  .waterline-svg:focus-visible { outline-offset: -2px; }
+  .waterline-band--short-1 { fill: var(--waterline-short-1); background: var(--waterline-short-1); }
+  .waterline-band--short-2 { fill: var(--waterline-short-2); background: var(--waterline-short-2); }
+  .waterline-band--short-3 { fill: var(--waterline-short-3); background: var(--waterline-short-3); }
+  .waterline-band--short-4 { fill: var(--waterline-short-4); background: var(--waterline-short-4); }
+  .waterline-band--short-5 { fill: var(--waterline-short-5); background: var(--waterline-short-5); }
+  .waterline-band--short-6 { fill: var(--waterline-short-6); background: var(--waterline-short-6); }
+  .waterline-band--long-1 { fill: var(--waterline-long-1); background: var(--waterline-long-1); }
+  .waterline-band--long-2 { fill: var(--waterline-long-2); background: var(--waterline-long-2); }
+  .waterline-band--long-3 { fill: var(--waterline-long-3); background: var(--waterline-long-3); }
+  .waterline-band--long-4 { fill: var(--waterline-long-4); background: var(--waterline-long-4); }
+  .waterline-band--long-5 { fill: var(--waterline-long-5); background: var(--waterline-long-5); }
+  .waterline-band--long-6 { fill: var(--waterline-long-6); background: var(--waterline-long-6); }
+  .waterline-grid { stroke: var(--text); stroke-opacity: 0.07; stroke-width: 1; }
+  .waterline-axis { stroke: var(--rule); stroke-width: 1; }
+  .waterline-tick {
+    fill: var(--text-subtle);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--fs-2xs);
+  }
+  .waterline-axis-title {
+    fill: var(--text-muted);
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: var(--fs-xs);
+  }
+  .waterline-ray { stroke: var(--text-subtle); stroke-opacity: 0.6; stroke-width: 1; stroke-dasharray: 2 4; }
+  .waterline-contour { fill: none; stroke: var(--text-muted); stroke-opacity: 0.55; stroke-width: 1; }
+  .waterline-line { fill: none; stroke: var(--text); stroke-width: 2.5; stroke-linejoin: round; }
+  .waterline-label, .waterline-ray-label, .waterline-leader-label, .waterline-you-label {
+    stroke: var(--label-halo);
+    stroke-width: 3px;
+    paint-order: stroke;
+    pointer-events: none;
+  }
+  .waterline-label { fill: var(--text-muted); font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: var(--fs-2xs); }
+  .waterline-label--line { fill: var(--text); font-family: 'Fraunces', serif; font-style: italic; font-size: var(--fs-sm); }
+  .waterline-ray-label { fill: var(--text-subtle); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); }
+  .waterline-guide { stroke: var(--text); stroke-opacity: 0.45; stroke-width: 1; stroke-dasharray: 3 3; }
+  .waterline-leader { stroke: var(--text); stroke-width: 1.5; }
+  .waterline-leader-end { fill: var(--text); }
+  .waterline-leader-label { fill: var(--text); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); }
+  .waterline-you { fill: var(--text); stroke: var(--surface-raised); stroke-width: 2; }
+  .waterline-you-label { fill: var(--text); font-family: 'Fraunces', serif; font-style: italic; font-size: var(--fs-xs); }
+  .waterline-probe-line { stroke: var(--accent-strong); stroke-width: 1; stroke-dasharray: 2 2; pointer-events: none; }
+  .waterline-probe-dot { fill: none; stroke: var(--accent-strong); stroke-width: 2; pointer-events: none; }
+  .waterline-pin-dot { fill: var(--accent-strong); stroke: var(--surface-raised); stroke-width: 2; pointer-events: none; }
+  .waterline-tooltip {
+    position: absolute;
+    z-index: 2;
+    background: var(--surface-raised);
+    border: 1px solid var(--control-border);
+    box-shadow: 0 3px 8px var(--shadow);
+    padding: 8px 10px;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    pointer-events: none;
+    max-width: calc(100% - 8px);
+  }
+  .waterline-tooltip[hidden] { display: none; }
+  .waterline-tip-money { font-family: 'JetBrains Mono', monospace; font-feature-settings: "tnum"; }
+  .waterline-tip-detail { color: var(--text-subtle); }
+  .waterline-tip-long { color: var(--positive); }
+  .waterline-tip-short { color: var(--negative); }
+  .waterline-message {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  .waterline-message[hidden] { display: none; }
+  .waterline.is-inactive .waterline-plot { height: 160px; background: var(--surface-sunken); border-style: dashed; }
+  .waterline.is-inactive .waterline-svg { cursor: default; }
+  .waterline.is-inactive .waterline-head h3 { color: var(--text-muted); }
+  .waterline.is-inactive .waterline-message { color: var(--text); }
+  .waterline-pinned {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: var(--fs-sm);
+  }
+  .waterline-pinned[hidden] { display: none; }
+  .waterline-pinned p { flex: 1 1 280px; }
+  .waterline-actions { display: flex; gap: 8px; }
+  .waterline-readouts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    border-bottom: 1px solid var(--rule);
+    overflow: hidden;
+  }
+  .waterline-readouts[hidden] { display: none; }
+  .waterline-readouts dd { margin: 0; }
+
   /* ============ TABLE ============ */
   .table-section {
     position: relative;
@@ -672,7 +829,7 @@
     border-bottom: 1px solid var(--rule);
     margin-bottom: 0;
   }
-  .table-head h3 {
+  .table-head h3, .waterline-head h3 {
     font-family: 'Fraunces', serif;
     font-variation-settings: "opsz" 72, "SOFT" 30;
     font-weight: 400;
@@ -680,14 +837,14 @@
     letter-spacing: -0.015em;
     color: var(--text);
   }
-  .table-head h3 em {
+  .table-head h3 em, .waterline-head h3 em {
     font-style: italic;
     color: var(--text-muted);
     font-weight: 300;
     font-variation-settings: "opsz" 72, "SOFT" 50, "wght" 300;
   }
-  .table-head-titles { display: flex; flex: 1 1 300px; flex-direction: column; gap: 3px; }
-  .table-hint {
+  .table-head-titles, .waterline-titles { display: flex; flex: 1 1 300px; flex-direction: column; gap: 3px; }
+  .table-hint, .waterline-hint {
     font-family: 'Fraunces', serif;
     font-style: italic;
     font-size: var(--fs-xs);
@@ -703,7 +860,7 @@
     color: var(--accent-strong);
     margin-right: 4px;
   }
-  .table-actions > button {
+  .table-actions > button, .waterline-actions > button {
     padding: 6px 12px;
     white-space: nowrap;
     background: var(--surface);
@@ -716,7 +873,7 @@
     text-transform: uppercase;
     transition: background-color 0.15s, color 0.15s, border-color 0.15s;
   }
-  .table-actions > button:not(:disabled):hover {
+  .table-actions > button:not(:disabled):hover, .waterline-actions > button:hover {
     background: var(--text);
     color: var(--on-strong);
     border-color: var(--text);
@@ -1382,6 +1539,30 @@
       <div class="chart-x-labels" id="chart-x-labels"></div>
     </div>
 
+    <section class="waterline" id="waterline" aria-labelledby="waterline-title">
+      <div class="waterline-head">
+        <div class="waterline-titles">
+          <h3 id="waterline-title">The <em>Waterline</em></h3>
+          <p class="waterline-hint" id="waterline-hint">Starting principal and monthly investment income, with every other input as set.</p>
+        </div>
+        <div class="waterline-legend" id="waterline-legend" aria-hidden="true"></div>
+      </div>
+      <div class="waterline-plot" id="waterline-plot">
+        <svg class="waterline-svg" id="waterline-svg" role="img" tabindex="0" aria-describedby="waterline-hint"></svg>
+        <div class="waterline-tooltip" id="waterline-tooltip" hidden></div>
+        <p class="waterline-message" id="waterline-message" hidden></p>
+      </div>
+      <div class="waterline-pinned" id="waterline-pinned" hidden>
+        <p id="waterline-pinned-text"></p>
+        <div class="waterline-actions">
+          <button type="button" id="waterline-apply">Use these values</button>
+          <button type="button" id="waterline-unpin">Unpin</button>
+        </div>
+      </div>
+      <dl class="waterline-readouts" id="waterline-readouts"></dl>
+      <p class="sr-only" id="waterline-announce" aria-live="polite"></p>
+    </section>
+
     <section class="table-section">
       <div class="table-head">
         <div class="table-head-titles">
@@ -1451,6 +1632,14 @@
         <div class="method-item">
           <dt>Income ledger</dt>
           <dd>Gross sales reduce principal. Sales and closing-principal valuations adjust raw investment income by <em>modifier × income yield × principal change</em>, using the modifier in force at each event. Later principal changes can raise or lower that ledger. At zero principal, payable investment income is zero even if raw income remains; an explicit income edit resets raw income and yield.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Assumptions</dt>
+          <dd>Only expenses inflate; investment income and external income stay at their nominal amounts. Principal changes only through sales and closing valuations, and cash earns nothing.</dd>
+        </div>
+        <div class="method-item">
+          <dt>Waterline</dt>
+          <dd>Each point reruns this scenario from that starting principal and monthly investment income, with every other input and adjustment as set, until the reserve fails or the 1,200-month cap. A point lasts the months its expenses and reserve were fully funded; reaching the horizon exactly counts as lasting it. Adjustments that set principal or investment income turn the map off.</dd>
         </div>
         <div class="method-item">
           <dt>Pins</dt>
@@ -2289,15 +2478,19 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   let pinIdx = 0;
   while (pinIdx < sortedPins.length && sortedPins[pinIdx].at_month < startMonth) pinIdx++;
 
+  // Summary runs settle the same months but keep no rows or state snapshots; the
+  // longevity map needs only how far each scenario runs.
+  const summary = options.summary === true;
   const rows = [];
   let terminatedReason = null;
   let terminatedAtMonth = null;
   let capturedState = null;
+  let lastMonth = null;
 
   for (let m = startMonth; m <= monthLimit; m++) {
     if (m === options.captureBeforeMonth) capturedState = { ...sim, ledger: { ...sim.ledger } };
     // ------- Pin application BEFORE computing this month -------
-    const preStartState = snapshotState(sim);
+    const preStartState = summary ? null : snapshotState(sim);
     const pin = sortedPins[pinIdx]?.at_month === m ? sortedPins[pinIdx++] : null;
     const start = pin?.start || {};
     if ('modifier' in start) sim.current_modifier = start.modifier;
@@ -2313,7 +2506,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
       }
       resetIncomeLedger(sim.ledger, start.investment_income);
     }
-    const postStartState = snapshotState(sim);
+    const postStartState = summary ? null : snapshotState(sim);
 
     // ------- Compute this month -------
     const investment_income = effectiveIncome(sim.ledger);
@@ -2356,7 +2549,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     const unfunded_reserve = reserveGap;
     const unfunded_deficit = unfunded_expense + unfunded_reserve;
     const insolvency = unfunded_deficit > tolerance;
-    const naturalEndState = snapshotState(sim);
+    const naturalEndState = summary ? null : snapshotState(sim);
     let valuation_adjustment = 0;
     let cash_adjustment = 0;
     if (!insolvency && pin) {
@@ -2382,6 +2575,19 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
         cash_adjustment = end.buffer - sim.buffer;
         sim.buffer = end.buffer;
       }
+    }
+    lastMonth = m;
+    if (summary) {
+      if (![sim.buffer, net_income, delta, expense_this_month, ...Object.values(sim.ledger)].every(Number.isFinite)) {
+        return invalidResult([issue('model', `The projection exceeds the supported numerical range at month ${m}.`, { month: m })], plannedLastMonth);
+      }
+      if (insolvency) {
+        terminatedReason = 'reserve_failure';
+        terminatedAtMonth = m;
+        break;
+      }
+      sim.current_expense *= (1 + sim.current_monthly_inflation);
+      continue;
     }
     const endState = snapshotState(sim);
     const adjustment_application = pin ? { id: pin.id, at_month: m,
@@ -2434,7 +2640,7 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
   }
 
   if (!terminatedReason) {
-    if (rows.at(-1)?.month === monthLimit) {
+    if (lastMonth === monthLimit) {
       // A trial cutoff is not evidence that the planned horizon was reached.
       // Solvers must verify the last row reaches their target span before accepting a trial.
       terminatedReason = throughMonth < plannedLastMonth
@@ -2445,7 +2651,152 @@ function simulate(params = state.params, pins = state.pins, options = {}) {
     }
   }
 
-  return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [], capturedState };
+  return { rows, plannedLastMonth, terminatedReason, terminatedAtMonth, issues: [], capturedState, lastMonth };
+}
+
+// Months whose expense and protected reserve were fully funded. simulate() reports a
+// failure month only for a shortfall beyond moneyTolerance(), so a month that ends with
+// cash exactly at the floor still counts as funded.
+function fundedMonths(result) {
+  if (result.terminatedReason === 'reserve_failure') return result.terminatedAtMonth - 1;
+  return result.lastMonth ?? 0;
+}
+
+/* ============================================================
+   WATERLINE MODEL
+   Starting principal × monthly investment income, with every other input taken
+   from the accepted scenario. Longevity never falls as either axis rises, so each
+   contour is a single income per principal and a bisection finds it exactly.
+   ============================================================ */
+const WATERLINE_BANDS = 5;        // bands on each side of the waterline before shading saturates
+const WATERLINE_COLUMNS = 81;     // principal samples per contour
+const WATERLINE_ITERATIONS = 12;  // income bisection steps per sample: 1/4096 of the axis
+
+// Adjustments that set principal or the income baseline overwrite the starting values
+// on the axes and break the monotonicity the contour search relies on.
+function waterlineBlockers(pins) {
+  return pins.filter(pin => 'investment_income' in pin.start ||
+    'investments' in pin.end || 'investment_income' in pin.end);
+}
+
+// Funded months for one starting point; with throughMonth, a value of throughMonth
+// means "at least that long".
+function waterlineLasts(model, principal, income, throughMonth) {
+  const result = simulate({ ...model.params, investments_initial: principal,
+    investment_income: principal > 0 ? income : 0, num_periods: 0 }, model.pins,
+    throughMonth === undefined ? { summary: true } : { summary: true, throughMonth });
+  return result.terminatedReason === 'invalid' ? NaN : fundedMonths(result);
+}
+
+// Exactly reaching the target counts as making it.
+function waterlineBand(months, target, step) {
+  const offset = Math.floor((months - target) / step);
+  return offset >= 0
+    ? { side: 'long', depth: Math.min(WATERLINE_BANDS + 1, offset + 1) }
+    : { side: 'short', depth: Math.min(WATERLINE_BANDS + 1, -offset) };
+}
+
+// Band width in months: whole years in yearly view, and about an eighth of the horizon.
+function waterlineStep(target, unit) {
+  const steps = unit === 'years' ? [12, 24, 60, 120] : [1, 2, 3, 6, 12, 24, 60, 120];
+  return steps.filter(step => step <= Math.max(steps[0], target / 8)).at(-1);
+}
+
+// Contours worth computing: lo and hi are the longevities at the view's lower-left and
+// upper-right corners, so a level outside (lo, hi] cannot cross the view.
+function waterlineLevels(target, unit, lo, hi) {
+  const crosses = months => months > lo && months <= hi && months <= MAX_MONTHS;
+  const levels = [];
+  if (target !== null) {
+    const step = waterlineStep(target, unit);
+    for (let offset = -WATERLINE_BANDS; offset <= WATERLINE_BANDS; offset++) {
+      const months = target + offset * step;
+      if (months > 0 && crosses(months)) levels.push({ offset, months });
+    }
+    return levels;
+  }
+  // Without a horizon: whole-year contours, the finest spacing that keeps eight or fewer.
+  const top = Math.min(hi, MAX_MONTHS);
+  const step = [12, 24, 60, 120, 240, 600].find(s => Math.floor(top / s) - Math.floor(lo / s) <= 8) ?? 600;
+  for (let months = (Math.floor(lo / step) + 1) * step; crosses(months); months += step) {
+    levels.push({ offset: null, months });
+  }
+  return levels;
+}
+
+// Least income in [0, yMax] at this principal that lasts the level; null above the view.
+function waterlineCrossing(model, principal, level, yMax, iterations = WATERLINE_ITERATIONS) {
+  const reaches = income => waterlineLasts(model, principal, income, level) >= level;
+  if (reaches(0)) return 0;
+  if (!reaches(yMax)) return null;
+  let lo = 0, hi = yMax;
+  for (let i = 0; i < iterations; i++) {
+    const mid = (lo + hi) / 2;
+    if (reaches(mid)) hi = mid; else lo = mid;
+  }
+  return hi;
+}
+
+// Least nonnegative value that reaches, searching up to 1,000 times scale; null beyond.
+function waterlineLeast(reaches, scale) {
+  if (reaches(0)) return 0;
+  let lo = 0, hi = scale;
+  while (!reaches(hi)) {
+    lo = hi;
+    hi *= 4;
+    if (hi > scale * 1000) return null;
+  }
+  for (let i = 0; i < 48 && hi - lo > Math.max(0.01, hi * 1e-9); i++) {
+    const mid = (lo + hi) / 2;
+    if (reaches(mid)) hi = mid; else lo = mid;
+  }
+  return hi;
+}
+
+// The two readings traced from the scenario to the waterline. Positive principal is
+// required for any investment income, so the principal search starts at $1.
+function waterlineNeeds(model, target) {
+  const { investments_initial: principal, investment_income: income, expense } = model.params;
+  return {
+    income: principal > 0 ? waterlineLeast(x => waterlineLasts(model, principal, x, target) >= target,
+      Math.max(income, expense, 1000)) : null,
+    principal: waterlineLeast(x => waterlineLasts(model, Math.max(x, 1), income, target) >= target,
+      Math.max(principal, 100000)),
+  };
+}
+
+function niceCeil(value) {
+  const power = 10 ** Math.floor(Math.log10(value));
+  return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(f => f * power >= value * (1 - 1e-12)) * power;
+}
+
+function niceCeilStep(value) {
+  const power = 10 ** Math.floor(Math.log10(value));
+  return [1, 2, 2.5, 5, 10].find(f => f * power >= value * (1 - 1e-12)) * power;
+}
+
+function niceFloorStep(value) {
+  const power = 10 ** Math.floor(Math.log10(value));
+  return [5, 2.5, 2, 1].find(f => f * power <= value * (1 + 1e-12)) * power;
+}
+
+// The view spans twice the scenario's principal and income, stretched up to five times
+// so the waterline meets both axes inside it.
+function waterlineAxes(model, target) {
+  const { investments_initial: principal, investment_income: income, expense } = model.params;
+  const scale = Math.max(expense, 1000);
+  let xMax = principal > 0 ? 2 * principal : scale * (target ?? 120);
+  let yMax = income > 0 ? 2 * income : scale * 1.5;
+  if (target !== null) {
+    const p = waterlineLeast(x => waterlineLasts(model, x, 0, target) >= target, xMax);
+    if (p !== null && p * 1.1 > xMax) xMax = Math.min(5 * xMax, p * 1.1);
+    xMax = niceCeil(xMax);
+    const i = waterlineLeast(y => waterlineLasts(model, xMax / 400, y, target) >= target, yMax);
+    if (i !== null && i * 1.1 > yMax) yMax = Math.min(5 * yMax, i * 1.1);
+  }
+  xMax = niceCeil(xMax);
+  yMax = niceCeil(yMax);
+  return { xMax, yMax, xStep: niceFloorStep(xMax / 100), yStep: niceFloorStep(yMax / 100) };
 }
 
 function snapshotState(sim) {
@@ -2648,7 +2999,7 @@ function renderStats(rows, result) {
   const totalIncomeTax = rows.reduce((s, r) => s + r.income_tax_paid, 0);
   const totalSaleTax = rows.reduce((s, r) => s + r.sale_tax_paid, 0);
   const totalTax = rows.reduce((s, r) => s + r.tax_paid, 0);
-  const months = rows.length;
+  const months = result.terminatedReason === 'reserve_failure' ? fundedMonths(result) : rows.length;
 
   const horizonText = result.terminatedReason === 'reserve_failure'
     ? (p.unit === 'years' ? `${(months / 12).toFixed(1)} yrs` : `${months}`)
@@ -2846,6 +3197,421 @@ function renderChart(rows) {
     <span>${fmtDate(midD, state.params.unit === 'years' ? 'years' : 'months')}</span>
     <span>${fmtDate(lastD, state.params.unit === 'years' ? 'years' : 'months')}</span>
   `;
+}
+
+/* ============================================================
+   WATERLINE VIEW
+   ============================================================ */
+const waterline = {
+  key: null,          // the accepted scenario the data below describes
+  status: 'idle',     // 'inactive', 'computing', or 'ready'
+  model: null,
+  target: null,       // horizon in months, or null when Periods is 0
+  unit: 'months',
+  step: null,         // band width in months
+  axes: null,
+  columns: [],        // principal samples
+  levels: [],
+  curves: new Map(),  // level months → least income per column (null above the view)
+  range: null,        // longevity at the lower-left and upper-right corners
+  here: null,         // the scenario's own longevity, run past the horizon
+  needs: null,
+  blockers: [],
+  probe: null,        // { principal, income, months } under the pointer or keyboard
+  pinned: null,
+  timer: null,
+  geometry: null,
+};
+
+function fmtSpan(months, unit) {
+  if (unit === 'months') return `${months} mo`;
+  const years = Math.floor(months / 12), rest = months % 12;
+  return [years ? `${years} yr${years === 1 ? '' : 's'}` : '', rest ? `${rest} mo` : '']
+    .filter(Boolean).join(' ') || '0 mo';
+}
+
+// "5+ yrs" or "60+ mo": at least this span.
+function fmtSpanAtLeast(months, unit) {
+  return fmtSpan(months, unit).replace(/^(\d+)/, '$1+');
+}
+
+function fmtAxisMoney(v) {
+  if (v >= 1e6) return `$${+(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `$${+(v / 1e3).toFixed(1)}K`;
+  return `$${+v.toFixed(0)}`;
+}
+
+function waterlineLastsText(months, unit) {
+  return months >= MAX_MONTHS ? 'the full 100 years' : fmtSpan(months, unit);
+}
+
+// How a longevity compares with the horizon, in the horizon's unit.
+function waterlineVerdict(months, target, unit) {
+  if (target === null) return null;
+  const gap = months - target;
+  if (gap > 0) return { side: 'long', text: `${months >= MAX_MONTHS ? fmtSpanAtLeast(gap, unit) : fmtSpan(gap, unit)} beyond ${fmtSpan(target, unit)}` };
+  if (gap === 0) return { side: 'long', text: `exactly ${fmtSpan(target, unit)}` };
+  return { side: 'short', text: `${fmtSpan(-gap, unit)} short of ${fmtSpan(target, unit)}` };
+}
+
+function waterlineSentence(point) {
+  const verdict = waterlineVerdict(point.months, waterline.target, waterline.unit);
+  return `${fmtMoney(point.principal)} of principal earning ${fmtMoney(point.income)} a month lasts ` +
+    `${waterlineLastsText(point.months, waterline.unit)}${verdict ? `, ${verdict.text}` : ''}.`;
+}
+
+function scheduleWaterline(result) {
+  if (!document.getElementById('waterline-svg')) return;
+  const key = JSON.stringify([state.params, state.pins]);
+  if (key !== waterline.key) startWaterline(key, result);
+  renderWaterline();
+}
+
+// Corner runs, axes and the scenario's own readings are computed at once; contour
+// searches run in short slices so input stays responsive, the waterline first.
+function startWaterline(key, result) {
+  clearTimeout(waterline.timer);
+  const params = state.params;
+  const model = { params, pins: state.pins.map(clonePin) };
+  const target = params.num_periods === 0 ? null : result.plannedLastMonth;
+  Object.assign(waterline, { key, model, target, unit: params.unit, probe: null, pinned: null,
+    curves: new Map(), levels: [], needs: null, here: null, timer: null, blockers: waterlineBlockers(model.pins) });
+  if (waterline.blockers.length) {
+    waterline.status = 'inactive';
+    return;
+  }
+  const axes = waterlineAxes(model, target);
+  const columns = Array.from({ length: WATERLINE_COLUMNS },
+    (_, j) => axes.xMax * Math.max(j, 0.2) / (WATERLINE_COLUMNS - 1));
+  const range = { lo: waterlineLasts(model, columns[0], 0), hi: waterlineLasts(model, axes.xMax, axes.yMax) };
+  const levels = waterlineLevels(target, params.unit, range.lo, range.hi)
+    .sort((a, b) => (a.offset === null ? a.months : Math.abs(a.offset)) - (b.offset === null ? b.months : Math.abs(b.offset)));
+  levels.forEach(level => waterline.curves.set(level.months, new Array(columns.length)));
+  Object.assign(waterline, { status: 'computing', axes, columns, range, levels,
+    step: target === null ? null : waterlineStep(target, params.unit),
+    here: waterlineLasts(model, params.investments_initial, params.investment_income),
+    needs: target === null ? null : waterlineNeeds(model, target) });
+  const tasks = levels.flatMap(level => columns.map((_, j) => [level, j]));
+  let next = 0;
+  const run = () => {
+    if (waterline.key !== key) return;
+    const deadline = performance.now() + 12;
+    while (next < tasks.length && performance.now() < deadline) {
+      const [level, j] = tasks[next++];
+      waterline.curves.get(level.months)[j] = waterlineCrossing(model, columns[j], level.months, axes.yMax);
+      if (j === columns.length - 1 && next < tasks.length) renderWaterline();
+    }
+    if (next < tasks.length) {
+      waterline.timer = setTimeout(run, 0);
+      return;
+    }
+    waterline.status = 'ready';
+    waterline.timer = null;
+    renderWaterline();
+  };
+  waterline.timer = setTimeout(run, 0);
+}
+
+function renderWaterline() {
+  const section = document.getElementById('waterline');
+  const svg = document.getElementById('waterline-svg');
+  if (!section || !svg) return;
+  const w = waterline, unit = w.unit;
+  const inactive = w.status === 'inactive';
+  section.classList.toggle('is-inactive', inactive);
+  svg.setAttribute('tabindex', inactive ? '-1' : '0');
+  const message = document.getElementById('waterline-message');
+  const legend = document.getElementById('waterline-legend');
+  const hint = document.getElementById('waterline-hint');
+  const reading = 'Hover or use the arrow keys to read a point; click or press Enter to pin it.';
+  if (inactive) {
+    const months = w.blockers.map(pin => pin.at_month).sort((a, b) => a - b);
+    const one = months.length === 1;
+    svg.innerHTML = '';
+    svg.setAttribute('aria-label', 'Waterline unavailable');
+    w.geometry = null;
+    message.textContent = `The waterline is off while ${one ? 'an adjustment sets' : 'adjustments set'} principal or ` +
+      `investment income (month${one ? '' : 's'} ${months.join(', ')}). Remove ${one ? 'it' : 'them'} to map this scenario.`;
+    message.hidden = false;
+    legend.hidden = true;
+    hint.textContent = 'Starting principal and monthly investment income, with every other input as set.';
+    renderWaterlineReadouts();
+    renderWaterlinePinned();
+    paintWaterlineProbe();
+    return;
+  }
+  if (!w.axes) return;
+
+  hint.innerHTML = w.target === null
+    ? `How long each starting principal and monthly investment income lasts, with every other input as set. Set Periods to a horizon to see what reaches it. ${reading}`
+    : `What starting principal and monthly investment income last <strong>${fmtSpan(w.target, unit)}</strong>, with every other input as set. ${reading}`;
+  const contourStep = w.levels.length > 1 ? Math.abs(w.levels[1].months - w.levels[0].months) : null;
+  legend.hidden = false;
+  legend.innerHTML = w.target === null
+    ? `<span><span class="waterline-legend-contour"></span>${contourStep ? `Contours every ${fmtSpan(contourStep, unit)}` : 'Contours mark whole years'}</span>`
+    : `<span>${fmtSpanAtLeast(WATERLINE_BANDS * w.step, unit)} short</span>
+       <span class="waterline-ramp">${[6, 5, 4, 3, 2, 1].map(d => `<span class="waterline-band--short-${d}"></span>`).join('')}${[1, 2, 3, 4, 5, 6].map(d => `<span class="waterline-band--long-${d}"></span>`).join('')}</span>
+       <span>${fmtSpanAtLeast(WATERLINE_BANDS * w.step, unit)} beyond</span>
+       <span>Each band is ${fmtSpan(w.step, unit)}</span>`;
+
+  const box = svg.getBoundingClientRect();
+  const W = Math.round(box.width) || 800, H = Math.round(box.height) || 480;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const padL = W < 520 ? 52 : 72, padR = 16, padT = 12, padB = 46;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const { xMax, yMax } = w.axes;
+  const xTick = niceCeilStep(xMax / Math.max(2, Math.floor(innerW / 84)));
+  const yTick = niceCeilStep(yMax / Math.max(2, Math.floor(innerH / 56)));
+  const xs = p => padL + p / xMax * innerW;
+  const ys = i => padT + (1 - Math.min(yMax, Math.max(0, i)) / yMax) * innerH;
+  w.geometry = { W, H, padL, padR, padT, padB, innerW, innerH, xs, ys };
+
+  const complete = w.levels.filter(level => w.curves.get(level.months).every(v => v !== undefined))
+    .sort((a, b) => a.months - b.months);
+  message.textContent = 'Mapping the waterline…';
+  message.hidden = complete.length > 0 || w.levels.length === 0;
+  const value = (curve, j) => curve[j] === null ? yMax : curve[j];
+  const point = (curve, j) => `${(j === 0 ? padL : xs(w.columns[j])).toFixed(1)},${ys(value(curve, j)).toFixed(1)}`;
+
+  // Bands appear once every contour is known, so a partly computed map never shows a wrong band.
+  let bands = '';
+  if (w.status === 'ready' && w.target !== null) {
+    const edges = [w.columns.map(() => 0), ...complete.map(level => w.curves.get(level.months)), w.columns.map(() => null)];
+    for (let k = 0; k < edges.length - 1; k++) {
+      const months = k < complete.length ? complete[k].months - 1 : (complete.at(-1)?.months ?? w.range.lo);
+      const band = waterlineBand(months, w.target, w.step);
+      const points = [...w.columns.map((_, j) => point(edges[k], j)), ...w.columns.map((_, j) => point(edges[k + 1], j)).reverse()];
+      bands += `<polygon class="waterline-band waterline-band--${band.side}-${band.depth}" points="${points.join(' ')}"/>`;
+    }
+  }
+
+  let grid = '', ticks = '';
+  for (let p = 0; p <= xMax * (1 + 1e-9); p += xTick) {
+    grid += `<line class="waterline-grid" x1="${xs(p).toFixed(1)}" y1="${padT}" x2="${xs(p).toFixed(1)}" y2="${(padT + innerH).toFixed(1)}"/>`;
+    const anchor = p === 0 ? 'start' : p + xTick > xMax * (1 + 1e-9) ? 'end' : 'middle';
+    ticks += `<text class="waterline-tick" x="${xs(p).toFixed(1)}" y="${(padT + innerH + 16).toFixed(1)}" text-anchor="${anchor}">${fmtAxisMoney(p)}</text>`;
+  }
+  for (let i = 0; i <= yMax * (1 + 1e-9); i += yTick) {
+    grid += `<line class="waterline-grid" x1="${padL}" y1="${ys(i).toFixed(1)}" x2="${(padL + innerW).toFixed(1)}" y2="${ys(i).toFixed(1)}"/>`;
+    ticks += `<text class="waterline-tick" x="${padL - 8}" y="${(ys(i) + 4).toFixed(1)}" text-anchor="end">${fmtAxisMoney(i)}</text>`;
+  }
+  ticks += `<text class="waterline-axis-title" x="${(padL + innerW / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">Starting principal</text>
+    <text class="waterline-axis-title" transform="rotate(-90)" x="${-(padT + innerH / 2).toFixed(1)}" y="13" text-anchor="middle">Monthly investment income</text>`;
+
+  // Annual-yield rays from the origin show which corners need implausible yields.
+  const cornerYield = 12 * yMax / xMax, rayStep = niceFloorStep(cornerYield / 1.5);
+  let rays = '';
+  for (let k = 1; k <= 4; k++) {
+    const yieldRate = k * rayStep, pEnd = Math.min(xMax, 12 * yMax / yieldRate), iEnd = yieldRate * pEnd / 12;
+    const exitsTop = pEnd < xMax;
+    rays += `<line class="waterline-ray" x1="${padL}" y1="${ys(0).toFixed(1)}" x2="${xs(pEnd).toFixed(1)}" y2="${ys(iEnd).toFixed(1)}"/>
+      <text class="waterline-ray-label" x="${(xs(pEnd) - 4).toFixed(1)}" y="${(ys(iEnd) + (exitsTop ? 12 : -5)).toFixed(1)}" text-anchor="end">${+(yieldRate * 100).toFixed(2)}%${k === 1 ? ' yield' : ''}</text>`;
+  }
+
+  // The scenario, with leaders traced to the waterline along each axis.
+  const { investments_initial: P0, investment_income: I0 } = w.model.params;
+  const hx = xs(P0), hy = ys(I0);
+  const labelLeft = hx > W - 130;
+  const obstacles = [[hx, hy], [hx + (labelLeft ? -52 : 52), hy - 14]];
+  let you = `<line class="waterline-guide" x1="${hx.toFixed(1)}" y1="${hy.toFixed(1)}" x2="${hx.toFixed(1)}" y2="${(padT + innerH).toFixed(1)}"/>
+    <line class="waterline-guide" x1="${padL}" y1="${hy.toFixed(1)}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}"/>`;
+  if (w.needs?.income !== null && w.needs?.income !== undefined) {
+    const gap = I0 - w.needs.income, ny = ys(w.needs.income), ly = (hy + ny) / 2 + 4;
+    obstacles.push([hx, ny], [hx + 36, ly - 4]);
+    you += `<line class="waterline-leader" x1="${hx.toFixed(1)}" y1="${hy.toFixed(1)}" x2="${hx.toFixed(1)}" y2="${ny.toFixed(1)}"/>
+      <circle class="waterline-leader-end" cx="${hx.toFixed(1)}" cy="${ny.toFixed(1)}" r="3"/>
+      <text class="waterline-leader-label" x="${(hx + 8).toFixed(1)}" y="${ly.toFixed(1)}">${fmtMoney(gap, true)}/mo</text>`;
+  }
+  if (w.needs?.principal !== null && w.needs?.principal !== undefined) {
+    const gap = P0 - w.needs.principal, nx = xs(Math.min(xMax, w.needs.principal)), lx = (hx + nx) / 2;
+    obstacles.push([nx, hy], [lx, hy - 12]);
+    you += `<line class="waterline-leader" x1="${hx.toFixed(1)}" y1="${hy.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${hy.toFixed(1)}"/>
+      <circle class="waterline-leader-end" cx="${nx.toFixed(1)}" cy="${hy.toFixed(1)}" r="3"/>
+      <text class="waterline-leader-label" x="${lx.toFixed(1)}" y="${(hy - 8).toFixed(1)}" text-anchor="middle">${gap >= 0 ? '+' : '−'}${fmtMoneyCompact(Math.abs(gap))}</text>`;
+  }
+  you += `<circle class="waterline-you" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6"/>
+    <text class="waterline-you-label" x="${(hx + (labelLeft ? -10 : 10)).toFixed(1)}" y="${(hy - 10).toFixed(1)}" text-anchor="${labelLeft ? 'end' : 'start'}">Your scenario</text>`;
+
+  // Contours, labelled where they cross one of several diagonal guides. The waterline is
+  // labelled first; each label takes the first guide that keeps it clear of the scenario
+  // marks and of labels already placed, or is left out.
+  let contours = '', labels = '';
+  const placed = [];
+  const guides = [0.12, 0.38, -0.16, 0.62, -0.42].map(c => u => c + u * 1.1);
+  const clear = (x, y) => placed.every(([px, py]) => Math.hypot(px - x, py - y) >= 26) &&
+    obstacles.every(([ox, oy]) => Math.hypot(ox - x, oy - y) >= 34);
+  const priority = level => level.offset === null ? level.months : Math.abs(level.offset);
+  for (const level of [...complete].sort((a, b) => priority(a) - priority(b))) {
+    const curve = w.curves.get(level.months);
+    const inside = curve.map(v => v !== null && v > 0 && v < yMax);
+    const runs = [];
+    let current = [];
+    curve.forEach((_, j) => {
+      if (inside[j] || inside[j - 1] || inside[j + 1]) current.push(point(curve, j));
+      else if (current.length) { runs.push(current); current = []; }
+    });
+    if (current.length) runs.push(current);
+    const isLine = level.offset === 0;
+    contours += `<path class="${isLine ? 'waterline-line' : 'waterline-contour'}" data-months="${level.months}" d="${runs.filter(run => run.length > 1).map(run => `M ${run.join(' L ')}`).join(' ')}"/>`;
+    const text = level.offset === null || isLine ? fmtSpan(level.months, unit)
+      : `${level.offset > 0 ? '+' : '−'}${fmtSpan(Math.abs(level.offset) * w.step, unit)}`;
+    for (const guide of guides) {
+      const spot = waterlineGuideCrossing(curve, guide, inside);
+      if (!spot || !clear(spot.x, spot.y)) continue;
+      placed.push([spot.x, spot.y]);
+      labels += `<text class="waterline-label${isLine ? ' waterline-label--line' : ''}" x="${spot.x.toFixed(1)}" y="${(spot.y - 4).toFixed(1)}" text-anchor="middle" transform="rotate(${spot.angle.toFixed(1)} ${spot.x.toFixed(1)} ${spot.y.toFixed(1)})">${text}</text>`;
+      break;
+    }
+  }
+
+  function waterlineGuideCrossing(curve, guide, inside) {
+    for (let j = 1; j < curve.length; j++) {
+      const before = guide(w.columns[j - 1] / xMax) - value(curve, j - 1) / yMax;
+      const after = guide(w.columns[j] / xMax) - value(curve, j) / yMax;
+      if (before < 0 && after >= 0 && inside[j] && inside[j - 1]) {
+        const t = before / (before - after);
+        const x0 = xs(w.columns[j - 1]), y0 = ys(value(curve, j - 1)), x1 = xs(w.columns[j]), y1 = ys(value(curve, j));
+        const x = x0 + t * (x1 - x0), y = y0 + t * (y1 - y0);
+        if (x < padL + 24 || x > padL + innerW - 24 || y < padT + 12) return null;
+        return { x, y, angle: Math.atan2(y1 - y0, x1 - x0) * 180 / Math.PI };
+      }
+    }
+    return null;
+  }
+
+  svg.innerHTML = `${bands}${grid}${rays}${contours}
+    <line class="waterline-axis" x1="${padL}" y1="${(padT + innerH).toFixed(1)}" x2="${(padL + innerW).toFixed(1)}" y2="${(padT + innerH).toFixed(1)}"/>
+    <line class="waterline-axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${(padT + innerH).toFixed(1)}"/>
+    ${labels}${ticks}${you}<g id="waterline-marks"></g>`;
+  svg.setAttribute('aria-label', w.here === null ? 'Waterline' : `Waterline. ${waterlineSentence({ principal: P0, income: I0, months: w.here })}`);
+  renderWaterlineReadouts();
+  renderWaterlinePinned();
+  paintWaterlineProbe();
+}
+
+function renderWaterlineReadouts() {
+  const el = document.getElementById('waterline-readouts');
+  const w = waterline;
+  if (w.status === 'inactive' || w.here === null) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const { investments_initial: P0, investment_income: I0 } = w.model.params;
+  const verdict = waterlineVerdict(w.here, w.target, w.unit);
+  const items = [['Your scenario lasts', waterlineLastsText(w.here, w.unit), verdict?.text ?? 'no horizon set']];
+  if (w.needs) {
+    const spare = (gap, suffix = '') => `${fmtMoney(Math.abs(gap))}${suffix} ${gap >= 0 ? 'to spare' : 'short'}`;
+    const atPrincipal = `at ${fmtMoneyCompact(P0)} principal`, atIncome = `at ${fmtMoney(I0)}/mo`;
+    items.push(P0 === 0
+      ? ['Income needed', '—', 'investment income needs principal']
+      : w.needs.income === null
+        ? ['Income needed', 'Not reachable', `${atPrincipal}, within 1,000 times your income`]
+        : ['Income needed', `${fmtMoney(w.needs.income)}/mo`, `${atPrincipal}; ${spare(I0 - w.needs.income, '/mo')}`]);
+    items.push(w.needs.principal === null
+      ? ['Principal needed', 'Not reachable', `${atIncome}; sales cannot fund the horizon`]
+      : ['Principal needed', fmtMoney(w.needs.principal), `${atIncome}; ${spare(P0 - w.needs.principal)}`]);
+  }
+  el.hidden = false;
+  el.innerHTML = items.map(([label, value, detail]) =>
+    `<div class="stat"><dt class="stat-label">${label}</dt><dd class="stat-value">${value}</dd><dd class="stat-detail">${detail}</dd></div>`).join('');
+}
+
+function renderWaterlinePinned() {
+  const panel = document.getElementById('waterline-pinned');
+  const pin = waterline.status === 'inactive' ? null : waterline.pinned;
+  panel.hidden = !pin;
+  if (pin) document.getElementById('waterline-pinned-text').textContent = `Pinned: ${waterlineSentence(pin)}`;
+}
+
+function waterlineInteractive() {
+  return waterline.status !== 'inactive' && waterline.status !== 'idle' && waterline.geometry !== null;
+}
+
+// Hover and keyboard positions snap to round values so specific points are easy to reach.
+function waterlineSnap(principal, income) {
+  const { xMax, yMax, xStep, yStep } = waterline.axes;
+  return {
+    principal: Math.min(xMax, Math.max(xStep, Math.round(principal / xStep) * xStep)),
+    income: Math.min(yMax, Math.max(0, Math.round(income / yStep) * yStep)),
+  };
+}
+
+function waterlinePointAt(x, y) {
+  const g = waterline.geometry;
+  if (x < g.padL - 4 || x > g.padL + g.innerW + 4 || y < g.padT - 4 || y > g.padT + g.innerH + 4) return null;
+  return waterlineSnap((x - g.padL) / g.innerW * waterline.axes.xMax, (g.padT + g.innerH - y) / g.innerH * waterline.axes.yMax);
+}
+
+function waterlineMeasured(point) {
+  const known = [waterline.probe, waterline.pinned].find(item =>
+    item && item.principal === point.principal && item.income === point.income);
+  return known ?? { ...point, months: waterlineLasts(waterline.model, point.principal, point.income) };
+}
+
+function setWaterlineProbe(point, announce = false) {
+  waterline.probe = point && waterlineInteractive() ? waterlineMeasured(point) : null;
+  paintWaterlineProbe();
+  if (announce && waterline.probe) {
+    document.getElementById('waterline-announce').textContent = waterlineSentence(waterline.probe);
+  }
+}
+
+function toggleWaterlinePin(point) {
+  const pinned = waterline.pinned;
+  waterline.pinned = pinned && pinned.principal === point.principal && pinned.income === point.income
+    ? null : waterlineMeasured(point);
+  renderWaterlinePinned();
+  paintWaterlineProbe();
+  document.getElementById('waterline-announce').textContent = waterline.pinned
+    ? `Pinned: ${waterlineSentence(waterline.pinned)}` : 'Unpinned.';
+}
+
+function applyWaterlinePin() {
+  const pin = waterline.pinned;
+  if (!pin) return;
+  for (const [id, value] of [['investments-initial', pin.principal], ['investment-income', pin.income]]) {
+    const input = document.getElementById(id);
+    input.value = String(value);
+    updateFieldReadout(input);
+  }
+  pendingFocus = '#waterline-svg';
+  recalc();
+}
+
+function paintWaterlineProbe() {
+  const marks = document.getElementById('waterline-marks');
+  const tooltip = document.getElementById('waterline-tooltip');
+  const g = waterline.geometry;
+  if (!marks || !g || !waterlineInteractive()) {
+    if (tooltip) tooltip.hidden = true;
+    return;
+  }
+  const { pinned, probe } = waterline;
+  let html = '';
+  if (pinned) html += `<circle class="waterline-pin-dot" cx="${g.xs(pinned.principal).toFixed(1)}" cy="${g.ys(pinned.income).toFixed(1)}" r="5"/>`;
+  if (probe) {
+    const x = g.xs(probe.principal), y = g.ys(probe.income);
+    html += `<line class="waterline-probe-line" x1="${g.padL}" y1="${y.toFixed(1)}" x2="${(g.padL + g.innerW).toFixed(1)}" y2="${y.toFixed(1)}"/>
+      <line class="waterline-probe-line" x1="${x.toFixed(1)}" y1="${g.padT}" x2="${x.toFixed(1)}" y2="${(g.padT + g.innerH).toFixed(1)}"/>
+      <circle class="waterline-probe-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6"/>`;
+    const verdict = waterlineVerdict(probe.months, waterline.target, waterline.unit);
+    const yieldRate = probe.income * 12 / probe.principal;
+    tooltip.innerHTML = `<div><span class="waterline-tip-money">${fmtMoney(probe.principal)}</span> principal, <span class="waterline-tip-money">${fmtMoney(probe.income)}</span>/mo <span class="waterline-tip-detail">(${fmtPct(yieldRate)} yield)</span></div>
+      <div>Lasts <strong>${waterlineLastsText(probe.months, waterline.unit)}</strong></div>
+      ${verdict ? `<div class="waterline-tip-${verdict.side}">${verdict.text.charAt(0).toUpperCase()}${verdict.text.slice(1)}</div>` : ''}
+      <div class="waterline-tip-detail">${probe.months >= MAX_MONTHS ? 'No reserve failure within 100 years' : `Reserve fails ${fmtDate(dateForMonth(probe.months + 1), 'months')}`}</div>`;
+    tooltip.hidden = false;
+    // Beside the point where it fits, otherwise flipped, and always inside the plot.
+    const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
+    const left = x + 16 + width <= g.W ? x + 16 : x - 16 - width;
+    const top = y - 14 - height >= 0 ? y - 14 - height : y + 14;
+    tooltip.style.left = `${Math.max(4, Math.min(g.W - width - 4, left)).toFixed(1)}px`;
+    tooltip.style.top = `${Math.max(4, Math.min(g.H - height - 4, top)).toFixed(1)}px`;
+  } else {
+    tooltip.hidden = true;
+  }
+  marks.innerHTML = html;
 }
 
 // Builds one editable value cell. The four editable columns (expense,
@@ -3676,6 +4442,7 @@ function rerender(validated = false) {
   renderStats(result.rows, result);
   renderVerdict(result.rows, result);
   renderChart(result.rows);
+  scheduleWaterline(result);
   renderTable(viewRows, result.rows, result);
   renderAdjustments();
   attachPinEditorEvents(viewRows, result.rows);
@@ -3907,6 +4674,56 @@ function init() {
         if (lastChartRows) renderChart(lastChartRows);
       });
     }).observe(document.getElementById('chart'));
+  }
+
+  const waterlineSvg = document.getElementById('waterline-svg');
+  const waterlinePointer = event => {
+    if (!waterlineInteractive()) return null;
+    const box = waterlineSvg.getBoundingClientRect();
+    return waterlinePointAt(event.clientX - box.left, event.clientY - box.top);
+  };
+  const waterlineScenarioPoint = () => waterlineSnap(waterline.model.params.investments_initial,
+    waterline.model.params.investment_income);
+  waterlineSvg.addEventListener('pointermove', event => setWaterlineProbe(waterlinePointer(event)));
+  waterlineSvg.addEventListener('pointerleave', () => setWaterlineProbe(null));
+  waterlineSvg.addEventListener('click', event => {
+    const point = waterlinePointer(event);
+    if (point) toggleWaterlinePin(point);
+  });
+  waterlineSvg.addEventListener('focus', () => {
+    if (waterlineInteractive() && !waterline.probe) setWaterlineProbe(waterline.pinned ?? waterlineScenarioPoint(), true);
+  });
+  waterlineSvg.addEventListener('blur', () => setWaterlineProbe(null));
+  waterlineSvg.addEventListener('keydown', event => {
+    if (!waterlineInteractive()) return;
+    const move = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[event.key];
+    if (move) {
+      event.preventDefault();
+      const from = waterline.probe ?? waterline.pinned ?? waterlineScenarioPoint();
+      const scale = event.shiftKey ? 10 : 1;
+      setWaterlineProbe(waterlineSnap(from.principal + move[0] * scale * waterline.axes.xStep,
+        from.income + move[1] * scale * waterline.axes.yStep), true);
+    } else if ((event.key === 'Enter' || event.key === ' ') && waterline.probe) {
+      event.preventDefault();
+      toggleWaterlinePin(waterline.probe);
+    } else if (event.key === 'Escape' && waterline.pinned) {
+      toggleWaterlinePin(waterline.pinned);
+    }
+  });
+  document.getElementById('waterline-apply').addEventListener('click', applyWaterlinePin);
+  document.getElementById('waterline-unpin').addEventListener('click', () => {
+    if (waterline.pinned) toggleWaterlinePin(waterline.pinned);
+    waterlineSvg.focus();
+  });
+  if (typeof ResizeObserver === 'function') {
+    let waterlineFrame = null;
+    new ResizeObserver(() => {
+      if (waterlineFrame !== null) return;
+      waterlineFrame = requestAnimationFrame(() => {
+        waterlineFrame = null;
+        renderWaterline();
+      });
+    }).observe(document.getElementById('waterline-plot'));
   }
 
   document.querySelectorAll('.theme-toggle button').forEach(button => {

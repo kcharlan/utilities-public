@@ -1501,3 +1501,148 @@ test.describe('year marks', () => {
     await expect(row(page, 13)).toHaveClass(/\bis-year-start\b/);
   });
 });
+
+test.describe('waterline map', () => {
+  const ready = page => page.waitForFunction(() => waterline.status === 'ready');
+  // Test-side formatting, independent of the page's fmtSpan.
+  const span = months => [Math.floor(months / 12) ? `${Math.floor(months / 12)} yr${Math.floor(months / 12) === 1 ? '' : 's'}` : '',
+    months % 12 ? `${months % 12} mo` : ''].filter(Boolean).join(' ');
+  const screenPoint = (page, principal, income) => page.evaluate(([p, i]) => {
+    const svg = document.getElementById('waterline-svg');
+    svg.scrollIntoView({ block: 'center', behavior: 'instant' }); // the page scrolls smoothly
+    const box = svg.getBoundingClientRect();
+    return [box.left + waterline.geometry.xs(p), box.top + waterline.geometry.ys(i)];
+  }, [principal, income]);
+  const fullLongevity = (page, principal, income) => page.evaluate(([p, i]) => fundedMonths(simulate({
+    ...state.params, investments_initial: p, investment_income: i, num_periods: 0 }, state.pins)), [principal, income]);
+  async function fifteenYearScenario(page) {
+    await page.locator('#unit-years').click();
+    await page.locator('#periods').fill('15');
+    await page.locator('#investments-initial').fill('420000');
+    await page.locator('#investment-income').fill('3600');
+    await page.waitForFunction(() => state.params.num_periods === 15 && state.params.investments_initial === 420000
+      && state.params.investment_income === 3600);
+    await ready(page);
+  }
+
+  test('maps the default scenario with banded contours, the waterline, and readouts', async ({ page }) => {
+    await ready(page);
+    await expect(page.locator('#waterline-svg .waterline-line')).toHaveAttribute('d', /^M /);
+    expect(await page.locator('#waterline-svg .waterline-contour').count()).toBeGreaterThan(4);
+    expect(await page.locator('#waterline-svg .waterline-band').count()).toBeGreaterThan(5);
+    await expect(page.locator('#waterline-hint')).toContainText('last 120 mo');
+    const readouts = page.locator('#waterline-readouts .stat');
+    await expect(readouts).toHaveCount(3);
+    // The default reserve fails in month 322, so it lasts 321 funded months.
+    await expect(readouts.nth(0)).toContainText('321 mo');
+    await expect(readouts.nth(0)).toContainText('201 mo beyond 120 mo');
+  });
+
+  test('traces the scenario to the waterline along both axes', async ({ page }) => {
+    await fifteenYearScenario(page);
+    const readouts = page.locator('#waterline-readouts .stat');
+    // Hand-checked with a separate full-projection search.
+    await expect(readouts.nth(0)).toContainText('16 yrs 3 mo');
+    await expect(readouts.nth(0)).toContainText('1 yr 3 mo beyond 15 yrs');
+    await expect(readouts.nth(1)).toContainText('$3,092/mo');
+    await expect(readouts.nth(1)).toContainText('$508/mo to spare');
+    await expect(readouts.nth(2)).toContainText('$332,748');
+    await expect(page.locator('#waterline-svg .waterline-leader')).toHaveCount(2);
+  });
+
+  test('hover reads a snapped point and a click pins it for the sidebar', async ({ page }) => {
+    await fifteenYearScenario(page);
+    await page.mouse.move(...await screenPoint(page, 300000, 3000));
+    const tooltip = page.locator('#waterline-tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('$300,000 principal, $3,000/mo');
+    const months = await fullLongevity(page, 300000, 3000);
+    expect(months).toBeLessThan(180);
+    await expect(tooltip).toContainText(`Lasts ${span(months)}`);
+    await expect(tooltip).toContainText(`${span(180 - months)} short of 15 yrs`);
+
+    await page.mouse.click(...await screenPoint(page, 300000, 3000));
+    await expect(page.locator('#waterline-pinned')).toBeVisible();
+    await expect(page.locator('#waterline-pinned-text')).toContainText('$300,000 of principal earning $3,000 a month');
+    await page.locator('#waterline-apply').click();
+    await expect(page.locator('#investments-initial')).toHaveValue('300000');
+    await expect(page.locator('#investment-income')).toHaveValue('3000');
+    await page.waitForFunction(() => state.params.investments_initial === 300000);
+    await ready(page);
+    await expect(page.locator('#waterline-readouts .stat').nth(0)).toContainText(span(months));
+    await expect(page.locator('#waterline-pinned')).toBeHidden();
+    await expect(page.locator('#waterline-svg')).toBeFocused();
+  });
+
+  test('keyboard moves the probe by snap steps and Enter pins it', async ({ page }) => {
+    await ready(page);
+    const map = page.locator('#waterline-svg');
+    await map.focus();
+    const tooltip = page.locator('#waterline-tooltip');
+    await expect(tooltip).toContainText('$600,000 principal, $6,000/mo');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Shift+ArrowUp');
+    await expect(tooltip).toContainText('$610,000 principal, $7,000/mo');
+    await expect(page.locator('#waterline-announce')).toContainText('$610,000 of principal earning $7,000 a month');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#waterline-pinned-text')).toContainText('$610,000 of principal earning $7,000 a month');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#waterline-pinned')).toBeHidden();
+  });
+
+  test('turns off without computing while an adjustment sets principal', async ({ page }) => {
+    await ready(page);
+    await page.evaluate(() => {
+      acceptPins([{ id: 'crash', at_month: 24, start: {}, end: { investments: 300000 } },
+        { id: 'expense', at_month: 30, start: { expense: 4000 }, end: {} }]);
+      rerender();
+    });
+    await expect(page.locator('#waterline')).toHaveClass(/is-inactive/);
+    await expect(page.locator('#waterline-message')).toContainText('(month 24)');
+    await expect(page.locator('#waterline-svg')).toHaveAttribute('tabindex', '-1');
+    await expect(page.locator('#waterline-svg *')).toHaveCount(0);
+    await expect(page.locator('#waterline-readouts')).toBeHidden();
+    expect(await page.evaluate(() => [waterline.status, waterline.levels.length, waterline.timer])).toEqual(['inactive', 0, null]);
+
+    await page.evaluate(() => { acceptPins([{ id: 'expense', at_month: 30, start: { expense: 4000 }, end: {} }]); rerender(); });
+    await ready(page);
+    await expect(page.locator('#waterline')).not.toHaveClass(/is-inactive/);
+    await expect(page.locator('#waterline-svg .waterline-line')).toHaveCount(1);
+  });
+
+  test('without a horizon shows plain longevity contours', async ({ page }) => {
+    await ready(page);
+    await page.locator('#periods').fill('0');
+    await page.waitForFunction(() => state.params.num_periods === 0);
+    await ready(page);
+    await expect(page.locator('#waterline-svg .waterline-band')).toHaveCount(0);
+    expect(await page.locator('#waterline-svg .waterline-contour').count()).toBeGreaterThan(2);
+    await expect(page.locator('#waterline-legend')).toContainText('Contours every');
+    await expect(page.locator('#waterline-readouts .stat')).toHaveCount(1);
+  });
+
+  test('bands follow the color scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await ready(page);
+    const fill = () => page.locator('#waterline-svg .waterline-band').first().evaluate(el => getComputedStyle(el).fill);
+    const light = await fill();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(fill).not.toBe(light);
+  });
+
+  test('fits a phone and keeps its tooltip inside the plot', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await ready(page);
+    await page.locator('#waterline').scrollIntoViewIfNeeded();
+    await page.mouse.move(...await screenPoint(page, 150000, 7000));
+    const tooltip = page.locator('#waterline-tooltip');
+    await expect(tooltip).toBeVisible();
+    const fits = await page.evaluate(() => {
+      const plot = document.getElementById('waterline-plot').getBoundingClientRect();
+      const tip = document.getElementById('waterline-tooltip').getBoundingClientRect();
+      return document.documentElement.scrollWidth <= innerWidth
+        && tip.left >= plot.left && tip.right <= plot.right && tip.top >= plot.top && tip.bottom <= plot.bottom;
+    });
+    expect(fits).toBe(true);
+  });
+});

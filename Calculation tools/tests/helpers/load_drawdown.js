@@ -29,7 +29,8 @@ function loadDrawdownApi({ document = {}, today = [2026, 6, 30] } = {}) {
     toRoundedCents, formatCents, buildCsvText,
     solveAnnualTarget, evaluateAnnualIncomeCandidate, encloseAnnualIncomeCandidates,
     searchAnnualIncome, intervalArithmetic, annualIncomeContext,
-    yearOfMonth, isYearStart, yearMarkTag, yearBoundaries, chartYearSteps,
+    yearOfMonth, isYearStart, yearMarkTag, yearBoundaries, chartYearSteps, fundedMonths,
+    waterlineBlockers, waterlineBand, waterlineStep, waterlineLevels, waterlineCrossing, waterlineNeeds, waterlineAxes,
   };`, context);
   return context.__api;
 }
