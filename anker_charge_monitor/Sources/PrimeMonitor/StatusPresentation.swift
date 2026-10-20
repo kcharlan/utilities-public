@@ -11,19 +11,17 @@ struct StatusPresentation: Equatable {
     let accessibility: String
     var textSize: MenuBarTextSize = .default
 
-    /// Compact title: the button's own image–title gap replaces a leading
-    /// space, and a thin space separates the unit. The symbol matches the text size.
+    /// Shows the symbol and reading as one image with no button title.
+    /// NSStatusBarButton's title cell pads a title by about 3 pt on each side;
+    /// an image-only button adds nothing. A thin space separates the unit.
     @MainActor func apply(to button: NSButton) {
-        let size = CGFloat(textSize.pointSize)
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
-            .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
-        image?.isTemplate = true; button.image = image
-        button.imagePosition = .imageLeading
-        button.contentTintColor = dimmed ? .secondaryLabelColor : nil
+        // Clear the title first: setting a title can change imagePosition.
+        button.title = ""
+        button.image = StatusImage.make(for: self)
+        button.imagePosition = .imageOnly
         button.setAccessibilityLabel(accessibility)
         button.setAccessibilityHelp(accessibility)
         button.toolTip = tooltip
-        button.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor])
     }
 
     static func make(status: ConnectionStatus, snapshot: ChargerSnapshot?, isStale: Bool, now: Date, textSize: MenuBarTextSize = .default) -> Self {
@@ -46,6 +44,35 @@ struct StatusPresentation: Equatable {
         let age = snapshot.map { "; updated " + DisplayFormatter.age(now.timeIntervalSince($0.receivedAt)) } ?? ""
         let tooltip = reason + age
         return .init(symbol: failed ? "exclamationmark.triangle.fill" : "bolt.fill", title: title, dimmed: failed, tooltip: tooltip, accessibility: "\(PrimeMonitorRelease.displayName), " + (spoken.isEmpty ? "" : spoken + ", ") + tooltip, textSize: textSize)
+    }
+}
+
+/// Draws the status symbol, a fixed gap and the reading into one image,
+/// following Brew Version's StatusIcon (NativeActions.swift). Colours resolve
+/// in the drawing handler, which runs under the menu bar's real appearance;
+/// the macOS 27 menu bar draws a tinted template image black. `textColor`
+/// stays opaque in every appearance, unlike `labelColor`.
+@MainActor enum StatusImage {
+    static let gap: CGFloat = 4
+    static func font(_ size: MenuBarTextSize) -> NSFont { .monospacedDigitSystemFont(ofSize: size.pointSize, weight: .regular) }
+    static func make(for presentation: StatusPresentation) -> NSImage? {
+        let color: NSColor = presentation.dimmed ? .secondaryLabelColor : .textColor
+        let configuration = NSImage.SymbolConfiguration(pointSize: presentation.textSize.pointSize, weight: .regular)
+            .applying(.init(paletteColors: [color]))
+        guard let symbol = NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else { return nil }
+        let title = NSAttributedString(string: presentation.title, attributes: [.font: font(presentation.textSize), .foregroundColor: color])
+        let text = presentation.title.isEmpty ? .zero : title.size()
+        let size = NSSize(width: ceil(symbol.size.width + (text.width > 0 ? gap + text.width : 0)),
+                          height: ceil(max(symbol.size.height, text.height)))
+        let image = NSImage(size: size, flipped: false) { _ in
+            symbol.draw(in: NSRect(x: 0, y: (size.height - symbol.size.height) / 2, width: symbol.size.width, height: symbol.size.height))
+            if text.width > 0 { title.draw(at: NSPoint(x: symbol.size.width + gap, y: (size.height - text.height) / 2)) }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = presentation.accessibility
+        return image
     }
 }
 

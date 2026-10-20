@@ -22,3 +22,9 @@ The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen
 renders exercise maintained sources; physical click/Space behavior and system
 login registration require installed-app observation.
+
+The status item shows one image drawn by `StatusImage`: the symbol, a 4 pt gap
+and the reading. A button title would add NSStatusBarButton title-cell insets
+(about 3 pt per side). Colours resolve in the image's drawing handler, under
+the menu bar's real appearance; the macOS 27 menu bar draws tinted template
+images and tinted titles black on a dark bar.

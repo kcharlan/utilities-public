@@ -1,5 +1,20 @@
 # Lessons learned
 
+## 2026-10-20: Draw the status item as one image; tints and titles misrender
+
+The 0.2.0 status item set a template symbol and an attributed title on the
+button. NSStatusBarButton's title cell padded that title by about 3 pt on each
+side. A composed image spends 4 pt of that on a symbol–reading gap, for a net
+2 pt (an 82 pt window became 80 pt). Shrinking `length` clipped the text
+instead. The dimmed state used `contentTintColor` and a `secondaryLabelColor`
+title; in a real macOS 27 dark menu bar both the triangle and the reading drew
+black and nearly vanished.
+One composed `NSImage(size:flipped:drawingHandler:)` with `imagePosition =
+.imageOnly` fixes both: the button is exactly the image's width, and colours
+resolve at draw time. Clear the button title before setting `imagePosition`,
+because setting the title changed it back. Tests assert the button width
+equals the image width and check rendered ink under all four appearances.
+
 ## 2026-10-19: Preserve a single owner of bundle activation
 
 The root deployment CLI captures tracked release inputs and checks app/receipt

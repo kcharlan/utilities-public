@@ -111,7 +111,7 @@ backup=$(sed -n 's/^Recovery backup: //p' "$scratch/renamed-rollback.log")
 cmp "$scratch/renamed-old" "$backup/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor"
 "$root/tools/install.sh" "$scratch/source.app" > "$scratch/renamed-success.log"
 cmp "$scratch/source.app/Contents/MacOS/PrimeMonitor" "$target/Contents/MacOS/PrimeMonitor"
-[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")" = 0.2.0 ]
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")" = 0.2.1 ]
 cat <&7 > "$scratch/renamed-held"; exec 7<&-
 cmp "$scratch/renamed-old" "$scratch/renamed-held"
 [ ! -e "$legacy" ]

@@ -9,4 +9,4 @@ fs.mkdirSync(path.join(app,'Contents/MacOS'),{recursive:true});
 fs.writeFileSync(path.join(app,'Contents/MacOS/PrimeMonitor'),'synthetic never-executed app\n',{mode:0o755});
 fs.copyFileSync(path.join(repo,'anker_charge_monitor/Resources/Info.plist'),path.join(app,'Contents/Info.plist'));
 fs.chmodSync(path.join(app,'Contents/Info.plist'),0o644);
-fs.writeFileSync(path.join(scripts,'.anker-charge-monitor-native.json'),JSON.stringify({schema:1,sourceHash:sourceInventory(repo).sourceHash,version:'0.2.0',appTreeHash:appTreeHash(app),signingIdentity:'A'.repeat(40)})+'\n',{mode:0o600});
+fs.writeFileSync(path.join(scripts,'.anker-charge-monitor-native.json'),JSON.stringify({schema:1,sourceHash:sourceInventory(repo).sourceHash,version:'0.2.1',appTreeHash:appTreeHash(app),signingIdentity:'A'.repeat(40)})+'\n',{mode:0o600});
