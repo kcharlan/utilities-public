@@ -263,6 +263,25 @@ test('[summary] reports summed gross sales and both tax components in five cards
   assert.match(stats.innerHTML, /Asset sale tax <span title="Rounded to cents \$20\.00 · Model value \$20"[^>]*>\$20/);
 });
 
+test('[summary] horizon counts fully funded months when the reserve fails', () => {
+  const stats = { innerHTML: '' };
+  const { state, simulate, renderStats } = loadDrawdownApi({ getElementById: () => stats });
+  // $3,650 above a zero floor pays 36 months of $100; month 37 has only $50.
+  const params = { buffer_initial: 3650, floor: 0, external_income: 0, investments_initial: 0,
+    investment_income: 0, modifier: 1, expense: 100, inflation: 0, tax_rate: 0, sale_tax_rate: 0,
+    unit: 'months', num_periods: 0 };
+  const result = simulate(params, []);
+  assert.equal(result.terminatedAtMonth, 37);
+
+  Object.assign(state.params, params);
+  renderStats(result.rows, result);
+  assert.match(stats.innerHTML, /Horizon<\/div>\s*<div class="stat-value warning">36<\/div>/);
+
+  Object.assign(state.params, { unit: 'years' });
+  renderStats(result.rows, result);
+  assert.match(stats.innerHTML, /Horizon<\/div>\s*<div class="stat-value warning">3\.0 yrs<\/div>/);
+});
+
 test('[Gross sold] table renames only the visible sale heading', () => {
   assert.match(calculatorHtml, /<th>Gross sold<\/th>/);
   assert.doesNotMatch(calculatorHtml, /<th>Sold<\/th>/);

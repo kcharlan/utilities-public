@@ -11,6 +11,11 @@
 - **Markup is part of the test contract.** `tests/drawdown_sales.test.js` asserts exact tax-label/input markup, the `inputs` array, the Gross sold header, the table scroll wrapper, the stats count, and pin field attributes. `tests/drawdown_dates.test.js` asserts the date stamp. `tests/drawdown.browser.spec.js` exercises the pin field chain, chart series paths, and editor, status, and table selectors. Inspect those locations before changing markup.
 - **Chromium snaps fractional borders down.** At 1x device pixel ratio a `1.5px` table border computes and paints as `1px`, indistinguishable from the fine row rule. Year-boundary rules use `2px` so they read on every display.
 - **Year-mark controls must not reuse `.toggle`.** The unit buttons call `setPressed(document.querySelectorAll('.toggle button'), …)`, which would clear any other `.toggle` group. Table-action button styles are scoped to `.table-actions > button` so the nested year toggle keeps toggle styling.
+- **Count funded months in one place.** The Horizon tile showed `rows.length` on a reserve failure, which includes the failing month, while the table footer said "last fully funded month m − 1". Use `fundedMonths(result)` wherever longevity is shown or compared. `simulate()` declares failure only for a shortfall beyond `moneyTolerance()`, so a month ending exactly at the floor is funded.
+- **Benchmark `simulate()` in a browser, not under `node:vm`.** The test loader runs the script in a `vm` context, where every global lookup (`Math`, `Number`, top-level functions) goes through interceptors. A summary run cost about 1.4 µs per month there and about 0.12 µs per month in Chromium.
+- **Arrays from the `vm` context fail `assert.deepEqual` against test-realm arrays** ("same structure but are not reference-equal"). Compare lengths, or copy with `Array.from` first.
+- **The page scrolls smoothly.** `html { scroll-behavior: smooth }` makes `scrollIntoView()` animate, so a test that reads `getBoundingClientRect()` right after it gets pre-scroll coordinates. Pass `behavior: 'instant'` before computing pointer positions.
+- **`.stat-label` must stay on one line at 1024px.** A tablet-layout test checks every `.stat-label` on the page, including the waterline readouts, so keep those labels short and put amounts in the detail line.
 
 ## AI model timeline
 
