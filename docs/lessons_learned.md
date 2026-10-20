@@ -1,5 +1,20 @@
 # Lessons learned
 
+## 2026-10-20: Use the system CLI consistently in usage exports
+
+`usage-monthly-csv` invoked a pinned npm package while the user's `ccusage`
+command used a newer installation. The old adapter discovered only `.jsonl`,
+so Codex's migration of cold logs to `.jsonl.zst` silently removed historical
+days and undercounted surviving dates. Compare the actual versions and source
+discovery rules before blaming CSV conversion or calendar filtering.
+
+Call the system command, including interactive Zsh functions and aliases,
+rather than choosing a separate package version in the wrapper. Test with real
+compressed synthetic logs as well as report stubs: a stub that returns complete
+JSON cannot reveal an upstream discovery failure. Keep the synthetic home and
+reports outside the checkout, force offline pricing, and verify token totals
+as well as dates.
+
 ## 2026-10-20: Size a menu bar icon item with variableLength, not squareLength
 
 Brew Version's mug sat in visibly wider gaps than neighbouring items.

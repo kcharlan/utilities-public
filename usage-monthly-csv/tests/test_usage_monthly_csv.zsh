@@ -8,17 +8,18 @@ mkdir -p "$TMPDIR/bin" "$TMPDIR/out"
 
 cat <<'STUB' >"$TMPDIR/bin/npx"
 #!/usr/bin/env zsh
-set -eu
-if [[ "${1:-}" == "--yes" ]]; then
-  shift
-fi
-package=$1
-subcommand=$2
-command=$3
-format=$4
-shift 4
+print -u2 -- 'FAIL: monthly export must use system ccusage, not npx'
+exit 1
+STUB
 
-[[ "$package" == "ccusage@20.0.20" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
+cat <<'STUB' >"$TMPDIR/bin/ccusage"
+#!/usr/bin/env zsh
+set -eu
+subcommand=$1
+command=$2
+format=$3
+shift 3
+
 [[ "$subcommand" == "claude" || "$subcommand" == "codex" ]] || { print -u2 -- "unexpected subcommand: $subcommand"; exit 1; }
 [[ "$command" == "daily" ]] || { print -u2 -- "unexpected command: $command"; exit 1; }
 [[ "$format" == "--json" ]] || { print -u2 -- "unexpected format: $format"; exit 1; }
@@ -88,7 +89,7 @@ EOF
 esac
 STUB
 
-chmod +x "$TMPDIR/bin/npx"
+chmod +x "$TMPDIR/bin/npx" "$TMPDIR/bin/ccusage"
 
 export PATH="$TMPDIR/bin:$PATH"
 
@@ -150,16 +151,10 @@ zsh "$SCRIPT" --date 2026-06-20 --output-dir "$TMPDIR/custom"
 expect_file_contains "$TMPDIR/custom/ccusage-0626.csv" '"2026-06-01",201,202,203,204,205,206'
 expect_file_contains "$TMPDIR/custom/cusage-0626.csv" '"2026-06-01",210,220,230,240,250,260'
 
-cat <<'STUB' >"$TMPDIR/bin/npx"
+cat <<'STUB' >"$TMPDIR/bin/ccusage"
 #!/usr/bin/env zsh
 set -eu
-if [[ "${1:-}" == "--yes" ]]; then
-  shift
-fi
-package=$1
-subcommand=$2
-
-[[ "$package" == "ccusage@20.0.20" ]] || { print -u2 -- "unexpected package: $package"; exit 1; }
+subcommand=$1
 
 case "$subcommand" in
   claude)
@@ -179,13 +174,27 @@ EOF
 esac
 STUB
 
-chmod +x "$TMPDIR/bin/npx"
+chmod +x "$TMPDIR/bin/ccusage"
 rm -f "$TMPDIR/out"/*.csv(N)
 
 zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPDIR/out"
 expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"2026-04-01",1,2,3,4,5,6'
 expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"2026-04-01",10,20,30,40,50,60'
 expect_file_not_contains "$TMPDIR/out/cusage-0426.csv" '"Apr 01, 2026",10,20,30,40,50,60'
+
+# A failing system command must preserve existing output, not try npm/fallbacks.
+previous_csv=$(cat "$TMPDIR/out/ccusage-0426.csv")
+cat <<'STUB' > "$TMPDIR/bin/ccusage"
+#!/usr/bin/env zsh
+print -u2 -- 'synthetic system ccusage failure'
+exit 42
+STUB
+if zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPDIR/out" > "$TMPDIR/failure.log" 2>&1; then
+  fail 'system ccusage failure was swallowed'
+fi
+expect_file_contains "$TMPDIR/failure.log" 'synthetic system ccusage failure'
+[[ "$(cat "$TMPDIR/out/ccusage-0426.csv")" == "$previous_csv" ]] || fail 'failed report replaced existing CSV'
+[[ -z "$(print -rl -- "$TMPDIR/out"/*.tmp.*(N))" ]] || fail 'failed report left temporary output'
 
 HELP=$(zsh "$SCRIPT" --help)
 print -- "$HELP" | grep -F -- '--output-dir DIR' >/dev/null || fail 'help missing output-dir'
@@ -211,5 +220,29 @@ ZSHRC
 HOME="$TMPROOT/home" PATH="/usr/bin:/bin:/usr/sbin:/sbin" zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPROOT/out"
 expect_file_contains "$TMPROOT/out/ccusage-0426.csv" "ccusage:--since 20260401"
 expect_file_contains "$TMPROOT/out/cusage-0426.csv" "cusage:--since 20260401"
+
+# Resolve the system ccusage through interactive Zsh when it is a function/alias.
+mkdir -p "$TMPROOT/bin"
+ln -s "$(command -v jq)" "$TMPROOT/bin/jq"
+cat <<'ZSHRC' > "$TMPROOT/home/.zshrc"
+ccusage() {
+  [[ "$*" == 'claude daily --json --since 20260401 --until 20260430' || "$*" == 'codex daily --json --since 20260401 --until 20260430' ]] || return 1
+  print -r -- '{"daily":[{"date":"2026-04-02","inputTokens":1,"outputTokens":2,"totalTokens":3}]}'
+}
+ZSHRC
+HOME="$TMPROOT/home" PATH="$TMPROOT/bin:/usr/bin:/bin:/usr/sbin:/sbin" zsh "$SCRIPT" --date 20260410 --output-dir "$TMPROOT/out"
+expect_file_contains "$TMPROOT/out/ccusage-0426.csv" '"2026-04-02",1,2,,,3,'
+expect_file_contains "$TMPROOT/out/cusage-0426.csv" '"2026-04-02",1,,2,,3,'
+
+cat <<'ZSHRC' > "$TMPROOT/home/.zshrc"
+synthetic_ccusage() {
+  [[ "$*" == 'claude daily --json --since 20260401 --until 20260430' || "$*" == 'codex daily --json --since 20260401 --until 20260430' ]] || return 1
+  print -r -- '{"daily":[{"date":"2026-04-03","inputTokens":4,"outputTokens":5,"totalTokens":9}]}'
+}
+alias ccusage='synthetic_ccusage'
+ZSHRC
+HOME="$TMPROOT/home" PATH="$TMPROOT/bin:/usr/bin:/bin:/usr/sbin:/sbin" zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPROOT/out"
+expect_file_contains "$TMPROOT/out/ccusage-0426.csv" '"2026-04-03",4,5,,,9,'
+expect_file_contains "$TMPROOT/out/cusage-0426.csv" '"2026-04-03",4,,5,,9,'
 
 print -- 'ok'

@@ -5,8 +5,6 @@ setopt errexit nounset pipefail
 
 readonly DEFAULT_OUTPUT_DIR="$HOME/Downloads"
 readonly DEFAULT_BOUNDARY_DAYS=2
-readonly PRIMARY_PACKAGE="ccusage@20.0.20"
-readonly SECONDARY_PACKAGE="ccusage@20.0.20"
 readonly PRIMARY_SUBCOMMAND="claude"
 readonly SECONDARY_SUBCOMMAND="codex"
 readonly PRIMARY_FALLBACK_COMMAND="ccusage_csv"
@@ -21,8 +19,8 @@ usage() {
 usage-monthly-csv
 
 Generate monthly CSV reports from:
-  - npx ${PRIMARY_PACKAGE} ${PRIMARY_SUBCOMMAND} daily
-  - npx ${SECONDARY_PACKAGE} ${SECONDARY_SUBCOMMAND} daily
+  - ccusage ${PRIMARY_SUBCOMMAND} daily
+  - ccusage ${SECONDARY_SUBCOMMAND} daily
 
 Usage:
   usage-monthly-csv [options]
@@ -63,15 +61,18 @@ command_available() {
   zsh -ic "command -v ${(q)command_name} >/dev/null 2>&1"
 }
 
-run_fallback_command() {
+run_available_command() {
   local command_name=$1
-  local since_value=$2
-  local until_value=$3
+  shift
 
   if command -v "$command_name" >/dev/null 2>&1; then
-    "$command_name" --since "$since_value" --until "$until_value"
+    "$command_name" "$@"
   else
-    zsh -ic "${(q)command_name} --since ${(q)since_value} --until ${(q)until_value}"
+    local command_line="${(q)command_name}" arg
+    for arg in "$@"; do
+      command_line+=" ${(q)arg}"
+    done
+    zsh -ic "$command_line"
   fi
 }
 
@@ -95,27 +96,25 @@ json_to_csv() {
 }
 
 run_upstream_json_as_csv() {
-  local package_name=$1
-  local subcommand=$2
+  local subcommand=$1
+  local columns_json=$2
+  local since_value=$3
+  local until_value=$4
+
+  run_available_command ccusage "$subcommand" daily --json --since "$since_value" --until "$until_value" | json_to_csv "$columns_json"
+}
+
+run_report_command() {
+  local subcommand=$1
+  local fallback_command=$2
   local columns_json=$3
   local since_value=$4
   local until_value=$5
 
-  npx --yes "$package_name" "$subcommand" daily --json --since "$since_value" --until "$until_value" | json_to_csv "$columns_json"
-}
-
-run_report_command() {
-  local package_name=$1
-  local subcommand=$2
-  local fallback_command=$3
-  local columns_json=$4
-  local since_value=$5
-  local until_value=$6
-
-  if command -v npx >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    run_upstream_json_as_csv "$package_name" "$subcommand" "$columns_json" "$since_value" "$until_value"
+  if command -v jq >/dev/null 2>&1 && command_available ccusage; then
+    run_upstream_json_as_csv "$subcommand" "$columns_json" "$since_value" "$until_value"
   else
-    run_fallback_command "$fallback_command" "$since_value" "$until_value"
+    run_available_command "$fallback_command" --since "$since_value" --until "$until_value"
   fi
 }
 
@@ -207,13 +206,12 @@ month_until() {
 }
 
 run_report() {
-  local package_name=$1
-  local subcommand=$2
-  local fallback_command=$3
-  local prefix=$4
-  local columns_json=$5
-  local anchor_date=$6
-  local output_dir=$7
+  local subcommand=$1
+  local fallback_command=$2
+  local prefix=$3
+  local columns_json=$4
+  local anchor_date=$5
+  local output_dir=$6
   local since_value until_value suffix output_file temp_file
 
   since_value=$(month_since "$anchor_date")
@@ -222,7 +220,7 @@ run_report() {
   output_file="${output_dir}/${prefix}-${suffix}.csv"
   temp_file="${output_file}.tmp.$$"
 
-  if run_report_command "$package_name" "$subcommand" "$fallback_command" "$columns_json" "$since_value" "$until_value" | normalize_csv_stream > "$temp_file"; then
+  if run_report_command "$subcommand" "$fallback_command" "$columns_json" "$since_value" "$until_value" | normalize_csv_stream > "$temp_file"; then
     mv "$temp_file" "$output_file"
   else
     rm -f "$temp_file"
@@ -276,9 +274,9 @@ main() {
     esac
   done
 
-  if ! { command -v npx >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; }; then
-    command_available "$PRIMARY_FALLBACK_COMMAND" || die "Required command 'npx' with 'jq', or fallback command '$PRIMARY_FALLBACK_COMMAND', was not found."
-    command_available "$SECONDARY_FALLBACK_COMMAND" || die "Required command 'npx' with 'jq', or fallback command '$SECONDARY_FALLBACK_COMMAND', was not found."
+  if ! { command -v jq >/dev/null 2>&1 && command_available ccusage; }; then
+    command_available "$PRIMARY_FALLBACK_COMMAND" || die "Required system command 'ccusage' with 'jq', or fallback command '$PRIMARY_FALLBACK_COMMAND', was not found."
+    command_available "$SECONDARY_FALLBACK_COMMAND" || die "Required system command 'ccusage' with 'jq', or fallback command '$SECONDARY_FALLBACK_COMMAND', was not found."
   fi
 
   mkdir -p "$output_dir"
@@ -302,8 +300,8 @@ main() {
       continue
     fi
     seen_months[$anchor]=1
-    run_report "$PRIMARY_PACKAGE" "$PRIMARY_SUBCOMMAND" "$PRIMARY_FALLBACK_COMMAND" "$PRIMARY_PREFIX" "$PRIMARY_COLUMNS" "$anchor" "$output_dir"
-    run_report "$SECONDARY_PACKAGE" "$SECONDARY_SUBCOMMAND" "$SECONDARY_FALLBACK_COMMAND" "$SECONDARY_PREFIX" "$SECONDARY_COLUMNS" "$anchor" "$output_dir"
+    run_report "$PRIMARY_SUBCOMMAND" "$PRIMARY_FALLBACK_COMMAND" "$PRIMARY_PREFIX" "$PRIMARY_COLUMNS" "$anchor" "$output_dir"
+    run_report "$SECONDARY_SUBCOMMAND" "$SECONDARY_FALLBACK_COMMAND" "$SECONDARY_PREFIX" "$SECONDARY_COLUMNS" "$anchor" "$output_dir"
   done
 }
 

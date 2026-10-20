@@ -15,16 +15,22 @@ Standalone Zsh utility that runs the `ccusage claude daily` and `ccusage codex d
 - Supports an explicit prior-month mode for manual backfills after the boundary window.
 - Accepts `--date` in either `YYYY-MM-DD` or `YYYYMMDD`, normalizes internally, and still passes `YYYYMMDD`-style values to the upstream commands.
 - Replaces existing files for the same month only after the new report has been generated successfully.
-- If `npx` or `jq` is missing, falls back to the legacy `ccusage_csv` and `cusage_csv` commands. It can load those commands through interactive Zsh when they are defined as functions or aliases in a startup file such as `~/.zshrc`.
+- Uses the system's `ccusage` command, including functions or aliases defined in interactive Zsh startup files such as `~/.zshrc`. The wrapper does not select or install an npm package version.
+- If `ccusage` or `jq` is missing, falls back to the legacy `ccusage_csv` and `cusage_csv` commands. It can also load those commands through interactive Zsh.
 
 ## Requirements
 
 - macOS with `zsh` and BSD `date`.
 - One of these report sources:
-  - Preferred: `npx` and `jq` on `PATH`. The script invokes the reproducibly pinned `ccusage@20.0.20`, so `npx` may need network access when that package is not cached.
+  - Preferred: `jq` on `PATH` and a system `ccusage` executable, Zsh function, or alias. Its installation and updates are managed separately from this wrapper.
   - Fallback: both `ccusage_csv` and `cusage_csv`, either on `PATH` or available to interactive Zsh through a startup file such as `~/.zshrc`.
 
 An upstream JSON command failure stops the run; it does not trigger the fallback.
+
+Use a `ccusage` version that supports Codex's compressed `.jsonl.zst` logs.
+Older versions, including `20.0.20`, silently omit those sessions, which can
+remove historical days and undercount days that still appear. See
+[upstream fix #1890](https://github.com/ccusage/ccusage/pull/1890).
 
 ## Installation
 
@@ -82,7 +88,15 @@ Repo-local regression harness:
 
 ```bash
 zsh tests/test_usage_monthly_csv.zsh
+zsh tests/test_compressed_codex.zsh
 ```
+
+The first harness uses synthetic command stubs and checks executable, function,
+alias, fallback, date-normalization, and failure-preservation behavior. The second
+requires `zstd` and runs the actual system `ccusage` against synthetic plain and
+compressed logs in a temporary home. It forces offline pricing and npm resolution;
+if the system command uses npm, its package must already be cached. It does not
+read real usage logs or write reports to Downloads.
 
 Safe shell-utility validation:
 
