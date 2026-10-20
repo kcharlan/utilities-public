@@ -86,7 +86,7 @@ struct StatusContent: View {
          cancelSession: @escaping (NSStatusItemExpandedInterfaceSession) -> Void = { $0.cancel() },
          activate: @escaping () -> Void = { NSApp.activate(ignoringOtherApps: true) }) {
         self.controller = controller
-        let item = suppliedItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = suppliedItem ?? Self.makeItem()
         self.item = item
         panel = suppliedPanel ?? StatusPanel()
         settings = suppliedSettings ?? SettingsWindowController(controller: controller, notifier: notifier)
@@ -131,6 +131,12 @@ struct StatusContent: View {
             self.item.button?.setAccessibilityHelp(presentation.accessibility)
             self.item.button?.toolTip = presentation.accessibility
         }
+    }
+    /// Variable length fits the item to its mug. Square length pads every
+    /// image to the bar's 22pt thickness, leaving wide gaps beside the
+    /// narrower mug; the amber dot widens the item by a few points instead.
+    static func makeItem(in bar: NSStatusBar = .system) -> NSStatusItem {
+        bar.statusItem(withLength: NSStatusItem.variableLength)
     }
     deinit {
         notifications.removeObserver(self)

@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-20: Size a menu bar icon item with variableLength, not squareLength
+
+Brew Version's mug sat in visibly wider gaps than neighbouring items.
+`NSStatusItem.squareLength` makes the button as wide as the bar's thickness
+(22pt), so a 12.5pt mug got 3pt more blank on each side than `variableLength`,
+which sizes the item to its image. Measure the ink margins inside the status
+item's window before guessing at a cause: a button title adds its own cell
+insets, which length does not change.
+
 ## 2026-10-19: Keep app activation separate from deployment provenance
 
 An app-only deployer must not inherit CLI `--help`/`--version` probes: those

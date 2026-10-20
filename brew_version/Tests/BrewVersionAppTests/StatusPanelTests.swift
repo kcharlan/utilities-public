@@ -226,6 +226,13 @@ private final class PanelSaveCounter: Sendable {
         #expect(!image.isTemplate)
         #expect(button.accessibilityLabel() == "Brew Version, 3 watched updates available")
     }
+    @Test func statusItemFitsTheMugInsteadOfTheBarThickness() {
+        // Square length padded the mug to 22pt, leaving ~10pt gaps beside it.
+        let bar = NSStatusBar()
+        let item = StatusItemController.makeItem(in: bar)
+        defer { bar.removeStatusItem(item) }
+        #expect(item.length == NSStatusItem.variableLength)
+    }
     @Test func repeatedNativeSessionsAndProgrammaticRequestsUseSameRetainedHost() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
