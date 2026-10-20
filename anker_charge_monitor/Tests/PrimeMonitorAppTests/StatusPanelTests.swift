@@ -669,6 +669,25 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(await fixture.rig.backend.log.filter { $0 == "request" }.count == requests + (state == "stale" ? 1 : 0))
         await fixture.rig.finish()
     }
+    /// Width of the symbol, the gap and the reading, measured apart from StatusImage.
+    static func composedWidth(_ title: String, symbol: String = "bolt.fill", size: MenuBarTextSize) throws -> CGFloat {
+        let image = try #require(NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size.pointSize, weight: .regular)))
+        let text = title.isEmpty ? 0 : StatusImage.gap + NSAttributedString(string: title, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size.pointSize, weight: .regular)]).size().width
+        return ceil(image.size.width + text)
+    }
+    /// The most opaque pixel of `image` drawn under `name`: its alpha and red level.
+    static func ink(_ image: NSImage, _ name: NSAppearance.Name) throws -> (alpha: CGFloat, level: CGFloat) {
+        let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(image.size.width), pixelsHigh: Int(image.size.height), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        try #require(NSAppearance(named: name)).performAsCurrentDrawingAppearance {
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            image.draw(in: NSRect(origin: .zero, size: image.size)); NSGraphicsContext.restoreGraphicsState()
+        }
+        var peak: (alpha: CGFloat, level: CGFloat) = (0, 0)
+        for y in 0..<rep.pixelsHigh { for x in 0..<rep.pixelsWide {
+            if let color = rep.colorAt(x: x, y: y), color.alphaComponent > peak.alpha { peak = (color.alphaComponent, color.redComponent) }
+        } }
+        return peak
+    }
     @Test func monitorPresentationUpdatesActualStatusButton() async throws {
         let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
         await fixture.rig.start()
@@ -676,21 +695,30 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         fixture.rig.backend.output.yield(.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading])))
         await settle()
         let button = try #require(fixture.item.button)
-        #expect(button.image?.isTemplate == true)
-        // The image–title gap replaces a leading space; a thin space separates the unit.
-        #expect(button.attributedTitle.string == "43.21\u{2009}W")
-        #expect(button.imagePosition == .imageLeading)
+        // One image holds the symbol and reading, so the button has no title
+        // and no title-cell insets. A thin space separates the unit.
+        #expect(button.imagePosition == .imageOnly)
+        #expect(button.title.isEmpty && button.attributedTitle.length == 0)
+        let image = try #require(button.image)
+        #expect(!image.isTemplate)
+        #expect(image.size.width == (try Self.composedWidth("43.21\u{2009}W", size: .default)))
+        #expect(image.accessibilityDescription?.contains("43.21 W") == true)
         // Convert before #expect: its operand capture mis-compares mixed Double and CGFloat.
         let standard = CGFloat(MenuBarTextSize.default.pointSize), menuBarFont = NSFont.menuBarFont(ofSize: 0).pointSize
         #expect(standard == menuBarFont)
-        #expect(button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular))
+        #expect(StatusImage.font(.default) == NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular))
         #expect(button.toolTip?.contains("Connected") == true)
         #expect(button.accessibilityLabel()?.contains("43.21 W") == true)
         await fixture.rig.events.send(.network(false)); await settle()
-        #expect(button.contentTintColor == .secondaryLabelColor)
-        #expect(button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+        // The macOS 27 menu bar draws a tinted template image black, so the
+        // dimmed colour is drawn into the image rather than set as a tint.
+        #expect(button.contentTintColor == nil)
+        let dimmed = try #require(button.image)
+        #expect(dimmed !== image && !dimmed.isTemplate)
+        #expect(dimmed.size.width == (try Self.composedWidth("43.21\u{2009}W", symbol: "exclamationmark.triangle.fill", size: .default)))
+        #expect(try Self.ink(dimmed, .vibrantDark).level < Self.ink(image, .vibrantDark).level - 0.3)
         #expect(button.toolTip?.contains("Network unavailable") == true)
-        #expect(button.attributedTitle.string == "43.21\u{2009}W")
+        #expect(button.title.isEmpty)
         await fixture.rig.finish()
     }
     @Test func textSizeSettingResizesTheActualStatusButtonImmediately() async throws {
@@ -702,29 +730,76 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         let button = try #require(fixture.item.button)
         for size in MenuBarTextSize.allCases.reversed() {
             fixture.rig.controller.setMenuBarTextSize(size); await settle()
-            #expect(button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont == NSFont.monospacedDigitSystemFont(ofSize: size.pointSize, weight: .regular))
-            #expect(button.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: size.pointSize, weight: .regular))
-            #expect(button.image?.isTemplate == true)
-            #expect(button.attributedTitle.string == "43.21\u{2009}W")
+            let image = try #require(button.image)
+            #expect(image.size.width == (try Self.composedWidth("43.21\u{2009}W", size: size)))
+            #expect(!image.isTemplate && button.imagePosition == .imageOnly && button.title.isEmpty)
         }
         #expect(StateStore(fileURL: fixture.directory.appending(path: "state.json", directoryHint: .notDirectory)).load().state.menuBarTextSize == .pt10)
         await fixture.rig.finish()
     }
-    @Test func everyTextSizeIsNarrowerThanThePreviousLayout() {
+    /// NSStatusBarButton's title cell pads a title by about 3 pt on each side.
+    /// The button must be exactly as wide as its image, in every state and size.
+    @Test func statusButtonAddsNoTitleInsets() throws {
+        let snapshot = ChargerSnapshot(receivedAt: Date(), readings: [.init(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 3576)])
+        for size in MenuBarTextSize.allCases {
+            for (status, stale) in [(ConnectionStatus.connected, false), (.connected, true), (.networkUnavailable, false), (.notConfigured, false)] {
+                let presentation = StatusPresentation.make(status: status, snapshot: status == .notConfigured ? nil : snapshot, isStale: stale, now: Date(), textSize: size)
+                let button = NSStatusBarButton(frame: .zero); button.isBordered = false
+                presentation.apply(to: button); button.sizeToFit()
+                let image = try #require(button.image)
+                #expect(image.size.width == (try Self.composedWidth(presentation.title, symbol: presentation.symbol, size: size)))
+                #expect(button.frame.width == image.size.width)
+                #expect(button.intrinsicContentSize.width == image.size.width)
+            }
+        }
+    }
+    /// The image is drawn at draw time, so one image follows every appearance:
+    /// opaque ink for a live reading, and a visible grey (never black on a
+    /// dark bar) when dimmed.
+    @Test func composedImageInkFollowsTheBarAppearance() throws {
+        let live = try #require(StatusImage.make(for: .init(symbol: "bolt.fill", title: "43.21\u{2009}W", dimmed: false, tooltip: "", accessibility: "")))
+        let dimmed = try #require(StatusImage.make(for: .init(symbol: "exclamationmark.triangle.fill", title: "43.21\u{2009}W", dimmed: true, tooltip: "", accessibility: "")))
+        for name in [NSAppearance.Name.aqua, .vibrantLight] {
+            let ink = try Self.ink(live, name)
+            #expect(ink.alpha > 0.99 && ink.level < 0.05, "\(name.rawValue)")
+        }
+        for name in [NSAppearance.Name.darkAqua, .vibrantDark] {
+            let ink = try Self.ink(live, name)
+            #expect(ink.alpha > 0.99 && ink.level > 0.95, "\(name.rawValue)")
+        }
+        for name in [NSAppearance.Name.vibrantLight, .vibrantDark] {
+            let ink = try Self.ink(dimmed, name)
+            #expect(ink.level > 0.3 && ink.level < 0.7, "\(name.rawValue)")
+        }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            #expect(try Self.ink(dimmed, name).alpha < 0.7, "\(name.rawValue)")
+        }
+    }
+    @Test func everyTextSizeIsNarrowerThanThePreviousLayouts() {
         func width(_ configure: (NSStatusBarButton) -> Void) -> CGFloat {
             let button = NSStatusBarButton(frame: .zero); button.isBordered = false
             configure(button); button.sizeToFit(); return button.frame.width
         }
         // The 0.1.1 layout: default-size symbol, leading space and a full space before the unit.
-        let previous = width { button in
+        let original = width { button in
             button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil); button.imagePosition = .imageLeading
             button.attributedTitle = NSAttributedString(string: " 43.21 W", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
+        }
+        // The 0.2.0 layout at the same size: sized symbol plus a button title,
+        // which the title cell pads by about 3 pt on each side.
+        func titled(_ size: MenuBarTextSize) -> CGFloat {
+            width { button in
+                button.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size.pointSize, weight: .regular))
+                button.imagePosition = .imageLeading
+                button.attributedTitle = NSAttributedString(string: "43.21\u{2009}W", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size.pointSize, weight: .regular)])
+            }
         }
         let snapshot = ChargerSnapshot(receivedAt: Date(), readings: [.init(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)])
         let widths = MenuBarTextSize.allCases.map { size in
             width { StatusPresentation.make(status: .connected, snapshot: snapshot, isStale: false, now: Date(), textSize: size).apply(to: $0) }
         }
-        #expect(widths.allSatisfy { $0 < previous - 4 })
+        #expect(widths.allSatisfy { $0 < original - 4 })
+        #expect(zip(MenuBarTextSize.allCases, widths).allSatisfy { $1 < titled($0) - 1 })
         #expect(zip(widths, widths.dropFirst()).allSatisfy { $0 < $1 })
     }
 }

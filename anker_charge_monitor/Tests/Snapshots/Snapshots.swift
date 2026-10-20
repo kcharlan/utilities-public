@@ -22,6 +22,8 @@ import PrimeMonitorCore
                 let button = NSButton(frame: .zero)
                 button.isBordered = false
                 presentation.apply(to: button); button.sizeToFit()
+                // The composed image is the whole button: no title-cell insets.
+                guard let image = button.image, button.frame.width == image.size.width, button.title.isEmpty else { fatalError("Status button wider than its image: \(button.frame.width)") }
                 let background = NSView(frame: NSRect(x: 0, y: 0, width: max(32, button.frame.width + 12), height: 30))
                 button.setFrameOrigin(NSPoint(x: 6, y: (30 - button.frame.height) / 2)); background.addSubview(button)
                 try capture(background, size: background.frame.size, dark: dark, to: home.appending(path: "menu-\(name)-\(palette).png", directoryHint: .notDirectory))
