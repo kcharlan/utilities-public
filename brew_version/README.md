@@ -279,7 +279,8 @@ the menu bar. Initial launch stays quiet, including at login; opening the runnin
 app again shows its popover. An amber dot on the mug means a watched update is
 available, matching the dot on its row; its accessibility label includes the
 number of watched updates. The mug outline follows the menu bar's light or dark
-appearance.
+appearance. The status item is as wide as its image rather than the bar's
+height, so it widens by 3pt while the amber dot shows.
 
 The popover shows the last check, refresh, and a search field. Search accepts
 space-separated names, rejects invalid names, and suggests catalog prefixes.
