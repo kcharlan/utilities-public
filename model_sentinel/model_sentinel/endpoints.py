@@ -23,6 +23,7 @@ from typing import Any, Final, Literal, NamedTuple, TypeAlias
 from urllib.parse import urlsplit
 
 from .change_render import ResolvedPriceValue, resolve_price_value
+from .credentials import redact_credential_values
 from .diffing import diff_values
 from .models import (
     EndpointCaptureCandidate,
@@ -357,6 +358,13 @@ def sanitize_endpoint_error_message(message: str) -> str:
     if len(text) > ENDPOINT_ERROR_MESSAGE_LIMIT:
         text = text[: ENDPOINT_ERROR_MESSAGE_LIMIT - 3] + "..."
     return text
+
+
+def endpoint_failure_message(error: BaseException, credential_values: Mapping[str, str]) -> str:
+    """Exception type and message with credential values masked; never a traceback."""
+    return sanitize_endpoint_error_message(
+        redact_credential_values(f"{type(error).__name__}: {error}", credential_values)
+    )
 
 
 class KeyedEndpoint(NamedTuple):

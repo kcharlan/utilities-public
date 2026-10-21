@@ -30,6 +30,7 @@ from .endpoints import (
     CAPTURE_ERROR,
     build_endpoint_capture,
     build_endpoint_error_summary,
+    endpoint_failure_message,
     sanitize_endpoint_error_message,
 )
 from .models import (
@@ -633,6 +634,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
         provider_results=provider_results,
         detail_policy=detail_policy,
         semantic_cores=live_semantic_cores,
+        credential_values=snapshot.values,
     )
     _emit_output(report_text, output_path=report_path if args.output else None)
     if report_path and not args.output:
@@ -655,6 +657,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=live_semantic_cores,
+            credential_values=snapshot.values,
             companion_link=(full_html_report_path.name, "Full-detail report \u2192"),
         )
         html_report_path.write_text(html_text, encoding="utf-8")
@@ -671,6 +674,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 unclassified_limit=detail_policy.unclassified_limit,
             ),
             semantic_cores=live_semantic_cores,
+            credential_values=snapshot.values,
             companion_link=(html_report_path.name, "\u2190 Concise report"),
         )
         full_html_report_path.write_text(full_html_text, encoding="utf-8")
@@ -787,7 +791,7 @@ def _check_provider_aliases(
     try:
         return divergence_events(baseline_models, current_map, profile, lists)
     except Exception as exc:
-        logger.warning("%s alias check failed: %s", provider_id, _endpoint_failure_message(exc, credential_values))
+        logger.warning("%s alias check failed: %s", provider_id, endpoint_failure_message(exc, credential_values))
         return ()
 
 
@@ -813,7 +817,7 @@ def _endpoint_capture_fallback(
     """
     summary = None
     try:
-        message = _endpoint_failure_message(error, credential_values)
+        message = endpoint_failure_message(error, credential_values)
         logger.error("%s endpoint capture failed: %s", provider_id, message)
         built = _endpoint_error_summary(
             provider_id=provider_id,
@@ -843,7 +847,7 @@ def _endpoint_capture_fallback(
     except Exception as fallback_error:
         detail = "unknown error"
         try:
-            detail = _endpoint_failure_message(fallback_error, credential_values)
+            detail = endpoint_failure_message(fallback_error, credential_values)
             logger.error("%s endpoint capture fallback failed: %s", provider_id, detail)
         except Exception:
             pass  # Best effort only: the catalog result must stand.
@@ -881,13 +885,6 @@ def _endpoint_error_summary(
         if baseline_capture is None:
             raise
         return build_endpoint_error_summary(baseline_capture=None, **fields)
-
-
-def _endpoint_failure_message(error: BaseException, credential_values: Mapping[str, str]) -> str:
-    """Exception type and message with credential values masked; never a traceback."""
-    return sanitize_endpoint_error_message(
-        redact_credential_values(f"{type(error).__name__}: {error}", credential_values)
-    )
 
 
 def _endpoint_capture_counts(summary: EndpointCaptureSummary) -> str:
@@ -1242,7 +1239,7 @@ def _endpoint_capture_check(
         return {
             "check": "endpoint_capture",
             "status": "warn",
-            "detail": unreadable + _endpoint_failure_message(exc, credential_values),
+            "detail": unreadable + endpoint_failure_message(exc, credential_values),
         }
     if latest.error_summary:
         detail += f"; error: {latest.error_summary}"

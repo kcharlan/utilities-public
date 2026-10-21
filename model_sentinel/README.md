@@ -247,8 +247,10 @@ as comparison gaps rather than treated as empty lists.
 Endpoint failures never change the catalog result, the notification decision,
 or the scan exit status. A capture that fails as a whole is saved as a minimal
 `error` capture with a sanitized message; the log records each capture's status
-and its request, failure, mapping, comparison-gap and change counts. To turn
-capture off, set
+and its request, failure, mapping, comparison-gap and change counts. A report or
+artifact whose Alias check or Provider endpoints sections cannot be built or
+rendered omits them and the log records a redacted warning; its catalog content
+is unchanged. To turn capture off, set
 `MODEL_SENTINEL_ENDPOINT_CAPTURE=false` in `~/.model_sentinel/settings.env`.
 
 ## Provider Credentials

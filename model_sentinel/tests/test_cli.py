@@ -23,6 +23,7 @@ import logging
 import pytest
 
 import model_sentinel.cli as cli
+import model_sentinel.endpoint_html as endpoint_html_module
 import model_sentinel.providers as providers
 import model_sentinel.reporting as reporting
 import model_sentinel.storage as storage_module
@@ -2437,6 +2438,85 @@ def test_endpoint_failure_isolation(
     assert ENDPOINT_SECRET not in visible
     assert "Traceback" not in visible
     assert "openrouter failed:" not in visible
+
+
+def _report_contents(runtime_home: Path) -> dict[str, str]:
+    """Every managed artifact by name, with its content."""
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted((runtime_home / "reports").iterdir())
+    }
+
+
+# Which endpoint presentation step raises, and what each failure must leave
+# exactly as the no-endpoint control: the requested format (stdout and its
+# managed artifact) and/or the HTML companions.
+_RENDER_FAILURES = {
+    "sections": (lambda patch: patch.setattr(reporting, "scan_endpoint_sections", _raise_runtime), True, True),
+    "json": (lambda patch: patch.setattr(reporting, "endpoint_capture_json", _raise_runtime), True, False),
+    "html": (lambda patch: patch.setattr(endpoint_html_module, "render_endpoint_html", _raise_runtime), False, True),
+}
+
+
+@pytest.mark.parametrize(
+    ("format_name", "failure"),
+    (("text", "sections"), ("markdown", "sections"), ("json", "json"), ("text", "html")),
+)
+def test_endpoint_report_rendering_failure_isolation(
+    tmp_path: Path, monkeypatch, capsys, format_name: str, failure: str
+) -> None:
+    """An endpoint or alias rendering failure omits only those sections.
+
+    The capture still runs and is saved; the catalog report on stdout, every
+    managed artifact the failure touched, the notification and the exit status
+    match a run without endpoint work.
+    """
+    argv = ("scan", "--save", "--format", format_name)
+    catalogs = (FIRST_ENDPOINT_CATALOG, SECOND_ENDPOINT_CATALOG)
+    control_home = _endpoint_home(
+        tmp_path / "control", monkeypatch, settings_extra="MODEL_SENTINEL_ENDPOINT_CAPTURE=0\n"
+    )
+    _install_endpoint_transport(monkeypatch)
+    controls = [_run_endpoint_scan(monkeypatch, capsys, catalog, argv=argv) for catalog in catalogs]
+
+    home = _endpoint_home(tmp_path / "injected", monkeypatch)
+    calls = _install_endpoint_transport(monkeypatch)
+    inject, requested_isolated, html_isolated = _RENDER_FAILURES[failure]
+    with monkeypatch.context() as patch:
+        inject(patch)
+        runs = [_run_endpoint_scan(monkeypatch, capsys, catalog, argv=argv) for catalog in catalogs]
+
+    assert calls == ["openrouter", "openrouter"]
+    assert [c["status"] for c in _endpoint_state(home).captures] == ["complete", "complete"]
+    assert _catalog_state(home) == _catalog_state(control_home)
+    for run, control in zip(runs, controls):
+        assert run.exit_code == control.exit_code == 0
+        assert run.notifications == control.notifications
+        assert [(r.status, r.change_count, r.saved) for r in run.results] == [
+            (r.status, r.change_count, r.saved) for r in control.results
+        ]
+        if requested_isolated:
+            assert run.stdout == control.stdout
+        else:
+            assert "\n\nProvider endpoints\n" in run.stdout
+            assert _catalog_report(run.stdout) == control.stdout
+        assert "Alias check and Provider endpoints sections omitted" in run.stderr
+        assert "RuntimeError: synthetic endpoint failure [REDACTED]" in run.stderr
+        visible = run.stdout + run.stderr
+        assert ENDPOINT_SECRET not in visible
+        assert "Traceback" not in visible
+    assert ENDPOINT_SECRET not in (home / "logs" / "model_sentinel.log").read_text(encoding="utf-8")
+
+    artifacts, control_artifacts = _report_contents(home), _report_contents(control_home)
+    assert artifacts.keys() == control_artifacts.keys()
+    html_names = {name for name in artifacts if name.endswith(".html")}
+    assert len(html_names) == 4
+    for name, content in artifacts.items():
+        isolated = html_isolated if name in html_names else requested_isolated
+        if isolated:
+            assert content == control_artifacts[name], name
+        else:
+            assert content != control_artifacts[name], name
 
 
 @pytest.mark.parametrize("primary", ("fetch", "transaction"))

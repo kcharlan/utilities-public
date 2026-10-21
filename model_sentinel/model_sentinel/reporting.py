@@ -3,13 +3,14 @@ from __future__ import annotations
 import fnmatch
 import html as html_module
 import json
+import logging
 import re
 from collections import Counter, OrderedDict, defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
@@ -101,7 +102,7 @@ from .endpoint_report import (
     plural,
     scan_endpoint_sections,
 )
-from .endpoints import ENDPOINT_ADDED, FIELD_CHANGED
+from .endpoints import ENDPOINT_ADDED, FIELD_CHANGED, endpoint_failure_message
 from .models import (
     FieldChange,
     HistoryEvent,
@@ -2149,15 +2150,28 @@ def render_scan_report(
     detail_policy: ReportDetailPolicy | None = None,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
     companion_link: tuple[str, str] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
+    """Render one scan report.
+
+    Endpoint and alias sections are isolated from the catalog report: if
+    building or rendering them raises, they are omitted and a redacted warning
+    is logged (see `_isolated_endpoint_output`). `credential_values` are the
+    scan's credentials, masked in that warning.
+    """
     detail_policy = detail_policy or make_report_detail_policy()
+    credential_values = credential_values or {}
     if format_name == "json":
         payload: dict[str, Any] = {
             "generated_at": to_local_iso(generated_at),
             "command": command,
             "providers": [_provider_result_json(result) for result in provider_results],
         }
-        payload.update(_endpoint_json_extensions(provider_results))
+        payload.update(
+            _isolated_endpoint_output(
+                lambda: _endpoint_json_extensions(provider_results), {}, credential_values=credential_values
+            )
+        )
         return json.dumps(payload, indent=2, sort_keys=True)
     if format_name == "markdown":
         return _render_scan_markdown(
@@ -2166,6 +2180,7 @@ def render_scan_report(
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=semantic_cores,
+            credential_values=credential_values,
         )
     if format_name == "html":
         return _render_scan_html(
@@ -2175,6 +2190,7 @@ def render_scan_report(
             detail_policy=detail_policy,
             semantic_cores=semantic_cores,
             companion_link=companion_link,
+            credential_values=credential_values,
         )
     return _render_scan_text(
         generated_at=generated_at,
@@ -2182,6 +2198,7 @@ def render_scan_report(
         provider_results=provider_results,
         detail_policy=detail_policy,
         semantic_cores=semantic_cores,
+        credential_values=credential_values,
     )
 
 
@@ -3414,6 +3431,33 @@ def _provider_result_json(result: ProviderScanResult) -> dict[str, Any]:
     }
 
 
+_LOG = logging.getLogger(__name__)
+_EndpointOutput = TypeVar("_EndpointOutput")
+
+
+def _isolated_endpoint_output(
+    build: Callable[[], _EndpointOutput],
+    fallback: _EndpointOutput,
+    *,
+    credential_values: Mapping[str, str],
+) -> _EndpointOutput:
+    """`build()`, the Alias check and Provider endpoints output, or `fallback`.
+
+    The one guard for every scan format. An endpoint exception must leave the
+    catalog report, notification decision and exit status unchanged, so a
+    failure while building or rendering those sections omits them and logs one
+    warning, credential values masked and without a traceback.
+    """
+    try:
+        return build()
+    except Exception as exc:
+        _LOG.warning(
+            "Alias check and Provider endpoints sections omitted from the report: %s",
+            endpoint_failure_message(exc, credential_values),
+        )
+        return fallback
+
+
 def _endpoint_json_extensions(provider_results: list[ProviderScanResult]) -> dict[str, Any]:
     """Optional top-level `alias_checks` and `endpoint_captures`, keyed by provider.
 
@@ -4105,6 +4149,7 @@ def _render_scan_text(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     lines = [
         "Model Sentinel report",
@@ -4221,10 +4266,15 @@ def _render_scan_text(
                     parts.append(f"{len(result.changed)} changed")
                 lines.append(f"  {result.provider_label}: {', '.join(parts)}")
 
+    leading_blank = bool(lines) and lines[-1] != ""
     lines.extend(
-        _endpoint_sections_text(
-            scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
-            leading_blank=bool(lines) and lines[-1] != "",
+        _isolated_endpoint_output(
+            lambda: _endpoint_sections_text(
+                scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
+                leading_blank=leading_blank,
+            ),
+            [],
+            credential_values=credential_values or {},
         )
     )
     return "\n".join(lines).rstrip()
@@ -4242,6 +4292,7 @@ def _render_scan_markdown(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     lines = [
         "# Model Sentinel Report",
@@ -4349,8 +4400,12 @@ def _render_scan_markdown(
         lines.extend(changed_lines or ["- None"])
         lines.append("")
     lines.extend(
-        _endpoint_sections_markdown(
-            scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode)
+        _isolated_endpoint_output(
+            lambda: _endpoint_sections_markdown(
+                scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode)
+            ),
+            [],
+            credential_values=credential_values or {},
         )
     )
     return "\n".join(lines).rstrip()
@@ -7609,6 +7664,7 @@ def _render_scan_html(
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
     companion_link: tuple[str, str] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
@@ -7755,12 +7811,16 @@ def _render_scan_html(
     # model decides ordering, caps and wording, and is empty when squelched.
     # Imported here because `endpoint_html` builds on this module's card-row
     # helpers.
-    from .endpoint_html import render_endpoint_html
+    from .endpoint_html import EndpointHtml, render_endpoint_html
 
-    endpoint_html = render_endpoint_html(
-        scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
-        provider_results,
-        companion_link=companion_link,
+    endpoint_html = _isolated_endpoint_output(
+        lambda: render_endpoint_html(
+            scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
+            provider_results,
+            companion_link=companion_link,
+        ),
+        EndpointHtml("", "", ""),
+        credential_values=credential_values or {},
     )
     body_html = (
         f'<div class="provider-cards">\n  {"".join(provider_cards)}\n</div>\n\n'
