@@ -1,23 +1,31 @@
 from pathlib import Path
 
 from argparse import Namespace
-from datetime import date
+import copy
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 import http.server
+import io
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
 import threading
+from types import SimpleNamespace
 import urllib.request
-from urllib.parse import quote, unquote
+from urllib.error import HTTPError
+from urllib.parse import quote, unquote, urlsplit
 import logging
 
 import pytest
 
 import model_sentinel.cli as cli
+import model_sentinel.providers as providers
 import model_sentinel.reporting as reporting
+import model_sentinel.storage as storage_module
 from model_sentinel.__init__ import __version__
 from model_sentinel.browse import server as browse_server_module
 from model_sentinel.build_info import format_build_info
@@ -141,6 +149,8 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
                     "notify_default": False,
                     "notify_on": "never",
                     "report_retention_days": 30,
+                    # Endpoint capture is outside this test; FakeStore has no capture methods.
+                    "endpoint_capture": False,
                 },
             )(),
             "runtime_paths": type("Paths", (), {"report_dir": tmp_path})(),
@@ -765,6 +775,7 @@ def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypa
                         "log_max_bytes": 10485760,
                         "log_keep_files": 3,
                         "runtime_home": runtime_home,
+                        "endpoint_capture": True,
                     },
                 )(),
                 "providers": (provider,),
@@ -2026,7 +2037,11 @@ def test_healthcheck_warns_when_provider_kind_has_no_registered_profile(
         "using the generic profile (labels and price-field detection will be "
         "best-effort)."
     ) in captured.out
-    assert "Provider 'openrouter'" not in captured.out
+    # Only the generic-kind provider is warned about; the endpoint_capture
+    # item names openrouter for an unrelated reason.
+    profile_lines = [line for line in captured.out.splitlines() if "provider_profile" in line]
+    assert len(profile_lines) == 1
+    assert "Provider 'openrouter'" not in profile_lines[0]
 
 
 @pytest.mark.parametrize("notify_flag", [None, True])
@@ -2044,3 +2059,703 @@ def test_notify_flag_does_not_override_never_policy(notify_flag):
 
     assert cli._should_notify(args=args, loaded=loaded, provider_results=changed_and_failed) is False
     assert cli._should_notify_for_errors(args=args, loaded=loaded) is False
+
+
+# ---------------------------------------------------------------------------
+# Endpoint capture integration. Every catalog, endpoint list and credential
+# below is invented; endpoint lists are served by an in-process fake opener
+# passed to the real `providers.fetch_endpoint_lists`.
+# ---------------------------------------------------------------------------
+
+ENDPOINT_SECRET = "SYNTHETIC_NOT_A_REAL_SECRET_endpoint_capture"
+ENDPOINT_PREFIX = "/api/v1/models/"
+_REAL_RENDER_SCAN_REPORT = cli.render_scan_report
+_REAL_FETCH_ENDPOINT_LISTS = providers.fetch_endpoint_lists
+_ENDPOINT_TABLES = (
+    "endpoint_lists",
+    "endpoint_capture_models",
+    "endpoint_observations",
+    "endpoint_capture_archives",
+    "endpoint_comparison_gaps",
+)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_endpoint_network(monkeypatch):
+    """No test here may send a real endpoint-list request."""
+    attempts: list[str] = []
+
+    class ForbiddenOpener:
+        def open(self, request, timeout=None):
+            attempts.append(request.full_url)
+            raise AssertionError("test attempted a real endpoint-list request")
+
+    monkeypatch.setattr(providers, "endpoint_opener", lambda: ForbiddenOpener())
+    yield
+    assert attempts == []
+
+
+def _endpoint_path(model_id: str) -> str:
+    return f"{ENDPOINT_PREFIX}{model_id}/endpoints"
+
+
+def _endpoint_catalog(*models: tuple[str, str]) -> list[dict]:
+    return [
+        {"id": model_id, "name": name, "links": {"details": _endpoint_path(model_id)}}
+        for model_id, name in models
+    ]
+
+
+FIRST_ENDPOINT_CATALOG = _endpoint_catalog(("fake-org/test-model-a", "Test Model A"))
+SECOND_ENDPOINT_CATALOG = _endpoint_catalog(
+    ("fake-org/test-model-a", "Test Model A Renamed"),
+    ("fake-org/test-model-b", "Test Model B"),
+)
+
+
+def _endpoint_list_response(request, timeout):
+    """Answer each endpoint-list path with one invented endpoint."""
+    path = urlsplit(request.full_url).path
+    model_id = path[len(ENDPOINT_PREFIX):-len("/endpoints")]
+    body = {
+        "data": {
+            "id": model_id,
+            "endpoints": [{"name": f"Fake Host A | {model_id}", "pricing": {"prompt": "0.000001"}}],
+        }
+    }
+    return io.BytesIO(json.dumps(body).encode("utf-8"))
+
+
+def _endpoint_home(root: Path, monkeypatch, *, settings_extra: str = "") -> Path:
+    runtime_home = _write_config_files(root)
+    settings_path = runtime_home / "settings.env"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8")
+        .replace("MODEL_SENTINEL_NOTIFY_DEFAULT=0", "MODEL_SENTINEL_NOTIFY_DEFAULT=1")
+        .replace("MODEL_SENTINEL_NOTIFY_ON=never", "MODEL_SENTINEL_NOTIFY_ON=both")
+        + settings_extra,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", ENDPOINT_SECRET)
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    ticks = iter(range(10_000))
+    base = datetime(2030, 1, 2, 3, 4, 5, tzinfo=UTC)
+    monkeypatch.setattr(cli, "_now", lambda: base + timedelta(seconds=next(ticks)))
+    return runtime_home
+
+
+def _install_endpoint_transport(monkeypatch, respond=_endpoint_list_response) -> list[str]:
+    calls: list[str] = []
+
+    def fetch(provider, current_map):
+        calls.append(provider.provider_id)
+        return _REAL_FETCH_ENDPOINT_LISTS(provider, current_map, open_response=respond, sleep=lambda _: None)
+
+    monkeypatch.setattr(cli, "fetch_endpoint_lists", fetch)
+    return calls
+
+
+def _run_endpoint_scan(monkeypatch, capsys, catalog, argv=("scan", "--save")) -> SimpleNamespace:
+    results: list[tuple] = []
+
+    def render(**kwargs):
+        if kwargs["format_name"] != "html" and not results:
+            results.append(tuple(kwargs["provider_results"]))
+        return _REAL_RENDER_SCAN_REPORT(**kwargs)
+
+    notifications: list[dict] = []
+    monkeypatch.setattr(cli, "render_scan_report", render)
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda provider, api_key, profile: copy.deepcopy(catalog))
+    monkeypatch.setattr(cli, "send_notification", lambda **kwargs: notifications.append(kwargs))
+    exit_code = cli.main(list(argv))
+    captured = capsys.readouterr()
+    return SimpleNamespace(
+        exit_code=exit_code,
+        stdout=captured.out,
+        stderr=captured.err,
+        results=results[0] if results else (),
+        notifications=[(item["title"], Path(item["report_path"]).name) for item in notifications],
+    )
+
+
+def _catalog_state(runtime_home: Path) -> dict:
+    with sqlite3.connect(runtime_home / "model_sentinel.db") as db:
+        return {
+            "scrapes": db.execute("SELECT * FROM scrapes ORDER BY scrape_id").fetchall(),
+            "snapshot_models": db.execute(
+                "SELECT * FROM snapshot_models ORDER BY scrape_id, provider_model_id"
+            ).fetchall(),
+            "field_changes": db.execute("SELECT * FROM field_changes ORDER BY change_id").fetchall(),
+        }
+
+
+def _endpoint_state(runtime_home: Path) -> SimpleNamespace:
+    with sqlite3.connect(runtime_home / "model_sentinel.db") as db:
+        db.row_factory = sqlite3.Row
+        captures = [dict(row) for row in db.execute("SELECT * FROM endpoint_captures ORDER BY capture_id")]
+        per_capture = {
+            table: dict(db.execute(f"SELECT capture_id, COUNT(*) FROM {table} GROUP BY capture_id").fetchall())
+            for table in _ENDPOINT_TABLES
+        }
+        per_capture["endpoint_changes"] = dict(
+            db.execute("SELECT to_capture_id, COUNT(*) FROM endpoint_changes GROUP BY to_capture_id").fetchall()
+        )
+    return SimpleNamespace(captures=captures, per_capture=per_capture)
+
+
+def _assert_same_catalog_outcome(run: SimpleNamespace, control: SimpleNamespace) -> None:
+    assert run.exit_code == control.exit_code
+    assert run.stdout == control.stdout
+    assert run.notifications == control.notifications
+    assert [(r.status, r.change_count, r.saved, r.error_message) for r in run.results] == [
+        (r.status, r.change_count, r.saved, r.error_message) for r in control.results
+    ]
+
+
+def _control_scans(tmp_path: Path, monkeypatch, capsys) -> tuple[Path, SimpleNamespace, SimpleNamespace]:
+    """Two saved scans with endpoint capture disabled: the no-endpoint-work outcome."""
+    home = _endpoint_home(tmp_path / "control", monkeypatch, settings_extra="MODEL_SENTINEL_ENDPOINT_CAPTURE=0\n")
+    calls = _install_endpoint_transport(monkeypatch)
+    first = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+    assert calls == []
+    assert _endpoint_state(home).captures == []
+    return home, first, second
+
+
+def test_endpoint_capture_eligibility_saved_capable_enabled_scan_captures_after_catalog(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "eligible", monkeypatch)
+    observed_catalog = []
+
+    def respond(request, timeout):
+        # The catalog snapshot and its field changes are already saved.
+        state = _catalog_state(home)
+        observed_catalog.append((len(state["snapshot_models"]), len(state["field_changes"])))
+        return _endpoint_list_response(request, timeout)
+
+    calls = _install_endpoint_transport(monkeypatch, respond)
+
+    first = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    after_first = _catalog_state(home)
+    second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+    after_second = _catalog_state(home)
+
+    assert calls == ["openrouter", "openrouter"]
+    assert len(after_second["field_changes"]) > len(after_first["field_changes"])
+    assert observed_catalog == [
+        (len(after_first["snapshot_models"]), len(after_first["field_changes"])),
+        (len(after_second["snapshot_models"]), len(after_second["field_changes"])),
+        (len(after_second["snapshot_models"]), len(after_second["field_changes"])),
+    ]
+    assert (first.exit_code, second.exit_code) == (0, 0)
+    state = _endpoint_state(home)
+    assert [(c["scrape_id"], c["status"], c["paths_requested"], c["paths_attempted"]) for c in state.captures] == [
+        (1, "complete", 1, 1),
+        (2, "complete", 2, 2),
+    ]
+    (first_result,) = first.results
+    (second_result,) = second.results
+    assert first_result.endpoint_capture.capture_id == state.captures[0]["capture_id"]
+    assert first_result.endpoint_capture.comparison_state == "no_selected_baseline"
+    assert second_result.endpoint_capture.capture_id == state.captures[1]["capture_id"]
+    assert second_result.endpoint_capture.comparison_state == "available"
+    assert second_result.endpoint_capture.baseline_capture_id == state.captures[0]["capture_id"]
+    assert [gap.reason for gap in second_result.endpoint_capture.comparison_gaps] == ["new_path_unpaired"]
+    assert "openrouter endpoint capture complete: capture_id=1 paths_requested=1" in first.stderr
+    assert (
+        "openrouter endpoint capture complete: capture_id=2 paths_requested=2 paths_attempted=2 "
+        "paths_failed=0 mapping_failures=0 comparison_state=available comparison_gaps=1 changes=0"
+    ) in second.stderr
+    # Endpoint work never changes the catalog count or the notification.
+    assert (first_result.change_count, second_result.change_count) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    ("case", "settings_extra", "argv", "kind"),
+    (
+        ("compare_only", "", ("scan",), "openrouter"),
+        ("setting_disabled", "MODEL_SENTINEL_ENDPOINT_CAPTURE=false\n", ("scan", "--save"), "openrouter"),
+        ("profile_not_capable", "", ("scan", "--save"), "abacus"),
+    ),
+)
+def test_endpoint_capture_eligibility_ineligible_scans_do_no_endpoint_work(
+    tmp_path: Path, monkeypatch, capsys, case: str, settings_extra: str, argv: tuple, kind: str
+) -> None:
+    # Compare-only mode needs a saved baseline; create it without capture.
+    seed_setting = "MODEL_SENTINEL_ENDPOINT_CAPTURE=0\n"
+    home = _endpoint_home(tmp_path / case, monkeypatch, settings_extra=seed_setting)
+    providers_path = home / "providers.env"
+    providers_path.write_text(
+        providers_path.read_text(encoding="utf-8").replace("_KIND=openrouter", f"_KIND={kind}"),
+        encoding="utf-8",
+    )
+    calls = _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    settings_path = home / "settings.env"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8").replace(seed_setting, settings_extra), encoding="utf-8"
+    )
+
+    run = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG, argv=argv)
+
+    assert run.exit_code == 0
+    assert calls == []
+    assert _endpoint_state(home).captures == []
+    (result,) = run.results
+    assert result.status == "success"
+    assert result.endpoint_capture is None
+    assert "endpoint capture" not in run.stderr
+
+
+def test_endpoint_capture_eligibility_selects_baseline_capture_from_selected_scrape(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The selected baseline's own (unusable) capture is used, never a last-good one."""
+    home = _endpoint_home(tmp_path / "selected", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+
+    monkeypatch.setattr(cli, "fetch_endpoint_lists", _failing_fetch(RuntimeError("synthetic endpoint failure")))
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    _install_endpoint_transport(monkeypatch)
+    third = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+
+    captures = _endpoint_state(home).captures
+    assert [(c["scrape_id"], c["status"]) for c in captures] == [(1, "complete"), (2, "error"), (3, "complete")]
+    summary = third.results[0].endpoint_capture
+    assert summary.comparison_state == "unusable_baseline"
+    assert summary.baseline_capture_id == captures[1]["capture_id"]
+    assert summary.changes == () and summary.comparison_gaps == ()
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        assert db.execute("SELECT baseline_scrape_id FROM scrapes WHERE scrape_id = 3").fetchone() == (2,)
+
+
+def _raise_runtime(*args, **kwargs):
+    raise RuntimeError(f"synthetic endpoint failure {ENDPOINT_SECRET}")
+
+
+def _failing_fetch(exception):
+    def fetch(provider, current_map):
+        raise exception
+
+    return fetch
+
+
+def _inject_fetch(exception):
+    def inject(monkeypatch):
+        monkeypatch.setattr(cli, "fetch_endpoint_lists", _failing_fetch(exception))
+
+    return inject
+
+
+def _inject_baseline_read(monkeypatch):
+    monkeypatch.setattr(Store, "get_endpoint_capture_for_scrape", _raise_runtime)
+
+
+def _inject_build(monkeypatch):
+    monkeypatch.setattr(cli, "build_endpoint_capture", _raise_runtime)
+
+
+def _inject_transaction_write(monkeypatch):
+    monkeypatch.setattr(storage_module, "_write_endpoint_changes", _raise_runtime)
+
+
+@pytest.mark.parametrize(
+    ("case", "inject", "error_summary", "comparison_state"),
+    (
+        ("fetch_runtime_error", _inject_fetch(RuntimeError(f"synthetic endpoint failure {ENDPOINT_SECRET}")),
+         "RuntimeError: synthetic endpoint failure [REDACTED]", "available"),
+        # ValueError and ProviderFetchError are what the catalog handler
+        # catches: leaking either would turn the catalog result into an error.
+        ("fetch_value_error", _inject_fetch(ValueError(f"synthetic invalid origin {ENDPOINT_SECRET}")),
+         "ValueError: synthetic invalid origin [REDACTED]", "available"),
+        ("fetch_provider_error", _inject_fetch(cli.ProviderFetchError(f"synthetic transport {ENDPOINT_SECRET}")),
+         "ProviderFetchError: synthetic transport [REDACTED]", "available"),
+        ("baseline_read", _inject_baseline_read,
+         "RuntimeError: synthetic endpoint failure [REDACTED]", "missing_baseline_capture"),
+        ("build", _inject_build, "RuntimeError: synthetic endpoint failure [REDACTED]", "available"),
+        ("transaction_write", _inject_transaction_write,
+         "RuntimeError: synthetic endpoint failure [REDACTED]", "available"),
+    ),
+)
+def test_endpoint_failure_isolation(
+    tmp_path: Path, monkeypatch, capsys, case: str, inject, error_summary: str, comparison_state: str
+) -> None:
+    control_home, control_first, control_second = _control_scans(tmp_path, monkeypatch, capsys)
+
+    home = _endpoint_home(tmp_path / case, monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    first = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    with monkeypatch.context() as patch:
+        inject(patch)
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    # Catalog persistence, result, output, notification and exit status are
+    # exactly what they are without endpoint work.
+    _assert_same_catalog_outcome(first, control_first)
+    _assert_same_catalog_outcome(second, control_second)
+    assert _catalog_state(home) == _catalog_state(control_home)
+    assert second.results[0].status == "success"
+
+    # The failed capture rolled back and was replaced by a minimal error capture.
+    state = _endpoint_state(home)
+    first_capture, error_capture = state.captures
+    assert (first_capture["scrape_id"], first_capture["status"]) == (1, "complete")
+    assert error_capture["scrape_id"] == 2
+    assert error_capture["status"] == "error"
+    assert (
+        error_capture["paths_requested"], error_capture["paths_attempted"],
+        error_capture["paths_failed"], error_capture["mapping_failures"],
+    ) == (0, 0, 0, 0)
+    assert error_capture["error_summary"] == error_summary
+    assert error_capture["comparison_state"] == comparison_state
+    for table, counts in state.per_capture.items():
+        assert error_capture["capture_id"] not in counts, table
+    assert state.per_capture["endpoint_lists"][first_capture["capture_id"]] == 1
+
+    summary = second.results[0].endpoint_capture
+    assert summary.capture_id == error_capture["capture_id"]
+    assert (summary.status, summary.error_summary, summary.persistence_error) == ("error", error_summary, None)
+    assert f"openrouter endpoint capture failed: {error_summary}" in second.stderr
+    assert "openrouter endpoint capture error: capture_id=2 paths_requested=0" in second.stderr
+    visible = second.stdout + second.stderr + (home / "logs" / "model_sentinel.log").read_text(encoding="utf-8")
+    assert ENDPOINT_SECRET not in visible
+    assert "Traceback" not in visible
+    assert "openrouter failed:" not in visible
+
+
+@pytest.mark.parametrize("primary", ("fetch", "transaction"))
+def test_endpoint_fallback_persistence_failure(tmp_path: Path, monkeypatch, capsys, primary: str) -> None:
+    control_home, _control_first, control_second = _control_scans(tmp_path, monkeypatch, capsys)
+
+    home = _endpoint_home(tmp_path / primary, monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+
+    def unavailable_writer(self):
+        raise sqlite3.OperationalError(f"synthetic database is locked {ENDPOINT_SECRET}")
+
+    with monkeypatch.context() as patch:
+        if primary == "fetch":
+            _inject_fetch(RuntimeError("synthetic endpoint failure"))(patch)
+        patch.setattr(Store, "_connect_capture_writer", unavailable_writer)
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    _assert_same_catalog_outcome(second, control_second)
+    assert _catalog_state(home) == _catalog_state(control_home)
+    # Nothing was saved for the second scrape; the error stays in memory.
+    assert [c["scrape_id"] for c in _endpoint_state(home).captures] == [1]
+    summary = second.results[0].endpoint_capture
+    assert summary.capture_id is None
+    assert summary.status == "error"
+    assert summary.persistence_error == (
+        "endpoint error capture was not saved: OperationalError: synthetic database is locked [REDACTED]"
+    )
+    assert f"openrouter endpoint capture persistence failed: {summary.persistence_error}" in second.stderr
+    assert "openrouter endpoint capture error: capture_id=unsaved" in second.stderr
+    assert ENDPOINT_SECRET not in second.stdout + second.stderr
+    assert "Traceback" not in second.stderr
+
+
+def test_endpoint_fallback_persistence_failure_inconsistent_baseline_capture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The error-summary builder rejects the same inconsistent baseline; the fallback still records the error."""
+    control_home, _control_first, control_second = _control_scans(tmp_path, monkeypatch, capsys)
+    home = _endpoint_home(tmp_path / "inconsistent", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    real_read = Store.get_endpoint_capture_for_scrape
+
+    def foreign_capture(self, scrape_id):
+        return replace(real_read(self, scrape_id), provider_id="fake_other_provider")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "get_endpoint_capture_for_scrape", foreign_capture)
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    _assert_same_catalog_outcome(second, control_second)
+    assert _catalog_state(home) == _catalog_state(control_home)
+    error_capture = _endpoint_state(home).captures[1]
+    assert (error_capture["scrape_id"], error_capture["status"]) == (2, "error")
+    assert error_capture["comparison_state"] == "missing_baseline_capture"
+    assert error_capture["error_summary"] == "ValueError: baseline capture belongs to a different provider"
+    assert second.results[0].endpoint_capture.capture_id == error_capture["capture_id"]
+
+
+def test_endpoint_fallback_persistence_failure_summary_builder_raises(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    control_home, _control_first, control_second = _control_scans(tmp_path, monkeypatch, capsys)
+    home = _endpoint_home(tmp_path / "builder", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+
+    with monkeypatch.context() as patch:
+        _inject_fetch(RuntimeError("synthetic endpoint failure"))(patch)
+        patch.setattr(cli, "build_endpoint_error_summary", _raise_runtime)
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    _assert_same_catalog_outcome(second, control_second)
+    assert _catalog_state(home) == _catalog_state(control_home)
+    assert [c["scrape_id"] for c in _endpoint_state(home).captures] == [1]
+    assert second.results[0].endpoint_capture is None
+    assert (
+        "openrouter endpoint capture fallback failed: RuntimeError: synthetic endpoint failure [REDACTED]"
+    ) in second.stderr
+    assert ENDPOINT_SECRET not in second.stdout + second.stderr
+
+
+@pytest.mark.parametrize("failure", ("after_save_returns", "summary_logging"))
+def test_endpoint_failure_after_commit(tmp_path: Path, monkeypatch, capsys, failure: str) -> None:
+    control_home, _control_first, control_second = _control_scans(tmp_path, monkeypatch, capsys)
+    home = _endpoint_home(tmp_path / failure, monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    real_save = Store.save_endpoint_capture
+    real_log = cli._log_endpoint_capture
+    log_calls = []
+
+    def save_then_fail(self, candidate):
+        real_save(self, candidate)
+        raise RuntimeError(f"synthetic failure after commit {ENDPOINT_SECRET}")
+
+    def log_fails_once(logger, provider_id, summary):
+        log_calls.append(summary.capture_id)
+        if len(log_calls) == 1:
+            raise RuntimeError(f"synthetic failure after commit {ENDPOINT_SECRET}")
+        real_log(logger, provider_id, summary)
+
+    with monkeypatch.context() as patch:
+        if failure == "after_save_returns":
+            patch.setattr(Store, "save_endpoint_capture", save_then_fail)
+        else:
+            patch.setattr(cli, "_log_endpoint_capture", log_fails_once)
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    _assert_same_catalog_outcome(second, control_second)
+    assert _catalog_state(home) == _catalog_state(control_home)
+    # The committed capture is kept as committed: no error capture replaces it.
+    state = _endpoint_state(home)
+    committed = state.captures[1]
+    assert len(state.captures) == 2
+    assert (committed["scrape_id"], committed["status"], committed["error_summary"]) == (2, "complete", None)
+    capture_id = committed["capture_id"]
+    assert state.per_capture["endpoint_lists"][capture_id] == 2
+    assert state.per_capture["endpoint_observations"][capture_id] == 2
+    assert state.per_capture["endpoint_capture_archives"][capture_id] == 1
+    summary = second.results[0].endpoint_capture
+    assert (summary.capture_id, summary.status, summary.persistence_error) == (capture_id, "complete", None)
+    assert len(summary.lists) == 2
+    assert "openrouter endpoint capture failed: RuntimeError: synthetic failure after commit [REDACTED]" in second.stderr
+    assert f"openrouter endpoint capture {capture_id} was committed before the failure and is kept" in second.stderr
+    assert ENDPOINT_SECRET not in second.stdout + second.stderr
+
+
+def _endpoint_checks(stdout: str) -> list[dict]:
+    return [check for check in json.loads(stdout) if check["check"] == "endpoint_capture"]
+
+
+def _counts_text(capture) -> str:
+    return (
+        f"paths_requested={capture.paths_requested} paths_attempted={capture.paths_attempted} "
+        f"paths_failed={capture.paths_failed} mapping_failures={capture.mapping_failures} "
+        f"comparison_state={capture.comparison_state} comparison_gaps={len(capture.comparison_gaps)} "
+        f"changes={len(capture.changes)}"
+    )
+
+
+def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "health", monkeypatch)
+
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert _endpoint_checks(capsys.readouterr().out) == [
+        {"check": "endpoint_capture", "status": "ok",
+         "detail": "Provider 'openrouter': capture enabled; no capture yet"},
+    ]
+
+    _install_endpoint_transport(monkeypatch)
+    _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    complete = Store(home / "model_sentinel.db").get_latest_endpoint_capture("openrouter")
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert _endpoint_checks(capsys.readouterr().out) == [
+        {"check": "endpoint_capture", "status": "ok",
+         "detail": (
+             f"Provider 'openrouter': capture enabled; latest capture "
+             f"{to_local_human(complete.completed_at)} status=complete {_counts_text(complete)}"
+         )},
+    ]
+
+    def partial(request, timeout):
+        if "test-model-b" in request.full_url:
+            raise HTTPError(request.full_url, 404, "synthetic", {}, io.BytesIO(b""))
+        return _endpoint_list_response(request, timeout)
+
+    _install_endpoint_transport(monkeypatch, partial)
+    _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+    latest = Store(home / "model_sentinel.db").get_latest_endpoint_capture("openrouter")
+    assert (latest.status, latest.paths_requested, latest.paths_failed) == ("partial", 2, 1)
+    detail = (
+        f"Provider 'openrouter': capture enabled; latest capture "
+        f"{to_local_human(latest.completed_at)} status=partial {_counts_text(latest)}"
+    )
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert _endpoint_checks(capsys.readouterr().out) == [
+        {"check": "endpoint_capture", "status": "warn", "detail": detail},
+    ]
+    assert cli.main(["healthcheck"]) == 0
+    assert f"WARN    endpoint_capture: {detail}" in capsys.readouterr().out.splitlines()
+    assert cli.main(["healthcheck", "--format", "markdown"]) == 0
+    assert f"| endpoint_capture | warn | {detail} |" in capsys.readouterr().out.splitlines()
+
+    monkeypatch.setattr(cli, "fetch_endpoint_lists", _failing_fetch(RuntimeError("synthetic failure")))
+    _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+    failed = Store(home / "model_sentinel.db").get_latest_endpoint_capture("openrouter")
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert _endpoint_checks(capsys.readouterr().out) == [
+        {"check": "endpoint_capture", "status": "warn",
+         "detail": (
+             f"Provider 'openrouter': capture enabled; latest capture "
+             f"{to_local_human(failed.completed_at)} status=error {_counts_text(failed)}; "
+             "error: RuntimeError: synthetic failure"
+         )},
+    ]
+
+    settings_path = home / "settings.env"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8") + "MODEL_SENTINEL_ENDPOINT_CAPTURE=off\n", encoding="utf-8"
+    )
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert _endpoint_checks(capsys.readouterr().out) == [
+        {"check": "endpoint_capture", "status": "ok",
+         "detail": (
+             f"Provider 'openrouter': capture disabled; latest capture "
+             f"{to_local_human(failed.completed_at)} status=error {_counts_text(failed)}; "
+             "error: RuntimeError: synthetic failure"
+         )},
+    ]
+
+
+def test_endpoint_healthcheck_status_and_counts_only_enabled_capable_providers(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "selection", monkeypatch)
+    providers_path = home / "providers.env"
+    extra = ""
+    for provider_id, kind, enabled in (
+        ("FAKE_GENERIC", "fake_generic_kind", 1),
+        ("FAKE_DISABLED_ROUTER", "openrouter", 0),
+        ("FAKE_SECOND_ROUTER", "openrouter", 1),
+    ):
+        prefix = f"MODEL_SENTINEL_PROVIDER_{provider_id}_"
+        extra += (
+            f"{prefix}ENABLED={enabled}\n{prefix}LABEL={provider_id.title()}\n{prefix}KIND={kind}\n"
+            f"{prefix}BASE_URL=https://fake-router.invalid/api/v1\n{prefix}MODELS_PATH=/models\n"
+            f"{prefix}API_KEY_ENV=OPENROUTER_AI_CREDS\n{prefix}PRICE_MULTIPLIER=1\n{prefix}PRICE_DIVISOR=1\n"
+        )
+    providers_path.write_text(providers_path.read_text(encoding="utf-8") + extra, encoding="utf-8")
+
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    assert sorted(check["detail"] for check in _endpoint_checks(capsys.readouterr().out)) == [
+        "Provider 'fake_second_router': capture enabled; no capture yet",
+        "Provider 'openrouter': capture enabled; no capture yet",
+    ]
+
+
+@pytest.mark.parametrize("credentials_present", (True, False))
+def test_endpoint_healthcheck_status_and_counts_query_failure_is_advisory(
+    tmp_path: Path, monkeypatch, capsys, credentials_present: bool
+) -> None:
+    _endpoint_home(tmp_path / "query", monkeypatch)
+    if not credentials_present:
+        monkeypatch.delenv("OPENROUTER_AI_CREDS")
+    expected_exit = 0 if credentials_present else 1
+    assert cli.main(["healthcheck", "--format", "json"]) == expected_exit
+    baseline_checks = [c for c in json.loads(capsys.readouterr().out) if c["check"] != "endpoint_capture"]
+
+    def unreadable(self, provider_id):
+        raise sqlite3.OperationalError(f"synthetic unreadable history {ENDPOINT_SECRET}")
+
+    monkeypatch.setattr(Store, "get_latest_endpoint_capture", unreadable)
+    assert cli.main(["healthcheck", "--format", "json"]) == expected_exit
+    output = capsys.readouterr().out
+    checks = json.loads(output)
+    assert [c for c in checks if c["check"] != "endpoint_capture"] == baseline_checks
+    expected_detail = "Provider 'openrouter': capture enabled; latest capture could not be read: OperationalError: synthetic unreadable history "
+    expected_detail += "[REDACTED]" if credentials_present else ENDPOINT_SECRET
+    if credentials_present:
+        assert ENDPOINT_SECRET not in output
+    assert _endpoint_checks(output) == [
+        {"check": "endpoint_capture", "status": "warn", "detail": expected_detail},
+    ]
+
+
+def test_endpoint_healthcheck_status_and_counts_unready_database_is_advisory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _endpoint_home(tmp_path / "unready", monkeypatch)
+
+    def unavailable(self):
+        raise OSError("synthetic unwritable runtime home")
+
+    monkeypatch.setattr(Store, "initialize", unavailable)
+    assert cli.main(["healthcheck", "--format", "json"]) == 1
+    checks = json.loads(capsys.readouterr().out)
+    assert {"check": "runtime_paths", "status": "error", "detail": "synthetic unwritable runtime home"} in checks
+    assert _endpoint_checks(json.dumps(checks)) == [
+        {"check": "endpoint_capture", "status": "warn",
+         "detail": "Provider 'openrouter': capture enabled; latest capture could not be read: database is not ready"},
+    ]
+
+
+def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Shipped templates in a private home, environment credentials, no provider requests."""
+    project_root = Path(cli.__file__).resolve().parents[1]
+    runtime_home = tmp_path / "synthetic_runtime_home"
+    runtime_home.mkdir(mode=0o700)
+    (runtime_home / "providers.env").write_text(
+        (project_root / "providers.env.template").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    settings = "\n".join(
+        line
+        for line in (project_root / "settings.env.template").read_text(encoding="utf-8").splitlines()
+        if not line.startswith("MODEL_SENTINEL_CREDENTIAL_SOURCE=")
+    )
+    (runtime_home / "settings.env").write_text(
+        settings + "\nMODEL_SENTINEL_CREDENTIAL_SOURCE=environment\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "SYNTHETIC_NOT_A_REAL_SECRET_openrouter")
+    monkeypatch.setenv("ABACUS_AI_CREDS", "SYNTHETIC_NOT_A_REAL_SECRET_abacus")
+    requests = []
+
+    def no_network(*args, **kwargs):
+        requests.append(args)
+        raise AssertionError("healthcheck attempted a provider request")
+
+    monkeypatch.setattr(providers, "urlopen", no_network)
+    monkeypatch.setattr(providers, "endpoint_opener", no_network)
+    monkeypatch.setattr(cli, "fetch_raw_models", no_network)
+    monkeypatch.setattr(cli, "fetch_endpoint_lists", no_network)
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+
+    exit_code = cli.main(["healthcheck", "--format", "json"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert requests == []
+    checks = json.loads(output)
+    assert all(check["status"] != "error" for check in checks)
+    assert {"check": "credential_source", "status": "ok", "detail": "environment"} in checks
+    assert _endpoint_checks(output) == [
+        {"check": "endpoint_capture", "status": "ok",
+         "detail": "Provider 'openrouter': capture enabled; no capture yet"},
+    ]
+    assert "SYNTHETIC_NOT_A_REAL_SECRET" not in output
+    assert (runtime_home / "model_sentinel.db").is_file()

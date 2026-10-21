@@ -245,7 +245,10 @@ path, or a split, merge or partial move of models between paths) are recorded
 as comparison gaps rather than treated as empty lists.
 
 Endpoint failures never change the catalog result, the notification decision,
-or the scan exit status. To turn capture off, set
+or the scan exit status. A capture that fails as a whole is saved as a minimal
+`error` capture with a sanitized message; the log records each capture's status
+and its request, failure, mapping, comparison-gap and change counts. To turn
+capture off, set
 `MODEL_SENTINEL_ENDPOINT_CAPTURE=false` in `~/.model_sentinel/settings.env`.
 
 ## Provider Credentials
@@ -516,6 +519,12 @@ This validates:
 
 It also emits non-fatal warnings for duplicate display labels and provider
 kinds that are using the generic fallback profile.
+
+For each enabled provider whose profile supports endpoint capture, an
+`endpoint_capture` item shows whether the setting is enabled and the latest
+capture's date, status and counts, or `no capture yet`. It is `warn` when the
+latest capture is `partial` or `error` while capture is enabled, or when the
+capture history cannot be read; it never changes the healthcheck exit status.
 
 ## Help
 

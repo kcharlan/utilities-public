@@ -4,16 +4,17 @@ import argparse
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .__init__ import __version__
 from .build_info import format_build_info, runtime_entrypoint
 from .config import (
     ConfigError,
     LoadedConfig,
+    ProviderConfig,
     default_runtime_home,
     describe_duplicate_labels,
     load_config,
@@ -23,7 +24,13 @@ from .config import (
 from .conditional_pricing import ComparisonIdentity
 from .credentials import CredentialError, redact_credential_values, refresh_credentials, resolve_credentials
 from .diffing import compare_models
-from .models import BaselineInfo, ModelDelta, NormalizedModel, ProviderScanResult
+from .endpoints import (
+    CAPTURE_COMPLETE,
+    build_endpoint_capture,
+    build_endpoint_error_summary,
+    sanitize_endpoint_error_message,
+)
+from .models import BaselineInfo, EndpointCaptureSummary, ModelDelta, NormalizedModel, ProviderScanResult
 from .normalize import normalize_models
 from .notifications import send_notification
 from .provider_profiles import (
@@ -32,7 +39,7 @@ from .provider_profiles import (
     profiles_for,
     resolve_profile,
 )
-from .providers import ProviderFetchError, fetch_raw_models
+from .providers import ProviderFetchError, fetch_endpoint_lists, fetch_raw_models
 from .reporting import (
     DEFAULT_REPORT_SHOW_FIELDS,
     DEFAULT_REPORT_SQUELCH_FIELDS,
@@ -504,6 +511,19 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                     deltas=added + removed + changed,
                     detected_at=completed.isoformat(),
                 )
+            endpoint_capture = None
+            if args.save and profile.endpoint_capture and loaded.settings.endpoint_capture:
+                # Never raises: endpoint failures stay out of the handler below.
+                endpoint_capture = _capture_provider_endpoints(
+                    provider=provider,
+                    profile=profile,
+                    current_map=current_map,
+                    scrape_id=scrape_id,
+                    baseline_scrape_id=baseline.scrape_id if baseline else None,
+                    store=store,
+                    logger=logger,
+                    credential_values=snapshot.values,
+                )
             baseline_message = None
             if baseline is None and args.save:
                 baseline_message = "No prior saved baseline existed; current snapshot was saved as the initial baseline."
@@ -520,6 +540,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 removed=tuple(removed),
                 changed=tuple(changed),
                 profile=profile,
+                endpoint_capture=endpoint_capture,
             )
             provider_results.append(result)
             if changed:
@@ -664,6 +685,176 @@ def _build_pending_live_semantic_cores(
                 item.profile,
             )
     return cores
+
+
+def _capture_provider_endpoints(
+    *,
+    provider: ProviderConfig,
+    profile: ProviderProfile,
+    current_map: dict[str, NormalizedModel],
+    scrape_id: int,
+    baseline_scrape_id: int | None,
+    store: Store,
+    logger: logging.Logger,
+    credential_values: Mapping[str, str],
+) -> EndpointCaptureSummary | None:
+    """Capture, compare and save one provider's endpoint lists; never raises.
+
+    `scrape_id` is the saved catalog scrape and `baseline_scrape_id` its
+    selected catalog baseline. The comparison baseline is that scrape's own
+    capture, never a newer or last-good one. Any exception is recorded as an
+    error capture instead, so endpoint work cannot change the catalog result,
+    notification decision or exit status. Endpoint timestamps use the
+    transport's clock (`now_utc`), not `_now`.
+    """
+    started_at = now_utc().isoformat()
+    baseline_capture = None
+    try:
+        if baseline_scrape_id is not None:
+            baseline_capture = store.get_endpoint_capture_for_scrape(baseline_scrape_id)
+        fetch = fetch_endpoint_lists(provider, current_map)
+        candidate = build_endpoint_capture(
+            fetch,
+            profile=profile,
+            scrape_id=scrape_id,
+            baseline_scrape_id=baseline_scrape_id,
+            baseline_capture=baseline_capture,
+        )
+        summary = store.save_endpoint_capture(candidate)
+        _log_endpoint_capture(logger, provider.provider_id, summary)
+        return summary
+    except Exception as exc:
+        return _endpoint_capture_fallback(
+            provider_id=provider.provider_id,
+            scrape_id=scrape_id,
+            started_at=started_at,
+            baseline_scrape_id=baseline_scrape_id,
+            baseline_capture=baseline_capture,
+            store=store,
+            logger=logger,
+            credential_values=credential_values,
+            error=exc,
+        )
+
+
+def _endpoint_capture_fallback(
+    *,
+    provider_id: str,
+    scrape_id: int,
+    started_at: str,
+    baseline_scrape_id: int | None,
+    baseline_capture: EndpointCaptureSummary | None,
+    store: Store,
+    logger: logging.Logger,
+    credential_values: Mapping[str, str],
+    error: Exception,
+) -> EndpointCaptureSummary | None:
+    """Record a failed capture without letting anything escape.
+
+    Saves a minimal error capture. The store returns a capture already
+    committed for the scrape unchanged, so a failure after the commit keeps
+    the committed evidence. When saving fails the in-memory summary keeps a
+    `persistence_error`, which is logged. Returns None only when no error
+    summary could be built at all.
+    """
+    summary = None
+    try:
+        message = _endpoint_failure_message(error, credential_values)
+        logger.error("%s endpoint capture failed: %s", provider_id, message)
+        built = _endpoint_error_summary(
+            provider_id=provider_id,
+            scrape_id=scrape_id,
+            started_at=started_at,
+            error_summary=message,
+            baseline_scrape_id=baseline_scrape_id,
+            baseline_capture=baseline_capture,
+        )
+        summary = built
+        summary = store.save_endpoint_error_capture(built)
+        if summary.persistence_error is not None:
+            summary = replace(
+                summary,
+                persistence_error=sanitize_endpoint_error_message(
+                    redact_credential_values(summary.persistence_error, credential_values)
+                ),
+            )
+            logger.error("%s endpoint capture persistence failed: %s", provider_id, summary.persistence_error)
+        elif summary.error_summary != built.error_summary:
+            logger.warning(
+                "%s endpoint capture %s was committed before the failure and is kept",
+                provider_id,
+                summary.capture_id,
+            )
+        _log_endpoint_capture(logger, provider_id, summary)
+    except Exception as fallback_error:
+        detail = "unknown error"
+        try:
+            detail = _endpoint_failure_message(fallback_error, credential_values)
+            logger.error("%s endpoint capture fallback failed: %s", provider_id, detail)
+        except Exception:
+            pass  # Best effort only: the catalog result must stand.
+        if summary is not None and summary.capture_id is None and summary.persistence_error is None:
+            summary = replace(
+                summary,
+                persistence_error=sanitize_endpoint_error_message(
+                    f"endpoint error capture was not saved: {detail}"
+                ),
+            )
+    return summary
+
+
+def _endpoint_error_summary(
+    *,
+    provider_id: str,
+    scrape_id: int,
+    started_at: str,
+    error_summary: str,
+    baseline_scrape_id: int | None,
+    baseline_capture: EndpointCaptureSummary | None,
+) -> EndpointCaptureSummary:
+    """Build the error summary; a baseline capture it rejects reads as missing."""
+    fields = {
+        "provider_id": provider_id,
+        "scrape_id": scrape_id,
+        "completed_at": now_utc().isoformat(),
+        "started_at": started_at,
+        "error_summary": error_summary,
+        "baseline_scrape_id": baseline_scrape_id,
+    }
+    try:
+        return build_endpoint_error_summary(baseline_capture=baseline_capture, **fields)
+    except Exception:
+        if baseline_capture is None:
+            raise
+        return build_endpoint_error_summary(baseline_capture=None, **fields)
+
+
+def _endpoint_failure_message(error: BaseException, credential_values: Mapping[str, str]) -> str:
+    """Exception type and message with credential values masked; never a traceback."""
+    return sanitize_endpoint_error_message(
+        redact_credential_values(f"{type(error).__name__}: {error}", credential_values)
+    )
+
+
+def _endpoint_capture_counts(summary: EndpointCaptureSummary) -> str:
+    return (
+        f"paths_requested={summary.paths_requested} paths_attempted={summary.paths_attempted} "
+        f"paths_failed={summary.paths_failed} mapping_failures={summary.mapping_failures} "
+        f"comparison_state={summary.comparison_state} "
+        f"comparison_gaps={len(summary.comparison_gaps)} changes={len(summary.changes)}"
+    )
+
+
+def _log_endpoint_capture(logger: logging.Logger, provider_id: str, summary: EndpointCaptureSummary) -> None:
+    """Log a capture's status and counts. `status`, not `comparison_state`, says whether it succeeded."""
+    log = logger.info if summary.status == CAPTURE_COMPLETE else logger.warning
+    log(
+        "%s endpoint capture %s: capture_id=%s %s",
+        provider_id,
+        summary.status,
+        summary.capture_id if summary.capture_id is not None else "unsaved",
+        _endpoint_capture_counts(summary),
+    )
 
 
 def run_history(*, args: argparse.Namespace, loaded, store: Store) -> int:
@@ -921,18 +1112,89 @@ def run_healthcheck(*, args: argparse.Namespace, project_root: Path) -> int:
         checks.append({"check": "credential_cache_age", "status": "warn" if age < 0 else "ok",
                        "detail": f"Cache last updated: {to_local_human(snapshot.updated_at)}; " +
                        ("modification time is in the future" if age < 0 else f"age: {int(age)} seconds")})
+    ready_store = None
     try:
         loaded.runtime_paths.ensure_directories()
         store = Store(loaded.runtime_paths.database_path)
         store.initialize()
+        ready_store = store
         checks.append({"check": "runtime_paths", "status": "ok", "detail": f"Runtime home ready at {loaded.runtime_paths.runtime_home}"})
         checks.append({"check": "database", "status": "ok", "detail": f"SQLite database ready at {loaded.runtime_paths.database_path}"})
     except OSError as exc:
         status_code = 1
         checks.append({"check": "runtime_paths", "status": "error", "detail": str(exc)})
+    checks.extend(
+        _endpoint_capture_checks(
+            loaded=loaded,
+            store=ready_store,
+            credential_values=snapshot.values if snapshot else {},
+        )
+    )
     report = render_healthcheck_report(format_name=args.format, checks=checks)
     _emit_output(report, output_path=None)
     return status_code
+
+
+def _endpoint_capture_checks(
+    *,
+    loaded: LoadedConfig,
+    store: Store | None,
+    credential_values: Mapping[str, str],
+) -> list[dict[str, str]]:
+    """One advisory item per enabled provider whose profile captures endpoints.
+
+    Statuses are only `ok` and `warn`, so these items never change the
+    healthcheck exit code; `store` is None when the database is not ready.
+    """
+    enabled = loaded.settings.endpoint_capture
+    checks = []
+    for provider in loaded.providers:
+        if not provider.enabled:
+            continue
+        profile = resolve_profile(
+            provider.kind,
+            price_multiplier=provider.price_multiplier,
+            price_divisor=provider.price_divisor,
+        )
+        if profile.endpoint_capture:
+            checks.append(
+                _endpoint_capture_check(
+                    provider.provider_id, store=store, enabled=enabled, credential_values=credential_values
+                )
+            )
+    return checks
+
+
+def _endpoint_capture_check(
+    provider_id: str,
+    *,
+    store: Store | None,
+    enabled: bool,
+    credential_values: Mapping[str, str],
+) -> dict[str, str]:
+    prefix = f"Provider '{provider_id}': capture {'enabled' if enabled else 'disabled'}; "
+    unreadable = prefix + "latest capture could not be read: "
+    if store is None:
+        return {"check": "endpoint_capture", "status": "warn", "detail": unreadable + "database is not ready"}
+    try:
+        latest = store.get_latest_endpoint_capture(provider_id)
+        if latest is None:
+            return {"check": "endpoint_capture", "status": "ok", "detail": prefix + "no capture yet"}
+        detail = (
+            f"{prefix}latest capture {to_local_human(latest.completed_at)} "
+            f"status={latest.status} {_endpoint_capture_counts(latest)}"
+        )
+    except Exception as exc:
+        return {
+            "check": "endpoint_capture",
+            "status": "warn",
+            "detail": unreadable + _endpoint_failure_message(exc, credential_values),
+        }
+    if latest.error_summary:
+        detail += f"; error: {latest.error_summary}"
+    # A capture the user switched off is history, not a current problem.
+    status = "ok" if latest.status == CAPTURE_COMPLETE or not enabled else "warn"
+    return {"check": "endpoint_capture", "status": status, "detail": detail}
 
 
 def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) -> BaselineInfo | None | str:

@@ -77,6 +77,9 @@ class ProviderScanResult:
     changed: tuple[ModelDelta, ...]
     profile: ProviderProfile
     error_message: str | None = None
+    # This scan's endpoint capture, success or failure, when one was eligible.
+    # It never contributes to `change_count`.
+    endpoint_capture: EndpointCaptureSummary | None = None
 
     @property
     def change_count(self) -> int:
