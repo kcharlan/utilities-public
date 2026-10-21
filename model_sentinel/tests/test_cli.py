@@ -5,11 +5,13 @@ from datetime import date
 import http.server
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 import threading
 import urllib.request
+from urllib.parse import quote, unquote
 import logging
 
 import pytest
@@ -786,6 +788,21 @@ def test_initial_saved_scan_reports_all_models_as_added(tmp_path: Path, monkeypa
     assert "+ beta (Beta)" in captured.out
 
 
+def _companion_links(path: Path) -> list[tuple[str, str]]:
+    """The (decoded filename, label) of every companion link in an HTML report.
+
+    The href is checked against `quote(..., safe="")` of the decoded name, so a
+    mis-encoded filename fails here rather than resolving by luck.
+    """
+    html = path.read_text(encoding="utf-8")
+    links = []
+    for href, label in re.findall(r'<a class="companion-link" href="([^"]*)">([^<]*)</a>', html):
+        name = unquote(href)
+        assert href == quote(name, safe=""), href
+        links.append((name, label))
+    return links
+
+
 def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, capsys) -> None:
     runtime_home = _write_config_files(tmp_path)
     settings_path = runtime_home / "settings.env"
@@ -823,6 +840,17 @@ def test_scan_writes_full_html_companion_report(tmp_path: Path, monkeypatch, cap
     assert full_reports
     assert any("1 field change across 1 model" in path.read_text(encoding="utf-8") for path in concise_reports)
     assert any("Design arena" in path.read_text(encoding="utf-8") for path in full_reports)
+
+    # Companion navigation: each document links to its sibling in the same
+    # directory, with the filename percent-encoded in the href.
+    assert len(concise_reports) == len(full_reports)
+    for concise, full in zip(concise_reports, full_reports):
+        assert full.name == f"{concise.stem}_full.html"
+        assert _companion_links(concise) == [(full.name, "Full-detail report \u2192")]
+        assert _companion_links(full) == [(concise.name, "\u2190 Concise report")]
+        for document in (concise, full):
+            ((target, _label),) = _companion_links(document)
+            assert (document.parent / target).is_file()
 
 
 def test_changes_writes_its_html_companion_when_a_model_was_added(
@@ -1061,6 +1089,86 @@ def test_scan_explicit_output_does_not_generate_managed_companions(
     assert "changed: 1" in output_path.read_text(encoding="utf-8")
     assert list((runtime_home / "reports").glob("scan_*.html")) == []
     assert list((runtime_home / "reports").glob("scan_*_full.html")) == []
+
+
+def test_scan_explicit_output_renders_without_companion_links(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """An explicit `--output` writes one document and no siblings, so nothing
+    it renders may point at a companion that was never written."""
+    runtime_home = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "synthetic-token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    output_path = tmp_path / "explicit-scan.md"
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [{"id": "synthetic/model", "name": "Synthetic Model", "status": "active"}],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+    real_render = cli.render_scan_report
+    calls: list[dict] = []
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real_render(**kwargs)
+
+    monkeypatch.setattr(cli, "render_scan_report", spy)
+
+    assert cli.main(["scan", "--save"]) == 0
+    assert cli.main(["scan", "--save", "--output", str(output_path)]) == 0
+    capsys.readouterr()
+
+    assert output_path.exists()
+    assert calls
+    assert all(call.get("companion_link") is None for call in calls)
+    assert list((runtime_home / "reports").glob("scan_*.html")) == []
+
+
+def test_scan_managed_primary_report_carries_no_companion_link(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Only the two HTML documents link to each other; the text/JSON/Markdown
+    primary report ignores companion navigation entirely."""
+    runtime_home = _write_config_files(tmp_path)
+    settings_path = runtime_home / "settings.env"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8")
+        .replace("MODEL_SENTINEL_NOTIFY_DEFAULT=0", "MODEL_SENTINEL_NOTIFY_DEFAULT=1")
+        .replace("MODEL_SENTINEL_NOTIFY_ON=never", "MODEL_SENTINEL_NOTIFY_ON=changes"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "synthetic-token")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setattr(cli, "send_notification", lambda **kwargs: None)
+    payloads = iter(
+        [
+            [{"id": "synthetic/model", "name": "Synthetic Model"}],
+            [{"id": "synthetic/model", "name": "Synthetic Model", "status": "active"}],
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_raw_models",
+        lambda provider, api_key, profile: next(payloads),
+    )
+
+    assert cli.main(["scan", "--save"]) == 0
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+
+    report_dir = runtime_home / "reports"
+    primaries = sorted(report_dir.glob("scan_*.txt"))
+    assert primaries
+    for primary in primaries:
+        text = primary.read_text(encoding="utf-8")
+        assert "companion" not in text
+        assert "_full.html" not in text
 
 
 def test_explicit_scan_json_without_companions_never_builds_semantics(

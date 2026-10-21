@@ -603,6 +603,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 pending_live_semantics
             )
         html_report_path = report_path.with_suffix(".html")
+        full_html_report_path = report_path.with_name(f"{report_path.stem}_full.html")
         html_text = render_scan_report(
             generated_at=generated_at,
             command="scan",
@@ -610,10 +611,10 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=live_semantic_cores,
+            companion_link=(full_html_report_path.name, "Full-detail report \u2192"),
         )
         html_report_path.write_text(html_text, encoding="utf-8")
         logger.info("HTML report written to %s", html_report_path)
-        full_html_report_path = report_path.with_name(f"{report_path.stem}_full.html")
         full_html_text = render_scan_report(
             generated_at=generated_at,
             command="scan",
@@ -626,6 +627,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 unclassified_limit=detail_policy.unclassified_limit,
             ),
             semantic_cores=live_semantic_cores,
+            companion_link=(html_report_path.name, "\u2190 Concise report"),
         )
         full_html_report_path.write_text(full_html_text, encoding="utf-8")
         logger.info("Full HTML report written to %s", full_html_report_path)

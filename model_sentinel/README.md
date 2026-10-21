@@ -626,6 +626,8 @@ headline still elevates the largest dollar movements.
 
 **Raw values are available without leaving the page.** Hovering a price cell shows the full derivation — the provider's literal value, its magnitude in scientific notation as a parenthetical, the conversion factor and the resulting figure, e.g. `0.000002 (2.0e-6) × 1,000,000 = $2.00`. Because a tooltip cannot be selected or copied, a `Show raw values` checkbox in the header also reveals a selectable `old → new` sub-line under every price row. That checkbox is **ticked by default in the full-detail companion report**, whose whole purpose is the raw numbers, and unticked in the concise one.
 
+**The two companions link to each other.** The concise report's header carries a `Full-detail report →` link and the full-detail report's header carries `← Concise report`, placed after the `Show raw values` checkbox. Each link is a relative filename in the same report directory, so the pair can be moved or opened together and still navigate. The links use the same dim navigation styling as the card `↑` back-link rather than a change color, and they appear only in the auto-generated pair: a report written with `--output` has no companion and no link.
+
 When no changes are detected, no HTML companion is generated. The requested
 primary format is still emitted to stdout or an explicit `--output`; the
 managed report directory receives no scan artifact unless notification policy

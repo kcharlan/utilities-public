@@ -628,6 +628,117 @@ def _bulk_parameter_changes() -> tuple[ModelDelta, ...]:
     )
 
 
+def _companion_report(
+    format_name: str = "html",
+    *,
+    companion_link: tuple[str, str] | None = None,
+    detail_policy: ReportDetailPolicy | None = None,
+) -> str:
+    kwargs = {} if companion_link is None else {"companion_link": companion_link}
+    return render_scan_report(
+        generated_at="2026-06-16T13:05:05+00:00",
+        command="scan",
+        format_name=format_name,
+        provider_results=[
+            _scan_result(
+                (
+                    ModelDelta(
+                        "changed",
+                        "fake-org/test-model-a",
+                        "Test Model A",
+                        (FieldChange("pricing.prompt", "0.000001", "0.000002"),),
+                    ),
+                )
+            )
+        ],
+        detail_policy=detail_policy,
+        **kwargs,
+    )
+
+
+def _companion_anchors(html: str) -> list[str]:
+    return re.findall(r'<a class="companion-link"[^>]*>[^<]*</a>', html)
+
+
+def test_companion_navigation_link_follows_raw_toggle_in_header(tmp_path: Path) -> None:
+    path = tmp_path / "scan_20260616T130505_00.html"
+    path.write_text(
+        _companion_report(
+            companion_link=("scan_20260616T130505_00_full.html", "Full-detail report →")
+        ),
+        encoding="utf-8",
+    )
+    html = path.read_text(encoding="utf-8")
+
+    assert _companion_anchors(html) == [
+        '<a class="companion-link" href="scan_20260616T130505_00_full.html">'
+        "Full-detail report →</a>"
+    ]
+    header = html[html.index("<header>") : html.index("</header>")]
+    assert header.index("Show raw values") < header.index('class="companion-link"')
+
+
+def test_companion_navigation_encodes_filename_and_escapes_label(tmp_path: Path) -> None:
+    name = "scan 1&2<x>\"'#?/é.html"
+    path = tmp_path / "report.html"
+    path.write_text(
+        _companion_report(companion_link=(name, 'A <b>"quoted"</b> & more')),
+        encoding="utf-8",
+    )
+    html = path.read_text(encoding="utf-8")
+
+    (anchor,) = _companion_anchors(html)
+    # `safe=''` encodes `/`, `#` and `?` too, so the name cannot become a path,
+    # fragment or query; the href is then HTML-escaped as an attribute value.
+    assert 'href="scan%201%262%3Cx%3E%22%27%23%3F%2F%C3%A9.html"' in anchor
+    assert ">A &lt;b&gt;&quot;quoted&quot;&lt;/b&gt; &amp; more</a>" in anchor
+    assert "<b>" not in anchor
+
+
+def test_companion_navigation_absent_without_link() -> None:
+    html = _companion_report()
+
+    assert "companion-link" not in html
+    assert _companion_report(companion_link=None) == html
+
+
+def test_companion_navigation_ignored_by_other_formats() -> None:
+    link = ("scan_x_full.html", "Full-detail report")
+    for format_name in ("text", "markdown", "json"):
+        plain = _companion_report(format_name)
+        linked = _companion_report(format_name, companion_link=link)
+        assert linked == plain
+        assert "scan_x_full.html" not in linked
+
+
+def test_companion_navigation_styling_is_navigation_not_change_color() -> None:
+    plain = _companion_report()
+    linked = _companion_report(companion_link=("scan_x_full.html", "Full-detail report"))
+
+    # Absent link: the stylesheet is untouched, so existing documents are
+    # byte-identical (the characterization suites pin this too).
+    assert "a.companion-link" not in plain
+    rule = re.search(r"a\.companion-link \{[^}]*\}", linked)
+    assert rule is not None
+    assert "color: var(--text-dim)" in rule.group(0)
+    assert "price-" not in rule.group(0)
+    assert "accent-" not in rule.group(0)
+    hover = re.search(r"a\.companion-link:hover \{[^}]*\}", linked)
+    assert hover is not None
+    assert "color: var(--text-bright)" in hover.group(0)
+
+
+def test_companion_navigation_appears_in_full_detail_report_too() -> None:
+    html = _companion_report(
+        detail_policy=make_report_detail_policy(mode="all"),
+        companion_link=("scan_x.html", "← Concise report"),
+    )
+
+    assert _companion_anchors(html) == [
+        '<a class="companion-link" href="scan_x.html">← Concise report</a>'
+    ]
+
+
 def test_scan_report_summarizes_benchmarks_by_default() -> None:
     report = render_scan_report(
         generated_at="2026-06-16T13:05:05+00:00",

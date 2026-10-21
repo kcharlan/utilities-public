@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any, Literal
+from urllib.parse import quote
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
 # `classify_change` once per field change and format the result, instead of
@@ -2126,6 +2127,7 @@ def render_scan_report(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy | None = None,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    companion_link: tuple[str, str] | None = None,
 ) -> str:
     detail_policy = detail_policy or make_report_detail_policy()
     if format_name == "json":
@@ -2153,6 +2155,7 @@ def render_scan_report(
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=semantic_cores,
+            companion_link=companion_link,
         )
     return _render_scan_text(
         generated_at=generated_at,
@@ -4973,6 +4976,18 @@ footer {
   font-family: var(--font-mono);
 }"""
 
+_COMPANION_LINK_CSS = """\
+a.companion-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  margin-left: 1rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+a.companion-link:hover { color: var(--text-bright); }"""
+
 _CONDITIONAL_HTML_CSS = """\
 .price-conditional { color: var(--accent-blue); }
 .conditional-pricing {
@@ -5040,6 +5055,24 @@ _CONDITIONAL_HTML_CSS = """\
 """
 
 
+def _companion_link_html(companion_link: tuple[str, str] | None) -> str:
+    """The header link to a sibling report, or nothing.
+
+    The filename is a path segment, so `safe=""` percent-encodes `/`, `#` and
+    `?` as well; the quoted href and the label are then HTML-escaped. It is
+    styled as the dim navigation link (like the card `↑` back-link), never in a
+    change color.
+    """
+    if companion_link is None:
+        return ""
+    filename, label = companion_link
+    h = html_module.escape
+    return (
+        f'  <a class="companion-link" href="{h(quote(filename, safe=""))}">'
+        f"{h(label)}</a>\n"
+    )
+
+
 def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html: str) -> str:
     """The page shell. `tail_html` is whatever sits between the body and the footer.
 
@@ -5057,6 +5090,9 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
         or 'price-conditional' in body_html
         else ""
     )
+    companion_css = (
+        "\n" + _COMPANION_LINK_CSS if 'class="companion-link"' in header_html else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5064,7 +5100,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{h(title)}</title>
 <style>
-{_HTML_CSS}{conditional_css}
+{_HTML_CSS}{conditional_css}{companion_css}
 </style>
 </head>
 <body>
@@ -7326,6 +7362,7 @@ def _render_scan_html(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    companion_link: tuple[str, str] | None = None,
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
@@ -7464,7 +7501,7 @@ def _render_scan_html(
         f'  <div class="meta">{timestamp} &middot; {h(command)}</div>\n'
         f'  <label class="raw-toggle"><input type="checkbox" id="{_RAW_TOGGLE_ID}"'
         f'{raw_checked}> Show raw values</label>\n'
-        f'</header>'
+        f'{_companion_link_html(companion_link)}</header>'
     )
     price_movement_html = _render_html_price_movement_summary(movement, anchors)
     body_html = (
