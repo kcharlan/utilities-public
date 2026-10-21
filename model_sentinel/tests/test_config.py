@@ -337,3 +337,43 @@ def test_invalid_credential_settings_are_rejected(tmp_path: Path, name: str, val
         handle.write(f"MODEL_SENTINEL_CREDENTIAL_{name}={value}\n")
     with pytest.raises(ConfigError, match=f"MODEL_SENTINEL_CREDENTIAL_{name}"):
         load_settings(settings_path, runtime_home=runtime_home)
+
+
+def test_endpoint_capture_setting_defaults_and_boolean_grammar(tmp_path: Path) -> None:
+    from model_sentinel.config import load_settings
+
+    runtime_home = _write_config_files(tmp_path)
+    settings_path = runtime_home / "settings.env"
+    assert load_settings(settings_path, runtime_home=runtime_home).endpoint_capture is True
+
+    base = settings_path.read_text(encoding="utf-8")
+    cases = {
+        "1": True, "true": True, "YES": True, " On ": True,
+        "0": False, "false": False, "No": False, "OFF": False,
+    }
+    for value, expected in cases.items():
+        settings_path.write_text(
+            base + f"MODEL_SENTINEL_ENDPOINT_CAPTURE={value}\n", encoding="utf-8"
+        )
+        loaded = load_settings(settings_path, runtime_home=runtime_home)
+        assert loaded.endpoint_capture is expected, value
+
+    for invalid in ("maybe", "", "2"):
+        settings_path.write_text(
+            base + f"MODEL_SENTINEL_ENDPOINT_CAPTURE={invalid}\n", encoding="utf-8"
+        )
+        with pytest.raises(ConfigError, match="Invalid boolean"):
+            load_settings(settings_path, runtime_home=runtime_home)
+
+
+def test_settings_template_documents_endpoint_capture(tmp_path: Path) -> None:
+    from model_sentinel.config import load_settings
+
+    template = Path(__file__).resolve().parents[1] / "settings.env.template"
+    runtime_home = tmp_path / "home"
+    runtime_home.mkdir()
+    settings_path = runtime_home / "settings.env"
+    settings_path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+
+    assert load_settings(settings_path, runtime_home=runtime_home).endpoint_capture is True
+    assert "MODEL_SENTINEL_ENDPOINT_CAPTURE=1" in template.read_text(encoding="utf-8")

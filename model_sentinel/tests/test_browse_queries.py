@@ -576,3 +576,51 @@ def test_non_busy_operational_errors_are_not_translated() -> None:
 def test_busy_operational_error_is_translated() -> None:
     with pytest.raises(DatabaseBusyError):
         queries.list_scrapes(_FailingConnection("database table is busy"))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda connection: queries.endpoint_tables_present(connection),
+        lambda connection: queries.model_observation(
+            connection, provider_id="endpoint-example", model_id="fake-org/endpoint-model-a", scrape_id=1
+        ),
+        lambda connection: queries.endpoint_capture_for_scrape(connection, scrape_id=1),
+        lambda connection: queries.endpoint_model_list(
+            connection, capture_id=1, model_id="fake-org/endpoint-model-a"
+        ),
+        lambda connection: queries.endpoint_list_models(
+            connection, capture_id=1, list_path="/api/v1/models/fake-org/endpoint-model-a/endpoints"
+        ),
+        lambda connection: queries.endpoint_capture_has_records(connection, capture_id=1),
+        lambda connection: queries.endpoint_capture_lists(connection, capture_id=1),
+        lambda connection: queries.endpoint_list_gaps(
+            connection, capture_id=1, list_path="/api/v1/models/fake-org/endpoint-model-a/endpoints"
+        ),
+        lambda connection: queries.endpoint_list_changes(
+            connection,
+            provider_id="endpoint-example",
+            list_path="/api/v1/models/fake-org/endpoint-model-a/endpoints",
+            completed_at="2026-09-03T12:00:00+00:00",
+            scrape_id=1,
+            limit=200,
+        ),
+        lambda connection: queries.first_usable_endpoint_capture_date(connection, provider_id="endpoint-example"),
+    ],
+)
+def test_endpoint_busy_reads_translate_every_endpoint_query(call) -> None:
+    with pytest.raises(DatabaseBusyError):
+        call(_FailingConnection("database is locked"))
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        call(_FailingConnection("no such table: endpoint_captures"))
+
+
+def test_endpoint_reason_states_table_detection(tmp_path: Path) -> None:
+    database_path = tmp_path / "fixture.db"
+    build_fixture_db(database_path)
+    with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
+        assert queries.endpoint_tables_present(connection) is True
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP TABLE endpoint_observations")
+    with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
+        assert queries.endpoint_tables_present(connection) is False

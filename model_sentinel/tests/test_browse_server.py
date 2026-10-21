@@ -329,6 +329,7 @@ def test_locked_database_returns_retryable_503_from_every_query_path(
         "/api/model?provider=example-provider&model=fake-org/test-model-a",
         "/api/series?models=example-provider/fake-org/test-model-a&aspects=example-provider:input_price",
         "/api/events?models=example-provider/fake-org/test-model-a",
+        "/api/endpoints?provider=example-provider&model=fake-org/test-model-a",
     )
     server, _, database_path, _ = browse_server
     writer = sqlite3.connect(database_path, timeout=0)
@@ -428,3 +429,101 @@ def test_run_browse_closes_database_when_server_creation_fails(
 
     assert close_calls == 1
     assert captured_context.display_invocation == "renamed-sentinel"
+
+
+def test_endpoint_reason_states_served_over_http(tmp_path: Path) -> None:
+    database_path = tmp_path / "endpoints.db"
+    facts = build_fixture_db(database_path, with_endpoints=True).endpoint
+    before = hashlib.sha256(database_path.read_bytes()).hexdigest()
+    db = open_readonly(database_path)
+    server = make_server(browse_context(db), port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"/api/endpoints?provider={facts.provider_id}&model="
+        status, headers, body = _request(server, "GET", base + facts.listed_model)
+        assert status == 200
+        assert headers["Content-Type"].startswith("application/json")
+        payload = json.loads(body)
+        assert (payload["captured"], payload["scrape_id"]) == (True, facts.third_scrape)
+
+        status, _, body = _request(server, "GET", f"{base}{facts.error_only_model}")
+        assert status == 200
+        assert json.loads(body)["reason"] == "capture_error"
+
+        status, _, body = _request(server, "GET", f"{base}{facts.listed_model}&scrape_id={facts.error_scrape}")
+        assert status == 400
+        assert json.loads(body) == {
+            "error": f"scrape_id must identify a saved observation of {facts.listed_model} for {facts.provider_id}"
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        db.close_all()
+    assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
+
+
+def test_client_disconnects_are_not_reported_as_server_errors(browse_server, capsys) -> None:
+    # The page aborts superseded requests (useApi's AbortController), so a
+    # client closing its socket mid-response is routine, not a server error.
+    server, *_ = browse_server
+    for error in (BrokenPipeError(32, "Broken pipe"), ConnectionResetError(54, "reset")):
+        try:
+            raise error
+        except ConnectionError:
+            server.handle_error(None, ("127.0.0.1", 1))
+    assert capsys.readouterr().err == ""
+
+    try:
+        raise RuntimeError("synthetic handler failure")
+    except RuntimeError:
+        server.handle_error(None, ("127.0.0.1", 1))
+    assert "synthetic handler failure" in capsys.readouterr().err
+
+
+def test_a_connection_burst_before_the_accept_loop_runs_is_served(tmp_path: Path) -> None:
+    """Connections queued while the accept loop is busy are served, not reset.
+
+    The page opens a connection per request (HTTP/1.0) and Chromium runs
+    several at once. The socketserver default backlog of 5 lets macOS reset
+    the overflow, which the browser reports as `net::ERR_CONNECTION_RESET`
+    whenever the accept loop falls behind, as on a loaded machine. Here the
+    accept loop does not run at all until every client has connected.
+    """
+    database_path = tmp_path / "fixture.db"
+    build_fixture_db(database_path)
+    db = open_readonly(database_path)
+    server = make_server(browse_context(db), port=0)
+    clients = 16
+    connected = threading.Barrier(clients + 1)
+
+    def fetch() -> int | str:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        try:
+            try:
+                connection.connect()
+            finally:
+                connected.wait(timeout=5)
+            connection.request("GET", "/app.css")
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        except OSError as exc:
+            return type(exc).__name__
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    try:
+        with ThreadPoolExecutor(max_workers=clients) as pool:
+            results = [pool.submit(fetch) for _ in range(clients)]
+            connected.wait(timeout=5)
+            thread.start()
+            assert [result.result() for result in results] == [200] * clients
+    finally:
+        if thread.is_alive():
+            server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        db.close_all()

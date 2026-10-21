@@ -1,15 +1,41 @@
 from __future__ import annotations
 
+import gzip
 import json
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from contextlib import closing
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
 from .conditional_pricing import StoredComparisonIdentity
 from .config import ProviderConfig
-from .models import BaselineInfo, FieldChange, HistoryEvent, ModelDelta, NormalizedModel
+from .endpoints import (
+    COMPARISON_AVAILABLE,
+    ENDPOINT_ADDED,
+    ENDPOINT_REMOVED,
+    GAP_BASELINE_OBSERVATION_FAILED,
+    GAP_CURRENT_OBSERVATION_FAILED,
+    endpoint_state_hash,
+    sanitize_endpoint_error_message,
+)
+from .models import (
+    BaselineInfo,
+    EndpointCaptureCandidate,
+    EndpointCaptureSummary,
+    EndpointChangeRecord,
+    EndpointComparisonGap,
+    EndpointListRecord,
+    EndpointMapping,
+    EndpointObservationRecord,
+    FieldChange,
+    HistoryEvent,
+    ModelDelta,
+    NormalizedModel,
+    canonical_json,
+)
 from .time_utils import local_date_for, to_storage_timestamp
 
 
@@ -83,6 +109,125 @@ SCHEMA = (
         detected_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_captures (
+        capture_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scrape_id INTEGER NOT NULL UNIQUE,
+        provider_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('complete', 'partial', 'error')),
+        paths_requested INTEGER NOT NULL CHECK (paths_requested >= 0),
+        paths_attempted INTEGER NOT NULL
+            CHECK (paths_attempted >= 0 AND paths_attempted <= paths_requested),
+        paths_failed INTEGER NOT NULL
+            CHECK (paths_failed >= 0 AND paths_failed <= paths_requested),
+        mapping_failures INTEGER NOT NULL CHECK (mapping_failures >= 0),
+        first_capture INTEGER NOT NULL CHECK (first_capture IN (0, 1)),
+        comparison_state TEXT NOT NULL CHECK (comparison_state IN (
+            'available', 'no_selected_baseline', 'missing_baseline_capture', 'unusable_baseline'
+        )),
+        baseline_capture_id INTEGER,
+        error_summary TEXT,
+        CHECK (
+            (comparison_state IN ('available', 'unusable_baseline'))
+            = (baseline_capture_id IS NOT NULL)
+        ),
+        FOREIGN KEY (scrape_id) REFERENCES scrapes(scrape_id),
+        FOREIGN KEY (baseline_capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_lists (
+        capture_id INTEGER NOT NULL,
+        list_path TEXT NOT NULL,
+        list_model_id TEXT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'empty', 'error')),
+        endpoint_count INTEGER NOT NULL CHECK (endpoint_count >= 0),
+        error_code TEXT,
+        error_message TEXT,
+        CHECK (
+            (outcome = 'ok' AND endpoint_count > 0)
+            OR (outcome IN ('empty', 'error') AND endpoint_count = 0)
+        ),
+        PRIMARY KEY (capture_id, list_path),
+        FOREIGN KEY (capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_capture_models (
+        capture_id INTEGER NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('listed', 'alias', 'no_link', 'invalid_link')),
+        list_path TEXT,
+        alias_target_model_id TEXT,
+        error_code TEXT,
+        PRIMARY KEY (capture_id, provider_model_id),
+        FOREIGN KEY (capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_states (
+        state_hash TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_observations (
+        capture_id INTEGER NOT NULL,
+        list_path TEXT NOT NULL,
+        endpoint_key TEXT NOT NULL,
+        state_hash TEXT NOT NULL,
+        status_code INTEGER,
+        PRIMARY KEY (capture_id, list_path, endpoint_key),
+        FOREIGN KEY (capture_id, list_path) REFERENCES endpoint_lists(capture_id, list_path),
+        FOREIGN KEY (state_hash) REFERENCES endpoint_states(state_hash)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_changes (
+        endpoint_change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        from_capture_id INTEGER NOT NULL,
+        to_capture_id INTEGER NOT NULL,
+        from_list_path TEXT NOT NULL,
+        list_path TEXT NOT NULL,
+        endpoint_key TEXT NOT NULL,
+        change_kind TEXT NOT NULL CHECK (change_kind IN (
+            'endpoint_added', 'endpoint_removed', 'field_changed', 'status_changed'
+        )),
+        field_name TEXT,
+        old_value_json TEXT,
+        new_value_json TEXT,
+        detected_at TEXT NOT NULL,
+        FOREIGN KEY (from_capture_id) REFERENCES endpoint_captures(capture_id),
+        FOREIGN KEY (to_capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_comparison_gaps (
+        capture_id INTEGER NOT NULL,
+        list_path TEXT NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN (
+            'baseline_observation_failed', 'current_observation_failed',
+            'new_path_unpaired', 'removed_path_unpaired', 'ambiguous_mapping'
+        )),
+        from_list_path TEXT,
+        PRIMARY KEY (capture_id, list_path, reason),
+        FOREIGN KEY (capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_capture_archives (
+        capture_id INTEGER PRIMARY KEY,
+        body_gzip BLOB NOT NULL,
+        FOREIGN KEY (capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_endpoint_changes_provider_list_capture
+        ON endpoint_changes (provider_id, list_path, to_capture_id)
+    """,
 )
 
 
@@ -140,6 +285,15 @@ class _StoredEdgeEnvelope:
 
 class StoredComparisonDataError(RuntimeError):
     """Exact-side persisted data cannot form a deterministic comparison event."""
+
+
+class EndpointCaptureIntegrityError(RuntimeError):
+    """An endpoint capture write was refused before anything was saved.
+
+    Raised when foreign-key enforcement cannot be enabled on the write
+    connection, or when the capture does not reference a saved success scrape
+    of its provider and that scrape's selected baseline capture.
+    """
 
 
 class Store:
@@ -654,10 +808,531 @@ class Store:
             )
         return _build_comparison_events(envelopes, rows)
 
+    def save_endpoint_capture(self, candidate: EndpointCaptureCandidate) -> EndpointCaptureSummary:
+        """Persist one endpoint capture and return it as persisted.
+
+        Inside one `BEGIN IMMEDIATE` transaction on a foreign-key-enforcing
+        connection this validates the referenced scrape and baseline capture,
+        assigns `first_capture` from the provider's persisted captures, and
+        writes the capture, mappings, lists, states, observations, archive,
+        comparison gaps and changes, then commits once. Any failure rolls the
+        whole capture back and is re-raised; the summary is returned only
+        after the commit succeeded. A second capture for the same scrape is
+        rejected by the unique `scrape_id`.
+        """
+        summary = candidate.summary
+        _validate_capture_summary(summary)
+        with closing(self._connect_capture_writer()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                _validate_capture_references(connection, summary)
+                capture_id = _insert_capture_row(connection, summary)
+                _write_capture_models(connection, capture_id=capture_id, mappings=candidate.mappings)
+                _write_endpoint_lists(connection, capture_id=capture_id, lists=summary.lists)
+                connection.execute(
+                    "INSERT INTO endpoint_capture_archives (capture_id, body_gzip) VALUES (?, ?)",
+                    (capture_id, _capture_archive_blob(candidate.archive)),
+                )
+                _write_comparison_gaps(connection, capture_id=capture_id, gaps=summary.comparison_gaps)
+                _write_endpoint_changes(
+                    connection,
+                    provider_id=summary.provider_id,
+                    to_capture_id=capture_id,
+                    detected_at=to_storage_timestamp(summary.completed_at),
+                    changes=summary.changes,
+                )
+                connection.execute("COMMIT")
+            except BaseException:
+                _rollback(connection)
+                raise
+            return _load_capture_summary(connection, capture_id)
+
+    def save_endpoint_error_capture(self, summary: EndpointCaptureSummary) -> EndpointCaptureSummary:
+        """Persist a minimal error capture; never raises.
+
+        `summary` comes from `endpoints.build_endpoint_error_summary`. In a new
+        transaction, a capture already committed for the scrape is reused and
+        returned unchanged rather than replaced. Otherwise only the capture row
+        is written, under the same reference validation and `first_capture`
+        rule as `save_endpoint_capture`. When persistence fails, the
+        in-memory summary is returned with `capture_id` None and a sanitized
+        `persistence_error`; the caller logs it.
+        """
+        try:
+            _validate_capture_summary(summary)
+            if summary.lists or summary.changes or summary.comparison_gaps:
+                raise ValueError("a minimal error capture has no lists, changes or gaps")
+            with closing(self._connect_capture_writer()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    existing = connection.execute(
+                        "SELECT capture_id FROM endpoint_captures WHERE scrape_id = ?",
+                        (summary.scrape_id,),
+                    ).fetchone()
+                    if existing is not None:
+                        capture_id = int(existing["capture_id"])
+                    else:
+                        _validate_capture_references(connection, summary)
+                        capture_id = _insert_capture_row(connection, summary)
+                    connection.execute("COMMIT")
+                except BaseException:
+                    _rollback(connection)
+                    raise
+                return _load_capture_summary(connection, capture_id)
+        except Exception as exc:
+            return replace(
+                summary,
+                capture_id=None,
+                persistence_error=sanitize_endpoint_error_message(
+                    f"endpoint error capture was not saved: {type(exc).__name__}: {exc}"
+                ),
+            )
+
+    def get_endpoint_capture_for_scrape(self, scrape_id: int) -> EndpointCaptureSummary | None:
+        """Return the capture saved for exactly this catalog scrape, if any."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM endpoint_captures WHERE scrape_id = ?",
+                (scrape_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return _capture_summary_from_row(connection, row)
+
+    def get_latest_endpoint_capture(self, provider_id: str) -> EndpointCaptureSummary | None:
+        """Return the provider's most recently completed capture, if any."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM endpoint_captures
+                WHERE provider_id = ?
+                ORDER BY datetime(completed_at) DESC, capture_id DESC
+                LIMIT 1
+                """,
+                (provider_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return _capture_summary_from_row(connection, row)
+
+    def load_endpoint_lists(self, capture_id: int) -> tuple[EndpointListRecord, ...]:
+        """Return a capture's lists with their mapped models and observations."""
+        with self._connect() as connection:
+            return _load_endpoint_lists(connection, capture_id)
+
+    def _connect_capture_writer(self) -> sqlite3.Connection:
+        """Open a capture-write connection with verified foreign-key enforcement.
+
+        The connection is in autocommit mode so the caller issues its own
+        `BEGIN IMMEDIATE` and single `COMMIT`. This policy is local to
+        capture writes; other Store connections are unchanged.
+        """
+        connection = sqlite3.connect(self.database_path, isolation_level=None)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            enabled = connection.execute("PRAGMA foreign_keys").fetchone()
+            if enabled is None or enabled[0] != 1:
+                raise EndpointCaptureIntegrityError(
+                    "SQLite foreign key enforcement could not be enabled for an endpoint capture write"
+                )
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+
+def _rollback(connection: sqlite3.Connection) -> None:
+    """Roll back an open transaction without masking the error being handled."""
+    if not connection.in_transaction:
+        return
+    try:
+        connection.execute("ROLLBACK")
+    except sqlite3.Error:
+        pass  # Closing the connection discards the transaction anyway.
+
+
+def _validate_capture_summary(summary: EndpointCaptureSummary) -> None:
+    """Check the in-memory summary is a new capture whose comparison is consistent."""
+    if summary.capture_id is not None:
+        raise ValueError("endpoint capture has already been persisted")
+    if (summary.changes or summary.comparison_gaps) and summary.comparison_state != COMPARISON_AVAILABLE:
+        raise ValueError("endpoint changes and gaps require an available comparison")
+    if any(change.from_capture_id != summary.baseline_capture_id for change in summary.changes):
+        raise ValueError("endpoint changes must come from the selected baseline capture")
+
+
+def _validate_capture_references(connection: sqlite3.Connection, summary: EndpointCaptureSummary) -> None:
+    """Require a saved success scrape of the provider and its selected baseline capture."""
+    scrape = connection.execute(
+        "SELECT provider_id, status, saved_snapshot, baseline_scrape_id FROM scrapes WHERE scrape_id = ?",
+        (summary.scrape_id,),
+    ).fetchone()
+    if (
+        scrape is None
+        or scrape["provider_id"] != summary.provider_id
+        or scrape["status"] != "success"
+        or scrape["saved_snapshot"] != 1
+    ):
+        raise EndpointCaptureIntegrityError(
+            "endpoint capture must reference a saved success scrape of the same provider"
+        )
+    if summary.baseline_capture_id is None:
+        return
+    baseline = connection.execute(
+        "SELECT provider_id, scrape_id FROM endpoint_captures WHERE capture_id = ?",
+        (summary.baseline_capture_id,),
+    ).fetchone()
+    if baseline is None or baseline["provider_id"] != summary.provider_id:
+        raise EndpointCaptureIntegrityError("baseline capture must belong to the same provider")
+    if baseline["scrape_id"] != scrape["baseline_scrape_id"]:
+        raise EndpointCaptureIntegrityError(
+            "baseline capture must belong to the scrape's selected baseline scrape"
+        )
+
+
+def _insert_capture_row(connection: sqlite3.Connection, summary: EndpointCaptureSummary) -> int:
+    """Insert the capture row, assigning `first_capture` from persisted captures."""
+    earlier = connection.execute(
+        "SELECT 1 FROM endpoint_captures WHERE provider_id = ? LIMIT 1",
+        (summary.provider_id,),
+    ).fetchone()
+    cursor = connection.execute(
+        """
+        INSERT INTO endpoint_captures (
+            scrape_id, provider_id, started_at, completed_at, status,
+            paths_requested, paths_attempted, paths_failed, mapping_failures,
+            first_capture, comparison_state, baseline_capture_id, error_summary
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            summary.scrape_id,
+            summary.provider_id,
+            to_storage_timestamp(summary.started_at),
+            to_storage_timestamp(summary.completed_at),
+            summary.status,
+            summary.paths_requested,
+            summary.paths_attempted,
+            summary.paths_failed,
+            summary.mapping_failures,
+            int(earlier is None),
+            summary.comparison_state,
+            summary.baseline_capture_id,
+            None if summary.error_summary is None else sanitize_endpoint_error_message(summary.error_summary),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def _write_capture_models(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    mappings: Sequence[EndpointMapping],
+) -> None:
+    connection.executemany(
+        """
+        INSERT INTO endpoint_capture_models (
+            capture_id, provider_model_id, outcome, list_path, alias_target_model_id, error_code
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                capture_id,
+                mapping.provider_model_id,
+                mapping.outcome,
+                mapping.list_path,
+                mapping.alias_target_model_id,
+                mapping.error_code,
+            )
+            for mapping in mappings
+        ],
+    )
+
+
+def _write_endpoint_lists(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    lists: Sequence[EndpointListRecord],
+) -> None:
+    """Write lists, their deduplicated stable states, and observations in response order."""
+    for listing in lists:
+        connection.execute(
+            """
+            INSERT INTO endpoint_lists (
+                capture_id, list_path, list_model_id, outcome, endpoint_count, error_code, error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                capture_id,
+                listing.list_path,
+                listing.list_model_id,
+                listing.outcome,
+                listing.endpoint_count,
+                listing.error_code,
+                None if listing.error_message is None else sanitize_endpoint_error_message(listing.error_message),
+            ),
+        )
+        for observation in listing.observations:
+            if endpoint_state_hash(observation.state) != observation.state_hash:
+                raise ValueError("endpoint observation state does not match its state hash")
+            connection.execute(
+                "INSERT OR IGNORE INTO endpoint_states (state_hash, state_json) VALUES (?, ?)",
+                (observation.state_hash, canonical_json(observation.state)),
+            )
+            connection.execute(
+                """
+                INSERT INTO endpoint_observations (capture_id, list_path, endpoint_key, state_hash, status_code)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    capture_id,
+                    listing.list_path,
+                    observation.endpoint_key,
+                    observation.state_hash,
+                    observation.status_code,
+                ),
+            )
+
+
+def _capture_archive_blob(archive: Mapping[str, Any]) -> bytes:
+    """Gzip the canonical JSON of the decoded response bodies, keyed by path."""
+    return gzip.compress(canonical_json(dict(archive)).encode("utf-8"), mtime=0)
+
+
+def _write_comparison_gaps(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    gaps: Sequence[EndpointComparisonGap],
+) -> None:
+    connection.executemany(
+        """
+        INSERT INTO endpoint_comparison_gaps (capture_id, list_path, reason, from_list_path)
+        VALUES (?, ?, ?, ?)
+        """,
+        [(capture_id, gap.list_path, gap.reason, gap.from_list_path) for gap in gaps],
+    )
+
+
+def _write_endpoint_changes(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str,
+    to_capture_id: int,
+    detected_at: str,
+    changes: Sequence[EndpointChangeRecord],
+) -> None:
+    """Insert change rows on the caller's transaction; never commits.
+
+    The absent side of an added or removed endpoint is NULL; every other value
+    is stored as JSON, so a change to or from null keeps the literal `null`.
+    """
+    connection.executemany(
+        """
+        INSERT INTO endpoint_changes (
+            provider_id, from_capture_id, to_capture_id, from_list_path, list_path,
+            endpoint_key, change_kind, field_name, old_value_json, new_value_json, detected_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                provider_id,
+                change.from_capture_id,
+                to_capture_id,
+                change.from_list_path,
+                change.list_path,
+                change.endpoint_key,
+                change.change_kind,
+                change.field_name,
+                None if change.change_kind == ENDPOINT_ADDED else _change_value_json(change.old_value),
+                None if change.change_kind == ENDPOINT_REMOVED else _change_value_json(change.new_value),
+                detected_at,
+            )
+            for change in changes
+        ],
+    )
+
+
+def _change_value_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=True)
+
+
+def _load_capture_summary(connection: sqlite3.Connection, capture_id: int) -> EndpointCaptureSummary:
+    row = connection.execute(
+        "SELECT * FROM endpoint_captures WHERE capture_id = ?",
+        (capture_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("persisted endpoint capture could not be read back")
+    return _capture_summary_from_row(connection, row)
+
+
+def _capture_summary_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> EndpointCaptureSummary:
+    capture_id = int(row["capture_id"])
+    lists = _load_endpoint_lists(connection, capture_id)
+    lists_by_path = {listing.list_path: listing for listing in lists}
+    gaps = _load_endpoint_gaps(connection, capture_id)
+    changes: list[EndpointChangeRecord] = []
+    for change in connection.execute(
+        "SELECT * FROM endpoint_changes WHERE to_capture_id = ? ORDER BY endpoint_change_id",
+        (capture_id,),
+    ):
+        listing = lists_by_path.get(change["list_path"])
+        changes.append(
+            EndpointChangeRecord(
+                from_capture_id=int(change["from_capture_id"]),
+                to_capture_id=capture_id,
+                from_list_path=change["from_list_path"],
+                list_path=change["list_path"],
+                endpoint_key=change["endpoint_key"],
+                change_kind=change["change_kind"],
+                field_name=change["field_name"],
+                old_value=load_json_value(change["old_value_json"]),
+                new_value=load_json_value(change["new_value_json"]),
+                display_id=listing.display_id if listing is not None else change["list_path"],
+                model_ids=listing.model_ids if listing is not None else (),
+            )
+        )
+    return EndpointCaptureSummary(
+        capture_id=capture_id,
+        scrape_id=int(row["scrape_id"]),
+        provider_id=row["provider_id"],
+        started_at=row["started_at"],
+        completed_at=row["completed_at"],
+        status=row["status"],
+        paths_requested=int(row["paths_requested"]),
+        paths_attempted=int(row["paths_attempted"]),
+        paths_failed=int(row["paths_failed"]),
+        mapping_failures=int(row["mapping_failures"]),
+        first_capture=bool(row["first_capture"]),
+        comparison_state=row["comparison_state"],
+        baseline_capture_id=row["baseline_capture_id"],
+        error_summary=row["error_summary"],
+        changes=tuple(changes),
+        comparison_gaps=gaps,
+        lists=lists,
+    )
+
+
+def _load_endpoint_gaps(
+    connection: sqlite3.Connection,
+    capture_id: int,
+    *,
+    list_path: str | None = None,
+) -> tuple[EndpointComparisonGap, ...]:
+    """Load a capture's gaps (all, or only `list_path`'s) in (list_path, reason) order.
+
+    Each `*_observation_failed` gap gets `list_error_code` from the saved list
+    it names: the current list, or the baseline capture's list at
+    `from_list_path`.
+    """
+    rows = connection.execute(
+        """
+        SELECT g.list_path, g.reason, g.from_list_path, l.error_code AS list_error_code
+        FROM endpoint_comparison_gaps AS g
+        JOIN endpoint_captures AS c ON c.capture_id = g.capture_id
+        LEFT JOIN endpoint_lists AS l ON l.outcome = 'error' AND (
+            (g.reason = ?
+             AND l.capture_id = g.capture_id AND l.list_path = g.list_path)
+            OR (g.reason = ?
+                AND l.capture_id = c.baseline_capture_id AND l.list_path = g.from_list_path)
+        )
+        WHERE g.capture_id = ? AND (? IS NULL OR g.list_path = ?)
+        ORDER BY g.list_path, g.reason
+        """,
+        (
+            GAP_CURRENT_OBSERVATION_FAILED,
+            GAP_BASELINE_OBSERVATION_FAILED,
+            capture_id,
+            list_path,
+            list_path,
+        ),
+    )
+    return tuple(
+        EndpointComparisonGap(row["list_path"], row["reason"], row["from_list_path"], row["list_error_code"])
+        for row in rows
+    )
+
+
+def _load_endpoint_lists(
+    connection: sqlite3.Connection,
+    capture_id: int,
+    *,
+    list_path: str | None = None,
+) -> tuple[EndpointListRecord, ...]:
+    """Load lists in path order with listed model IDs and response-ordered observations.
+
+    Observations have no position column; their insertion order is the
+    response order, read back through `rowid`. `list_path` limits the load to
+    that one list (an empty result when the capture has no such list).
+    """
+    path_filter = (list_path, list_path)
+    model_ids: dict[str, list[str]] = {}
+    for mapping in connection.execute(
+        """
+        SELECT list_path, provider_model_id
+        FROM endpoint_capture_models
+        WHERE capture_id = ? AND outcome = 'listed'
+          AND (? IS NULL OR list_path = ?)
+        ORDER BY provider_model_id
+        """,
+        (capture_id, *path_filter),
+    ):
+        model_ids.setdefault(mapping["list_path"], []).append(mapping["provider_model_id"])
+    observations: dict[str, list[EndpointObservationRecord]] = {}
+    for observation in connection.execute(
+        """
+        SELECT o.list_path, o.endpoint_key, o.state_hash, o.status_code, s.state_json
+        FROM endpoint_observations o
+        JOIN endpoint_states s ON s.state_hash = o.state_hash
+        WHERE o.capture_id = ?
+          AND (? IS NULL OR o.list_path = ?)
+        ORDER BY o.list_path, o.rowid
+        """,
+        (capture_id, *path_filter),
+    ):
+        observations.setdefault(observation["list_path"], []).append(
+            EndpointObservationRecord(
+                endpoint_key=observation["endpoint_key"],
+                state_hash=observation["state_hash"],
+                state=json.loads(observation["state_json"]),
+                status_code=observation["status_code"],
+            )
+        )
+    return tuple(
+        EndpointListRecord(
+            list_path=listing["list_path"],
+            list_model_id=listing["list_model_id"],
+            outcome=listing["outcome"],
+            endpoint_count=int(listing["endpoint_count"]),
+            error_code=listing["error_code"],
+            error_message=listing["error_message"],
+            model_ids=tuple(model_ids.get(listing["list_path"], ())),
+            observations=tuple(observations.get(listing["list_path"], ())),
+        )
+        for listing in connection.execute(
+            """
+            SELECT list_path, list_model_id, outcome, endpoint_count, error_code, error_message
+            FROM endpoint_lists
+            WHERE capture_id = ?
+              AND (? IS NULL OR list_path = ?)
+            ORDER BY list_path
+            """,
+            (capture_id, *path_filter),
+        )
+    )
 
 
 def _maybe_int(value: bool | None) -> int | None:

@@ -1145,6 +1145,153 @@
     })}</dl></section>`)}</section>`;
   }
 
+  // Serving endpoints: a view of /api/endpoints for the dossier's exact saved
+  // observation. Every decision (reason, comparison, matching, ladder
+  // positions, change order and truncation) and the reports' evidence
+  // sentences come from the API; this code only lays them out.
+  const ENDPOINT_CAPTURE_GUIDANCE = "See Endpoint capture in the README: saved scans record endpoint lists for providers whose profile supports it (currently OpenRouter) while MODEL_SENTINEL_ENDPOINT_CAPTURE is on.";
+  const ENDPOINT_HEADER = {
+    no_tables: "no endpoint tables", not_captured: "not captured", capture_error: "capture failed",
+    no_link: "no endpoint link", invalid_link: "malformed link", alias_target_missing: "alias target missing", alias_cycle: "alias cycle"
+  };
+
+  function joinWords(words) {
+    return words.length <= 2 ? words.join(" and ") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+  }
+  function plural(count, noun) { return `${count} ${noun}${count === 1 ? "" : "s"}`; }
+
+  function endpointStateText(data) {
+    const alias = data.alias;
+    switch (data.reason) {
+      case "no_tables": return `This database was created before endpoint capture and has no endpoint tables. ${ENDPOINT_CAPTURE_GUIDANCE}`;
+      case "not_captured": return `Provider endpoints weren't captured for this snapshot. ${data.first_capture_date ? `This provider's first usable endpoint capture is from ${data.first_capture_date}.` : ENDPOINT_CAPTURE_GUIDANCE}`;
+      case "capture_error": return "Endpoint capture failed for this snapshot, so no endpoint lists were saved.";
+      case "fetch_error": return data.list_error.sentence;
+      case "no_link": return "This snapshot's catalog row has no endpoint-list link, so no endpoint list was requested.";
+      case "invalid_link": return "This snapshot's catalog row has a malformed endpoint-list link, so no endpoint list was requested.";
+      case "alias_target_missing": return `This model is an alias of ${alias && alias.alias_target_model_id || "a model"}, which is not in this snapshot's catalog, so no endpoint list was resolved.`;
+      case "alias_cycle": return "This model's alias chain is a cycle, so no endpoint list was resolved.";
+      default: return data.list_outcome === "empty" ? "The provider returned an empty endpoint list for this model at this snapshot." : null;
+    }
+  }
+
+  function endpointHeader(data, scrape) {
+    if (data.reason === "fetch_error") return data.list_error.label;
+    if (data.reason) return ENDPOINT_HEADER[data.reason] || data.reason;
+    return `${plural(data.endpoints.rows.length, "endpoint")} · ${scrape ? scrape.date : `snapshot #${data.scrape_id}`}`;
+  }
+
+  function CaptureEvidence({capture, listPath}) {
+    return html`<dl class="endpoint-capture"><div><dt>Capture</dt><dd class="endpoint-capture-line">${capture.status_line}</dd></div><div><dt>Completed</dt><dd>${localDay(capture.completed_at)}</dd></div><div><dt>Comparison</dt><dd class="endpoint-sentence">${capture.comparison_sentence}</dd></div>${listPath ? html`<div><dt>List</dt><dd><code>${listPath}</code></dd></div>` : null}</dl>`;
+  }
+
+  function SharedListNote({data}) {
+    const others = data.shared_with.map(item => `${item.model_id}${item.outcome === "alias" ? " (alias)" : ""}`);
+    const borrowed = data.list_model_id && data.list_model_id !== data.model_id;
+    if (!borrowed && !others.length) return null;
+    const lead = borrowed ? `this model uses ${data.list_model_id}'s list ${data.list_path}` : data.list_path;
+    const sharing = others.length ? `${borrowed ? ", which also serves" : " also serves"} ${joinWords(others)}` : "";
+    return html`<p class="endpoint-note endpoint-shared">Shared endpoint list: ${lead}${sharing}. These endpoints belong to the list; this catalog row's price can differ.</p>`;
+  }
+
+  function AliasEvidence({alias}) {
+    const chained = alias.target_model_id && alias.target_model_id !== alias.alias_target_model_id;
+    return html`<section class="endpoint-alias"><h3>Alias of ${alias.alias_target_model_id}${chained ? `, resolving to ${alias.target_model_id}` : ""}</h3>
+      ${alias.reason_text ? html`<p>Alias prices could not be compared: ${alias.reason_text}.</p>`
+        : alias.divergence_sentences.length ? html`<ul class="alias-leaves">${alias.divergence_sentences.map(sentence => html`<li key=${sentence}>${sentence}</li>`)}</ul>`
+        : alias.compared_leaves.length ? html`<p>The alias's ${joinWords(alias.compared_leaves.map(leaf => leaf.label))} prices match its target.</p>` : null}
+      ${alias.unavailable_sentences.length ? html`<ul class="alias-uncompared">${alias.unavailable_sentences.map(sentence => html`<li key=${sentence}>${sentence}</li>`)}</ul>` : null}
+      ${!alias.reason_text ? html`<p class="alias-match">${alias.match_sentence}</p>` : null}
+    </section>`;
+  }
+
+  function aliasTag(match, key) {
+    if (match.matching_keys.includes(key)) return "carries alias prices";
+    if (match.differing_keys.includes(key)) return "differs";
+    return match.unknown_keys.includes(key) ? "not checkable" : "—";
+  }
+
+  function EndpointTable({table, match}) {
+    return html`<div class="table-wrap"><table class="endpoint-table"><thead><tr><th scope="col">Endpoint</th><th scope="col">Status</th>${table.columns.map(column => html`<th scope="col" key=${column.path}>${column.label}<small>${column.unit_label}</small></th>`)}${match ? html`<th scope="col">Alias prices</th>` : null}</tr></thead><tbody>${table.rows.map(row => html`<tr key=${row.endpoint_key}><th scope="row"><span>${row.provider_name || row.name || row.tag || row.endpoint_key}</span><small>${row.endpoint_key}</small></th><td>${row.status == null ? "—" : String(row.status)}</td>${row.prices.map((price, index) => html`<td key=${table.columns[index].path} title=${price ? `raw ${price.raw_value}` : "no price"}>${price ? price.display : "—"}</td>`)}${match ? html`<td class="alias-tag">${aliasTag(match, row.endpoint_key)}</td>` : null}</tr>`)}</tbody></table></div>`;
+  }
+
+  function PriceLadder({ladder}) {
+    return html`<figure class="endpoint-ladder"><figcaption><strong>${ladder.label}</strong><span>${ladder.unit_label} · log scale · low ${ladder.domain_min_display} · high ${ladder.domain_max_display}</span></figcaption>
+      <div class="ladder-track" aria-hidden="true"><div class="ladder-axis">${ladder.positions.map(position => html`<span key=${position.exact_value} class="ladder-point" style=${`left: ${position.position * 100}%`} title=${`${position.display} ${ladder.unit_label}: ${position.text}`}>${position.entries.some(entry => entry.kind === "endpoint") ? html`<i class="ladder-endpoint"></i>` : null}${position.entries.filter(entry => entry.kind !== "endpoint").map(entry => html`<i key=${entry.label} class=${`ladder-mark ladder-mark-${entry.label}`}></i>`)}</span>`)}</div></div>
+      <ol class="ladder-text">${ladder.positions.map(position => html`<li key=${position.exact_value}>${position.display}: ${position.text}</li>`)}</ol>
+      ${ladder.unplaced_text ? html`<p class="endpoint-note">Not placed: ${ladder.unplaced_text}</p>` : null}
+    </figure>`;
+  }
+
+  function endpointChangeCells(change) {
+    if (change.change_kind === "endpoint_added" || change.change_kind === "endpoint_removed") {
+      const added = change.change_kind === "endpoint_added";
+      const prices = change.price_evidence.map(item => `${item.label} ${added ? item.new_display : item.old_display}`).join(" · ");
+      return {label: added ? "Endpoint added" : "Endpoint removed", tone: "endpoint-presence", transition: prices || "—", delta: "—", pct: "—", unit: "—"};
+    }
+    const rendered = change.rendered;
+    if (!rendered) return {label: change.label || change.field_name, tone: "dim", transition: "raw policy changed", delta: "—", pct: "—", unit: "—"};
+    return {
+      label: change.label || rendered.label, tone: semantic(rendered), transition: html`${rendered.old_display}<b>→</b>${rendered.new_display}`,
+      delta: rendered.delta_display || "—", pct: rendered.pct_display || (rendered.pct_basis_zero ? "from zero" : "—"), unit: rendered.unit || "—"
+    };
+  }
+
+  function EndpointChanges({data}) {
+    const footer = data.truncated
+      ? `Showing the ${data.limit} most recent endpoint changes; older changes are not shown.`
+      : data.changes.length ? `${plural(data.changes.length, "endpoint change")} recorded through this snapshot.` : "No endpoint changes are recorded for this list through this snapshot.";
+    return html`<section class="endpoint-history"><h3>Endpoint changes</h3>${data.changes.length ? html`<div class="table-wrap"><table class="changes endpoint-changes"><thead><tr><th>Endpoint · field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th><th>Snapshots</th></tr></thead><tbody>${data.changes.map(change => {
+      const cells = endpointChangeCells(change);
+      return html`<tr key=${change.endpoint_change_id} data-endpoint-change-id=${change.endpoint_change_id}><th scope="row"><span>${cells.label}</span><small>${change.endpoint_key}</small></th><td class=${`transition ${cells.tone}`} title=${change.rendered ? `raw ${change.rendered.old_raw} → ${change.rendered.new_raw}` : undefined}>${cells.transition}</td><td>${cells.delta}</td><td>${cells.pct}</td><td class="unit">${cells.unit}</td><td class="unit">${change.from_scrape ? change.from_scrape.date : "—"} → ${change.to_scrape ? change.to_scrape.date : "—"}</td></tr>`;
+    })}</tbody></table></div>` : null}<p class="endpoint-note endpoint-truncation">${footer}</p></section>`;
+  }
+
+  function EndpointState({data, reload, loading}) {
+    const failed = data.reason === "fetch_error" || data.reason === "capture_error";
+    const failure = data.reason === "fetch_error" ? data.list_error && `${data.list_error.code}: ${data.list_error.message}` : data.capture && data.capture.error_summary;
+    return html`<div class=${`endpoint-state${failed ? " is-failed" : ""}`}><p>${endpointStateText(data)}</p>
+      ${failed && failure ? html`<pre class="endpoint-failure">${failure}</pre>` : null}
+      ${data.reason === "fetch_error" && data.list_path ? html`<p class="endpoint-note">List <code>${data.list_path}</code></p>` : null}
+      ${failed ? html`<div class="endpoint-retry"><button type="button" disabled=${loading} onClick=${reload}>${loading ? "Re-reading…" : "Re-read saved capture"}</button><span>Re-reading asks this local history browser again; it does not contact the provider.</span></div>` : null}
+    </div>`;
+  }
+
+  function ListGaps({gaps}) {
+    return gaps.length ? html`<section class="endpoint-gaps"><h3>Comparison gaps</h3><ul>${gaps.map((gap, index) => html`<li key=${`${gap.reason}-${index}`} class="endpoint-sentence">${gap.text}</li>`)}</ul></section>` : null;
+  }
+
+  function EndpointBody({data, reload, loading}) {
+    const match = data.alias && data.alias.endpoint_match;
+    const tableMatch = match && !match.unavailable_reason && match.list_path === data.list_path ? match : null;
+    const state = endpointStateText(data);
+    return html`<div class="endpoint-body">
+      ${state ? html`<${EndpointState} data=${data} reload=${reload} loading=${loading} />` : null}
+      ${data.captured ? html`<${SharedListNote} data=${data} />` : null}
+      ${data.alias ? html`<${AliasEvidence} alias=${data.alias} />` : null}
+      ${data.endpoints.rows.length ? html`<${EndpointTable} table=${data.endpoints} match=${tableMatch} />` : null}
+      ${data.ladders.length ? html`<div class="endpoint-ladders">${data.ladders.map(ladder => html`<${PriceLadder} key=${ladder.leaf} ladder=${ladder} />`)}</div>` : null}
+      ${data.capture ? html`<${ListGaps} gaps=${data.capture.list_gaps} />` : null}
+      ${data.captured ? html`<${EndpointChanges} data=${data} />` : null}
+      ${data.capture ? html`<${CaptureEvidence} capture=${data.capture} listPath=${data.captured ? data.list_path : null} />` : null}
+    </div>`;
+  }
+
+  function EndpointsSection({dossier, fresh}) {
+    // Bound to the exact observation the dossier shows: no request until that
+    // dossier response is fresh, and data for any other provider/model/scrape
+    // is never displayed (useApi `fresh`), though a same-resource retry keeps it.
+    const scrape = dossier.latest_scrape;
+    const scrapeId = scrape ? scrape.scrape_id : null;
+    const request = useApi("/api/endpoints", {provider: dossier.provider_id, model: dossier.model_id, scrape_id: scrapeId}, Boolean(fresh && scrapeId != null));
+    const data = request.fresh ? request.data : null;
+    return html`<section class="dossier-endpoints instrument" aria-labelledby="endpoints-title" aria-busy=${Boolean(request.loading)}><header class="section-heading"><div><p>03 / serving providers</p><h2 id="endpoints-title">Serving endpoints</h2></div><span>${data ? endpointHeader(data, scrape) : request.error ? "unavailable" : "reading"}</span></header>
+      <${ErrorBanner} error=${request.error} reload=${request.reload} />
+      ${!data && !request.error ? html`<div class="loading"><i></i><p>Reading saved endpoint capture…</p></div>` : null}
+      ${data ? html`<${EndpointBody} data=${data} reload=${request.reload} loading=${request.loading} />` : null}
+    </section>`;
+  }
+
   function ModelView({meta, state, write, openRaw, inputRef, themeKey}) {
     const parts = pinParts(state.model, meta.providers);
     const request = useApi("/api/model", {provider: parts.provider && parts.provider.id, model: parts.model, detail: state.detail}, Boolean(parts.provider && parts.model));
@@ -1165,8 +1312,8 @@
     if (!dossier) return null;
     const firstSeen = localDay(dossier.first_seen), lastSeen = localDay(dossier.last_seen);
     const timeline = () => write({view: "models", model: null, at: null, pins: [`${dossier.provider_id}/${dossier.model_id}`], aspects: defaultTimelineAspects(meta, dossier.provider_id), from: clamp(shiftDay(firstSeen, -30), meta.date_span), to: clamp(lastSeen, meta.date_span)});
-    const changelog = html`<section ref=${changelogHost} class="dossier-changelog instrument" aria-labelledby="changelog-title"><header class="section-heading"><div><p>03 / complete record</p><h2 id="changelog-title">Changelog</h2></div><span>${dossier.changelog.length} comparison edges</span></header>${dossier.changelog.map((item, index) => html`<article key=${`${item.date}-${index}`} class=${`date-block dossier-edge${state.at === item.date ? " is-target" : ""}`} data-changelog-date=${item.date}><header><time datetime=${item.date}>${item.date}</time><span>${item.kind}</span></header><div>${item.kind === "initial" ? html`<p class="presence-summary"><i>•</i> Initial saved observation</p>` : html`<${ChangeTable} entry=${item} openRaw=${openRaw} />`}${Object.values(item.hidden || {}).some(Boolean) ? html`<p class="entry-hidden">${Object.values(item.hidden).reduce((a,b) => a+b, 0)} additional details hidden by visibility policy</p>` : null}<button type="button" class="day-activity-link" onClick=${() => write({view: "activity", providers: [dossier.provider_id], from: item.date, to: item.date, model: null, at: null})}>That day in Activity</button></div></article>`)}</section>`;
-    return html`<div class="model-detail"><div class="model-breadcrumb"><span>Model</span><b>${dossier.display_name}</b><button type="button" aria-label="Close model dossier" onClick=${() => write({view: "activity", model: null, at: null})}>×</button></div><div class="dossier-layout"><aside class="dossier-identity instrument"><p>01 / identity</p><h2>${dossier.display_name}</h2><code>${dossier.model_id}</code><span>${dossier.provider_label}</span><dl><div><dt>First seen</dt><dd>${firstSeen}</dd></div><div><dt>Last seen</dt><dd>${lastSeen}</dd></div><div><dt>Observations</dt><dd>${dossier.observations}</dd></div></dl><strong class=${dossier.present_in_latest ? "is-present" : "is-removed"}>${dossier.present_in_latest ? "Present in latest" : "Not in latest"}</strong><button type="button" onClick=${timeline}>Timeline</button></aside><main><${FactsList} meta=${meta} dossier=${dossier} openRaw=${openRaw} openSparkline=${setSparkline} />${changelog}</main></div>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
+    const changelog = html`<section ref=${changelogHost} class="dossier-changelog instrument" aria-labelledby="changelog-title"><header class="section-heading"><div><p>04 / complete record</p><h2 id="changelog-title">Changelog</h2></div><span>${dossier.changelog.length} comparison edges</span></header>${dossier.changelog.map((item, index) => html`<article key=${`${item.date}-${index}`} class=${`date-block dossier-edge${state.at === item.date ? " is-target" : ""}`} data-changelog-date=${item.date}><header><time datetime=${item.date}>${item.date}</time><span>${item.kind}</span></header><div>${item.kind === "initial" ? html`<p class="presence-summary"><i>•</i> Initial saved observation</p>` : html`<${ChangeTable} entry=${item} openRaw=${openRaw} />`}${Object.values(item.hidden || {}).some(Boolean) ? html`<p class="entry-hidden">${Object.values(item.hidden).reduce((a,b) => a+b, 0)} additional details hidden by visibility policy</p>` : null}<button type="button" class="day-activity-link" onClick=${() => write({view: "activity", providers: [dossier.provider_id], from: item.date, to: item.date, model: null, at: null})}>That day in Activity</button></div></article>`)}</section>`;
+    return html`<div class="model-detail"><div class="model-breadcrumb"><span>Model</span><b>${dossier.display_name}</b><button type="button" aria-label="Close model dossier" onClick=${() => write({view: "activity", model: null, at: null})}>×</button></div><div class="dossier-layout"><aside class="dossier-identity instrument"><p>01 / identity</p><h2>${dossier.display_name}</h2><code>${dossier.model_id}</code><span>${dossier.provider_label}</span><dl><div><dt>First seen</dt><dd>${firstSeen}</dd></div><div><dt>Last seen</dt><dd>${lastSeen}</dd></div><div><dt>Observations</dt><dd>${dossier.observations}</dd></div></dl><strong class=${dossier.present_in_latest ? "is-present" : "is-removed"}>${dossier.present_in_latest ? "Present in latest" : "Not in latest"}</strong><button type="button" onClick=${timeline}>Timeline</button></aside><main><${FactsList} meta=${meta} dossier=${dossier} openRaw=${openRaw} openSparkline=${setSparkline} /><${EndpointsSection} dossier=${dossier} fresh=${request.fresh} />${changelog}</main></div>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
   function useFocusTrap(panelRef, active, onClose) {

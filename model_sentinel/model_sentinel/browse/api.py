@@ -4,11 +4,11 @@ import hashlib
 import json
 import math
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Mapping, Sequence
 
-from ..change_render import absent_side_display, classify_change, resolve_price_rule
+from ..change_render import classify_change, resolve_price_rule
 from ..config import ProviderConfig
 from ..models import FieldChange
 from ..normalize import profile_field_candidate
@@ -34,6 +34,9 @@ from ..storage import (
 from ..time_utils import local_date_for
 from . import queries
 from .aspects import CATEGORIES, Aspect
+from .endpoints_api import endpoint_response
+from .json_values import json_scrape as _json_scrape
+from .json_values import rendered_change_to_json
 from .readonly import ReadOnlyDatabase
 
 
@@ -132,14 +135,6 @@ def _integer(
         bound = f" between {minimum} and {maximum}" if maximum is not None else f" at least {minimum}"
         raise BadRequest(f"{name} must be{bound}")
     return value
-
-
-def rendered_change_to_json(rendered: Any) -> dict[str, Any]:
-    return {
-        **asdict(rendered),
-        "old_display": absent_side_display(rendered.old_display, rendered.old_raw),
-        "new_display": absent_side_display(rendered.new_display, rendered.new_raw),
-    }
 
 
 def _render_presence_change(
@@ -996,13 +991,6 @@ def _raw_aspect_value(row: dict[str, Any] | None, aspect: Aspect, profile: Provi
     return None if value is _MISSING else value
 
 
-def _json_scrape(scrape: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value.isoformat() if isinstance(value, date) else value
-        for key, value in scrape.items()
-    }
-
-
 def _catalog_machine_value(
     row: dict[str, Any] | None,
     aspect: Aspect,
@@ -1176,7 +1164,8 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     return response
 
 
-def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+def _model_identity(ctx: ApiContext, params: Mapping[str, str]) -> tuple[str, str]:
+    """The dossier's `provider` and `model` parameters, validated."""
     provider_id = params.get("provider")
     model_id = params.get("model")
     if not provider_id:
@@ -1185,11 +1174,10 @@ def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         raise BadRequest(f"unknown provider: {provider_id}")
     if not model_id:
         raise BadRequest("model is required")
-    detail = params.get("detail") or getattr(ctx.settings, "report_detail", "default")
-    if detail not in REPORT_DETAIL_MODES:
-        raise BadRequest("detail must be one of default, all, squelched")
+    return provider_id, model_id
 
-    connection = ctx.db.connection()
+
+def _model_presence(connection: Any, provider_id: str, model_id: str) -> dict[str, Any]:
     presence = queries.model_presence(
         connection,
         provider_id=provider_id,
@@ -1197,6 +1185,17 @@ def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     )
     if presence is None:
         raise BadRequest(f"unknown model: {model_id}")
+    return presence
+
+
+def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+    provider_id, model_id = _model_identity(ctx, params)
+    detail = params.get("detail") or getattr(ctx.settings, "report_detail", "default")
+    if detail not in REPORT_DETAIL_MODES:
+        raise BadRequest("detail must be one of default, all, squelched")
+
+    connection = ctx.db.connection()
+    presence = _model_presence(connection, provider_id, model_id)
     profile = ctx.profiles[provider_id]
     aspects = tuple(
         aspect for aspect in ctx.aspects if aspect.provider_id == provider_id
@@ -1407,6 +1406,41 @@ def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         "facts": facts,
         "changelog": changelog,
     }
+
+
+def endpoints(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+    """Saved endpoint evidence for exactly one observation of one model.
+
+    Without `scrape_id` the observation is the dossier's (`model_presence`'s
+    latest scrape). `scrape_id` must name a saved observation of this
+    provider/model, so the page can bind the response to the scrape it
+    displays; another scrape's capture is never substituted.
+    """
+    provider_id, model_id = _model_identity(ctx, params)
+    connection = ctx.db.connection()
+    presence = _model_presence(connection, provider_id, model_id)
+    raw_scrape = params.get("scrape_id")
+    if raw_scrape in (None, ""):
+        scrape = presence["latest_scrape"]
+    else:
+        try:
+            scrape_id = int(raw_scrape)
+        except ValueError as exc:
+            raise BadRequest("scrape_id must be an integer") from exc
+        scrape = queries.model_observation(
+            connection, provider_id=provider_id, model_id=model_id, scrape_id=scrape_id
+        )
+        if scrape is None:
+            raise BadRequest(
+                f"scrape_id must identify a saved observation of {model_id} for {provider_id}"
+            )
+    return endpoint_response(
+        connection,
+        provider_id=provider_id,
+        model_id=model_id,
+        scrape=scrape,
+        profile=ctx.profiles[provider_id],
+    )
 
 
 def change(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:

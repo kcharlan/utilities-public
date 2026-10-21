@@ -7,6 +7,7 @@ import logging
 import re
 import socket
 import sqlite3
+import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,7 +27,7 @@ _SAFE_STATIC_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
 _BUSY_MESSAGE = "The database is busy — a scan may be writing. Try again in a moment."
 _API_ROUTES = frozenset(
-    ("meta", "activity", "heatmap", "series", "events", "catalog", "model", "models")
+    ("meta", "activity", "heatmap", "series", "events", "catalog", "model", "models", "endpoints")
 )
 
 
@@ -71,10 +72,23 @@ def find_free_port(start_port: int, max_attempts: int = 20) -> int:
 
 class _BrowseHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
+    # Each API request is its own HTTP/1.0 connection and the page sends
+    # several at once. With socketserver's default backlog of 5, macOS resets
+    # the connections beyond it whenever the accept loop falls behind, and the
+    # browser reports a failed load (`net::ERR_CONNECTION_RESET`).
+    request_queue_size = socket.SOMAXCONN
 
     def __init__(self, server_address: tuple[str, int], ctx: ApiContext) -> None:
         self.ctx = ctx
         super().__init__(server_address, _BrowseHandler)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # The page aborts superseded requests, so a client closing its socket
+        # mid-response is routine; anything else keeps the default report.
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            _LOG.debug("Client %s disconnected before the response completed.", client_address)
+            return
+        super().handle_error(request, client_address)
 
 
 class _BrowseHandler(BaseHTTPRequestHandler):

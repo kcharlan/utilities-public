@@ -165,6 +165,7 @@ non-fatal warning that their labels and price-field detection are best-effort.
 - default report directory
 - report retention days (automatic cleanup of old report files)
 - default report detail mode and field-pattern display policy
+- endpoint capture (`MODEL_SENTINEL_ENDPOINT_CAPTURE`)
 
 Secrets do not belong in either file.
 
@@ -214,6 +215,43 @@ retains `1 / 1`, but that is not a complete normalization rule: its public
 schema mixes per-token token rates with media prices in other units. Abacus
 therefore uses the generic fallback profile until its authenticated payload is
 validated and a dedicated field-rule registry is added.
+
+### Endpoint capture
+
+`MODEL_SENTINEL_ENDPOINT_CAPTURE` controls whether a saved scan also records
+each model's per-provider endpoint list for providers whose profile supports it
+(currently OpenRouter). Capture is on by default; when the key is absent the
+setting is `true`. Accepted values are `1`/`true`/`yes`/`on` and
+`0`/`false`/`no`/`off`.
+
+Capture adds network traffic to every saved scan: one extra request per
+distinct endpoint-list path found in the catalog, not one per model, because
+several catalog models can share a path. At most 4 requests are in flight at a
+time, and new requests are admitted for at most 180 seconds per scan. Paths not
+started by then are recorded as failed rather than treated as empty. Requests
+are anonymous: they send no authorization header or cookie, do not follow
+redirects, and never retry with credentials. This is a local policy choice;
+Model Sentinel does not assume the provider guarantees anonymous access, and an
+authentication failure appears as a failed path.
+
+Each capture is saved in the runtime database with the catalog scrape it belongs
+to: one row per catalog model mapping, one per endpoint-list path with its
+outcome and sanitized error, each endpoint's stable state (stored once and
+shared by identical endpoints), and a gzip archive of the decoded response
+bodies. A capture is compared only with the capture of the scan's selected
+catalog baseline, never with a newer or last-good capture. Lists that cannot be
+compared (a failed fetch on either side, a newly appearing or disappearing
+path, or a split, merge or partial move of models between paths) are recorded
+as comparison gaps rather than treated as empty lists.
+
+Endpoint failures never change the catalog result, the notification decision,
+or the scan exit status. A capture that fails as a whole is saved as a minimal
+`error` capture with a sanitized message; the log records each capture's status
+and its request, failure, mapping, comparison-gap and change counts. A report or
+artifact whose Alias check or Provider endpoints sections cannot be built or
+rendered omits them and the log records a redacted warning; its catalog content
+is unchanged. To turn capture off, set
+`MODEL_SENTINEL_ENDPOINT_CAPTURE=false` in `~/.model_sentinel/settings.env`.
 
 ## Provider Credentials
 
@@ -436,6 +474,26 @@ Use the **Timeline** action to graph that model or **That day in Activity** to
 inspect the provider-wide context. The **Find model** box searches every saved
 provider regardless of the current provider filter.
 
+A dossier's **Serving endpoints** section shows the endpoint list saved with
+the exact snapshot the dossier displays (see Endpoint capture), never a newer
+capture or another snapshot's. For a captured list it shows each endpoint's
+prices (hover a cell for the raw value), the list's changes in saved order up
+to that snapshot (at most 200, newest first, with a note when older changes
+are left out), and the capture's status and baseline comparison. When several
+catalog models share one list, a note names the list and its other models and
+warns that the catalog row's own price can differ. For an alias, it shows each
+price that differs from the target, which endpoints carry the alias's prices
+(claims about the named prices only), and a price ladder per differing price
+with neutral endpoint dots and target/alias marks. Otherwise the section says
+why there is no list: the snapshot was not captured (with the provider's first
+usable capture date, or a pointer to the capture setting), the database
+predates endpoint capture, the catalog row has no or a malformed endpoint
+link, the alias target is missing or its chain is a cycle, the list failed to
+fetch or was not sent before the endpoint fetch budget ran out, or the whole
+capture failed. Failures show the saved error evidence;
+**Re-read saved capture** only asks the local browse server again and never
+contacts the provider.
+
 The browser is read-only: it opens SQLite in read-only/query-only mode and does
 not create or update database, config, log, report, or cache files. It is also
 fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
@@ -449,7 +507,8 @@ offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.
 
 `browse` requires readable `providers.env` and `settings.env` files plus an
-existing database containing at least the Model Sentinel schema. Run
+existing database containing at least the Model Sentinel schema; a database
+created before endpoint capture, without its tables, is accepted. Run
 `./setup.sh` if the config files are absent and `./model-sentinel scan --save`
 to create the first saved snapshot. Provider credentials and network access
 are not required to browse saved history.
@@ -482,6 +541,12 @@ This validates:
 
 It also emits non-fatal warnings for duplicate display labels and provider
 kinds that are using the generic fallback profile.
+
+For each enabled provider whose profile supports endpoint capture, an
+`endpoint_capture` item shows whether the setting is enabled and the latest
+capture's date, status and counts, or `no capture yet`. It is `warn` when the
+latest capture is `partial` or `error` while capture is enabled, or when the
+capture history cannot be read; it never changes the healthcheck exit status.
 
 ## Help
 
@@ -533,6 +598,65 @@ Scan reports use smart, field-type-aware formatting:
 - **Repetitive list changes** affecting at least three models are consolidated into one bulk-change entry in default reports. List-size differences are ignored when the actual additions/removals match.
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
+
+### Alias Check and Provider Endpoints
+
+For a provider whose profile supports endpoint capture (currently
+OpenRouter), every successful scan, saved or compare-only, also compares each
+catalog alias (a model whose `alias_target` names another catalog model) with
+the model its alias chain resolves to, on the price leaves both resolve to the
+same unit. The comparison runs on the scan's selected baseline snapshot and the
+current catalog, so an alias divergence is `new`, `changed`, `persisting`, or
+`resolved` (a retargeted alias names both targets), and is `unavailable` when
+the alias, its target, or the previously divergent prices can no longer be
+compared. On a first save every current divergence is `new`. A saved scan
+also checks which endpoints of the target's captured list carry the alias's
+prices; such a match is a claim about the named prices only, and the report
+never says that no endpoint matches while any endpoint could not be checked.
+
+Text and Markdown append two sections after the catalog report:
+
+- **Alias check** lists `new`, `changed`, and `resolved` divergences with one
+  labelled alias-versus-target sentence per differing price, raw value first.
+  `--detail all` adds `unavailable` events, prices that could not be compared,
+  and why endpoint matching was unavailable.
+- **Provider endpoints** leads with the capture's status and counts, how the
+  selected baseline's capture was used (a genuine first capture is stated
+  separately from a missing or unusable baseline capture), and summary
+  clauses counted over every list: lists with price changes, endpoint
+  additions and removals, conditional pricing and status changes, persisting
+  alias divergences, lists that failed to fetch, lists never requested
+  because the endpoint fetch budget ran out, mapping failures, and
+  comparison gaps.
+  "No endpoint changes" is stated only for lists that were actually compared.
+  Persisting alias divergences come next, then changed lists: lists are
+  grouped by the comparison unit of their first moved price in profile order
+  and ranked within a unit by their largest move, and lists with no comparable
+  price move follow in path order. Default detail shows price, endpoint
+  presence, and conditional pricing changes for at most 25 lists and states
+  how many were omitted; `--detail all` shows every list with its metadata
+  and status changes, the raw conditional-pricing JSON, comparison gaps, and
+  failed lists. Endpoint fields are classified strictly: a monetary-looking
+  field the profile has no price rule for is shown as a neutral value, not a
+  price. Endpoint field labels describe the endpoint, so an endpoint's own
+  `context_length` reads `Context length`, without the catalog's `(model)`
+  qualifier.
+
+The HTML report follows the same sections and policy (see HTML
+Auto-Reports): `new`, `changed`, and `resolved` alias events follow the Price
+Movement card, and everything else sits in a closed `Provider endpoints`
+disclosure.
+`--detail squelched` omits both sections. JSON output adds optional top-level
+`alias_checks` and `endpoint_captures` maps, keyed by provider ID and present
+only when that data exists; `endpoint_captures` carries the capture summary
+without its lists, with every change and comparison gap, and each change's
+`price_evidence` (normalized display, unit, and comparison group). Neither
+map changes the `providers` payload.
+
+Endpoint changes and alias events never count as catalog changes: they do not
+create managed report artifacts, trigger notifications, or enter model counts
+or Price Movement. They still appear on stdout and in an explicit `--output`
+file, and in a managed report that catalog changes created.
 
 ### Conditional Pricing Policies
 
@@ -625,6 +749,41 @@ headline still elevates the largest dollar movements.
 **Navigation is by anchor.** Every model card has a stable id; the Price Movement panel and the tier-1 Change Summary rows link into them, and each card header carries a dim `↑` back-link to the Price Movement card. The landed-on card is highlighted, with the highlight animation suppressed under `prefers-reduced-motion`.
 
 **Raw values are available without leaving the page.** Hovering a price cell shows the full derivation — the provider's literal value, its magnitude in scientific notation as a parenthetical, the conversion factor and the resulting figure, e.g. `0.000002 (2.0e-6) × 1,000,000 = $2.00`. Because a tooltip cannot be selected or copied, a `Show raw values` checkbox in the header also reveals a selectable `old → new` sub-line under every price row. That checkbox is **ticked by default in the full-detail companion report**, whose whole purpose is the raw numbers, and unticked in the concise one.
+
+**The two companions link to each other.** The concise report's header carries a `Full-detail report →` link and the full-detail report's header carries `← Concise report`, placed after the `Show raw values` checkbox. Each link is a relative filename in the same report directory, so the pair can be moved or opened together and still navigate. The links use the same dim navigation styling as the card `↑` back-link rather than a change color, and they appear only in the auto-generated pair: a report written with `--output` has no companion and no link.
+
+**Alias events follow the Price Movement card.** For a provider with alias
+checks (see Alias Check and Provider Endpoints), an `Alias check` card lists
+`new`, `changed`, and `resolved` divergences, each with one labelled
+alias-versus-target sentence per differing price, normalized figure first and
+the raw provider value in parentheses; the full-detail companion adds
+`unavailable` events and prices that could not be compared. Divergences are
+not price moves, so the card is neutral: red and green stay reserved for
+prices that went up or down. When the target's endpoint list was captured in
+this scan, each divergent price gets a **price ladder**: a static SVG on a
+log scale with a neutral dot per endpoint price and two labelled reference
+marks, a hollow diamond for the target's catalog price and a solid triangle
+for the alias's. Coincident or crowded labels move to separate rows instead of
+overlapping, the ladder keeps a legible size and scrolls inside its frame on a
+narrow screen, and each ladder is an accessible image whose title names it and
+whose caption lists every placed price low to high, plus any endpoint that
+could not be placed (free, missing, or in another unit). A leaf no endpoint
+carries gets no ladder.
+
+**Endpoint detail is one closed disclosure.** `Provider endpoints` sits after
+`Other changes`, closed in both companions, and its summary line carries the
+same uncapped clauses as the text report. Inside are the capture and baseline
+facts, persisting alias divergences, then each changed list: an
+endpoint-price table (endpoint, one column per resolved price with its unit in
+the header, and the change), with each cell's raw provider value in its
+tooltip and on the `Show raw values` sub-line, and in full detail a separate
+table of metadata and status changes in the model cards' column layout. Price
+cells use the cost colors; an endpoint added or removed, or a price appearing,
+is coverage blue. The concise report shows at most 25 lists; when lists are
+omitted, or only the full report can show them, its note links to the
+full-detail companion's `#provider-endpoints`, and the full-detail disclosure
+links back to the concise one. `--detail squelched` omits both additions, and
+a report without endpoint or alias data is unchanged.
 
 When no changes are detected, no HTML companion is generated. The requested
 primary format is still emitted to stdout or an explicit `--output`; the

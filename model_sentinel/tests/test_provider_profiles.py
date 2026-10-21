@@ -821,3 +821,50 @@ def test_synthetic_scheduled_rate_fixture_derives_the_two_exact_movements() -> N
         "request": {-41.2, 17.6},
     }
     assert rules[0] == {"utc_days": ["saturday", "sunday"], "prompt": 0.00000066}
+
+
+def test_endpoint_capability_preserved_by_with_pricing() -> None:
+    assert GENERIC_PROFILE.endpoint_capture is False
+    assert GENERIC_PROFILE.endpoint_telemetry_fields == frozenset()
+    assert GENERIC_PROFILE.endpoint_status_field is None
+    assert OPENROUTER_PROFILE.endpoint_capture is True
+    assert OPENROUTER_PROFILE.endpoint_status_field == "status"
+
+    bound = OPENROUTER_PROFILE.with_pricing(7, 3)
+
+    assert bound.endpoint_capture is True
+    assert bound.endpoint_telemetry_fields == OPENROUTER_PROFILE.endpoint_telemetry_fields
+    assert bound.endpoint_status_field == "status"
+    assert dict(bound.endpoint_field_path_labels) == {"context_length": "Context length"}
+    assert GENERIC_PROFILE.endpoint_field_path_labels == {}
+    # Telemetry never overlaps the stable fields or the status field.
+    assert "status" not in bound.endpoint_telemetry_fields
+    assert "pricing" not in bound.endpoint_telemetry_fields
+    assert {"uptime_last_30m", "latency_last_30m", "throughput_last_30m"} <= (
+        bound.endpoint_telemetry_fields
+    )
+
+    custom = ProviderProfile(
+        kind="synthetic",
+        endpoint_capture=True,
+        endpoint_telemetry_fields=frozenset({"synthetic_uptime"}),
+        endpoint_status_field="synthetic_status",
+    ).with_pricing(2, 5)
+    assert custom.endpoint_capture is True
+    assert custom.endpoint_telemetry_fields == frozenset({"synthetic_uptime"})
+    assert custom.endpoint_status_field == "synthetic_status"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"endpoint_capture": 1},
+        {"endpoint_telemetry_fields": {"not_frozen"}},
+        {"endpoint_telemetry_fields": frozenset({""})},
+        {"endpoint_status_field": ""},
+        {"endpoint_status_field": 3},
+    ],
+)
+def test_endpoint_capability_fields_are_validated(overrides: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        ProviderProfile(kind="synthetic", **overrides)

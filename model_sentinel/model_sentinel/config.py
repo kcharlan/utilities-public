@@ -52,6 +52,7 @@ class Settings:
     credential_file: Path | None = None
     credential_refresh_file: Path | None = None
     credential_refresh_timeout_seconds: float = 5.0
+    endpoint_capture: bool = True
 
 
 @dataclass(frozen=True)
@@ -308,6 +309,8 @@ def load_settings(path: Path, *, runtime_home: Path) -> Settings:
         raise ConfigError("MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS must be finite and > 0") from None
     if not math.isfinite(credential_refresh_timeout_seconds) or credential_refresh_timeout_seconds <= 0:
         raise ConfigError("MODEL_SENTINEL_CREDENTIAL_REFRESH_TIMEOUT_SECONDS must be finite and > 0")
+    endpoint_capture_raw = raw.get("MODEL_SENTINEL_ENDPOINT_CAPTURE")
+    endpoint_capture = True if endpoint_capture_raw is None else _parse_bool(endpoint_capture_raw)
     return Settings(
         log_max_bytes=log_max_bytes,
         log_keep_files=log_keep_files,
@@ -327,6 +330,7 @@ def load_settings(path: Path, *, runtime_home: Path) -> Settings:
         credential_file=credential_file,
         credential_refresh_file=credential_refresh_file,
         credential_refresh_timeout_seconds=credential_refresh_timeout_seconds,
+        endpoint_capture=endpoint_capture,
     )
 
 

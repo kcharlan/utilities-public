@@ -3,13 +3,15 @@ from __future__ import annotations
 import fnmatch
 import html as html_module
 import json
+import logging
 import re
 from collections import Counter, OrderedDict, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
+from urllib.parse import quote
 
 # Renderers in this module are pure formatters over `RenderedChange`: they call
 # `classify_change` once per field change and format the result, instead of
@@ -80,6 +82,27 @@ from .conditional_pricing import (
     interpret_conditional_pricing,
     resolve_direct_price_movement,
 )
+from .endpoint_report import (
+    AliasEventView,
+    EndpointListView,
+    EndpointPriceRow,
+    ProviderEndpointReport,
+    ScanEndpointSections,
+    alias_check_json,
+    alias_event_heading,
+    alias_event_reason,
+    alias_leaf_sentence,
+    alias_match_sentence,
+    alias_unavailable_leaf_sentence,
+    detail_only_lists_phrase,
+    endpoint_capture_json,
+    endpoint_list_heading,
+    omitted_lists_phrase,
+    plain_identifier,
+    plural,
+    scan_endpoint_sections,
+)
+from .endpoints import ENDPOINT_ADDED, FIELD_CHANGED, endpoint_failure_message
 from .models import (
     FieldChange,
     HistoryEvent,
@@ -2126,18 +2149,30 @@ def render_scan_report(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy | None = None,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    companion_link: tuple[str, str] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
+    """Render one scan report.
+
+    Endpoint and alias sections are isolated from the catalog report: if
+    building or rendering them raises, they are omitted and a redacted warning
+    is logged (see `_isolated_endpoint_output`). `credential_values` are the
+    scan's credentials, masked in that warning.
+    """
     detail_policy = detail_policy or make_report_detail_policy()
+    credential_values = credential_values or {}
     if format_name == "json":
-        return json.dumps(
-            {
-                "generated_at": to_local_iso(generated_at),
-                "command": command,
-                "providers": [_provider_result_json(result) for result in provider_results],
-            },
-            indent=2,
-            sort_keys=True,
+        payload: dict[str, Any] = {
+            "generated_at": to_local_iso(generated_at),
+            "command": command,
+            "providers": [_provider_result_json(result) for result in provider_results],
+        }
+        payload.update(
+            _isolated_endpoint_output(
+                lambda: _endpoint_json_extensions(provider_results), {}, credential_values=credential_values
+            )
         )
+        return json.dumps(payload, indent=2, sort_keys=True)
     if format_name == "markdown":
         return _render_scan_markdown(
             generated_at=generated_at,
@@ -2145,6 +2180,7 @@ def render_scan_report(
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=semantic_cores,
+            credential_values=credential_values,
         )
     if format_name == "html":
         return _render_scan_html(
@@ -2153,6 +2189,8 @@ def render_scan_report(
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=semantic_cores,
+            companion_link=companion_link,
+            credential_values=credential_values,
         )
     return _render_scan_text(
         generated_at=generated_at,
@@ -2160,6 +2198,7 @@ def render_scan_report(
         provider_results=provider_results,
         detail_policy=detail_policy,
         semantic_cores=semantic_cores,
+        credential_values=credential_values,
     )
 
 
@@ -3392,6 +3431,59 @@ def _provider_result_json(result: ProviderScanResult) -> dict[str, Any]:
     }
 
 
+_LOG = logging.getLogger(__name__)
+_EndpointOutput = TypeVar("_EndpointOutput")
+
+
+def _isolated_endpoint_output(
+    build: Callable[[], _EndpointOutput],
+    fallback: _EndpointOutput,
+    *,
+    credential_values: Mapping[str, str],
+) -> _EndpointOutput:
+    """`build()`, the Alias check and Provider endpoints output, or `fallback`.
+
+    The one guard for every scan format. An endpoint exception must leave the
+    catalog report, notification decision and exit status unchanged, so a
+    failure while building or rendering those sections omits them and logs one
+    warning, credential values masked and without a traceback.
+    """
+    try:
+        return build()
+    except Exception as exc:
+        _LOG.warning(
+            "Alias check and Provider endpoints sections omitted from the report: %s",
+            endpoint_failure_message(exc, credential_values),
+        )
+        return fallback
+
+
+def _endpoint_json_extensions(provider_results: list[ProviderScanResult]) -> dict[str, Any]:
+    """Optional top-level `alias_checks` and `endpoint_captures`, keyed by provider.
+
+    Each map appears only when some provider has that data. They are
+    serialized explicitly beside `_provider_result_json`, never through it or
+    through catalog semantic planning, and are full fidelity at every detail
+    level.
+    """
+    extensions: dict[str, Any] = {}
+    alias_checks = {
+        result.provider_id: alias_check_json(result.alias_events)
+        for result in provider_results
+        if result.alias_events
+    }
+    if alias_checks:
+        extensions["alias_checks"] = alias_checks
+    endpoint_captures = {
+        result.provider_id: endpoint_capture_json(result.endpoint_capture, result.profile)
+        for result in provider_results
+        if result.endpoint_capture is not None
+    }
+    if endpoint_captures:
+        extensions["endpoint_captures"] = endpoint_captures
+    return extensions
+
+
 def _delta_to_json(delta: Any) -> dict[str, Any]:
     return {
         "kind": delta.kind,
@@ -4057,6 +4149,7 @@ def _render_scan_text(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     lines = [
         "Model Sentinel report",
@@ -4173,6 +4266,17 @@ def _render_scan_text(
                     parts.append(f"{len(result.changed)} changed")
                 lines.append(f"  {result.provider_label}: {', '.join(parts)}")
 
+    leading_blank = bool(lines) and lines[-1] != ""
+    lines.extend(
+        _isolated_endpoint_output(
+            lambda: _endpoint_sections_text(
+                scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
+                leading_blank=leading_blank,
+            ),
+            [],
+            credential_values=credential_values or {},
+        )
+    )
     return "\n".join(lines).rstrip()
 
 
@@ -4188,6 +4292,7 @@ def _render_scan_markdown(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     lines = [
         "# Model Sentinel Report",
@@ -4294,7 +4399,188 @@ def _render_scan_markdown(
             changed_lines.extend(_hidden_rollup_markdown(provider_plan.rollups, detail_policy))
         lines.extend(changed_lines or ["- None"])
         lines.append("")
+    lines.extend(
+        _isolated_endpoint_output(
+            lambda: _endpoint_sections_markdown(
+                scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode)
+            ),
+            [],
+            credential_values=credential_values or {},
+        )
+    )
     return "\n".join(lines).rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Alias check and Provider endpoints sections (text and Markdown)
+#
+# Both formats append the two sections after the catalog report, Alias check
+# first, from the shared `endpoint_report` model: its ordering, cap, summary
+# clauses and wording are never recomputed here. They are audit formats, so
+# every price leads with the provider's raw value.
+# ---------------------------------------------------------------------------
+
+_SECTION_RULE = "-" * 60
+
+
+def _capitalized(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _alias_event_title_line(view: AliasEventView, quote: Callable[[str], str]) -> str:
+    line = f"{view.title}: {alias_event_heading(view, quote)}"
+    reason = alias_event_reason(view)
+    return f"{line}; {reason}" if reason else line
+
+
+def _alias_event_detail_lines(view: AliasEventView, quote: Callable[[str], str]) -> list[str]:
+    lines = [alias_leaf_sentence(leaf, view.kind, raw_first=True) for leaf in view.leaves]
+    match = alias_match_sentence(view, quote)
+    if match is not None:
+        lines.append(match)
+    lines.extend(alias_unavailable_leaf_sentence(leaf) for leaf in view.unavailable_leaves)
+    return lines
+
+
+def _endpoint_presence_text(row: EndpointPriceRow, listing: EndpointListView) -> str:
+    added = row.change_kind == ENDPOINT_ADDED
+    noun = "endpoint added" if added else "endpoint removed"
+    prices = []
+    for column, cell in zip(listing.price_columns, row.cells):
+        if cell is None:
+            continue
+        raw, display = (cell.new_raw, cell.new_display) if added else (cell.old_raw, cell.old_display)
+        prices.append(f"{column.label} {raw} ({display} {column.unit_label})")
+    return f"{noun}: {', '.join(prices)}" if prices else noun
+
+
+def _endpoint_row_texts(
+    listing: EndpointListView, *, full_detail: bool
+) -> list[tuple[str, str, bool, tuple[str, ...]]]:
+    """(endpoint key, row text, is change text, raw evidence) per displayed row.
+
+    Change text is provider-derived and becomes a Markdown code span; the
+    conditional-pricing label is report wording. Conditional rows expose the
+    raw parent JSON in full detail only, without schedule interpretation.
+    """
+    rows: list[tuple[str, str, bool, tuple[str, ...]]] = []
+    for row in listing.price_rows:
+        if row.change_kind == FIELD_CHANGED:
+            rows.extend(
+                (row.endpoint_key, _render_change_text(cell.rendered), True, ())
+                for cell in row.cells
+                if cell is not None and cell.rendered is not None
+            )
+        else:
+            rows.append((row.endpoint_key, _endpoint_presence_text(row, listing), True, ()))
+    for field_row in listing.conditional_rows:
+        evidence = (
+            (
+                f"old: {canonical_json(field_row.change.old_value)}",
+                f"new: {canonical_json(field_row.change.new_value)}",
+            )
+            if full_detail
+            else ()
+        )
+        rows.append((field_row.endpoint_key, field_row.label, False, evidence))
+    rows.extend(
+        (field_row.endpoint_key, _render_change_text(field_row.rendered), True, ())
+        for field_row in listing.metadata_rows + listing.status_rows
+        if field_row.rendered is not None
+    )
+    return rows
+
+
+def _endpoint_report_lines(report: ProviderEndpointReport, *, markdown: bool) -> list[str]:
+    quote = _markdown_code_span if markdown else plain_identifier
+    bullet, sub, subsub = ("- ", "  - ", "    - ") if markdown else ("  ", "    ", "      ")
+    lines = [f"{bullet}{'Capture' if markdown else 'capture'}: {report.capture_line}"]
+    labelled = (
+        ("not saved", report.persistence_error),
+        ("baseline", report.baseline_line),
+        ("summary", "; ".join(report.summary_clauses) if report.summary_clauses else None),
+    )
+    for label, value in labelled:
+        if value:
+            lines.append(f"{bullet}{_capitalized(label) if markdown else label}: {value}")
+    if report.no_change_line:
+        lines.append(f"{bullet}{_capitalized(report.no_change_line) if markdown else report.no_change_line}")
+    for view in report.persisting:
+        lines.append(f"{bullet}{_alias_event_title_line(view, quote)}")
+        lines.extend(f"{sub}{line}" for line in _alias_event_detail_lines(view, quote))
+    for listing in report.lists:
+        lines.append(f"{bullet}{'List' if markdown else 'list'} {endpoint_list_heading(listing, quote)}")
+        for key, text, is_change, evidence in _endpoint_row_texts(listing, full_detail=report.full_detail):
+            rendered = _markdown_code_span(text) if markdown and is_change else text
+            lines.append(f"{sub}{quote(key)}: {rendered}")
+            for item in evidence:
+                label, _, value = item.partition(": ")
+                if markdown:
+                    lines.append(f"{subsub}{_capitalized(label)}: {_markdown_code_span(value)}")
+                else:
+                    lines.append(f"{subsub}{label}: {value}")
+    detail_flag = "`--detail all`" if markdown else "--detail all"
+    if report.omitted_list_count:
+        lines.append(f"{bullet}{omitted_lists_phrase(report.omitted_list_count)}; use {detail_flag} for every list")
+    if report.detail_only_list_count:
+        pronoun = "it" if report.detail_only_list_count == 1 else "them"
+        lines.append(
+            f"{bullet}{detail_only_lists_phrase(report.detail_only_list_count)}; use {detail_flag} to show {pronoun}"
+        )
+    if report.gaps:
+        lines.append(f"{bullet}{'Comparison gaps' if markdown else 'comparison gaps'}:")
+        for gap in report.gaps:
+            where = quote(gap.list_path)
+            if gap.from_list_path is not None and gap.from_list_path != gap.list_path:
+                where += f" (from {quote(gap.from_list_path)})"
+            lines.append(f"{sub}{where}: {gap.description}")
+    if report.failed_lists:
+        lines.append(f"{bullet}{'Failed lists' if markdown else 'failed lists'}:")
+        for listing in report.failed_lists:
+            lines.append(f"{sub}{quote(listing.list_path)}: {listing.error_code}: {listing.error_message}")
+    return lines
+
+
+def _endpoint_sections_text(sections: ScanEndpointSections, *, leading_blank: bool) -> list[str]:
+    lines: list[str] = []
+    if sections.alias_reports:
+        lines.extend(["", "Alias check", _SECTION_RULE])
+        for index, report in enumerate(sections.alias_reports):
+            if index:
+                lines.append("")
+            lines.append(f"{report.provider_label} ({report.provider_id})")
+            for view in report.events:
+                lines.append(f"  {_alias_event_title_line(view, plain_identifier)}")
+                lines.extend(f"    {line}" for line in _alias_event_detail_lines(view, plain_identifier))
+    if sections.endpoint_reports:
+        lines.extend(["", "Provider endpoints", _SECTION_RULE])
+        for index, report in enumerate(sections.endpoint_reports):
+            if index:
+                lines.append("")
+            lines.append(f"{report.provider_label} ({report.provider_id})")
+            lines.extend(_endpoint_report_lines(report, markdown=False))
+    if lines and not leading_blank:
+        lines = lines[1:]
+    return lines
+
+
+def _endpoint_sections_markdown(sections: ScanEndpointSections) -> list[str]:
+    lines: list[str] = []
+    if sections.alias_reports:
+        lines.extend(["## Alias check", ""])
+        for report in sections.alias_reports:
+            lines.extend([f"### {report.provider_label} (`{report.provider_id}`)", ""])
+            for view in report.events:
+                lines.append(f"- {_alias_event_title_line(view, _markdown_code_span)}")
+                lines.extend(f"  - {line}" for line in _alias_event_detail_lines(view, _markdown_code_span))
+            lines.append("")
+    if sections.endpoint_reports:
+        lines.extend(["## Provider endpoints", ""])
+        for report in sections.endpoint_reports:
+            lines.extend([f"### {report.provider_label} (`{report.provider_id}`)", ""])
+            lines.extend(_endpoint_report_lines(report, markdown=True))
+            lines.append("")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -4973,6 +5259,18 @@ footer {
   font-family: var(--font-mono);
 }"""
 
+_COMPANION_LINK_CSS = """\
+a.companion-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  margin-left: 1rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+a.companion-link:hover { color: var(--text-bright); }"""
+
 _CONDITIONAL_HTML_CSS = """\
 .price-conditional { color: var(--accent-blue); }
 .conditional-pricing {
@@ -5040,8 +5338,32 @@ _CONDITIONAL_HTML_CSS = """\
 """
 
 
-def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html: str) -> str:
+def _companion_link_html(companion_link: tuple[str, str] | None) -> str:
+    """The header link to a sibling report, or nothing.
+
+    The filename is a path segment, so `safe=""` percent-encodes `/`, `#` and
+    `?` as well; the quoted href and the label are then HTML-escaped. It is
+    styled as the dim navigation link (like the card `↑` back-link), never in a
+    change color.
+    """
+    if companion_link is None:
+        return ""
+    filename, label = companion_link
+    h = html_module.escape
+    return (
+        f'  <a class="companion-link" href="{h(quote(filename, safe=""))}">'
+        f"{h(label)}</a>\n"
+    )
+
+
+def _render_html_page(
+    *, title: str, header_html: str, body_html: str, tail_html: str, extra_css: str = ""
+) -> str:
     """The page shell. `tail_html` is whatever sits between the body and the footer.
+
+    `extra_css` is appended to the stylesheet only when a renderer has content
+    that needs it (the endpoint and alias additions), so a page without that
+    content keeps its stylesheet byte for byte.
 
     Named for its POSITION rather than its contents since F1: the `changes`
     report still passes its Change Summary table here, but the scan report now
@@ -5057,6 +5379,10 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
         or 'price-conditional' in body_html
         else ""
     )
+    companion_css = (
+        "\n" + _COMPANION_LINK_CSS if 'class="companion-link"' in header_html else ""
+    )
+    added_css = "\n" + extra_css if extra_css else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5064,7 +5390,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{h(title)}</title>
 <style>
-{_HTML_CSS}{conditional_css}
+{_HTML_CSS}{conditional_css}{companion_css}{added_css}
 </style>
 </head>
 <body>
@@ -6417,6 +6743,18 @@ def _price_conversion_factor(rendered: RenderedChange) -> str:
     return _price_rule_conversion_factor(rendered.price_rule)
 
 
+def _raw_price_derivation(
+    raw: str,
+    display: str,
+    price_rule: ResolvedPriceRule | None,
+) -> str:
+    """`0.000002 (2.0e-6) × 1,000,000 = $2.00`: see `_card_raw_title`."""
+    scientific = _scientific_notation(raw)
+    lead = f"{raw} ({scientific})" if scientific is not None else raw
+    factor = _price_rule_conversion_factor(price_rule)
+    return f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
+
+
 def _raw_price_title(
     raw: str | None,
     display: str,
@@ -6424,11 +6762,7 @@ def _raw_price_title(
 ) -> str:
     if raw is None:
         return ""
-    scientific = _scientific_notation(raw)
-    lead = f"{raw} ({scientific})" if scientific is not None else raw
-    factor = _price_rule_conversion_factor(price_rule)
-    derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
-    return f' title="{html_module.escape(derivation)}"'
+    return f' title="{html_module.escape(_raw_price_derivation(raw, display, price_rule))}"'
 
 
 def _card_raw_title(
@@ -7252,8 +7586,7 @@ def _build_scan_change_tiers(
     )
 
 
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
+_plural = plural
 
 
 def _render_scan_disclosure(tiers: _ScanChangeTiers, summary_html: str) -> str:
@@ -7326,6 +7659,8 @@ def _render_scan_html(
     provider_results: list[ProviderScanResult],
     detail_policy: ReportDetailPolicy,
     semantic_cores: dict[ComparisonIdentity, ModelEventSemanticCore] | None = None,
+    companion_link: tuple[str, str] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> str:
     h = html_module.escape
     timestamp = h(to_local_human(generated_at))
@@ -7464,25 +7799,46 @@ def _render_scan_html(
         f'  <div class="meta">{timestamp} &middot; {h(command)}</div>\n'
         f'  <label class="raw-toggle"><input type="checkbox" id="{_RAW_TOGGLE_ID}"'
         f'{raw_checked}> Show raw values</label>\n'
-        f'</header>'
+        f'{_companion_link_html(companion_link)}</header>'
     )
     price_movement_html = _render_html_price_movement_summary(movement, anchors)
+    # Alias events and the Provider endpoints disclosure. They never enter the
+    # header counts, the Price Movement card or the tiers above; the shared
+    # model decides ordering, caps and wording, and is empty when squelched.
+    # Imported here because `endpoint_html` builds on this module's card-row
+    # helpers.
+    from .endpoint_html import EndpointHtml, render_endpoint_html
+
+    endpoint_html = _isolated_endpoint_output(
+        lambda: render_endpoint_html(
+            scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
+            provider_results,
+            companion_link=companion_link,
+        ),
+        EndpointHtml("", "", ""),
+        credential_values=credential_values or {},
+    )
     body_html = (
         f'<div class="provider-cards">\n  {"".join(provider_cards)}\n</div>\n\n'
         + (f'{price_movement_html}\n\n' if price_movement_html else "")
+        + (f'{endpoint_html.alias_html}\n\n' if endpoint_html.alias_html else "")
         + tiers.primary
     )
+    tail_html = _render_scan_disclosure(
+        tiers,
+        _build_html_summary_table(
+            summary_entries, concise=True, show_provider=contributing > 1
+        ),
+    )
+    if endpoint_html.disclosure_html:
+        tail_html += f"\n{endpoint_html.disclosure_html}"
 
     return _render_html_page(
         title=f"Model Sentinel \u2014 {to_local_human(generated_at)}",
         header_html=header_html,
         body_html=body_html,
-        tail_html=_render_scan_disclosure(
-            tiers,
-            _build_html_summary_table(
-                summary_entries, concise=True, show_provider=contributing > 1
-            ),
-        ),
+        tail_html=tail_html,
+        extra_css=endpoint_html.css,
     )
 
 
