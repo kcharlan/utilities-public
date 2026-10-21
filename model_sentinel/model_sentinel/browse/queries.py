@@ -6,7 +6,8 @@ from datetime import date, datetime, time, timedelta
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
-from ..storage import load_json_value
+from ..models import EndpointListRecord
+from ..storage import _load_endpoint_lists, load_json_value
 from ..time_utils import local_date_for
 from .aspects import _CANONICAL_COLUMNS, _safe_path
 from .readonly import DatabaseBusyError, is_database_busy_error
@@ -458,3 +459,285 @@ def db_providers(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+@_translate_busy
+def model_observation(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str,
+    model_id: str,
+    scrape_id: int,
+) -> dict[str, Any] | None:
+    """The saved observation of this model at exactly `scrape_id`, if any.
+
+    It qualifies a scrape as `model_presence` does (saved, successful, of
+    this provider, containing the model) and has its `latest_scrape` shape.
+    """
+    row = connection.execute(
+        """SELECT sm.scrape_id, s.completed_at, s.status
+           FROM snapshot_models AS sm
+           JOIN scrapes AS s ON s.scrape_id = sm.scrape_id
+           WHERE sm.scrape_id = ? AND sm.provider_id = ? AND sm.provider_model_id = ?
+             AND s.provider_id = ?
+             AND s.status = 'success' AND s.saved_snapshot = 1""",
+        (scrape_id, provider_id, model_id, provider_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return _scrape_summary(row)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint captures. These tables are optional: databases created before
+# endpoint capture lack them (see `readonly._REQUIRED_SCHEMA`), so callers
+# check `endpoint_tables_present` before any other endpoint query.
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_TABLES = (
+    "endpoint_captures",
+    "endpoint_capture_models",
+    "endpoint_lists",
+    "endpoint_states",
+    "endpoint_observations",
+    "endpoint_comparison_gaps",
+    "endpoint_changes",
+)
+
+
+@_translate_busy
+def endpoint_tables_present(connection: sqlite3.Connection) -> bool:
+    """Whether every endpoint table the dossier reads exists."""
+    placeholders = ", ".join("?" for _ in _ENDPOINT_TABLES)
+    rows = connection.execute(
+        f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({placeholders})",
+        _ENDPOINT_TABLES,
+    ).fetchall()
+    return {row[0] for row in rows} == set(_ENDPOINT_TABLES)
+
+
+@_translate_busy
+def endpoint_capture_for_scrape(connection: sqlite3.Connection, *, scrape_id: int) -> dict[str, Any] | None:
+    """The capture saved for exactly this catalog scrape, without its lists.
+
+    `baseline_scrape_id` is the catalog scrape of the capture it was compared
+    with (None when it has no baseline capture).
+    """
+    row = connection.execute(
+        """SELECT c.capture_id, c.scrape_id, c.provider_id, c.started_at, c.completed_at,
+                  c.status, c.paths_requested, c.paths_attempted, c.paths_failed,
+                  c.mapping_failures, c.first_capture, c.comparison_state,
+                  c.baseline_capture_id, b.scrape_id AS baseline_scrape_id, c.error_summary
+           FROM endpoint_captures AS c
+           LEFT JOIN endpoint_captures AS b ON b.capture_id = c.baseline_capture_id
+           WHERE c.scrape_id = ?""",
+        (scrape_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "capture_id": int(row["capture_id"]),
+        "scrape_id": int(row["scrape_id"]),
+        "provider_id": row["provider_id"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "status": row["status"],
+        "paths_requested": int(row["paths_requested"]),
+        "paths_attempted": int(row["paths_attempted"]),
+        "paths_failed": int(row["paths_failed"]),
+        "mapping_failures": int(row["mapping_failures"]),
+        "first_capture": bool(row["first_capture"]),
+        "comparison_state": row["comparison_state"],
+        "baseline_capture_id": row["baseline_capture_id"],
+        "baseline_scrape_id": row["baseline_scrape_id"],
+        "error_summary": row["error_summary"],
+    }
+
+
+@_translate_busy
+def endpoint_model_list(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    model_id: str,
+) -> dict[str, Any] | None:
+    """Resolve one catalog model to its endpoint list in one capture.
+
+    Returns the model's mapping (`outcome`, `list_path` — for an alias the
+    path its chain resolved to — `alias_target_model_id`, `error_code`) and
+    whether a list row exists for that path (`list_present`), or None when
+    the capture has no mapping for the model.
+    """
+    row = connection.execute(
+        """SELECT m.outcome, m.list_path, m.alias_target_model_id, m.error_code,
+                  l.list_path IS NOT NULL AS list_present
+           FROM endpoint_capture_models AS m
+           LEFT JOIN endpoint_lists AS l
+             ON l.capture_id = m.capture_id AND l.list_path = m.list_path
+           WHERE m.capture_id = ? AND m.provider_model_id = ?""",
+        (capture_id, model_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "outcome": row["outcome"],
+        "list_path": row["list_path"],
+        "alias_target_model_id": row["alias_target_model_id"],
+        "error_code": row["error_code"],
+        "list_present": bool(row["list_present"]),
+    }
+
+
+@_translate_busy
+def endpoint_list_models(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    list_path: str,
+) -> list[dict[str, Any]]:
+    """Every catalog model that resolved to `list_path` in one capture.
+
+    This reads the mappings (listed models and resolved aliases alike), never
+    model-ID suffixes or the listed-only IDs carried by change records.
+    """
+    rows = connection.execute(
+        """SELECT provider_model_id, outcome, alias_target_model_id
+           FROM endpoint_capture_models
+           WHERE capture_id = ? AND list_path = ? AND error_code IS NULL
+           ORDER BY provider_model_id""",
+        (capture_id, list_path),
+    ).fetchall()
+    return [
+        {
+            "model_id": row["provider_model_id"],
+            "outcome": row["outcome"],
+            "alias_target_model_id": row["alias_target_model_id"],
+        }
+        for row in rows
+    ]
+
+
+@_translate_busy
+def endpoint_capture_has_records(connection: sqlite3.Connection, *, capture_id: int) -> bool:
+    """Whether a capture saved any mapping or list (a minimal error capture has neither)."""
+    row = connection.execute(
+        """SELECT EXISTS (SELECT 1 FROM endpoint_capture_models WHERE capture_id = ?)
+                  OR EXISTS (SELECT 1 FROM endpoint_lists WHERE capture_id = ?)""",
+        (capture_id, capture_id),
+    ).fetchone()
+    return bool(row[0])
+
+
+@_translate_busy
+def endpoint_capture_lists(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    list_path: str | None = None,
+) -> tuple[EndpointListRecord, ...]:
+    """A capture's list records (all of them, or only `list_path`), as `Store.load_endpoint_lists` reads them."""
+    return _load_endpoint_lists(connection, capture_id, list_path=list_path)
+
+
+@_translate_busy
+def endpoint_list_gaps(
+    connection: sqlite3.Connection,
+    *,
+    capture_id: int,
+    list_path: str,
+) -> list[dict[str, Any]]:
+    """The comparison gaps one capture recorded for `list_path`."""
+    rows = connection.execute(
+        """SELECT list_path, reason, from_list_path
+           FROM endpoint_comparison_gaps
+           WHERE capture_id = ? AND list_path = ?
+           ORDER BY list_path, reason""",
+        (capture_id, list_path),
+    ).fetchall()
+    return [
+        {"list_path": row["list_path"], "reason": row["reason"], "from_list_path": row["from_list_path"]}
+        for row in rows
+    ]
+
+
+@_translate_busy
+def endpoint_list_changes(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str,
+    list_path: str,
+    completed_at: str,
+    scrape_id: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Up to `limit` changes recorded under `list_path`, newest observation first.
+
+    The bound and order are those of `model_presence`: a change's target
+    capture belongs to a saved catalog scrape, which must not be later than
+    the dossier's observation (`completed_at`, then `scrape_id`), whatever
+    order the captures themselves completed in. Rows are ordered by that
+    scrape descending, then by descending change ID.
+    """
+    rows = connection.execute(
+        """SELECT ec.endpoint_change_id, ec.from_capture_id, ec.to_capture_id,
+                  ec.from_list_path, ec.list_path, ec.endpoint_key, ec.change_kind,
+                  ec.field_name, ec.old_value_json, ec.new_value_json, ec.detected_at,
+                  fs.scrape_id AS from_scrape_id, fs.completed_at AS from_completed_at,
+                  fs.status AS from_status,
+                  ts.scrape_id AS to_scrape_id, ts.completed_at AS to_completed_at,
+                  ts.status AS to_status
+           FROM endpoint_changes AS ec
+           JOIN endpoint_captures AS tc ON tc.capture_id = ec.to_capture_id
+           JOIN scrapes AS ts ON ts.scrape_id = tc.scrape_id
+           JOIN endpoint_captures AS fc ON fc.capture_id = ec.from_capture_id
+           JOIN scrapes AS fs ON fs.scrape_id = fc.scrape_id
+           WHERE ec.provider_id = ? AND ec.list_path = ?
+             AND ts.provider_id = ?
+             AND ts.status = 'success' AND ts.saved_snapshot = 1
+             AND (ts.completed_at < ? OR (ts.completed_at = ? AND ts.scrape_id <= ?))
+           ORDER BY ts.completed_at DESC, ts.scrape_id DESC, ec.endpoint_change_id DESC
+           LIMIT ?""",
+        (provider_id, list_path, provider_id, completed_at, completed_at, scrape_id, limit),
+    ).fetchall()
+    return [
+        {
+            "endpoint_change_id": int(row["endpoint_change_id"]),
+            "from_capture_id": int(row["from_capture_id"]),
+            "to_capture_id": int(row["to_capture_id"]),
+            "from_list_path": row["from_list_path"],
+            "list_path": row["list_path"],
+            "endpoint_key": row["endpoint_key"],
+            "change_kind": row["change_kind"],
+            "field_name": row["field_name"],
+            "old_value": load_json_value(row["old_value_json"]),
+            "new_value": load_json_value(row["new_value_json"]),
+            "detected_at": row["detected_at"],
+            "from_scrape": _scrape_summary(row, "from_"),
+            "to_scrape": _scrape_summary(row, "to_"),
+        }
+        for row in rows
+    ]
+
+
+@_translate_busy
+def first_usable_endpoint_capture_date(connection: sqlite3.Connection, *, provider_id: str) -> date | None:
+    """The local date of the provider's first capture with a successful list.
+
+    Only persisted `ok` or `empty` list observations count, so an error-only
+    capture (failed lists, or a minimal error capture with none) never does.
+    """
+    row = connection.execute(
+        """SELECT c.completed_at
+           FROM endpoint_captures AS c
+           WHERE c.provider_id = ?
+             AND EXISTS (
+                 SELECT 1 FROM endpoint_lists AS l
+                 WHERE l.capture_id = c.capture_id AND l.outcome IN ('ok', 'empty')
+             )
+           ORDER BY c.completed_at, c.capture_id
+           LIMIT 1""",
+        (provider_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return local_date_for(str(row["completed_at"]))

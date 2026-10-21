@@ -40,7 +40,6 @@ from .alias_check import (
     UNPLACED_MISSING,
     UNPLACED_NEGATIVE,
     UNPLACED_ZERO,
-    price_ladder,
 )
 from .change_render import ABSENT_DISPLAY, absent_side_display, resolve_price_rule
 from .endpoint_report import (
@@ -55,6 +54,7 @@ from .endpoint_report import (
     ScanEndpointSections,
     alias_event_heading,
     alias_event_reason,
+    alias_ladders,
     alias_leaf_sentence,
     alias_match_sentence,
     alias_unavailable_leaf_sentence,
@@ -62,7 +62,7 @@ from .endpoint_report import (
     endpoint_list_heading,
     omitted_lists_phrase,
 )
-from .models import Ladder, LadderMarkInput, ProviderScanResult, canonical_json
+from .models import Ladder, ProviderScanResult, canonical_json
 from .provider_profiles import ProviderProfile
 from .reporting import (
     _CARD_TABLE_COLGROUP,
@@ -226,28 +226,12 @@ def _alias_event(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> s
 
 def _alias_ladders(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> list[str]:
     """A ladder per displayed divergent leaf, when the target's list has endpoints."""
-    listing = view.target_list
-    if view.kind not in _LADDER_KINDS or listing is None or not listing.succeeded or not listing.observations:
+    if view.kind not in _LADDER_KINDS or view.target_list is None:
         return []
-    endpoints = [(observation.endpoint_key, observation.state) for observation in listing.observations]
-    figures = []
-    for leaf in view.leaves:
-        ladder = price_ladder(
-            endpoints,
-            leaf=leaf.path,
-            marks=(
-                LadderMarkInput("target", leaf.path, leaf.target_raw),
-                LadderMarkInput("alias", leaf.path, leaf.alias_raw),
-            ),
-            profile=profile,
-        )
-        # A ladder on which no endpoint could be placed would only restate the
-        # two catalog prices, so it is left out; the match sentence covers it.
-        if ladder is not None and any(
-            entry.kind == LADDER_ENDPOINT for position in ladder.positions for entry in position.entries
-        ):
-            figures.append(_ladder_figure(ladder, listing.display_id, ids))
-    return figures
+    return [
+        _ladder_figure(ladder, view.target_list.display_id, ids)
+        for ladder in alias_ladders(view.leaves, view.target_list, profile)
+    ]
 
 
 # ---------------------------------------------------------------------------

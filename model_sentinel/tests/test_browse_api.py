@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from copy import deepcopy
@@ -10,13 +11,15 @@ from types import SimpleNamespace
 import pytest
 
 from model_sentinel.browse import api
-from model_sentinel.browse import queries
+from model_sentinel.browse import endpoints_api, queries
 from model_sentinel.browse.aspects import Aspect, build_aspect_catalog
-from model_sentinel.browse.readonly import open_readonly
+from model_sentinel.browse.readonly import DatabaseBusyError, open_readonly
+from model_sentinel.endpoints import DOSSIER_ENDPOINT_CHANGE_LIMIT
 from model_sentinel.models import FieldChange, ModelDelta
 from model_sentinel.provider_profiles import profiles_for, resolve_profile
 from model_sentinel.reporting import DEFAULT_REPORT_SHOW_FIELDS, DEFAULT_REPORT_SQUELCH_FIELDS
 from model_sentinel.storage import Store, recent_change_rows
+from model_sentinel.time_utils import local_date_for
 from tests.browse_fixtures import EXAMPLE_PROVIDER, OTHER_PROVIDER, _save_scrape, build_fixture_db
 
 
@@ -1388,3 +1391,545 @@ def test_empty_history_endpoint_responses(tmp_path) -> None:
     }
     assert heatmap == []
     assert model_rows == []
+
+
+# ---------------------------------------------------------------------------
+# Dossier endpoints (`api.endpoints`)
+# ---------------------------------------------------------------------------
+
+_UNAVAILABLE_COLLECTIONS = {
+    "shared_with": [],
+    "endpoints": {"columns": [], "rows": []},
+    "ladders": [],
+    "changes": [],
+    "limit": DOSSIER_ENDPOINT_CHANGE_LIMIT,
+    "truncated": False,
+}
+_UNRESOLVED_LIST = {"list_path": None, "list_model_id": None, "list_outcome": None, "list_error": None}
+
+
+@pytest.fixture
+def endpoint_context(tmp_path):
+    database_path = tmp_path / "endpoints.db"
+    facts = build_fixture_db(database_path, with_endpoints=True)
+    before = hashlib.sha256(database_path.read_bytes()).hexdigest()
+    db = open_readonly(database_path)
+    context = _context(db)
+    yield context, facts.endpoint, database_path
+    db.close_all()
+    # Every endpoint read is read-only.
+    assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
+
+
+def _endpoints(context, facts, model_id: str, scrape_id: int | None = None) -> dict:
+    params = {"provider": facts.provider_id, "model": model_id}
+    if scrape_id is not None:
+        params["scrape_id"] = str(scrape_id)
+    response = api.endpoints(context, params)
+    assert json.loads(json.dumps(response)) == response
+    return response
+
+
+def _keys(response: dict) -> list[str]:
+    return [row["endpoint_key"] for row in response["endpoints"]["rows"]]
+
+
+def _capture_keys(facts, capture_id: int) -> list[str]:
+    return list(dict(facts.listed_keys_by_capture)[capture_id])
+
+
+def test_endpoint_reason_states_captured_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.listed_model)
+
+    assert set(response) == {
+        "provider_id", "model_id", "scrape_id", "captured", "reason", "capture",
+        "first_capture_date", "list_path", "list_model_id", "shared_with", "alias",
+        "list_outcome", "list_error", "endpoints", "ladders", "changes", "limit", "truncated",
+    }
+    assert response["provider_id"] == facts.provider_id
+    assert response["model_id"] == facts.listed_model
+    assert response["scrape_id"] == facts.third_scrape
+    assert response["captured"] is True
+    assert response["reason"] is None
+    assert response["list_path"] == facts.listed_path
+    assert response["list_model_id"] == facts.listed_model
+    assert response["list_outcome"] == "ok"
+    assert response["list_error"] is None
+    assert response["alias"] is None
+    assert response["ladders"] == []
+    assert response["first_capture_date"] == local_date_for(facts.first_capture_completed_at).isoformat()
+    assert response["limit"] == DOSSIER_ENDPOINT_CHANGE_LIMIT
+    assert response["truncated"] is False
+
+    capture = response["capture"]
+    assert capture["capture_id"] == facts.third_capture
+    assert capture["scrape_id"] == facts.third_scrape
+    assert capture["status"] == "partial"
+    assert capture["first_capture"] is False
+    assert capture["comparison_state"] == "available"
+    assert capture["baseline_capture_id"] == facts.first_capture
+    assert capture["baseline_scrape_id"] == facts.first_scrape
+    assert capture["error_summary"] is None
+    assert capture["list_gaps"] == []
+
+    table = response["endpoints"]
+    assert [column["path"] for column in table["columns"]] == ["pricing.prompt", "pricing.completion"]
+    assert {column["unit_label"] for column in table["columns"]} == {"/1M tokens"}
+    assert all(isinstance(column["label"], str) and column["label"] for column in table["columns"])
+    assert _keys(response) == _capture_keys(facts, facts.third_capture)
+    first_row = table["rows"][0]
+    assert first_row["tag"] == "fake-host-1"
+    assert first_row["provider_name"] == "Synthetic Host fake-host-1"
+    assert first_row["status"] == 0
+    assert [cell["display"] for cell in first_row["prices"]] == ["$2.00", "$10.00"]
+    assert [cell["raw_value"] for cell in first_row["prices"]] == ["0.000002", "0.00001"]
+    assert first_row["prices"][0]["unit_label"] == "/1M tokens"
+    assert first_row["prices"][0]["comparison_group"] == "usd_per_million_tokens"
+    # Values in one column share one precision.
+    assert [row["prices"][0]["display"] for row in table["rows"]] == ["$2.00", "$2.50"]
+
+
+def test_endpoint_reason_states_valid_empty_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.empty_model)
+    assert response["captured"] is True
+    assert response["reason"] is None
+    assert response["list_path"] == facts.empty_path
+    assert response["list_outcome"] == "empty"
+    assert response["endpoints"] == {"columns": [], "rows": []}
+    assert response["changes"] == []
+    assert response["shared_with"] == []
+
+
+def test_endpoint_reason_states_failed_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.failed_model)
+    assert response["captured"] is False
+    assert response["reason"] == "fetch_error"
+    assert response["list_path"] == facts.failed_path
+    assert response["list_model_id"] is None
+    assert response["list_outcome"] == "error"
+    code, message = facts.failed_error
+    assert response["list_error"] == {"code": code, "message": message}
+    assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
+    # The selected baseline's failed observation is a recorded comparison gap.
+    assert response["capture"]["list_gaps"] == [
+        {"list_path": facts.failed_path, "reason": "baseline_observation_failed", "from_list_path": facts.failed_path},
+        {"list_path": facts.failed_path, "reason": "current_observation_failed", "from_list_path": facts.failed_path},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("attribute", "reason"),
+    (
+        ("no_link_model", "no_link"),
+        ("invalid_link_model", "invalid_link"),
+        ("missing_alias_model", "alias_target_missing"),
+        ("cycle_models", "alias_cycle"),
+    ),
+)
+def test_endpoint_reason_states_unresolved_mapping(endpoint_context, attribute, reason) -> None:
+    context, facts, _ = endpoint_context
+    model_id = getattr(facts, attribute)
+    if isinstance(model_id, tuple):
+        model_id = model_id[0]
+    response = _endpoints(context, facts, model_id)
+    assert response["captured"] is False
+    assert response["reason"] == reason
+    assert {key: response[key] for key in _UNRESOLVED_LIST} == _UNRESOLVED_LIST
+    assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
+    assert response["capture"]["capture_id"] == facts.third_capture
+    if reason.startswith("alias_"):
+        assert response["alias"]["unavailable_reason"] == reason
+    else:
+        assert response["alias"] is None
+
+
+def test_endpoint_reason_states_not_captured(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.uncaptured_model)
+    assert response["scrape_id"] == facts.uncaptured_scrape
+    assert response["captured"] is False
+    assert response["reason"] == "not_captured"
+    assert response["capture"] is None
+    # The provider's first usable capture explains the absent evidence.
+    assert response["first_capture_date"] == local_date_for(facts.first_capture_completed_at).isoformat()
+    assert {key: response[key] for key in _UNRESOLVED_LIST} == _UNRESOLVED_LIST
+    assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
+
+
+def test_endpoint_reason_states_missing_selected_baseline_capture(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.rebased_model)
+    assert response["scrape_id"] == facts.rebased_scrape
+    assert response["captured"] is True
+    assert response["capture"]["capture_id"] == facts.rebased_capture
+    assert response["capture"]["comparison_state"] == "missing_baseline_capture"
+    assert response["capture"]["baseline_capture_id"] is None
+    assert response["capture"]["baseline_scrape_id"] is None
+    assert response["list_path"] == facts.rebased_path
+    assert response["changes"] == []
+
+
+def test_endpoint_reason_states_no_tables_in_legacy_schema(endpoint_context, tmp_path) -> None:
+    context, facts, database_path = endpoint_context
+    legacy_path = tmp_path / "legacy.db"
+    legacy_path.write_bytes(database_path.read_bytes())
+    with sqlite3.connect(legacy_path) as connection:
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'endpoint\\_%' ESCAPE '\\'"
+            )
+        ]
+        assert "endpoint_captures" in tables
+        for table in tables:
+            connection.execute(f'DROP TABLE "{table}"')
+    db = open_readonly(legacy_path)
+    try:
+        legacy = _context(db)
+        listed = _endpoints(legacy, facts, facts.listed_model)
+        alias = _endpoints(legacy, facts, facts.alias_model)
+    finally:
+        db.close_all()
+
+    for response in (listed, alias):
+        assert response["captured"] is False
+        assert response["reason"] == "no_tables"
+        assert response["capture"] is None
+        assert response["first_capture_date"] is None
+        assert {key: response[key] for key in _UNRESOLVED_LIST} == _UNRESOLVED_LIST
+        assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
+    # The alias check still runs on the exact catalog snapshot, without capture evidence.
+    assert alias["alias"]["target_model_id"] == facts.listed_model
+    assert [leaf["path"] for leaf in alias["alias"]["divergence"]["leaves"]] == [facts.alias_divergent_leaf]
+    assert alias["alias"]["endpoint_match"]["unavailable_reason"] == "not_captured"
+
+
+def test_endpoint_reason_states_missing_mapping_is_a_data_integrity_error(endpoint_context, tmp_path) -> None:
+    context, facts, database_path = endpoint_context
+    broken_path = tmp_path / "broken.db"
+    broken_path.write_bytes(database_path.read_bytes())
+    with sqlite3.connect(broken_path) as connection:
+        connection.execute(
+            "DELETE FROM endpoint_capture_models WHERE capture_id = ? AND provider_model_id = ?",
+            (facts.third_capture, facts.no_link_model),
+        )
+        connection.execute(
+            "DELETE FROM endpoint_lists WHERE capture_id = ? AND list_path = ?",
+            (facts.third_capture, facts.empty_path),
+        )
+    db = open_readonly(broken_path)
+    try:
+        broken = _context(db)
+        with pytest.raises(endpoints_api.EndpointDataIntegrityError):
+            api.endpoints(broken, {"provider": facts.provider_id, "model": facts.no_link_model})
+        with pytest.raises(endpoints_api.EndpointDataIntegrityError):
+            api.endpoints(broken, {"provider": facts.provider_id, "model": facts.empty_model})
+    finally:
+        db.close_all()
+
+
+def test_endpoint_exact_observation_binds_the_requested_scrape(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    default = _endpoints(context, facts, facts.listed_model)
+    presence = queries.model_presence(
+        context.db.connection(), provider_id=facts.provider_id, model_id=facts.listed_model
+    )
+    assert default["scrape_id"] == presence["latest_scrape"]["scrape_id"] == facts.third_scrape
+
+    for scrape_id, capture_id in (
+        (facts.first_scrape, facts.first_capture),
+        (facts.second_scrape, facts.second_capture),
+        (facts.third_scrape, facts.third_capture),
+    ):
+        response = _endpoints(context, facts, facts.listed_model, scrape_id)
+        assert response["scrape_id"] == scrape_id
+        assert response["capture"]["capture_id"] == capture_id
+        assert response["capture"]["scrape_id"] == scrape_id
+        assert _keys(response) == _capture_keys(facts, capture_id)
+
+    first = _endpoints(context, facts, facts.listed_model, facts.first_scrape)
+    assert first["capture"]["first_capture"] is True
+    assert first["capture"]["comparison_state"] == "no_selected_baseline"
+    assert first["changes"] == []
+
+
+def test_endpoint_exact_observation_never_substitutes_another_capture(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    # The provider's newest scrape has a capture; this model's observation does not.
+    assert _endpoints(context, facts, facts.uncaptured_model)["reason"] == "not_captured"
+    error = _endpoints(context, facts, facts.uncaptured_model, facts.error_scrape)
+    assert error["reason"] == "capture_error"
+    assert error["capture"]["capture_id"] == facts.error_capture
+    captured = _endpoints(context, facts, facts.uncaptured_model, facts.first_scrape)
+    assert captured["captured"] is True
+    assert captured["capture"]["capture_id"] == facts.first_capture
+
+
+@pytest.mark.parametrize(
+    ("params", "message"),
+    (
+        ({}, "provider is required"),
+        ({"provider": "unknown"}, "unknown provider: unknown"),
+        ({"provider": "endpoint-example"}, "model is required"),
+        ({"provider": "endpoint-example", "model": "fake-org/not-a-model"}, "unknown model: fake-org/not-a-model"),
+        (
+            {"provider": "endpoint-example", "model": "fake-org/endpoint-model-a", "scrape_id": "latest"},
+            "scrape_id must be an integer",
+        ),
+    ),
+)
+def test_endpoint_exact_observation_rejects_bad_identity(endpoint_context, params, message) -> None:
+    context, _, _ = endpoint_context
+    with pytest.raises(api.BadRequest) as raised:
+        api.endpoints(context, params)
+    assert raised.value.message == message
+
+
+def test_endpoint_exact_observation_rejects_scrapes_without_that_observation(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    other_provider_scrape = queries.saved_scrape_ids(
+        context.db.connection(), provider_id=EXAMPLE_PROVIDER.provider_id, since=None, until=None
+    )[-1]["scrape_id"]
+    for scrape_id in (facts.error_scrape, other_provider_scrape, 999_999):
+        with pytest.raises(api.BadRequest) as raised:
+            _endpoints(context, facts, facts.listed_model, scrape_id)
+        assert raised.value.message == (
+            f"scrape_id must identify a saved observation of {facts.listed_model} for {facts.provider_id}"
+        )
+
+
+def test_endpoint_alias_and_shared_mapping_alias_uses_its_target_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.alias_model)
+    assert response["captured"] is True
+    assert response["reason"] is None
+    assert response["list_path"] == facts.listed_path
+    assert response["list_model_id"] == facts.listed_model
+    assert response["shared_with"] == [
+        {"model_id": facts.listed_model, "outcome": "listed", "alias_target_model_id": None},
+        {"model_id": facts.twin_model, "outcome": "listed", "alias_target_model_id": None},
+    ]
+    assert _keys(response) == _capture_keys(facts, facts.third_capture)
+
+    alias = response["alias"]
+    assert alias["alias_model_id"] == facts.alias_model
+    assert alias["target_model_id"] == facts.listed_model
+    assert alias["unavailable_reason"] is None
+    leaves = alias["divergence"]["leaves"]
+    assert [leaf["path"] for leaf in leaves] == [facts.alias_divergent_leaf]
+    assert (leaves[0]["alias_raw"], leaves[0]["target_raw"]) == ("0.0000025", "0.000002")
+    assert alias["endpoint_match"]["list_path"] == facts.listed_path
+    assert alias["endpoint_match"]["matching_keys"] == list(facts.alias_matching_keys)
+
+    # One ladder per divergent leaf, with the positions computed here.
+    assert [ladder["leaf"] for ladder in response["ladders"]] == [facts.alias_divergent_leaf]
+    ladder = response["ladders"][0]
+    placed = [(entry["kind"], entry["label"]) for position in ladder["positions"] for entry in position["entries"]]
+    assert sorted(placed) == sorted(
+        [("endpoint", "fake-host-1#0"), ("endpoint", "fake-host-2#0"), ("mark", "target"), ("mark", "alias")]
+    )
+    assert [position["position"] for position in ladder["positions"]] == sorted(
+        position["position"] for position in ladder["positions"]
+    )
+    assert ladder["unplaced"] == []
+
+
+def test_endpoint_alias_and_shared_mapping_shared_list_comes_from_mappings(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    for model_id, others in (
+        (facts.listed_model, (facts.alias_model, facts.twin_model)),
+        (facts.twin_model, (facts.alias_model, facts.listed_model)),
+    ):
+        response = _endpoints(context, facts, model_id)
+        assert response["list_path"] == facts.listed_path
+        assert [entry["model_id"] for entry in response["shared_with"]] == list(others)
+        alias_entry = response["shared_with"][0]
+        assert alias_entry == {
+            "model_id": facts.alias_model,
+            "outcome": "alias",
+            "alias_target_model_id": facts.listed_model,
+        }
+        assert response["alias"] is None
+        assert response["ladders"] == []
+    # A model with its own list shares it with nobody.
+    assert _endpoints(context, facts, facts.bulk_model)["shared_with"] == []
+
+
+def test_endpoint_alias_and_shared_mapping_alias_at_an_earlier_observation(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    # The alias's own observation at the first scrape still has its evaluation.
+    response = _endpoints(context, facts, facts.alias_model, facts.first_scrape)
+    assert response["alias"]["target_model_id"] == facts.listed_model
+    assert response["capture"]["capture_id"] == facts.first_capture
+    assert _keys(response) == _capture_keys(facts, facts.first_capture)
+
+
+def test_endpoint_change_truncation_bounds_rows_at_the_limit(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.bulk_model)
+    assert facts.bulk_change_count > DOSSIER_ENDPOINT_CHANGE_LIMIT
+    assert response["limit"] == DOSSIER_ENDPOINT_CHANGE_LIMIT
+    assert response["truncated"] is True
+    assert len(response["changes"]) == DOSSIER_ENDPOINT_CHANGE_LIMIT
+    ids = [change["endpoint_change_id"] for change in response["changes"]]
+    assert ids == sorted(ids, reverse=True)
+    with sqlite3.connect(context.db.path) as connection:
+        newest = connection.execute(
+            "SELECT MAX(endpoint_change_id) FROM endpoint_changes WHERE list_path = ?",
+            (facts.bulk_path,),
+        ).fetchone()[0]
+    assert ids[0] == newest
+
+
+@pytest.mark.parametrize(("limit", "truncated"), ((2, True), (3, False), (4, False)))
+def test_endpoint_change_truncation_uses_one_extra_row(endpoint_context, monkeypatch, limit, truncated) -> None:
+    context, facts, _ = endpoint_context
+    full = _endpoints(context, facts, facts.listed_model)["changes"]
+    assert len(full) == 3
+    monkeypatch.setattr(endpoints_api, "DOSSIER_ENDPOINT_CHANGE_LIMIT", limit)
+    response = _endpoints(context, facts, facts.listed_model)
+    assert response["limit"] == limit
+    assert response["truncated"] is truncated
+    assert response["changes"] == full[:limit]
+
+
+def test_endpoint_no_future_changes_after_the_selected_observation(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    # Capture order is the reverse of catalog order: the third scrape's
+    # capture has the smaller ID and completed before the second scrape's.
+    assert facts.third_capture < facts.second_capture
+    second = _endpoints(context, facts, facts.listed_model, facts.second_scrape)
+    third = _endpoints(context, facts, facts.listed_model, facts.third_scrape)
+    assert second["capture"]["completed_at"] > third["capture"]["completed_at"]
+
+    assert [change["to_capture_id"] for change in second["changes"]] == [facts.second_capture] * 2
+    assert {change["to_scrape"]["scrape_id"] for change in second["changes"]} == {facts.second_scrape}
+    assert _endpoints(context, facts, facts.listed_model, facts.first_scrape)["changes"] == []
+
+    # Newest catalog observation first, then descending change ID.
+    assert [change["to_scrape"]["scrape_id"] for change in third["changes"]] == [
+        facts.third_scrape,
+        facts.second_scrape,
+        facts.second_scrape,
+    ]
+    assert third["changes"][1:] == second["changes"]
+    ids = [change["endpoint_change_id"] for change in second["changes"]]
+    assert ids == sorted(ids, reverse=True)
+
+
+def test_endpoint_no_future_changes_rows_keep_comparison_identity(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    changes = _endpoints(context, facts, facts.listed_model)["changes"]
+    by_kind = {(change["change_kind"], change["endpoint_key"], change["field_name"]): change for change in changes}
+    assert set(by_kind) == {
+        ("field_changed", "fake-host-1#0", "pricing.completion"),
+        ("field_changed", "fake-host-1#0", "pricing.prompt"),
+        ("endpoint_added", "fake-host-3#0", None),
+    }
+    for change in changes:
+        assert change["from_capture_id"] == facts.first_capture
+        assert change["from_scrape"]["scrape_id"] == facts.first_scrape
+        assert change["from_list_path"] == change["list_path"] == facts.listed_path
+        assert change["detected_at"]
+
+    completion = by_kind[("field_changed", "fake-host-1#0", "pricing.completion")]
+    assert completion["to_capture_id"] == facts.third_capture
+    assert (completion["old_value"], completion["new_value"]) == ("0.000008", "0.00001")
+    assert completion["rendered"]["kind"] == "price"
+    assert completion["rendered"]["direction"] == "up"
+    assert (completion["rendered"]["old_display"], completion["rendered"]["new_display"]) == ("$8.00", "$10.00")
+    assert isinstance(completion["label"], str) and completion["label"]
+    assert completion["price_evidence"][0]["path"] == "pricing.completion"
+
+    added = by_kind[("endpoint_added", "fake-host-3#0", None)]
+    assert added["old_value"] is None
+    assert added["new_value"]["tag"] == "fake-host-3"
+    assert "status" not in added["new_value"] and "uptime_last_30m" not in added["new_value"]
+    assert added["rendered"] is None
+    assert [entry["path"] for entry in added["price_evidence"]] == ["pricing.prompt", "pricing.completion"]
+    assert [entry["new_display"] for entry in added["price_evidence"]] == ["$1.50", "$7.00"]
+
+
+def test_endpoint_minimal_error_capture_roundtrip_reports_capture_error(endpoint_context) -> None:
+    context, facts, database_path = endpoint_context
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM endpoint_capture_models WHERE capture_id = ?", (facts.error_capture,)
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM endpoint_lists WHERE capture_id = ?", (facts.error_capture,)
+        ).fetchone() == (0,)
+    response = _endpoints(context, facts, facts.error_only_model)
+    assert response["scrape_id"] == facts.error_scrape
+    assert response["captured"] is False
+    assert response["reason"] == "capture_error"
+    capture = response["capture"]
+    assert capture["capture_id"] == facts.error_capture
+    assert capture["status"] == "error"
+    assert capture["error_summary"] == facts.error_summary
+    assert (capture["paths_requested"], capture["paths_attempted"], capture["paths_failed"]) == (0, 0, 0)
+    # The selected baseline was usable, so the error capture still reads `available`.
+    assert capture["comparison_state"] == "available"
+    assert capture["baseline_capture_id"] == facts.third_capture
+    assert capture["list_gaps"] == []
+    assert {key: response[key] for key in _UNRESOLVED_LIST} == _UNRESOLVED_LIST
+    assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
+
+
+def test_endpoint_minimal_error_capture_roundtrip_is_not_a_first_usable_capture(tmp_path) -> None:
+    from model_sentinel.endpoints import build_endpoint_error_summary
+
+    database_path = tmp_path / "error-only.db"
+    build_fixture_db(database_path)
+    store = Store(database_path)
+    scrape_id = store.create_scrape(
+        provider_id=EXAMPLE_PROVIDER.provider_id,
+        started_at="2026-08-20T12:00:00+00:00",
+        completed_at="2026-08-20T12:00:01+00:00",
+        status="success",
+        baseline_mode="previous",
+        baseline_scrape_id=None,
+        saved_snapshot=True,
+        model_count=0,
+        error_message=None,
+    )
+    saved = store.save_endpoint_error_capture(
+        build_endpoint_error_summary(
+            provider_id=EXAMPLE_PROVIDER.provider_id,
+            scrape_id=scrape_id,
+            completed_at="2026-08-20T12:00:02+00:00",
+            error_summary="RuntimeError: synthetic failure",
+        )
+    )
+    assert saved.capture_id is not None
+    db = open_readonly(database_path)
+    try:
+        response = api.endpoints(
+            _context(db), {"provider": EXAMPLE_PROVIDER.provider_id, "model": "fake-org/test-model-a"}
+        )
+        assert queries.first_usable_endpoint_capture_date(
+            db.connection(), provider_id=EXAMPLE_PROVIDER.provider_id
+        ) is None
+    finally:
+        db.close_all()
+    # This model's dossier observation predates the provider's only capture.
+    assert response["reason"] == "not_captured"
+    assert response["first_capture_date"] is None
+
+
+def test_endpoint_busy_reads_raise_database_busy(endpoint_context) -> None:
+    context, facts, database_path = endpoint_context
+    connection = context.db.connection()
+    connection.execute("PRAGMA busy_timeout = 0")
+    writer = sqlite3.connect(database_path, timeout=0)
+    try:
+        writer.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(DatabaseBusyError):
+            api.endpoints(context, {"provider": facts.provider_id, "model": facts.listed_model})
+    finally:
+        writer.rollback()
+        writer.close()
+        connection.execute("PRAGMA busy_timeout = 5000")

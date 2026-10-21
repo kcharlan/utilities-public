@@ -1235,21 +1235,29 @@ def _capture_summary_from_row(connection: sqlite3.Connection, row: sqlite3.Row) 
     )
 
 
-def _load_endpoint_lists(connection: sqlite3.Connection, capture_id: int) -> tuple[EndpointListRecord, ...]:
+def _load_endpoint_lists(
+    connection: sqlite3.Connection,
+    capture_id: int,
+    *,
+    list_path: str | None = None,
+) -> tuple[EndpointListRecord, ...]:
     """Load lists in path order with listed model IDs and response-ordered observations.
 
     Observations have no position column; their insertion order is the
-    response order, read back through `rowid`.
+    response order, read back through `rowid`. `list_path` limits the load to
+    that one list (an empty result when the capture has no such list).
     """
+    path_filter = (list_path, list_path)
     model_ids: dict[str, list[str]] = {}
     for mapping in connection.execute(
         """
         SELECT list_path, provider_model_id
         FROM endpoint_capture_models
         WHERE capture_id = ? AND outcome = 'listed'
+          AND (? IS NULL OR list_path = ?)
         ORDER BY provider_model_id
         """,
-        (capture_id,),
+        (capture_id, *path_filter),
     ):
         model_ids.setdefault(mapping["list_path"], []).append(mapping["provider_model_id"])
     observations: dict[str, list[EndpointObservationRecord]] = {}
@@ -1259,9 +1267,10 @@ def _load_endpoint_lists(connection: sqlite3.Connection, capture_id: int) -> tup
         FROM endpoint_observations o
         JOIN endpoint_states s ON s.state_hash = o.state_hash
         WHERE o.capture_id = ?
+          AND (? IS NULL OR o.list_path = ?)
         ORDER BY o.list_path, o.rowid
         """,
-        (capture_id,),
+        (capture_id, *path_filter),
     ):
         observations.setdefault(observation["list_path"], []).append(
             EndpointObservationRecord(
@@ -1287,9 +1296,10 @@ def _load_endpoint_lists(connection: sqlite3.Connection, capture_id: int) -> tup
             SELECT list_path, list_model_id, outcome, endpoint_count, error_code, error_message
             FROM endpoint_lists
             WHERE capture_id = ?
+              AND (? IS NULL OR list_path = ?)
             ORDER BY list_path
             """,
-            (capture_id,),
+            (capture_id, *path_filter),
         )
     )
 

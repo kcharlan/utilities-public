@@ -31,6 +31,7 @@ from .alias_check import (
     EVENT_ALIAS_MISSING,
     EVENT_LEAVES_UNAVAILABLE,
     EVENT_NOT_ALIAS,
+    LADDER_ENDPOINT,
     LEAF_INCOMPATIBLE,
     LEAF_MISSING,
     LEAF_UNRESOLVED,
@@ -38,6 +39,7 @@ from .alias_check import (
     MATCH_LIST_MISSING,
     MATCH_NO_COMPARABLE_LEAVES,
     MATCH_NOT_CAPTURED,
+    price_ladder,
 )
 from .change_render import (
     RenderedChange,
@@ -81,6 +83,8 @@ from .models import (
     EndpointChangeRecord,
     EndpointListRecord,
     FieldChange,
+    Ladder,
+    LadderMarkInput,
     ProviderScanResult,
 )
 from .provider_profiles import ProviderProfile
@@ -519,6 +523,31 @@ def _strict_change(field_name: str, old: Any, new: Any, profile: ProviderProfile
     return classify_change(FieldChange(field_name, old, new), profile=profile, allow_unmatched_prices=False)
 
 
+def endpoint_change_rendering(change: EndpointChangeRecord, profile: ProviderProfile) -> RenderedChange | None:
+    """The strict classification of one endpoint change, as every view shows it.
+
+    A status change is classified under the profile's status field and any
+    other field change under its own path, with
+    `allow_unmatched_prices=False`. Presence changes and conditional pricing
+    changes (the neutral `Conditional pricing changed` row, whose evidence is
+    the raw parent JSON) have none.
+    """
+    if change.change_kind in (ENDPOINT_ADDED, ENDPOINT_REMOVED):
+        return None
+    if change.change_kind == STATUS_CHANGED:
+        return _strict_change(profile.endpoint_status_field or "status", change.old_value, change.new_value, profile)
+    if change.field_name == PRICING_OVERRIDES_FIELD:
+        return None
+    return _strict_change(change.field_name or "", change.old_value, change.new_value, profile)
+
+
+def endpoint_change_label(change: EndpointChangeRecord, rendered: RenderedChange | None) -> str | None:
+    """The row label of a change given its `endpoint_change_rendering`; None for presence changes."""
+    if change.change_kind == FIELD_CHANGED and change.field_name == PRICING_OVERRIDES_FIELD:
+        return CONDITIONAL_PRICING_ROW_LABEL
+    return rendered.display_label if rendered is not None else None
+
+
 def _strict_leaf(path: str, raw: Any, profile: ProviderProfile) -> PriceLeaf | None:
     if raw is None:
         return None
@@ -564,17 +593,16 @@ def _analyse_list(
     row_order: list[tuple[str, str]] = []
     for change in changes:
         key = change.endpoint_key
+        rendered = endpoint_change_rendering(change, profile)
         if change.change_kind in (ENDPOINT_ADDED, ENDPOINT_REMOVED):
             presence.append(change)
             row_order.append((change.change_kind, key))
-        elif change.change_kind == STATUS_CHANGED:
-            rendered = _strict_change(profile.endpoint_status_field or "status", change.old_value, change.new_value, profile)
-            status.append(EndpointFieldRow(key, rendered.display_label, change, rendered))
-        elif change.change_kind == FIELD_CHANGED and change.field_name == PRICING_OVERRIDES_FIELD:
+        elif rendered is None:
             conditional.append(EndpointFieldRow(key, CONDITIONAL_PRICING_ROW_LABEL, change, None))
+        elif change.change_kind == STATUS_CHANGED:
+            status.append(EndpointFieldRow(key, rendered.display_label, change, rendered))
         else:
             field_name = change.field_name or ""
-            rendered = _strict_change(field_name, change.old_value, change.new_value, profile)
             if _direct_price_path(change.field_name) and rendered.kind == "price":
                 if key not in priced:
                     row_order.append((FIELD_CHANGED, key))
@@ -912,6 +940,131 @@ def endpoint_report(
     )
 
 
+# ---------------------------------------------------------------------------
+# One captured list as it stands, and alias price ladders
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EndpointPriceValue:
+    """One endpoint's strictly resolved price for one column, with its raw value."""
+
+    path: str
+    raw_value: Any
+    display: str
+    unit_label: str
+    comparison_group: str | None
+
+
+@dataclass(frozen=True)
+class EndpointTableRow:
+    """One endpoint of a captured list, in response order.
+
+    `tag`, `name` and `provider_name` are the endpoint's own strings (None
+    when absent or not a string); `status` is its stored status code.
+    `prices` align with the table's columns; None where the endpoint has no
+    resolved price for that column.
+    """
+
+    endpoint_key: str
+    tag: str | None
+    name: str | None
+    provider_name: str | None
+    status: int | None
+    prices: tuple[EndpointPriceValue | None, ...]
+
+
+@dataclass(frozen=True)
+class EndpointPriceTable:
+    """A captured list's endpoints and their resolved price columns.
+
+    Columns are every resolved direct `pricing` leaf of any endpoint, in
+    `pricing_field_sort_key` order; unresolved leaves are left out. The
+    values in one column share one precision. Every value is JSON-safe.
+    """
+
+    columns: tuple[EndpointPriceColumn, ...]
+    rows: tuple[EndpointTableRow, ...]
+
+
+def _optional_string(state: Mapping[str, Any], name: str) -> str | None:
+    value = state.get(name)
+    return value if isinstance(value, str) else None
+
+
+def endpoint_price_table(listing: EndpointListRecord, profile: ProviderProfile) -> EndpointPriceTable:
+    """The endpoint-price table of one captured list (empty for a failed or empty list)."""
+    leaves = [_state_leaves(observation.state, profile) for observation in listing.observations]
+    paths = sorted({path for row in leaves for path in row}, key=lambda path: pricing_field_sort_key(path, profile))
+    columns = tuple(
+        EndpointPriceColumn(
+            path=path,
+            label=_label(path, profile),
+            unit_label=rule.unit_label,
+            comparison_group=rule.comparison_group,
+        )
+        for path in paths
+        for rule in (resolve_price_rule(path, profile),)
+    )
+    cells: list[list[EndpointPriceValue | None]] = [[None] * len(columns) for _ in leaves]
+    for column_index, column in enumerate(columns):
+        present = [(row_index, row[column.path]) for row_index, row in enumerate(leaves) if column.path in row]
+        # `_state_leaves` keeps only resolved leaves, which always carry a price.
+        displays = format_price_values([leaf.price for _, leaf in present], precision_basis=())
+        for (row_index, leaf), display in zip(present, displays):
+            cells[row_index][column_index] = EndpointPriceValue(
+                path=column.path,
+                raw_value=leaf.raw_value,
+                display=display,
+                unit_label=leaf.unit_label or column.unit_label,
+                comparison_group=leaf.comparison_group,
+            )
+    rows = tuple(
+        EndpointTableRow(
+            endpoint_key=observation.endpoint_key,
+            tag=_optional_string(observation.state, "tag"),
+            name=_optional_string(observation.state, "name"),
+            provider_name=_optional_string(observation.state, "provider_name"),
+            status=observation.status_code,
+            prices=tuple(row_cells),
+        )
+        for observation, row_cells in zip(listing.observations, cells)
+    )
+    return EndpointPriceTable(columns=columns, rows=rows)
+
+
+def alias_ladders(
+    leaves: Sequence[AliasLeafComparison],
+    listing: EndpointListRecord | None,
+    profile: ProviderProfile,
+) -> tuple[Ladder, ...]:
+    """A ladder per divergent leaf, when the target's list has endpoints.
+
+    Each ladder places the list's endpoints with the target and alias
+    catalog prices as marks. A ladder on which no endpoint could be placed
+    would only restate the two catalog prices, so it is left out.
+    """
+    if listing is None or not listing.succeeded or not listing.observations:
+        return ()
+    endpoints = [(observation.endpoint_key, observation.state) for observation in listing.observations]
+    ladders = []
+    for leaf in leaves:
+        ladder = price_ladder(
+            endpoints,
+            leaf=leaf.path,
+            marks=(
+                LadderMarkInput("target", leaf.path, leaf.target_raw),
+                LadderMarkInput("alias", leaf.path, leaf.alias_raw),
+            ),
+            profile=profile,
+        )
+        if ladder is not None and any(
+            entry.kind == LADDER_ENDPOINT for position in ladder.positions for entry in position.entries
+        ):
+            ladders.append(ladder)
+    return tuple(ladders)
+
+
 @dataclass(frozen=True)
 class ScanEndpointSections:
     """The alias and endpoint sections of one scan report, per provider."""
@@ -971,7 +1124,7 @@ def _price_evidence_entry(
     }
 
 
-def _change_price_evidence(change: EndpointChangeRecord, profile: ProviderProfile) -> list[dict[str, Any]]:
+def change_price_evidence(change: EndpointChangeRecord, profile: ProviderProfile) -> list[dict[str, Any]]:
     """Normalized display/unit metadata for a change's strictly resolved prices."""
     entries: list[dict[str, Any] | None] = []
     if change.change_kind == FIELD_CHANGED and _direct_price_path(change.field_name):
@@ -1008,7 +1161,7 @@ def endpoint_capture_json(capture: EndpointCaptureSummary, profile: ProviderProf
         if field.name not in ("lists", "changes", "comparison_gaps")
     }
     payload["changes"] = [
-        {**dataclasses.asdict(change), "price_evidence": _change_price_evidence(change, profile)}
+        {**dataclasses.asdict(change), "price_evidence": change_price_evidence(change, profile)}
         for change in capture.changes
     ]
     payload["comparison_gaps"] = [dataclasses.asdict(gap) for gap in capture.comparison_gaps]
