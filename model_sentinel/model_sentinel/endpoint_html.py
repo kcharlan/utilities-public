@@ -25,7 +25,7 @@ from __future__ import annotations
 import html as html_module
 import math
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 from urllib.parse import quote as url_quote
@@ -35,11 +35,6 @@ from .alias_check import (
     ALIAS_EVENT_NEW,
     ALIAS_EVENT_PERSISTING,
     LADDER_ENDPOINT,
-    UNPLACED_INCOMPATIBLE,
-    UNPLACED_INVALID,
-    UNPLACED_MISSING,
-    UNPLACED_NEGATIVE,
-    UNPLACED_ZERO,
 )
 from .change_render import ABSENT_DISPLAY, absent_side_display, resolve_price_rule
 from .endpoint_report import (
@@ -60,6 +55,8 @@ from .endpoint_report import (
     alias_unavailable_leaf_sentence,
     detail_only_lists_phrase,
     endpoint_list_heading,
+    ladder_position_text,
+    ladder_unplaced_text,
     omitted_lists_phrase,
 )
 from .models import Ladder, ProviderScanResult, canonical_json
@@ -252,11 +249,6 @@ _LADDER_AXIS_INSET: Final = 28
 _LADDER_LABEL_GAP: Final = 8
 _LADDER_LABEL_PAD: Final = 4
 
-_UNPLACED_TEXT: Final = {
-    UNPLACED_MISSING: "no {label} price",
-    UNPLACED_INVALID: "not a valid price",
-    UNPLACED_INCOMPATIBLE: "a different unit",
-}
 
 
 @dataclass(frozen=True)
@@ -388,35 +380,6 @@ def _fmt(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
-def _join_words(words: Sequence[str]) -> str:
-    if len(words) <= 2:
-        return " and ".join(words)
-    return ", ".join(words[:-1]) + f" and {words[-1]}"
-
-
-def _position_text(entries: Iterable) -> str:
-    """`endpoints a#0 and b#0; alias price` for one ladder position."""
-    entries = tuple(entries)
-    keys = [entry.label for entry in entries if entry.kind == LADDER_ENDPOINT]
-    parts = []
-    if keys:
-        parts.append(f"{'endpoint' if len(keys) == 1 else 'endpoints'} {_join_words(keys)}")
-    parts.extend(f"{entry.label} price" for entry in entries if entry.kind != LADDER_ENDPOINT)
-    return "; ".join(parts)
-
-
-def _unplaced_text(ladder: Ladder) -> str:
-    items = []
-    for item in ladder.unplaced:
-        if item.reason in (UNPLACED_ZERO, UNPLACED_NEGATIVE) and item.display:
-            detail = item.display
-        else:
-            detail = _UNPLACED_TEXT.get(item.reason, item.reason).format(label=ladder.label)
-        name = item.label if item.kind == LADDER_ENDPOINT else f"{item.label} price"
-        items.append(f"{name} ({detail})")
-    return ", ".join(items)
-
-
 def _ladder_figure(ladder: Ladder, list_display_id: str, ids: _Ids) -> str:
     """The SVG ladder with an accessible title and an equivalent text list."""
     figure_id = ids.next("ladder")
@@ -449,7 +412,7 @@ def _ladder_figure(ladder: Ladder, list_display_id: str, ids: _Ids) -> str:
             )
     for x, index in layout.points:
         position = ladder.positions[index]
-        tooltip = f"{position.display} {ladder.unit_label}: {_position_text(position.entries)}"
+        tooltip = f"{position.display} {ladder.unit_label}: {ladder_position_text(position.entries)}"
         glyphs = []
         if any(entry.kind == LADDER_ENDPOINT for entry in position.entries):
             glyphs.append(f'<circle class="ladder-endpoint" cx="{_fmt(x)}" cy="{_fmt(layout.axis_y)}" r="4"/>')
@@ -488,11 +451,11 @@ def _ladder_figure(ladder: Ladder, list_display_id: str, ids: _Ids) -> str:
     svg.append("</svg>")
 
     items = "".join(
-        f"<li>{_h(position.display)}: {_h(_position_text(position.entries))}</li>"
+        f"<li>{_h(position.display)}: {_h(ladder_position_text(position.entries))}</li>"
         for position in ladder.positions
     )
     unplaced = (
-        f'<p class="ladder-unplaced">Not placed: {_h(_unplaced_text(ladder))}</p>' if ladder.unplaced else ""
+        f'<p class="ladder-unplaced">Not placed: {_h(ladder_unplaced_text(ladder))}</p>' if ladder.unplaced else ""
     )
     return (
         f'<figure class="price-ladder" id="{figure_id}">'

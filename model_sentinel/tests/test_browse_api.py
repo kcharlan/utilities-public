@@ -1514,9 +1514,20 @@ def test_endpoint_reason_states_failed_list(endpoint_context) -> None:
     assert response["list_error"] == {"code": code, "message": message}
     assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
     # The selected baseline's failed observation is a recorded comparison gap.
+    # Each gap carries endpoint_report's description of it.
     assert response["capture"]["list_gaps"] == [
-        {"list_path": facts.failed_path, "reason": "baseline_observation_failed", "from_list_path": facts.failed_path},
-        {"list_path": facts.failed_path, "reason": "current_observation_failed", "from_list_path": facts.failed_path},
+        {
+            "list_path": facts.failed_path,
+            "reason": "baseline_observation_failed",
+            "from_list_path": facts.failed_path,
+            "text": "the baseline list failed to fetch; not compared",
+        },
+        {
+            "list_path": facts.failed_path,
+            "reason": "current_observation_failed",
+            "from_list_path": facts.failed_path,
+            "text": "the current list failed to fetch; not compared",
+        },
     ]
 
 
@@ -1933,3 +1944,87 @@ def test_endpoint_busy_reads_raise_database_busy(endpoint_context) -> None:
         writer.rollback()
         writer.close()
         connection.execute("PRAGMA busy_timeout = 5000")
+
+
+def test_endpoint_evidence_sentences_for_a_compared_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.listed_model)
+    assert response["capture"]["list_gaps"] == []
+    assert response["capture"]["comparison_sentence"] == f"compared with endpoint capture {facts.first_capture}"
+
+
+def test_endpoint_evidence_sentences_for_a_failed_list(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.failed_model)
+    assert response["reason"] == "fetch_error"
+    assert response["capture"]["comparison_state"] == "available"
+    # The capture had a usable baseline, but this list was not compared.
+    assert response["capture"]["comparison_sentence"] == (
+        f"this list failed to fetch, so it was not compared with endpoint capture {facts.first_capture}"
+    )
+
+
+def test_endpoint_evidence_sentences_for_the_minimal_error_capture(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.error_only_model)
+    assert response["reason"] == "capture_error"
+    assert (response["capture"]["paths_attempted"], response["capture"]["list_gaps"]) == (0, [])
+    assert response["capture"]["comparison_sentence"] == (
+        f"no endpoint list was saved for this model, so nothing was compared with endpoint capture {facts.third_capture}"
+    )
+
+
+def test_endpoint_evidence_sentences_for_a_captured_list_with_a_gap(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    response = _endpoints(context, facts, facts.new_path_model)
+    assert (response["captured"], response["reason"], response["list_outcome"]) == (True, None, "ok")
+    assert response["capture"]["list_gaps"] == [
+        {
+            "list_path": facts.new_path_path,
+            "reason": "new_path_unpaired",
+            "from_list_path": None,
+            "text": "new list with no baseline list; not compared",
+        }
+    ]
+    assert response["capture"]["comparison_sentence"] == (
+        f"this list has a comparison gap, so it was not compared with endpoint capture {facts.first_capture}"
+    )
+
+
+def test_endpoint_evidence_sentences_for_missing_and_first_baselines(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    rebased = _endpoints(context, facts, facts.rebased_model)
+    assert rebased["capture"]["comparison_sentence"] == (
+        "the selected catalog baseline has no endpoint capture, so endpoint lists were not compared"
+    )
+    first = _endpoints(context, facts, facts.listed_model, scrape_id=facts.first_scrape)
+    assert first["capture"]["comparison_sentence"] == (
+        "first endpoint capture for this provider; there is no earlier capture to compare with"
+    )
+    assert _endpoints(context, facts, facts.uncaptured_model)["capture"] is None
+
+
+def test_endpoint_evidence_sentences_for_an_alias(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    alias = _endpoints(context, facts, facts.alias_model)["alias"]
+    assert alias["reason_text"] is None
+    assert alias["divergence_sentences"] == [
+        "Input: alias $2.50 /1M tokens (raw 0.0000025) vs target $2.00 /1M tokens (raw 0.000002)"
+    ]
+    assert alias["match_sentence"] == "Endpoint fake-host-2#0 carries the alias's Input and Output prices"
+    assert alias["unavailable_sentences"] == []
+
+    missing = _endpoints(context, facts, facts.missing_alias_model)["alias"]
+    assert missing["reason_text"] == "its alias target is not in the catalog"
+    assert missing["divergence_sentences"] == []
+    assert missing["match_sentence"] == "Endpoint matching unavailable: its alias target is not in the catalog"
+
+
+def test_endpoint_evidence_sentences_for_ladders(endpoint_context) -> None:
+    context, facts, _ = endpoint_context
+    (ladder,) = _endpoints(context, facts, facts.alias_model)["ladders"]
+    assert [position["text"] for position in ladder["positions"]] == [
+        "endpoint fake-host-1#0; target price",
+        "endpoint fake-host-2#0; alias price",
+    ]
+    assert ladder["unplaced_text"] is None

@@ -1185,7 +1185,9 @@ legend,
 .endpoint-state > p { margin: 0; color: var(--ink-strong); font-size: 0.76rem; line-height: 1.45; }
 .endpoint-state.is-failed { border-color: var(--capacity); border-inline-start-width: 3px; }
 .endpoint-failure { margin: 0; padding: 0.5rem 0.6rem; overflow-x: auto; border: 1px solid var(--border); color: var(--ink-strong); background: var(--panel); font-size: 0.68rem; white-space: pre-wrap; }
-.endpoint-gaps { display: grid; gap: 0.2rem; margin: 0; padding-inline-start: 1.1rem; color: var(--ink); font-size: 0.68rem; }
+.endpoint-gaps ul { display: grid; gap: 0.2rem; margin: 0; padding-inline-start: 1.1rem; color: var(--ink); font-size: 0.68rem; }
+/* API evidence sentences are report fragments; capitalize them for display. */
+.endpoint-sentence::first-letter { text-transform: uppercase; }
 .endpoint-retry { display: flex; flex-wrap: wrap; gap: 0.5rem 0.8rem; align-items: center; color: var(--ink-muted); font-size: 0.64rem; }
 .endpoint-retry button { padding: 0.4rem 0.65rem; border: 1px solid var(--accent); color: var(--accent); background: var(--panel); cursor: pointer; font-size: 0.66rem; font-weight: 700; }
 .endpoint-retry button:disabled { cursor: wait; opacity: 0.65; }
@@ -1193,7 +1195,8 @@ legend,
 .endpoint-alias h3 { color: var(--ink-strong); font-family: inherit; font-size: 0.78rem; letter-spacing: 0; text-transform: none; }
 .endpoint-alias p,
 .endpoint-alias li { margin: 0; color: var(--ink); font-size: 0.7rem; line-height: 1.45; }
-.alias-leaves { display: grid; gap: 0.2rem; margin: 0 0 0.45rem; padding-inline-start: 1.1rem; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.alias-leaves,
+.alias-uncompared { display: grid; gap: 0.2rem; margin: 0 0 0.45rem; padding-inline-start: 1.1rem; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .alias-match { margin-block-start: 0.35rem; }
 .endpoint-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
 .endpoint-table th,

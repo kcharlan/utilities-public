@@ -162,6 +162,10 @@ class EndpointFixtureFacts:
     alias_divergent_leaf: str
     alias_matching_keys: tuple[str, ...]
     bulk_change_count: int
+    # Listed in the second and third scrapes only: an `ok` list whose path has
+    # no baseline list, recorded as a `new_path_unpaired` comparison gap.
+    new_path_model: str
+    new_path_path: str
 
 
 def browse_settings() -> SimpleNamespace:
@@ -280,6 +284,8 @@ _EP_BULK = "fake-org/endpoint-bulk"
 _EP_ERROR_ONLY = "fake-org/endpoint-error-only"
 _EP_UNCAPTURED = "fake-org/endpoint-uncaptured"
 _EP_REBASED = "fake-org/endpoint-rebased"
+# Listed from the second scrape on, so its path has no baseline list (a gap).
+_EP_NEW_PATH = "fake-org/endpoint-new-path"
 _EP_BULK_COUNT = 105
 _EP_FAILED_ERROR = ("http_status", "HTTP 503 from the synthetic endpoint host")
 _EP_ERROR_SUMMARY = "RuntimeError: synthetic endpoint capture failure"
@@ -346,6 +352,8 @@ def _ep_catalog(number: int) -> list[dict[str, object]]:
                 _ep_listed(_EP_BULK),
             )
         )
+    if 2 <= number <= 3:
+        models.append(_ep_listed(_EP_NEW_PATH))
     if number <= 4:
         models.append(_ep_listed(_EP_ERROR_ONLY))
     if number <= 5:
@@ -381,6 +389,7 @@ def _ep_lists(number: int) -> dict[str, tuple[dict[str, object], ...]]:
         _ep_path(_EP_ERROR_ONLY): host,
         _ep_path(_EP_UNCAPTURED): host,
         _ep_path(_EP_REBASED): host,
+        _ep_path(_EP_NEW_PATH): host,
     }
 
 
@@ -524,6 +533,8 @@ def _build_endpoint_history(store: Store) -> EndpointFixtureFacts:
         alias_divergent_leaf="pricing.prompt",
         alias_matching_keys=("fake-host-2#0",),
         bulk_change_count=2 * _EP_BULK_COUNT,
+        new_path_model=_EP_NEW_PATH,
+        new_path_path=_ep_path(_EP_NEW_PATH),
     )
 
 

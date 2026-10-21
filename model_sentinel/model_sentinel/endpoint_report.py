@@ -39,6 +39,11 @@ from .alias_check import (
     MATCH_LIST_MISSING,
     MATCH_NO_COMPARABLE_LEAVES,
     MATCH_NOT_CAPTURED,
+    UNPLACED_INCOMPATIBLE,
+    UNPLACED_INVALID,
+    UNPLACED_MISSING,
+    UNPLACED_NEGATIVE,
+    UNPLACED_ZERO,
     price_ladder,
 )
 from .change_render import (
@@ -219,6 +224,14 @@ class ProviderAliasReport:
     events: tuple[AliasEventView, ...]
 
 
+def alias_match_labels(
+    match: AliasEndpointMatch, compared_leaves: Sequence[AliasLeafComparison]
+) -> tuple[str, ...]:
+    """The labels of the leaves `match` compared, in its order."""
+    by_path = {leaf.path: leaf.label for leaf in compared_leaves}
+    return tuple(by_path.get(path, path) for path in match.compared_leaves)
+
+
 def _alias_event_view(
     event: AliasEvent,
     lists: Sequence[EndpointListRecord],
@@ -239,8 +252,7 @@ def _alias_event_view(
         match = None
     labels: tuple[str, ...] = ()
     if match is not None and current is not None:
-        by_path = {leaf.path: leaf.label for leaf in current.compared_leaves}
-        labels = tuple(by_path.get(path, path) for path in match.compared_leaves)
+        labels = alias_match_labels(match, current.compared_leaves)
     target_list = None
     if match is not None and match.list_path is not None:
         target_list = next((item for item in lists if item.list_path == match.list_path), None)
@@ -293,6 +305,11 @@ def alias_event_reason(view: AliasEventView) -> str | None:
     reason = view.event.unavailable_reason
     if reason is None:
         return None
+    return alias_reason_text(reason)
+
+
+def alias_reason_text(reason: str) -> str:
+    """The words for an alias or alias-event `unavailable_reason` code."""
     return _ALIAS_REASON_TEXT.get(reason, reason)
 
 
@@ -302,21 +319,26 @@ def alias_leaf_sentence(leaf: AliasLeafComparison, kind: str, *, raw_first: bool
     Text and Markdown are audit formats and lead with the provider's raw
     value; HTML leads with the normalized figure.
     """
-
-    def side(raw: Any, display: str) -> str:
-        if raw_first:
-            return f"{raw} ({display} {leaf.unit_label})"
-        return f"{display} {leaf.unit_label} (raw {raw})"
-
     if kind == ALIAS_EVENT_RESOLVED:
-        return f"{leaf.label}: alias now matches target at {side(leaf.target_raw, leaf.target_display)}"
-    sentence = (
-        f"{leaf.label}: alias {side(leaf.alias_raw, leaf.alias_display)}"
-        f" vs target {side(leaf.target_raw, leaf.target_display)}"
-    )
+        return f"{leaf.label}: alias now matches target at {_alias_side(leaf, leaf.target_raw, leaf.target_display, raw_first)}"
+    sentence = alias_divergence_sentence(leaf, raw_first=raw_first)
     if kind == ALIAS_EVENT_UNAVAILABLE:
         sentence += " at the baseline"
     return sentence
+
+
+def alias_divergence_sentence(leaf: AliasLeafComparison, *, raw_first: bool) -> str:
+    """`Label: alias <value> vs target <value>` for one compared leaf."""
+    return (
+        f"{leaf.label}: alias {_alias_side(leaf, leaf.alias_raw, leaf.alias_display, raw_first)}"
+        f" vs target {_alias_side(leaf, leaf.target_raw, leaf.target_display, raw_first)}"
+    )
+
+
+def _alias_side(leaf: AliasLeafComparison, raw: Any, display: str, raw_first: bool) -> str:
+    if raw_first:
+        return f"{raw} ({display} {leaf.unit_label})"
+    return f"{display} {leaf.unit_label} (raw {raw})"
 
 
 def alias_match_sentence(view: AliasEventView, quote: Quote = plain_identifier) -> str | None:
@@ -324,14 +346,21 @@ def alias_match_sentence(view: AliasEventView, quote: Quote = plain_identifier) 
 
     It never says that no endpoint matches while any candidate is unknown.
     """
-    match = view.endpoint_match
-    if match is None:
+    if view.endpoint_match is None:
         return None
+    return endpoint_match_sentence(view.endpoint_match, view.match_labels, quote)
+
+
+def endpoint_match_sentence(
+    match: AliasEndpointMatch, labels: Sequence[str], quote: Quote = plain_identifier
+) -> str:
+    """`alias_match_sentence` for one evaluation's match and its leaf labels
+    (`alias_match_labels`)."""
     if match.unavailable_reason is not None:
         reason = _MATCH_REASON_TEXT.get(match.unavailable_reason, match.unavailable_reason)
         return f"Endpoint matching unavailable: {reason}"
-    noun = "price" if len(view.match_labels) == 1 else "prices"
-    prices = f"the alias's {_join_words(view.match_labels)} {noun}"
+    noun = "price" if len(labels) == 1 else "prices"
+    prices = f"the alias's {_join_words(labels)} {noun}"
     parts: list[str] = []
     if match.matching_keys:
         keys = ", ".join(quote(key) for key in match.matching_keys)
@@ -805,19 +834,53 @@ def baseline_comparison_line(capture: EndpointCaptureSummary | None) -> str | No
     if capture is None:
         return None
     if capture.first_capture:
-        return "first endpoint capture for this provider; there is no earlier capture to compare with"
+        return _FIRST_CAPTURE_LINE
     state = capture.comparison_state
     if state == COMPARISON_AVAILABLE:
         if _compared_paths(capture):
             return f"compared with endpoint capture {capture.baseline_capture_id}"
         return f"no current list could be compared with endpoint capture {capture.baseline_capture_id}"
+    return _baseline_unavailable_line(state, capture.baseline_capture_id)
+
+
+def list_comparison_line(
+    *,
+    first_capture: bool,
+    comparison_state: str,
+    baseline_capture_id: int | None,
+    list_succeeded: bool | None,
+    gap_reasons: Sequence[str],
+) -> str:
+    """Whether one model's list was compared with the selected baseline's
+    capture, or why not, on the same terms as `_compared_paths`.
+
+    `list_succeeded` is None when the capture saved no list for the model.
+    """
+    if first_capture:
+        return _FIRST_CAPTURE_LINE
+    if comparison_state != COMPARISON_AVAILABLE:
+        return _baseline_unavailable_line(comparison_state, baseline_capture_id)
+    if list_succeeded is None:
+        return f"no endpoint list was saved for this model, so nothing was compared with endpoint capture {baseline_capture_id}"
+    if not list_succeeded:
+        return f"this list failed to fetch, so it was not compared with endpoint capture {baseline_capture_id}"
+    if gap_reasons:
+        return f"this list has a comparison gap, so it was not compared with endpoint capture {baseline_capture_id}"
+    return f"compared with endpoint capture {baseline_capture_id}"
+
+
+_FIRST_CAPTURE_LINE: Final = "first endpoint capture for this provider; there is no earlier capture to compare with"
+
+
+def _baseline_unavailable_line(state: str, baseline_capture_id: int | None) -> str:
+    """Why no list was compared when the selected baseline allowed no comparison."""
     if state == COMPARISON_NO_SELECTED_BASELINE:
         return "no catalog baseline was selected, so endpoint lists were not compared"
     if state == COMPARISON_MISSING_BASELINE_CAPTURE:
         return "the selected catalog baseline has no endpoint capture, so endpoint lists were not compared"
     if state == COMPARISON_UNUSABLE_BASELINE:
         return (
-            f"the selected baseline's endpoint capture {capture.baseline_capture_id} has no usable lists,"
+            f"the selected baseline's endpoint capture {baseline_capture_id} has no usable lists,"
             " so endpoint lists were not compared"
         )
     return f"endpoint lists were not compared ({state})"
@@ -825,6 +888,37 @@ def baseline_comparison_line(capture: EndpointCaptureSummary | None) -> str | No
 
 def endpoint_gap_description(reason: str) -> str:
     return _GAP_TEXT.get(reason, reason)
+
+
+_UNPLACED_TEXT: Final = {
+    UNPLACED_MISSING: "no {label} price",
+    UNPLACED_INVALID: "not a valid price",
+    UNPLACED_INCOMPATIBLE: "a different unit",
+}
+
+
+def ladder_position_text(entries: Iterable) -> str:
+    """`endpoints a#0 and b#0; alias price` for one ladder position."""
+    entries = tuple(entries)
+    keys = [entry.label for entry in entries if entry.kind == LADDER_ENDPOINT]
+    parts = []
+    if keys:
+        parts.append(f"{'endpoint' if len(keys) == 1 else 'endpoints'} {_join_words(keys)}")
+    parts.extend(f"{entry.label} price" for entry in entries if entry.kind != LADDER_ENDPOINT)
+    return "; ".join(parts)
+
+
+def ladder_unplaced_text(ladder: Ladder) -> str:
+    """The ladder's unplaced values with why, e.g. `alias price (no Input price)`."""
+    items = []
+    for item in ladder.unplaced:
+        if item.reason in (UNPLACED_ZERO, UNPLACED_NEGATIVE) and item.display:
+            detail = item.display
+        else:
+            detail = _UNPLACED_TEXT.get(item.reason, item.reason).format(label=ladder.label)
+        name = item.label if item.kind == LADDER_ENDPOINT else f"{item.label} price"
+        items.append(f"{name} ({detail})")
+    return ", ".join(items)
 
 
 def omitted_lists_phrase(count: int) -> str:

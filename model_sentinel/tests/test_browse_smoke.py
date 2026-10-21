@@ -575,7 +575,7 @@ def test_endpoint_dossier_captured_list_table_changes_and_label_order(
 
     capture = section.locator(".endpoint-capture")
     expect(capture).to_contain_text(f"#{endpoint.third_capture} · partial")
-    expect(capture).to_contain_text(f"Compared with the capture of snapshot #{endpoint.first_scrape}.")
+    expect(_comparison(section)).to_have_text(f"compared with endpoint capture {endpoint.first_capture}")
     expect(capture).to_contain_text(endpoint.listed_path)
 
     # Changes keep the API's order and identity.
@@ -632,7 +632,7 @@ def test_endpoint_dossier_alias_uses_differing_leaf_evidence_and_api_ladders(
         ["Input: alias $2.50 /1M tokens (raw 0.0000025) vs target $2.00 /1M tokens (raw 0.000002)"]
     )
     expect(alias.locator(".alias-match")).to_have_text(
-        "Endpoint fake-host-2#0 carries the alias's Input and Output prices."
+        "Endpoint fake-host-2#0 carries the alias's Input and Output prices"
     )
     expect(section.locator(".endpoint-shared")).to_contain_text(
         f"this model uses {endpoint.listed_model}'s list {endpoint.listed_path}"
@@ -701,14 +701,14 @@ def test_endpoint_dossier_reason_states_are_distinct(endpoint_page: Page, endpoi
     )
     expect(section.locator(".endpoint-state p").first).to_have_text(
         f"{_NOT_CAPTURED} See Endpoint capture in the README: saved scans record endpoint lists"
-        " while MODEL_SENTINEL_ENDPOINT_CAPTURE is on."
+        " for providers whose profile supports it (currently OpenRouter) while MODEL_SENTINEL_ENDPOINT_CAPTURE is on."
     )
 
     # Valid capture with a missing selected-baseline capture is still shown.
     section = open_endpoint_dossier(endpoint_page, endpoint_server, endpoint.rebased_model)
     expect(section.locator("table.endpoint-table tbody tr")).to_have_count(1)
-    expect(section.locator(".endpoint-capture")).to_contain_text(
-        "The selected catalog baseline has no endpoint capture, so endpoint lists were not compared."
+    expect(_comparison(section)).to_have_text(
+        "the selected catalog baseline has no endpoint capture, so endpoint lists were not compared"
     )
 
 
@@ -735,12 +735,12 @@ def test_endpoint_dossier_without_endpoint_tables(browser: Browser, endpoint_ser
                 expect(section.locator(".endpoint-state p").first).to_have_text(
                     "This database was created before endpoint capture and has no endpoint tables."
                     " See Endpoint capture in the README: saved scans record endpoint lists"
-                    " while MODEL_SENTINEL_ENDPOINT_CAPTURE is on."
+                    " for providers whose profile supports it (currently OpenRouter) while MODEL_SENTINEL_ENDPOINT_CAPTURE is on."
                 )
                 # The alias is still compared on the catalog snapshot.
                 expect(section.locator(".endpoint-alias .alias-leaves li")).to_have_count(1)
                 expect(section.locator(".endpoint-alias .alias-match")).to_have_text(
-                    "Endpoint matching unavailable: no endpoint lists were captured in this scan."
+                    "Endpoint matching unavailable: no endpoint lists were captured in this scan"
                 )
         finally:
             context.close()
@@ -756,10 +756,43 @@ def test_endpoint_dossier_failed_list_shows_evidence_and_local_retry(
     code, message = endpoint.failed_error
     expect(state.locator(".endpoint-failure")).to_have_text(f"{code}: {message}")
     expect(state).to_contain_text(endpoint.failed_path)
-    expect(state.locator(".endpoint-gaps li")).to_have_text(
+    expect(section.locator(".endpoint-gaps li")).to_have_text(
         ["the baseline list failed to fetch; not compared", "the current list failed to fetch; not compared"]
     )
+    # The capture had a usable baseline, but this list was never compared.
+    _assert_not_compared(
+        section, f"this list failed to fetch, so it was not compared with endpoint capture {endpoint.first_capture}"
+    )
     _assert_local_retry(endpoint_page, endpoint_server, section)
+
+
+def _comparison(section):
+    return section.locator(".endpoint-capture dd.endpoint-sentence")
+
+
+def _assert_not_compared(section, sentence: str) -> None:
+    comparison = _comparison(section)
+    expect(comparison).to_have_text(sentence)
+    assert not comparison.inner_text().casefold().startswith("compared with")
+
+
+def test_endpoint_dossier_captured_list_renders_its_comparison_gaps(
+    endpoint_page: Page, endpoint_server
+) -> None:
+    _, facts = endpoint_server
+    endpoint = facts.endpoint
+    section = open_endpoint_dossier(endpoint_page, endpoint_server, endpoint.new_path_model)
+    expect(section.locator("table.endpoint-table tbody tr")).to_have_count(1)
+    expect(section.locator(".endpoint-gaps li")).to_have_text(["new list with no baseline list; not compared"])
+    # Displayed as a sentence.
+    assert section.locator(".endpoint-gaps li").inner_text().startswith("New list")
+    _assert_not_compared(
+        section, f"this list has a comparison gap, so it was not compared with endpoint capture {endpoint.first_capture}"
+    )
+
+    # A compared list has no gaps section.
+    section = open_endpoint_dossier(endpoint_page, endpoint_server, endpoint.listed_model)
+    expect(section.locator(".endpoint-gaps")).to_have_count(0)
 
 
 def _assert_local_retry(page: Page, served, section) -> None:
@@ -786,6 +819,10 @@ def test_endpoint_minimal_error_capture_roundtrip_in_browser(
     capture = section.locator(".endpoint-capture")
     expect(capture).to_contain_text(f"#{endpoint.error_capture} · error")
     expect(capture).to_contain_text("0 of 0 paths attempted")
+    _assert_not_compared(
+        section,
+        f"no endpoint list was saved for this model, so nothing was compared with endpoint capture {endpoint.third_capture}",
+    )
     expect(section.locator(".section-heading > span")).to_have_text("capture failed")
     _assert_local_retry(endpoint_page, endpoint_server, section)
 

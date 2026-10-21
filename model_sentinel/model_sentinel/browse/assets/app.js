@@ -1146,27 +1146,10 @@
   }
 
   // Serving endpoints: a view of /api/endpoints for the dossier's exact saved
-  // observation. Every decision (reason, matching, ladder positions, change
-  // order and truncation) is the API's; this code only words and lays it out.
-  const ENDPOINT_CAPTURE_GUIDANCE = "See Endpoint capture in the README: saved scans record endpoint lists while MODEL_SENTINEL_ENDPOINT_CAPTURE is on.";
-  const ENDPOINT_MATCH_REASONS = {
-    no_comparable_leaves: "no price is comparable between the alias and its target",
-    not_captured: "no endpoint lists were captured in this scan",
-    list_missing: "the target has no captured endpoint list",
-    list_failed: "the target's endpoint list failed to fetch",
-    alias_target_missing: "its alias target is not in the catalog",
-    alias_cycle: "its alias chain is a cycle",
-    invalid_link: "its alias declaration is malformed"
-  };
-  const ENDPOINT_GAPS = {
-    baseline_observation_failed: "the baseline list failed to fetch; not compared",
-    current_observation_failed: "the current list failed to fetch; not compared",
-    new_path_unpaired: "new list with no baseline list; not compared",
-    removed_path_unpaired: "list is no longer present; not compared",
-    ambiguous_mapping: "models moved between lists ambiguously; not compared"
-  };
-  const ALIAS_UNCOMPARED = {missing: "missing on one side", unresolved: "no strict price on one side", incompatible: "units differ"};
-  const ENDPOINT_UNPLACED = {missing: "no price", invalid: "not a valid price", incompatible: "a different unit"};
+  // observation. Every decision (reason, comparison, matching, ladder
+  // positions, change order and truncation) and the reports' evidence
+  // sentences come from the API; this code only lays them out.
+  const ENDPOINT_CAPTURE_GUIDANCE = "See Endpoint capture in the README: saved scans record endpoint lists for providers whose profile supports it (currently OpenRouter) while MODEL_SENTINEL_ENDPOINT_CAPTURE is on.";
   const ENDPOINT_HEADER = {
     no_tables: "no endpoint tables", not_captured: "not captured", capture_error: "capture failed", fetch_error: "fetch failed",
     no_link: "no endpoint link", invalid_link: "malformed link", alias_target_missing: "alias target missing", alias_cycle: "alias cycle"
@@ -1176,17 +1159,6 @@
     return words.length <= 2 ? words.join(" and ") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
   }
   function plural(count, noun) { return `${count} ${noun}${count === 1 ? "" : "s"}`; }
-
-  function endpointComparison(capture) {
-    if (capture.first_capture) return "First endpoint capture for this provider; there is no earlier capture to compare with.";
-    switch (capture.comparison_state) {
-      case "available": return capture.baseline_scrape_id == null ? "Compared with the selected baseline's capture." : `Compared with the capture of snapshot #${capture.baseline_scrape_id}.`;
-      case "no_selected_baseline": return "No catalog baseline was selected, so endpoint lists were not compared.";
-      case "missing_baseline_capture": return "The selected catalog baseline has no endpoint capture, so endpoint lists were not compared.";
-      case "unusable_baseline": return "The selected baseline's endpoint capture has no usable lists, so endpoint lists were not compared.";
-      default: return `Endpoint lists were not compared (${capture.comparison_state}).`;
-    }
-  }
 
   function endpointStateText(data) {
     const alias = data.alias;
@@ -1209,7 +1181,7 @@
   }
 
   function CaptureEvidence({capture, listPath}) {
-    return html`<dl class="endpoint-capture"><div><dt>Capture</dt><dd>#${capture.capture_id} · ${capture.status} · completed ${localDay(capture.completed_at)}</dd></div><div><dt>Paths</dt><dd>${capture.paths_attempted} of ${capture.paths_requested} paths attempted · ${capture.paths_failed} failed · ${plural(capture.mapping_failures, "mapping failure")}</dd></div><div><dt>Comparison</dt><dd>${endpointComparison(capture)}</dd></div>${listPath ? html`<div><dt>List</dt><dd><code>${listPath}</code></dd></div>` : null}</dl>`;
+    return html`<dl class="endpoint-capture"><div><dt>Capture</dt><dd>#${capture.capture_id} · ${capture.status} · completed ${localDay(capture.completed_at)}</dd></div><div><dt>Paths</dt><dd>${capture.paths_attempted} of ${capture.paths_requested} paths attempted · ${capture.paths_failed} failed · ${plural(capture.mapping_failures, "mapping failure")}</dd></div><div><dt>Comparison</dt><dd class="endpoint-sentence">${capture.comparison_sentence}</dd></div>${listPath ? html`<div><dt>List</dt><dd><code>${listPath}</code></dd></div>` : null}</dl>`;
   }
 
   function SharedListNote({data}) {
@@ -1221,33 +1193,14 @@
     return html`<p class="endpoint-note endpoint-shared">Shared endpoint list: ${lead}${sharing}. These endpoints belong to the list; this catalog row's price can differ.</p>`;
   }
 
-  function aliasLeafText(leaf) {
-    return `${leaf.label}: alias ${leaf.alias_display} ${leaf.unit_label} (raw ${leaf.alias_raw}) vs target ${leaf.target_display} ${leaf.unit_label} (raw ${leaf.target_raw})`;
-  }
-
-  function aliasMatchText(alias) {
-    const match = alias.endpoint_match;
-    if (!match) return null;
-    if (match.unavailable_reason) return `Endpoint matching unavailable: ${ENDPOINT_MATCH_REASONS[match.unavailable_reason] || match.unavailable_reason}.`;
-    const labels = match.compared_leaves.map(path => (alias.compared_leaves.find(leaf => leaf.path === path) || {label: path}).label);
-    const prices = `the alias's ${joinWords(labels)} ${labels.length === 1 ? "price" : "prices"}`;
-    const parts = [];
-    if (match.matching_keys.length) parts.push(match.matching_keys.length === 1 ? `Endpoint ${match.matching_keys[0]} carries ${prices}` : `Endpoints ${match.matching_keys.join(", ")} carry ${prices}`);
-    else if (!match.unknown_keys.length) parts.push(match.differing_keys.length ? `No endpoint in the target's list carries ${prices}` : "The target's endpoint list is empty");
-    if (match.unknown_keys.length) parts.push(`${plural(match.unknown_keys.length, "endpoint")} ${match.unknown_keys.length === 1 ? "was" : "were"} not checkable on every compared price: ${match.unknown_keys.join(", ")}`);
-    return `${parts.join("; ")}.`;
-  }
-
   function AliasEvidence({alias}) {
     const chained = alias.target_model_id && alias.target_model_id !== alias.alias_target_model_id;
-    const leaves = alias.divergence ? alias.divergence.leaves : [];
-    const match = aliasMatchText(alias);
     return html`<section class="endpoint-alias"><h3>Alias of ${alias.alias_target_model_id}${chained ? `, resolving to ${alias.target_model_id}` : ""}</h3>
-      ${alias.unavailable_reason ? html`<p>Alias prices could not be compared: ${ENDPOINT_MATCH_REASONS[alias.unavailable_reason] || alias.unavailable_reason}.</p>`
-        : leaves.length ? html`<ul class="alias-leaves">${leaves.map(leaf => html`<li key=${leaf.path}>${aliasLeafText(leaf)}</li>`)}</ul>`
+      ${alias.reason_text ? html`<p>Alias prices could not be compared: ${alias.reason_text}.</p>`
+        : alias.divergence_sentences.length ? html`<ul class="alias-leaves">${alias.divergence_sentences.map(sentence => html`<li key=${sentence}>${sentence}</li>`)}</ul>`
         : alias.compared_leaves.length ? html`<p>The alias's ${joinWords(alias.compared_leaves.map(leaf => leaf.label))} prices match its target.</p>` : null}
-      ${alias.unavailable_leaves.length ? html`<p class="endpoint-note">Not compared: ${alias.unavailable_leaves.map(leaf => `${leaf.label} (${ALIAS_UNCOMPARED[leaf.reason] || leaf.reason})`).join(", ")}.</p>` : null}
-      ${match && !alias.unavailable_reason ? html`<p class="alias-match">${match}</p>` : null}
+      ${alias.unavailable_sentences.length ? html`<ul class="alias-uncompared">${alias.unavailable_sentences.map(sentence => html`<li key=${sentence}>${sentence}</li>`)}</ul>` : null}
+      ${!alias.reason_text ? html`<p class="alias-match">${alias.match_sentence}</p>` : null}
     </section>`;
   }
 
@@ -1261,18 +1214,11 @@
     return html`<div class="table-wrap"><table class="endpoint-table"><thead><tr><th scope="col">Endpoint</th><th scope="col">Status</th>${table.columns.map(column => html`<th scope="col" key=${column.path}>${column.label}<small>${column.unit_label}</small></th>`)}${match ? html`<th scope="col">Alias prices</th>` : null}</tr></thead><tbody>${table.rows.map(row => html`<tr key=${row.endpoint_key}><th scope="row"><span>${row.provider_name || row.name || row.tag || row.endpoint_key}</span><small>${row.endpoint_key}</small></th><td>${row.status == null ? "—" : String(row.status)}</td>${row.prices.map((price, index) => html`<td key=${table.columns[index].path} title=${price ? `raw ${price.raw_value}` : "no price"}>${price ? price.display : "—"}</td>`)}${match ? html`<td class="alias-tag">${aliasTag(match, row.endpoint_key)}</td>` : null}</tr>`)}</tbody></table></div>`;
   }
 
-  function ladderEntryText(entries) {
-    const keys = entries.filter(entry => entry.kind === "endpoint").map(entry => entry.label);
-    const parts = keys.length ? [`${keys.length === 1 ? "endpoint" : "endpoints"} ${joinWords(keys)}`] : [];
-    return [...parts, ...entries.filter(entry => entry.kind !== "endpoint").map(entry => `${entry.label} price`)].join("; ");
-  }
-
   function PriceLadder({ladder}) {
-    const unplaced = ladder.unplaced.map(item => `${item.kind === "endpoint" ? item.label : `${item.label} price`} (${item.display || ENDPOINT_UNPLACED[item.reason] || item.reason})`);
     return html`<figure class="endpoint-ladder"><figcaption><strong>${ladder.label}</strong><span>${ladder.unit_label} · log scale · low ${ladder.domain_min_display} · high ${ladder.domain_max_display}</span></figcaption>
-      <div class="ladder-track" aria-hidden="true"><div class="ladder-axis">${ladder.positions.map(position => html`<span key=${position.exact_value} class="ladder-point" style=${`left: ${position.position * 100}%`} title=${`${position.display} ${ladder.unit_label}: ${ladderEntryText(position.entries)}`}>${position.entries.some(entry => entry.kind === "endpoint") ? html`<i class="ladder-endpoint"></i>` : null}${position.entries.filter(entry => entry.kind !== "endpoint").map(entry => html`<i key=${entry.label} class=${`ladder-mark ladder-mark-${entry.label}`}></i>`)}</span>`)}</div></div>
-      <ol class="ladder-text">${ladder.positions.map(position => html`<li key=${position.exact_value}>${position.display}: ${ladderEntryText(position.entries)}</li>`)}</ol>
-      ${unplaced.length ? html`<p class="endpoint-note">Not placed: ${unplaced.join(", ")}</p>` : null}
+      <div class="ladder-track" aria-hidden="true"><div class="ladder-axis">${ladder.positions.map(position => html`<span key=${position.exact_value} class="ladder-point" style=${`left: ${position.position * 100}%`} title=${`${position.display} ${ladder.unit_label}: ${position.text}`}>${position.entries.some(entry => entry.kind === "endpoint") ? html`<i class="ladder-endpoint"></i>` : null}${position.entries.filter(entry => entry.kind !== "endpoint").map(entry => html`<i key=${entry.label} class=${`ladder-mark ladder-mark-${entry.label}`}></i>`)}</span>`)}</div></div>
+      <ol class="ladder-text">${ladder.positions.map(position => html`<li key=${position.exact_value}>${position.display}: ${position.text}</li>`)}</ol>
+      ${ladder.unplaced_text ? html`<p class="endpoint-note">Not placed: ${ladder.unplaced_text}</p>` : null}
     </figure>`;
   }
 
@@ -1303,13 +1249,15 @@
   function EndpointState({data, reload, loading}) {
     const failed = data.reason === "fetch_error" || data.reason === "capture_error";
     const failure = data.reason === "fetch_error" ? data.list_error && `${data.list_error.code}: ${data.list_error.message}` : data.capture && data.capture.error_summary;
-    const gaps = data.capture ? data.capture.list_gaps : [];
     return html`<div class=${`endpoint-state${failed ? " is-failed" : ""}`}><p>${endpointStateText(data)}</p>
       ${failed && failure ? html`<pre class="endpoint-failure">${failure}</pre>` : null}
       ${data.reason === "fetch_error" && data.list_path ? html`<p class="endpoint-note">List <code>${data.list_path}</code></p>` : null}
-      ${gaps.length ? html`<ul class="endpoint-gaps">${gaps.map((gap, index) => html`<li key=${`${gap.reason}-${index}`}>${ENDPOINT_GAPS[gap.reason] || gap.reason}</li>`)}</ul>` : null}
       ${failed ? html`<div class="endpoint-retry"><button type="button" disabled=${loading} onClick=${reload}>${loading ? "Re-reading…" : "Re-read saved capture"}</button><span>Re-reading asks this local history browser again; it does not contact the provider.</span></div>` : null}
     </div>`;
+  }
+
+  function ListGaps({gaps}) {
+    return gaps.length ? html`<section class="endpoint-gaps"><h3>Comparison gaps</h3><ul>${gaps.map((gap, index) => html`<li key=${`${gap.reason}-${index}`} class="endpoint-sentence">${gap.text}</li>`)}</ul></section>` : null;
   }
 
   function EndpointBody({data, reload, loading}) {
@@ -1322,6 +1270,7 @@
       ${data.alias ? html`<${AliasEvidence} alias=${data.alias} />` : null}
       ${data.endpoints.rows.length ? html`<${EndpointTable} table=${data.endpoints} match=${tableMatch} />` : null}
       ${data.ladders.length ? html`<div class="endpoint-ladders">${data.ladders.map(ladder => html`<${PriceLadder} key=${ladder.leaf} ladder=${ladder} />`)}</div>` : null}
+      ${data.capture ? html`<${ListGaps} gaps=${data.capture.list_gaps} />` : null}
       ${data.captured ? html`<${EndpointChanges} data=${data} />` : null}
       ${data.capture ? html`<${CaptureEvidence} capture=${data.capture} listPath=${data.captured ? data.list_path : null} />` : null}
     </div>`;

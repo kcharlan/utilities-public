@@ -31,14 +31,23 @@ from ..endpoints import (
     alias_declaration,
 )
 from ..endpoint_report import (
+    alias_divergence_sentence,
     alias_ladders,
+    alias_match_labels,
+    alias_reason_text,
+    alias_unavailable_leaf_sentence,
     change_price_evidence,
     endpoint_change_label,
     endpoint_change_rendering,
+    endpoint_gap_description,
     endpoint_label_profile,
+    endpoint_match_sentence,
     endpoint_price_table,
+    ladder_position_text,
+    ladder_unplaced_text,
+    list_comparison_line,
 )
-from ..models import AliasEvaluation, EndpointChangeRecord, EndpointListRecord
+from ..models import AliasEvaluation, EndpointChangeRecord, EndpointListRecord, Ladder
 from ..provider_profiles import ProviderProfile
 from . import queries
 from .json_values import json_scrape, rendered_change_to_json
@@ -69,7 +78,40 @@ def endpoint_response(
 
     `scrape` is a `model_presence`/`model_observation` scrape summary already
     validated as a saved observation of this model.
+
+    Evidence is also worded here, by `endpoint_report`'s functions, so the
+    page shows the reports' sentences rather than re-deriving them:
+    `capture.comparison_sentence` (whether this model's list was compared),
+    each list gap's `text`, the alias's `reason_text`,
+    `divergence_sentences`, `match_sentence` and `unavailable_sentences`, and
+    each ladder's `unplaced_text` and position `text`.
     """
+    response = _endpoint_projection(
+        connection, provider_id=provider_id, model_id=model_id, scrape=scrape, profile=profile
+    )
+    capture = response["capture"]
+    if capture is not None:
+        for gap in capture["list_gaps"]:
+            gap["text"] = endpoint_gap_description(gap["reason"])
+        succeeded = True if response["captured"] else False if response["reason"] == REASON_FETCH_ERROR else None
+        capture["comparison_sentence"] = list_comparison_line(
+            first_capture=bool(capture["first_capture"]),
+            comparison_state=capture["comparison_state"],
+            baseline_capture_id=capture["baseline_capture_id"],
+            list_succeeded=succeeded,
+            gap_reasons=[gap["reason"] for gap in capture["list_gaps"]],
+        )
+    return response
+
+
+def _endpoint_projection(
+    connection: sqlite3.Connection,
+    *,
+    provider_id: str,
+    model_id: str,
+    scrape: Mapping[str, Any],
+    profile: ProviderProfile,
+) -> dict[str, Any]:
     scrape_id = int(scrape["scrape_id"])
     tables = queries.endpoint_tables_present(connection)
     capture = queries.endpoint_capture_for_scrape(connection, scrape_id=scrape_id) if tables else None
@@ -99,7 +141,7 @@ def endpoint_response(
 
     evaluation, lists = _alias_evaluation(connection, provider_id, model_id, scrape_id, capture, profile)
     if evaluation is not None:
-        response["alias"] = _plain_asdict(evaluation)
+        response["alias"] = _alias_json(evaluation)
     if not tables:
         response["reason"] = REASON_NO_TABLES
         return response
@@ -156,8 +198,7 @@ def endpoint_response(
         target_path = evaluation.endpoint_match.list_path
         target_list = next((item for item in lists if item.list_path == target_path), None)
         response["ladders"] = [
-            _plain_asdict(ladder)
-            for ladder in alias_ladders(evaluation.divergence.leaves, target_list, profile)
+            _ladder_json(ladder) for ladder in alias_ladders(evaluation.divergence.leaves, target_list, profile)
         ]
 
     limit = DOSSIER_ENDPOINT_CHANGE_LIMIT
@@ -212,6 +253,30 @@ def _alias_evaluation(
         None,
     )
     return evaluation, lists
+
+
+def _alias_json(evaluation: AliasEvaluation) -> dict[str, Any]:
+    match = evaluation.endpoint_match
+    return {
+        **_plain_asdict(evaluation),
+        "reason_text": (
+            alias_reason_text(evaluation.unavailable_reason) if evaluation.unavailable_reason is not None else None
+        ),
+        "divergence_sentences": [
+            alias_divergence_sentence(leaf, raw_first=False)
+            for leaf in (evaluation.divergence.leaves if evaluation.divergence is not None else ())
+        ],
+        "match_sentence": endpoint_match_sentence(match, alias_match_labels(match, evaluation.compared_leaves)),
+        "unavailable_sentences": [alias_unavailable_leaf_sentence(leaf) for leaf in evaluation.unavailable_leaves],
+    }
+
+
+def _ladder_json(ladder: Ladder) -> dict[str, Any]:
+    payload = _plain_asdict(ladder)
+    for position, record in zip(payload["positions"], ladder.positions):
+        position["text"] = ladder_position_text(record.entries)
+    payload["unplaced_text"] = ladder_unplaced_text(ladder) if ladder.unplaced else None
+    return payload
 
 
 def _change_json(row: Mapping[str, Any], listing: EndpointListRecord, profile: ProviderProfile) -> dict[str, Any]:
