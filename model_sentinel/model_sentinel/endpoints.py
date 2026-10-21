@@ -17,12 +17,12 @@ import hashlib
 import json
 import string
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, Final, Literal, NamedTuple, TypeAlias
 from urllib.parse import urlsplit
 
-from .change_render import resolve_price_value
+from .change_render import ResolvedPriceValue, resolve_price_value
 from .diffing import diff_values
 from .models import (
     EndpointCaptureCandidate,
@@ -217,7 +217,54 @@ def build_endpoint_mappings(
         model.provider_model_id: _classify_link(model.metadata(), path_prefix)
         for model in models.values()
     }
-    return tuple(_resolve_mapping(model_id, links) for model_id in sorted(links))
+    alias_targets = {model_id: target for model_id, (_, _, target) in links.items()}
+    return tuple(
+        _resolve_mapping(model_id, links, alias_targets) for model_id in sorted(links)
+    )
+
+
+def alias_declaration(metadata: Mapping[str, Any]) -> tuple[bool, str | None]:
+    """Return (whether the model declares an alias, its direct target ID).
+
+    A non-null `alias_target` declares an alias. Its target is the nonempty
+    string `slug`; any other shape is a malformed declaration with no target.
+    """
+    alias = metadata.get("alias_target")
+    if alias is None:
+        return False, None
+    slug = alias.get("slug") if isinstance(alias, Mapping) else None
+    return True, slug if isinstance(slug, str) and slug else None
+
+
+def resolve_alias_chain(
+    alias_model_id: str,
+    alias_targets: Mapping[str, str | None],
+) -> tuple[str | None, str | None]:
+    """Follow an alias chain by exact catalog model ID with a visited set.
+
+    `alias_targets` maps every catalog model ID to its direct alias target, or
+    None for a model with no followable target (not an alias, or a malformed
+    declaration). Returns (terminal model ID, None), where the terminal is the
+    first model on the chain without a followable target, or (None, error) with
+    `alias_target_missing` for an ID outside the catalog or `alias_cycle` for a
+    revisited ID, including an alias that targets itself. Link validity plays
+    no part; callers judge the terminal model. Raises ValueError when
+    `alias_model_id` has no followable target.
+    """
+    current = alias_targets.get(alias_model_id)
+    if current is None:
+        raise ValueError("alias chain must start at a model with an alias target")
+    visited = {alias_model_id}
+    while True:
+        if current not in alias_targets:
+            return None, ALIAS_TARGET_MISSING
+        if current in visited:
+            return None, ALIAS_CYCLE
+        visited.add(current)
+        following = alias_targets[current]
+        if following is None:
+            return current, None
+        current = following
 
 
 def planned_endpoint_paths(mappings: Sequence[EndpointMapping]) -> tuple[str, ...]:
@@ -233,11 +280,10 @@ def planned_endpoint_paths(mappings: Sequence[EndpointMapping]) -> tuple[str, ..
 
 def _classify_link(metadata: Mapping[str, Any], path_prefix: str) -> tuple[str, str | None, str | None]:
     """Return (outcome, own list path, direct alias target) for one model."""
-    alias = metadata.get("alias_target")
-    if alias is not None:
-        slug = alias.get("slug") if isinstance(alias, Mapping) else None
-        if isinstance(slug, str) and slug:
-            return MAPPING_ALIAS, None, slug
+    declares_alias, target = alias_declaration(metadata)
+    if declares_alias:
+        if target is not None:
+            return MAPPING_ALIAS, None, target
         return MAPPING_INVALID_LINK, None, None
     links = metadata.get("links")
     if links is None:
@@ -256,29 +302,20 @@ def _classify_link(metadata: Mapping[str, Any], path_prefix: str) -> tuple[str, 
 def _resolve_mapping(
     model_id: str,
     links: Mapping[str, tuple[str, str | None, str | None]],
+    alias_targets: Mapping[str, str | None],
 ) -> EndpointMapping:
     outcome, list_path, target = links[model_id]
     if outcome == MAPPING_LISTED:
         return EndpointMapping(model_id, outcome, list_path, None, None, None)
     if outcome != MAPPING_ALIAS:
         return EndpointMapping(model_id, outcome, None, None, None, outcome)
-    visited = {model_id}
-    current = target
-    while True:
-        if current not in links:
-            error_code = ALIAS_TARGET_MISSING
-            break
-        if current in visited:
-            error_code = ALIAS_CYCLE
-            break
-        visited.add(current)
-        next_outcome, next_path, next_target = links[current]
-        if next_outcome == MAPPING_LISTED:
-            return EndpointMapping(model_id, MAPPING_ALIAS, next_path, target, current, None)
-        if next_outcome != MAPPING_ALIAS:
-            error_code = next_outcome
-            break
-        current = next_target
+    terminal, error_code = resolve_alias_chain(model_id, alias_targets)
+    if terminal is not None:
+        terminal_outcome, terminal_path, _ = links[terminal]
+        if terminal_outcome == MAPPING_LISTED:
+            return EndpointMapping(model_id, MAPPING_ALIAS, terminal_path, target, terminal, None)
+        # A terminal model without a usable link passes its own reason through.
+        error_code = terminal_outcome
     return EndpointMapping(model_id, MAPPING_ALIAS, None, target, None, error_code)
 
 
@@ -447,9 +484,10 @@ class PriceLeaf:
     """One direct scalar child of an endpoint's `pricing` object.
 
     `resolved` is True only when the profile gives the leaf a strict price
-    identity; only then are `normalized_exact_value`, `unit_label` and
-    `comparison_group` set. Unresolved leaves stay visible for matching but must
-    not enter price arithmetic.
+    identity; only then are `normalized_exact_value`, `unit_label`,
+    `comparison_group` and `price` set. Unresolved leaves stay visible for
+    matching but must not enter price arithmetic. `price` is the full resolved
+    value, which `format_price_values` formats; it takes no part in equality.
     """
 
     path: str
@@ -458,6 +496,23 @@ class PriceLeaf:
     normalized_exact_value: Fraction | None = None
     unit_label: str | None = None
     comparison_group: str | None = None
+    price: ResolvedPriceValue | None = field(default=None, compare=False, repr=False)
+
+
+def resolve_price_leaf(path: str, raw_value: Any, profile: ProviderProfile) -> PriceLeaf:
+    """Resolve one scalar price value at `path` through the strict contract."""
+    resolved = resolve_price_value(path, raw_value, profile)
+    if resolved is None:
+        return PriceLeaf(path=path, raw_value=raw_value, resolved=False)
+    return PriceLeaf(
+        path=path,
+        raw_value=raw_value,
+        resolved=True,
+        normalized_exact_value=resolved.normalized_exact_value,
+        unit_label=resolved.price_rule.unit_label,
+        comparison_group=resolved.price_rule.comparison_group,
+        price=resolved,
+    )
 
 
 def resolved_price_leaves(
@@ -473,27 +528,11 @@ def resolved_price_leaves(
     pricing = metadata.get("pricing")
     if not isinstance(pricing, Mapping):
         return ()
-    leaves: list[PriceLeaf] = []
-    for name in sorted(pricing, key=str):
-        value = pricing[name]
-        if isinstance(value, (Mapping, list, tuple)):
-            continue
-        path = f"pricing.{name}"
-        resolved = resolve_price_value(path, value, profile)
-        if resolved is None:
-            leaves.append(PriceLeaf(path=path, raw_value=value, resolved=False))
-            continue
-        leaves.append(
-            PriceLeaf(
-                path=path,
-                raw_value=value,
-                resolved=True,
-                normalized_exact_value=resolved.normalized_exact_value,
-                unit_label=resolved.price_rule.unit_label,
-                comparison_group=resolved.price_rule.comparison_group,
-            )
-        )
-    return tuple(leaves)
+    return tuple(
+        resolve_price_leaf(f"pricing.{name}", pricing[name], profile)
+        for name in sorted(pricing, key=str)
+        if not isinstance(pricing[name], (Mapping, list, tuple))
+    )
 
 
 def aggregate_capture_status(

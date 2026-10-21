@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 from .provider_profiles import ProviderProfile
 
@@ -318,3 +318,220 @@ class EndpointCaptureCandidate:
     summary: EndpointCaptureSummary
     mappings: tuple[EndpointMapping, ...]
     archive: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class AliasLeafComparison:
+    """One price leaf an alias and its target both resolve to one identity.
+
+    Both sides resolve strictly with the same `unit_label` and
+    `comparison_group`. Values are kept JSON-safe: `*_raw` are the provider
+    spellings, `*_exact` the exact normalized values as reduced fraction
+    strings (for example `"3"` or `"1/2"`), and `*_display` the normalized
+    prices formatted together at one shared precision. `equal` compares the
+    exact values.
+    """
+
+    path: str
+    label: str
+    unit_label: str
+    comparison_group: str | None
+    alias_raw: Any
+    target_raw: Any
+    alias_exact: str
+    target_exact: str
+    alias_display: str
+    target_display: str
+    equal: bool
+
+
+@dataclass(frozen=True)
+class AliasUnavailableLeaf:
+    """A catalog price leaf that is outside an alias's comparison set.
+
+    `alias_state` and `target_state` are each `resolved`, `unresolved`, or
+    `missing`. `reason` is `missing` when either side lacks the leaf,
+    `unresolved` when either side has no strict price identity, and
+    `incompatible` when both resolve with different unit or comparison-group
+    identities. Raw values are None for a missing side; unit and group are set
+    only for a resolved side.
+    """
+
+    path: str
+    label: str
+    reason: str
+    alias_state: str
+    target_state: str
+    alias_raw: Any
+    target_raw: Any
+    alias_unit_label: str | None
+    target_unit_label: str | None
+    alias_comparison_group: str | None
+    target_comparison_group: str | None
+
+
+@dataclass(frozen=True)
+class AliasDivergence:
+    """The compared leaves where an alias's price differs from its target's."""
+
+    target_model_id: str
+    leaves: tuple[AliasLeafComparison, ...]
+
+    @property
+    def signature(self) -> tuple[str, tuple[tuple[str, str, str, str, str | None], ...]]:
+        """The semantic identity of this divergence.
+
+        It is the target ID plus, for each differing leaf sorted by path, the
+        exact normalized alias and target values with their unit and group.
+        Raw spelling and endpoint-match evidence play no part.
+        """
+        return (
+            self.target_model_id,
+            tuple(
+                sorted(
+                    (
+                        leaf.path,
+                        leaf.alias_exact,
+                        leaf.target_exact,
+                        leaf.unit_label,
+                        leaf.comparison_group,
+                    )
+                    for leaf in self.leaves
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class AliasEndpointMatch:
+    """Which endpoints of an alias's target list carry the alias's prices.
+
+    Each candidate is judged on the fixed `compared_leaves` paths: one proven
+    unequal leaf puts its key in `differing_keys`; otherwise it is in
+    `matching_keys` only when every leaf is resolved, compatible and equal, and
+    in `unknown_keys` when any is missing, unresolved or incompatible. Keys
+    keep list order. A match is a claim about the named leaves only.
+    `unavailable_reason` is None when the list was evaluated (a successful
+    empty list has no candidates); `list_path` and `list_outcome` describe the
+    list used, when one was found.
+    """
+
+    compared_leaves: tuple[str, ...]
+    matching_keys: tuple[str, ...]
+    differing_keys: tuple[str, ...]
+    unknown_keys: tuple[str, ...]
+    unavailable_reason: str | None
+    list_path: str | None
+    list_outcome: str | None
+
+
+@dataclass(frozen=True)
+class AliasEvaluation:
+    """One catalog alias compared with the model its alias chain resolves to.
+
+    `alias_target_model_id` is the direct target (None for a malformed
+    declaration) and `target_model_id` the terminal catalog model of the
+    chain, or None with `unavailable_reason` set when the chain is unresolved.
+    `compared_leaves` is the fixed comparison set in profile price order;
+    `unavailable_leaves` keeps the other catalog leaves as evidence.
+    `divergence` is set when any compared leaf differs.
+    """
+
+    alias_model_id: str
+    alias_target_model_id: str | None
+    target_model_id: str | None
+    unavailable_reason: str | None
+    compared_leaves: tuple[AliasLeafComparison, ...]
+    unavailable_leaves: tuple[AliasUnavailableLeaf, ...]
+    divergence: AliasDivergence | None
+    endpoint_match: AliasEndpointMatch
+
+
+@dataclass(frozen=True)
+class AliasEvent:
+    """How one alias's divergence moved between the baseline and current catalog.
+
+    `kind` is `new`, `changed`, `persisting`, `resolved`, or `unavailable`.
+    `current` and `baseline` are the evaluations on each side, None where the
+    alias was not evaluated there. `leaves` are the leaves the event is about:
+    the current divergent leaves for `new`, `changed` and `persisting`, the
+    current (now equal) comparisons of the previously divergent leaves for
+    `resolved`, and the baseline divergent leaves for `unavailable`, whose
+    `unavailable_reason` says why the current catalog cannot show them.
+    """
+
+    kind: str
+    alias_model_id: str
+    current: AliasEvaluation | None
+    baseline: AliasEvaluation | None
+    unavailable_reason: str | None
+    leaves: tuple[AliasLeafComparison, ...]
+
+
+class LadderMarkInput(NamedTuple):
+    """A labelled reference price (such as a catalog alias or target price)."""
+
+    label: str
+    field_path: str
+    raw_value: Any
+
+
+@dataclass(frozen=True)
+class LadderEntry:
+    """One endpoint (`kind="endpoint"`, `label` its key) or mark at a position."""
+
+    kind: str
+    label: str
+    raw_value: Any
+
+
+@dataclass(frozen=True)
+class LadderPosition:
+    """All entries with one exact normalized value, placed on the ladder.
+
+    `position` is in [0, 1], linear in log10 of the value across the domain.
+    `exact_value` is the reduced fraction string, `normalized_value` its float
+    projection and `display` the formatted price. Entries list endpoints in
+    input order, then marks in input order.
+    """
+
+    position: float
+    exact_value: str
+    normalized_value: float
+    display: str
+    entries: tuple[LadderEntry, ...]
+
+
+@dataclass(frozen=True)
+class LadderUnplaced:
+    """A value that cannot be placed, with why.
+
+    `reason` is `zero`, `negative`, `missing`, `invalid`, or `incompatible`.
+    `display` is the formatted price for `zero` and `negative`, else None.
+    """
+
+    kind: str
+    label: str
+    raw_value: Any
+    reason: str
+    display: str | None
+
+
+@dataclass(frozen=True)
+class Ladder:
+    """The shared log-scale projection of one price leaf across endpoints.
+
+    Consumers render `positions` as given and never recompute the scale. The
+    domain spans the smallest and largest placed values, endpoint or mark.
+    """
+
+    leaf: str
+    label: str
+    unit_label: str
+    comparison_group: str | None
+    domain_min_exact: str
+    domain_max_exact: str
+    domain_min_display: str
+    domain_max_display: str
+    positions: tuple[LadderPosition, ...]
+    unplaced: tuple[LadderUnplaced, ...]

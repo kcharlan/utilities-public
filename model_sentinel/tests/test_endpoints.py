@@ -393,3 +393,22 @@ def test_endpoint_price_leaf_namespace() -> None:
     # The generic profile has no declared price fields, so nothing resolves.
     generic = resolved_price_leaves({"pricing": {"prompt": "0.1"}}, GENERIC_PROFILE)
     assert [(leaf.path, leaf.resolved) for leaf in generic] == [("pricing.prompt", False)]
+
+
+def test_endpoint_price_leaf_namespace_single_leaf_keeps_resolved_price() -> None:
+    leaf = endpoints.resolve_price_leaf("pricing.prompt", "0.000003", OPENROUTER_PROFILE)
+    assert (leaf.resolved, leaf.normalized_exact_value, leaf.unit_label) == (
+        True,
+        Fraction(3),
+        "/1M tokens",
+    )
+    assert leaf.price is not None
+    assert leaf.price.normalized_exact_value == Fraction(3)
+    # The full resolved value takes no part in equality.
+    assert leaf == endpoints.PriceLeaf(
+        "pricing.prompt", "0.000003", True, Fraction(3), "/1M tokens", "usd_per_million_tokens"
+    )
+    unresolved = endpoints.resolve_price_leaf("pricing.mystery_unit", "0.5", OPENROUTER_PROFILE)
+    assert (unresolved.resolved, unresolved.price) == (False, None)
+    collected = resolved_price_leaves({"pricing": {"prompt": "0.000003"}}, OPENROUTER_PROFILE)
+    assert collected[0].price is not None

@@ -872,3 +872,24 @@ def test_endpoint_anonymous_headers_default_transport_uses_endpoint_opener(monke
     ]
     assert result.paths[0].outcome == "empty"
     assert result.started_at.endswith("+00:00")
+
+
+def test_endpoint_mapping_outcomes_alias_chain_ignores_link_validity() -> None:
+    assert endpoints.alias_declaration({"id": "fake-org/m"}) == (False, None)
+    assert endpoints.alias_declaration({"alias_target": None}) == (False, None)
+    assert endpoints.alias_declaration({"alias_target": {"slug": "fake-org/t"}}) == (True, "fake-org/t")
+    assert endpoints.alias_declaration({"alias_target": {"slug": ""}}) == (True, None)
+    assert endpoints.alias_declaration({"alias_target": "fake-org/t"}) == (True, None)
+    targets = {
+        "fake-org/a": "fake-org/b",
+        "fake-org/b": "fake-org/c",
+        # The terminal needs no usable link to end the chain.
+        "fake-org/c": None,
+        "fake-org/loop": "fake-org/loop",
+        "fake-org/lost": "fake-org/nowhere",
+    }
+    assert endpoints.resolve_alias_chain("fake-org/a", targets) == ("fake-org/c", None)
+    assert endpoints.resolve_alias_chain("fake-org/loop", targets) == (None, "alias_cycle")
+    assert endpoints.resolve_alias_chain("fake-org/lost", targets) == (None, "alias_target_missing")
+    with pytest.raises(ValueError):
+        endpoints.resolve_alias_chain("fake-org/c", targets)
