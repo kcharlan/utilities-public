@@ -438,7 +438,10 @@ def test_catalog_snapshot_compare_changed_only_presets_and_sticky_column(page: P
 
     page.get_by_role("button", name="Pricing", exact=True).click()
     expect(page).to_have_url(re.compile(r"cols=.*input_price"))
-    page.get_by_role("button", name="All", exact=True).last.click()
+    # The preset replaces the table with a loading state until its catalog
+    # request answers; measuring before then can catch the old table detaching.
+    with page.expect_response(lambda response: "/api/catalog?" in response.url):
+        page.get_by_role("button", name="All", exact=True).last.click()
     table_wrap = page.locator(".catalog-table-wrap")
     first_model = page.locator('.catalog-table tbody th[scope="row"]').first
     value_cell = page.locator(".catalog-table tbody td").first
