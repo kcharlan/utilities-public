@@ -4423,10 +4423,6 @@ def _render_scan_markdown(
 _SECTION_RULE = "-" * 60
 
 
-def _markdown_identifier(value: str) -> str:
-    return f"`{value}`"
-
-
 def _capitalized(text: str) -> str:
     return text[:1].upper() + text[1:]
 
@@ -4496,7 +4492,7 @@ def _endpoint_row_texts(
 
 
 def _endpoint_report_lines(report: ProviderEndpointReport, *, markdown: bool) -> list[str]:
-    quote = _markdown_identifier if markdown else plain_identifier
+    quote = _markdown_code_span if markdown else plain_identifier
     bullet, sub, subsub = ("- ", "  - ", "    - ") if markdown else ("  ", "    ", "      ")
     lines = [f"{bullet}{'Capture' if markdown else 'capture'}: {report.capture_line}"]
     labelled = (
@@ -4575,8 +4571,8 @@ def _endpoint_sections_markdown(sections: ScanEndpointSections) -> list[str]:
         for report in sections.alias_reports:
             lines.extend([f"### {report.provider_label} (`{report.provider_id}`)", ""])
             for view in report.events:
-                lines.append(f"- {_alias_event_title_line(view, _markdown_identifier)}")
-                lines.extend(f"  - {line}" for line in _alias_event_detail_lines(view, _markdown_identifier))
+                lines.append(f"- {_alias_event_title_line(view, _markdown_code_span)}")
+                lines.extend(f"  - {line}" for line in _alias_event_detail_lines(view, _markdown_code_span))
             lines.append("")
     if sections.endpoint_reports:
         lines.extend(["## Provider endpoints", ""])

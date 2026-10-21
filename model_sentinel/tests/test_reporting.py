@@ -6822,16 +6822,29 @@ def test_endpoint_disclosure_summary_and_detail_markdown() -> None:
         "- Baseline: compared with endpoint capture 1",
         "- Summary: 1 list with price changes; 1 endpoint added; 1 endpoint removed;"
         " 1 conditional pricing change; 1 status change",
-        f"- List `{_EP_TARGET}` — models: `{_EP_TARGET}`",
+        f"- List ` {_EP_TARGET} ` — models: ` {_EP_TARGET} `",
     ]
     assert (
-        "  - `host-a#0`: ` Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%) `"
+        "  - ` host-a#0 `: ` Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%) `"
         in default.splitlines()
     )
     assert "Context length" not in default
     full = _ep_section(_ep_report(_ep_result(_three_list_capture()), "markdown", "all"), "Provider endpoints")
     assert "Context length: " in full and "(model)" not in full
     assert '    - Old: ` [{"min_prompt_tokens":200000,"prompt":"0.000002"}] `' in full.splitlines()
+
+
+def test_endpoint_disclosure_markdown_identifiers_are_safe_code_spans() -> None:
+    """Provider identifiers can contain backticks; Markdown quotes them with a
+    longer delimiter instead of letting them close the span."""
+    odd = "fake-org/odd`model"
+    baseline = (_ep_list(odd, _ep_obs("host", _ep_state("host", prompt="0.000001"))),)
+    current = (_ep_list(odd, _ep_obs("host", _ep_state("host", prompt="0.000002"))),)
+    section = _ep_section(
+        _ep_report(_ep_result(_ep_capture(baseline, current)), "markdown"), "Provider endpoints"
+    ).splitlines()
+    assert f"- List `` {odd} `` — models: `` {odd} ``" in section
+    assert any(line.startswith("  - ` host#0 `: ") for line in section)
 
 
 def test_endpoint_disclosure_summary_and_detail_squelched_omits_sections() -> None:
@@ -7146,7 +7159,7 @@ def test_alias_leaf_presentation_markdown() -> None:
         "",
         "### OpenRouter (`openrouter`)",
         "",
-        f"- New alias price divergence: `{_EP_ALIAS}` → `{_EP_TARGET}`",
+        f"- New alias price divergence: ` {_EP_ALIAS} ` → ` {_EP_TARGET} `",
         "  - Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens)",
     ]
 
