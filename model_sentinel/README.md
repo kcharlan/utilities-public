@@ -234,6 +234,16 @@ redirects, and never retry with credentials. This is a local policy choice;
 Model Sentinel does not assume the provider guarantees anonymous access, and an
 authentication failure appears as a failed path.
 
+Each capture is saved in the runtime database with the catalog scrape it belongs
+to: one row per catalog model mapping, one per endpoint-list path with its
+outcome and sanitized error, each endpoint's stable state (stored once and
+shared by identical endpoints), and a gzip archive of the decoded response
+bodies. A capture is compared only with the capture of the scan's selected
+catalog baseline, never with a newer or last-good capture. Lists that cannot be
+compared (a failed fetch on either side, a newly appearing or disappearing
+path, or a split, merge or partial move of models between paths) are recorded
+as comparison gaps rather than treated as empty lists.
+
 Endpoint failures never change the catalog result, the notification decision,
 or the scan exit status. To turn capture off, set
 `MODEL_SENTINEL_ENDPOINT_CAPTURE=false` in `~/.model_sentinel/settings.env`.
@@ -472,7 +482,8 @@ offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.
 
 `browse` requires readable `providers.env` and `settings.env` files plus an
-existing database containing at least the Model Sentinel schema. Run
+existing database containing at least the Model Sentinel schema; a database
+created before endpoint capture, without its tables, is accepted. Run
 `./setup.sh` if the config files are absent and `./model-sentinel scan --save`
 to create the first saved snapshot. Provider credentials and network access
 are not required to browse saved history.

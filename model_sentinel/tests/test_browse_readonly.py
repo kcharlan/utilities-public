@@ -208,3 +208,63 @@ def test_query_sweep_does_not_change_fixture_bytes(tmp_path: Path) -> None:
         connection.execute(f"SELECT * FROM {table}").fetchall()
     database.close_all()
     assert hashlib.sha256(database_path.read_bytes()).digest() == before
+
+
+_LEGACY_TABLES_DDL = (
+    "CREATE TABLE providers (provider_id TEXT PRIMARY KEY, label TEXT NOT NULL, kind TEXT NOT NULL, "
+    "base_url TEXT NOT NULL, models_path TEXT NOT NULL, credential_env_var TEXT NOT NULL, "
+    "enabled INTEGER NOT NULL, updated_at TEXT NOT NULL)",
+    "CREATE TABLE scrapes (scrape_id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, "
+    "started_at TEXT NOT NULL, completed_at TEXT NOT NULL, status TEXT NOT NULL, baseline_mode TEXT, "
+    "baseline_scrape_id INTEGER, saved_snapshot INTEGER NOT NULL, model_count INTEGER NOT NULL DEFAULT 0, "
+    "error_message TEXT)",
+    "CREATE TABLE snapshot_models (scrape_id INTEGER NOT NULL, provider_id TEXT NOT NULL, "
+    "provider_model_id TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT, model_family TEXT, "
+    "created_at_provider TEXT, context_window INTEGER, max_output_tokens INTEGER, input_price REAL, "
+    "output_price REAL, cache_read_price REAL, cache_write_price REAL, reasoning_supported INTEGER, "
+    "tool_calling_supported INTEGER, vision_supported INTEGER, audio_supported INTEGER, "
+    "image_supported INTEGER, structured_output_supported INTEGER, deprecated INTEGER, status TEXT, "
+    "metadata_json TEXT NOT NULL, PRIMARY KEY (scrape_id, provider_model_id))",
+    "CREATE TABLE field_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, "
+    "from_scrape_id INTEGER, to_scrape_id INTEGER NOT NULL, provider_model_id TEXT NOT NULL, "
+    "change_kind TEXT NOT NULL, field_name TEXT, old_value_json TEXT, new_value_json TEXT, "
+    "detected_at TEXT NOT NULL)",
+)
+
+
+def test_endpoint_tables_optional_for_legacy_database(tmp_path: Path) -> None:
+    from model_sentinel.storage import Store
+
+    required_tables = {table for table, _ in readonly._REQUIRED_SCHEMA}
+    assert not any(table.startswith("endpoint_") for table in required_tables)
+
+    legacy_path = tmp_path / "legacy.db"
+    with sqlite3.connect(legacy_path) as connection:
+        for statement in _LEGACY_TABLES_DDL:
+            connection.execute(statement)
+    database = open_readonly(legacy_path)
+    try:
+        tables = {
+            row[0]
+            for row in database.connection().execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not any(name.startswith("endpoint_") for name in tables)
+    finally:
+        database.close_all()
+
+    current_path = tmp_path / "current.db"
+    Store(current_path).initialize()
+    database = open_readonly(current_path)
+    try:
+        ensure_schema(database.connection())
+        tables = {
+            row[0]
+            for row in database.connection().execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "endpoint_captures" in tables
+    finally:
+        database.close_all()

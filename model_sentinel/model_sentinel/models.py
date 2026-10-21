@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -188,3 +189,129 @@ class EndpointFetchResult:
     paths_failed: int
     mapping_failures: int
     bodies: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class EndpointObservationRecord:
+    """One endpoint in a saved list: its key, stable state and status.
+
+    `state` is the decoded stable state (telemetry and status removed) and
+    `state_hash` its SHA-256 identity. `status_code` is the endpoint's status
+    when it is an integer, else None.
+    """
+
+    endpoint_key: str
+    state_hash: str
+    state: dict[str, Any]
+    status_code: int | None
+
+
+@dataclass(frozen=True)
+class EndpointListRecord:
+    """One endpoint-list path in a capture, with its outcome and observations.
+
+    `model_ids` are the catalog models whose `listed` mapping is this path,
+    sorted. `list_model_id` is the response `data.id` when supplied.
+    `error_code` and `error_message` are set only for an `error` outcome.
+    `observations` keep response order and are empty for an error.
+    """
+
+    list_path: str
+    list_model_id: str | None
+    outcome: str
+    endpoint_count: int
+    error_code: str | None
+    error_message: str | None
+    model_ids: tuple[str, ...]
+    observations: tuple[EndpointObservationRecord, ...]
+
+    @property
+    def display_id(self) -> str:
+        """The response model ID, or the path when the response did not supply one."""
+        return self.list_model_id or self.list_path
+
+    @property
+    def succeeded(self) -> bool:
+        """True for an `ok` or `empty` observation, which is evidence of the list."""
+        return self.outcome in ("ok", "empty")
+
+
+@dataclass(frozen=True)
+class EndpointChangeRecord:
+    """One endpoint change between the selected baseline capture and this one.
+
+    The comparison identity is (`from_capture_id`, `to_capture_id`,
+    `from_list_path`, `list_path`, `endpoint_key`, `change_kind`,
+    `field_name`). `from_list_path` equals `list_path` for a shared path and
+    preserves the old path for a moved one. `to_capture_id` is None until the
+    capture is persisted. `display_id` and `model_ids` describe the current
+    list; values are decoded.
+    """
+
+    from_capture_id: int
+    to_capture_id: int | None
+    from_list_path: str
+    list_path: str
+    endpoint_key: str
+    change_kind: str
+    field_name: str | None
+    old_value: Any
+    new_value: Any
+    display_id: str
+    model_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EndpointComparisonGap:
+    """A list whose comparison could not be made, and why.
+
+    `list_path` is the current path, or the baseline path for a path that
+    disappeared. `from_list_path` is the baseline path involved, when one is.
+    """
+
+    list_path: str
+    reason: str
+    from_list_path: str | None
+
+
+@dataclass(frozen=True)
+class EndpointCaptureSummary:
+    """One provider's endpoint capture, in memory or as persisted.
+
+    Identity and status fields mirror `endpoint_captures`. `capture_id` is
+    None before persistence or when persistence failed, and `first_capture` is
+    None until persistence assigns it. `persistence_error` is set only on an
+    in-memory summary that could not be saved.
+    """
+
+    capture_id: int | None
+    scrape_id: int
+    provider_id: str
+    started_at: str
+    completed_at: str
+    status: str
+    paths_requested: int
+    paths_attempted: int
+    paths_failed: int
+    mapping_failures: int
+    first_capture: bool | None
+    comparison_state: str
+    baseline_capture_id: int | None
+    error_summary: str | None
+    persistence_error: str | None = None
+    changes: tuple[EndpointChangeRecord, ...] = ()
+    comparison_gaps: tuple[EndpointComparisonGap, ...] = ()
+    lists: tuple[EndpointListRecord, ...] = ()
+
+
+@dataclass(frozen=True)
+class EndpointCaptureCandidate:
+    """Everything `Store.save_endpoint_capture` writes for one capture.
+
+    `summary` is the in-memory summary; `mappings` are the capture's catalog
+    mapping records; `archive` holds the decoded response bodies keyed by path.
+    """
+
+    summary: EndpointCaptureSummary
+    mappings: tuple[EndpointMapping, ...]
+    archive: Mapping[str, Any]

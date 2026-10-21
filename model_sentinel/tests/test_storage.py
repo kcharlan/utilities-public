@@ -1,6 +1,9 @@
+import gzip
 import json
 import os
-from dataclasses import FrozenInstanceError
+import sqlite3
+from contextlib import closing
+from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -10,7 +13,21 @@ from typing import Any
 import pytest
 
 from model_sentinel.config import ProviderConfig
-from model_sentinel.models import FieldChange, ModelDelta, NormalizedModel, canonical_json
+from model_sentinel.endpoints import (
+    ENDPOINT_ERROR_MESSAGE_LIMIT,
+    build_endpoint_capture,
+    build_endpoint_error_summary,
+    endpoint_state,
+)
+from model_sentinel.models import (
+    EndpointFetchResult,
+    EndpointMapping,
+    EndpointPathResult,
+    FieldChange,
+    ModelDelta,
+    NormalizedModel,
+    canonical_json,
+)
 from model_sentinel import storage
 from model_sentinel.storage import Store
 from model_sentinel.time_utils import local_date_for
@@ -1595,3 +1612,1258 @@ def test_comparison_events_preserve_subsecond_chronology(tmp_path: Path) -> None
         "2026-08-20T12:00:00.100000+00:00",
         "2026-08-20T12:00:00.900000+00:00",
     )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint capture storage and comparison. Every fixture is invented: the
+# provider, model IDs, hosts and prices are synthetic.
+# ---------------------------------------------------------------------------
+
+# Literal `SCHEMA` from the migration-fixture revision
+# d40cf3c063a2f7e13448eae412f0753371f6a68e (model_sentinel/model_sentinel/storage.py),
+# extracted with `git show`. It is embedded, not imported, so the test does not
+# depend on the implementation under test.
+LEGACY_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS providers (
+        provider_id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        models_path TEXT NOT NULL,
+        credential_env_var TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scrapes (
+        scrape_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        baseline_mode TEXT,
+        baseline_scrape_id INTEGER,
+        saved_snapshot INTEGER NOT NULL,
+        model_count INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS snapshot_models (
+        scrape_id INTEGER NOT NULL,
+        provider_id TEXT NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT,
+        model_family TEXT,
+        created_at_provider TEXT,
+        context_window INTEGER,
+        max_output_tokens INTEGER,
+        input_price REAL,
+        output_price REAL,
+        cache_read_price REAL,
+        cache_write_price REAL,
+        reasoning_supported INTEGER,
+        tool_calling_supported INTEGER,
+        vision_supported INTEGER,
+        audio_supported INTEGER,
+        image_supported INTEGER,
+        structured_output_supported INTEGER,
+        deprecated INTEGER,
+        status TEXT,
+        metadata_json TEXT NOT NULL,
+        PRIMARY KEY (scrape_id, provider_model_id),
+        FOREIGN KEY (scrape_id) REFERENCES scrapes(scrape_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS field_changes (
+        change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        from_scrape_id INTEGER,
+        to_scrape_id INTEGER NOT NULL,
+        provider_model_id TEXT NOT NULL,
+        change_kind TEXT NOT NULL,
+        field_name TEXT,
+        old_value_json TEXT,
+        new_value_json TEXT,
+        detected_at TEXT NOT NULL
+    )
+    """,
+)
+
+_ENDPOINT_TABLES = (
+    "endpoint_captures",
+    "endpoint_lists",
+    "endpoint_capture_models",
+    "endpoint_states",
+    "endpoint_observations",
+    "endpoint_changes",
+    "endpoint_comparison_gaps",
+    "endpoint_capture_archives",
+)
+_FAKE_PROVIDER = "fake-router"
+_OTHER_PROVIDER = "fake-router-two"
+
+
+def _endpoint_path(slug: str) -> str:
+    return f"/api/v1/models/{slug}/endpoints"
+
+
+def _fake_endpoint(
+    tag: str,
+    *,
+    prompt: str = "0.000001",
+    status: Any = 0,
+    uptime: float = 99.0,
+    **extra: Any,
+) -> dict[str, Any]:
+    endpoint: dict[str, Any] = {
+        "name": f"Fake Host {tag}",
+        "tag": tag,
+        "provider_name": f"Fake Host {tag}",
+        "context_length": 8000,
+        "pricing": {"prompt": prompt, "completion": "0.000002"},
+        "status": status,
+        "uptime_last_30m": uptime,
+    }
+    endpoint.update(extra)
+    return endpoint
+
+
+def _fake_fetch(
+    *,
+    lists: dict[str, Any],
+    listed: dict[str, str],
+    other_mappings: tuple[Any, ...] = (),
+    list_ids: dict[str, str | None] | None = None,
+    provider_id: str = _FAKE_PROVIDER,
+    completed_at: str = "2026-09-01T12:00:05+00:00",
+    error_messages: dict[str, str] | None = None,
+):
+    """Build an invented `EndpointFetchResult`.
+
+    `lists` maps a path to a list of endpoint objects (ok/empty) or to an error
+    code string. `listed` maps catalog model IDs to their listed path.
+    """
+
+    list_ids = list_ids or {}
+    error_messages = error_messages or {}
+    mappings = [
+        EndpointMapping(model_id, "listed", path, None, None, None)
+        for model_id, path in listed.items()
+    ]
+    mappings.extend(other_mappings)
+    paths = []
+    bodies: dict[str, Any] = {}
+    for path in sorted(lists):
+        value = lists[path]
+        if isinstance(value, str):
+            paths.append(
+                EndpointPathResult(
+                    path, None, "error", (), value, error_messages.get(path, "HTTP 503"), None
+                )
+            )
+            continue
+        list_id = list_ids.get(path, path.split("/")[4] + "/" + path.split("/")[5])
+        endpoints = tuple(value)
+        paths.append(
+            EndpointPathResult(
+                path, list_id, "ok" if endpoints else "empty", endpoints, None, None, None
+            )
+        )
+        bodies[path] = {"data": {"id": list_id, "endpoints": list(endpoints)}}
+    failed = sum(1 for path in paths if path.outcome == "error")
+    return EndpointFetchResult(
+        provider_id=provider_id,
+        started_at="2026-09-01T12:00:00+00:00",
+        completed_at=completed_at,
+        mappings=tuple(sorted(mappings, key=lambda mapping: mapping.provider_model_id)),
+        paths=tuple(paths),
+        paths_requested=len(paths),
+        paths_attempted=len(paths),
+        paths_failed=failed,
+        mapping_failures=sum(1 for mapping in mappings if mapping.is_failure),
+        bodies=bodies,
+    )
+
+
+def _endpoint_store(tmp_path: Path, name: str = "endpoints.db") -> Store:
+    store = Store(tmp_path / name)
+    store.initialize()
+    return store
+
+
+def _saved_scrape(
+    store: Store,
+    *,
+    provider_id: str = _FAKE_PROVIDER,
+    baseline_scrape_id: int | None = None,
+    status: str = "success",
+    saved: bool = True,
+    minute: int = 0,
+) -> int:
+    return store.create_scrape(
+        provider_id=provider_id,
+        started_at=f"2026-09-01T12:{minute:02d}:00+00:00",
+        completed_at=f"2026-09-01T12:{minute:02d}:01+00:00",
+        status=status,
+        baseline_mode="previous",
+        baseline_scrape_id=baseline_scrape_id,
+        saved_snapshot=saved,
+        model_count=1,
+        error_message=None,
+    )
+
+
+def _capture(
+    store: Store,
+    fetch,
+    *,
+    scrape_id: int,
+    baseline_scrape_id: int | None = None,
+):
+
+    baseline_capture = (
+        store.get_endpoint_capture_for_scrape(baseline_scrape_id)
+        if baseline_scrape_id is not None
+        else None
+    )
+    candidate = build_endpoint_capture(
+        fetch,
+        profile=OPENROUTER_PROFILE,
+        scrape_id=scrape_id,
+        baseline_scrape_id=baseline_scrape_id,
+        baseline_capture=baseline_capture,
+    )
+    return store.save_endpoint_capture(candidate)
+
+
+def _scan_with_capture(
+    store: Store,
+    fetch,
+    *,
+    baseline_scrape_id: int | None = None,
+    provider_id: str = _FAKE_PROVIDER,
+    minute: int = 0,
+):
+    scrape_id = _saved_scrape(
+        store, provider_id=provider_id, baseline_scrape_id=baseline_scrape_id, minute=minute
+    )
+    return scrape_id, _capture(
+        store, fetch, scrape_id=scrape_id, baseline_scrape_id=baseline_scrape_id
+    )
+
+
+def _table_counts(store: Store) -> dict[str, int]:
+    with store._connect() as connection:
+        return {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in _ENDPOINT_TABLES
+        }
+
+
+def _gap_tuples(summary) -> tuple[tuple[str, str, str | None], ...]:
+    return tuple((gap.list_path, gap.reason, gap.from_list_path) for gap in summary.comparison_gaps)
+
+
+def _change_tuples(summary) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (
+            change.from_list_path,
+            change.list_path,
+            change.endpoint_key,
+            change.change_kind,
+            change.field_name,
+            change.old_value,
+            change.new_value,
+        )
+        for change in summary.changes
+    )
+
+
+def _legacy_snapshot(path: Path) -> dict[str, Any]:
+
+    with sqlite3.connect(path) as connection:
+        tables = ("providers", "scrapes", "snapshot_models", "field_changes")
+        return {
+            "sql": connection.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE tbl_name IN (?, ?, ?, ?) ORDER BY name",
+                tables,
+            ).fetchall(),
+            **{
+                table: connection.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                for table in tables
+            },
+        }
+
+
+def test_endpoint_legacy_schema_preservation(tmp_path: Path) -> None:
+
+    assert storage.SCHEMA[: len(LEGACY_SCHEMA)] == LEGACY_SCHEMA
+    added = storage.SCHEMA[len(LEGACY_SCHEMA) :]
+    assert len(added) == len(_ENDPOINT_TABLES) + 1
+    for statement in added:
+        assert statement.count("CREATE ") == 1
+
+    database_path = tmp_path / "legacy.db"
+    with sqlite3.connect(database_path) as connection:
+        for statement in LEGACY_SCHEMA:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO providers VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-fake",
+                "Legacy Fake",
+                "generic",
+                "https://legacy-fake.invalid",
+                "/models",
+                "FAKE_LEGACY_TOKEN",
+                1,
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        for scrape_id, minute in ((1, 0), (2, 5)):
+            connection.execute(
+                "INSERT INTO scrapes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scrape_id,
+                    "legacy-fake",
+                    f"2026-01-01T00:0{minute}:00+00:00",
+                    f"2026-01-01T00:0{minute}:30+00:00",
+                    "success",
+                    "previous",
+                    scrape_id - 1 or None,
+                    1,
+                    1,
+                    None,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO snapshot_models (scrape_id, provider_id, provider_model_id, "
+                "display_name, input_price, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    scrape_id,
+                    "legacy-fake",
+                    "fake-org/legacy-model",
+                    "Legacy Model",
+                    1.5 * scrape_id,
+                    canonical_json({"id": "fake-org/legacy-model", "scrape": scrape_id}),
+                ),
+            )
+        connection.execute(
+            "INSERT INTO field_changes (provider_id, from_scrape_id, to_scrape_id, "
+            "provider_model_id, change_kind, field_name, old_value_json, new_value_json, "
+            "detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-fake",
+                1,
+                2,
+                "fake-org/legacy-model",
+                "field_changed",
+                "input_price",
+                "1.5",
+                "3.0",
+                "2026-01-01T00:05:30+00:00",
+            ),
+        )
+    before = _legacy_snapshot(database_path)
+
+    store = Store(database_path)
+    store.initialize()
+    store.initialize()
+
+    assert _legacy_snapshot(database_path) == before
+    with sqlite3.connect(database_path) as connection:
+        names = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')")
+        }
+    assert set(_ENDPOINT_TABLES) <= names
+    assert "idx_endpoint_changes_provider_list_capture" in names
+    assert store.get_latest_saved_baseline("legacy-fake").scrape_id == 2
+    assert store.load_saved_models(2)["fake-org/legacy-model"].input_price == 3.0
+    assert store.get_latest_endpoint_capture("legacy-fake") is None
+    assert store.get_endpoint_capture_for_scrape(2) is None
+
+
+def test_endpoint_transaction_rollback_including_changes(tmp_path: Path, monkeypatch) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    baseline_scrape, _ = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path}),
+    )
+    before = _table_counts(store)
+    current = _fake_fetch(
+        lists={path: [_fake_endpoint("host-a", prompt="0.000003"), _fake_endpoint("host-b")]},
+        listed={"fake-org/test-model-a": path},
+    )
+    scrape_id = _saved_scrape(store, baseline_scrape_id=baseline_scrape, minute=1)
+
+    real_write_changes = storage._write_endpoint_changes
+    written: list[int] = []
+
+    def write_then_fail(connection, **kwargs):
+        real_write_changes(connection, **kwargs)
+        written.append(
+            connection.execute("SELECT COUNT(*) FROM endpoint_changes").fetchone()[0]
+        )
+        raise RuntimeError("injected change-write failure")
+
+    monkeypatch.setattr(storage, "_write_endpoint_changes", write_then_fail)
+    with pytest.raises(RuntimeError, match="injected change-write failure"):
+        _capture(store, current, scrape_id=scrape_id, baseline_scrape_id=baseline_scrape)
+
+    # The helper wrote change rows on the shared connection, and they vanished
+    # with the rest of the capture: nothing was committed independently.
+    assert written and written[0] > 0
+    assert _table_counts(store) == before
+    assert store.get_endpoint_capture_for_scrape(scrape_id) is None
+
+    monkeypatch.setattr(storage, "_write_endpoint_changes", real_write_changes)
+    persisted = _capture(store, current, scrape_id=scrape_id, baseline_scrape_id=baseline_scrape)
+    assert {change.change_kind for change in persisted.changes} == {"field_changed", "endpoint_added"}
+    assert _table_counts(store)["endpoint_changes"] == len(persisted.changes)
+
+
+def test_endpoint_transaction_rollback_including_changes_on_late_constraint(tmp_path: Path) -> None:
+
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    scrape_id = _saved_scrape(store)
+    candidate = build_endpoint_capture(
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path}),
+        profile=OPENROUTER_PROFILE,
+        scrape_id=scrape_id,
+        baseline_scrape_id=None,
+        baseline_capture=None,
+    )
+    # A duplicated list path violates the endpoint_lists primary key after the
+    # capture row and mappings were already written in the same transaction.
+    broken = replace(
+        candidate, summary=replace(candidate.summary, lists=candidate.summary.lists * 2)
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_endpoint_capture(broken)
+    assert set(_table_counts(store).values()) == {0}
+
+
+def test_endpoint_state_deduplication(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path_a = _endpoint_path("fake-org/test-model-a")
+    path_b = _endpoint_path("fake-org/test-model-b")
+    listed = {"fake-org/test-model-a": path_a, "fake-org/test-model-b": path_b}
+    # Same stable state on both lists; telemetry and status differ and must not
+    # create a second state row.
+    first = _fake_fetch(
+        lists={
+            path_a: [_fake_endpoint("host-a", uptime=99.0, status=0)],
+            path_b: [_fake_endpoint("host-a", uptime=42.0, status=-1)],
+        },
+        listed=listed,
+    )
+    scrape_1, capture_1 = _scan_with_capture(store, first)
+    assert _table_counts(store)["endpoint_states"] == 1
+    assert _table_counts(store)["endpoint_observations"] == 2
+    hashes = {obs.state_hash for listing in capture_1.lists for obs in listing.observations}
+    assert len(hashes) == 1
+    assert [obs.status_code for listing in capture_1.lists for obs in listing.observations] == [0, -1]
+
+    scrape_2, capture_2 = _scan_with_capture(
+        store, first, baseline_scrape_id=scrape_1, minute=1
+    )
+    assert _table_counts(store)["endpoint_states"] == 1
+    assert _table_counts(store)["endpoint_observations"] == 4
+    assert capture_2.changes == ()
+
+    changed = _fake_fetch(
+        lists={
+            path_a: [_fake_endpoint("host-a", prompt="0.000005")],
+            path_b: [_fake_endpoint("host-a", status=-1)],
+        },
+        listed=listed,
+    )
+    _, capture_3 = _scan_with_capture(store, changed, baseline_scrape_id=scrape_2, minute=2)
+    assert _table_counts(store)["endpoint_states"] == 2
+    with store._connect() as connection:
+        rows = connection.execute("SELECT state_hash, state_json FROM endpoint_states").fetchall()
+    for row in rows:
+        state = json.loads(row["state_json"])
+        assert "status" not in state and "uptime_last_30m" not in state
+        assert row["state_json"] == canonical_json(state)
+    assert _change_tuples(capture_3) == (
+        (path_a, path_a, "host-a#0", "field_changed", "pricing.prompt", "0.000001", "0.000005"),
+    )
+
+
+def test_endpoint_state_deduplication_non_integer_status_is_not_stored(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    listed = {"fake-org/test-model-a": path}
+    fetch = _fake_fetch(
+        lists={
+            path: [
+                _fake_endpoint("host-a", status="degraded"),
+                _fake_endpoint("host-b", status=True),
+                _fake_endpoint("host-c", status=None),
+            ]
+        },
+        listed=listed,
+    )
+    scrape_1, capture_1 = _scan_with_capture(store, fetch)
+    assert [obs.status_code for obs in capture_1.lists[0].observations] == [None, None, None]
+    with store._connect() as connection:
+        stored = connection.execute(
+            "SELECT status_code FROM endpoint_observations ORDER BY rowid"
+        ).fetchall()
+    assert [row[0] for row in stored] == [None, None, None]
+    # The in-memory current side uses the same normalization, so repeating the
+    # fetch produces no spurious status change.
+    _, capture_2 = _scan_with_capture(store, fetch, baseline_scrape_id=scrape_1, minute=1)
+    assert capture_2.changes == ()
+
+
+def test_endpoint_selected_baseline_gaps_no_selected_baseline(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    _, summary = _scan_with_capture(
+        store, _fake_fetch(lists={path: "http_status"}, listed={"fake-org/test-model-a": path})
+    )
+    assert summary.comparison_state == "no_selected_baseline"
+    assert summary.baseline_capture_id is None
+    assert summary.changes == () and summary.comparison_gaps == ()
+
+
+def test_endpoint_selected_baseline_gaps_missing_baseline_capture(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    baseline_scrape = _saved_scrape(store)
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path}),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    assert summary.comparison_state == "missing_baseline_capture"
+    assert summary.baseline_capture_id is None
+    assert summary.changes == () and summary.comparison_gaps == ()
+
+
+def test_endpoint_selected_baseline_gaps_unusable_baseline(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    listed = {"fake-org/test-model-a": path}
+    baseline_scrape = _saved_scrape(store)
+    error_capture = store.save_endpoint_error_capture(
+        build_endpoint_error_summary(
+            provider_id=_FAKE_PROVIDER,
+            scrape_id=baseline_scrape,
+            completed_at="2026-09-01T12:00:02+00:00",
+            error_summary="endpoint capture failed: RuntimeError",
+        )
+    )
+    assert error_capture.persistence_error is None and error_capture.status == "error"
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    assert summary.comparison_state == "unusable_baseline"
+    assert summary.baseline_capture_id == error_capture.capture_id
+    assert summary.changes == () and summary.comparison_gaps == ()
+
+    # A fetched capture whose every path failed is also an unusable `error` baseline.
+    failed_scrape, failed = _scan_with_capture(
+        store, _fake_fetch(lists={path: "timeout"}, listed=listed), minute=2
+    )
+    assert failed.status == "error"
+    _, after_failed = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed),
+        baseline_scrape_id=failed_scrape,
+        minute=3,
+    )
+    assert after_failed.comparison_state == "unusable_baseline"
+
+
+def test_endpoint_selected_baseline_gaps_partial_baseline_is_usable(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path_a = _endpoint_path("fake-org/test-model-a")
+    path_b = _endpoint_path("fake-org/test-model-b")
+    listed = {"fake-org/test-model-a": path_a, "fake-org/test-model-b": path_b}
+    baseline_scrape, baseline = _scan_with_capture(
+        store, _fake_fetch(lists={path_a: [_fake_endpoint("host-a")], path_b: "timeout"}, listed=listed)
+    )
+    assert baseline.status == "partial"
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={path_a: [_fake_endpoint("host-a", prompt="0.000009")], path_b: "http_status"},
+            listed=listed,
+        ),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    assert summary.comparison_state == "available"
+    assert summary.baseline_capture_id == baseline.capture_id
+    assert _change_tuples(summary) == (
+        (path_a, path_a, "host-a#0", "field_changed", "pricing.prompt", "0.000001", "0.000009"),
+    )
+    # Failed observations on either side suppress the diff and record a gap.
+    assert _gap_tuples(summary) == (
+        (path_b, "baseline_observation_failed", path_b),
+        (path_b, "current_observation_failed", path_b),
+    )
+
+
+def test_endpoint_selected_baseline_gaps_failed_current_observation(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    listed = {"fake-org/test-model-a": path}
+    baseline_scrape, _ = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed)
+    )
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: "invalid_json"}, listed=listed),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    assert summary.comparison_state == "available"
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == ((path, "current_observation_failed", path),)
+
+
+def test_endpoint_selected_baseline_gaps_never_substitute_latest_capture(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    listed = {"fake-org/test-model-a": path}
+    first_scrape, first = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a", prompt="0.000001")]}, listed=listed)
+    )
+    _, latest = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a", prompt="0.000002")]}, listed=listed),
+        baseline_scrape_id=first_scrape,
+        minute=1,
+    )
+    assert store.get_latest_endpoint_capture(_FAKE_PROVIDER).capture_id == latest.capture_id
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a", prompt="0.000002")]}, listed=listed),
+        baseline_scrape_id=first_scrape,
+        minute=2,
+    )
+    assert summary.baseline_capture_id == first.capture_id
+    assert [change.from_capture_id for change in summary.changes] == [first.capture_id]
+    assert _change_tuples(summary) == (
+        (path, path, "host-a#0", "field_changed", "pricing.prompt", "0.000001", "0.000002"),
+    )
+
+
+def test_endpoint_selected_baseline_gaps_reject_mismatched_baseline(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    fetch = _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
+    first_scrape, first = _scan_with_capture(store, fetch)
+    with pytest.raises(ValueError, match="selected baseline"):
+        build_endpoint_capture(
+            fetch,
+            profile=OPENROUTER_PROFILE,
+            scrape_id=first_scrape + 1,
+            baseline_scrape_id=first_scrape + 99,
+            baseline_capture=first,
+        )
+    other = _fake_fetch(
+        lists={path: [_fake_endpoint("host-a")]},
+        listed={"fake-org/test-model-a": path},
+        provider_id=_OTHER_PROVIDER,
+    )
+    with pytest.raises(ValueError, match="provider"):
+        build_endpoint_capture(
+            other,
+            profile=OPENROUTER_PROFILE,
+            scrape_id=first_scrape + 1,
+            baseline_scrape_id=first_scrape,
+            baseline_capture=first,
+        )
+
+
+def test_endpoint_shared_path_identity(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    shared = _endpoint_path("fake-org/test-model-a")
+    own = _endpoint_path("fake-org/test-model-c")
+    listed = {
+        "fake-org/test-model-a": shared,
+        "fake-org/test-model-b": shared,
+        "fake-org/test-model-c": own,
+    }
+    baseline_scrape, baseline = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={
+                shared: [_fake_endpoint("host-a"), _fake_endpoint("host-b")],
+                own: [_fake_endpoint("host-c", status=0)],
+            },
+            listed=listed,
+            list_ids={own: None},
+        ),
+    )
+    current_scrape, summary = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={
+                shared: [_fake_endpoint("host-a", prompt="0.000004"), _fake_endpoint("host-d")],
+                own: [_fake_endpoint("host-c", status=-1)],
+            },
+            listed=listed,
+            list_ids={own: None},
+        ),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    removed_state = _endpoint_state_for_test(_fake_endpoint("host-b"))
+    added_state = _endpoint_state_for_test(_fake_endpoint("host-d"))
+    assert _change_tuples(summary) == (
+        (shared, shared, "host-a#0", "field_changed", "pricing.prompt", "0.000001", "0.000004"),
+        (shared, shared, "host-b#0", "endpoint_removed", None, removed_state, None),
+        (shared, shared, "host-d#0", "endpoint_added", None, None, added_state),
+        (own, own, "host-c#0", "status_changed", None, 0, -1),
+    )
+    by_path = {change.list_path: change for change in summary.changes}
+    assert by_path[shared].display_id == "fake-org/test-model-a"
+    assert by_path[shared].model_ids == ("fake-org/test-model-a", "fake-org/test-model-b")
+    assert by_path[own].display_id == own
+    assert by_path[own].model_ids == ("fake-org/test-model-c",)
+    assert {(c.from_capture_id, c.to_capture_id) for c in summary.changes} == {
+        (baseline.capture_id, summary.capture_id)
+    }
+    assert summary.comparison_gaps == ()
+    assert summary.first_capture is False and summary.status == "complete"
+
+    # The returned summary is the persisted one and every read path agrees.
+    assert store.get_endpoint_capture_for_scrape(current_scrape) == summary
+    assert store.get_latest_endpoint_capture(_FAKE_PROVIDER) == summary
+    assert store.load_endpoint_lists(summary.capture_id) == summary.lists
+    shared_list = next(listing for listing in summary.lists if listing.list_path == shared)
+    assert [obs.endpoint_key for obs in shared_list.observations] == ["host-a#0", "host-d#0"]
+    assert shared_list.list_model_id == "fake-org/test-model-a"
+    assert shared_list.outcome == "ok" and shared_list.endpoint_count == 2
+
+    with store._connect() as connection:
+        rows = connection.execute(
+            "SELECT provider_id, from_capture_id, to_capture_id, from_list_path, list_path, "
+            "endpoint_key, change_kind, field_name, old_value_json, new_value_json, detected_at "
+            "FROM endpoint_changes ORDER BY endpoint_change_id"
+        ).fetchall()
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM endpoint_changes "
+            "WHERE provider_id = ? AND list_path = ? ORDER BY to_capture_id",
+            (_FAKE_PROVIDER, shared),
+        ).fetchall()
+    assert rows[0]["old_value_json"] == '"0.000001"'
+    assert rows[1]["new_value_json"] is None and rows[2]["old_value_json"] is None
+    assert rows[3]["old_value_json"] == "0" and rows[3]["new_value_json"] == "-1"
+    assert {row["detected_at"] for row in rows} == {"2026-09-01T12:00:05+00:00"}
+    assert {row["provider_id"] for row in rows} == {_FAKE_PROVIDER}
+    assert any("idx_endpoint_changes_provider_list_capture" in str(tuple(row)) for row in plan)
+
+    # The archive keeps the decoded bodies, telemetry included, keyed by path.
+    with store._connect() as connection:
+        blob = connection.execute(
+            "SELECT body_gzip FROM endpoint_capture_archives WHERE capture_id = ?",
+            (summary.capture_id,),
+        ).fetchone()[0]
+    archive = json.loads(gzip.decompress(blob))
+    assert sorted(archive) == [shared, own]
+    assert archive[shared]["data"]["endpoints"][0]["uptime_last_30m"] == 99.0
+    assert archive[own]["data"]["id"] is None
+
+
+def _endpoint_state_for_test(endpoint: dict[str, Any]) -> dict[str, Any]:
+
+    return json.loads(canonical_json(endpoint_state(endpoint, OPENROUTER_PROFILE)))
+
+
+def test_endpoint_shared_path_identity_takes_precedence_over_mapping_moves(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path_o = _endpoint_path("fake-org/test-model-o")
+    path_s = _endpoint_path("fake-org/test-model-s")
+    baseline_scrape, _ = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={path_o: [_fake_endpoint("host-o")], path_s: [_fake_endpoint("host-s")]},
+            listed={"fake-org/test-model-a": path_o, "fake-org/test-model-s": path_s},
+        ),
+    )
+    # Model A moves from O to S while both paths stay present: both are still
+    # compared as shared paths and no move or ambiguity is recorded.
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={
+                path_o: [_fake_endpoint("host-o", prompt="0.000007")],
+                path_s: [_fake_endpoint("host-s")],
+            },
+            listed={
+                "fake-org/test-model-o": path_o,
+                "fake-org/test-model-a": path_s,
+                "fake-org/test-model-s": path_s,
+            },
+        ),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    assert _change_tuples(summary) == (
+        (path_o, path_o, "host-o#0", "field_changed", "pricing.prompt", "0.000001", "0.000007"),
+    )
+    assert summary.comparison_gaps == ()
+
+
+def _move_scenario(
+    tmp_path: Path,
+    *,
+    baseline_lists: dict[str, Any],
+    baseline_listed: dict[str, str],
+    current_lists: dict[str, Any],
+    current_listed: dict[str, str],
+):
+    store = _endpoint_store(tmp_path)
+    baseline_scrape, _ = _scan_with_capture(
+        store, _fake_fetch(lists=baseline_lists, listed=baseline_listed)
+    )
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists=current_lists, listed=current_listed),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    return store, summary
+
+
+def test_endpoint_moves_splits_and_merges_unique_move(tmp_path: Path) -> None:
+    old = _endpoint_path("fake-org/test-model-a")
+    new = _endpoint_path("fake-org/test-model-a-v2")
+    store, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old: [_fake_endpoint("host-a")]},
+        # Two common models follow the same edge; they are deduplicated to one diff.
+        baseline_listed={"fake-org/test-model-a": old, "fake-org/test-model-b": old},
+        current_lists={new: [_fake_endpoint("host-a", prompt="0.000006")]},
+        current_listed={"fake-org/test-model-a": new, "fake-org/test-model-b": new},
+    )
+    assert _change_tuples(summary) == (
+        (old, new, "host-a#0", "field_changed", "pricing.prompt", "0.000001", "0.000006"),
+    )
+    assert summary.comparison_gaps == ()
+    with store._connect() as connection:
+        row = connection.execute("SELECT from_list_path, list_path FROM endpoint_changes").fetchone()
+    assert tuple(row) == (old, new)
+
+
+def test_endpoint_moves_splits_and_merges_split(tmp_path: Path) -> None:
+    old = _endpoint_path("fake-org/test-model-a")
+    new_1 = _endpoint_path("fake-org/test-model-a-v2")
+    new_2 = _endpoint_path("fake-org/test-model-b-v2")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old: [_fake_endpoint("host-a")]},
+        baseline_listed={"fake-org/test-model-a": old, "fake-org/test-model-b": old},
+        current_lists={new_1: [_fake_endpoint("host-a")], new_2: [_fake_endpoint("host-a")]},
+        current_listed={"fake-org/test-model-a": new_1, "fake-org/test-model-b": new_2},
+    )
+    assert summary.changes == ()
+    # Gaps sort by path text, where "-v2/" sorts before "/".
+    assert _gap_tuples(summary) == (
+        (new_1, "ambiguous_mapping", None),
+        (old, "ambiguous_mapping", old),
+        (new_2, "ambiguous_mapping", None),
+    )
+
+
+def test_endpoint_moves_splits_and_merges_merge(tmp_path: Path) -> None:
+    old_1 = _endpoint_path("fake-org/test-model-a")
+    old_2 = _endpoint_path("fake-org/test-model-b")
+    new = _endpoint_path("fake-org/test-model-ab")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old_1: [_fake_endpoint("host-a")], old_2: [_fake_endpoint("host-b")]},
+        baseline_listed={"fake-org/test-model-a": old_1, "fake-org/test-model-b": old_2},
+        current_lists={new: [_fake_endpoint("host-a")]},
+        current_listed={"fake-org/test-model-a": new, "fake-org/test-model-b": new},
+    )
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == (
+        (old_1, "ambiguous_mapping", old_1),
+        (new, "ambiguous_mapping", None),
+        (old_2, "ambiguous_mapping", old_2),
+    )
+
+
+def test_endpoint_moves_splits_and_merges_partial_move(tmp_path: Path) -> None:
+    old = _endpoint_path("fake-org/test-model-a")
+    new = _endpoint_path("fake-org/test-model-a-v2")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old: [_fake_endpoint("host-a")]},
+        baseline_listed={"fake-org/test-model-a": old, "fake-org/test-model-b": old},
+        current_lists={old: [_fake_endpoint("host-a")], new: [_fake_endpoint("host-a")]},
+        current_listed={"fake-org/test-model-a": old, "fake-org/test-model-b": new},
+    )
+    # The old path is still present and compared in place; the partially moved
+    # list starts a new baseline.
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == ((new, "ambiguous_mapping", None),)
+
+
+def test_endpoint_moves_splits_and_merges_merge_into_existing_path(tmp_path: Path) -> None:
+    old = _endpoint_path("fake-org/test-model-a")
+    kept = _endpoint_path("fake-org/test-model-s")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old: [_fake_endpoint("host-a")], kept: [_fake_endpoint("host-s")]},
+        baseline_listed={"fake-org/test-model-a": old, "fake-org/test-model-s": kept},
+        current_lists={kept: [_fake_endpoint("host-s")]},
+        current_listed={"fake-org/test-model-a": kept, "fake-org/test-model-s": kept},
+    )
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == ((old, "ambiguous_mapping", old),)
+
+
+def test_endpoint_moves_splits_and_merges_unpaired_paths(tmp_path: Path) -> None:
+
+    kept = _endpoint_path("fake-org/test-model-a")
+    gone = _endpoint_path("fake-org/test-model-b")
+    fresh = _endpoint_path("fake-org/test-model-c")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={kept: [_fake_endpoint("host-a")], gone: [_fake_endpoint("host-b")]},
+        baseline_listed={"fake-org/test-model-a": kept, "fake-org/test-model-b": gone},
+        current_lists={kept: [_fake_endpoint("host-a")], fresh: []},
+        current_listed={"fake-org/test-model-a": kept, "fake-org/test-model-c": fresh},
+    )
+    # Newly appearing or disappearing paths produce no presence diff, only a
+    # coverage disposition. A complete capture can still have gaps.
+    assert summary.status == "complete"
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == (
+        (gone, "removed_path_unpaired", gone),
+        (fresh, "new_path_unpaired", None),
+    )
+
+
+def test_endpoint_moves_splits_and_merges_move_with_failed_observation(tmp_path: Path) -> None:
+    old = _endpoint_path("fake-org/test-model-a")
+    new = _endpoint_path("fake-org/test-model-a-v2")
+    _, summary = _move_scenario(
+        tmp_path,
+        baseline_lists={old: [_fake_endpoint("host-a")]},
+        baseline_listed={"fake-org/test-model-a": old},
+        current_lists={new: "http_status"},
+        current_listed={"fake-org/test-model-a": new},
+    )
+    assert summary.changes == ()
+    assert _gap_tuples(summary) == ((new, "current_observation_failed", old),)
+
+
+def test_endpoint_first_capture_independent_of_baseline(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    fetch = _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
+
+    # The first persisted capture for a provider can be a minimal error capture.
+    error_scrape = _saved_scrape(store)
+    error_capture = store.save_endpoint_error_capture(
+        build_endpoint_error_summary(
+            provider_id=_FAKE_PROVIDER,
+            scrape_id=error_scrape,
+            completed_at="2026-09-01T12:00:02+00:00",
+            error_summary="endpoint capture failed",
+        )
+    )
+    assert error_capture.first_capture is True
+
+    scrape_id = _saved_scrape(store, minute=1)
+    candidate = build_endpoint_capture(
+        fetch,
+        profile=OPENROUTER_PROFILE,
+        scrape_id=scrape_id,
+        baseline_scrape_id=None,
+        baseline_capture=None,
+    )
+    # first_capture is assigned only inside the persistence transaction.
+    assert candidate.summary.first_capture is None
+    no_baseline = store.save_endpoint_capture(candidate)
+    assert no_baseline.comparison_state == "no_selected_baseline"
+    assert no_baseline.first_capture is False
+
+    _, missing = _scan_with_capture(store, fetch, baseline_scrape_id=_saved_scrape(store, minute=2), minute=3)
+    assert missing.comparison_state == "missing_baseline_capture"
+    assert missing.first_capture is False
+
+    _, other_provider = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={path: [_fake_endpoint("host-a")]},
+            listed={"fake-org/test-model-a": path},
+            provider_id=_OTHER_PROVIDER,
+        ),
+        provider_id=_OTHER_PROVIDER,
+        minute=4,
+    )
+    assert other_provider.first_capture is True
+    with store._connect() as connection:
+        rows = connection.execute(
+            "SELECT provider_id, first_capture FROM endpoint_captures ORDER BY capture_id"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (_FAKE_PROVIDER, 1),
+        (_FAKE_PROVIDER, 0),
+        (_FAKE_PROVIDER, 0),
+        (_OTHER_PROVIDER, 1),
+    ]
+
+
+def test_endpoint_sanitized_error_roundtrip(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    baseline_scrape, baseline = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
+    )
+    scrape_id = _saved_scrape(store, baseline_scrape_id=baseline_scrape, minute=1)
+    raw = "endpoint\ncapture\x00failed:\t" + "x" * 400
+    summary = build_endpoint_error_summary(
+        provider_id=_FAKE_PROVIDER,
+        scrape_id=scrape_id,
+        started_at="2026-09-01T12:01:01+00:00",
+        completed_at="2026-09-01T12:01:02+00:00",
+        error_summary=raw,
+        baseline_scrape_id=baseline_scrape,
+        baseline_capture=baseline,
+    )
+    assert summary.capture_id is None and summary.persistence_error is None
+    assert summary.status == "error"
+    assert summary.error_summary.startswith("endpoint capture failed: xxx")
+    assert len(summary.error_summary) == ENDPOINT_ERROR_MESSAGE_LIMIT
+    assert summary.error_summary.endswith("...")
+    assert (summary.paths_requested, summary.paths_attempted, summary.paths_failed) == (0, 0, 0)
+    assert summary.comparison_state == "available"
+    assert summary.baseline_capture_id == baseline.capture_id
+    assert summary.lists == () and summary.changes == () and summary.comparison_gaps == ()
+
+    persisted = store.save_endpoint_error_capture(summary)
+    assert persisted.persistence_error is None
+    assert persisted.capture_id is not None
+    assert persisted.error_summary == summary.error_summary
+    assert persisted.started_at == "2026-09-01T12:01:01+00:00"
+    assert persisted.first_capture is False
+    assert store.get_endpoint_capture_for_scrape(scrape_id) == persisted
+    with store._connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM endpoint_capture_archives WHERE capture_id = ?",
+            (persisted.capture_id,),
+        ).fetchone()[0] == 0
+
+
+def test_endpoint_sanitized_error_roundtrip_list_messages(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    _, summary = _scan_with_capture(
+        store,
+        _fake_fetch(
+            lists={path: "network"},
+            listed={"fake-org/test-model-a": path},
+            error_messages={path: "network\r\nfailure\x1b[31m " + "y" * 300},
+        ),
+    )
+    message = summary.lists[0].error_message
+    assert message.startswith("network failure [31m yyy")
+    assert len(message) <= 200 and "\n" not in message and "\x1b" not in message
+    assert summary.lists[0].error_code == "network"
+
+
+def test_endpoint_sanitized_error_roundtrip_fallback_reuses_committed_capture(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    scrape_id, committed = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
+    )
+    before = _table_counts(store)
+    reused = store.save_endpoint_error_capture(
+        build_endpoint_error_summary(
+            provider_id=_FAKE_PROVIDER,
+            scrape_id=scrape_id,
+            completed_at="2026-09-01T12:00:09+00:00",
+            error_summary="post-commit failure",
+        )
+    )
+    assert reused == committed
+    assert reused.status == "complete" and reused.error_summary is None
+    assert _table_counts(store) == before
+
+
+def test_endpoint_sanitized_error_roundtrip_fallback_failure_is_retained(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    unsaved_scrape = _saved_scrape(store, saved=False)
+    summary = build_endpoint_error_summary(
+        provider_id=_FAKE_PROVIDER,
+        scrape_id=unsaved_scrape,
+        completed_at="2026-09-01T12:00:02+00:00",
+        error_summary="endpoint capture failed",
+    )
+    result = store.save_endpoint_error_capture(summary)
+    assert result.capture_id is None
+    assert result.error_summary == "endpoint capture failed"
+    assert result.persistence_error is not None
+    assert "saved success" in result.persistence_error
+    assert len(result.persistence_error) <= 200
+    assert set(_table_counts(store).values()) == {0}
+
+    broken = Store(tmp_path / "missing-dir" / "nested" / "endpoints.db")
+    result = broken.save_endpoint_error_capture(summary)
+    assert result.capture_id is None and result.persistence_error
+
+
+def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity(tmp_path: Path) -> None:
+
+    store = _endpoint_store(tmp_path)
+    with closing(store._connect_capture_writer()) as connection:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO endpoint_lists (capture_id, list_path, outcome, endpoint_count) "
+                "VALUES (999, '/api/v1/models/fake-org/orphan/endpoints', 'empty', 0)"
+            )
+    # The policy is local to capture writes; other Store connections are unchanged.
+    with store._connect() as connection:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+
+
+def _rejected_capture(store: Store, scrape_id: int, *, provider_id: str = _FAKE_PROVIDER):
+
+    path = _endpoint_path("fake-org/test-model-a")
+    candidate = build_endpoint_capture(
+        _fake_fetch(
+            lists={path: [_fake_endpoint("host-a")]},
+            listed={"fake-org/test-model-a": path},
+            provider_id=provider_id,
+        ),
+        profile=OPENROUTER_PROFILE,
+        scrape_id=scrape_id,
+        baseline_scrape_id=None,
+        baseline_capture=None,
+    )
+    with pytest.raises(storage.EndpointCaptureIntegrityError) as exc_info:
+        store.save_endpoint_capture(candidate)
+    return str(exc_info.value)
+
+
+def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_rejects_scrapes(
+    tmp_path: Path,
+) -> None:
+    store = _endpoint_store(tmp_path)
+    assert "saved success" in _rejected_capture(store, _saved_scrape(store, saved=False))
+    assert "saved success" in _rejected_capture(store, _saved_scrape(store, status="error", saved=False))
+    assert "saved success" in _rejected_capture(store, _saved_scrape(store, provider_id=_OTHER_PROVIDER))
+    assert "saved success" in _rejected_capture(store, 4242)
+    assert set(_table_counts(store).values()) == {0}
+
+
+def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_rejects_baselines(
+    tmp_path: Path,
+) -> None:
+
+
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    listed = {"fake-org/test-model-a": path}
+    other_scrape, other_capture = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed, provider_id=_OTHER_PROVIDER),
+        provider_id=_OTHER_PROVIDER,
+    )
+    own_scrape, own_capture = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed), minute=1
+    )
+    before = _table_counts(store)
+    scrape_id = _saved_scrape(store, baseline_scrape_id=own_scrape, minute=2)
+    candidate = build_endpoint_capture(
+        _fake_fetch(lists={path: [_fake_endpoint("host-a", prompt="0.000008")]}, listed=listed),
+        profile=OPENROUTER_PROFILE,
+        scrape_id=scrape_id,
+        baseline_scrape_id=own_scrape,
+        baseline_capture=own_capture,
+    )
+    foreign_summary = replace(
+        candidate.summary,
+        baseline_capture_id=other_capture.capture_id,
+        changes=tuple(
+            replace(change, from_capture_id=other_capture.capture_id)
+            for change in candidate.summary.changes
+        ),
+    )
+    with pytest.raises(storage.EndpointCaptureIntegrityError, match="baseline capture"):
+        store.save_endpoint_capture(replace(candidate, summary=foreign_summary))
+    assert _table_counts(store) == before
+
+    # A baseline capture of this provider that is not the selected baseline
+    # scrape's capture is not substituted either.
+    _, unselected = _scan_with_capture(
+        store, _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed=listed), minute=3
+    )
+    before = _table_counts(store)
+    substituted = replace(
+        candidate.summary,
+        baseline_capture_id=unselected.capture_id,
+        changes=tuple(
+            replace(change, from_capture_id=unselected.capture_id)
+            for change in candidate.summary.changes
+        ),
+    )
+    with pytest.raises(storage.EndpointCaptureIntegrityError, match="selected baseline"):
+        store.save_endpoint_capture(replace(candidate, summary=substituted))
+    assert _table_counts(store) == before
+
+    persisted = store.save_endpoint_capture(candidate)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_endpoint_capture(candidate)
+    assert store.get_endpoint_capture_for_scrape(scrape_id) == persisted
+
+
+def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_requires_pragma(
+    tmp_path: Path, monkeypatch
+) -> None:
+
+    class ForeignKeysUnavailable(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.strip().upper() == "PRAGMA FOREIGN_KEYS":
+                return super().execute("SELECT 0")
+            return super().execute(sql, *args)
+
+    store = _endpoint_store(tmp_path)
+    scrape_id = _saved_scrape(store)
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        storage.sqlite3,
+        "connect",
+        lambda *args, **kwargs: real_connect(*args, factory=ForeignKeysUnavailable, **kwargs),
+    )
+    message = _rejected_capture(store, scrape_id)
+    assert "foreign key" in message
+    monkeypatch.undo()
+    assert set(_table_counts(store).values()) == {0}

@@ -5,13 +5,16 @@ catalog model maps to an endpoint-list path (alias resolution and path
 validation included), how a list response is validated, how an endpoint's
 comparable state is separated from volatile telemetry and status, how
 endpoints in a response-ordered list are keyed, how two keyed lists are
-compared, how scalar price leaves are resolved, and how a capture's overall
-status is derived. Transport, storage and rendering consume these functions.
+compared, how scalar price leaves are resolved, how a capture's overall
+status is derived, and how a capture is compared with its selected baseline
+capture into the in-memory summary that storage persists. Transport, storage
+and rendering consume these functions.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import string
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -21,7 +24,19 @@ from urllib.parse import urlsplit
 
 from .change_render import resolve_price_value
 from .diffing import diff_values
-from .models import EndpointChange, EndpointMapping, NormalizedModel, canonical_json
+from .models import (
+    EndpointCaptureCandidate,
+    EndpointCaptureSummary,
+    EndpointChange,
+    EndpointChangeRecord,
+    EndpointComparisonGap,
+    EndpointFetchResult,
+    EndpointListRecord,
+    EndpointMapping,
+    EndpointObservationRecord,
+    NormalizedModel,
+    canonical_json,
+)
 from .provider_profiles import ProviderProfile
 
 ENDPOINT_FETCH_TIMEOUT_SECONDS: Final[float] = 30.0
@@ -507,3 +522,357 @@ def aggregate_capture_status(
     if paths_requested - paths_failed > 0:
         return CAPTURE_PARTIAL
     return CAPTURE_ERROR
+
+
+# How the selected catalog baseline's capture relates to this capture.
+COMPARISON_AVAILABLE: Final = "available"
+COMPARISON_NO_SELECTED_BASELINE: Final = "no_selected_baseline"
+COMPARISON_MISSING_BASELINE_CAPTURE: Final = "missing_baseline_capture"
+COMPARISON_UNUSABLE_BASELINE: Final = "unusable_baseline"
+COMPARISON_STATES: Final = (
+    COMPARISON_AVAILABLE,
+    COMPARISON_NO_SELECTED_BASELINE,
+    COMPARISON_MISSING_BASELINE_CAPTURE,
+    COMPARISON_UNUSABLE_BASELINE,
+)
+
+# Why a list could not be compared. Gaps are recorded only when the comparison
+# state is `available`.
+GAP_BASELINE_OBSERVATION_FAILED: Final = "baseline_observation_failed"
+GAP_CURRENT_OBSERVATION_FAILED: Final = "current_observation_failed"
+GAP_NEW_PATH_UNPAIRED: Final = "new_path_unpaired"
+GAP_REMOVED_PATH_UNPAIRED: Final = "removed_path_unpaired"
+GAP_AMBIGUOUS_MAPPING: Final = "ambiguous_mapping"
+GAP_REASONS: Final = (
+    GAP_BASELINE_OBSERVATION_FAILED,
+    GAP_CURRENT_OBSERVATION_FAILED,
+    GAP_NEW_PATH_UNPAIRED,
+    GAP_REMOVED_PATH_UNPAIRED,
+    GAP_AMBIGUOUS_MAPPING,
+)
+
+_SQLITE_INTEGER_MIN: Final = -(2**63)
+_SQLITE_INTEGER_MAX: Final = 2**63 - 1
+
+
+def endpoint_status_code(status: Any) -> int | None:
+    """Return a status value that is a storable integer, else None.
+
+    Booleans and non-integer values are not status codes. Both sides of every
+    comparison use this value, so a non-integer status never yields a change
+    against its persisted form; the raw value survives in the capture archive.
+    """
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    if not _SQLITE_INTEGER_MIN <= status <= _SQLITE_INTEGER_MAX:
+        return None
+    return status
+
+
+def endpoint_list_records(
+    fetch: EndpointFetchResult,
+    profile: ProviderProfile,
+) -> tuple[EndpointListRecord, ...]:
+    """Return one list record per fetched path, in the fetch's path order."""
+    model_ids: dict[str, list[str]] = {}
+    for mapping in fetch.mappings:
+        if mapping.outcome == MAPPING_LISTED and mapping.list_path is not None:
+            model_ids.setdefault(mapping.list_path, []).append(mapping.provider_model_id)
+    records: list[EndpointListRecord] = []
+    for path in fetch.paths:
+        observations = tuple(
+            _observation_record(keyed.key, keyed.endpoint, profile)
+            for keyed in key_endpoint_list(path.endpoints)
+        )
+        records.append(
+            EndpointListRecord(
+                list_path=path.list_path,
+                list_model_id=path.list_model_id,
+                outcome=path.outcome,
+                endpoint_count=len(observations),
+                error_code=path.error_code,
+                error_message=(
+                    None
+                    if path.error_message is None
+                    else sanitize_endpoint_error_message(path.error_message)
+                ),
+                model_ids=tuple(sorted(model_ids.get(path.list_path, ()))),
+                observations=observations,
+            )
+        )
+    return tuple(records)
+
+
+def _observation_record(
+    key: str,
+    endpoint: Mapping[str, Any],
+    profile: ProviderProfile,
+) -> EndpointObservationRecord:
+    state = endpoint_state(endpoint, profile)
+    # Decode the canonical form so the in-memory state equals its persisted copy
+    # and shares no mutable values with the fetched response.
+    return EndpointObservationRecord(
+        endpoint_key=key,
+        state_hash=endpoint_state_hash(state),
+        state=json.loads(canonical_json(state)),
+        status_code=endpoint_status_code(endpoint_status(endpoint, profile)),
+    )
+
+
+def endpoint_capture_usable(capture: EndpointCaptureSummary) -> bool:
+    """Whether a capture can serve as a comparison baseline.
+
+    A capture is unusable when its status is `error` and none of its lists has
+    a successful (`ok` or `empty`) observation, which includes every minimal
+    error capture. A partial capture is usable; its failed lists become gaps.
+    """
+    return capture.status != CAPTURE_ERROR or any(listing.succeeded for listing in capture.lists)
+
+
+def endpoint_comparison_state(
+    *,
+    provider_id: str,
+    baseline_scrape_id: int | None,
+    baseline_capture: EndpointCaptureSummary | None,
+) -> tuple[str, int | None]:
+    """Return (comparison_state, baseline_capture_id) for the selected baseline.
+
+    `baseline_scrape_id` is the selected catalog baseline scrape and
+    `baseline_capture` that scrape's persisted capture, if any; no other
+    capture is ever substituted. Raises ValueError when the capture does not
+    belong to that scrape and provider or was never persisted.
+    """
+    if baseline_scrape_id is None:
+        if baseline_capture is not None:
+            raise ValueError("a baseline capture was given without a selected baseline scrape")
+        return COMPARISON_NO_SELECTED_BASELINE, None
+    if baseline_capture is None:
+        return COMPARISON_MISSING_BASELINE_CAPTURE, None
+    if baseline_capture.scrape_id != baseline_scrape_id:
+        raise ValueError("baseline capture does not belong to the selected baseline scrape")
+    if baseline_capture.provider_id != provider_id:
+        raise ValueError("baseline capture belongs to a different provider")
+    if baseline_capture.capture_id is None:
+        raise ValueError("baseline capture has not been persisted")
+    if not endpoint_capture_usable(baseline_capture):
+        return COMPARISON_UNUSABLE_BASELINE, baseline_capture.capture_id
+    return COMPARISON_AVAILABLE, baseline_capture.capture_id
+
+
+def compare_endpoint_captures(
+    baseline_lists: Sequence[EndpointListRecord],
+    current_lists: Sequence[EndpointListRecord],
+    *,
+    from_capture_id: int,
+) -> tuple[tuple[EndpointChangeRecord, ...], tuple[EndpointComparisonGap, ...]]:
+    """Compare a usable baseline capture's lists with the current lists.
+
+    A path present on both sides is compared in place. A path that disappeared
+    is compared with a newly present path only through a unique moved-mapping
+    edge (see `_pair_moved_paths`); the changes are stored under the new path
+    with `from_list_path` preserving the old one. Diffs need a successful
+    observation on each side; a failed side records a gap instead. Unpaired
+    and ambiguously mapped paths record gaps and no presence diff.
+
+    Changes follow current path order, then `diff_endpoint_lists` order. Gaps
+    are sorted by (list_path, reason).
+    """
+    old = {listing.list_path: listing for listing in baseline_lists}
+    new = {listing.list_path: listing for listing in current_lists}
+    pairs, ambiguous = _pair_moved_paths(old, new)
+    changes: list[EndpointChangeRecord] = []
+    gaps: list[EndpointComparisonGap] = []
+    for path in sorted(new):
+        current = new[path]
+        source_path = path if path in old else pairs.get(path)
+        if source_path is None:
+            reason = GAP_AMBIGUOUS_MAPPING if path in ambiguous else GAP_NEW_PATH_UNPAIRED
+            gaps.append(EndpointComparisonGap(path, reason, None))
+            continue
+        baseline = old[source_path]
+        if not baseline.succeeded:
+            gaps.append(EndpointComparisonGap(path, GAP_BASELINE_OBSERVATION_FAILED, source_path))
+        if not current.succeeded:
+            gaps.append(EndpointComparisonGap(path, GAP_CURRENT_OBSERVATION_FAILED, source_path))
+        if not (baseline.succeeded and current.succeeded):
+            continue
+        for change in diff_endpoint_lists(_observation_map(baseline), _observation_map(current)):
+            changes.append(
+                EndpointChangeRecord(
+                    from_capture_id=from_capture_id,
+                    to_capture_id=None,
+                    from_list_path=source_path,
+                    list_path=path,
+                    endpoint_key=change.endpoint_key,
+                    change_kind=change.change_kind,
+                    field_name=change.field_name,
+                    old_value=change.old_value,
+                    new_value=change.new_value,
+                    display_id=current.display_id,
+                    model_ids=current.model_ids,
+                )
+            )
+    paired_sources = set(pairs.values())
+    for path in sorted(old):
+        if path in new or path in paired_sources:
+            continue
+        reason = GAP_AMBIGUOUS_MAPPING if path in ambiguous else GAP_REMOVED_PATH_UNPAIRED
+        gaps.append(EndpointComparisonGap(path, reason, path))
+    gaps.sort(key=lambda gap: (gap.list_path, gap.reason))
+    return tuple(changes), tuple(gaps)
+
+
+def _pair_moved_paths(
+    old: Mapping[str, EndpointListRecord],
+    new: Mapping[str, EndpointListRecord],
+) -> tuple[dict[str, str], set[str]]:
+    """Return ({new path: old path} for unique moves, ambiguous paths).
+
+    Candidate edges come from common catalog models whose `listed` path
+    changed, deduplicated to distinct (old, new) path pairs. An edge pairs its
+    paths only when the old path disappeared, the new path is newly present,
+    and the edge is the only one leaving the old path and the only one
+    reaching the new path, counting every candidate edge. Any other
+    disappeared or newly present path on a candidate edge (splits, merges,
+    partial moves, moves into or out of a shared path) is ambiguous. Shared
+    paths are never ambiguous: same-path comparison takes precedence.
+    """
+    old_paths = {model_id: path for path, listing in old.items() for model_id in listing.model_ids}
+    new_paths = {model_id: path for path, listing in new.items() for model_id in listing.model_ids}
+    edges = {
+        (old_paths[model_id], new_paths[model_id])
+        for model_id in old_paths.keys() & new_paths.keys()
+        if old_paths[model_id] != new_paths[model_id]
+    }
+    targets: dict[str, set[str]] = {}
+    sources: dict[str, set[str]] = {}
+    for old_path, new_path in edges:
+        targets.setdefault(old_path, set()).add(new_path)
+        sources.setdefault(new_path, set()).add(old_path)
+    pairs = {
+        new_path: old_path
+        for old_path, new_path in edges
+        if old_path not in new
+        and new_path not in old
+        and targets[old_path] == {new_path}
+        and sources[new_path] == {old_path}
+    }
+    paired = set(pairs) | set(pairs.values())
+    involved = {path for edge in edges for path in edge}
+    ambiguous = {
+        path
+        for path in involved - paired
+        if (path in old) != (path in new)
+    }
+    return pairs, ambiguous
+
+
+def _observation_map(listing: EndpointListRecord) -> dict[str, EndpointObservation]:
+    return {
+        observation.endpoint_key: (observation.state, observation.status_code)
+        for observation in listing.observations
+    }
+
+
+def build_endpoint_capture(
+    fetch: EndpointFetchResult,
+    *,
+    profile: ProviderProfile,
+    scrape_id: int,
+    baseline_scrape_id: int | None,
+    baseline_capture: EndpointCaptureSummary | None,
+) -> EndpointCaptureCandidate:
+    """Build the in-memory capture, its comparison and records, before saving.
+
+    `scrape_id` is the saved catalog scrape this capture belongs to.
+    `baseline_scrape_id` is that scan's selected catalog baseline scrape (None
+    when there was none) and `baseline_capture` the persisted capture of that
+    scrape, if any (`Store.get_endpoint_capture_for_scrape`). Changes and gaps
+    are computed only when the comparison state is `available`.
+    `first_capture` stays None and `capture_id` None until persistence.
+    """
+    comparison_state, baseline_capture_id = endpoint_comparison_state(
+        provider_id=fetch.provider_id,
+        baseline_scrape_id=baseline_scrape_id,
+        baseline_capture=baseline_capture,
+    )
+    lists = endpoint_list_records(fetch, profile)
+    changes: tuple[EndpointChangeRecord, ...] = ()
+    gaps: tuple[EndpointComparisonGap, ...] = ()
+    if (
+        comparison_state == COMPARISON_AVAILABLE
+        and baseline_capture is not None
+        and baseline_capture_id is not None
+    ):
+        changes, gaps = compare_endpoint_captures(
+            baseline_capture.lists, lists, from_capture_id=baseline_capture_id
+        )
+    summary = EndpointCaptureSummary(
+        capture_id=None,
+        scrape_id=scrape_id,
+        provider_id=fetch.provider_id,
+        started_at=fetch.started_at,
+        completed_at=fetch.completed_at,
+        status=aggregate_capture_status(
+            paths_requested=fetch.paths_requested,
+            paths_failed=fetch.paths_failed,
+            mapping_failures=fetch.mapping_failures,
+        ),
+        paths_requested=fetch.paths_requested,
+        paths_attempted=fetch.paths_attempted,
+        paths_failed=fetch.paths_failed,
+        mapping_failures=fetch.mapping_failures,
+        first_capture=None,
+        comparison_state=comparison_state,
+        baseline_capture_id=baseline_capture_id,
+        error_summary=None,
+        changes=changes,
+        comparison_gaps=gaps,
+        lists=lists,
+    )
+    return EndpointCaptureCandidate(summary=summary, mappings=fetch.mappings, archive=fetch.bodies)
+
+
+def build_endpoint_error_summary(
+    *,
+    provider_id: str,
+    scrape_id: int,
+    completed_at: str,
+    error_summary: str,
+    started_at: str | None = None,
+    baseline_scrape_id: int | None = None,
+    baseline_capture: EndpointCaptureSummary | None = None,
+) -> EndpointCaptureSummary:
+    """Build the in-memory summary of a capture that failed as a whole.
+
+    The summary has status `error`, zero counts, no lists, changes or gaps,
+    and the sanitized, bounded `error_summary`. `started_at` defaults to
+    `completed_at`. The comparison state describes the selected baseline as
+    far as it is known: pass the selected baseline scrape and, when it could
+    be read, its capture; an unknown capture reads as
+    `missing_baseline_capture`. Persist it with
+    `Store.save_endpoint_error_capture`.
+    """
+    comparison_state, baseline_capture_id = endpoint_comparison_state(
+        provider_id=provider_id,
+        baseline_scrape_id=baseline_scrape_id,
+        baseline_capture=baseline_capture,
+    )
+    return EndpointCaptureSummary(
+        capture_id=None,
+        scrape_id=scrape_id,
+        provider_id=provider_id,
+        started_at=started_at if started_at is not None else completed_at,
+        completed_at=completed_at,
+        status=aggregate_capture_status(
+            paths_requested=0, paths_failed=0, mapping_failures=0, capture_exception=True
+        ),
+        paths_requested=0,
+        paths_attempted=0,
+        paths_failed=0,
+        mapping_failures=0,
+        first_capture=None,
+        comparison_state=comparison_state,
+        baseline_capture_id=baseline_capture_id,
+        error_summary=sanitize_endpoint_error_message(error_summary),
+    )

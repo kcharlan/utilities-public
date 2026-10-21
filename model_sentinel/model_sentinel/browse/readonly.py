@@ -31,6 +31,8 @@ def is_database_busy_error(exc: sqlite3.OperationalError) -> bool:
     return "locked" in message or "busy" in message
 
 
+# Endpoint-capture tables are deliberately absent: databases created before
+# endpoint capture must still open, so endpoint reads detect those tables.
 _REQUIRED_SCHEMA: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "providers",
