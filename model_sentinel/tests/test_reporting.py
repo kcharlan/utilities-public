@@ -6731,197 +6731,34 @@ def test_a_bulk_summary_row_survives_a_label_containing_the_old_split_token() ->
 
 # ---------------------------------------------------------------------------
 # Endpoint and alias report sections. Every provider, model, endpoint, path
-# and price below is invented.
+# and price below is invented; the shared builders live in
+# `tests/endpoint_report_fixtures.py`.
 # ---------------------------------------------------------------------------
 
 from model_sentinel.alias_check import divergence_events as _divergence_events
-from model_sentinel.config import ProviderConfig as _ProviderConfig
-from model_sentinel.endpoints import (
-    CONCISE_ENDPOINT_LIST_CAP,
-    compare_endpoint_captures,
-    endpoint_state_hash,
+from model_sentinel.endpoints import CONCISE_ENDPOINT_LIST_CAP
+from model_sentinel.models import EndpointCaptureSummary
+from tests.endpoint_report_fixtures import (
+    _EP_ALIAS,
+    _EP_PROFILE,
+    _EP_TARGET,
+    _TARGET_PRICES,
+    _alias_catalog,
+    _ep_alias,
+    _ep_capture,
+    _ep_catalog,
+    _ep_html,
+    _ep_list,
+    _ep_listed,
+    _ep_obs,
+    _ep_path,
+    _ep_report,
+    _ep_result,
+    _ep_section,
+    _ep_state,
+    _price_move_delta,
+    _three_list_capture,
 )
-from model_sentinel.models import (
-    EndpointCaptureSummary,
-    EndpointComparisonGap,
-    EndpointListRecord,
-    EndpointObservationRecord,
-)
-from model_sentinel.normalize import normalize_models as _normalize_models
-
-_EP_PREFIX = "/api/v1/models/"
-_EP_PROFILE = OPENROUTER_PROFILE
-_EP_PROVIDER = _ProviderConfig(
-    provider_id="openrouter",
-    label="OpenRouter",
-    kind="openrouter",
-    base_url="https://fake-router.invalid/api/v1",
-    models_path="/models",
-    credential_env_var="FAKE_ROUTER_NOT_A_REAL_KEY",
-    price_multiplier=1,
-    price_divisor=1,
-    enabled=True,
-)
-_EP_TARGET = "fake-org/test-model-a"
-_EP_ALIAS = "fake-org/test-model-latest"
-
-
-def _ep_path(model_id: str) -> str:
-    return f"{_EP_PREFIX}{model_id}/endpoints"
-
-
-def _ep_state(tag: str, *, context_length: int = 1000, **pricing) -> dict:
-    return {"tag": tag, "provider_name": f"Fake Host {tag}", "context_length": context_length, "pricing": pricing}
-
-
-def _ep_obs(tag: str, state: dict, status: int = 0, occurrence: int = 0) -> EndpointObservationRecord:
-    return EndpointObservationRecord(f"{tag}#{occurrence}", endpoint_state_hash(state), state, status)
-
-
-def _ep_list(model_id: str, *observations, outcome: str | None = None, model_ids=None, path=None) -> EndpointListRecord:
-    if outcome is None:
-        outcome = "ok" if observations else "empty"
-    return EndpointListRecord(
-        list_path=path or _ep_path(model_id),
-        list_model_id=model_id,
-        outcome=outcome,
-        endpoint_count=len(observations),
-        error_code="http_status" if outcome == "error" else None,
-        error_message="HTTP 503" if outcome == "error" else None,
-        model_ids=(model_id,) if model_ids is None else model_ids,
-        observations=observations,
-    )
-
-
-def _ep_capture(baseline_lists, current_lists, **overrides) -> EndpointCaptureSummary:
-    if baseline_lists is None:
-        changes, gaps = (), ()
-    else:
-        changes, gaps = compare_endpoint_captures(baseline_lists, current_lists, from_capture_id=1)
-    failed = sum(1 for listing in current_lists if not listing.succeeded)
-    values = dict(
-        capture_id=2,
-        scrape_id=8,
-        provider_id="openrouter",
-        started_at="2030-01-02T03:04:05+00:00",
-        completed_at="2030-01-02T03:04:06+00:00",
-        status="complete" if not failed else "partial",
-        paths_requested=len(current_lists),
-        paths_attempted=len(current_lists),
-        paths_failed=failed,
-        mapping_failures=0,
-        first_capture=False,
-        comparison_state="available" if baseline_lists is not None else "no_selected_baseline",
-        baseline_capture_id=1 if baseline_lists is not None else None,
-        error_summary=None,
-        changes=changes,
-        comparison_gaps=gaps,
-        lists=tuple(current_lists),
-    )
-    values.update(overrides)
-    return EndpointCaptureSummary(**values)
-
-
-def _ep_result(capture=None, alias_events=(), changed=()) -> ProviderScanResult:
-    return ProviderScanResult(
-        provider_id="openrouter",
-        provider_label="OpenRouter",
-        status="success",
-        current_count=2,
-        saved=True,
-        baseline=_BASELINE,
-        baseline_message=None,
-        scrape_id=8,
-        added=(),
-        removed=(),
-        changed=changed,
-        profile=_EP_PROFILE,
-        endpoint_capture=capture,
-        alias_events=alias_events,
-    )
-
-
-def _ep_report(result, format_name: str = "text", mode: str = "default") -> str:
-    return render_scan_report(
-        generated_at="2030-01-02T03:04:06+00:00",
-        command="scan",
-        format_name=format_name,
-        provider_results=[result],
-        detail_policy=make_report_detail_policy(mode=mode),
-    )
-
-
-def _ep_section(report: str, heading: str) -> str:
-    """One appended section of a text or Markdown scan report, heading included."""
-    markers = {
-        "Alias check": ("\nAlias check\n", "\n## Alias check\n"),
-        "Provider endpoints": ("\nProvider endpoints\n", "\n## Provider endpoints\n"),
-    }[heading]
-    starts = [report.find(marker) for marker in markers if marker in report]
-    assert starts, f"{heading!r} section missing"
-    start = starts[0] + 1
-    following = [
-        report.find(marker, start)
-        for other in ("Alias check", "Provider endpoints")
-        if other != heading
-        for marker in ("\nAlias check\n", "\n## Alias check\n", "\nProvider endpoints\n", "\n## Provider endpoints\n")
-        if other in marker and report.find(marker, start) > start
-    ]
-    return report[start : min(following) if following else len(report)]
-
-
-def _ep_catalog(*raw_models: dict) -> dict:
-    models = _normalize_models(_EP_PROVIDER, list(raw_models), _EP_PROFILE)
-    return {model.provider_model_id: model for model in models}
-
-
-def _ep_listed(model_id: str, **pricing) -> dict:
-    return {"id": model_id, "links": {"details": _ep_path(model_id)}, "pricing": pricing}
-
-
-def _ep_alias(model_id: str, target: str, **pricing) -> dict:
-    return {"id": model_id, "alias_target": {"slug": target}, "pricing": pricing}
-
-
-_TARGET_PRICES = {"prompt": "0.000003", "completion": "0.000015", "request": "0.02"}
-
-
-def _alias_catalog(target: str = _EP_TARGET, *, extra=(), **alias_pricing) -> dict:
-    pricing = dict(_TARGET_PRICES)
-    pricing.update(alias_pricing)
-    return _ep_catalog(
-        _ep_listed(_EP_TARGET, **_TARGET_PRICES),
-        *extra,
-        _ep_alias(_EP_ALIAS, target, **pricing),
-    )
-
-
-def _three_list_capture() -> EndpointCaptureSummary:
-    """A price move, presence changes, a conditional change and full-detail-only changes."""
-    model_b = "fake-org/test-model-b"
-    baseline = (
-        _ep_list(
-            _EP_TARGET,
-            _ep_obs("host-a", _ep_state("host-a", prompt="0.000001", completion="0.000002")),
-            _ep_obs("host-b", _ep_state("host-b", prompt="0.000001", completion="0.000002")),
-        ),
-        _ep_list(model_b, _ep_obs("host-c", {**_ep_state("host-c", prompt="0.000001"), "pricing": {
-            "prompt": "0.000001", "overrides": [{"min_prompt_tokens": 200000, "prompt": "0.000002"}]}})),
-    )
-    current = (
-        _ep_list(
-            _EP_TARGET,
-            _ep_obs(
-                "host-a",
-                _ep_state("host-a", context_length=2000, prompt="0.000002", completion="0.000002"),
-                status=1,
-            ),
-            _ep_obs("host-d", _ep_state("host-d", prompt="0.000004", completion="0.000005")),
-        ),
-        _ep_list(model_b, _ep_obs("host-c", {**_ep_state("host-c", prompt="0.000001"), "pricing": {
-            "prompt": "0.000001", "overrides": [{"min_prompt_tokens": 200000, "prompt": "0.000003"}]}})),
-    )
-    return _ep_capture(baseline, current)
 
 
 # ---------------------------------------------------------------------------
@@ -7407,3 +7244,459 @@ def test_endpoint_disclosure_summary_and_detail_unmatched_price_is_neutral_metad
     full = _ep_section(_ep_report(result, mode="all"), "Provider endpoints").splitlines()
     assert "    host#0: Mystery: 0.25 → 0.5" in full
     assert not any("unit unknown" in line or "$" in line for line in full)
+
+
+# ---------------------------------------------------------------------------
+# HTML alias events and the Provider endpoints disclosure (Task 8)
+# ---------------------------------------------------------------------------
+
+import html as _html_module
+
+
+def _element(html: str, marker: str) -> str:
+    """The element whose opening tag contains `marker`, through its closing tag."""
+    start = html.rindex("<", 0, html.index(marker) + 1)
+    tag = re.match(r"<([a-z0-9]+)", html[start:]).group(1)
+    depth = 0
+    for match in re.finditer(rf"<(/?){tag}\b[^>]*>", html[start:]):
+        depth += -1 if match.group(1) else 1
+        if depth == 0:
+            return html[start : start + match.end()]
+    raise AssertionError(f"unclosed <{tag}> for {marker!r}")
+
+
+def _elements(html: str, marker: str) -> list[str]:
+    found, offset = [], 0
+    while marker in html[offset:]:
+        element = _element(html[offset:], marker)
+        found.append(element)
+        offset += html[offset:].index(element) + len(element)
+    return found
+
+
+def _text(fragment: str) -> str:
+    """Visible text of an HTML fragment, whitespace collapsed (SVG text included).
+
+    Inline tags vanish; every other tag separates words.
+    """
+    inline = re.sub(r"</?(?:code|span|a)\b[^>]*>", "", fragment)
+    return " ".join(_html_module.unescape(re.sub(r"<[^>]+>", " ", inline)).split())
+
+
+def _cells(row: str) -> list[str]:
+    return [cell for cell in re.findall(r"<t[hd]\b[^>]*>.*?</t[hd]>", row, re.S)]
+
+
+def _ladder_target_list():
+    alias_prices = {**_TARGET_PRICES, "prompt": "0.000002"}
+    return _ep_list(
+        _EP_TARGET,
+        _ep_obs("match", _ep_state("match", **alias_prices)),
+        _ep_obs("other", _ep_state("other", **_TARGET_PRICES)),
+        _ep_obs("partial", _ep_state("partial", prompt="0.000002")),
+        _ep_obs("free", _ep_state("free", prompt="0", completion="0")),
+    )
+
+
+def _ladder_result(**alias_pricing):
+    capture = _ep_capture(None, (_ladder_target_list(),))
+    catalog = _alias_catalog(**(alias_pricing or {"prompt": "0.000002"}))
+    events = _divergence_events(None, catalog, _EP_PROFILE, capture.lists)
+    return _ep_result(capture, alias_events=events)
+
+
+def _no_script(html: str) -> None:
+    assert "<script" not in html
+    assert "javascript:" not in html
+    assert re.findall(r"<[^>]*\son[a-z]+=", html) == []
+
+
+# --- alias_leaf_presentation ------------------------------------------------
+
+
+def test_alias_leaf_presentation_html_events_follow_the_price_movement_card() -> None:
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002", request="0.03"), _EP_PROFILE)
+    html = _ep_html(_ep_result(None, alias_events=events, changed=(_price_move_delta(),)))
+    assert html.index('id="price-movement"') < html.index('id="alias-check"') < html.index('class="model-card"')
+    section = _element(html, 'id="alias-check"')
+    assert _text(_element(section, 'class="alias-check-title"')) == "Alias check"
+    (event,) = _elements(section, 'class="alias-event"')
+    assert 'data-kind="new"' in event
+    assert _text(_element(event, 'class="alias-event-header"')) == (
+        f"New alias price divergence {_EP_ALIAS} → {_EP_TARGET}"
+    )
+    # One labelled sentence per differing leaf, normalized figure first, raw kept.
+    assert [_text(item) for item in re.findall(r"<li>.*?</li>", _element(event, 'class="alias-leaves"'))] == [
+        "Input: alias $2.00 /1M tokens (raw 0.000002) vs target $3.00 /1M tokens (raw 0.000003)",
+        "Per request: alias $0.03 /request (raw 0.03) vs target $0.02 /request (raw 0.02)",
+    ]
+    # Output agrees, so no Output sentence stands in for another leaf.
+    assert "Output" not in _text(section)
+    # A divergence is not a price move: no cost colors, and no ladder without
+    # endpoint evidence (this compare-only scan captured nothing).
+    assert "sem-cost" not in section and "price-higher" not in section and "price-lower" not in section
+    assert "<svg" not in section and "Endpoint matching" not in section
+    # Alias events never enter the catalog counts in the header.
+    assert _ep_html(_ep_result(None, changed=(_price_move_delta(),))).split("<header>")[1].split("</header>")[0] == (
+        html.split("<header>")[1].split("</header>")[0]
+    )
+    _no_script(html)
+
+
+def test_alias_leaf_presentation_html_without_price_movement_and_squelched() -> None:
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002"), _EP_PROFILE)
+    result = _ep_result(None, alias_events=events)
+    html = _ep_html(result)
+    assert 'id="price-movement"' not in html
+    assert html.index('class="provider-cards"') < html.index('id="alias-check"') < html.index("<footer>")
+    plain = replace(result, alias_events=())
+    # Squelched mode omits every endpoint and alias addition, CSS included.
+    assert _ep_html(result, "squelched") == _ep_html(plain, "squelched")
+    assert "alias-check" not in _ep_html(plain)
+
+
+def test_alias_leaf_presentation_html_resolved_and_full_detail_evidence() -> None:
+    other = "fake-org/test-model-b"
+    extra = (_ep_listed(other, **{**_TARGET_PRICES, "prompt": "0.000002"}),)
+    baseline = _alias_catalog(prompt="0.000002", extra=extra)
+    current = _alias_catalog(other, prompt="0.000002", extra=extra)
+    (resolved,) = _divergence_events(baseline, current, _EP_PROFILE)
+    gone_baseline = _alias_catalog(prompt="0.000002")
+    (gone,) = _divergence_events(gone_baseline, _ep_catalog(_ep_listed(_EP_TARGET, **_TARGET_PRICES)), _EP_PROFILE)
+    result = _ep_result(None, alias_events=(resolved, gone))
+
+    default = _element(_ep_html(result), 'id="alias-check"')
+    (event,) = _elements(default, 'class="alias-event"')
+    assert _text(_element(event, 'class="alias-event-header"')) == (
+        f"Alias price divergence resolved {_EP_ALIAS} → {other} (target changed from {_EP_TARGET})"
+    )
+    assert "Input: alias now matches target at $2.00 /1M tokens (raw 0.000002)" in _text(event)
+    assert "cannot be checked" not in default
+
+    full = _element(_ep_html(result, "all"), 'id="alias-check"')
+    unavailable = _elements(full, 'data-kind="unavailable"')
+    assert len(unavailable) == 1
+    assert "The alias is no longer in the catalog" in _text(unavailable[0])
+    assert "at the baseline" in _text(unavailable[0])
+    # Neutral evidence: no cost colors anywhere in the section.
+    assert "sem-cost" not in full
+
+
+def test_alias_leaf_presentation_html_ladders_are_accessible_and_neutral() -> None:
+    html = _ep_html(_ladder_result())
+    section = _element(html, 'id="alias-check"')
+    (event,) = _elements(section, 'class="alias-event"')
+    # `free#0` has a proven unequal Input price, so it is a nonmatch, not unknown.
+    assert _text(_element(event, 'class="alias-match"')) == (
+        "Endpoint match#0 carries the alias's Input, Output and Per request prices;"
+        " 1 endpoint was not checkable on every compared price: partial#0"
+    )
+    assert "<code>match#0</code>" in _element(event, 'class="alias-match"')
+    # One ladder per displayed divergent leaf (only Input differs).
+    (figure,) = _elements(event, 'class="price-ladder"')
+    svg = _element(figure, "<svg")
+    assert 'role="img"' in svg
+    title_id = re.search(r'aria-labelledby="([^"]+)"', svg).group(1)
+    text_id = re.search(r'aria-describedby="([^"]+)"', svg).group(1)
+    assert f'<title id="{title_id}">' in svg
+    assert _text(_element(svg, f'id="{title_id}"')).startswith("Input price ladder")
+    caption = _element(figure, f'id="{text_id}"')
+    assert caption.startswith("<figcaption")
+    # The equivalent text names every placed entry and every unplaced one.
+    assert [_text(item) for item in re.findall(r"<li>.*?</li>", caption)] == [
+        "$2.00: endpoints match#0 and partial#0; alias price",
+        "$3.00: endpoint other#0; target price",
+    ]
+    assert "free#0 (free)" in _text(_element(caption, 'class="ladder-unplaced"'))
+    # Neutral endpoint dots; distinguishable, labelled target and alias marks.
+    assert svg.count('class="ladder-endpoint"') == 2
+    assert svg.count('class="ladder-mark ladder-mark-target"') == 1
+    assert svg.count('class="ladder-mark ladder-mark-alias"') == 1
+    labels = [_text(label) for label in re.findall(r"<text\b[^>]*ladder-label[^>]*>.*?</text>", svg)]
+    assert sorted(labels) == sorted(["match#0 $2.00", "partial#0 $2.00", "other#0 $3.00", "alias $2.00", "target $3.00"])
+    assert "sem-cost" not in figure and "price-higher" not in figure and "accent-red" not in figure
+    _no_script(html)
+
+
+def test_alias_leaf_presentation_html_no_ladder_without_placed_endpoints() -> None:
+    """A leaf no endpoint carries would draw only the two catalog marks."""
+    capture = _ep_capture(None, (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000002"))),))
+    catalog = _alias_catalog(prompt="0.000002", request="0.03")
+    events = _divergence_events(None, catalog, _EP_PROFILE, capture.lists)
+    event = _element(_ep_html(_ep_result(capture, alias_events=events)), 'class="alias-event"')
+    assert "Per request: alias $0.03" in _text(event)
+    figures = _elements(event, 'class="price-ladder"')
+    assert [_text(_element(figure, "<title")) .split(":")[0] for figure in figures] == ["Input price ladder"]
+
+
+def test_alias_leaf_presentation_html_ladder_collision_rows() -> None:
+    """Coincident and crowded labels go to separate rows, never on top of each other."""
+    from model_sentinel.alias_check import price_ladder
+    from model_sentinel.endpoint_html import layout_ladder
+    from model_sentinel.models import LadderMarkInput
+
+    observations = [
+        _ep_obs(f"crowded-host-{index}", _ep_state(f"crowded-host-{index}", prompt="0.000002"))
+        for index in range(5)
+    ] + [_ep_obs("near", _ep_state("near", prompt="0.0000021"))]
+    capture = _ep_capture(None, (_ep_list(_EP_TARGET, *observations),))
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002"), _EP_PROFILE, capture.lists)
+    ladder = price_ladder(
+        [(observation.endpoint_key, observation.state) for observation in observations],
+        leaf="pricing.prompt",
+        marks=(
+            LadderMarkInput("target", "pricing.prompt", "0.000003"),
+            LadderMarkInput("alias", "pricing.prompt", "0.000002"),
+        ),
+        profile=_EP_PROFILE,
+    )
+    layout = layout_ladder(ladder)
+    width, height = layout.width, layout.height
+    boxes = [(label.x0, label.y0, label.x1, label.y1, label.kind) for label in layout.labels]
+    assert len(boxes) == 8  # six endpoints, alias and target
+    for index, (x0, y0, x1, y1, _) in enumerate(boxes):
+        assert 0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height
+        for other in boxes[index + 1 :]:
+            overlap = x0 < other[2] and other[0] < x1 and y0 < other[3] and other[1] < y1
+            assert not overlap, (boxes[index], other)
+    # Five coincident endpoints need at least five label rows below the axis.
+    assert len({box[1] for box in boxes if box[4] == "endpoint"}) >= 5
+    # Mark labels sit above the axis, endpoint labels below it.
+    assert all(box[3] <= layout.alias_lane_y for box in boxes if box[4] == "mark")
+    assert all(box[1] >= layout.axis_y for box in boxes if box[4] == "endpoint")
+    # The rendered page carries one placed label per entry.
+    svg = _element(_ep_html(_ep_result(capture, alias_events=events)), "<svg")
+    assert len(re.findall(r"<text\b[^>]*ladder-label", svg)) == 8
+
+
+# --- endpoint_disclosure_summary_and_detail ----------------------------------
+
+
+def test_endpoint_disclosure_summary_and_detail_html_closed_after_scan_disclosure() -> None:
+    html = _ep_html(_ep_result(_three_list_capture(), changed=(_price_move_delta(),)))
+    disclosure = _element(html, 'id="provider-endpoints"')
+    assert disclosure.startswith('<details class="endpoint-disclosure" id="provider-endpoints">')
+    assert html.index('class="secondary-changes"') < html.index('id="provider-endpoints"') < html.index("<footer>")
+    assert _text(_element(disclosure, "<summary")) == (
+        "Provider endpoints — 1 list with price changes · 1 endpoint added · 1 endpoint removed"
+        " · 1 conditional pricing change · 1 status change"
+    )
+    facts = _element(disclosure, 'class="endpoint-facts"')
+    assert _text(facts) == (
+        "Capture complete (capture 2): 2 lists requested, 2 attempted, 0 failed, 0 mapping failures"
+        " Baseline compared with endpoint capture 1"
+    )
+    headings = [_text(heading) for heading in _elements(disclosure, 'class="endpoint-list-heading"')]
+    assert headings == [
+        f"List {_EP_TARGET} — models: {_EP_TARGET}",
+        "List fake-org/test-model-b — models: fake-org/test-model-b",
+    ]
+    # Default detail: price, presence and conditional rows; no metadata, status
+    # or raw conditional JSON.
+    assert 'class="card-table endpoint-field-table"' not in disclosure
+    assert "Conditional pricing changed" in _text(disclosure)
+    assert "min_prompt_tokens" not in disclosure
+    # Endpoint data never changes catalog counts or the Price Movement card.
+    plain = _ep_html(_ep_result(None, changed=(_price_move_delta(),)))
+    assert _element(plain, 'id="price-movement"') == _element(html, 'id="price-movement"')
+    assert plain.split("<header>")[1].split("</header>")[0] == html.split("<header>")[1].split("</header>")[0]
+    _no_script(html)
+
+
+def test_endpoint_disclosure_summary_and_detail_html_full_detail() -> None:
+    html = _ep_html(_ep_result(_three_list_capture()), "all")
+    disclosure = _element(html, 'id="provider-endpoints"')
+    # Still closed in full detail.
+    assert disclosure.startswith('<details class="endpoint-disclosure" id="provider-endpoints">')
+    (field_table,) = _elements(disclosure, 'class="card-table endpoint-field-table"')
+    text = _text(field_table)
+    assert "host-a#0 Context length 1,000 → 2,000" in text
+    assert "Status 0 → 1" in text
+    assert "(model)" not in disclosure
+    conditional = _element(disclosure, 'class="endpoint-conditional"')
+    assert _text(conditional) == (
+        'host-c#0 Conditional pricing changed'
+        ' Old [{"min_prompt_tokens":200000,"prompt":"0.000002"}]'
+        ' New [{"min_prompt_tokens":200000,"prompt":"0.000003"}]'
+    )
+
+
+def test_endpoint_disclosure_summary_and_detail_html_persisting_gaps_and_failures() -> None:
+    same = _ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000003", completion="0.000015", request="0.02")))
+    failed_baseline = _ep_list("fake-org/test-model-b", _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    failed_current = _ep_list("fake-org/test-model-b", outcome="error")
+    moved_old = _ep_list("fake-org/test-model-c", _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    moved_new = _ep_list("fake-org/test-model-c", _ep_obs("host", _ep_state("host", prompt="0.000002")), path=_ep_path("fake-org/new-c"))
+    capture = _ep_capture((same, failed_baseline, moved_old), (same, failed_current, moved_new))
+    baseline = _alias_catalog(prompt="0.000002")
+    events = _divergence_events(baseline, baseline, _EP_PROFILE, capture.lists)
+    result = _ep_result(capture, alias_events=events)
+
+    default = _element(_ep_html(result), 'id="provider-endpoints"')
+    assert "1 persisting alias divergence" in _text(_element(default, "<summary"))
+    persisting = default.index('data-kind="persisting"')
+    assert persisting < default.index('class="endpoint-list"')
+    assert "comparison gap" in _text(_element(default, "<summary"))
+    assert "Comparison gaps" not in _text(default) and "Failed lists" not in _text(default)
+    # Persisting divergences are not repeated after the Price Movement card.
+    assert 'id="alias-check"' not in _ep_html(result)
+
+    full = _element(_ep_html(result, "all"), 'id="provider-endpoints"')
+    gaps = _text(_element(full, 'class="endpoint-evidence endpoint-gaps"'))
+    assert f"{_ep_path('fake-org/test-model-b')}: the current list failed to fetch; not compared" in gaps
+    failures = _text(_element(full, 'class="endpoint-evidence endpoint-failed-lists"'))
+    assert failures == f"Failed lists {_ep_path('fake-org/test-model-b')}: http_status: HTTP 503"
+
+
+def test_endpoint_disclosure_summary_and_detail_html_first_capture_and_no_changes() -> None:
+    same = _ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    first = _element(_ep_html(_ep_result(_ep_capture(None, (same,), first_capture=True))), 'id="provider-endpoints"')
+    assert "Baseline first endpoint capture for this provider; there is no earlier capture to compare with" in _text(first)
+    assert "No endpoint changes" not in _text(first)
+    quiet = _element(_ep_html(_ep_result(_ep_capture((same,), (same,)))), 'id="provider-endpoints"')
+    assert _text(_element(quiet, "<summary")) == "Provider endpoints — no endpoint changes in 1 compared list"
+    assert _text(_element(quiet, 'class="endpoint-no-change"')) == "No endpoint changes in 1 compared list"
+
+
+def test_endpoint_disclosure_summary_and_detail_html_absent_data_is_pristine() -> None:
+    result = _ep_result(_three_list_capture(), alias_events=_divergence_events(
+        None, _alias_catalog(prompt="0.000002"), _EP_PROFILE))
+    plain = replace(result, endpoint_capture=None, alias_events=())
+    html = _ep_html(plain)
+    for marker in ("provider-endpoints", "alias-check", "endpoint-", "price-ladder", "ladder-"):
+        assert marker not in html
+    for mode in ("squelched",):
+        assert _ep_html(result, mode) == _ep_html(plain, mode)
+
+
+# --- endpoint_strict_price_and_metadata_tables -------------------------------
+
+
+def test_endpoint_strict_price_and_metadata_tables_html_price_table() -> None:
+    disclosure = _element(_ep_html(_ep_result(_three_list_capture())), 'id="provider-endpoints"')
+    table = _elements(disclosure, 'class="endpoint-price-table"')[0]
+    header, *rows = re.findall(r"<tr\b[^>]*>.*?</tr>", table, re.S)
+    assert [_text(cell) for cell in _cells(header)] == ["Endpoint", "Input /1M tokens", "Output /1M tokens", "Change"]
+    assert all(len(_cells(row)) == 4 for row in rows)
+    by_key = {_text(_cells(row)[0]): row for row in rows}
+    assert list(by_key) == ["host-a#0", "host-b#0", "host-d#0"]
+
+    key, prompt, completion, change = _cells(by_key["host-a#0"])
+    assert key.startswith('<th scope="row"')
+    assert 'sem-cost-up' in prompt
+    assert _text(_element(prompt, 'class="ep-value"')) == "$1.00 → $2.00"
+    # Per-cell raw evidence: the derivation tooltip and a selectable raw line.
+    assert "0.000001 (1.0e-6) × 1,000,000 = $1.00" in _html_module.unescape(prompt)
+    assert "0.000002 (2.0e-6) × 1,000,000 = $2.00" in _html_module.unescape(prompt)
+    assert _text(_element(prompt, 'class="ep-raw"')) == "0.000001 → 0.000002"
+    # An unchanged leaf shows the current value, uncoloured.
+    assert _text(_element(completion, 'class="ep-value"')) == "$2.00" and "sem-cost" not in completion
+    assert _text(change) == "↑ higher" and "sem-cost-up" in change
+
+    _, removed_prompt, _, removed_change = _cells(by_key["host-b#0"])
+    assert _text(_element(removed_prompt, 'class="ep-value"')) == "$1.00"
+    assert _text(_element(removed_prompt, 'class="ep-raw"')) == "0.000001"
+    # Endpoint presence is coverage, never a cost color.
+    assert _text(removed_change) == "endpoint removed" and "sem-coverage" in removed_change
+    _, _, _, added_change = _cells(by_key["host-d#0"])
+    assert _text(added_change) == "endpoint added" and "sem-coverage" in added_change
+    # Metadata never enters the price table.
+    assert "Context length" not in table and "Status" not in table
+
+
+def test_endpoint_strict_price_and_metadata_tables_html_coverage_and_mixed_cells() -> None:
+    baseline = (
+        _ep_list("fake-org/coverage", _ep_obs("host", _ep_state("host", prompt="0.000001"))),
+        _ep_list("fake-org/mixed", _ep_obs("host", _ep_state("host", prompt="0.000001", completion="0.000004"))),
+    )
+    current = (
+        _ep_list("fake-org/coverage", _ep_obs("host", _ep_state("host", prompt="0.000001", web_search="0.01"))),
+        _ep_list("fake-org/mixed", _ep_obs("host", _ep_state("host", prompt="0.000002", completion="0.000003"))),
+    )
+    disclosure = _element(_ep_html(_ep_result(_ep_capture(baseline, current))), 'id="provider-endpoints"')
+    tables = {
+        _text(_element(article, 'class="endpoint-list-heading"')).split()[1]: _element(article, 'class="endpoint-price-table"')
+        for article in _elements(disclosure, 'class="endpoint-list"')
+    }
+    _, coverage_row = re.findall(r"<tr\b[^>]*>.*?</tr>", tables["fake-org/coverage"], re.S)
+    cells = _cells(coverage_row)
+    assert [_text(cell) for cell in _cells(re.findall(r"<tr\b[^>]*>.*?</tr>", tables["fake-org/coverage"], re.S)[0])] == [
+        "Endpoint", "Web search /1K searches", "Change"
+    ]
+    assert _text(_element(cells[1], 'class="ep-value"')) == "— → $10.00" and "sem-coverage" in cells[1]
+    assert _text(cells[2]) == "price added/removed" and "sem-coverage" in cells[2]
+    _, mixed_row = re.findall(r"<tr\b[^>]*>.*?</tr>", tables["fake-org/mixed"], re.S)
+    cells = _cells(mixed_row)
+    assert "sem-cost-up" in cells[1] and "sem-cost-down" in cells[2]
+    assert _text(cells[3]) == "↕ mixed" and "sem-cost" not in cells[3]
+
+
+def test_endpoint_strict_price_and_metadata_tables_html_metadata_uses_card_rows() -> None:
+    baseline = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001", mystery="0.25"))),)
+    current = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", context_length=4000, prompt="0.000001", mystery="0.5"))),)
+    full = _element(_ep_html(_ep_result(_ep_capture(baseline, current)), "all"), 'id="provider-endpoints"')
+    assert 'class="endpoint-price-table"' not in full
+    table = _element(full, 'class="card-table endpoint-field-table"')
+    assert reporting._CARD_TABLE_COLGROUP in table
+    rows = re.findall(r"<tr\b[^>]*>.*?</tr>", table, re.S)
+    # `_render_html_card_row`'s eight columns, the endpoint key in the chip column.
+    assert all(len(_cells(row)) == 8 for row in rows)
+    assert _text(_cells(rows[0])[0]) == "host#0"
+    labels = [_text(_cells(row)[1]) for row in rows]
+    assert labels == ["Context length", "Mystery"]
+    # Strict classification: an unmatched monetary-looking leaf is a neutral value.
+    mystery = rows[1]
+    assert "$" not in mystery and "unit unknown" not in mystery and "sem-cost" not in mystery
+    assert "0.25" in mystery and "0.5" in mystery
+
+
+# --- endpoint_companion_cap_navigation ---------------------------------------
+
+
+def _capped_result(extra: int = 2):
+    ids = [f"fake-org/capped-{index:02d}" for index in range(CONCISE_ENDPOINT_LIST_CAP + extra)]
+    baseline = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000001"))) for m in ids)
+    current = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000002"))) for m in ids)
+    return _ep_result(_ep_capture(baseline, current))
+
+
+def test_endpoint_companion_cap_navigation_concise_links_to_full_companion() -> None:
+    html = _ep_html(_capped_result(), companion_link=("scan 01_full.html", "Full-detail report →"))
+    disclosure = _element(html, 'id="provider-endpoints"')
+    assert len(_elements(disclosure, 'class="endpoint-list"')) == CONCISE_ENDPOINT_LIST_CAP
+    # The summary counts every list even though the display is capped.
+    assert f"{CONCISE_ENDPOINT_LIST_CAP + 2} lists with price changes" in _text(_element(disclosure, "<summary"))
+    omitted = _element(disclosure, 'class="endpoint-omitted"')
+    assert _text(omitted) == "2 more changed lists not shown — Full-detail report →"
+    assert '<a class="endpoint-nav" href="scan%2001_full.html#provider-endpoints">' in omitted
+
+
+def test_endpoint_companion_cap_navigation_without_companion_names_detail_flag() -> None:
+    disclosure = _element(_ep_html(_capped_result()), 'id="provider-endpoints"')
+    omitted = _element(disclosure, 'class="endpoint-omitted"')
+    assert _text(omitted) == "2 more changed lists not shown; the full-detail report (--detail all) shows every list"
+    assert "<a " not in omitted
+
+
+def test_endpoint_companion_cap_navigation_full_links_back_to_concise() -> None:
+    html = _ep_html(_capped_result(), "all", companion_link=("scan.html", "← Concise report"))
+    disclosure = _element(html, 'id="provider-endpoints"')
+    assert len(_elements(disclosure, 'class="endpoint-list"')) == CONCISE_ENDPOINT_LIST_CAP + 2
+    assert 'class="endpoint-omitted"' not in disclosure
+    back = _element(disclosure, 'class="endpoint-back"')
+    assert '<a class="endpoint-nav" href="scan.html#provider-endpoints">← Concise report</a>' in back
+    # Without a companion, the full report has no back link.
+    assert 'class="endpoint-back"' not in _ep_html(_capped_result(), "all")
+
+
+def test_endpoint_companion_cap_navigation_detail_only_lists_and_uncapped() -> None:
+    baseline = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001"))),)
+    current = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", context_length=9, prompt="0.000001"))),)
+    link = ("scan_full.html", "Full-detail report →")
+    disclosure = _element(_ep_html(_ep_result(_ep_capture(baseline, current)), companion_link=link), 'id="provider-endpoints"')
+    assert _text(_element(disclosure, 'class="endpoint-omitted"')) == (
+        "1 changed list has only metadata or status changes — Full-detail report →"
+    )
+    # Nothing was omitted from an uncapped report with a visible list.
+    uncapped = _element(_ep_html(_ep_result(_three_list_capture()), companion_link=link), 'id="provider-endpoints"')
+    assert 'class="endpoint-omitted"' not in uncapped

@@ -5305,8 +5305,14 @@ def _companion_link_html(companion_link: tuple[str, str] | None) -> str:
     )
 
 
-def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html: str) -> str:
+def _render_html_page(
+    *, title: str, header_html: str, body_html: str, tail_html: str, extra_css: str = ""
+) -> str:
     """The page shell. `tail_html` is whatever sits between the body and the footer.
+
+    `extra_css` is appended to the stylesheet only when a renderer has content
+    that needs it (the endpoint and alias additions), so a page without that
+    content keeps its stylesheet byte for byte.
 
     Named for its POSITION rather than its contents since F1: the `changes`
     report still passes its Change Summary table here, but the scan report now
@@ -5325,6 +5331,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
     companion_css = (
         "\n" + _COMPANION_LINK_CSS if 'class="companion-link"' in header_html else ""
     )
+    added_css = "\n" + extra_css if extra_css else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5332,7 +5339,7 @@ def _render_html_page(*, title: str, header_html: str, body_html: str, tail_html
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{h(title)}</title>
 <style>
-{_HTML_CSS}{conditional_css}{companion_css}
+{_HTML_CSS}{conditional_css}{companion_css}{added_css}
 </style>
 </head>
 <body>
@@ -6685,6 +6692,18 @@ def _price_conversion_factor(rendered: RenderedChange) -> str:
     return _price_rule_conversion_factor(rendered.price_rule)
 
 
+def _raw_price_derivation(
+    raw: str,
+    display: str,
+    price_rule: ResolvedPriceRule | None,
+) -> str:
+    """`0.000002 (2.0e-6) × 1,000,000 = $2.00`: see `_card_raw_title`."""
+    scientific = _scientific_notation(raw)
+    lead = f"{raw} ({scientific})" if scientific is not None else raw
+    factor = _price_rule_conversion_factor(price_rule)
+    return f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
+
+
 def _raw_price_title(
     raw: str | None,
     display: str,
@@ -6692,11 +6711,7 @@ def _raw_price_title(
 ) -> str:
     if raw is None:
         return ""
-    scientific = _scientific_notation(raw)
-    lead = f"{raw} ({scientific})" if scientific is not None else raw
-    factor = _price_rule_conversion_factor(price_rule)
-    derivation = f"{lead} {factor} = {display}" if factor else f"{lead} = {display}"
-    return f' title="{html_module.escape(derivation)}"'
+    return f' title="{html_module.escape(_raw_price_derivation(raw, display, price_rule))}"'
 
 
 def _card_raw_title(
@@ -7735,22 +7750,39 @@ def _render_scan_html(
         f'{_companion_link_html(companion_link)}</header>'
     )
     price_movement_html = _render_html_price_movement_summary(movement, anchors)
+    # Alias events and the Provider endpoints disclosure. They never enter the
+    # header counts, the Price Movement card or the tiers above; the shared
+    # model decides ordering, caps and wording, and is empty when squelched.
+    # Imported here because `endpoint_html` builds on this module's card-row
+    # helpers.
+    from .endpoint_html import render_endpoint_html
+
+    endpoint_html = render_endpoint_html(
+        scan_endpoint_sections(provider_results, detail_mode=detail_policy.mode),
+        provider_results,
+        companion_link=companion_link,
+    )
     body_html = (
         f'<div class="provider-cards">\n  {"".join(provider_cards)}\n</div>\n\n'
         + (f'{price_movement_html}\n\n' if price_movement_html else "")
+        + (f'{endpoint_html.alias_html}\n\n' if endpoint_html.alias_html else "")
         + tiers.primary
     )
+    tail_html = _render_scan_disclosure(
+        tiers,
+        _build_html_summary_table(
+            summary_entries, concise=True, show_provider=contributing > 1
+        ),
+    )
+    if endpoint_html.disclosure_html:
+        tail_html += f"\n{endpoint_html.disclosure_html}"
 
     return _render_html_page(
         title=f"Model Sentinel \u2014 {to_local_human(generated_at)}",
         header_html=header_html,
         body_html=body_html,
-        tail_html=_render_scan_disclosure(
-            tiers,
-            _build_html_summary_table(
-                summary_entries, concise=True, show_provider=contributing > 1
-            ),
-        ),
+        tail_html=tail_html,
+        extra_css=endpoint_html.css,
     )
 
 

@@ -603,7 +603,9 @@ Text and Markdown append two sections after the catalog report:
   separately from a missing or unusable baseline capture), and summary
   clauses counted over every list: lists with price changes, endpoint
   additions and removals, conditional pricing and status changes, persisting
-  alias divergences, failed lists, mapping failures, and comparison gaps.
+  alias divergences, lists that failed to fetch, lists never requested
+  because the endpoint fetch budget ran out, mapping failures, and
+  comparison gaps.
   "No endpoint changes" is stated only for lists that were actually compared.
   Persisting alias divergences come next, then changed lists: lists are
   grouped by the comparison unit of their first moved price in profile order
@@ -614,8 +616,14 @@ Text and Markdown append two sections after the catalog report:
   and status changes, the raw conditional-pricing JSON, comparison gaps, and
   failed lists. Endpoint fields are classified strictly: a monetary-looking
   field the profile has no price rule for is shown as a neutral value, not a
-  price.
+  price. Endpoint field labels describe the endpoint, so an endpoint's own
+  `context_length` reads `Context length`, without the catalog's `(model)`
+  qualifier.
 
+The HTML report follows the same sections and policy (see HTML
+Auto-Reports): `new`, `changed`, and `resolved` alias events follow the Price
+Movement card, and everything else sits in a closed `Provider endpoints`
+disclosure.
 `--detail squelched` omits both sections. JSON output adds optional top-level
 `alias_checks` and `endpoint_captures` maps, keyed by provider ID and present
 only when that data exists; `endpoint_captures` carries the capture summary
@@ -721,6 +729,39 @@ headline still elevates the largest dollar movements.
 **Raw values are available without leaving the page.** Hovering a price cell shows the full derivation — the provider's literal value, its magnitude in scientific notation as a parenthetical, the conversion factor and the resulting figure, e.g. `0.000002 (2.0e-6) × 1,000,000 = $2.00`. Because a tooltip cannot be selected or copied, a `Show raw values` checkbox in the header also reveals a selectable `old → new` sub-line under every price row. That checkbox is **ticked by default in the full-detail companion report**, whose whole purpose is the raw numbers, and unticked in the concise one.
 
 **The two companions link to each other.** The concise report's header carries a `Full-detail report →` link and the full-detail report's header carries `← Concise report`, placed after the `Show raw values` checkbox. Each link is a relative filename in the same report directory, so the pair can be moved or opened together and still navigate. The links use the same dim navigation styling as the card `↑` back-link rather than a change color, and they appear only in the auto-generated pair: a report written with `--output` has no companion and no link.
+
+**Alias events follow the Price Movement card.** For a provider with alias
+checks (see Alias Check and Provider Endpoints), an `Alias check` card lists
+`new`, `changed`, and `resolved` divergences, each with one labelled
+alias-versus-target sentence per differing price, normalized figure first and
+the raw provider value in parentheses; the full-detail companion adds
+`unavailable` events and prices that could not be compared. Divergences are
+not price moves, so the card is neutral: red and green stay reserved for
+prices that went up or down. When the target's endpoint list was captured in
+this scan, each divergent price gets a **price ladder**: a static SVG on a
+log scale with a neutral dot per endpoint price and two labelled reference
+marks, a hollow diamond for the target's catalog price and a solid triangle
+for the alias's. Coincident or crowded labels move to separate rows instead of
+overlapping, the ladder keeps a legible size and scrolls inside its frame on a
+narrow screen, and each ladder is an accessible image whose title names it and
+whose caption lists every placed price low to high, plus any endpoint that
+could not be placed (free, missing, or in another unit). A leaf no endpoint
+carries gets no ladder.
+
+**Endpoint detail is one closed disclosure.** `Provider endpoints` sits after
+`Other changes`, closed in both companions, and its summary line carries the
+same uncapped clauses as the text report. Inside are the capture and baseline
+facts, persisting alias divergences, then each changed list: an
+endpoint-price table (endpoint, one column per resolved price with its unit in
+the header, and the change), with each cell's raw provider value in its
+tooltip and on the `Show raw values` sub-line, and in full detail a separate
+table of metadata and status changes in the model cards' column layout. Price
+cells use the cost colors; an endpoint added or removed, or a price appearing,
+is coverage blue. The concise report shows at most 25 lists; when lists are
+omitted, or only the full report can show them, its note links to the
+full-detail companion's `#provider-endpoints`, and the full-detail disclosure
+links back to the concise one. `--detail squelched` omits both additions, and
+a report without endpoint or alias data is unchanged.
 
 When no changes are detected, no HTML companion is generated. The requested
 primary format is still emitted to stdout or an explicit `--output`; the
