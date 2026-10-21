@@ -1172,6 +1172,66 @@ legend,
 .day-activity-link { margin-block-start: 0.7rem; padding: 0.35rem 0.55rem; border: 1px solid var(--border); color: var(--accent); background: var(--ground); cursor: pointer; font-size: 0.62rem; }
 @keyframes dossier-target { from { background: var(--accent-soft); } to { background: var(--panel); } }
 
+/* Serving endpoints: endpoint dots and alias/target marks are neutral and told
+   apart by shape and label; only a moved price uses the cost colors (via the
+   shared `.cost-up`/`.cost-down` change classes). */
+.endpoint-body { display: grid; gap: 0.9rem; padding: 0.8rem; }
+.endpoint-body h3 { margin: 0 0 0.45rem; color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.endpoint-body .table-wrap { margin-block-start: 0; }
+.endpoint-body code { overflow-wrap: anywhere; color: var(--ink-strong); font-size: 0.66rem; }
+.endpoint-note { margin: 0; color: var(--ink); font-size: 0.7rem; line-height: 1.45; }
+.endpoint-shared { padding: 0.55rem 0.7rem; border-inline-start: 3px solid var(--border-strong); background: var(--ground); }
+.endpoint-state { display: grid; gap: 0.55rem; padding: 0.7rem; border: 1px solid var(--border); background: var(--ground); }
+.endpoint-state > p { margin: 0; color: var(--ink-strong); font-size: 0.76rem; line-height: 1.45; }
+.endpoint-state.is-failed { border-color: var(--capacity); border-inline-start-width: 3px; }
+.endpoint-failure { margin: 0; padding: 0.5rem 0.6rem; overflow-x: auto; border: 1px solid var(--border); color: var(--ink-strong); background: var(--panel); font-size: 0.68rem; white-space: pre-wrap; }
+.endpoint-gaps { display: grid; gap: 0.2rem; margin: 0; padding-inline-start: 1.1rem; color: var(--ink); font-size: 0.68rem; }
+.endpoint-retry { display: flex; flex-wrap: wrap; gap: 0.5rem 0.8rem; align-items: center; color: var(--ink-muted); font-size: 0.64rem; }
+.endpoint-retry button { padding: 0.4rem 0.65rem; border: 1px solid var(--accent); color: var(--accent); background: var(--panel); cursor: pointer; font-size: 0.66rem; font-weight: 700; }
+.endpoint-retry button:disabled { cursor: wait; opacity: 0.65; }
+.endpoint-alias { padding: 0.7rem; border: 1px solid var(--border); background: var(--panel-raised); }
+.endpoint-alias h3 { color: var(--ink-strong); font-family: inherit; font-size: 0.78rem; letter-spacing: 0; text-transform: none; }
+.endpoint-alias p,
+.endpoint-alias li { margin: 0; color: var(--ink); font-size: 0.7rem; line-height: 1.45; }
+.alias-leaves { display: grid; gap: 0.2rem; margin: 0 0 0.45rem; padding-inline-start: 1.1rem; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.alias-match { margin-block-start: 0.35rem; }
+.endpoint-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
+.endpoint-table th,
+.endpoint-table td { padding: 0.42rem 0.5rem; border-block-start: 1px solid var(--border); text-align: right; }
+.endpoint-table thead th { color: var(--ink-muted); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; vertical-align: bottom; }
+.endpoint-table thead th small { display: block; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.endpoint-table th:first-child { padding-inline-start: 0; text-align: left; }
+.endpoint-table tbody th span,
+.endpoint-table tbody th small { display: block; }
+.endpoint-table tbody th span { color: var(--ink-strong); font-weight: 600; }
+.endpoint-table tbody th small { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.6rem; font-weight: 400; }
+.endpoint-table td { color: var(--ink-strong); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.endpoint-table td.alias-tag { color: var(--ink); font-family: inherit; font-size: 0.64rem; }
+.endpoint-ladders { display: grid; gap: 0.7rem; }
+.endpoint-ladder { display: grid; gap: 0.45rem; margin: 0; padding: 0.7rem; border: 1px solid var(--border); background: var(--panel); }
+.endpoint-ladder figcaption { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; }
+.endpoint-ladder figcaption strong { color: var(--ink-strong); font-size: 0.74rem; }
+.endpoint-ladder figcaption span { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.62rem; }
+.ladder-track { padding: 1.1rem 0.9rem 0.8rem; }
+.ladder-axis { position: relative; height: 2px; background: var(--border-strong); }
+.ladder-point { position: absolute; top: 1px; display: block; width: 0; height: 0; }
+.ladder-endpoint,
+.ladder-mark { position: absolute; display: block; transform: translate(-50%, -50%); }
+.ladder-endpoint { top: 0; width: 0.6rem; height: 0.6rem; border: 2px solid var(--panel); border-radius: 50%; background: var(--ink-muted); }
+.ladder-mark { width: 0.65rem; height: 0.65rem; background: var(--ink-strong); }
+.ladder-mark-target { top: -0.75rem; transform: translate(-50%, -50%) rotate(45deg) scale(0.8); }
+.ladder-mark-alias { top: 0.75rem; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.ladder-text { display: grid; gap: 0.15rem; margin: 0; padding-inline-start: 1.1rem; color: var(--ink); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.64rem; }
+.endpoint-history { display: grid; gap: 0.45rem; }
+.endpoint-history h3 { margin: 0; }
+.endpoint-changes td.endpoint-presence { color: var(--capability); white-space: normal; }
+.endpoint-changes tbody th small { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-weight: 400; }
+.endpoint-truncation { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.64rem; }
+.endpoint-capture { display: grid; gap: 0; margin: 0; border-block-start: 1px solid var(--border); }
+.endpoint-capture div { display: grid; grid-template-columns: minmax(6rem, 0.3fr) minmax(0, 1fr); gap: 0.8rem; padding: 0.42rem 0; border-block-end: 1px solid var(--border); }
+.endpoint-capture dt { color: var(--ink-muted); font-size: 0.62rem; }
+.endpoint-capture dd { margin: 0; color: var(--ink-strong); font-size: 0.66rem; }
+
 @media (max-width: 76rem) {
   .filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .facets { top: 13rem; }
@@ -1200,6 +1260,7 @@ legend,
   .dossier-identity { position: static; }
   .dossier-facts dl > div { grid-template-columns: 1fr; }
   .dossier-facts dd { border-inline-start: 0; border-block-start: 1px solid var(--border); }
+  .endpoint-capture div { grid-template-columns: 1fr; gap: 0.15rem; }
   .state-strip-row { grid-template-columns: minmax(6rem, 8rem) minmax(0, 1fr); }
   .drawer dl,
   .scrapes { grid-template-columns: 1fr; }

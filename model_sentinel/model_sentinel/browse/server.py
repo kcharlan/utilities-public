@@ -7,6 +7,7 @@ import logging
 import re
 import socket
 import sqlite3
+import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -75,6 +76,14 @@ class _BrowseHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], ctx: ApiContext) -> None:
         self.ctx = ctx
         super().__init__(server_address, _BrowseHandler)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # The page aborts superseded requests, so a client closing its socket
+        # mid-response is routine; anything else keeps the default report.
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            _LOG.debug("Client %s disconnected before the response completed.", client_address)
+            return
+        super().handle_error(request, client_address)
 
 
 class _BrowseHandler(BaseHTTPRequestHandler):

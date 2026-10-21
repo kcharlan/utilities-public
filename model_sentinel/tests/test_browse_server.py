@@ -462,3 +462,21 @@ def test_endpoint_reason_states_served_over_http(tmp_path: Path) -> None:
         thread.join(timeout=5)
         db.close_all()
     assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
+
+
+def test_client_disconnects_are_not_reported_as_server_errors(browse_server, capsys) -> None:
+    # The page aborts superseded requests (useApi's AbortController), so a
+    # client closing its socket mid-response is routine, not a server error.
+    server, *_ = browse_server
+    for error in (BrokenPipeError(32, "Broken pipe"), ConnectionResetError(54, "reset")):
+        try:
+            raise error
+        except ConnectionError:
+            server.handle_error(None, ("127.0.0.1", 1))
+    assert capsys.readouterr().err == ""
+
+    try:
+        raise RuntimeError("synthetic handler failure")
+    except RuntimeError:
+        server.handle_error(None, ("127.0.0.1", 1))
+    assert "synthetic handler failure" in capsys.readouterr().err

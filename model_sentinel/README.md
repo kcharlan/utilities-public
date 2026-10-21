@@ -472,6 +472,25 @@ Use the **Timeline** action to graph that model or **That day in Activity** to
 inspect the provider-wide context. The **Find model** box searches every saved
 provider regardless of the current provider filter.
 
+A dossier's **Serving endpoints** section shows the endpoint list saved with
+the exact snapshot the dossier displays (see Endpoint capture), never a newer
+capture or another snapshot's. For a captured list it shows each endpoint's
+prices (hover a cell for the raw value), the list's changes in saved order up
+to that snapshot (at most 200, newest first, with a note when older changes
+are left out), and the capture's status and baseline comparison. When several
+catalog models share one list, a note names the list and its other models and
+warns that the catalog row's own price can differ. For an alias, it shows each
+price that differs from the target, which endpoints carry the alias's prices
+(claims about the named prices only), and a price ladder per differing price
+with neutral endpoint dots and target/alias marks. Otherwise the section says
+why there is no list: the snapshot was not captured (with the provider's first
+usable capture date, or a pointer to the capture setting), the database
+predates endpoint capture, the catalog row has no or a malformed endpoint
+link, the alias target is missing or its chain is a cycle, the list failed to
+fetch, or the whole capture failed. Failures show the saved error evidence;
+**Re-read saved capture** only asks the local browse server again and never
+contacts the provider.
+
 The browser is read-only: it opens SQLite in read-only/query-only mode and does
 not create or update database, config, log, report, or cache files. It is also
 fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
