@@ -1750,7 +1750,6 @@ def _fake_fetch(
     `lists` maps a path to a list of endpoint objects (ok/empty) or to an error
     code string. `listed` maps catalog model IDs to their listed path.
     """
-
     list_ids = list_ids or {}
     error_messages = error_messages or {}
     mappings = [
@@ -1827,7 +1826,6 @@ def _capture(
     scrape_id: int,
     baseline_scrape_id: int | None = None,
 ):
-
     baseline_capture = (
         store.get_endpoint_capture_for_scrape(baseline_scrape_id)
         if baseline_scrape_id is not None
@@ -1887,7 +1885,6 @@ def _change_tuples(summary) -> tuple[tuple[Any, ...], ...]:
 
 
 def _legacy_snapshot(path: Path) -> dict[str, Any]:
-
     with sqlite3.connect(path) as connection:
         tables = ("providers", "scrapes", "snapshot_models", "field_changes")
         return {
@@ -1904,7 +1901,6 @@ def _legacy_snapshot(path: Path) -> dict[str, Any]:
 
 
 def test_endpoint_legacy_schema_preservation(tmp_path: Path) -> None:
-
     assert storage.SCHEMA[: len(LEGACY_SCHEMA)] == LEGACY_SCHEMA
     added = storage.SCHEMA[len(LEGACY_SCHEMA) :]
     assert len(added) == len(_ENDPOINT_TABLES) + 1
@@ -2033,8 +2029,6 @@ def test_endpoint_transaction_rollback_including_changes(tmp_path: Path, monkeyp
 
 
 def test_endpoint_transaction_rollback_including_changes_on_late_constraint(tmp_path: Path) -> None:
-
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     scrape_id = _saved_scrape(store)
@@ -2158,7 +2152,6 @@ def test_endpoint_selected_baseline_gaps_missing_baseline_capture(tmp_path: Path
 
 
 def test_endpoint_selected_baseline_gaps_unusable_baseline(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     listed = {"fake-org/test-model-a": path}
@@ -2296,7 +2289,6 @@ def test_endpoint_selected_baseline_gaps_never_substitute_latest_capture(tmp_pat
 
 
 def test_endpoint_selected_baseline_gaps_reject_mismatched_baseline(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     fetch = _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
@@ -2416,7 +2408,6 @@ def test_endpoint_shared_path_identity(tmp_path: Path) -> None:
 
 
 def _endpoint_state_for_test(endpoint: dict[str, Any]) -> dict[str, Any]:
-
     return json.loads(canonical_json(endpoint_state(endpoint, OPENROUTER_PROFILE)))
 
 
@@ -2566,7 +2557,6 @@ def test_endpoint_moves_splits_and_merges_merge_into_existing_path(tmp_path: Pat
 
 
 def test_endpoint_moves_splits_and_merges_unpaired_paths(tmp_path: Path) -> None:
-
     kept = _endpoint_path("fake-org/test-model-a")
     gone = _endpoint_path("fake-org/test-model-b")
     fresh = _endpoint_path("fake-org/test-model-c")
@@ -2602,7 +2592,6 @@ def test_endpoint_moves_splits_and_merges_move_with_failed_observation(tmp_path:
 
 
 def test_endpoint_first_capture_independent_of_baseline(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     fetch = _fake_fetch(lists={path: [_fake_endpoint("host-a")]}, listed={"fake-org/test-model-a": path})
@@ -2661,7 +2650,6 @@ def test_endpoint_first_capture_independent_of_baseline(tmp_path: Path) -> None:
 
 
 def test_endpoint_sanitized_error_roundtrip(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     baseline_scrape, baseline = _scan_with_capture(
@@ -2720,7 +2708,6 @@ def test_endpoint_sanitized_error_roundtrip_list_messages(tmp_path: Path) -> Non
 
 
 def test_endpoint_sanitized_error_roundtrip_fallback_reuses_committed_capture(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     scrape_id, committed = _scan_with_capture(
@@ -2741,7 +2728,6 @@ def test_endpoint_sanitized_error_roundtrip_fallback_reuses_committed_capture(tm
 
 
 def test_endpoint_sanitized_error_roundtrip_fallback_failure_is_retained(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     unsaved_scrape = _saved_scrape(store, saved=False)
     summary = build_endpoint_error_summary(
@@ -2764,7 +2750,6 @@ def test_endpoint_sanitized_error_roundtrip_fallback_failure_is_retained(tmp_pat
 
 
 def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity(tmp_path: Path) -> None:
-
     store = _endpoint_store(tmp_path)
     with closing(store._connect_capture_writer()) as connection:
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -2779,7 +2764,6 @@ def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity(tmp_path: Pa
 
 
 def _rejected_capture(store: Store, scrape_id: int, *, provider_id: str = _FAKE_PROVIDER):
-
     path = _endpoint_path("fake-org/test-model-a")
     candidate = build_endpoint_capture(
         _fake_fetch(
@@ -2811,8 +2795,6 @@ def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_rejects_scra
 def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_rejects_baselines(
     tmp_path: Path,
 ) -> None:
-
-
     store = _endpoint_store(tmp_path)
     path = _endpoint_path("fake-org/test-model-a")
     listed = {"fake-org/test-model-a": path}
@@ -2873,7 +2855,6 @@ def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_rejects_base
 def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_requires_pragma(
     tmp_path: Path, monkeypatch
 ) -> None:
-
     class ForeignKeysUnavailable(sqlite3.Connection):
         def execute(self, sql, *args):
             if sql.strip().upper() == "PRAGMA FOREIGN_KEYS":

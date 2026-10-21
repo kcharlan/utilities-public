@@ -250,7 +250,6 @@ _LADDER_LABEL_GAP: Final = 8
 _LADDER_LABEL_PAD: Final = 4
 
 
-
 @dataclass(frozen=True)
 class LadderLabel:
     """One placed label: its box (top-left to bottom-right), text and anchor point.
