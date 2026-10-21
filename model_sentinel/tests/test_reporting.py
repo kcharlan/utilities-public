@@ -6956,7 +6956,10 @@ def test_endpoint_disclosure_summary_and_detail_text_default() -> None:
 def test_endpoint_disclosure_summary_and_detail_text_full_detail() -> None:
     section = _ep_section(_ep_report(_ep_result(_three_list_capture()), mode="all"), "Provider endpoints")
     lines = section.splitlines()
-    assert "    host-a#0: Context length (model): 1,000 → 2,000 (+1,000, ↑ 100.0%)" in lines
+    assert "    host-a#0: Context length: 1,000 → 2,000 (+1,000, ↑ 100.0%)" in lines
+    # An endpoint row describes the endpoint, so the catalog label's
+    # "(model)" disambiguator would be a false claim here.
+    assert "(model)" not in section
     assert "    host-a#0: Status: 0 → 1 (+1)" in lines
     # Metadata and status rows follow the list's price and presence rows.
     assert lines.index("    host-a#0: Status: 0 → 1 (+1)") > lines.index(
@@ -6990,7 +6993,7 @@ def test_endpoint_disclosure_summary_and_detail_markdown() -> None:
     )
     assert "Context length" not in default
     full = _ep_section(_ep_report(_ep_result(_three_list_capture()), "markdown", "all"), "Provider endpoints")
-    assert "Context length (model)" in full
+    assert "Context length: " in full and "(model)" not in full
     assert '    - Old: ` [{"min_prompt_tokens":200000,"prompt":"0.000002"}] `' in full.splitlines()
 
 
@@ -7111,6 +7114,25 @@ def test_endpoint_comparison_gap_wording_no_changes_only_for_compared_lists() ->
     assert f"    {_ep_path('fake-org/test-model-b')}: http_status: HTTP 503" in full
     # The gaps are full-detail evidence only.
     assert "comparison gaps:" not in _ep_section(_ep_report(result), "Provider endpoints")
+
+
+def test_endpoint_comparison_gap_wording_unsent_lists_are_not_called_failed() -> None:
+    """`paths_failed` includes `budget_exceeded` paths that were never sent."""
+    sent = _ep_list("fake-org/test-model-b", outcome="error")
+    unsent = replace(
+        _ep_list("fake-org/test-model-c", outcome="error"),
+        error_code="budget_exceeded",
+        error_message="request admission deadline passed",
+    )
+    capture = _ep_capture(None, (sent, unsent))
+    assert capture.paths_failed == 2
+    assert _ep_line(_ep_result(capture), "  summary:") == (
+        "  summary: 1 list failed to fetch; 1 list not requested before the endpoint fetch budget ran out"
+    )
+    only_unsent = _ep_capture(None, (unsent,))
+    summary = _ep_line(_ep_result(only_unsent), "  summary:")
+    assert summary == "  summary: 1 list not requested before the endpoint fetch budget ran out"
+    assert "failed to fetch" not in summary
 
 
 def test_endpoint_comparison_gap_wording_other_compared_lists_and_moved_lists() -> None:

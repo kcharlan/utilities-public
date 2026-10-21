@@ -57,6 +57,7 @@ from .endpoints import (
     COMPARISON_UNUSABLE_BASELINE,
     CONCISE_ENDPOINT_LIST_CAP,
     ENDPOINT_ADDED,
+    ENDPOINT_ERROR_BUDGET_EXCEEDED,
     ENDPOINT_REMOVED,
     FIELD_CHANGED,
     GAP_AMBIGUOUS_MAPPING,
@@ -154,6 +155,22 @@ def _join_words(words: Sequence[str]) -> str:
 
 def _label(path: str, profile: ProviderProfile) -> str:
     return format_qualified_label(*resolve_field_label(path, profile))
+
+
+def endpoint_label_profile(profile: ProviderProfile) -> ProviderProfile:
+    """The profile to label and classify endpoint-state fields with.
+
+    It is `profile` with `endpoint_field_path_labels` laid over the catalog's
+    exact-path labels, so an endpoint's own `context_length` is not called
+    `Context length (model)`. Price rules and every other behavior are the
+    profile's own. Build it once per report: profiles are not hashable.
+    """
+    if not profile.endpoint_field_path_labels:
+        return profile
+    return dataclasses.replace(
+        profile,
+        field_path_labels={**profile.field_path_labels, **profile.endpoint_field_path_labels},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +816,7 @@ def endpoint_report(
     )
     if capture is None and not persisting:
         return None
-    profile = result.profile
+    profile = endpoint_label_profile(result.profile)
     by_path: dict[str, list[EndpointChangeRecord]] = {}
     for change in capture.changes if capture is not None else ():
         by_path.setdefault(change.list_path, []).append(change)
@@ -825,6 +842,11 @@ def endpoint_report(
     failed: tuple[EndpointListRecord, ...] = ()
     if capture is not None:
         all_changes = capture.changes
+        # `paths_failed` also counts `budget_exceeded` paths, which were never
+        # sent; they are not described as fetch failures.
+        unsent = sum(
+            1 for listing in lists if not listing.succeeded and listing.error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED
+        )
         counts = (
             (sum(1 for analysis in analyses if analysis.has_price_change), "list", " with price changes"),
             (sum(1 for c in all_changes if c.change_kind == ENDPOINT_ADDED), "endpoint", " added"),
@@ -836,7 +858,8 @@ def endpoint_report(
             ),
             (sum(1 for c in all_changes if c.change_kind == STATUS_CHANGED), "status change", ""),
             (len(persisting), "persisting alias divergence", ""),
-            (capture.paths_failed, "list", " failed to fetch"),
+            (max(capture.paths_failed - unsent, 0), "list", " failed to fetch"),
+            (unsent, "list", " not requested before the endpoint fetch budget ran out"),
             (capture.mapping_failures, "mapping failure", ""),
             (len(capture.comparison_gaps), "comparison gap", ""),
         )

@@ -835,6 +835,8 @@ def test_endpoint_capability_preserved_by_with_pricing() -> None:
     assert bound.endpoint_capture is True
     assert bound.endpoint_telemetry_fields == OPENROUTER_PROFILE.endpoint_telemetry_fields
     assert bound.endpoint_status_field == "status"
+    assert dict(bound.endpoint_field_path_labels) == {"context_length": "Context length"}
+    assert GENERIC_PROFILE.endpoint_field_path_labels == {}
     # Telemetry never overlaps the stable fields or the status field.
     assert "status" not in bound.endpoint_telemetry_fields
     assert "pricing" not in bound.endpoint_telemetry_fields
