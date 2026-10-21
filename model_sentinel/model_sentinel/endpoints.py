@@ -60,7 +60,7 @@ STATUS_CHANGED: Final = "status_changed"
 # Entries with no usable tag, name or provider_name share this base. It is the
 # empty string so it cannot equal the base of any entry that has an identifier.
 UNNAMED_ENDPOINT_BASE: Final = ""
-_OVERRIDES_FIELD: Final = "pricing.overrides"
+PRICING_OVERRIDES_FIELD: Final = "pricing.overrides"
 
 # endpoint key -> (stable state, status value), as `diff_endpoint_lists` expects.
 EndpointObservation: TypeAlias = tuple[Mapping[str, Any], Any]
@@ -466,7 +466,7 @@ def _diff_states(
         old_rest["pricing"] = {}
     changes = diff_values(old_rest, new_rest)
     if old_overrides != new_overrides:
-        changes.append((_OVERRIDES_FIELD, old_overrides, new_overrides))
+        changes.append((PRICING_OVERRIDES_FIELD, old_overrides, new_overrides))
     return sorted(changes, key=lambda change: change[0])
 
 
@@ -521,9 +521,10 @@ def resolved_price_leaves(
 ) -> tuple[PriceLeaf, ...]:
     """Return the direct scalar children of `pricing`, sorted by path.
 
-    Object and array children (including `pricing.overrides`) are excluded
-    before resolution. Each remaining leaf is resolved through the strict
-    `resolve_price_value` contract, so an unmatched field is unresolved.
+    Object and array children are excluded before resolution, and so is
+    `pricing.overrides` whatever its value: a null or scalar policy is still
+    a policy, never a price leaf. Each remaining leaf is resolved through the
+    strict `resolve_price_value` contract, so an unmatched field is unresolved.
     """
     pricing = metadata.get("pricing")
     if not isinstance(pricing, Mapping):
@@ -531,7 +532,8 @@ def resolved_price_leaves(
     return tuple(
         resolve_price_leaf(f"pricing.{name}", pricing[name], profile)
         for name in sorted(pricing, key=str)
-        if not isinstance(pricing[name], (Mapping, list, tuple))
+        if f"pricing.{name}" != PRICING_OVERRIDES_FIELD
+        and not isinstance(pricing[name], (Mapping, list, tuple))
     )
 
 

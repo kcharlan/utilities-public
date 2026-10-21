@@ -395,6 +395,14 @@ def test_endpoint_price_leaf_namespace() -> None:
     assert [(leaf.path, leaf.resolved) for leaf in generic] == [("pricing.prompt", False)]
 
 
+@pytest.mark.parametrize("overrides", (None, "not-a-policy", 0, True, [], {}))
+def test_endpoint_price_leaf_namespace_excludes_overrides_of_any_type(overrides) -> None:
+    """`pricing.overrides` is a policy, never a scalar price leaf, whatever its value."""
+    metadata = {"pricing": {"prompt": "0.000001", "overrides": overrides}}
+    leaves = resolved_price_leaves(metadata, OPENROUTER_PROFILE)
+    assert [leaf.path for leaf in leaves] == ["pricing.prompt"]
+
+
 def test_endpoint_price_leaf_namespace_single_leaf_keeps_resolved_price() -> None:
     leaf = endpoints.resolve_price_leaf("pricing.prompt", "0.000003", OPENROUTER_PROFILE)
     assert (leaf.resolved, leaf.normalized_exact_value, leaf.unit_label) == (

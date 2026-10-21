@@ -1400,12 +1400,18 @@ def classify_change(
     field_change: FieldChange,
     *,
     profile: ProviderProfile,
+    allow_unmatched_prices: bool = True,
 ) -> RenderedChange:
     """Classify a single field change into a structured `RenderedChange`.
 
     Branch order (see module docstring for why boolean must precede the
     numeric family): noop -> list -> boolean -> price -> count -> numeric ->
     scalar.
+
+    `allow_unmatched_prices` keeps the permissive scalar price fallback for a
+    monetary field the profile has no rule for (`/unit unknown`). Endpoint
+    classification passes False: such a field then has no strict price
+    identity and takes the neutral scalar presentation instead.
     """
     field_path = field_change.field_name
     label, qualifier = resolve_field_label(field_path, profile)
@@ -1494,13 +1500,13 @@ def classify_change(
             field_path,
             old_value,
             profile,
-            allow_unmatched=True,
+            allow_unmatched=allow_unmatched_prices,
         )
         new_price = resolve_price_value(
             field_path,
             new_value,
             profile,
-            allow_unmatched=True,
+            allow_unmatched=allow_unmatched_prices,
         )
         if (
             (old_price is not None or new_price is not None)

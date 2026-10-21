@@ -503,6 +503,24 @@ def test_openrouter_unknown_price_preserves_raw_magnitude_without_unit_claim() -
     assert result.price_rule.match_source == "unmatched"
 
 
+def test_strict_price_classification_gives_unmatched_prices_the_neutral_scalar_form() -> None:
+    """Endpoint classification passes `allow_unmatched_prices=False`."""
+    unmatched = FieldChange("pricing.input_cache_write_1h", "0.25", "0.5")
+    strict = classify_change_with_profile(
+        unmatched, profile=OPENROUTER_PROFILE, allow_unmatched_prices=False
+    )
+    assert (strict.kind, strict.semantic, strict.direction) == ("scalar", "neutral", "none")
+    assert (strict.old_display, strict.new_display, strict.unit) == ("0.25", "0.5", None)
+    assert strict.price_rule is None
+    # The default keeps every existing caller's permissive fallback.
+    assert classify_change_with_profile(unmatched, profile=OPENROUTER_PROFILE).kind == "price"
+    # A field with a strict rule is a price either way, with the same display.
+    matched = FieldChange("pricing.prompt", "0.000001", "0.000002")
+    assert classify_change_with_profile(
+        matched, profile=OPENROUTER_PROFILE, allow_unmatched_prices=False
+    ) == classify_change_with_profile(matched, profile=OPENROUTER_PROFILE)
+
+
 def test_conditional_openrouter_token_price_uses_the_leaf_rule() -> None:
     result = classify_change_with_profile(
         FieldChange(
