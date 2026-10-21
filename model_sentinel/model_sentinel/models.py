@@ -89,3 +89,22 @@ class HistoryEvent:
     field_name: str | None
     old_value: Any
     new_value: Any
+
+
+@dataclass(frozen=True)
+class EndpointChange:
+    """One difference between two captures of a single provider endpoint.
+
+    `change_kind` is one of `endpoint_added`, `endpoint_removed`,
+    `field_changed`, or `status_changed`. `field_name` is a dotted path for
+    `field_changed` and None for the other kinds. For `endpoint_added` and
+    `endpoint_removed` the added or removed side carries the endpoint's stable
+    state and the other side is None; for `status_changed` the values are the
+    two status values.
+    """
+
+    endpoint_key: str
+    change_kind: str
+    field_name: str | None
+    old_value: Any
+    new_value: Any

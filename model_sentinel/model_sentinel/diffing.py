@@ -31,7 +31,7 @@ def compare_models(
         current = current_models[model_id]
         field_changes = tuple(
             FieldChange(path, old_value, new_value)
-            for path, old_value, new_value in _diff_values(
+            for path, old_value, new_value in diff_values(
                 metadata_for_comparison(baseline),
                 metadata_for_comparison(current),
             )
@@ -42,7 +42,7 @@ def compare_models(
     return tuple(added), tuple(removed), tuple(changed)
 
 
-def _diff_values(old_value: Any, new_value: Any, prefix: str = "") -> list[tuple[str, Any, Any]]:
+def diff_values(old_value: Any, new_value: Any, prefix: str = "") -> list[tuple[str, Any, Any]]:
     if isinstance(old_value, dict) and isinstance(new_value, dict):
         changes: list[tuple[str, Any, Any]] = []
         for key in sorted(set(old_value) | set(new_value)):
@@ -53,7 +53,7 @@ def _diff_values(old_value: Any, new_value: Any, prefix: str = "") -> list[tuple
             if key not in new_value:
                 changes.append((path, old_value[key], None))
                 continue
-            changes.extend(_diff_values(old_value[key], new_value[key], path))
+            changes.extend(diff_values(old_value[key], new_value[key], path))
         return changes
     if old_value != new_value:
         return [(prefix or "value", old_value, new_value)]

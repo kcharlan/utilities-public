@@ -2226,7 +2226,7 @@ def test_grouping_key_does_not_route_through_the_noop_branch():
     change which models consolidate. The key must keep reporting the
     difference, byte-identically to its pre-unification behavior.
 
-    (Unreachable in production -- `diffing._diff_values` emits a FieldChange
+    (Unreachable in production -- `diffing.diff_values` emits a FieldChange
     only when `old_value != new_value` -- but the grouping guarantee is
     unconditional, not conditional on that argument.)
     """

@@ -282,6 +282,9 @@ class ProviderProfile:
     pricing_override_condition_set_semantics: ConditionalPricingConditionSetSemantics | None = None
     pricing_override_policy_semantics: ConditionalPricingPolicySemantics | None = None
     pricing_override_base_paths: Mapping[str, str] = field(default_factory=dict)
+    endpoint_capture: bool = False
+    endpoint_telemetry_fields: frozenset[str] = frozenset()
+    endpoint_status_field: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -333,6 +336,18 @@ class ProviderProfile:
             raise ValueError(
                 "conditional pricing policy semantics must be a semantics declaration or None"
             )
+        if not isinstance(self.endpoint_capture, bool):
+            raise ValueError("endpoint_capture must be a boolean")
+        if not isinstance(self.endpoint_telemetry_fields, frozenset) or any(
+            not isinstance(name, str) or not name.strip()
+            for name in self.endpoint_telemetry_fields
+        ):
+            raise ValueError("endpoint telemetry fields must be a frozenset of non-empty strings")
+        if self.endpoint_status_field is not None and (
+            not isinstance(self.endpoint_status_field, str)
+            or not self.endpoint_status_field.strip()
+        ):
+            raise ValueError("endpoint status field must be a non-empty string or None")
 
     @property
     def pricing_override_selector_names(self) -> tuple[str, ...]:
@@ -806,6 +821,20 @@ _OPENROUTER_PRICING_OVERRIDE_BASE_PATHS: Mapping[str, str] = MappingProxyType(
     {dimension: f"pricing.{dimension}" for dimension in _OPENROUTER_PRICE_LEAF_RULES}
 )
 
+# Volatile per-endpoint measurements from the endpoint-list response (30-minute
+# performance windows and uptime windows). They change on every request, so
+# they are excluded from the stable endpoint state used for comparison.
+_OPENROUTER_ENDPOINT_TELEMETRY_FIELDS: frozenset[str] = frozenset(
+    {
+        "latency_last_30m",
+        "perf_last_30m_by_workload",
+        "throughput_last_30m",
+        "uptime_last_1d",
+        "uptime_last_30m",
+        "uptime_last_5m",
+    }
+)
+
 _DEFAULT_NORMALIZED_FIELDS: Mapping[str, PathCandidates] = {
     "provider_model_id": (("id",), ("model",), ("name",)),
     "display_name": (("name",), ("display_name",)),
@@ -869,6 +898,9 @@ OPENROUTER_PROFILE = ProviderProfile(
     ),
     pricing_override_policy_semantics=_OPENROUTER_CONDITIONAL_PRICING_POLICY_SEMANTICS,
     pricing_override_base_paths=_OPENROUTER_PRICING_OVERRIDE_BASE_PATHS,
+    endpoint_capture=True,
+    endpoint_telemetry_fields=_OPENROUTER_ENDPOINT_TELEMETRY_FIELDS,
+    endpoint_status_field="status",
 )
 
 PROFILE_REGISTRY: dict[str, ProviderProfile] = {

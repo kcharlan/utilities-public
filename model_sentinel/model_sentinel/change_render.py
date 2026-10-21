@@ -983,7 +983,7 @@ def _list_diff_members(old_value: Any, new_value: Any) -> tuple[tuple[str, ...],
     still sharing one stringification and one set difference.
 
     (No FieldChange of that shape reaches production anyway: `diffing.py`'s
-    `_diff_values` and `reporting.py`'s `_diff_structured_values` both emit a
+    `diff_values` and `reporting.py`'s `_diff_structured_values` both emit a
     FieldChange only when `old_value != new_value`. The helper split makes the
     grouping guarantee unconditional rather than resting on that argument.)
     """

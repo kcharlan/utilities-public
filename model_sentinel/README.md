@@ -165,6 +165,7 @@ non-fatal warning that their labels and price-field detection are best-effort.
 - default report directory
 - report retention days (automatic cleanup of old report files)
 - default report detail mode and field-pattern display policy
+- endpoint capture (`MODEL_SENTINEL_ENDPOINT_CAPTURE`)
 
 Secrets do not belong in either file.
 
@@ -214,6 +215,28 @@ retains `1 / 1`, but that is not a complete normalization rule: its public
 schema mixes per-token token rates with media prices in other units. Abacus
 therefore uses the generic fallback profile until its authenticated payload is
 validated and a dedicated field-rule registry is added.
+
+### Endpoint capture
+
+`MODEL_SENTINEL_ENDPOINT_CAPTURE` controls whether a saved scan also records
+each model's per-provider endpoint list for providers whose profile supports it
+(currently OpenRouter). Capture is on by default; when the key is absent the
+setting is `true`. Accepted values are `1`/`true`/`yes`/`on` and
+`0`/`false`/`no`/`off`.
+
+Capture adds network traffic to every saved scan: one extra request per
+distinct endpoint-list path found in the catalog, not one per model, because
+several catalog models can share a path. At most 4 requests are in flight at a
+time, and new requests are admitted for at most 180 seconds per scan. Paths not
+started by then are recorded as failed rather than treated as empty. Requests
+are anonymous: they send no authorization header or cookie, do not follow
+redirects, and never retry with credentials. This is a local policy choice;
+Model Sentinel does not assume the provider guarantees anonymous access, and an
+authentication failure appears as a failed path.
+
+Endpoint failures never change the catalog result, the notification decision,
+or the scan exit status. To turn capture off, set
+`MODEL_SENTINEL_ENDPOINT_CAPTURE=false` in `~/.model_sentinel/settings.env`.
 
 ## Provider Credentials
 
