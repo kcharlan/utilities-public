@@ -6961,15 +6961,27 @@ def test_endpoint_comparison_gap_wording_unsent_lists_are_not_called_failed() ->
         error_code="budget_exceeded",
         error_message="request admission deadline passed",
     )
-    capture = _ep_capture(None, (sent, unsent))
+    capture = _ep_capture(None, (sent, unsent), paths_attempted=1)
     assert capture.paths_failed == 2
     assert _ep_line(_ep_result(capture), "  summary:") == (
         "  summary: 1 list failed to fetch; 1 list not requested before the endpoint fetch budget ran out"
     )
-    only_unsent = _ep_capture(None, (unsent,))
+    only_unsent = _ep_capture(None, (unsent,), paths_attempted=0)
     summary = _ep_line(_ep_result(only_unsent), "  summary:")
     assert summary == "  summary: 1 list not requested before the endpoint fetch budget ran out"
     assert "failed to fetch" not in summary
+    # The capture line counts the same way, so it cannot contradict the summary.
+    expected = (
+        "partial (capture 2): 2 lists requested, 1 attempted, 1 failed,"
+        " 1 not sent before the fetch budget ran out, 0 mapping failures"
+    )
+    assert _ep_line(_ep_result(capture), "  capture:") == f"  capture: {expected}"
+    disclosure = _element(_ep_html(_ep_result(capture)), 'id="provider-endpoints"')
+    assert f"Capture {expected}" in _text(_element(disclosure, 'class="endpoint-facts"'))
+    assert _ep_line(_ep_result(only_unsent), "  capture:") == (
+        "  capture: partial (capture 2): 1 list requested, 0 attempted, 0 failed,"
+        " 1 not sent before the fetch budget ran out, 0 mapping failures"
+    )
 
 
 def test_endpoint_comparison_gap_wording_other_compared_lists_and_moved_lists() -> None:

@@ -65,11 +65,13 @@ def page(browser: Browser) -> Iterator[Page]:
         "console",
         lambda message: console_errors.append(message.text) if message.type == "error" else None,
     )
-    yield instance
+    try:
+        yield instance
+    finally:
+        context.close()
     assert page_errors == []
     assert console_errors == []
     assert external == []
-    context.close()
 
 
 def _open(page: Page, path: Path, fragment: str = "") -> None:

@@ -738,6 +738,20 @@ def _compared_paths(capture: EndpointCaptureSummary) -> set[str]:
     return {listing.list_path for listing in capture.lists if listing.succeeded} - gap_paths
 
 
+def _failed_and_unsent(capture: EndpointCaptureSummary) -> tuple[int, int]:
+    """(lists that failed to fetch, lists never sent) for one capture.
+
+    `paths_failed` also counts `budget_exceeded` paths, which were never sent
+    after the admission deadline; they are not described as fetch failures.
+    """
+    unsent = sum(
+        1
+        for listing in capture.lists
+        if not listing.succeeded and listing.error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED
+    )
+    return max(capture.paths_failed - unsent, 0), unsent
+
+
 def capture_status_line(capture: EndpointCaptureSummary | None) -> str:
     """The capture's status first, then its counts and any error."""
     if capture is None:
@@ -745,10 +759,14 @@ def capture_status_line(capture: EndpointCaptureSummary | None) -> str:
     line = capture.status
     if capture.capture_id is not None:
         line += f" (capture {capture.capture_id})"
+    failed, unsent = _failed_and_unsent(capture)
     line += (
-        f": {plural(capture.paths_requested, 'list')} requested, {capture.paths_attempted} attempted,"
-        f" {capture.paths_failed} failed, {plural(capture.mapping_failures, 'mapping failure')}"
+        f": {plural(capture.paths_requested, 'list')} requested,"
+        f" {capture.paths_attempted} attempted, {failed} failed"
     )
+    if unsent:
+        line += f", {unsent} not sent before the fetch budget ran out"
+    line += f", {plural(capture.mapping_failures, 'mapping failure')}"
     if capture.error_summary:
         line += f"; error: {capture.error_summary}"
     return line
@@ -842,11 +860,7 @@ def endpoint_report(
     failed: tuple[EndpointListRecord, ...] = ()
     if capture is not None:
         all_changes = capture.changes
-        # `paths_failed` also counts `budget_exceeded` paths, which were never
-        # sent; they are not described as fetch failures.
-        unsent = sum(
-            1 for listing in lists if not listing.succeeded and listing.error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED
-        )
+        failed_count, unsent = _failed_and_unsent(capture)
         counts = (
             (sum(1 for analysis in analyses if analysis.has_price_change), "list", " with price changes"),
             (sum(1 for c in all_changes if c.change_kind == ENDPOINT_ADDED), "endpoint", " added"),
@@ -858,7 +872,7 @@ def endpoint_report(
             ),
             (sum(1 for c in all_changes if c.change_kind == STATUS_CHANGED), "status change", ""),
             (len(persisting), "persisting alias divergence", ""),
-            (max(capture.paths_failed - unsent, 0), "list", " failed to fetch"),
+            (failed_count, "list", " failed to fetch"),
             (unsent, "list", " not requested before the endpoint fetch budget ran out"),
             (capture.mapping_failures, "mapping failure", ""),
             (len(capture.comparison_gaps), "comparison gap", ""),
