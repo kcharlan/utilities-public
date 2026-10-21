@@ -72,6 +72,11 @@ def find_free_port(start_port: int, max_attempts: int = 20) -> int:
 
 class _BrowseHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
+    # Each API request is its own HTTP/1.0 connection and the page sends
+    # several at once. With socketserver's default backlog of 5, macOS resets
+    # the connections beyond it whenever the accept loop falls behind, and the
+    # browser reports a failed load (`net::ERR_CONNECTION_RESET`).
+    request_queue_size = socket.SOMAXCONN
 
     def __init__(self, server_address: tuple[str, int], ctx: ApiContext) -> None:
         self.ctx = ctx

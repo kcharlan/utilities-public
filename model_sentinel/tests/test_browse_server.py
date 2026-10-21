@@ -480,3 +480,50 @@ def test_client_disconnects_are_not_reported_as_server_errors(browse_server, cap
     except RuntimeError:
         server.handle_error(None, ("127.0.0.1", 1))
     assert "synthetic handler failure" in capsys.readouterr().err
+
+
+def test_a_connection_burst_before_the_accept_loop_runs_is_served(tmp_path: Path) -> None:
+    """Connections queued while the accept loop is busy are served, not reset.
+
+    The page opens a connection per request (HTTP/1.0) and Chromium runs
+    several at once. The socketserver default backlog of 5 lets macOS reset
+    the overflow, which the browser reports as `net::ERR_CONNECTION_RESET`
+    whenever the accept loop falls behind, as on a loaded machine. Here the
+    accept loop does not run at all until every client has connected.
+    """
+    database_path = tmp_path / "fixture.db"
+    build_fixture_db(database_path)
+    db = open_readonly(database_path)
+    server = make_server(browse_context(db), port=0)
+    clients = 16
+    connected = threading.Barrier(clients + 1)
+
+    def fetch() -> int | str:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        try:
+            try:
+                connection.connect()
+            finally:
+                connected.wait(timeout=5)
+            connection.request("GET", "/app.css")
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        except OSError as exc:
+            return type(exc).__name__
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    try:
+        with ThreadPoolExecutor(max_workers=clients) as pool:
+            results = [pool.submit(fetch) for _ in range(clients)]
+            connected.wait(timeout=5)
+            thread.start()
+            assert [result.result() for result in results] == [200] * clients
+    finally:
+        if thread.is_alive():
+            server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        db.close_all()
