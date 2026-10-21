@@ -1062,7 +1062,7 @@ _ACCEPTANCE_SCREENSHOTS = "MODEL_SENTINEL_ACCEPTANCE_SCREENSHOTS"
 
 
 def test_endpoint_synthetic_dossier_acceptance(
-    browser: Browser, tmp_path: Path, monkeypatch, capsys
+    browser: Browser, acceptance_dir: Path, monkeypatch, capsys
 ) -> None:
     """Serve fixture-defined endpoint dossiers through `run_browse` on port 0
     and inspect them in both maintained themes.
@@ -1070,7 +1070,7 @@ def test_endpoint_synthetic_dossier_acceptance(
     Screenshots go to this test's private directory; set
     MODEL_SENTINEL_ACCEPTANCE_SCREENSHOTS to also copy them elsewhere for review.
     """
-    database_path = tmp_path / "acceptance.db"
+    database_path = acceptance_dir / "acceptance.db"
     facts = build_fixture_db(database_path, with_endpoints=True)
     endpoint = facts.endpoint
     before = hashlib.sha256(database_path.read_bytes()).hexdigest()
@@ -1119,7 +1119,7 @@ def test_endpoint_synthetic_dossier_acceptance(
         "capture-error": (endpoint.error_only_model, ".endpoint-failure"),
         "truncated": (endpoint.bulk_model, ".endpoint-truncation"),
     }
-    shots = tmp_path / "screens"
+    shots = acceptance_dir / "screens"
     shots.mkdir(mode=0o700)
     try:
         for scheme in ("light", "dark"):

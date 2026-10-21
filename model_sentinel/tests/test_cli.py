@@ -2806,11 +2806,11 @@ def test_endpoint_healthcheck_status_and_counts_unready_database_is_advisory(
 
 
 def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
-    tmp_path: Path, monkeypatch, capsys
+    acceptance_dir: Path, monkeypatch, capsys
 ) -> None:
     """Shipped templates in a private home, environment credentials, no provider requests."""
     project_root = Path(cli.__file__).resolve().parents[1]
-    runtime_home = tmp_path / "synthetic_runtime_home"
+    runtime_home = acceptance_dir / "synthetic_runtime_home"
     runtime_home.mkdir(mode=0o700)
     (runtime_home / "providers.env").write_text(
         (project_root / "providers.env.template").read_text(encoding="utf-8"), encoding="utf-8"
