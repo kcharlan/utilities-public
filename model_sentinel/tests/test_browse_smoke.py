@@ -23,10 +23,12 @@ from tests.browse_fixtures import (
     ENDPOINT_PROVIDER,
     EXAMPLE_PROVIDER,
     OTHER_PROVIDER,
+    UNSENT_ERROR_MESSAGE,
     FixtureFacts,
     browse_context,
     browse_settings,
     build_fixture_db,
+    mark_failed_list_unsent,
 )
 
 
@@ -574,7 +576,8 @@ def test_endpoint_dossier_captured_list_table_changes_and_label_order(
     expect(first.locator("td").nth(1)).to_have_attribute("title", "raw 0.000002")
 
     capture = section.locator(".endpoint-capture")
-    expect(capture).to_contain_text(f"#{endpoint.third_capture} · partial")
+    expect(capture.locator(".endpoint-capture-line")).to_have_text(response["capture"]["status_line"])
+    expect(capture.locator(".endpoint-capture-line")).to_contain_text(f"partial (capture {endpoint.third_capture})")
     expect(_comparison(section)).to_have_text(f"compared with endpoint capture {endpoint.first_capture}")
     expect(capture).to_contain_text(endpoint.listed_path)
 
@@ -683,7 +686,7 @@ def test_endpoint_dossier_reason_states_are_distinct(endpoint_page: Page, endpoi
         endpoint.missing_alias_model: "This model is an alias of fake-org/endpoint-nowhere, which is not in this snapshot's catalog, so no endpoint list was resolved.",
         endpoint.cycle_models[0]: "This model's alias chain is a cycle, so no endpoint list was resolved.",
         endpoint.uncaptured_model: f"{_NOT_CAPTURED} This provider's first usable endpoint capture is from 2026-09-01.",
-        endpoint.failed_model: "This model's endpoint list failed to fetch during the scan, so the saved capture has no endpoints for it.",
+        endpoint.failed_model: "This model's endpoint list failed to fetch, so the saved capture has no endpoints for it.",
         endpoint.error_only_model: "Endpoint capture failed for this snapshot, so no endpoint lists were saved.",
     }
     seen: dict[str, str] = {}
@@ -754,6 +757,7 @@ def test_endpoint_dossier_failed_list_shows_evidence_and_local_retry(
     section = open_endpoint_dossier(endpoint_page, endpoint_server, endpoint.failed_model)
     state = section.locator(".endpoint-state")
     code, message = endpoint.failed_error
+    expect(section.locator(".section-heading > span")).to_have_text("fetch failed")
     expect(state.locator(".endpoint-failure")).to_have_text(f"{code}: {message}")
     expect(state).to_contain_text(endpoint.failed_path)
     expect(section.locator(".endpoint-gaps li")).to_have_text(
@@ -764,6 +768,50 @@ def test_endpoint_dossier_failed_list_shows_evidence_and_local_retry(
         section, f"this list failed to fetch, so it was not compared with endpoint capture {endpoint.first_capture}"
     )
     _assert_local_retry(endpoint_page, endpoint_server, section)
+
+
+def test_endpoint_dossier_unsent_list_is_not_called_failed(
+    browser: Browser, endpoint_server, tmp_path: Path
+) -> None:
+    """A list never sent (`budget_exceeded`) shows the API's unsent wording in
+    the header, state sentence, gaps, comparison and capture line."""
+    _, facts = endpoint_server
+    endpoint = facts.endpoint
+    database_path = tmp_path / "unsent.db"
+    build_fixture_db(database_path, with_endpoints=True)
+    mark_failed_list_unsent(database_path, endpoint)
+    with _serve(database_path, facts) as served:
+        context = browser.new_context()
+        try:
+            with _guarded_page(context, _origin(served)) as page:
+                section = open_endpoint_dossier(page, served, endpoint.failed_model)
+                expect(section.locator(".section-heading > span")).to_have_text("not sent")
+                state = section.locator(".endpoint-state")
+                expect(state.locator("p").first).to_have_text(
+                    "This model's endpoint list was not sent before the fetch budget ran out,"
+                    " so the saved capture has no endpoints for it."
+                )
+                expect(state.locator(".endpoint-failure")).to_have_text(f"budget_exceeded: {UNSENT_ERROR_MESSAGE}")
+                expect(section.locator(".endpoint-gaps li")).to_have_text(
+                    [
+                        "the baseline list was not sent before the fetch budget ran out; not compared",
+                        "the current list was not sent before the fetch budget ran out; not compared",
+                    ]
+                )
+                _assert_not_compared(
+                    section,
+                    "this list was not sent before the fetch budget ran out, so it was not compared"
+                    f" with endpoint capture {endpoint.first_capture}",
+                )
+                expect(section.locator(".endpoint-capture-line")).to_have_text(
+                    _endpoint_api(served, endpoint.failed_model)["capture"]["status_line"]
+                )
+                expect(section.locator(".endpoint-capture-line")).to_contain_text(
+                    "1 not sent before the fetch budget ran out"
+                )
+                assert "failed to fetch" not in section.inner_text()
+        finally:
+            context.close()
 
 
 def _comparison(section):
@@ -817,8 +865,11 @@ def test_endpoint_minimal_error_capture_roundtrip_in_browser(
     state = section.locator(".endpoint-state")
     expect(state.locator(".endpoint-failure")).to_have_text(endpoint.error_summary)
     capture = section.locator(".endpoint-capture")
-    expect(capture).to_contain_text(f"#{endpoint.error_capture} · error")
-    expect(capture).to_contain_text("0 of 0 paths attempted")
+    # The capture line is the reports' own (`capture_status_line`), from the API.
+    expect(capture.locator(".endpoint-capture-line")).to_have_text(
+        f"error (capture {endpoint.error_capture}): 0 lists requested, 0 attempted, 0 failed,"
+        f" 0 mapping failures; error: {endpoint.error_summary}"
+    )
     _assert_not_compared(
         section,
         f"no endpoint list was saved for this model, so nothing was compared with endpoint capture {endpoint.third_capture}",

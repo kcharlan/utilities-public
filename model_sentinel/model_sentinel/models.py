@@ -274,11 +274,16 @@ class EndpointComparisonGap:
 
     `list_path` is the current path, or the baseline path for a path that
     disappeared. `from_list_path` is the baseline path involved, when one is.
+    `list_error_code` is the error code of the list an `*_observation_failed`
+    gap names: the current list, or the baseline list at `from_list_path`. It
+    tells a list never sent (`budget_exceeded`) from one that failed to fetch.
+    It is not stored; storage reads it from that saved list.
     """
 
     list_path: str
     reason: str
     from_list_path: str | None
+    list_error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -416,8 +421,8 @@ class AliasEndpointMatch:
     in `unknown_keys` when any is missing, unresolved or incompatible. Keys
     keep list order. A match is a claim about the named leaves only.
     `unavailable_reason` is None when the list was evaluated (a successful
-    empty list has no candidates); `list_path` and `list_outcome` describe the
-    list used, when one was found.
+    empty list has no candidates); `list_path`, `list_outcome` and
+    `list_error_code` describe the list used, when one was found.
     """
 
     compared_leaves: tuple[str, ...]
@@ -427,6 +432,7 @@ class AliasEndpointMatch:
     unavailable_reason: str | None
     list_path: str | None
     list_outcome: str | None
+    list_error_code: str | None = None
 
 
 @dataclass(frozen=True)

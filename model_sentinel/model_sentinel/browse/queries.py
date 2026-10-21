@@ -6,8 +6,9 @@ from datetime import date, datetime, time, timedelta
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
+from ..endpoints import ENDPOINT_ERROR_BUDGET_EXCEEDED
 from ..models import EndpointListRecord
-from ..storage import _load_endpoint_lists, load_json_value
+from ..storage import _load_endpoint_gaps, _load_endpoint_lists, load_json_value
 from ..time_utils import local_date_for
 from .aspects import _CANONICAL_COLUMNS, _safe_path
 from .readonly import DatabaseBusyError, is_database_busy_error
@@ -521,17 +522,22 @@ def endpoint_capture_for_scrape(connection: sqlite3.Connection, *, scrape_id: in
     """The capture saved for exactly this catalog scrape, without its lists.
 
     `baseline_scrape_id` is the catalog scrape of the capture it was compared
-    with (None when it has no baseline capture).
+    with (None when it has no baseline capture). `paths_unsent` counts its
+    `budget_exceeded` lists, which `paths_failed` includes although they were
+    never sent.
     """
     row = connection.execute(
         """SELECT c.capture_id, c.scrape_id, c.provider_id, c.started_at, c.completed_at,
                   c.status, c.paths_requested, c.paths_attempted, c.paths_failed,
                   c.mapping_failures, c.first_capture, c.comparison_state,
-                  c.baseline_capture_id, b.scrape_id AS baseline_scrape_id, c.error_summary
+                  c.baseline_capture_id, b.scrape_id AS baseline_scrape_id, c.error_summary,
+                  (SELECT COUNT(*) FROM endpoint_lists AS l
+                   WHERE l.capture_id = c.capture_id AND l.outcome = 'error'
+                     AND l.error_code = ?) AS paths_unsent
            FROM endpoint_captures AS c
            LEFT JOIN endpoint_captures AS b ON b.capture_id = c.baseline_capture_id
            WHERE c.scrape_id = ?""",
-        (scrape_id,),
+        (ENDPOINT_ERROR_BUDGET_EXCEEDED, scrape_id),
     ).fetchone()
     if row is None:
         return None
@@ -551,6 +557,7 @@ def endpoint_capture_for_scrape(connection: sqlite3.Connection, *, scrape_id: in
         "baseline_capture_id": row["baseline_capture_id"],
         "baseline_scrape_id": row["baseline_scrape_id"],
         "error_summary": row["error_summary"],
+        "paths_unsent": int(row["paths_unsent"]),
     }
 
 
@@ -646,17 +653,15 @@ def endpoint_list_gaps(
     capture_id: int,
     list_path: str,
 ) -> list[dict[str, Any]]:
-    """The comparison gaps one capture recorded for `list_path`."""
-    rows = connection.execute(
-        """SELECT list_path, reason, from_list_path
-           FROM endpoint_comparison_gaps
-           WHERE capture_id = ? AND list_path = ?
-           ORDER BY list_path, reason""",
-        (capture_id, list_path),
-    ).fetchall()
+    """The comparison gaps one capture recorded for `list_path`, as `Store` reads them."""
     return [
-        {"list_path": row["list_path"], "reason": row["reason"], "from_list_path": row["from_list_path"]}
-        for row in rows
+        {
+            "list_path": gap.list_path,
+            "reason": gap.reason,
+            "from_list_path": gap.from_list_path,
+            "list_error_code": gap.list_error_code,
+        }
+        for gap in _load_endpoint_gaps(connection, capture_id, list_path=list_path)
     ]
 
 

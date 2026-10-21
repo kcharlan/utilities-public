@@ -20,6 +20,7 @@ from model_sentinel.endpoints import (
     endpoint_state,
 )
 from model_sentinel.models import (
+    EndpointComparisonGap,
     EndpointFetchResult,
     EndpointMapping,
     EndpointPathResult,
@@ -2223,6 +2224,30 @@ def test_endpoint_selected_baseline_gaps_partial_baseline_is_usable(tmp_path: Pa
         (path_b, "baseline_observation_failed", path_b),
         (path_b, "current_observation_failed", path_b),
     )
+
+
+def test_endpoint_selected_baseline_gaps_carry_the_failed_list_error_code(tmp_path: Path) -> None:
+    """A failed-observation gap names its list's error code, read back from the
+    list it names: the baseline capture's at `from_list_path`, or the current one."""
+    store = _endpoint_store(tmp_path)
+    path_a = _endpoint_path("fake-org/test-model-a")
+    path_b = _endpoint_path("fake-org/test-model-b")
+    listed = {"fake-org/test-model-a": path_a, "fake-org/test-model-b": path_b}
+    baseline_scrape, _ = _scan_with_capture(
+        store, _fake_fetch(lists={path_a: "budget_exceeded", path_b: [_fake_endpoint("host-b")]}, listed=listed)
+    )
+    current_scrape, summary = _scan_with_capture(
+        store,
+        _fake_fetch(lists={path_a: [_fake_endpoint("host-a")], path_b: "timeout"}, listed=listed),
+        baseline_scrape_id=baseline_scrape,
+        minute=1,
+    )
+    expected = (
+        EndpointComparisonGap(path_a, "baseline_observation_failed", path_a, "budget_exceeded"),
+        EndpointComparisonGap(path_b, "current_observation_failed", path_b, "timeout"),
+    )
+    assert summary.comparison_gaps == expected
+    assert store.get_endpoint_capture_for_scrape(current_scrape).comparison_gaps == expected
 
 
 def test_endpoint_selected_baseline_gaps_failed_current_observation(tmp_path: Path) -> None:

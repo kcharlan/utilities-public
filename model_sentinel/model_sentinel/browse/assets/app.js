@@ -1151,7 +1151,7 @@
   // sentences come from the API; this code only lays them out.
   const ENDPOINT_CAPTURE_GUIDANCE = "See Endpoint capture in the README: saved scans record endpoint lists for providers whose profile supports it (currently OpenRouter) while MODEL_SENTINEL_ENDPOINT_CAPTURE is on.";
   const ENDPOINT_HEADER = {
-    no_tables: "no endpoint tables", not_captured: "not captured", capture_error: "capture failed", fetch_error: "fetch failed",
+    no_tables: "no endpoint tables", not_captured: "not captured", capture_error: "capture failed",
     no_link: "no endpoint link", invalid_link: "malformed link", alias_target_missing: "alias target missing", alias_cycle: "alias cycle"
   };
 
@@ -1166,7 +1166,7 @@
       case "no_tables": return `This database was created before endpoint capture and has no endpoint tables. ${ENDPOINT_CAPTURE_GUIDANCE}`;
       case "not_captured": return `Provider endpoints weren't captured for this snapshot. ${data.first_capture_date ? `This provider's first usable endpoint capture is from ${data.first_capture_date}.` : ENDPOINT_CAPTURE_GUIDANCE}`;
       case "capture_error": return "Endpoint capture failed for this snapshot, so no endpoint lists were saved.";
-      case "fetch_error": return "This model's endpoint list failed to fetch during the scan, so the saved capture has no endpoints for it.";
+      case "fetch_error": return data.list_error.sentence;
       case "no_link": return "This snapshot's catalog row has no endpoint-list link, so no endpoint list was requested.";
       case "invalid_link": return "This snapshot's catalog row has a malformed endpoint-list link, so no endpoint list was requested.";
       case "alias_target_missing": return `This model is an alias of ${alias && alias.alias_target_model_id || "a model"}, which is not in this snapshot's catalog, so no endpoint list was resolved.`;
@@ -1176,12 +1176,13 @@
   }
 
   function endpointHeader(data, scrape) {
+    if (data.reason === "fetch_error") return data.list_error.label;
     if (data.reason) return ENDPOINT_HEADER[data.reason] || data.reason;
     return `${plural(data.endpoints.rows.length, "endpoint")} · ${scrape ? scrape.date : `snapshot #${data.scrape_id}`}`;
   }
 
   function CaptureEvidence({capture, listPath}) {
-    return html`<dl class="endpoint-capture"><div><dt>Capture</dt><dd>#${capture.capture_id} · ${capture.status} · completed ${localDay(capture.completed_at)}</dd></div><div><dt>Paths</dt><dd>${capture.paths_attempted} of ${capture.paths_requested} paths attempted · ${capture.paths_failed} failed · ${plural(capture.mapping_failures, "mapping failure")}</dd></div><div><dt>Comparison</dt><dd class="endpoint-sentence">${capture.comparison_sentence}</dd></div>${listPath ? html`<div><dt>List</dt><dd><code>${listPath}</code></dd></div>` : null}</dl>`;
+    return html`<dl class="endpoint-capture"><div><dt>Capture</dt><dd class="endpoint-capture-line">${capture.status_line}</dd></div><div><dt>Completed</dt><dd>${localDay(capture.completed_at)}</dd></div><div><dt>Comparison</dt><dd class="endpoint-sentence">${capture.comparison_sentence}</dd></div>${listPath ? html`<div><dt>List</dt><dd><code>${listPath}</code></dd></div>` : null}</dl>`;
   }
 
   function SharedListNote({data}) {

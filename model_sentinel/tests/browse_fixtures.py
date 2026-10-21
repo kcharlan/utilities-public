@@ -538,6 +538,26 @@ def _build_endpoint_history(store: Store) -> EndpointFixtureFacts:
     )
 
 
+UNSENT_ERROR_MESSAGE = "not requested within the synthetic admission budget"
+
+
+def mark_failed_list_unsent(path: Path, endpoint: EndpointFixtureFacts) -> None:
+    """Rewrite a `with_endpoints` fixture so the failed model's list was never
+    sent (`budget_exceeded`) in any capture, as `fetch_endpoint_lists` records
+    a path not started before its admission deadline."""
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """UPDATE endpoint_captures SET paths_attempted = paths_attempted - 1
+               WHERE capture_id IN (SELECT capture_id FROM endpoint_lists WHERE list_path = ?)""",
+            (endpoint.failed_path,),
+        )
+        connection.execute(
+            "UPDATE endpoint_lists SET error_code = 'budget_exceeded', error_message = ? WHERE list_path = ?",
+            (UNSENT_ERROR_MESSAGE, endpoint.failed_path),
+        )
+    connection.close()
+
+
 def build_fixture_db(path: Path, with_endpoints: bool = False) -> FixtureFacts:
     store = Store(path)
     store.initialize()

@@ -125,18 +125,24 @@ _MATCH_REASON_TEXT: Final = {
     MATCH_NO_COMPARABLE_LEAVES: "no price is comparable between the alias and its target",
     MATCH_NOT_CAPTURED: "no endpoint lists were captured in this scan",
     MATCH_LIST_MISSING: "the target has no captured endpoint list",
-    MATCH_LIST_FAILED: "the target's endpoint list failed to fetch",
     ALIAS_TARGET_MISSING: _ALIAS_REASON_TEXT[ALIAS_TARGET_MISSING],
     ALIAS_CYCLE: _ALIAS_REASON_TEXT[ALIAS_CYCLE],
     MAPPING_INVALID_LINK: _ALIAS_REASON_TEXT[MAPPING_INVALID_LINK],
 }
 _GAP_TEXT: Final = {
-    GAP_BASELINE_OBSERVATION_FAILED: "the baseline list failed to fetch; not compared",
-    GAP_CURRENT_OBSERVATION_FAILED: "the current list failed to fetch; not compared",
     GAP_NEW_PATH_UNPAIRED: "new list with no baseline list; not compared",
     GAP_REMOVED_PATH_UNPAIRED: "list is no longer present; not compared",
     GAP_AMBIGUOUS_MAPPING: "models moved between lists ambiguously; not compared",
 }
+# The side a `*_observation_failed` gap names; its wording comes from the
+# list's error code (`list_failure_phrase`).
+_FAILED_GAP_SIDES: Final = {
+    GAP_BASELINE_OBSERVATION_FAILED: "baseline",
+    GAP_CURRENT_OBSERVATION_FAILED: "current",
+}
+# A `budget_exceeded` list was never sent: `paths_failed` counts it, but no
+# wording calls it a fetch failure (see `_failed_and_unsent`).
+_UNSENT_TEXT: Final = "not sent before the fetch budget ran out"
 CONDITIONAL_PRICING_ROW_LABEL: Final = "Conditional pricing changed"
 _UP: Final = "up"
 _DOWN: Final = "down"
@@ -356,6 +362,9 @@ def endpoint_match_sentence(
 ) -> str:
     """`alias_match_sentence` for one evaluation's match and its leaf labels
     (`alias_match_labels`)."""
+    if match.unavailable_reason == MATCH_LIST_FAILED:
+        failure = list_failure_phrase(match.list_error_code)
+        return f"Endpoint matching unavailable: the target's endpoint list {failure}"
     if match.unavailable_reason is not None:
         reason = _MATCH_REASON_TEXT.get(match.unavailable_reason, match.unavailable_reason)
         return f"Endpoint matching unavailable: {reason}"
@@ -806,27 +815,81 @@ def _failed_and_unsent(capture: EndpointCaptureSummary) -> tuple[int, int]:
         for listing in capture.lists
         if not listing.succeeded and listing.error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED
     )
-    return max(capture.paths_failed - unsent, 0), unsent
+    return _sent_failures(capture.paths_failed, unsent), unsent
+
+
+def _sent_failures(paths_failed: int, paths_unsent: int) -> int:
+    """Failed lists that were sent: the stored `paths_failed` less the unsent ones."""
+    return max(paths_failed - paths_unsent, 0)
 
 
 def capture_status_line(capture: EndpointCaptureSummary | None) -> str:
     """The capture's status first, then its counts and any error."""
     if capture is None:
         return "not run in this scan"
-    line = capture.status
-    if capture.capture_id is not None:
-        line += f" (capture {capture.capture_id})"
-    failed, unsent = _failed_and_unsent(capture)
-    line += (
-        f": {plural(capture.paths_requested, 'list')} requested,"
-        f" {capture.paths_attempted} attempted, {failed} failed"
+    _, unsent = _failed_and_unsent(capture)
+    return capture_counts_line(
+        status=capture.status,
+        capture_id=capture.capture_id,
+        paths_requested=capture.paths_requested,
+        paths_attempted=capture.paths_attempted,
+        paths_failed=capture.paths_failed,
+        paths_unsent=unsent,
+        mapping_failures=capture.mapping_failures,
+        error_summary=capture.error_summary,
     )
-    if unsent:
-        line += f", {unsent} not sent before the fetch budget ran out"
-    line += f", {plural(capture.mapping_failures, 'mapping failure')}"
-    if capture.error_summary:
-        line += f"; error: {capture.error_summary}"
+
+
+def capture_counts_line(
+    *,
+    status: str,
+    capture_id: int | None,
+    paths_requested: int,
+    paths_attempted: int,
+    paths_failed: int,
+    paths_unsent: int,
+    mapping_failures: int,
+    error_summary: str | None,
+) -> str:
+    """`capture_status_line` from a capture's stored counts.
+
+    `paths_failed` is the stored count, which includes the `paths_unsent`
+    lists never sent; they are reported apart from the failures. The dossier
+    uses this directly, since it reads a capture without its lists.
+    """
+    line = status
+    if capture_id is not None:
+        line += f" (capture {capture_id})"
+    line += (
+        f": {plural(paths_requested, 'list')} requested,"
+        f" {paths_attempted} attempted, {_sent_failures(paths_failed, paths_unsent)} failed"
+    )
+    if paths_unsent:
+        line += f", {paths_unsent} {_UNSENT_TEXT}"
+    line += f", {plural(mapping_failures, 'mapping failure')}"
+    if error_summary:
+        line += f"; error: {error_summary}"
     return line
+
+
+def list_failure_phrase(error_code: str | None) -> str:
+    """What happened to one failed list: never sent, or failed to fetch."""
+    if error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED:
+        return f"was {_UNSENT_TEXT}"
+    return "failed to fetch"
+
+
+def failed_list_label(error_code: str | None) -> str:
+    """A short label for one failed list, such as a dossier header."""
+    return "not sent" if error_code == ENDPOINT_ERROR_BUDGET_EXCEEDED else "fetch failed"
+
+
+def failed_list_state_sentence(error_code: str | None) -> str:
+    """The dossier's sentence for a model whose saved list has no endpoints."""
+    return (
+        f"This model's endpoint list {list_failure_phrase(error_code)},"
+        " so the saved capture has no endpoints for it."
+    )
 
 
 def baseline_comparison_line(capture: EndpointCaptureSummary | None) -> str | None:
@@ -850,11 +913,13 @@ def list_comparison_line(
     baseline_capture_id: int | None,
     list_succeeded: bool | None,
     gap_reasons: Sequence[str],
+    list_error_code: str | None = None,
 ) -> str:
     """Whether one model's list was compared with the selected baseline's
     capture, or why not, on the same terms as `_compared_paths`.
 
-    `list_succeeded` is None when the capture saved no list for the model.
+    `list_succeeded` is None when the capture saved no list for the model;
+    `list_error_code` is a failed list's error code.
     """
     if first_capture:
         return _FIRST_CAPTURE_LINE
@@ -863,7 +928,10 @@ def list_comparison_line(
     if list_succeeded is None:
         return f"no endpoint list was saved for this model, so nothing was compared with endpoint capture {baseline_capture_id}"
     if not list_succeeded:
-        return f"this list failed to fetch, so it was not compared with endpoint capture {baseline_capture_id}"
+        return (
+            f"this list {list_failure_phrase(list_error_code)}, so it was not compared"
+            f" with endpoint capture {baseline_capture_id}"
+        )
     if gap_reasons:
         return f"this list has a comparison gap, so it was not compared with endpoint capture {baseline_capture_id}"
     return f"compared with endpoint capture {baseline_capture_id}"
@@ -886,7 +954,11 @@ def _baseline_unavailable_line(state: str, baseline_capture_id: int | None) -> s
     return f"endpoint lists were not compared ({state})"
 
 
-def endpoint_gap_description(reason: str) -> str:
+def endpoint_gap_description(reason: str, list_error_code: str | None = None) -> str:
+    """One gap in words; a failed-observation gap is worded by its list's error code."""
+    side = _FAILED_GAP_SIDES.get(reason)
+    if side is not None:
+        return f"the {side} list {list_failure_phrase(list_error_code)}; not compared"
     return _GAP_TEXT.get(reason, reason)
 
 
@@ -995,7 +1067,7 @@ def endpoint_report(
             (sum(1 for c in all_changes if c.change_kind == STATUS_CHANGED), "status change", ""),
             (len(persisting), "persisting alias divergence", ""),
             (failed_count, "list", " failed to fetch"),
-            (unsent, "list", " not requested before the endpoint fetch budget ran out"),
+            (unsent, "list", f" {_UNSENT_TEXT}"),
             (capture.mapping_failures, "mapping failure", ""),
             (len(capture.comparison_gaps), "comparison gap", ""),
         )
@@ -1008,7 +1080,12 @@ def endpoint_report(
             no_change_line = f"no endpoint changes in the other {plural(unchanged, 'compared list')}"
         if full_detail:
             gaps = tuple(
-                EndpointGapView(gap.list_path, gap.from_list_path, gap.reason, endpoint_gap_description(gap.reason))
+                EndpointGapView(
+                    gap.list_path,
+                    gap.from_list_path,
+                    gap.reason,
+                    endpoint_gap_description(gap.reason, gap.list_error_code),
+                )
                 for gap in capture.comparison_gaps
             )
             failed = tuple(listing for listing in lists if not listing.succeeded)

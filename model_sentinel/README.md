@@ -489,7 +489,8 @@ why there is no list: the snapshot was not captured (with the provider's first
 usable capture date, or a pointer to the capture setting), the database
 predates endpoint capture, the catalog row has no or a malformed endpoint
 link, the alias target is missing or its chain is a cycle, the list failed to
-fetch, or the whole capture failed. Failures show the saved error evidence;
+fetch or was not sent before the endpoint fetch budget ran out, or the whole
+capture failed. Failures show the saved error evidence;
 **Re-read saved capture** only asks the local browse server again and never
 contacts the provider.
 

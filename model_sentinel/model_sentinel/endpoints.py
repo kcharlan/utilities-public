@@ -740,9 +740,13 @@ def compare_endpoint_captures(
             continue
         baseline = old[source_path]
         if not baseline.succeeded:
-            gaps.append(EndpointComparisonGap(path, GAP_BASELINE_OBSERVATION_FAILED, source_path))
+            gaps.append(
+                EndpointComparisonGap(path, GAP_BASELINE_OBSERVATION_FAILED, source_path, baseline.error_code)
+            )
         if not current.succeeded:
-            gaps.append(EndpointComparisonGap(path, GAP_CURRENT_OBSERVATION_FAILED, source_path))
+            gaps.append(
+                EndpointComparisonGap(path, GAP_CURRENT_OBSERVATION_FAILED, source_path, current.error_code)
+            )
         if not (baseline.succeeded and current.succeeded):
             continue
         for change in diff_endpoint_lists(_observation_map(baseline), _observation_map(current)):

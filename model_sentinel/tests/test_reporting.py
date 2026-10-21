@@ -6964,11 +6964,11 @@ def test_endpoint_comparison_gap_wording_unsent_lists_are_not_called_failed() ->
     capture = _ep_capture(None, (sent, unsent), paths_attempted=1)
     assert capture.paths_failed == 2
     assert _ep_line(_ep_result(capture), "  summary:") == (
-        "  summary: 1 list failed to fetch; 1 list not requested before the endpoint fetch budget ran out"
+        "  summary: 1 list failed to fetch; 1 list not sent before the fetch budget ran out"
     )
     only_unsent = _ep_capture(None, (unsent,), paths_attempted=0)
     summary = _ep_line(_ep_result(only_unsent), "  summary:")
-    assert summary == "  summary: 1 list not requested before the endpoint fetch budget ran out"
+    assert summary == "  summary: 1 list not sent before the fetch budget ran out"
     assert "failed to fetch" not in summary
     # The capture line counts the same way, so it cannot contradict the summary.
     expected = (
@@ -6981,6 +6981,57 @@ def test_endpoint_comparison_gap_wording_unsent_lists_are_not_called_failed() ->
     assert _ep_line(_ep_result(only_unsent), "  capture:") == (
         "  capture: partial (capture 2): 1 list requested, 0 attempted, 0 failed,"
         " 1 not sent before the fetch budget ran out, 0 mapping failures"
+    )
+
+
+def _ep_unsent(model_id: str):
+    return replace(
+        _ep_list(model_id, outcome="error"),
+        error_code="budget_exceeded",
+        error_message="request admission deadline passed",
+    )
+
+
+def test_endpoint_comparison_gap_wording_unsent_gap_lists_are_not_called_failed() -> None:
+    """A gap on a list that was never sent says so, on either side, in every format."""
+    path_b, path_c = "fake-org/test-model-b", "fake-org/test-model-c"
+    listed = {
+        model_id: _ep_list(model_id, _ep_obs("host", _ep_state("host", prompt="0.000001")))
+        for model_id in (path_b, path_c)
+    }
+    capture = _ep_capture((_ep_unsent(path_b), listed[path_c]), (listed[path_b], _ep_unsent(path_c)))
+    assert [(gap.reason, gap.list_error_code) for gap in capture.comparison_gaps] == [
+        ("baseline_observation_failed", "budget_exceeded"),
+        ("current_observation_failed", "budget_exceeded"),
+    ]
+    baseline_gap = "the baseline list was not sent before the fetch budget ran out; not compared"
+    current_gap = "the current list was not sent before the fetch budget ran out; not compared"
+    text = _ep_section(_ep_report(_ep_result(capture), mode="all"), "Provider endpoints").splitlines()
+    assert text[text.index("  comparison gaps:") + 1 :][:2] == [
+        f"    {_ep_path(path_b)}: {baseline_gap}",
+        f"    {_ep_path(path_c)}: {current_gap}",
+    ]
+    markdown = _ep_report(_ep_result(capture), format_name="markdown", mode="all")
+    gaps_html = _text(_element(_ep_html(_ep_result(capture), mode="all"), "endpoint-gaps"))
+    for rendered in ("\n".join(text), markdown, gaps_html):
+        assert baseline_gap in rendered and current_gap in rendered
+        assert "failed to fetch" not in rendered
+
+
+def test_alias_leaf_presentation_unsent_target_list_is_not_called_failed() -> None:
+    catalog = _alias_catalog(prompt="0.000002")
+
+    def match_line(target_list) -> str:
+        capture = _ep_capture(None, (target_list,))
+        events = _divergence_events(None, catalog, _EP_PROFILE, capture.lists)
+        report = _ep_report(_ep_result(capture, alias_events=events), mode="all")
+        return next(line.strip() for line in report.splitlines() if "Endpoint matching unavailable" in line)
+
+    assert match_line(_ep_unsent(_EP_TARGET)) == (
+        "Endpoint matching unavailable: the target's endpoint list was not sent before the fetch budget ran out"
+    )
+    assert match_line(_ep_list(_EP_TARGET, outcome="error")) == (
+        "Endpoint matching unavailable: the target's endpoint list failed to fetch"
     )
 
 
@@ -7240,7 +7291,12 @@ def test_endpoint_json_extensions_are_uncapped_and_json_safe() -> None:
     endpoint = payload["endpoint_captures"]["openrouter"]
     assert len(endpoint["changes"]) == count
     assert endpoint["comparison_gaps"] == [
-        {"list_path": _ep_path("fake-org/json-new"), "reason": "new_path_unpaired", "from_list_path": None}
+        {
+            "list_path": _ep_path("fake-org/json-new"),
+            "reason": "new_path_unpaired",
+            "from_list_path": None,
+            "list_error_code": None,
+        }
     ]
     # JSON is full fidelity: squelched mode changes nothing.
     assert _ep_report(_ep_result(gap_capture), "json", "squelched") == _ep_report(_ep_result(gap_capture), "json")

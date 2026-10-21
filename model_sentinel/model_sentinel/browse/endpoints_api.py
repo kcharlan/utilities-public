@@ -36,6 +36,7 @@ from ..endpoint_report import (
     alias_match_labels,
     alias_reason_text,
     alias_unavailable_leaf_sentence,
+    capture_counts_line,
     change_price_evidence,
     endpoint_change_label,
     endpoint_change_rendering,
@@ -43,6 +44,8 @@ from ..endpoint_report import (
     endpoint_label_profile,
     endpoint_match_sentence,
     endpoint_price_table,
+    failed_list_label,
+    failed_list_state_sentence,
     ladder_position_text,
     ladder_unplaced_text,
     list_comparison_line,
@@ -81,7 +84,9 @@ def endpoint_response(
 
     Evidence is also worded here, by `endpoint_report`'s functions, so the
     page shows the reports' sentences rather than re-deriving them:
+    `capture.status_line` (the reports' capture line),
     `capture.comparison_sentence` (whether this model's list was compared),
+    `list_error.label` and `list_error.sentence` (a failed or unsent list),
     each list gap's `text`, the alias's `reason_text`,
     `divergence_sentences`, `match_sentence` and `unavailable_sentences`, and
     each ladder's `unplaced_text` and position `text`.
@@ -90,9 +95,23 @@ def endpoint_response(
         connection, provider_id=provider_id, model_id=model_id, scrape=scrape, profile=profile
     )
     capture = response["capture"]
+    list_error = response["list_error"]
+    if list_error is not None:
+        list_error["label"] = failed_list_label(list_error["code"])
+        list_error["sentence"] = failed_list_state_sentence(list_error["code"])
     if capture is not None:
+        capture["status_line"] = capture_counts_line(
+            status=capture["status"],
+            capture_id=capture["capture_id"],
+            paths_requested=capture["paths_requested"],
+            paths_attempted=capture["paths_attempted"],
+            paths_failed=capture["paths_failed"],
+            paths_unsent=capture["paths_unsent"],
+            mapping_failures=capture["mapping_failures"],
+            error_summary=capture["error_summary"],
+        )
         for gap in capture["list_gaps"]:
-            gap["text"] = endpoint_gap_description(gap["reason"])
+            gap["text"] = endpoint_gap_description(gap["reason"], gap["list_error_code"])
         succeeded = True if response["captured"] else False if response["reason"] == REASON_FETCH_ERROR else None
         capture["comparison_sentence"] = list_comparison_line(
             first_capture=bool(capture["first_capture"]),
@@ -100,6 +119,7 @@ def endpoint_response(
             baseline_capture_id=capture["baseline_capture_id"],
             list_succeeded=succeeded,
             gap_reasons=[gap["reason"] for gap in capture["list_gaps"]],
+            list_error_code=list_error["code"] if list_error is not None else None,
         )
     return response
 

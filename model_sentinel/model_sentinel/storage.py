@@ -16,6 +16,8 @@ from .endpoints import (
     COMPARISON_AVAILABLE,
     ENDPOINT_ADDED,
     ENDPOINT_REMOVED,
+    GAP_BASELINE_OBSERVATION_FAILED,
+    GAP_CURRENT_OBSERVATION_FAILED,
     endpoint_state_hash,
     sanitize_endpoint_error_message,
 )
@@ -1181,18 +1183,7 @@ def _capture_summary_from_row(connection: sqlite3.Connection, row: sqlite3.Row) 
     capture_id = int(row["capture_id"])
     lists = _load_endpoint_lists(connection, capture_id)
     lists_by_path = {listing.list_path: listing for listing in lists}
-    gaps = tuple(
-        EndpointComparisonGap(gap["list_path"], gap["reason"], gap["from_list_path"])
-        for gap in connection.execute(
-            """
-            SELECT list_path, reason, from_list_path
-            FROM endpoint_comparison_gaps
-            WHERE capture_id = ?
-            ORDER BY list_path, reason
-            """,
-            (capture_id,),
-        )
-    )
+    gaps = _load_endpoint_gaps(connection, capture_id)
     changes: list[EndpointChangeRecord] = []
     for change in connection.execute(
         "SELECT * FROM endpoint_changes WHERE to_capture_id = ? ORDER BY endpoint_change_id",
@@ -1232,6 +1223,46 @@ def _capture_summary_from_row(connection: sqlite3.Connection, row: sqlite3.Row) 
         changes=tuple(changes),
         comparison_gaps=gaps,
         lists=lists,
+    )
+
+
+def _load_endpoint_gaps(
+    connection: sqlite3.Connection,
+    capture_id: int,
+    *,
+    list_path: str | None = None,
+) -> tuple[EndpointComparisonGap, ...]:
+    """Load a capture's gaps (all, or only `list_path`'s) in (list_path, reason) order.
+
+    Each `*_observation_failed` gap gets `list_error_code` from the saved list
+    it names: the current list, or the baseline capture's list at
+    `from_list_path`.
+    """
+    rows = connection.execute(
+        """
+        SELECT g.list_path, g.reason, g.from_list_path, l.error_code AS list_error_code
+        FROM endpoint_comparison_gaps AS g
+        JOIN endpoint_captures AS c ON c.capture_id = g.capture_id
+        LEFT JOIN endpoint_lists AS l ON l.outcome = 'error' AND (
+            (g.reason = ?
+             AND l.capture_id = g.capture_id AND l.list_path = g.list_path)
+            OR (g.reason = ?
+                AND l.capture_id = c.baseline_capture_id AND l.list_path = g.from_list_path)
+        )
+        WHERE g.capture_id = ? AND (? IS NULL OR g.list_path = ?)
+        ORDER BY g.list_path, g.reason
+        """,
+        (
+            GAP_CURRENT_OBSERVATION_FAILED,
+            GAP_BASELINE_OBSERVATION_FAILED,
+            capture_id,
+            list_path,
+            list_path,
+        ),
+    )
+    return tuple(
+        EndpointComparisonGap(row["list_path"], row["reason"], row["from_list_path"], row["list_error_code"])
+        for row in rows
     )
 
 

@@ -450,6 +450,7 @@ def _unavailable_match(
         unavailable_reason=reason,
         list_path=None if listing is None else listing.list_path,
         list_outcome=None if listing is None else listing.outcome,
+        list_error_code=None if listing is None else listing.error_code,
     )
 
 

@@ -20,7 +20,14 @@ from model_sentinel.provider_profiles import profiles_for, resolve_profile
 from model_sentinel.reporting import DEFAULT_REPORT_SHOW_FIELDS, DEFAULT_REPORT_SQUELCH_FIELDS
 from model_sentinel.storage import Store, recent_change_rows
 from model_sentinel.time_utils import local_date_for
-from tests.browse_fixtures import EXAMPLE_PROVIDER, OTHER_PROVIDER, _save_scrape, build_fixture_db
+from tests.browse_fixtures import (
+    EXAMPLE_PROVIDER,
+    OTHER_PROVIDER,
+    UNSENT_ERROR_MESSAGE,
+    _save_scrape,
+    build_fixture_db,
+    mark_failed_list_unsent,
+)
 
 
 def _settings():
@@ -1511,7 +1518,12 @@ def test_endpoint_reason_states_failed_list(endpoint_context) -> None:
     assert response["list_model_id"] is None
     assert response["list_outcome"] == "error"
     code, message = facts.failed_error
-    assert response["list_error"] == {"code": code, "message": message}
+    assert response["list_error"] == {
+        "code": code,
+        "message": message,
+        "label": "fetch failed",
+        "sentence": "This model's endpoint list failed to fetch, so the saved capture has no endpoints for it.",
+    }
     assert {key: response[key] for key in _UNAVAILABLE_COLLECTIONS} == _UNAVAILABLE_COLLECTIONS
     # The selected baseline's failed observation is a recorded comparison gap.
     # Each gap carries endpoint_report's description of it.
@@ -1520,12 +1532,14 @@ def test_endpoint_reason_states_failed_list(endpoint_context) -> None:
             "list_path": facts.failed_path,
             "reason": "baseline_observation_failed",
             "from_list_path": facts.failed_path,
+            "list_error_code": code,
             "text": "the baseline list failed to fetch; not compared",
         },
         {
             "list_path": facts.failed_path,
             "reason": "current_observation_failed",
             "from_list_path": facts.failed_path,
+            "list_error_code": code,
             "text": "the current list failed to fetch; not compared",
         },
     ]
@@ -1964,6 +1978,46 @@ def test_endpoint_evidence_sentences_for_a_failed_list(endpoint_context) -> None
     )
 
 
+def test_endpoint_evidence_sentences_for_an_unsent_list(tmp_path) -> None:
+    """A list never sent (`budget_exceeded`) is not described as failed to
+    fetch: its gaps, comparison and state sentences and the capture line are
+    endpoint_report's unsent wording."""
+    database_path = tmp_path / "unsent.db"
+    facts = build_fixture_db(database_path, with_endpoints=True).endpoint
+    mark_failed_list_unsent(database_path, facts)
+    db = open_readonly(database_path)
+    try:
+        response = _endpoints(_context(db), facts, facts.failed_model)
+    finally:
+        db.close_all()
+    assert response["reason"] == "fetch_error"
+    assert response["list_error"] == {
+        "code": "budget_exceeded",
+        "message": UNSENT_ERROR_MESSAGE,
+        "label": "not sent",
+        "sentence": (
+            "This model's endpoint list was not sent before the fetch budget ran out,"
+            " so the saved capture has no endpoints for it."
+        ),
+    }
+    capture = response["capture"]
+    assert [(gap["list_error_code"], gap["text"]) for gap in capture["list_gaps"]] == [
+        ("budget_exceeded", "the baseline list was not sent before the fetch budget ran out; not compared"),
+        ("budget_exceeded", "the current list was not sent before the fetch budget ran out; not compared"),
+    ]
+    assert capture["comparison_sentence"] == (
+        "this list was not sent before the fetch budget ran out, so it was not compared"
+        f" with endpoint capture {facts.first_capture}"
+    )
+    assert capture["paths_unsent"] == 1
+    assert capture["status_line"] == (
+        f"{capture['status']} (capture {capture['capture_id']}): {capture['paths_requested']} lists requested,"
+        f" {capture['paths_attempted']} attempted, {capture['paths_failed'] - 1} failed,"
+        f" 1 not sent before the fetch budget ran out, {capture['mapping_failures']} mapping failures"
+    )
+    assert "failed to fetch" not in json.dumps(response)
+
+
 def test_endpoint_evidence_sentences_for_the_minimal_error_capture(endpoint_context) -> None:
     context, facts, _ = endpoint_context
     response = _endpoints(context, facts, facts.error_only_model)
@@ -1983,6 +2037,7 @@ def test_endpoint_evidence_sentences_for_a_captured_list_with_a_gap(endpoint_con
             "list_path": facts.new_path_path,
             "reason": "new_path_unpaired",
             "from_list_path": None,
+            "list_error_code": None,
             "text": "new list with no baseline list; not compared",
         }
     ]
