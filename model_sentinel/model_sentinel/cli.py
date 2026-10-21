@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .__init__ import __version__
+from .alias_check import divergence_events
 from .build_info import format_build_info, runtime_entrypoint
 from .config import (
     ConfigError,
@@ -26,11 +27,19 @@ from .credentials import CredentialError, redact_credential_values, refresh_cred
 from .diffing import compare_models
 from .endpoints import (
     CAPTURE_COMPLETE,
+    CAPTURE_ERROR,
     build_endpoint_capture,
     build_endpoint_error_summary,
     sanitize_endpoint_error_message,
 )
-from .models import BaselineInfo, EndpointCaptureSummary, ModelDelta, NormalizedModel, ProviderScanResult
+from .models import (
+    AliasEvent,
+    BaselineInfo,
+    EndpointCaptureSummary,
+    ModelDelta,
+    NormalizedModel,
+    ProviderScanResult,
+)
 from .normalize import normalize_models
 from .notifications import send_notification
 from .provider_profiles import (
@@ -524,6 +533,19 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                     logger=logger,
                     credential_values=snapshot.values,
                 )
+            alias_events: tuple[AliasEvent, ...] = ()
+            if profile.endpoint_capture:
+                # Never raises: malformed alias metadata cannot turn this
+                # catalog success into an error.
+                alias_events = _check_provider_aliases(
+                    provider_id=provider.provider_id,
+                    profile=profile,
+                    baseline_models=baseline_models if baseline else None,
+                    current_map=current_map,
+                    endpoint_capture=endpoint_capture,
+                    logger=logger,
+                    credential_values=snapshot.values,
+                )
             baseline_message = None
             if baseline is None and args.save:
                 baseline_message = "No prior saved baseline existed; current snapshot was saved as the initial baseline."
@@ -541,6 +563,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 changed=tuple(changed),
                 profile=profile,
                 endpoint_capture=endpoint_capture,
+                alias_events=alias_events,
             )
             provider_results.append(result)
             if changed:
@@ -735,6 +758,37 @@ def _capture_provider_endpoints(
             credential_values=credential_values,
             error=exc,
         )
+
+
+def _check_provider_aliases(
+    *,
+    provider_id: str,
+    profile: ProviderProfile,
+    baseline_models: Mapping[str, NormalizedModel] | None,
+    current_map: Mapping[str, NormalizedModel],
+    endpoint_capture: EndpointCaptureSummary | None,
+    logger: logging.Logger,
+    credential_values: Mapping[str, str],
+) -> tuple[AliasEvent, ...]:
+    """Classify alias divergences between this scan's compared snapshots; never raises.
+
+    `baseline_models` is the selected baseline snapshot (None without one, so
+    every current divergence is `new`) and `current_map` this catalog. The
+    endpoint evidence is this scan's own capture; no historical endpoint
+    lookup is made. A compare-only scan, or a capture that failed as a whole
+    and holds no lists, offers no endpoint evidence at all. Any exception is
+    logged, redacted and without a traceback, and yields no events, so alias
+    work cannot change the catalog result, notification decision or exit
+    status.
+    """
+    lists = None
+    if endpoint_capture is not None and (endpoint_capture.lists or endpoint_capture.status != CAPTURE_ERROR):
+        lists = endpoint_capture.lists
+    try:
+        return divergence_events(baseline_models, current_map, profile, lists)
+    except Exception as exc:
+        logger.warning("%s alias check failed: %s", provider_id, _endpoint_failure_message(exc, credential_values))
+        return ()
 
 
 def _endpoint_capture_fallback(

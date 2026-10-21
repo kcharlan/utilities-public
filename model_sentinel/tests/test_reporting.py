@@ -6727,3 +6727,661 @@ def test_a_bulk_summary_row_survives_a_label_containing_the_old_split_token() ->
     assert len(entries) == 1
     assert entries[0].field == rendered.display_label
     assert entries[0].detail == "+seed"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint and alias report sections. Every provider, model, endpoint, path
+# and price below is invented.
+# ---------------------------------------------------------------------------
+
+from model_sentinel.alias_check import divergence_events as _divergence_events
+from model_sentinel.config import ProviderConfig as _ProviderConfig
+from model_sentinel.endpoints import (
+    CONCISE_ENDPOINT_LIST_CAP,
+    compare_endpoint_captures,
+    endpoint_state_hash,
+)
+from model_sentinel.models import (
+    EndpointCaptureSummary,
+    EndpointComparisonGap,
+    EndpointListRecord,
+    EndpointObservationRecord,
+)
+from model_sentinel.normalize import normalize_models as _normalize_models
+
+_EP_PREFIX = "/api/v1/models/"
+_EP_PROFILE = OPENROUTER_PROFILE
+_EP_PROVIDER = _ProviderConfig(
+    provider_id="openrouter",
+    label="OpenRouter",
+    kind="openrouter",
+    base_url="https://fake-router.invalid/api/v1",
+    models_path="/models",
+    credential_env_var="FAKE_ROUTER_NOT_A_REAL_KEY",
+    price_multiplier=1,
+    price_divisor=1,
+    enabled=True,
+)
+_EP_TARGET = "fake-org/test-model-a"
+_EP_ALIAS = "fake-org/test-model-latest"
+
+
+def _ep_path(model_id: str) -> str:
+    return f"{_EP_PREFIX}{model_id}/endpoints"
+
+
+def _ep_state(tag: str, *, context_length: int = 1000, **pricing) -> dict:
+    return {"tag": tag, "provider_name": f"Fake Host {tag}", "context_length": context_length, "pricing": pricing}
+
+
+def _ep_obs(tag: str, state: dict, status: int = 0, occurrence: int = 0) -> EndpointObservationRecord:
+    return EndpointObservationRecord(f"{tag}#{occurrence}", endpoint_state_hash(state), state, status)
+
+
+def _ep_list(model_id: str, *observations, outcome: str | None = None, model_ids=None, path=None) -> EndpointListRecord:
+    if outcome is None:
+        outcome = "ok" if observations else "empty"
+    return EndpointListRecord(
+        list_path=path or _ep_path(model_id),
+        list_model_id=model_id,
+        outcome=outcome,
+        endpoint_count=len(observations),
+        error_code="http_status" if outcome == "error" else None,
+        error_message="HTTP 503" if outcome == "error" else None,
+        model_ids=(model_id,) if model_ids is None else model_ids,
+        observations=observations,
+    )
+
+
+def _ep_capture(baseline_lists, current_lists, **overrides) -> EndpointCaptureSummary:
+    if baseline_lists is None:
+        changes, gaps = (), ()
+    else:
+        changes, gaps = compare_endpoint_captures(baseline_lists, current_lists, from_capture_id=1)
+    failed = sum(1 for listing in current_lists if not listing.succeeded)
+    values = dict(
+        capture_id=2,
+        scrape_id=8,
+        provider_id="openrouter",
+        started_at="2030-01-02T03:04:05+00:00",
+        completed_at="2030-01-02T03:04:06+00:00",
+        status="complete" if not failed else "partial",
+        paths_requested=len(current_lists),
+        paths_attempted=len(current_lists),
+        paths_failed=failed,
+        mapping_failures=0,
+        first_capture=False,
+        comparison_state="available" if baseline_lists is not None else "no_selected_baseline",
+        baseline_capture_id=1 if baseline_lists is not None else None,
+        error_summary=None,
+        changes=changes,
+        comparison_gaps=gaps,
+        lists=tuple(current_lists),
+    )
+    values.update(overrides)
+    return EndpointCaptureSummary(**values)
+
+
+def _ep_result(capture=None, alias_events=(), changed=()) -> ProviderScanResult:
+    return ProviderScanResult(
+        provider_id="openrouter",
+        provider_label="OpenRouter",
+        status="success",
+        current_count=2,
+        saved=True,
+        baseline=_BASELINE,
+        baseline_message=None,
+        scrape_id=8,
+        added=(),
+        removed=(),
+        changed=changed,
+        profile=_EP_PROFILE,
+        endpoint_capture=capture,
+        alias_events=alias_events,
+    )
+
+
+def _ep_report(result, format_name: str = "text", mode: str = "default") -> str:
+    return render_scan_report(
+        generated_at="2030-01-02T03:04:06+00:00",
+        command="scan",
+        format_name=format_name,
+        provider_results=[result],
+        detail_policy=make_report_detail_policy(mode=mode),
+    )
+
+
+def _ep_section(report: str, heading: str) -> str:
+    """One appended section of a text or Markdown scan report, heading included."""
+    markers = {
+        "Alias check": ("\nAlias check\n", "\n## Alias check\n"),
+        "Provider endpoints": ("\nProvider endpoints\n", "\n## Provider endpoints\n"),
+    }[heading]
+    starts = [report.find(marker) for marker in markers if marker in report]
+    assert starts, f"{heading!r} section missing"
+    start = starts[0] + 1
+    following = [
+        report.find(marker, start)
+        for other in ("Alias check", "Provider endpoints")
+        if other != heading
+        for marker in ("\nAlias check\n", "\n## Alias check\n", "\nProvider endpoints\n", "\n## Provider endpoints\n")
+        if other in marker and report.find(marker, start) > start
+    ]
+    return report[start : min(following) if following else len(report)]
+
+
+def _ep_catalog(*raw_models: dict) -> dict:
+    models = _normalize_models(_EP_PROVIDER, list(raw_models), _EP_PROFILE)
+    return {model.provider_model_id: model for model in models}
+
+
+def _ep_listed(model_id: str, **pricing) -> dict:
+    return {"id": model_id, "links": {"details": _ep_path(model_id)}, "pricing": pricing}
+
+
+def _ep_alias(model_id: str, target: str, **pricing) -> dict:
+    return {"id": model_id, "alias_target": {"slug": target}, "pricing": pricing}
+
+
+_TARGET_PRICES = {"prompt": "0.000003", "completion": "0.000015", "request": "0.02"}
+
+
+def _alias_catalog(target: str = _EP_TARGET, *, extra=(), **alias_pricing) -> dict:
+    pricing = dict(_TARGET_PRICES)
+    pricing.update(alias_pricing)
+    return _ep_catalog(
+        _ep_listed(_EP_TARGET, **_TARGET_PRICES),
+        *extra,
+        _ep_alias(_EP_ALIAS, target, **pricing),
+    )
+
+
+def _three_list_capture() -> EndpointCaptureSummary:
+    """A price move, presence changes, a conditional change and full-detail-only changes."""
+    model_b = "fake-org/test-model-b"
+    baseline = (
+        _ep_list(
+            _EP_TARGET,
+            _ep_obs("host-a", _ep_state("host-a", prompt="0.000001", completion="0.000002")),
+            _ep_obs("host-b", _ep_state("host-b", prompt="0.000001", completion="0.000002")),
+        ),
+        _ep_list(model_b, _ep_obs("host-c", {**_ep_state("host-c", prompt="0.000001"), "pricing": {
+            "prompt": "0.000001", "overrides": [{"min_prompt_tokens": 200000, "prompt": "0.000002"}]}})),
+    )
+    current = (
+        _ep_list(
+            _EP_TARGET,
+            _ep_obs(
+                "host-a",
+                _ep_state("host-a", context_length=2000, prompt="0.000002", completion="0.000002"),
+                status=1,
+            ),
+            _ep_obs("host-d", _ep_state("host-d", prompt="0.000004", completion="0.000005")),
+        ),
+        _ep_list(model_b, _ep_obs("host-c", {**_ep_state("host-c", prompt="0.000001"), "pricing": {
+            "prompt": "0.000001", "overrides": [{"min_prompt_tokens": 200000, "prompt": "0.000003"}]}})),
+    )
+    return _ep_capture(baseline, current)
+
+
+# ---------------------------------------------------------------------------
+# endpoint_disclosure_summary_and_detail (text and Markdown; HTML in Task 8)
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_disclosure_summary_and_detail_text_default() -> None:
+    report = _ep_report(_ep_result(_three_list_capture()))
+    section = _ep_section(report, "Provider endpoints")
+    assert section.splitlines() == [
+        "Provider endpoints",
+        "-" * 60,
+        "OpenRouter (openrouter)",
+        "  capture: complete (capture 2): 2 lists requested, 2 attempted, 0 failed, 0 mapping failures",
+        "  baseline: compared with endpoint capture 1",
+        "  summary: 1 list with price changes; 1 endpoint added; 1 endpoint removed;"
+        " 1 conditional pricing change; 1 status change",
+        f"  list {_EP_TARGET} — models: {_EP_TARGET}",
+        "    host-a#0: Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%)",
+        "    host-b#0: endpoint removed: Input 0.000001 ($1.00 /1M tokens), Output 0.000002 ($2.00 /1M tokens)",
+        "    host-d#0: endpoint added: Input 0.000004 ($4.00 /1M tokens), Output 0.000005 ($5.00 /1M tokens)",
+        "  list fake-org/test-model-b — models: fake-org/test-model-b",
+        "    host-c#0: Conditional pricing changed",
+    ]
+    # Metadata and status changes are full-detail evidence only.
+    assert "Context length" not in section and "Status" not in section
+    # Endpoint data never enters the catalog Summary or change counts.
+    assert "Summary" not in report.split("Provider endpoints")[0]
+
+
+def test_endpoint_disclosure_summary_and_detail_text_full_detail() -> None:
+    section = _ep_section(_ep_report(_ep_result(_three_list_capture()), mode="all"), "Provider endpoints")
+    lines = section.splitlines()
+    assert "    host-a#0: Context length (model): 1,000 → 2,000 (+1,000, ↑ 100.0%)" in lines
+    assert "    host-a#0: Status: 0 → 1 (+1)" in lines
+    # Metadata and status rows follow the list's price and presence rows.
+    assert lines.index("    host-a#0: Status: 0 → 1 (+1)") > lines.index(
+        "    host-d#0: endpoint added: Input 0.000004 ($4.00 /1M tokens), Output 0.000005 ($5.00 /1M tokens)"
+    )
+    conditional = lines.index("    host-c#0: Conditional pricing changed")
+    assert lines[conditional + 1] == (
+        '      old: [{"min_prompt_tokens":200000,"prompt":"0.000002"}]'
+    )
+    assert lines[conditional + 2] == (
+        '      new: [{"min_prompt_tokens":200000,"prompt":"0.000003"}]'
+    )
+
+
+def test_endpoint_disclosure_summary_and_detail_markdown() -> None:
+    default = _ep_section(_ep_report(_ep_result(_three_list_capture()), "markdown"), "Provider endpoints")
+    assert default.splitlines()[:8] == [
+        "## Provider endpoints",
+        "",
+        "### OpenRouter (`openrouter`)",
+        "",
+        "- Capture: complete (capture 2): 2 lists requested, 2 attempted, 0 failed, 0 mapping failures",
+        "- Baseline: compared with endpoint capture 1",
+        "- Summary: 1 list with price changes; 1 endpoint added; 1 endpoint removed;"
+        " 1 conditional pricing change; 1 status change",
+        f"- List `{_EP_TARGET}` — models: `{_EP_TARGET}`",
+    ]
+    assert (
+        "  - `host-a#0`: ` Input: 0.000001 → 0.000002 ($1.00 → $2.00 /1M tokens, ↑ 100.0%) `"
+        in default.splitlines()
+    )
+    assert "Context length" not in default
+    full = _ep_section(_ep_report(_ep_result(_three_list_capture()), "markdown", "all"), "Provider endpoints")
+    assert "Context length (model)" in full
+    assert '    - Old: ` [{"min_prompt_tokens":200000,"prompt":"0.000002"}] `' in full.splitlines()
+
+
+def test_endpoint_disclosure_summary_and_detail_squelched_omits_sections() -> None:
+    result = _ep_result(
+        _three_list_capture(),
+        alias_events=_divergence_events(None, _alias_catalog(prompt="0.000002"), _EP_PROFILE),
+    )
+    plain = _ep_report(replace(result, endpoint_capture=None, alias_events=()), mode="squelched")
+    for format_name in ("text", "markdown"):
+        assert _ep_report(result, format_name, "squelched") == _ep_report(
+            replace(result, endpoint_capture=None, alias_events=()), format_name, "squelched"
+        )
+    assert "Provider endpoints" not in plain and "Alias check" not in plain
+
+
+def test_endpoint_disclosure_summary_and_detail_caps_lists_but_not_clauses() -> None:
+    count = CONCISE_ENDPOINT_LIST_CAP + 2
+    ids = [f"fake-org/capped-{index:02d}" for index in range(count)]
+    baseline = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000001"))) for m in ids)
+    current = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000002"))) for m in ids)
+    result = _ep_result(_ep_capture(baseline, current))
+
+    default = _ep_section(_ep_report(result), "Provider endpoints")
+    assert f"  summary: {count} lists with price changes" in default.splitlines()
+    assert sum(line.startswith("  list ") for line in default.splitlines()) == CONCISE_ENDPOINT_LIST_CAP
+    assert "  2 more changed lists not shown; use --detail all for every list" in default.splitlines()
+    full = _ep_section(_ep_report(result, mode="all"), "Provider endpoints")
+    assert sum(line.startswith("  list ") for line in full.splitlines()) == count
+    assert "more changed list" not in full
+
+
+def test_endpoint_disclosure_summary_and_detail_counts_full_detail_only_lists() -> None:
+    baseline = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001"))),)
+    current = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", context_length=9, prompt="0.000001"))),)
+    section = _ep_section(_ep_report(_ep_result(_ep_capture(baseline, current))), "Provider endpoints")
+    assert "  list " not in section
+    assert "  1 changed list has only metadata or status changes; use --detail all to show it" in section.splitlines()
+
+
+def test_endpoint_disclosure_summary_and_detail_shows_persisting_aliases_first() -> None:
+    baseline = _alias_catalog(prompt="0.000002")
+    events = _divergence_events(baseline, baseline, _EP_PROFILE)
+    assert [event.kind for event in events] == ["persisting"]
+    report = _ep_report(_ep_result(_three_list_capture(), alias_events=events))
+    section = _ep_section(report, "Provider endpoints").splitlines()
+    persisting = section.index(f"  Persisting alias price divergence: {_EP_ALIAS} → {_EP_TARGET}")
+    assert persisting < min(index for index, line in enumerate(section) if line.startswith("  list "))
+    assert section[persisting + 1] == (
+        "    Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens)"
+    )
+    assert "; 1 persisting alias divergence" in section[5]
+    # Persisting divergences are not repeated in the Alias check section.
+    assert "Alias check" not in report
+
+
+def test_endpoint_disclosure_summary_and_detail_persisting_alias_without_capture() -> None:
+    baseline = _alias_catalog(prompt="0.000002")
+    events = _divergence_events(baseline, baseline, _EP_PROFILE)
+    section = _ep_section(_ep_report(_ep_result(None, alias_events=events)), "Provider endpoints").splitlines()
+    assert section[3:6] == [
+        "  capture: not run in this scan",
+        "  summary: 1 persisting alias divergence",
+        f"  Persisting alias price divergence: {_EP_ALIAS} → {_EP_TARGET}",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# endpoint_comparison_gap_wording
+# ---------------------------------------------------------------------------
+
+
+def _ep_line(result, prefix: str, mode: str = "default") -> str | None:
+    section = _ep_section(_ep_report(result, mode=mode), "Provider endpoints")
+    return next((line for line in section.splitlines() if line.startswith(prefix)), None)
+
+
+def test_endpoint_comparison_gap_wording_first_capture_and_baseline_states() -> None:
+    current = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001"))),)
+    first = _ep_capture(None, current, first_capture=True)
+    assert _ep_line(_ep_result(first), "  baseline:") == (
+        "  baseline: first endpoint capture for this provider; there is no earlier capture to compare with"
+    )
+    cases = {
+        "no_selected_baseline": "no catalog baseline was selected, so endpoint lists were not compared",
+        "missing_baseline_capture": (
+            "the selected catalog baseline has no endpoint capture, so endpoint lists were not compared"
+        ),
+        "unusable_baseline": (
+            "the selected baseline's endpoint capture 1 has no usable lists, so endpoint lists were not compared"
+        ),
+    }
+    for state, wording in cases.items():
+        capture = _ep_capture(
+            None, current, comparison_state=state, baseline_capture_id=1 if state == "unusable_baseline" else None
+        )
+        assert _ep_line(_ep_result(capture), "  baseline:") == f"  baseline: {wording}"
+        # Nothing was compared, so nothing claims "no changes".
+        assert "no endpoint changes" not in _ep_report(_ep_result(capture))
+
+
+def test_endpoint_comparison_gap_wording_no_changes_only_for_compared_lists() -> None:
+    same = _ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    failed_baseline = _ep_list("fake-org/test-model-b", _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    failed_current = _ep_list("fake-org/test-model-b", outcome="error")
+    unpaired = _ep_list("fake-org/test-model-c", _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    capture = _ep_capture((same, failed_baseline), (same, failed_current, unpaired))
+    assert [gap.reason for gap in capture.comparison_gaps] == ["current_observation_failed", "new_path_unpaired"]
+    result = _ep_result(capture)
+
+    assert _ep_line(result, "  summary:") == "  summary: 1 list failed to fetch; 2 comparison gaps"
+    assert _ep_line(result, "  no endpoint changes") == "  no endpoint changes in 1 compared list"
+    full = _ep_section(_ep_report(result, mode="all"), "Provider endpoints").splitlines()
+    assert full[full.index("  comparison gaps:") + 1 :][:2] == [
+        f"    {_ep_path('fake-org/test-model-b')}: the current list failed to fetch; not compared",
+        f"    {_ep_path('fake-org/test-model-c')}: new list with no baseline list; not compared",
+    ]
+    assert f"    {_ep_path('fake-org/test-model-b')}: http_status: HTTP 503" in full
+    # The gaps are full-detail evidence only.
+    assert "comparison gaps:" not in _ep_section(_ep_report(result), "Provider endpoints")
+
+
+def test_endpoint_comparison_gap_wording_other_compared_lists_and_moved_lists() -> None:
+    old_b = "fake-org/test-model-b"
+    same = _ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001")))
+    moved_from = _ep_list(old_b, _ep_obs("host", _ep_state("host", prompt="0.000001")), path=_ep_path("fake-org/old-b"))
+    moved_to = _ep_list(old_b, _ep_obs("host", _ep_state("host", prompt="0.000002")))
+    result = _ep_result(_ep_capture((same, moved_from), (same, moved_to)))
+    section = _ep_section(_ep_report(result), "Provider endpoints").splitlines()
+    assert "  no endpoint changes in the other 1 compared list" in section
+    assert f"  list {old_b} (moved from {_ep_path('fake-org/old-b')}) — models: {old_b}" in section
+
+
+def test_endpoint_comparison_gap_wording_error_status_with_available_comparison() -> None:
+    capture = _ep_capture(
+        None,
+        (),
+        status="error",
+        comparison_state="available",
+        baseline_capture_id=1,
+        error_summary="RuntimeError: synthetic endpoint failure",
+    )
+    result = _ep_result(capture)
+    assert _ep_line(result, "  capture:") == (
+        "  capture: error (capture 2): 0 lists requested, 0 attempted, 0 failed, 0 mapping failures;"
+        " error: RuntimeError: synthetic endpoint failure"
+    )
+    assert _ep_line(result, "  baseline:") == (
+        "  baseline: no current list could be compared with endpoint capture 1"
+    )
+    assert "no endpoint changes" not in _ep_report(result)
+    unsaved = replace(capture, capture_id=None, persistence_error="endpoint error capture was not saved: OSError: x")
+    assert _ep_line(_ep_result(unsaved), "  not saved:") == (
+        "  not saved: endpoint error capture was not saved: OSError: x"
+    )
+
+
+# ---------------------------------------------------------------------------
+# endpoint_unit_group_ordering
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_unit_group_ordering_groups_ranks_and_trails() -> None:
+    def pair(model_id: str, old: dict, new: dict, *, old_ctx: int = 1000, new_ctx: int = 1000):
+        return (
+            _ep_list(model_id, _ep_obs("host", _ep_state("host", context_length=old_ctx, **old))),
+            _ep_list(model_id, _ep_obs("host", _ep_state("host", context_length=new_ctx, **new))),
+        )
+
+    pairs = [
+        # A huge per-request move: its own group, never ranked against tokens.
+        pair("fake-org/a-request", {"request": "1"}, {"request": "90"}),
+        # Token group: ranked by the largest move in the group, ties by path.
+        pair("fake-org/b-small-prompt", {"prompt": "0.000001"}, {"prompt": "0.000002"}),
+        pair("fake-org/c-large-completion", {"completion": "0.000001"}, {"completion": "0.000009"}),
+        pair("fake-org/d-large-prompt", {"prompt": "0.000001"}, {"prompt": "0.000009"}),
+        # Input moves first in profile order, so the list joins the token group.
+        pair("fake-org/e-mixed", {"prompt": "0.000001", "request": "1"}, {"prompt": "0.000003", "request": "500"}),
+        # No comparable movement: presence and conditional changes trail in path order.
+        (
+            _ep_list("fake-org/f-presence"),
+            _ep_list("fake-org/f-presence", _ep_obs("host", _ep_state("host", prompt="0.000001"))),
+        ),
+        (
+            _ep_list("fake-org/aa-coverage", _ep_obs("host", _ep_state("host"))),
+            _ep_list("fake-org/aa-coverage", _ep_obs("host", _ep_state("host", web_search="0.01"))),
+        ),
+    ]
+    capture = _ep_capture([old for old, _ in pairs], [new for _, new in pairs])
+    section = _ep_section(_ep_report(_ep_result(capture)), "Provider endpoints")
+    order = [line.split()[1] for line in section.splitlines() if line.startswith("  list ")]
+    assert order == [
+        "fake-org/c-large-completion",
+        "fake-org/d-large-prompt",
+        "fake-org/e-mixed",
+        "fake-org/b-small-prompt",
+        "fake-org/a-request",
+        "fake-org/aa-coverage",
+        "fake-org/f-presence",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# alias_leaf_presentation (text and Markdown; HTML in Task 8)
+# ---------------------------------------------------------------------------
+
+
+def test_alias_leaf_presentation_text_names_every_differing_leaf() -> None:
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002", request="0.03"), _EP_PROFILE)
+    report = _ep_report(_ep_result(None, alias_events=events))
+    section = _ep_section(report, "Alias check").splitlines()
+    assert section == [
+        "Alias check",
+        "-" * 60,
+        "OpenRouter (openrouter)",
+        f"  New alias price divergence: {_EP_ALIAS} → {_EP_TARGET}",
+        "    Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens)",
+        "    Per request: alias 0.03 ($0.03 /request) vs target 0.02 ($0.02 /request)",
+    ]
+    # Output prices agree, so no output sentence stands in for another leaf.
+    assert "Output" not in report.split("Alias check")[1]
+    # Alias events never change catalog counts.
+    assert "Summary" not in report
+
+
+def test_alias_leaf_presentation_markdown() -> None:
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002"), _EP_PROFILE)
+    section = _ep_section(_ep_report(_ep_result(None, alias_events=events), "markdown"), "Alias check")
+    assert section.splitlines() == [
+        "## Alias check",
+        "",
+        "### OpenRouter (`openrouter`)",
+        "",
+        f"- New alias price divergence: `{_EP_ALIAS}` → `{_EP_TARGET}`",
+        "  - Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens)",
+    ]
+
+
+def test_alias_leaf_presentation_resolved_retarget_names_both_targets() -> None:
+    other = "fake-org/test-model-b"
+    baseline = _alias_catalog(prompt="0.000002", extra=(_ep_listed(other, **{**_TARGET_PRICES, "prompt": "0.000002"}),))
+    current = _alias_catalog(other, prompt="0.000002", extra=(_ep_listed(other, **{**_TARGET_PRICES, "prompt": "0.000002"}),))
+    (event,) = _divergence_events(baseline, current, _EP_PROFILE)
+    assert event.kind == "resolved"
+    section = _ep_section(_ep_report(_ep_result(None, alias_events=(event,))), "Alias check").splitlines()
+    assert section[3:] == [
+        f"  Alias price divergence resolved: {_EP_ALIAS} → {other} (target changed from {_EP_TARGET})",
+        "    Input: alias now matches target at 0.000002 ($2.00 /1M tokens)",
+    ]
+
+
+def test_alias_leaf_presentation_changed_event_and_section_order() -> None:
+    baseline = _alias_catalog(prompt="0.000002")
+    (event,) = _divergence_events(baseline, _alias_catalog(prompt="0.000004"), _EP_PROFILE)
+    report = _ep_report(_ep_result(_three_list_capture(), alias_events=(event,)))
+    assert report.index("\nAlias check\n") < report.index("\nProvider endpoints\n")
+    assert f"  Alias price divergence changed: {_EP_ALIAS} → {_EP_TARGET}" in report.splitlines()
+
+
+def test_alias_leaf_presentation_endpoint_match_claims_named_leaves() -> None:
+    catalog = _alias_catalog(prompt="0.000002")
+    alias_prices = {**_TARGET_PRICES, "prompt": "0.000002"}
+    target_list = _ep_list(
+        _EP_TARGET,
+        _ep_obs("match", _ep_state("match", **alias_prices)),
+        _ep_obs("other", _ep_state("other", **_TARGET_PRICES)),
+        _ep_obs("partial", _ep_state("partial", prompt="0.000002")),
+    )
+    capture = _ep_capture(None, (target_list,))
+    events = _divergence_events(None, catalog, _EP_PROFILE, capture.lists)
+    section = _ep_section(_ep_report(_ep_result(capture, alias_events=events)), "Alias check").splitlines()
+    assert section[-1] == (
+        "    Endpoint match#0 carries the alias's Input, Output and Per request prices;"
+        " 1 endpoint was not checkable on every compared price: partial#0"
+    )
+    unknown_only = _ep_capture(None, (_ep_list(_EP_TARGET, _ep_obs("partial", _ep_state("partial", prompt="0.000002"))),))
+    events = _divergence_events(None, catalog, _EP_PROFILE, unknown_only.lists)
+    report = _ep_report(_ep_result(unknown_only, alias_events=events))
+    assert "No endpoint" not in report
+    assert "    1 endpoint was not checkable on every compared price: partial#0" in report.splitlines()
+    none_match = _ep_capture(None, (_ep_list(_EP_TARGET, _ep_obs("other", _ep_state("other", **_TARGET_PRICES))),))
+    events = _divergence_events(None, catalog, _EP_PROFILE, none_match.lists)
+    assert (
+        "    No endpoint in the target's list carries the alias's Input, Output and Per request prices"
+        in _ep_report(_ep_result(none_match, alias_events=events)).splitlines()
+    )
+
+
+def test_alias_leaf_presentation_unavailable_and_not_captured_are_full_detail_evidence() -> None:
+    baseline = _alias_catalog(prompt="0.000002")
+    current = _ep_catalog(_ep_listed(_EP_TARGET, **_TARGET_PRICES))
+    (gone,) = _divergence_events(baseline, current, _EP_PROFILE)
+    (new,) = _divergence_events(None, _alias_catalog(prompt="0.000002", web_search="0.01"), _EP_PROFILE)
+    result = _ep_result(None, alias_events=(gone, new))
+    default = _ep_report(result)
+    assert "cannot be checked" not in default and "Endpoint matching" not in default
+    assert "not compared" not in default
+    full = _ep_section(_ep_report(result, mode="all"), "Alias check").splitlines()
+    assert full[3:] == [
+        f"  New alias price divergence: {_EP_ALIAS} → {_EP_TARGET}",
+        "    Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens)",
+        "    Endpoint matching unavailable: no endpoint lists were captured in this scan",
+        "    Web search: not compared (missing on the target)",
+        f"  Alias price divergence cannot be checked: {_EP_ALIAS} → {_EP_TARGET};"
+        " the alias is no longer in the catalog",
+        "    Input: alias 0.000002 ($2.00 /1M tokens) vs target 0.000003 ($3.00 /1M tokens) at the baseline",
+    ]
+
+
+def test_alias_leaf_presentation_null_overrides_is_not_missing_price_evidence() -> None:
+    catalog = _ep_catalog(
+        _ep_listed(_EP_TARGET, **_TARGET_PRICES),
+        _ep_alias(_EP_ALIAS, _EP_TARGET, **{**_TARGET_PRICES, "prompt": "0.000002", "overrides": None}),
+    )
+    (event,) = _divergence_events(None, catalog, _EP_PROFILE)
+    assert [leaf.path for leaf in event.current.unavailable_leaves] == []
+    assert "Conditional pricing" not in _ep_report(_ep_result(None, alias_events=(event,)), mode="all")
+
+
+# ---------------------------------------------------------------------------
+# endpoint_json_extensions
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_json_extensions_present_only_with_data() -> None:
+    plain = json.loads(_ep_report(_ep_result(), "json"))
+    assert "alias_checks" not in plain and "endpoint_captures" not in plain
+
+    events = _divergence_events(None, _alias_catalog(prompt="0.000002"), _EP_PROFILE)
+    capture = _three_list_capture()
+    with_data = _ep_report(_ep_result(capture, alias_events=events), "json")
+    payload = json.loads(with_data)
+    assert "Fraction" not in with_data
+    # `_provider_result_json` is unchanged: provider payloads carry no endpoint data.
+    assert payload["providers"] == plain["providers"]
+    assert set(payload) == {"generated_at", "command", "providers", "alias_checks", "endpoint_captures"}
+
+    endpoint = payload["endpoint_captures"]["openrouter"]
+    assert "lists" not in endpoint
+    expected_fields = {f.name for f in __import__("dataclasses").fields(EndpointCaptureSummary)} - {"lists"}
+    assert set(endpoint) == expected_fields
+    assert endpoint["status"] == "complete" and endpoint["comparison_state"] == "available"
+    assert len(endpoint["changes"]) == len(capture.changes)
+    price_move = next(c for c in endpoint["changes"] if c["field_name"] == "pricing.prompt")
+    assert (price_move["old_value"], price_move["new_value"]) == ("0.000001", "0.000002")
+    assert price_move["price_evidence"] == [
+        {
+            "path": "pricing.prompt",
+            "label": "Input",
+            "unit_label": "/1M tokens",
+            "comparison_group": "usd_per_million_tokens",
+            "old_display": "$1.00",
+            "new_display": "$2.00",
+        }
+    ]
+    added = next(c for c in endpoint["changes"] if c["change_kind"] == "endpoint_added")
+    assert [(e["path"], e["old_display"], e["new_display"]) for e in added["price_evidence"]] == [
+        ("pricing.prompt", None, "$4.00"),
+        ("pricing.completion", None, "$5.00"),
+    ]
+    status = next(c for c in endpoint["changes"] if c["change_kind"] == "status_changed")
+    assert status["price_evidence"] == []
+
+    (alias,) = payload["alias_checks"]["openrouter"]["events"]
+    assert alias["kind"] == "new" and alias["alias_model_id"] == _EP_ALIAS
+    assert alias["leaves"][0]["alias_exact"] == "2"
+
+
+def test_endpoint_json_extensions_are_uncapped_and_json_safe() -> None:
+    count = CONCISE_ENDPOINT_LIST_CAP + 3
+    ids = [f"fake-org/json-{index:02d}" for index in range(count)]
+    baseline = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000001"))) for m in ids)
+    current = tuple(_ep_list(m, _ep_obs("host", _ep_state("host", prompt="0.000002"))) for m in ids)
+    gap_capture = _ep_capture(baseline, current + (_ep_list("fake-org/json-new"),))
+    payload = json.loads(_ep_report(_ep_result(gap_capture), "json"))
+    endpoint = payload["endpoint_captures"]["openrouter"]
+    assert len(endpoint["changes"]) == count
+    assert endpoint["comparison_gaps"] == [
+        {"list_path": _ep_path("fake-org/json-new"), "reason": "new_path_unpaired", "from_list_path": None}
+    ]
+    # JSON is full fidelity: squelched mode changes nothing.
+    assert _ep_report(_ep_result(gap_capture), "json", "squelched") == _ep_report(_ep_result(gap_capture), "json")
+
+
+def test_endpoint_disclosure_summary_and_detail_unmatched_price_is_neutral_metadata() -> None:
+    """Strict endpoint classification: an unmatched monetary leaf is no price row."""
+    baseline = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001", mystery="0.25"))),)
+    current = (_ep_list(_EP_TARGET, _ep_obs("host", _ep_state("host", prompt="0.000001", mystery="0.5"))),)
+    result = _ep_result(_ep_capture(baseline, current))
+    default = _ep_section(_ep_report(result), "Provider endpoints")
+    assert "with price changes" not in default and "  list " not in default
+    full = _ep_section(_ep_report(result, mode="all"), "Provider endpoints").splitlines()
+    assert "    host#0: Mystery: 0.25 → 0.5" in full
+    assert not any("unit unknown" in line or "$" in line for line in full)

@@ -577,6 +577,57 @@ Scan reports use smart, field-type-aware formatting:
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
 
+### Alias Check and Provider Endpoints
+
+For a provider whose profile supports endpoint capture (currently
+OpenRouter), every successful scan, saved or compare-only, also compares each
+catalog alias (a model whose `alias_target` names another catalog model) with
+the model its alias chain resolves to, on the price leaves both resolve to the
+same unit. The comparison runs on the scan's selected baseline snapshot and the
+current catalog, so an alias divergence is `new`, `changed`, `persisting`, or
+`resolved` (a retargeted alias names both targets), and is `unavailable` when
+the alias, its target, or the previously divergent prices can no longer be
+compared. On a first save every current divergence is `new`. A saved scan
+also checks which endpoints of the target's captured list carry the alias's
+prices; such a match is a claim about the named prices only, and the report
+never says that no endpoint matches while any endpoint could not be checked.
+
+Text and Markdown append two sections after the catalog report:
+
+- **Alias check** lists `new`, `changed`, and `resolved` divergences with one
+  labelled alias-versus-target sentence per differing price, raw value first.
+  `--detail all` adds `unavailable` events, prices that could not be compared,
+  and why endpoint matching was unavailable.
+- **Provider endpoints** leads with the capture's status and counts, how the
+  selected baseline's capture was used (a genuine first capture is stated
+  separately from a missing or unusable baseline capture), and summary
+  clauses counted over every list: lists with price changes, endpoint
+  additions and removals, conditional pricing and status changes, persisting
+  alias divergences, failed lists, mapping failures, and comparison gaps.
+  "No endpoint changes" is stated only for lists that were actually compared.
+  Persisting alias divergences come next, then changed lists: lists are
+  grouped by the comparison unit of their first moved price in profile order
+  and ranked within a unit by their largest move, and lists with no comparable
+  price move follow in path order. Default detail shows price, endpoint
+  presence, and conditional pricing changes for at most 25 lists and states
+  how many were omitted; `--detail all` shows every list with its metadata
+  and status changes, the raw conditional-pricing JSON, comparison gaps, and
+  failed lists. Endpoint fields are classified strictly: a monetary-looking
+  field the profile has no price rule for is shown as a neutral value, not a
+  price.
+
+`--detail squelched` omits both sections. JSON output adds optional top-level
+`alias_checks` and `endpoint_captures` maps, keyed by provider ID and present
+only when that data exists; `endpoint_captures` carries the capture summary
+without its lists, with every change and comparison gap, and each change's
+`price_evidence` (normalized display, unit, and comparison group). Neither
+map changes the `providers` payload.
+
+Endpoint changes and alias events never count as catalog changes: they do not
+create managed report artifacts, trigger notifications, or enter model counts
+or Price Movement. They still appear on stdout and in an explicit `--output`
+file, and in a managed report that catalog changes created.
+
 ### Conditional Pricing Policies
 
 When a provider publishes `pricing.overrides`, human reports interpret the

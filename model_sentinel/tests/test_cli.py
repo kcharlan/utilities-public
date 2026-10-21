@@ -2203,9 +2203,22 @@ def _endpoint_state(runtime_home: Path) -> SimpleNamespace:
     return SimpleNamespace(captures=captures, per_capture=per_capture)
 
 
+_ENDPOINT_SECTION_MARKERS = ("\n\nAlias check\n", "\n\nProvider endpoints\n")
+
+
+def _catalog_report(stdout: str) -> str:
+    """A text scan report without its appended Alias check and Provider endpoints sections.
+
+    Those sections are endpoint output, which the Output and artifact policy
+    adds to stdout independently of the catalog result being compared.
+    """
+    cuts = [stdout.find(marker) for marker in _ENDPOINT_SECTION_MARKERS if marker in stdout]
+    return stdout[: min(cuts)] + "\n" if cuts else stdout
+
+
 def _assert_same_catalog_outcome(run: SimpleNamespace, control: SimpleNamespace) -> None:
     assert run.exit_code == control.exit_code
-    assert run.stdout == control.stdout
+    assert _catalog_report(run.stdout) == control.stdout
     assert run.notifications == control.notifications
     assert [(r.status, r.change_count, r.saved, r.error_message) for r in run.results] == [
         (r.status, r.change_count, r.saved, r.error_message) for r in control.results
@@ -2759,3 +2772,271 @@ def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
     ]
     assert "SYNTHETIC_NOT_A_REAL_SECRET" not in output
     assert (runtime_home / "model_sentinel.db").is_file()
+
+
+# ---------------------------------------------------------------------------
+# alias_compare_only_scan and endpoint_output_and_artifact_policy. Every
+# catalog, alias, endpoint list and price below is invented.
+# ---------------------------------------------------------------------------
+
+ALIAS_TARGET_ID = "fake-org/test-model-a"
+ALIAS_ID = "fake-org/test-model-latest"
+
+
+def _alias_scan_catalog(alias_prompt: str) -> list[dict]:
+    return [
+        {
+            "id": ALIAS_TARGET_ID,
+            "name": "Test Model A",
+            "links": {"details": _endpoint_path(ALIAS_TARGET_ID)},
+            "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+        },
+        {
+            "id": ALIAS_ID,
+            "name": "Test Model Latest",
+            "alias_target": {"slug": ALIAS_TARGET_ID},
+            "pricing": {"prompt": alias_prompt, "completion": "0.000015"},
+        },
+    ]
+
+
+def _priced_endpoint_response(prompt: str):
+    """Answer every endpoint-list path with one invented endpoint at `prompt`."""
+
+    def respond(request, timeout):
+        path = urlsplit(request.full_url).path
+        model_id = path[len(ENDPOINT_PREFIX):-len("/endpoints")]
+        body = {"data": {"id": model_id, "endpoints": [{"tag": "fake-host", "pricing": {"prompt": prompt}}]}}
+        return io.BytesIO(json.dumps(body).encode("utf-8"))
+
+    return respond
+
+
+def _report_files(home: Path) -> list[str]:
+    report_dir = home / "reports"
+    return sorted(path.name for path in report_dir.iterdir()) if report_dir.exists() else []
+
+
+def test_alias_compare_only_scan_reports_a_new_divergence_without_capture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "alias-new", monkeypatch)
+    calls = _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000003")).exit_code == 0
+    captures_before = _endpoint_state(home).captures
+
+    run = _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002"), argv=("scan",))
+
+    assert run.exit_code == 0
+    assert calls == ["openrouter"]  # only the saved scan captured
+    assert _endpoint_state(home).captures == captures_before
+    (result,) = run.results
+    assert (result.status, result.saved, result.endpoint_capture) == ("success", False, None)
+    assert [(event.kind, event.alias_model_id) for event in result.alias_events] == [("new", ALIAS_ID)]
+    # The selected baseline snapshot is the evaluation's baseline side.
+    assert result.alias_events[0].baseline is not None
+    assert result.alias_events[0].baseline.divergence is None
+    alias_section = run.stdout[run.stdout.index("\nAlias check\n"):]
+    assert f"  New alias price divergence: {ALIAS_ID} → {ALIAS_TARGET_ID}" in alias_section
+    assert "    Input: alias 0.000002 (" in alias_section and " vs target 0.000003 (" in alias_section
+    # No capture in a compare-only scan: no endpoint section, no matching claim.
+    assert "Provider endpoints" not in run.stdout
+    assert "Endpoint matching" not in run.stdout
+    # The alias price change itself is one ordinary catalog change.
+    assert result.change_count == 1
+
+
+def test_alias_compare_only_scan_shows_persisting_divergence_in_endpoint_section(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _endpoint_home(tmp_path / "alias-persisting", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002")).exit_code == 0
+
+    run = _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002"), argv=("scan",))
+
+    (result,) = run.results
+    assert [event.kind for event in result.alias_events] == ["persisting"]
+    assert result.change_count == 0
+    assert run.notifications == []
+    assert "Alias check" not in run.stdout
+    section = run.stdout[run.stdout.index("\nProvider endpoints\n"):].splitlines()
+    assert "  capture: not run in this scan" in section
+    assert "  summary: 1 persisting alias divergence" in section
+    assert f"  Persisting alias price divergence: {ALIAS_ID} → {ALIAS_TARGET_ID}" in section
+
+
+def test_alias_compare_only_scan_saved_scan_judges_endpoints_from_this_capture(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _endpoint_home(tmp_path / "alias-saved", monkeypatch)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000002"))
+
+    run = _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002"))
+
+    (result,) = run.results
+    (event,) = result.alias_events
+    assert event.kind == "new"  # first save: no baseline snapshot
+    match = event.current.endpoint_match
+    assert match.unavailable_reason is None
+    assert match.list_path == _endpoint_path(ALIAS_TARGET_ID)
+    # The endpoint carries the alias's Input price but no Output price.
+    assert (match.matching_keys, match.unknown_keys) == ((), ("fake-host#0",))
+    assert "1 endpoint was not checkable on every compared price: fake-host#0" in run.stdout
+    assert "No endpoint" not in run.stdout
+
+
+@pytest.mark.parametrize("argv", (("scan",), ("scan", "--save")))
+def test_alias_compare_only_scan_alias_failure_cannot_turn_catalog_success_into_error(
+    tmp_path: Path, monkeypatch, capsys, argv: tuple
+) -> None:
+    control_home = _endpoint_home(tmp_path / "control", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000003")).exit_code == 0
+    control = _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002"), argv=argv)
+
+    home = _endpoint_home(tmp_path / "failing", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000003")).exit_code == 0
+
+    def broken(*args, **kwargs):
+        raise ValueError(f"synthetic malformed alias metadata {ENDPOINT_SECRET}")
+
+    monkeypatch.setattr(cli, "divergence_events", broken)
+    run = _run_endpoint_scan(monkeypatch, capsys, _alias_scan_catalog("0.000002"), argv=argv)
+
+    (result,) = run.results
+    (control_result,) = control.results
+    assert run.exit_code == control.exit_code == 0
+    assert (result.status, result.change_count, result.error_message) == ("success", 1, None)
+    assert result.alias_events == ()
+    assert run.notifications == control.notifications
+    assert _catalog_report(run.stdout) == _catalog_report(control.stdout)
+    assert _catalog_state(home)["field_changes"] == _catalog_state(control_home)["field_changes"]
+    assert "openrouter alias check failed: ValueError: synthetic malformed alias metadata" in run.stderr
+    assert "openrouter failed:" not in run.stderr
+    assert ENDPOINT_SECRET not in run.stdout + run.stderr
+    if "--save" in argv:
+        # Endpoint capture ran before the alias check and is unaffected.
+        assert result.endpoint_capture is not None and result.endpoint_capture.status == "complete"
+
+
+def test_endpoint_output_and_artifact_policy_endpoint_only_change_reaches_stdout_without_artifacts(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "endpoint-only", monkeypatch)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000001"))
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    reports_after_first = _report_files(home)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000002"))
+
+    run = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+
+    (result,) = run.results
+    assert run.exit_code == 0
+    assert result.change_count == 0
+    assert len(result.endpoint_capture.changes) == 1
+    # No catalog change: no notification and no new managed artifact.
+    assert run.notifications == []
+    assert _report_files(home) == reports_after_first
+    assert "Summary" not in run.stdout
+    section = run.stdout[run.stdout.index("\nProvider endpoints\n"):].splitlines()
+    assert "  summary: 1 list with price changes" in section
+    assert any(line.startswith("    fake-host#0: Input: 0.000001 → 0.000002") for line in section)
+
+
+def test_endpoint_output_and_artifact_policy_explicit_output_contains_endpoint_only_changes(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "explicit", monkeypatch)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000001"))
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    reports_after_first = _report_files(home)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000002"))
+    output = tmp_path / "explicit-report.md"
+
+    run = _run_endpoint_scan(
+        monkeypatch, capsys, FIRST_ENDPOINT_CATALOG,
+        argv=("scan", "--save", "--format", "markdown", "--output", str(output)),
+    )
+
+    assert run.exit_code == 0 and run.notifications == []
+    text = output.read_text(encoding="utf-8")
+    assert "## Provider endpoints" in text
+    assert "- Summary: 1 list with price changes" in text
+    # An explicit output writes only the requested format: no managed artifact.
+    assert _report_files(home) == reports_after_first
+
+
+def test_endpoint_output_and_artifact_policy_json_keeps_provider_payload_and_counts(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    def scans(root: Path, settings_extra: str) -> list[dict]:
+        _endpoint_home(root, monkeypatch, settings_extra=settings_extra)
+        _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000001"))
+        first = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG, argv=("scan", "--save", "--format", "json"))
+        _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000002"))
+        second = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG, argv=("scan", "--save", "--format", "json"))
+        return [json.loads(first.stdout), json.loads(second.stdout)], second
+
+    control, control_run = scans(tmp_path / "control", "MODEL_SENTINEL_ENDPOINT_CAPTURE=0\n")
+    payloads, run = scans(tmp_path / "enabled", "")
+
+    for payload, control_payload in zip(payloads, control):
+        assert payload["providers"] == control_payload["providers"]
+        assert "endpoint_captures" not in control_payload
+        assert set(payload["endpoint_captures"]) == {"openrouter"}
+    assert payloads[1]["endpoint_captures"]["openrouter"]["changes"][0]["field_name"] == "pricing.prompt"
+    # Endpoint changes never become catalog changes or notification triggers.
+    assert [r.change_count for r in run.results] == [r.change_count for r in control_run.results]
+    assert run.notifications == control_run.notifications
+
+
+def test_endpoint_output_and_artifact_policy_managed_report_carries_endpoint_section(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = _endpoint_home(tmp_path / "managed", monkeypatch)
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000001"))
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    _install_endpoint_transport(monkeypatch, _priced_endpoint_response("0.000002"))
+
+    run = _run_endpoint_scan(monkeypatch, capsys, SECOND_ENDPOINT_CATALOG)
+
+    (result,) = run.results
+    assert result.change_count == 2  # the catalog changes only
+    ((title, report_name),) = run.notifications
+    assert title == "Model Sentinel: 2 change(s) detected"
+    primary = home / "reports" / report_name.replace(".html", ".txt")
+    assert primary.read_text(encoding="utf-8") == run.stdout.rstrip("\n")
+    assert "\nProvider endpoints\n" in primary.read_text(encoding="utf-8")
+
+
+def test_alias_compare_only_scan_endpoint_evidence_selection() -> None:
+    """Only this scan's capture is evidence; a whole-capture failure is no evidence."""
+    profile = resolve_profile("openrouter")
+    provider = ProviderConfig(
+        provider_id="openrouter", label="OpenRouter", kind="openrouter",
+        base_url="https://fake-router.invalid/api/v1", models_path="/models",
+        credential_env_var="FAKE_ROUTER_NOT_A_REAL_KEY", price_multiplier=1, price_divisor=1, enabled=True,
+    )
+    current = {
+        model.provider_model_id: model
+        for model in cli.normalize_models(provider, _alias_scan_catalog("0.000002"), profile)
+    }
+    logger = logging.getLogger("test-alias-evidence")
+
+    def reason(capture) -> str | None:
+        (event,) = cli._check_provider_aliases(
+            provider_id="openrouter", profile=profile, baseline_models=None, current_map=current,
+            endpoint_capture=capture, logger=logger, credential_values={},
+        )
+        return event.current.endpoint_match.unavailable_reason
+
+    failed = cli._endpoint_error_summary(
+        provider_id="openrouter", scrape_id=1, started_at="2030-01-02T03:04:05+00:00",
+        error_summary="RuntimeError: synthetic", baseline_scrape_id=None, baseline_capture=None,
+    )
+    assert reason(None) == "not_captured"
+    assert reason(failed) == "not_captured"
+    # A capture that succeeded but planned no list for the target.
+    assert reason(replace(failed, status="complete", error_summary=None)) == "list_missing"

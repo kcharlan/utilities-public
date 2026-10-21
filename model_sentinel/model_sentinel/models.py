@@ -80,6 +80,10 @@ class ProviderScanResult:
     # This scan's endpoint capture, success or failure, when one was eligible.
     # It never contributes to `change_count`.
     endpoint_capture: EndpointCaptureSummary | None = None
+    # Alias divergence events between the selected baseline snapshot and this
+    # catalog, for capable profiles. Like `endpoint_capture`, they never
+    # contribute to `change_count`, notifications or Price Movement.
+    alias_events: tuple[AliasEvent, ...] = ()
 
     @property
     def change_count(self) -> int:
