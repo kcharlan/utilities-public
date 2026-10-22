@@ -1,5 +1,23 @@
 # Lessons learned
 
+## 2026-10-22: A defensive fallback can mask the ordering a test claims
+
+Quit must end a port operation before `MonitorController.stop()`. `stop()`
+also ends any operation, as a fallback for other callers, and its disconnect
+waits for that ending write. The AppDelegate termination tests therefore passed
+before `applicationShouldTerminate` awaited `endPortOperation()`: the write still
+preceded the disconnect. Asserting the logs alone could not show which path
+performed the write. The tests now also check that the controller's system events
+are still running while the ending attempt is held, and that check failed until
+the delegate change. When a lower layer repeats a guarantee, assert a
+precondition only the intended caller can satisfy.
+
+The TERM-resistant credential-process test once read an empty PID under full
+suite load. The script's `printf ... > marker` creates the file before
+writing to it, and the test waited only for the file to exist. It now waits until
+the content parses as a PID. Wait for the content a test needs, not only for the
+file that will hold it.
+
 ## 2026-10-22: Make cancellation and lifecycle boundaries explicit in control plans
 
 Disarming an armed action must consume Escape before naming cancellation or

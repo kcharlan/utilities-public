@@ -13,6 +13,37 @@ account boundaries so queued old events cannot cross into a new session. Polling
 has one guarded connected transition. Sleep/network recovery cleans up before
 reconnecting; terminal authentication failure requires explicit sign-in.
 
+Port switch control follows [the port-control plan's "Design
+decisions"](port_control_implementation_plan.md#design-decisions). `PortOperation`
+(Core) is a clock-free state machine for one turn-off, turn-on or restart: it
+takes `requested`, publish results, snapshots with their receive marks, ticks,
+disconnection, reconnection fences and ending reasons, and returns publish,
+status-request and finish actions. `MonitorController` owns the one running
+operation (`portOperation`) and the last unconfirmed result (`portOutcome`), so
+closing the panel changes nothing. It refuses a second operation, and any while
+disconnected or stale (`portControlBlock`). It executes publishes through
+`ChargerBackend.setPortSwitch` and issues operation status requests beside
+normal polling, which the staleness tracker still records. The 1 s
+`scheduleTick` drives operation time. Link loss suspends the operation; each
+reconnection reads `commandFence()` to resume it and to move the outcome's
+clearing boundary onto the new connection. Publish results are accepted only
+for the same operation, account, selection and connection generations.
+
+Sign-out, charger selection, credential edits, Retry, Reload Credentials, sign-in
+and quit end the operation synchronously at entry, before they invalidate
+anything. A restart's ending "on" write runs against the captured old link,
+after any in-flight switch write, in one task that becomes `cleanup`. The
+caller's disconnect, and so any replacement connection, waits for it, and
+overlapping endings share it. `PortControlPolicy.exitAttemptTimeout`, on the
+injected scheduler, bounds that attempt. On expiry the controller calls
+`abortCommands()`, which revokes the context and drains pending sends. If no
+context change replaced the connection, it then reconnects through the
+ordinary disconnect path. Terminal authentication statuses end the operation
+without a write. `AppDelegate` awaits `endPortOperation()` before
+`MonitorController.stop()`. The outcome survives these context changes. Dismiss,
+a new operation, or fresh matching evidence from its own account and charger
+clears it.
+
 `MemorySessionStore` retains credentials and renewed service sessions only in
 RAM. `StateStore` persists nonsecret configuration using private modes and atomic
 replacement (`PrivateFile.replace`). `AppInstanceGate` holds an exclusive process lease. No backend,

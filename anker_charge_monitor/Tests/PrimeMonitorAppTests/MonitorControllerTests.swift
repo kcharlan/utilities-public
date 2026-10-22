@@ -67,20 +67,61 @@ actor AppBackend: ChargerBackend {
     func restore(_ session: AccountSession, credentials: AnkerCredentials) async { log.append("restore") }
     func listChargers() async throws -> [ChargerInfo] { log.append("list"); return [appCharger] }
     func connect(to charger: ChargerInfo) async throws {
-        connectedChargers.append(charger); log.append("connect"); output.connected(); output.yield(.status(.connected))
+        connectedChargers.append(charger); log.append("connect"); linkUp = true; output.connected(); output.yield(.status(.connected))
         if holdConnection { holdConnection = false; await withCheckedContinuation { connectionWait = $0 } }
     }
-    func requestSnapshot() async throws { log.append("request") }
-    /// Synthetic switch commands are recorded, never sent anywhere.
+    var holdRequest = false
+    private var requestWait: CheckedContinuation<Void, Never>?
+    /// Holds the next status request in flight until `releaseRequest()`.
+    func blockRequest() { holdRequest = true }
+    func releaseRequest() { requestWait?.resume(); requestWait = nil }
+    func requestSnapshot() async throws {
+        log.append("request")
+        if holdRequest { holdRequest = false; await withCheckedContinuation { requestWait = $0 } }
+    }
+    /// Synthetic switch commands are recorded, never sent anywhere. `switchChargers`
+    /// records the charger connected when each write was attempted.
     var switchCommands: [(target: PortSwitch, on: Bool)] = []
+    var switchChargers: [String?] = []
+    /// A synthetic link: up from `connect`, down after `disconnect` or `abortCommands`.
+    private(set) var linkUp = false
+    private var holdSwitches = false, failSwitches = false, holdFences = false, failFences = false
+    private var switchWaits: [CheckedContinuation<Bool, Never>] = []
+    private var fenceWaits: [CheckedContinuation<Bool, Never>] = []
+    var heldSwitchWrites: Int { switchWaits.count }
+    var heldFences: Int { fenceWaits.count }
+    struct LinkClosed: Error {}
+    /// Holds every later switch write until released, or until the link closes.
+    func blockSwitches() { holdSwitches = true }
+    func failSwitchWrites(_ fail: Bool = true) { failSwitches = fail }
+    /// Completes held writes; their receipts take the fence at completion.
+    func releaseSwitches() { holdSwitches = false; finish(&switchWaits, completed: true) }
+    func blockFences() { holdFences = true }
+    func failFenceReads(_ fail: Bool = true) { failFences = fail }
+    func releaseFences() { holdFences = false; finish(&fenceWaits, completed: true) }
+    private func finish(_ waits: inout [CheckedContinuation<Bool, Never>], completed: Bool) {
+        let held = waits; waits = []
+        for wait in held { wait.resume(returning: completed) }
+    }
+    /// Closing the link resumes pending writes with an error, as NWMQTTLink does.
+    private func closeLink() { linkUp = false; finish(&switchWaits, completed: false); finish(&fenceWaits, completed: false) }
     func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
-        switchCommands.append((target, on)); log.append("switch")
+        switchCommands.append((target, on)); switchChargers.append(connectedChargers.last?.serial); log.append("switch")
+        guard linkUp, !failSwitches else { throw LinkClosed() }
+        if holdSwitches { guard await withCheckedContinuation({ switchWaits.append($0) }) else { throw LinkClosed() } }
+        guard linkUp else { throw LinkClosed() }
         return PortCommandReceipt(fence: output.fence)
     }
-    func commandFence() async throws -> PortCommandReceipt { log.append("fence"); return PortCommandReceipt(fence: output.fence) }
-    func abortCommands() async { log.append("abort") }
+    func commandFence() async throws -> PortCommandReceipt {
+        log.append("fence")
+        guard linkUp, !failFences else { throw LinkClosed() }
+        if holdFences { guard await withCheckedContinuation({ fenceWaits.append($0) }) else { throw LinkClosed() } }
+        guard linkUp else { throw LinkClosed() }
+        return PortCommandReceipt(fence: output.fence)
+    }
+    func abortCommands() async { log.append("abort"); closeLink() }
     func disconnect() async {
-        log.append("disconnect")
+        log.append("disconnect"); closeLink()
         if holdDisconnect { holdDisconnect = false; await withCheckedContinuation { disconnectWait = $0 } }
         releaseConnection()
     }
