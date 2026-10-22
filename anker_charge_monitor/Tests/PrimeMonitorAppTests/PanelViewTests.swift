@@ -186,6 +186,9 @@ func supportTwoMixedDetails() -> ChargerDetails {
         #expect(rows.map(\.secondaryText) == ["Fault reported · Synthetic Desk Lamp", "FEED:BEEF", "Unidentified device", nil, "USB-A fault", "USB-A fault"])
         #expect(rows.map(\.faulted) == [true, false, false, false, true, true])
         let c1 = PortRowView(reading: view.rows[0], presentation: rows[0])
+        // The row control exposes its expansion state.
+        #expect(c1.accessibilityValue == "Collapsed")
+        #expect(PortRowView(reading: view.rows[0], presentation: rows[0], expanded: true).accessibilityValue == "Expanded")
         #expect(c1.accessibilityText == "C1, Fault reported, Synthetic Desk Lamp, 0.00 W, 0.000 V, 0.020 A")
         #expect(PortRowView(reading: view.rows[3], presentation: rows[3]).accessibilityText == "C4, 43.21 W, 20.000 V, 1.490 A")
         #expect(PortRowView(reading: view.rows[4], presentation: rows[4]).accessibilityText == "A1, USB-A fault, 0.00 W, 0.000 V, 0.000 A")
@@ -424,6 +427,22 @@ func supportTwoMixedDetails() -> ChargerDetails {
         #expect(n.detail.cancelEditing()); n.detail.endEditing(n.context)
         #expect(n.text() == "Synthetic Editor Name")
         n.catalog.store.panelClosed()
+        await n.rig.finish()
+    }
+    @Test func removedFieldEndsEditingAndEscapeIgnoresAnUnshownDraft() async throws {
+        let n = try await Naming()
+        n.detail.toggle(.c1, n.context)
+        n.type("Synthetic Unplugged Draft")
+        // The device goes away: the field is removed without a focus-loss report.
+        await detailReply(n.rig, syntheticDetails(c1: .nothingAttached))
+        n.detail.fieldRemoved()
+        #expect(!n.detail.editing && n.detail.dirty && n.catalog.files.count("replace") == 0)
+        // Nothing shown to cancel, so Escape belongs to the panel.
+        #expect(!n.detail.cancelEditing(context: n.context) && n.detail.dirty)
+        // A shown failed draft with an unfocused field is cancelled by Escape.
+        await detailReply(n.rig, syntheticDetails())
+        #expect(n.detail.cancelEditing(context: n.context) && !n.detail.dirty)
+        #expect(!n.detail.cancelEditing(context: n.context))
         await n.rig.finish()
     }
     @Test func replacementDeviceOrChargerNeverReceivesTheDraft() async throws {

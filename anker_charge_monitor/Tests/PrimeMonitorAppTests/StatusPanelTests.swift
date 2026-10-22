@@ -645,6 +645,41 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
         await naming.finish()
     }
+    /// A snapshot that removes the focused field (device unplugged, unresolved
+    /// or replaced) must not leave Escape cancelling an unseen edit.
+    @Test(arguments: ["unplugged", "unresolved", "replaced"])
+    func snapshotRemovingTheFieldLetsEscapeDismissWithoutWriting(_ change: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Vanished Draft")
+        switch change {
+        case "unplugged": await detailReply(naming.fixture.rig, syntheticDetails(c1: .nothingAttached))
+        case "unresolved": await detailReply(naming.fixture.rig, syntheticDetails(c1: .identifying))
+        default:
+            await detailReply(naming.fixture.rig, syntheticDetails(c1: .identified(vendorID: 0xfeed, productID: 0x0001, brandClass: nil, modelCode: nil)))
+        }
+        await pumpRunLoop()
+        if change == "replaced" { #expect(try naming.field().stringValue == "") }
+        else { #expect(editableTextFields(in: naming.panel.contentView!).isEmpty) }
+        #expect(!naming.detail.editing && !naming.fieldEditing)
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1)
+        // Closing settled the unshown draft by discarding it: nothing was written.
+        #expect(naming.catalog.files.count("replace") == 0 && naming.catalog.store.catalog.devices.isEmpty && !naming.detail.dirty)
+        await naming.finish()
+    }
+    @Test func quittingSavesThePendingNameAndAFailureDoesNotThrow() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Quit Name")
+        naming.fixture.status.settlePendingEdits()
+        #expect(naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Quit Name"] && !naming.detail.dirty)
+        naming.catalog.files.failWrites = true
+        try await typeIntoFieldEditor(naming.panel, "Synthetic Unsaved Quit Name")
+        naming.fixture.status.settlePendingEdits()
+        #expect(naming.detail.dirty && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Quit Name"])
+        await naming.finish()
+    }
     @Test func closingSavesTheEditAndReopeningLeavesTheFieldUnfocused() async throws {
         await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
         let naming = try await NamingPanel()

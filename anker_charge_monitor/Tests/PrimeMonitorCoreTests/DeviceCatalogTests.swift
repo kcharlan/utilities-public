@@ -32,13 +32,13 @@ private func rejection(_ data: Data) -> String? {
                 == "brands entry \"\(key)\": the key must be a decimal brand class from 0 to 65534 without leading zeros.")
     }
 
-    @Test(arguments: ["5ac", "05ac0", "+5ac", "0x5a", "05ag", "", " 5ac", "\u{FF10}5ac"])
+    @Test(arguments: ["a1b", "0a1b0", "+a1b", "0x0a", "0a1g", "", " a1b", "\u{FF10}a1b"])
     func rejectedVendorKeys(_ key: String) {
         #expect(rejection(document(vendors: #"{"\#(key)": "Synthetic"}"#))
                 == "vendors entry \"\(key)\": the key must be four hexadecimal digits.")
     }
 
-    @Test(arguments: ["05ac", "05ac:", ":12ab", "05ac:12ab:0000", "05ac-12ab", "5ac:12ab", "05ac:+2ab", "05ac :12ab"])
+    @Test(arguments: ["0a1b", "0a1b:", ":2c3d", "0a1b:2c3d:0000", "0a1b-2c3d", "a1b:2c3d", "0a1b:+c3d", "0a1b :2c3d"])
     func rejectedDeviceKeys(_ key: String) {
         #expect(rejection(document(devices: #"{"\#(key)": "Synthetic"}"#))
                 == "devices entry \"\(key)\": the key must be four hexadecimal vendor digits, a colon and four hexadecimal product digits.")
@@ -90,7 +90,7 @@ private func rejection(_ data: Data) -> String? {
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x0001, brandClass: 7, modelCode: nil)) == "Synthetic Brand")
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x0001, brandClass: 8, modelCode: nil)) == "Synthetic Vendor")
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x0001, brandClass: nil, modelCode: nil)) == "Synthetic Vendor")
-        #expect(catalog.label(for: .identified(vendorID: 0x00c2, productID: 0x0e0f, brandClass: 8, modelCode: nil)) == "00C2:0E0F")
+        #expect(catalog.label(for: .identified(vendorID: 0x00ed, productID: 0x0bad, brandClass: 8, modelCode: nil)) == "00ED:0BAD")
         #expect(DeviceCatalog().label(for: .identified(vendorID: 0xabcd, productID: 0x0001, brandClass: 7, modelCode: 1)) == "ABCD:0001")
     }
 

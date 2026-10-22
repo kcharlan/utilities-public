@@ -75,7 +75,7 @@ import AnkerCloud
     @Test func readoutShowsUnavailableDetailValues() {
         let details = ChargerDetails(faultBits: 0x29, identitySupport: nil, identities: [
             .c1: .identified(vendorID: 0xfeed, productID: 0x0001, brandClass: nil, modelCode: 0),
-            .c2: .identified(vendorID: 0x00c0, productID: 0xbeef, brandClass: 0x1234, modelCode: nil),
+            .c2: .identified(vendorID: 0x00ed, productID: 0xbeef, brandClass: 0x1234, modelCode: nil),
             .c3: .nothingAttached,
         ], rawFields: [0xa3: [0x02, 0x29, 0x00], 0xbd: [], 0xbe: [0x01]])
         let lines = DiagnosticReadout.lines(ChargerSnapshot(receivedAt: .distantPast, readings: [], details: details))
@@ -85,7 +85,7 @@ import AnkerCloud
             "Fault bits: 0x29; over-temperature=true; C1 fault=false; C2 fault=false; C3 fault=true; C4 fault=false; USB-A fault=true",
             "Identity support: unavailable",
             "C1 identity: vendor=0xFEED; product=0x0001; class=unavailable; model code=0",
-            "C2 identity: vendor=0x00C0; product=0xBEEF; class=4660; model code=unavailable",
+            "C2 identity: vendor=0x00ED; product=0xBEEF; class=4660; model code=unavailable",
             "C3 identity: nothing attached",
             "C4 identity: unavailable",
             "Raw A3: 02 29 00",

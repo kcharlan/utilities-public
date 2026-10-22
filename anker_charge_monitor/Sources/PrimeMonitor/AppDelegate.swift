@@ -37,6 +37,8 @@ import PrimeMonitorCore
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if terminationTask == nil {
+            // Save a name being typed before shutdown; failure does not block quitting.
+            status?.settlePendingEdits()
             terminationTask = Task {
                 await startupTask?.value
                 await controller.stop(); lease?.release(); lease = nil

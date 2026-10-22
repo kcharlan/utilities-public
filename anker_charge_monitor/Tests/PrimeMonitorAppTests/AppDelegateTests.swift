@@ -24,11 +24,29 @@ import Testing
         await rig.backend.releaseDisconnection(); await delegate.terminationTask?.value
         #expect(replies == 1); await rig.finish()
     }
+    @Test func quittingSettlesAPendingNameOnceBeforeShutdown() async throws {
+        let rig = try ControllerRig(); var replies = 0
+        let status = RetainedStatusStub()
+        let delegate = AppDelegate(controller: rig.controller, acquireLease: { AppInstanceLease {} }, statusFactory: { status }, reply: { _ in replies += 1 })
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification)); await delegate.startupTask?.value
+        var repliesAtSettle: Int?
+        status.onSettle = { repliesAtSettle = replies }
+        #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
+        #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
+        // Settled synchronously, once, before shutdown replies; quitting continues.
+        #expect(status.settlements == 1 && repliesAtSettle == 0)
+        await delegate.terminationTask?.value
+        #expect(replies == 1 && status.settlements == 1)
+        await rig.finish()
+    }
 }
 
 @MainActor private final class RetainedStatusStub: PopoverPresenting {
     var openings = 0
+    var settlements = 0
+    var onSettle: () -> Void = {}
     func showPopover() { openings += 1 }
+    func settlePendingEdits() { settlements += 1; onSettle() }
 }
 extension AppDelegateTests {
     @Test func launchRetainsStatusItemAndReopenUsesIt() async throws {

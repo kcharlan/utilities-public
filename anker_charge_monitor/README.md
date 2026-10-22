@@ -65,7 +65,8 @@ bar's own spacing. Stale data and errors dim the icon and retained reading to
 grey in light and dark menu bars while data age continues advancing;
 a session-ended error offers Sign In Again. A new setup opens Settings.
 
-Each port row shows its connected USB-C device label beside the readings. A
+Each port row shows its connected USB-C device label beside the readings;
+hovering shows the full text of a shortened label. A
 reported port fault turns the row's label red with a warning triangle and "Fault
 reported"; the charger reports one fault bit for both USB-A ports, shown as
 "USB-A fault" on each. A charger over-temperature report appears as a red
@@ -78,12 +79,14 @@ not report read "Not reported by this charger". The charger's identity-support
 value is not used to hide identities: a charger reporting 2 has still
 identified devices.
 
-Press Return or move focus away to save a name; closing the panel or expanding
-another row also saves it, and a blank name removes it. Escape abandons the edit
-and keeps the panel open; a second Escape closes the panel. If a save fails, the
-typed name and an inline error stay, the edited row stays expanded, and the name
-remains available for retry after the panel is reopened (in memory only; quitting
-discards it). A problem in `devices.json` is
+Press Return or move focus away to save a name; closing the panel, expanding
+another row or quitting the app also saves it, and a blank name removes it.
+Escape abandons the edit and keeps the panel open, and also discards a typed name
+left after a failed save when the field is no longer focused; a second Escape
+closes the panel. If a save fails, the typed name and an inline error stay, the
+edited row stays expanded, and the name remains available for retry after the
+panel is reopened. It is kept in memory only: a save that still fails when you
+quit does not stop quitting, and the name is lost. A problem in `devices.json` is
 shown once, as a warning below the rows naming the failing entry.
 
 Only nonsecret provider configuration, charger selection, cadence and menu bar

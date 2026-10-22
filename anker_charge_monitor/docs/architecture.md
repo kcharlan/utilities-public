@@ -42,7 +42,10 @@ Escape has one owner action, `StatusItemController.cancel`, reached from
 `StatusHostingController.cancelOperation` and the naming field's
 `onExitCommand`; none forwards the command to another. While a field in the
 hosted content is editing, it cancels the edit (marking cancellation before
-clearing focus); otherwise it dismisses the panel.
+clearing focus); it also discards a shown draft left by a failed save when the
+field is not focused; otherwise it dismisses the panel. A field removed by a row
+or snapshot change ends editing without saving, and `AppDelegate` settles a
+pending draft through the same save path before termination.
 
 The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen

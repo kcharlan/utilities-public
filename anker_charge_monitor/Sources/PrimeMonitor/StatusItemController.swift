@@ -44,8 +44,13 @@ struct StatusContent: View {
 @MainActor protocol PopoverPresenting: AnyObject {
     func showPopover()
     func showSettings()
+    /// Saves a pending device-name edit, as closing the panel does.
+    func settlePendingEdits()
 }
-extension PopoverPresenting { func showSettings() {} }
+extension PopoverPresenting {
+    func showSettings() {}
+    func settlePendingEdits() {}
+}
 
 /// On macOS 27 MenuBarAgent hosts the status item, so the expanded-interface
 /// session is the reliable record of a press that opens the panel: begin shows
@@ -175,6 +180,9 @@ extension PopoverPresenting { func showSettings() {} }
         hidePanel()
     }
     func showSettings() { dismiss(); settings.show() }
+    /// Quitting saves a pending name through the same path as closing; a failed
+    /// save never blocks termination.
+    func settlePendingEdits() { detail.settle(NamingContext(monitor: controller, store: catalog)) }
     func showPopover() {
         guard !panel.isVisible else { return }
         activate()
@@ -186,7 +194,9 @@ extension PopoverPresenting { func showSettings() {} }
     /// focus leaves the field so the focus-loss save cannot commit it; it then
     /// clears the field's focus so a later Escape dismisses the panel.
     func cancel() {
-        if detail.cancelEditing(fieldFocused: namingFieldFocused) { _ = panel.makeFirstResponder(nil) }
+        if detail.cancelEditing(fieldFocused: namingFieldFocused, context: NamingContext(monitor: controller, store: catalog)) {
+            _ = panel.makeFirstResponder(nil)
+        }
         else { dismiss() }
     }
     /// A field editor is editing a control of the hosted panel content; other

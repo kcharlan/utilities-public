@@ -104,7 +104,7 @@ struct PanelView: View {
         PanelMotion.perform(reduceMotion: reduceMotion) { [detail, naming] in detail.toggle(port, naming) }
     }
     func cancelNaming() {
-        if let cancelAction { cancelAction() } else { _ = detail.cancelEditing() }
+        if let cancelAction { cancelAction() } else { _ = detail.cancelEditing(context: naming) }
     }
 
     var body: some View {
@@ -151,6 +151,7 @@ struct PanelView: View {
                                 .buttonStyle(.borderless)
                                 .onKeyPress(.return) { toggle(port); return .handled }
                                 .accessibilityLabel(row.accessibilityText)
+                                .accessibilityValue(row.accessibilityValue)
                                 .accessibilityHint("Shows device details")
                             if detail.expanded == port {
                                 PortDetailView(identity: expandedIdentity(port), faultLines: faultLines(port),
@@ -228,6 +229,9 @@ struct PortDetailView: View {
                     .onChange(of: detail.editing) { _, editing in
                         if !editing && nameFocused { nameFocused = false }
                     }
+                    .onDisappear { detail.fieldRemoved() }
+                    // A replacement device or charger gets a new, unfocused field.
+                    .id(target)
                 if let failure = detail.failure(for: target) {
                     Text(failure.inlineText).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }

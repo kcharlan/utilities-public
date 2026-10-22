@@ -2,6 +2,22 @@
 
 Status: approved for implementation 2026-10-21 (separate `devices.json`, `DeviceCatalog.label(for:)` row text, minor release).
 
+## Amendments (owner verification evidence, 2026-10-21)
+
+The implementation differs from the text below in these points:
+
+- Identity support (`b7`) never hides decoded identity. The owner's charger
+  reported 2 while one port carried a resolved identity, so decoded `bd`/`be`
+  data always wins and missing identity reads "Not reported by this charger".
+  The "This charger can't identify connected devices." state was not shipped.
+- `.identifying` (`{0, 0}`) presents as "Unidentified device" (catalog label)
+  and "This device hasn't reported its identity." (expanded detail): some
+  devices never answer USB-PD Discover Identity. The case name is unchanged.
+- Brand keys with leading zeros (for example `01`) are rejected.
+- Release: minor version 0.3.0, build 5.
+
+See the 2026-10-21 entries in [lessons](lessons_learned.md).
+
 ## Goal
 
 Display connected-device identity, port faults and charger over-temperature in

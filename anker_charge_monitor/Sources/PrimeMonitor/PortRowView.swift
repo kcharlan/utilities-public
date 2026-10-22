@@ -44,6 +44,7 @@ struct PortRowView: View {
     var power: String { DisplayFormatter.watts(centi: reading.powerCenti) }
     var voltage: String { DisplayFormatter.volts(milli: reading.voltageMilli) }
     var current: String { DisplayFormatter.amps(milli: reading.currentMilli) }
+    var accessibilityValue: String { expanded ? "Expanded" : "Collapsed" }
     /// Known fault and device information precede the readings.
     var accessibilityText: String {
         ([reading.port.label] + [presentation?.faultText, presentation?.device].compactMap { $0 } + [power, voltage, current])
@@ -57,7 +58,8 @@ struct PortRowView: View {
             HStack(spacing: 3) {
                 if let text = presentation?.secondaryText {
                     if faulted { Image(systemName: "exclamationmark.triangle") }
-                    Text(text).lineLimit(1).truncationMode(.tail)
+                    // Truncated in the row; the tooltip and accessibility label keep it whole.
+                    Text(text).lineLimit(1).truncationMode(.tail).help(text)
                 }
             }.font(.system(size: Self.deviceFontSize))
                 .foregroundStyle(faulted ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
@@ -75,5 +77,6 @@ struct PortRowView: View {
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityText)
+            .accessibilityValue(accessibilityValue)
     }
 }

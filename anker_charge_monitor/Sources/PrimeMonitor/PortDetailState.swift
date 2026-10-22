@@ -4,7 +4,7 @@ import PrimeMonitorCore
 
 /// The device a naming draft belongs to. A draft is never shown for, or
 /// saved to, a different charger, port or reported USB vendor/product pair.
-struct NamingTarget: Equatable {
+struct NamingTarget: Hashable {
     let charger: String?
     let port: PortID
     let key: DeviceKey
@@ -123,18 +123,29 @@ struct NamingFailure: Equatable {
             return false
         }
         expanded = expanded == port ? nil : port
-        // Any change of expansion removes the expanded row's field, and a
-        // removed field reports no focus loss. Without this, a stale editing
-        // state made the next Escape cancel nothing instead of dismissing.
-        cancelling = false
-        if editing { editing = false }
+        // Any change of expansion removes the field; end editing now rather
+        // than after SwiftUI's later disappearance callback.
+        fieldRemoved()
         return true
     }
 
-    /// Escape: cancels a draft or an edit in progress and reports whether it
-    /// did. With nothing to cancel the caller dismisses the panel.
-    func cancelEditing(fieldFocused: Bool = false) -> Bool {
-        guard editing || fieldFocused || draft != nil else { return false }
+    /// The naming field left the view (row change, device replaced or gone,
+    /// charger changed, signed out). A removed field may report no focus loss,
+    /// and a stale editing state made the next Escape cancel nothing instead of
+    /// dismissing. Ends editing without saving; the draft keeps its binding.
+    func fieldRemoved() {
+        cancelling = false
+        if editing { editing = false }
+    }
+
+    /// Escape: cancels an edit in progress or a draft shown for its device,
+    /// including a failed draft whose field is not focused, and reports whether
+    /// it did. With nothing visible to cancel the caller dismisses the panel; a
+    /// draft whose device is no longer reported is then settled (discarded) by
+    /// closing. Without a context every draft counts as shown.
+    func cancelEditing(fieldFocused: Bool = false, context: NamingContext? = nil) -> Bool {
+        let draftShown = draft.map { pending in context.map { $0.target(pending.target.port) == pending.target } ?? true } ?? false
+        guard editing || fieldFocused || draftShown else { return false }
         if editing || fieldFocused { cancelling = true }
         draft = nil
         if editing { editing = false }
