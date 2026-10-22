@@ -27,6 +27,7 @@ from .credentials import redact_credential_values
 from .diffing import diff_values
 from .models import (
     EndpointCaptureCandidate,
+    EndpointTelemetryRecord,
     EndpointCaptureSummary,
     EndpointChange,
     EndpointChangeRecord,
@@ -652,6 +653,29 @@ def endpoint_list_records(
     return tuple(records)
 
 
+def endpoint_telemetry_records(
+    bodies: Mapping[str, Any], profile: ProviderProfile,
+) -> tuple[EndpointTelemetryRecord, ...]:
+    """Extract telemetry using the same parser and response-order keys as observations."""
+    records = []
+    for path in sorted(bodies):
+        try:
+            _, entries = parse_endpoint_list(bodies[path])
+        except EndpointListError:
+            continue
+        for keyed in key_endpoint_list(entries):
+            raw = {name: value for name, value in keyed.endpoint.items()
+                   if name in profile.endpoint_telemetry_fields}
+            windows = []
+            for window in ("5m", "30m", "1d"):
+                value = raw.get(profile.endpoint_uptime_fields.get(window))
+                # Bounds also reject NaN and infinities without coercing huge ints.
+                windows.append(value if isinstance(value, (int, float))
+                               and not isinstance(value, bool) and 0 <= value <= 100 else None)
+            records.append(EndpointTelemetryRecord(path, keyed.key, *windows, raw))
+    return tuple(records)
+
+
 def _observation_record(
     key: str,
     endpoint: Mapping[str, Any],
@@ -883,7 +907,10 @@ def build_endpoint_capture(
         comparison_gaps=gaps,
         lists=lists,
     )
-    return EndpointCaptureCandidate(summary=summary, mappings=fetch.mappings, archive=fetch.bodies)
+    return EndpointCaptureCandidate(
+        summary=summary, mappings=fetch.mappings, archive=fetch.bodies,
+        telemetry=endpoint_telemetry_records(fetch.bodies, profile),
+    )
 
 
 def build_endpoint_error_summary(

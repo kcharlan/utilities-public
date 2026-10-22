@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-22: Mark telemetry processing separately from sample presence
+
+A missing numeric sample cannot distinguish an unprocessed archive from a
+processed capture with empty lists or rejected values. Keep a capture-level
+completion marker and write it with its samples in one transaction. Backfill
+each archive independently, use the observation parser and duplicate-key
+authority unchanged, and count unmatched observations rather than inventing
+links. Preserve raw telemetry separately from validated numeric columns;
+Python booleans are integers but are not valid uptime percentages. Regress
+empty processing, duplicate identities, late write failures and retries with
+synthetic archives.
+
 ## 2026-10-22: Validate bundled tax rules separately from frozen parity inputs
 
 Tax2's engine correctly supported earned-only components, but its bundled PA

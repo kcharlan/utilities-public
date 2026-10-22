@@ -2,6 +2,7 @@ from pathlib import Path
 
 from argparse import Namespace
 import copy
+import gzip
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 import http.server
@@ -2668,7 +2669,7 @@ def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
     assert cli.main(["healthcheck", "--format", "json"]) == 0
     assert _endpoint_checks(capsys.readouterr().out) == [
         {"check": "endpoint_capture", "status": "ok",
-         "detail": "Provider 'openrouter': capture enabled; no capture yet"},
+         "detail": "Provider 'openrouter': capture enabled; no capture yet; telemetry pending=0 unmatched=0"},
     ]
 
     _install_endpoint_transport(monkeypatch)
@@ -2679,7 +2680,7 @@ def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
         {"check": "endpoint_capture", "status": "ok",
          "detail": (
              f"Provider 'openrouter': capture enabled; latest capture "
-             f"{to_local_human(complete.completed_at)} status=complete {_counts_text(complete)}"
+             f"{to_local_human(complete.completed_at)} status=complete {_counts_text(complete)}; telemetry pending=0 unmatched=0"
          )},
     ]
 
@@ -2694,7 +2695,7 @@ def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
     assert (latest.status, latest.paths_requested, latest.paths_failed) == ("partial", 2, 1)
     detail = (
         f"Provider 'openrouter': capture enabled; latest capture "
-        f"{to_local_human(latest.completed_at)} status=partial {_counts_text(latest)}"
+        f"{to_local_human(latest.completed_at)} status=partial {_counts_text(latest)}; telemetry pending=0 unmatched=0"
     )
     assert cli.main(["healthcheck", "--format", "json"]) == 0
     assert _endpoint_checks(capsys.readouterr().out) == [
@@ -2714,7 +2715,7 @@ def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
          "detail": (
              f"Provider 'openrouter': capture enabled; latest capture "
              f"{to_local_human(failed.completed_at)} status=error {_counts_text(failed)}; "
-             "error: RuntimeError: synthetic failure"
+             "error: RuntimeError: synthetic failure; telemetry pending=0 unmatched=0"
          )},
     ]
 
@@ -2728,7 +2729,7 @@ def test_endpoint_healthcheck_status_and_counts_reports_latest_capture(
          "detail": (
              f"Provider 'openrouter': capture disabled; latest capture "
              f"{to_local_human(failed.completed_at)} status=error {_counts_text(failed)}; "
-             "error: RuntimeError: synthetic failure"
+             "error: RuntimeError: synthetic failure; telemetry pending=0 unmatched=0"
          )},
     ]
 
@@ -2754,8 +2755,8 @@ def test_endpoint_healthcheck_status_and_counts_only_enabled_capable_providers(
 
     assert cli.main(["healthcheck", "--format", "json"]) == 0
     assert sorted(check["detail"] for check in _endpoint_checks(capsys.readouterr().out)) == [
-        "Provider 'fake_second_router': capture enabled; no capture yet",
-        "Provider 'openrouter': capture enabled; no capture yet",
+        "Provider 'fake_second_router': capture enabled; no capture yet; telemetry pending=0 unmatched=0",
+        "Provider 'openrouter': capture enabled; no capture yet; telemetry pending=0 unmatched=0",
     ]
 
 
@@ -2848,7 +2849,7 @@ def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
     assert {"check": "credential_source", "status": "ok", "detail": "environment"} in checks
     assert _endpoint_checks(output) == [
         {"check": "endpoint_capture", "status": "ok",
-         "detail": "Provider 'openrouter': capture enabled; no capture yet"},
+         "detail": "Provider 'openrouter': capture enabled; no capture yet; telemetry pending=0 unmatched=0"},
     ]
     assert "SYNTHETIC_NOT_A_REAL_SECRET" not in output
     assert (runtime_home / "model_sentinel.db").is_file()
@@ -3120,3 +3121,104 @@ def test_alias_compare_only_scan_endpoint_evidence_selection() -> None:
     assert reason(failed) == "not_captured"
     # A capture that succeeded but planned no list for the target.
     assert reason(replace(failed, status="complete", error_summary=None)) == "list_missing"
+
+
+@pytest.mark.parametrize("capture_enabled", [True, False])
+def test_telemetry_backfill_runs_on_saved_scans_before_capture_even_when_disabled(
+    tmp_path: Path, monkeypatch, capsys, capture_enabled: bool,
+) -> None:
+    home = _endpoint_home(tmp_path / "synthetic-backfill", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        db.execute("DELETE FROM endpoint_telemetry")
+        db.execute("DELETE FROM endpoint_telemetry_captures")
+    if not capture_enabled:
+        settings = home / "settings.env"
+        settings.write_text(settings.read_text() + "MODEL_SENTINEL_ENDPOINT_CAPTURE=false\n")
+    # The request boundary sees the actual backfilled rows, proving ordering.
+    def response_after_backfill(request, timeout):
+        with sqlite3.connect(home / "model_sentinel.db") as db:
+            assert db.execute("SELECT source FROM endpoint_telemetry_captures WHERE capture_id = 1").fetchone() == ("archive",)
+        return _endpoint_list_response(request, timeout)
+    calls = _install_endpoint_transport(monkeypatch, response_after_backfill)
+    run = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    assert run.exit_code == 0
+    assert len(calls) == int(capture_enabled)
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        assert db.execute("SELECT source, endpoint_count, unmatched_count FROM endpoint_telemetry_captures WHERE capture_id = 1").fetchone() == ("archive", 1, 0)
+    assert "telemetry backfill: captures=1 rows=1 unmatched=0" in run.stderr
+
+
+def test_telemetry_backfill_failure_is_redacted_and_does_not_skip_capture(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    home = _endpoint_home(tmp_path / "synthetic-backfill-failure", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        db.execute("DELETE FROM endpoint_telemetry")
+        db.execute("DELETE FROM endpoint_telemetry_captures")
+        db.execute("UPDATE endpoint_capture_archives SET body_gzip = ?", (b"synthetic-invalid-gzip",))
+    real_backfill = Store.backfill_endpoint_telemetry
+    def failing_backfill(self, provider_id, profile):
+        try:
+            return real_backfill(self, provider_id, profile)
+        except gzip.BadGzipFile as exc:
+            raise RuntimeError(f"synthetic unreadable archive {ENDPOINT_SECRET}") from exc
+    monkeypatch.setattr(Store, "backfill_endpoint_telemetry", failing_backfill)
+    run = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG)
+    assert run.exit_code == 0
+    assert run.results[0].status == "success"
+    assert run.results[0].saved
+    assert run.results[0].endpoint_capture.status == "complete"
+    assert "telemetry backfill failed: RuntimeError: synthetic unreadable archive [REDACTED]" in run.stderr
+    assert ENDPOINT_SECRET not in run.stderr + run.stdout
+    assert Store(home / "model_sentinel.db").endpoint_telemetry_status("openrouter") == (1, 0)
+
+
+def test_telemetry_healthcheck_reports_pending_and_unmatched_without_status_change(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    home = _endpoint_home(tmp_path / "synthetic-health-telemetry", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        db.execute("UPDATE endpoint_telemetry_captures SET unmatched_count = 3")
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        db.execute("DELETE FROM endpoint_telemetry WHERE capture_id = 2")
+        db.execute("DELETE FROM endpoint_telemetry_captures WHERE capture_id = 2")
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    check, = _endpoint_checks(capsys.readouterr().out)
+    assert check["status"] == "ok"
+    assert "telemetry pending=1 unmatched=3" in check["detail"]
+    # Healthcheck reports only; it must leave pending work untouched.
+    assert Store(home / "model_sentinel.db").endpoint_telemetry_status("openrouter") == (1, 3)
+
+
+def test_telemetry_compare_only_scan_keeps_pending_archives_untouched(tmp_path: Path, monkeypatch, capsys) -> None:
+    home = _endpoint_home(tmp_path / "synthetic-compare-only", monkeypatch)
+    _install_endpoint_transport(monkeypatch)
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    with sqlite3.connect(home / "model_sentinel.db") as db:
+        db.execute("DELETE FROM endpoint_telemetry")
+        db.execute("DELETE FROM endpoint_telemetry_captures")
+    calls = _install_endpoint_transport(monkeypatch)
+    run = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG, argv=("scan",))
+    assert run.exit_code == 0
+    assert calls == []
+    assert Store(home / "model_sentinel.db").endpoint_telemetry_status("openrouter") == (1, 0)
+
+
+def test_telemetry_healthcheck_query_failure_retains_capture_status_and_redacts(tmp_path: Path, monkeypatch, capsys) -> None:
+    _endpoint_home(tmp_path / "synthetic-unreadable-telemetry", monkeypatch)
+    def unreadable(self, provider_id):
+        raise sqlite3.OperationalError(f"synthetic telemetry read failure {ENDPOINT_SECRET}")
+    monkeypatch.setattr(Store, "endpoint_telemetry_status", unreadable)
+    assert cli.main(["healthcheck", "--format", "json"]) == 0
+    output = capsys.readouterr().out
+    check, = _endpoint_checks(output)
+    assert check["status"] == "ok"
+    assert "telemetry counts could not be read: OperationalError: synthetic telemetry read failure [REDACTED]" in check["detail"]
+    assert ENDPOINT_SECRET not in output

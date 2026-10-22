@@ -284,6 +284,7 @@ class ProviderProfile:
     pricing_override_base_paths: Mapping[str, str] = field(default_factory=dict)
     endpoint_capture: bool = False
     endpoint_telemetry_fields: frozenset[str] = frozenset()
+    endpoint_uptime_fields: Mapping[str, str] = field(default_factory=dict)
     endpoint_status_field: str | None = None
     # Exact endpoint-state paths whose label must differ from the catalog
     # label of the same path (see `_OPENROUTER_ENDPOINT_FIELD_PATH_LABELS`).
@@ -295,6 +296,7 @@ class ProviderProfile:
             "price_leaf_rules",
             "pricing_override_condition_descriptors",
             "pricing_override_base_paths",
+            "endpoint_uptime_fields",
         ):
             registry = getattr(self, name)
             object.__setattr__(self, name, MappingProxyType(dict(registry)))
@@ -351,6 +353,9 @@ class ProviderProfile:
             or not self.endpoint_status_field.strip()
         ):
             raise ValueError("endpoint status field must be a non-empty string or None")
+        for window, name in self.endpoint_uptime_fields.items():
+            if window not in ("5m", "30m", "1d") or not isinstance(name, str) or name not in self.endpoint_telemetry_fields:
+                raise ValueError("endpoint uptime fields must map 5m, 30m or 1d to telemetry fields")
 
     @property
     def pricing_override_selector_names(self) -> tuple[str, ...]:
@@ -912,6 +917,9 @@ OPENROUTER_PROFILE = ProviderProfile(
     pricing_override_base_paths=_OPENROUTER_PRICING_OVERRIDE_BASE_PATHS,
     endpoint_capture=True,
     endpoint_telemetry_fields=_OPENROUTER_ENDPOINT_TELEMETRY_FIELDS,
+    endpoint_uptime_fields={
+        "5m": "uptime_last_5m", "30m": "uptime_last_30m", "1d": "uptime_last_1d",
+    },
     endpoint_status_field="status",
     endpoint_field_path_labels=_OPENROUTER_ENDPOINT_FIELD_PATH_LABELS,
 )

@@ -19,6 +19,7 @@ from .endpoints import (
     GAP_BASELINE_OBSERVATION_FAILED,
     GAP_CURRENT_OBSERVATION_FAILED,
     endpoint_state_hash,
+    endpoint_telemetry_records,
     sanitize_endpoint_error_message,
 )
 from .models import (
@@ -30,13 +31,15 @@ from .models import (
     EndpointListRecord,
     EndpointMapping,
     EndpointObservationRecord,
+    EndpointTelemetryRecord,
     FieldChange,
     HistoryEvent,
     ModelDelta,
     NormalizedModel,
     canonical_json,
 )
-from .time_utils import local_date_for, to_storage_timestamp
+from .provider_profiles import ProviderProfile
+from .time_utils import local_date_for, now_utc, to_storage_timestamp
 
 
 SCHEMA = (
@@ -228,7 +231,38 @@ SCHEMA = (
     CREATE INDEX IF NOT EXISTS idx_endpoint_changes_provider_list_capture
         ON endpoint_changes (provider_id, list_path, to_capture_id)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_telemetry_captures (
+        capture_id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL CHECK (source IN ('scan', 'archive')),
+        recorded_at TEXT NOT NULL,
+        endpoint_count INTEGER NOT NULL CHECK (endpoint_count >= 0),
+        unmatched_count INTEGER NOT NULL CHECK (unmatched_count >= 0),
+        FOREIGN KEY (capture_id) REFERENCES endpoint_captures(capture_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS endpoint_telemetry (
+        capture_id INTEGER NOT NULL,
+        list_path TEXT NOT NULL,
+        endpoint_key TEXT NOT NULL,
+        uptime_5m REAL CHECK (uptime_5m IS NULL OR (uptime_5m >= 0 AND uptime_5m <= 100)),
+        uptime_30m REAL CHECK (uptime_30m IS NULL OR (uptime_30m >= 0 AND uptime_30m <= 100)),
+        uptime_1d REAL CHECK (uptime_1d IS NULL OR (uptime_1d >= 0 AND uptime_1d <= 100)),
+        telemetry_json TEXT NOT NULL,
+        PRIMARY KEY (capture_id, list_path, endpoint_key),
+        FOREIGN KEY (capture_id, list_path, endpoint_key)
+            REFERENCES endpoint_observations(capture_id, list_path, endpoint_key)
+    )
+    """,
 )
+
+
+@dataclass(frozen=True)
+class TelemetryBackfillResult:
+    captures: int
+    rows: int
+    unmatched: int
 
 
 @dataclass(frozen=True)
@@ -833,6 +867,9 @@ class Store:
                     "INSERT INTO endpoint_capture_archives (capture_id, body_gzip) VALUES (?, ?)",
                     (capture_id, _capture_archive_blob(candidate.archive)),
                 )
+                _write_endpoint_telemetry(
+                    connection, capture_id=capture_id, records=candidate.telemetry, source="scan",
+                )
                 _write_comparison_gaps(connection, capture_id=capture_id, gaps=summary.comparison_gaps)
                 _write_endpoint_changes(
                     connection,
@@ -846,6 +883,71 @@ class Store:
                 _rollback(connection)
                 raise
             return _load_capture_summary(connection, capture_id)
+
+    def endpoint_telemetry_status(self, provider_id: str) -> tuple[int, int]:
+        """Return eligible unprocessed archives and the provider's unmatched total."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    COUNT(CASE WHEN a.capture_id IS NOT NULL AND t.capture_id IS NULL THEN 1 END),
+                    COALESCE(SUM(t.unmatched_count), 0)
+                FROM endpoint_captures c
+                LEFT JOIN endpoint_capture_archives a ON a.capture_id = c.capture_id
+                LEFT JOIN endpoint_telemetry_captures t ON t.capture_id = c.capture_id
+                WHERE c.provider_id = ?
+                """, (provider_id,),
+            ).fetchone()
+            return int(row[0]), int(row[1])
+
+    def backfill_endpoint_telemetry(
+        self, provider_id: str, profile: ProviderProfile,
+    ) -> TelemetryBackfillResult:
+        """Process pending archives oldest first, committing each capture independently.
+
+        Recheck eligibility under the writer lock so concurrent saved scans
+        cannot process the same archive twice. A failure preserves prior
+        committed progress and leaves the failing archive pending.
+        """
+        with self._connect() as connection:
+            pending = connection.execute(
+                """
+                SELECT c.capture_id FROM endpoint_captures c
+                JOIN endpoint_capture_archives a ON a.capture_id = c.capture_id
+                LEFT JOIN endpoint_telemetry_captures t ON t.capture_id = c.capture_id
+                WHERE c.provider_id = ? AND t.capture_id IS NULL
+                ORDER BY julianday(c.completed_at), c.capture_id
+                """, (provider_id,),
+            ).fetchall()
+        captures = rows = unmatched = 0
+        for capture in pending:
+            with closing(self._connect_capture_writer()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    archive = connection.execute(
+                        """
+                        SELECT a.body_gzip FROM endpoint_capture_archives a
+                        LEFT JOIN endpoint_telemetry_captures t ON t.capture_id = a.capture_id
+                        WHERE a.capture_id = ? AND t.capture_id IS NULL
+                        """, (capture["capture_id"],),
+                    ).fetchone()
+                    if archive is not None:
+                        bodies = json.loads(gzip.decompress(archive["body_gzip"]))
+                        if not isinstance(bodies, dict):
+                            raise ValueError("endpoint archive must contain bodies keyed by path")
+                        inserted, missed = _write_endpoint_telemetry(
+                            connection, capture_id=capture["capture_id"],
+                            records=endpoint_telemetry_records(bodies, profile), source="archive",
+                        )
+                    connection.execute("COMMIT")
+                except BaseException:
+                    _rollback(connection)
+                    raise
+                if archive is not None:
+                    captures += 1
+                    rows += inserted
+                    unmatched += missed
+        return TelemetryBackfillResult(captures, rows, unmatched)
 
     def save_endpoint_error_capture(self, summary: EndpointCaptureSummary) -> EndpointCaptureSummary:
         """Persist a minimal error capture; never raises.
@@ -1108,6 +1210,43 @@ def _write_endpoint_lists(
 def _capture_archive_blob(archive: Mapping[str, Any]) -> bytes:
     """Gzip the canonical JSON of the decoded response bodies, keyed by path."""
     return gzip.compress(canonical_json(dict(archive)).encode("utf-8"), mtime=0)
+
+
+def _write_endpoint_telemetry(
+    connection: sqlite3.Connection, *, capture_id: int,
+    records: Sequence[EndpointTelemetryRecord], source: str,
+) -> tuple[int, int]:
+    """Attach samples only to saved observations and mark completed processing."""
+    observations = {
+        (row["list_path"], row["endpoint_key"])
+        for row in connection.execute(
+            "SELECT list_path, endpoint_key FROM endpoint_observations WHERE capture_id = ?",
+            (capture_id,),
+        )
+    }
+    rows = unmatched = 0
+    for record in records:
+        if (record.list_path, record.endpoint_key) not in observations:
+            unmatched += 1
+            continue
+        connection.execute(
+            """
+            INSERT INTO endpoint_telemetry (
+                capture_id, list_path, endpoint_key, uptime_5m, uptime_30m, uptime_1d, telemetry_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (capture_id, record.list_path, record.endpoint_key, record.uptime_5m,
+             record.uptime_30m, record.uptime_1d, canonical_json(dict(record.telemetry))),
+        )
+        rows += 1
+    connection.execute(
+        """
+        INSERT INTO endpoint_telemetry_captures (
+            capture_id, source, recorded_at, endpoint_count, unmatched_count
+        ) VALUES (?, ?, ?, ?, ?)
+        """, (capture_id, source, to_storage_timestamp(now_utc()), rows, unmatched),
+    )
+    return rows, unmatched
 
 
 def _write_comparison_gaps(

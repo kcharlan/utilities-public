@@ -35,6 +35,48 @@ from model_sentinel.models import EndpointChange, canonical_json
 from model_sentinel.provider_profiles import GENERIC_PROFILE, OPENROUTER_PROFILE
 
 
+def test_telemetry_uses_response_order_keys_and_skips_invalid_bodies() -> None:
+    bodies = {
+        "/z": {"data": {"endpoints": [{"provider_name": "Fake Z"}]}},
+        "/bad": {"data": {"endpoints": [None]}},
+        "/a": {"data": {"endpoints": [
+            {"tag": "fake-duplicate", "uptime_last_5m": 100, "uptime_last_30m": 98.5,
+             "uptime_last_1d": 97, "latency_last_30m": None},
+            {"tag": "fake-duplicate", "uptime_last_5m": True,
+             "uptime_last_30m": "99", "uptime_last_1d": 101},
+        ]}},
+    }
+    records = endpoints.endpoint_telemetry_records(bodies, OPENROUTER_PROFILE)
+    assert [(r.list_path, r.endpoint_key) for r in records] == [
+        ("/a", "fake-duplicate#0"), ("/a", "fake-duplicate#1"), ("/z", "Fake Z#0")]
+    assert [(r.uptime_5m, r.uptime_30m, r.uptime_1d) for r in records] == [
+        (100, 98.5, 97), (None, None, None), (None, None, None)]
+    assert records[0].telemetry == {"uptime_last_5m": 100, "uptime_last_30m": 98.5,
+                                    "uptime_last_1d": 97, "latency_last_30m": None}
+    assert records[1].telemetry == {"uptime_last_5m": True,
+                                    "uptime_last_30m": "99", "uptime_last_1d": 101}
+    assert records[2].telemetry == {}
+
+
+@pytest.mark.parametrize("value,want", [(0, 0), (100, 100), (99.9, 99.9),
+    (-1, None), (101, None), (False, None), ("99", None), (None, None),
+    (float("nan"), None), (float("inf"), None), (10 ** 1000, None)])
+def test_telemetry_rejects_nonfinite_and_nonpercentage_uptime(value, want) -> None:
+    body = {"/fake": {"data": {"endpoints": [{"uptime_last_1d": value}]}}}
+    record, = endpoints.endpoint_telemetry_records(body, OPENROUTER_PROFILE)
+    assert record.uptime_1d == want
+    assert "uptime_last_1d" in record.telemetry
+
+
+@pytest.mark.parametrize("fields", [{"week": "uptime_last_1d"}, {"1d": "status"},
+                                    {"1d": []}])
+def test_telemetry_profile_rejects_invalid_uptime_declarations(fields) -> None:
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="uptime"):
+        replace(OPENROUTER_PROFILE, endpoint_uptime_fields=fields)
+
+
 def _endpoint(**overrides: Any) -> dict[str, Any]:
     endpoint: dict[str, Any] = {
         "name": "Fake Host A | fake-org/test-model-a",

@@ -252,6 +252,27 @@ compared (a failed fetch on either side, a newly appearing or disappearing
 path, or a split, merge or partial move of models between paths) are recorded
 as comparison gaps rather than treated as empty lists.
 
+OpenRouter uptime is sampled from the response's rolling 5-minute, 30-minute
+and 1-day windows. These are provider-reported percentages at capture time,
+not measurements made by Model Sentinel. Finite numeric values from 0 through
+100 are stored in `endpoint_telemetry`; missing values, booleans, strings and
+out-of-range values become NULL. Present raw telemetry fields, including nulls
+and rejected uptime values, remain in canonical JSON. Telemetry does not
+participate in stable-state comparisons or endpoint change counts.
+
+Each processed capture has an `endpoint_telemetry_captures` marker, including
+captures with no telemetry rows. On saved scans, capture-capable providers
+first backfill older unprocessed gzip archives locally, even when new endpoint
+capture is switched off. Backfill uses the same response-order endpoint keys
+as new captures, saves only samples matching recorded observations, and counts
+unmatched archive endpoints. Each archive commits independently; a failure
+rolls back that archive and leaves it pending for a later saved scan. Minimal
+error captures with no archive are ineligible. Backfill needs no network
+request, and its failures are logged as redacted warnings without changing the
+catalog scan outcome. Progress logs give captures, rows and unmatched counts.
+`healthcheck` reports pending archived captures and the cumulative unmatched
+count as advisory detail without changing the capture status or exit code.
+
 Endpoint failures never change the catalog result, the notification decision,
 or the scan exit status. A capture that fails as a whole is saved as a minimal
 `error` capture with a sanitized message; the log records each capture's status
