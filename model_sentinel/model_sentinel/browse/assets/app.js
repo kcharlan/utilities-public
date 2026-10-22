@@ -1223,25 +1223,50 @@
     const reasons = conditions.filter(condition => !condition.test(endpoint)).map(condition => condition.name);
     return {pass: reasons.length === 0, reasons};
   }
-  function ConditionText({label, value, valid, commit, presets = []}) {
+  function ConditionText({label, value, valid, commit, presets = [], onPreset, editorRef}) {
     const [draft, setDraft] = useState(value);
+    const timer = useRef(null), cancelled = useRef(false), deferBlur = useRef(false);
+    const latest = useRef(null);
+    latest.current = {draft, value, valid, commit};
+    const clearPending = () => { clearTimeout(timer.current); timer.current = null; };
+    // Removal cancels before pointer focus causes blur, and again on teardown.
+    // A late blur must never recreate a condition that its parent just removed.
+    const cancel = () => { cancelled.current = true; clearPending(); };
+    const flush = override => {
+      if (cancelled.current && !override) return;
+      clearPending();
+      const current = latest.current;
+      if (current.draft === "" || current.valid(current.draft)) {
+        if (override || current.draft !== current.value) (override || current.commit)(current.draft);
+      } else setDraft(current.value);
+    };
+    if (editorRef) editorRef.current = {cancel, flush, deferBlur: () => { deferBlur.current = true; }};
     useEffect(() => setDraft(value), [value]);
     useEffect(() => {
-      if (draft === value || draft !== "" && !valid(draft)) return;
-      const timer = setTimeout(() => commit(draft), 250);
-      return () => clearTimeout(timer);
+      if (cancelled.current || draft === value || draft !== "" && !valid(draft)) return;
+      // Read the latest target when the timer fires; changing a price column
+      // does not necessarily change the draft/value dependencies.
+      timer.current = setTimeout(() => { if (!cancelled.current) latest.current.commit(draft); }, 250);
+      return clearPending;
     }, [draft, value]);
-    const flush = () => { if (draft === "" || valid(draft)) { if (draft !== value) commit(draft); } else setDraft(value); };
-    return html`<label>${label}<input type="text" aria-label=${label} value=${draft} onInput=${event => setDraft(event.currentTarget.value)} aria-invalid=${draft !== "" && !valid(draft) ? "true" : undefined} onKeyDown=${event => { if (event.key === "Escape" || event.key === "Enter") flush(); }} onBlur=${flush} />${presets.length ? html`<span class="condition-presets">${presets.map(preset => html`<button type="button" key=${preset} onClick=${() => { setDraft(preset); commit(preset); }}>${preset}</button>`)}</span>` : null}</label>`;
+    useEffect(() => cancel, []);
+    return html`<label>${label}<input type="text" aria-label=${label} value=${draft} onInput=${event => { cancelled.current = false; deferBlur.current = false; setDraft(event.currentTarget.value); }} aria-invalid=${draft !== "" && !valid(draft) ? "true" : undefined} onKeyDown=${event => { if (event.key === "Escape" || event.key === "Enter") flush(); }} onBlur=${() => { if (deferBlur.current) deferBlur.current = false; else flush(); }} />${presets.length ? html`<span class="condition-presets">${presets.map(preset => html`<button type="button" key=${preset} onPointerDown=${() => { deferBlur.current = true; }} onClick=${() => { cancel(); onPreset(preset); }}>${preset}</button>`)}</span>` : null}</label>`;
   }
   function ConditionPopover({name, data, state, write, replaceState, close}) {
-    const panel = useRef(null);
-    useFocusTrap(panel, true, close);
+    const panel = useRef(null), textEditor = useRef(null);
+    const finish = () => { textEditor.current?.cancel(); close(); };
+    useFocusTrap(panel, true, finish);
     const index = CONDITION_NAMES.indexOf(name);
     const chips = (key, values, label = value => value) => html`<div class="condition-chips">${values.map(value => html`<button type="button" class="chip" key=${value} aria-pressed=${state[key].includes(value)} onClick=${() => write({[key]: state[key].includes(value) ? state[key].filter(item => item !== value) : [...state[key], value]})}>${label(value)}</button>`)}</div>`;
-    const remove = () => { write(Object.fromEntries(CONDITION_KEYS[index].map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
+    const remove = () => { textEditor.current?.cancel(); write(Object.fromEntries(CONDITION_KEYS[index].map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
     const priceSplit = state.plimit.lastIndexOf(":"), pricePath = priceSplit > 0 ? state.plimit.slice(0, priceSplit) : data.price_columns[0]?.path;
     const [column, setColumn] = useState(pricePath);
+    const applyPreset = value => write({[name === "Uptime" ? "upmin" : name === "Context length" ? "ctxmin" : "outmin"]: value});
+    const choosePriceColumn = event => {
+      const next = event.currentTarget.value;
+      setColumn(next);
+      textEditor.current?.flush(value => write({plimit: value ? `${next}:${value}` : ""}));
+    };
     const missingFields = {
       Status: endpoint => endpoint.status == null,
       Precision: endpoint => endpoint.precision_bits == null,
@@ -1253,7 +1278,7 @@
       Supports: endpoint => !endpoint.parameters.length && !endpoint.native_tools.length
     };
     const missing = data.endpoints.filter(missingFields[name] || (() => false)).length;
-    return html`<section class="condition-popover" role="dialog" aria-modal="true" aria-label=${name} ref=${panel}><header><h3>${name}</h3><button type="button" onClick=${close}>Close</button></header><p>${missing} endpoints with missing values${name === "Precision" ? " or unrecognized precision" : ""}.</p>${name === "Exclude hosts" ? chips("xhosts", data.hosts.map(host => host.name)) : name === "Status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal only (code 0)</label>` : name === "Precision" ? html`<div class="condition-presets">${["Any", "16-bit or better", "8-bit or better"].map((label, index) => html`<button type="button" key=${label} onClick=${() => write({quant: data.vocab.quantizations.filter(quant => !index || data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits == null ? !index || state.quant.includes(quant) : data.endpoints.find(endpoint => endpoint.quantization === quant).precision_bits >= (index === 1 ? 16 : 8)), quantset: "1"})}>${label}</button>`)}</div>${chips("quant", data.vocab.quantizations)}` : name === "Uptime" ? html`${data.telemetry !== "available" ? html`<p>Uptime isn't stored for this snapshot yet.${data.backfill_eligible ? " The next saved scan can backfill it from its archive." : ""}</p>` : null}<label>Uptime window<select aria-label="Uptime window" value=${state.upwin} onChange=${event => write({upwin: event.currentTarget.value})}>${["1d", "30m", "5m"].map(value => html`<option value=${value}>${value}</option>`)}</select></label><${ConditionText} label="Minimum uptime percent" value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin: value})} presets=${["99", "99.5", "99.9", "99.99"]} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Include missing uptime</label>` : name === "Context length" || name === "Max output" ? html`<${ConditionText} label=${name === "Context length" ? "Minimum context length" : "Minimum max output"} value=${state[name === "Context length" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[name === "Context length" ? "ctxmin" : "outmin"]: value})} presets=${["32K", "128K", "200K", "1M"]} />` : name === "Supports" ? html`<h4>Supported parameters</h4>${chips("params", data.vocab.parameters)}<h4>Native tools</h4>${chips("ntools", data.vocab.native_tools)}<label><input type="checkbox" checked=${state.caching === "1"} onChange=${event => write({caching: event.currentTarget.checked ? "1" : ""})} />Implicit caching</label>` : name === "Service tier" ? chips("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : name === "Price limit" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onChange=${event => { const next = event.currentTarget.value; setColumn(next); if (priceSplit > 0) write({plimit: `${next}:${state.plimit.slice(priceSplit + 1)}`}); }}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} label="Maximum price" value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit: value ? `${column}:${value}` : ""})} />` : html`<p>No price columns in this capture.</p>` : html`<${ConditionText} label="Search model lists" value=${state.hq} valid=${() => true} commit=${value => replaceState({hq: value})} />`}<footer><button type="button" onClick=${remove}>Remove condition</button></footer></section>`;
+    return html`<section class="condition-popover" role="dialog" aria-modal="true" aria-label=${name} ref=${panel}><header><h3>${name}</h3><button type="button" onClick=${finish}>Close</button></header><p>${missing} endpoints with missing values${name === "Precision" ? " or unrecognized precision" : ""}.</p>${name === "Exclude hosts" ? chips("xhosts", data.hosts.map(host => host.name)) : name === "Status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal only (code 0)</label>` : name === "Precision" ? html`<div class="condition-presets">${["Any", "16-bit or better", "8-bit or better"].map((label, index) => html`<button type="button" key=${label} onClick=${() => write({quant: data.vocab.quantizations.filter(quant => !index || data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits == null ? !index || state.quant.includes(quant) : data.endpoints.find(endpoint => endpoint.quantization === quant).precision_bits >= (index === 1 ? 16 : 8)), quantset: "1"})}>${label}</button>`)}</div>${chips("quant", data.vocab.quantizations)}` : name === "Uptime" ? html`${data.telemetry !== "available" ? html`<p>Uptime isn't stored for this snapshot yet.${data.backfill_eligible ? " The next saved scan can backfill it from its archive." : ""}</p>` : null}<label>Uptime window<select aria-label="Uptime window" value=${state.upwin} onChange=${event => write({upwin: event.currentTarget.value})}>${["1d", "30m", "5m"].map(value => html`<option value=${value}>${value}</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Minimum uptime percent" value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin: value})} presets=${["99", "99.5", "99.9", "99.99"]} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Include missing uptime</label>` : name === "Context length" || name === "Max output" ? html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label=${name === "Context length" ? "Minimum context length" : "Minimum max output"} value=${state[name === "Context length" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[name === "Context length" ? "ctxmin" : "outmin"]: value})} presets=${["32K", "128K", "200K", "1M"]} />` : name === "Supports" ? html`<h4>Supported parameters</h4>${chips("params", data.vocab.parameters)}<h4>Native tools</h4>${chips("ntools", data.vocab.native_tools)}<label><input type="checkbox" checked=${state.caching === "1"} onChange=${event => write({caching: event.currentTarget.checked ? "1" : ""})} />Implicit caching</label>` : name === "Service tier" ? chips("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : name === "Price limit" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onPointerDown=${() => textEditor.current?.deferBlur()} onChange=${choosePriceColumn}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Maximum price" value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit: value ? `${column}:${value}` : ""})} />` : html`<p>No price columns in this capture.</p>` : html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Search model lists" value=${state.hq} valid=${() => true} commit=${value => replaceState({hq: value})} />`}<footer><button type="button" onPointerDown=${() => textEditor.current?.cancel()} onClick=${remove}>Remove condition</button></footer></section>`;
   }
   function QuestionLine({data, state, write, replaceState, conditions, removal}) {
     const [editor, setEditor] = useState(null), anchor = useRef(null);
@@ -1361,6 +1386,13 @@
     const clean = data ? normalizeHostConditions(data, state) : null;
     useEffect(() => {
       if (!provider) return;
+      const currentHash = hashState.read(), currentState = resolveState(meta, currentHash);
+      // A blur replacement and a deliberate selection may queue different
+      // renders before effects run. Only normalize the current hash/resource;
+      // an older effect must not restore its superseded condition values.
+      if (HASH_KEYS.some(key => LIST_KEYS.has(key)
+        ? !sameList(state[key] || [], currentState[key] || [])
+        : (state[key] || "") !== (currentState[key] || ""))) return;
       const patch = {};
       if (!state.providers.includes(provider)) patch.providers = [provider];
       if (data) {
@@ -1368,9 +1400,9 @@
         if (state.rank !== dimension) patch.rank = dimension;
         if (!sameList(state.hosts, selected)) patch.hosts = selected;
         if (!sameList(state.xhosts, excluded)) patch.xhosts = excluded;
-        if (!["any", "all"].includes(hashState.read().match)) patch.match = "any";
+        if (!["any", "all"].includes(currentHash.match)) patch.match = "any";
         for (const [key, value] of Object.entries(clean)) {
-          const current = hashState.read()[key];
+          const current = currentHash[key];
           if (Array.isArray(value) ? !sameList(current || [], value) : (current || "") !== value) patch[key] = value;
         }
       }

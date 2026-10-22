@@ -1,5 +1,18 @@
 # Lessons learned
 
+## 2026-10-22: Give debounced condition editors an explicit commit lifecycle
+
+Model Sentinel's price editor captured an old column in its timer. Blurring
+a pending draft while removing the condition also queued replace and push
+updates whose normalization effects alternated forever. Read the latest commit
+target from a ref, cancel timers and blur commits before removal, and apply a
+column selection to the current draft as one action. Ignore normalization
+effects whose source state no longer matches the current hash/resource; the
+same race can happen when a pending value precedes a checkbox change. Keep
+typing as replace and deliberate presets as push; let their displayed value follow URL state
+so fast Back/Forward cannot leave an optimistic draft behind. Regress the
+whole edit/switch/remove sequence with a watchdog outside the browser renderer.
+
 ## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
 
 Model Sentinel's acceptance builder originally checked only the checkout

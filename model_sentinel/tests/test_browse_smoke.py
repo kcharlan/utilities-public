@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import threading
 import time
@@ -383,6 +384,103 @@ def test_hosts_price_editor_missing_count_tracks_selected_column_before_limit(ho
     expect(dialog).to_contain_text("5 endpoints with missing values.")
     hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
     expect(dialog).to_contain_text("134 endpoints with missing values.")
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_pending_price_draft_commits_to_current_column(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    hosts_page.get_by_label("Maximum price", exact=True).fill("7")
+    hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
+    expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A7"))
+    # Cover pending work after blur/column change, rather than accepting a
+    # momentarily correct hash before an obsolete timer fires.
+    hosts_page.wait_for_timeout(350)
+    expect(hosts_page.get_by_label("Price column", exact=True)).to_have_value("pricing.completion")
+    expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A7"))
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_remove_after_price_column_switch_cancels_drafts_without_hanging(hosts_page, hosts_server):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        goto(hosts_page, hosts_server, _hosts_fragment(facts))
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        field = hosts_page.get_by_label("Maximum price", exact=True)
+        field.fill("7")
+        hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
+        hosts_page.wait_for_timeout(350)
+        field.fill("8")
+        hosts_page.get_by_role("dialog", name="Price limit").get_by_role("button", name="Remove condition", exact=True).click()
+        hosts_page.wait_for_timeout(350)
+        assert "plimit" not in hosts_page.evaluate("location.hash")
+        expect(hosts_page.get_by_role("dialog", name="Price limit")).to_have_count(0)
+        hosts_page.get_by_role("button", name="Reset", exact=True).click()
+        expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+@contextmanager
+def _responsive_renderer_deadline():
+    def deadline(signum, frame):
+        raise AssertionError("condition editor left the renderer unresponsive")
+
+    previous = signal.signal(signal.SIGALRM, deadline)
+    signal.alarm(15)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+@pytest.mark.parametrize("action", ["missing", "window", "preset"])
+def test_hosts_pending_uptime_then_deliberate_control_keeps_newest_hash_responsive(hosts_page, hosts_server, action):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        goto(hosts_page, hosts_server, _hosts_fragment(facts))
+        hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
+        hosts_page.get_by_label("Minimum uptime percent", exact=True).fill("99.9")
+        if action == "missing":
+            hosts_page.get_by_label("Include missing uptime", exact=True).check()
+        elif action == "window":
+            hosts_page.get_by_label("Uptime window", exact=True).select_option("30m")
+        else:
+            hosts_page.get_by_role("dialog", name="Uptime").get_by_role("button", name="99", exact=True).click()
+        hosts_page.wait_for_timeout(350)
+        fragment = hosts_page.evaluate("location.hash")
+        if action == "missing":
+            assert "upmiss=1" in fragment
+        elif action == "window":
+            assert "upwin=30m" in fragment
+        expect(hosts_page.get_by_label("Minimum uptime percent", exact=True)).to_have_value("99" if action == "preset" else "99.9")
+        assert ("upmin=99" if action == "preset" else "upmin=99.9") in fragment
+        hosts_page.keyboard.press("Escape")
+        hosts_page.get_by_role("button", name="Reset", exact=True).click()
+        expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+@pytest.mark.parametrize(("condition", "field", "first", "second", "hash_key"), [
+    ("Context length", "Minimum context length", "128K", "200K", "ctxmin"),
+    ("Max output", "Minimum max output", "32K", "128K", "outmin"),
+    ("Uptime", "Minimum uptime percent", "99", "99.5", "upmin"),
+])
+def test_hosts_numeric_presets_preserve_back_forward_navigation(hosts_page, hosts_server, condition, field, first, second, hash_key):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name=condition + " condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name=condition)
+    before = hosts_page.evaluate("history.length")
+    dialog.get_by_role("button", name=first, exact=True).click()
+    expect(hosts_page.get_by_label(field, exact=True)).to_have_value(first)
+    expect(hosts_page).to_have_url(re.compile(hash_key + "=" + re.escape(first)))
+    assert hosts_page.evaluate("history.length") == before + 1
+    dialog.get_by_role("button", name=second, exact=True).click()
+    expect(hosts_page.get_by_label(field, exact=True)).to_have_value(second)
+    hosts_page.go_back()
+    expect(hosts_page.get_by_label(field, exact=True)).to_have_value(first)
+    hosts_page.go_forward()
+    expect(hosts_page.get_by_label(field, exact=True)).to_have_value(second)
 
 
 def test_hosts_grouping_ties_navigation_and_exact_prices(hosts_page, hosts_server):
