@@ -1,0 +1,284 @@
+{
+  "checked": "2026-10-22",
+  "latestRelease": "2026-10-21",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_14.json",
+  "preservedHistoricalRows": 472,
+  "additions": [
+    {
+      "model": "Rerank 5 Pro / Fast",
+      "lab": "Cohere",
+      "date": "2026-10-21",
+      "tier": "specialty",
+      "note": "Generally available retrieval rerankers, rerank-v5.0-pro and rerank-v5.0-fast, with 32K context and 100+ languages. Optional Context Focus returns relevant character spans within documents; existing indexes need no re-embedding.",
+      "source": "https://docs.cohere.com/v2/changelog/rerank-v5"
+    },
+    {
+      "model": "Nemotron 3.5 Embed 1B / 8B",
+      "lab": "NVIDIA",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Open multimodal embedding models for text and document-image retrieval. Uses the October 20 weight-release date in the official model cards; the broader Retriever family announcement followed October 21. Includes a 1B NVFP4 deployment option.",
+      "source": "https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16"
+    },
+    {
+      "model": "Nemotron 3.5 Rerank 8B",
+      "lab": "NVIDIA",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Open multimodal second-stage reranker for text and document images. Uses the model card's October 20 weight-release date, rather than the October 21 Retriever announcement; publisher benchmark gains are not independently reproduced here.",
+      "source": "https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16"
+    },
+    {
+      "model": "Voxtral Transcribe 3 family (public preview)",
+      "lab": "Mistral",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Small Transcribe 3, Mini Transcribe 3, and Mini Transcribe Realtime 3 speech recognition models, including batch and WebSocket streaming variants. Available through Mistral's hosted API; self-deployment requires contacting the vendor, rather than implying unrestricted public weights.",
+      "source": "https://mistral.ai/news/voxtral-3/"
+    },
+    {
+      "model": "Voxtral TTS 3 (public preview)",
+      "lab": "Mistral",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Expressive speech generation through the voxtral-mini-tts-3-0 API model, alongside the Voxtral 3 voice-agent SDK. The launch and model card give different language-coverage counts, so no single reconciled count is claimed here. Self-deployment is arranged with Mistral.",
+      "source": "https://docs.mistral.ai/models/voxtral-mini-tts-3-0"
+    },
+    {
+      "model": "Mercury 3",
+      "lab": "Inception",
+      "date": "2026-10-19",
+      "tier": "mid",
+      "note": "Production diffusion language model with 1M context for fast coding, tool use, and interactive agents. Available through Inception's API and inference partners. The reported 1,068 tokens/second and benchmark comparisons are publisher measurements.",
+      "source": "https://www.inceptionlabs.ai/blog/introducing-mercury-3"
+    },
+    {
+      "model": "MiniMax-M3.1-Flash (general availability)",
+      "lab": "MiniMax",
+      "date": "2026-10-19",
+      "tier": "mid",
+      "note": "Official API, M Plan, and MiniMax Code rollout of the multimodal coding and agent model with 1M context and adjustable thinking depth, following the September preview. The launch says weights will be released later. Space Bunny is identified as an early M3.1 Flash version.",
+      "source": "https://www.minimax.io/blog/minimax-m31f"
+    },
+    {
+      "model": "Clairic (preview)",
+      "lab": "Cloudflare",
+      "date": "2026-10-19",
+      "tier": "specialty",
+      "note": "Workers AI extraction model, @cf/cloudflare/clairic, for text spans, arithmetic, dates, bounded estimates, and time-series forecasts. Returns structured fields and confidence information; this is a specialist preview with documented calculation and calibration limits.",
+      "source": "https://blog.cloudflare.com/clairic-extraction-model?ref=explainx"
+    },
+    {
+      "model": "GoTo-AI-Gemma-3-27B-IT",
+      "lab": "GoTo / AI Singapore",
+      "date": "2026-10-19",
+      "tier": "open-weights",
+      "note": "27B Gemma 3 adaptation for English, Indonesian, Javanese, Sundanese, Balinese, and Batak Toba. Public weights support self-hosting under Gemma terms; no first-party hosted API or independent capability ranking is established here.",
+      "source": "https://huggingface.co/GoToCompany/gemma3-27b-cpt-gotoai-v3-instruct"
+    },
+    {
+      "model": "Maxwell (controlled early access)",
+      "lab": "doubleAI",
+      "date": "2026-10-19",
+      "tier": "specialty",
+      "note": "Announced code-execution model that optimizes running machine code with correctness checks. Access is by request through a controlled early-access program; public API access and weights are not established. Performance gains are vendor claims.",
+      "source": "https://heymaxwell.ai/"
+    },
+    {
+      "model": "DeepSeek-V4.1-Flash-1017",
+      "lab": "DeepSeek",
+      "date": "2026-10-17",
+      "tier": "open-weights",
+      "note": "New coding and agent revision available on DeepSeek's website, app, API, and as public weights. Distinct from September's V4.1 Flash; the first-party deepseek-flash alias now serves 1017. Optimized for DeepSeek Harness, CodeBuddy, and WorkBuddy.",
+      "source": "https://api-docs.deepseek.com/news/news261017/"
+    },
+    {
+      "model": "Nemotron 3.5 Parse",
+      "lab": "NVIDIA",
+      "date": "2026-10-17",
+      "tier": "specialty",
+      "note": "631M document-extraction model with open weights for converting visually structured pages into usable content. Uses the model card's October 17 weight-release date; NVIDIA's broader Embed, Rerank, and Parse announcement followed October 21.",
+      "source": "https://huggingface.co/nvidia/Nemotron-3.5-Parse"
+    },
+    {
+      "model": "Glimpse (research preview)",
+      "lab": "Elorian",
+      "date": "2026-10-16",
+      "tier": "specialty",
+      "note": "Visual-thinking research preview that revisits image and video evidence while reasoning about motion, viewpoints, and physical consequences. Available through Elorian's API and chat interface. Uses the October 16 announcement, not the October 17 OpenRouter listing; robot control remains future work.",
+      "source": "https://elorian.ai/blog/introducing-glimpse"
+    },
+    {
+      "model": "Beam (open weights / public API beta)",
+      "lab": "Reflection AI",
+      "date": "2026-10-16",
+      "tier": "open-weights",
+      "note": "Apache-2.0 release of the 501B-total, 23B-active coding and agent model in BF16, FP8, and NVFP4, with self-hosting and partner integrations. Reflection's hosted API opens in public beta. Separate from the October 5 restricted preview.",
+      "source": "https://reflection.ai/blog/beam-is-available"
+    },
+    {
+      "model": "Hy-Memory-30B-A3B",
+      "lab": "Tencent",
+      "date": "2026-10-16",
+      "tier": "specialty",
+      "note": "Apache-2.0 open memory-writer model with about 30B total and 3B active parameters for agent memory frameworks. Recorded with the Hy Memory 2.0 announcement date; the exact earlier weight-upload time is not established here. Specialist memory results are publisher evaluations.",
+      "source": "https://huggingface.co/tencent/Hy-Memory-30B-A3B"
+    },
+    {
+      "model": "pplx-decider-v1.2 / decider-flash-v1.2",
+      "lab": "Perplexity",
+      "date": "2026-10-16",
+      "tier": "specialty",
+      "note": "27B decision-model revision and new 4B Flash sibling with hosted typed decisions and Apache-2.0 model cards. Uses the dated October 16 hosted release; the first-party changelog gives only the month. Older v1/v1.1 aliases route to v1.2, so probability thresholds need rechecking.",
+      "source": "https://huggingface.co/perplexity-ai/pplx-decider-v1.2"
+    },
+    {
+      "model": "Muse Spark Open",
+      "lab": "Meta",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "Multimodal coding and agent model with 816B total, 42B active parameters, and 1M context. Weights released under the custom Muse Model License with limited commercial terms, alongside third-party hosted access. Distinct from October 12's Muse Wonder and Wonder Full.",
+      "source": "https://research.meta.ai/blog/muse-spark-open"
+    },
+    {
+      "model": "Nemotron 3.5 Super VL 120B-A12B",
+      "lab": "NVIDIA",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "120B-total, 12B-active multimodal model for visual documents, tool use, and ongoing agent workflows, with open weights and NIM/partner serving. Distinct from the Bolt edge model; reported throughput and accuracy gains are publisher claims.",
+      "source": "https://blogs.nvidia.com/blog/nemotron-3-5-super-vl/"
+    },
+    {
+      "model": "Nemotron 3.5 Bolt 74B-A9B-24GB",
+      "lab": "NVIDIA",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "74B-total, 9B-active open model targeting local agent workloads and a 24GB deployment footprint. Public NVIDIA checkpoint under OpenMDW 1.1. The separately announced Bolt E4B 4GB model is scheduled for October 23 and is not included as released.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
+    },
+    {
+      "model": "Strands Decider Gemma 4 E2B / E4B / 12B",
+      "lab": "AWS Strands Labs",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Gemma 4 decision adapters and readout heads for local probability, choice, and score questions. Base Gemma weights are obtained separately. The family announcement also covers the 26B-A4B model first released October 9; these three sizes are the new additions.",
+      "source": "https://strandsagents.com/blog/strands-decider-gemma-4-models/"
+    },
+    {
+      "model": "Pareto 26.10 (stable)",
+      "lab": "Unbiased",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Stable release of the blended multi-model system with 1M context; the pareto alias now targets 26.10. Preview token prices become permanent. A distinct availability milestone after October 1's preview, without claiming a new independent capability evaluation.",
+      "source": "https://unbiased.ai/blog/pareto-26-10/"
+    },
+    {
+      "model": "d1-ultra",
+      "lab": "Liquid AI",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Hosted multimodal decision model for typed probabilities over text and image context, available through Liquid's API and OpenRouter. Distinct from d1 and the open d1 edge family; this launch does not establish public d1-ultra weights.",
+      "source": "https://www.liquid.ai/blog/d1-ultra"
+    },
+    {
+      "model": "FLUX 3 Image Klein 5.6B",
+      "lab": "Black Forest Labs",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Compact image generation and editing model with up to ten references, released as base and distilled weights plus hosted API access. BF16, FP8, INT8, and NVFP4 options under the FLUX Kommunity License; distinct from the full FLUX 3 Image launch.",
+      "source": "https://bfl.ai/blog/flux-3-image-klein"
+    },
+    {
+      "model": "Ternary Bonsai 2 2B / 4B / 9B",
+      "lab": "PrismML",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "Three Qwen3.5-derived ternary models for local reasoning, vision, and tool use, expanding the earlier 27B release. Published language-weight footprints of 0.43GB, 0.95GB, and 2GB exclude vision projectors, runtime, and KV cache; compressed formats may require PrismML's runtime fork.",
+      "source": "https://prismml.com/news/bonsai-2-family"
+    },
+    {
+      "model": "Jais 3 family",
+      "lab": "MBZUAI (IFM)",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "IFM and Inception42 release six Arabic-native language models built on K2 Horizon, ranging from 0.9B to 375B parameters, including dense and MoE variants. Public weights focus on Arabic dialects, writing, and agent tasks; vendor benchmark leadership is not independently reproduced here.",
+      "source": "https://ifm.ai/jais3/press-release/"
+    },
+    {
+      "model": "Jais Speech",
+      "lab": "MBZUAI (IFM)",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Arabic speech-recognition model released alongside Jais 3, covering dialects across 19 Arab countries with code switching and diacritization. Official Hugging Face collection available; specific checkpoint sizing and deployment performance are not established here.",
+      "source": "https://ifm.ai/jais3/press-release/"
+    },
+    {
+      "model": "Timestral 5M / 28M / 123M / 209M",
+      "lab": "Mistral",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Four open time-series foundation models for probabilistic multivariate forecasting with historical and known-future covariates. Supports local CPU/GPU inference and customization through Forge. Publisher forecasting results are distinct from general-purpose language-model rankings.",
+      "source": "https://mistral.ai/news/timestral/"
+    },
+    {
+      "model": "Step 5 Preview (open weights)",
+      "lab": "StepFun",
+      "date": "2026-10-15",
+      "tier": "open-weights",
+      "note": "Public BF16, FP8, and NVFP4 checkpoints and self-hosting guidance for the 600B-total, 27B-active multimodal agent model. This is the later weight-availability milestone, not a new hosted model. Governed by custom StepFun Model License 1.0, not Apache-2.0.",
+      "source": "https://huggingface.co/stepfun-ai/Step-5-Preview-BF16"
+    },
+    {
+      "model": "Jev 1.14.0 (preview)",
+      "lab": "TypeSafe AI",
+      "date": "2026-10-14",
+      "tier": "specialty",
+      "note": "Decision-model revision exposed through jev-preview, with an experimental bounding-box output type and opt-in longer context. Image inputs are also enabled for Jev 1.13. The announcement schedules a later jev-latest migration; its effective switch date is not verified here.",
+      "source": "https://typesafe.ai/blog/jev-1-14"
+    },
+    {
+      "model": "kettei fat / chub / core / dot",
+      "lab": "Sqwish Labs",
+      "date": "2026-10-14",
+      "tier": "specialty",
+      "note": "Decision-model family for classification, routing, and verification: fat/chub accept images; core 3.7B and dot 0.9B target smaller deployments. OneHot offers hosted access and tuning; fat is described as early preview and individual open-weight license terms remain unverified.",
+      "source": "https://sqwish.ai/blog/your-ai-agent-is-writing-essays-to-tick-boxes"
+    },
+    {
+      "model": "Grok Voice 3.0",
+      "lab": "xAI",
+      "date": "2026-10-14",
+      "tier": "specialty",
+      "note": "Generally available real-time voice model through xAI's Voice Agent API. The grok-voice-latest alias switches to version 3.0. A speech-to-speech model release, separate from the Grok text-model and transcription families.",
+      "source": "https://x.ai/news/grok-voice-3"
+    },
+    {
+      "model": "Strands Decider 26B-A4B (Gemma 4)",
+      "lab": "AWS Strands Labs",
+      "date": "2026-10-09",
+      "tier": "specialty",
+      "note": "Gemma 4-based MoE decision adapter and heads for local typed probabilities. Uses the official model card's October 9 first-release changelog, rather than the October 15 four-size family announcement. Requires separately obtained Gemma base weights and their license.",
+      "source": "https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610"
+    }
+  ],
+  "corrections": [],
+  "coverage": [
+    {"lab":"Cross-checks","sourceURLs":[],"result":"Read the connected model registry's Models and Changes records and the AI Model Change Watch and AI Model Intelligence Weekly chats. Used these as discovery leads, then checked public primary announcements and model cards. Registry and chat contents were not copied into the public repository."},
+    {"lab":"GoTo / doubleAI launch dates","sourceURLs":["https://www.gotocompany.com/en/news/press/goto-releases-new-llm-2026","https://finance.yahoo.com/technology/ai/articles/doubleai-unveils-first-ai-lives-130000566.html"],"result":"GoTo's dated primary press release confirms October 19 and links the same Gemma checkpoint. doubleAI's company-issued Business Wire release, syndicated by Yahoo, also dates Maxwell early access October 19; the dated release was retrieved in search, while full-page retrieval was rate-limited. Model cards/sites establish model identities and access scope separately."},
+    {"lab":"NVIDIA","sourceURLs":["https://huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval","https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16","https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16","https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16","https://huggingface.co/nvidia/Nemotron-3.5-Parse","https://blogs.nvidia.com/blog/nemotron-3-5-super-vl/"],"result":"October 15 Super VL and Bolt verified. Retrieval family announcement is October 21, but official model cards date Embed/Rerank weights October 20 and Parse October 17. Use those explicit weight-release dates, not later listings or inferred upload times."},
+    {"lab":"Cohere","sourceURLs":["https://cohere.com/blog/rerank-5","https://docs.cohere.com/v2/changelog/rerank-v5"],"result":"October 21 Pro/Fast GA verified; grouped as one specialist family event."},
+    {"lab":"Mistral","sourceURLs":["https://mistral.ai/news/voxtral-3/","https://docs.mistral.ai/models/voxtral-small-transcribe-3-0","https://docs.mistral.ai/models/voxtral-mini-transcribe-3-0","https://docs.mistral.ai/models/voxtral-mini-transcribe-realtime-3-0","https://docs.mistral.ai/models/voxtral-mini-tts-3-0","https://mistral.ai/news/timestral/"],"result":"October 15 Timestral and October 20 Voxtral 3 model cards/announcement verified. TTS language-count discrepancy remains explicit. Large 4 price-discount expiry is not another model release."},
+    {"lab":"Inception / MiniMax / DeepSeek / Meta","sourceURLs":["https://www.inceptionlabs.ai/blog/introducing-mercury-3","https://www.minimax.io/blog/minimax-m31f","https://platform.minimax.io/docs/guides/text-generation","https://api-docs.deepseek.com/news/news261017/","https://research.meta.ai/blog/muse-spark-open"],"result":"Mercury 3, MiniMax M3.1 Flash GA, DeepSeek 1017, and Muse Spark Open verified. Earlier previews, originals, and Muse Wonder records retained."},
+    {"lab":"Decision and extraction specialists","sourceURLs":["https://typesafe.ai/blog/jev-1-14","https://strandsagents.com/blog/strands-decider-gemma-4-models/","https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610","https://www.liquid.ai/blog/d1-ultra","https://www.liquid.ai/news/models","https://sqwish.ai/blog/your-ai-agent-is-writing-essays-to-tick-boxes","https://blog.cloudflare.com/clairic-extraction-model?ref=explainx","https://huggingface.co/perplexity-ai/pplx-decider-v1.2","https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2","https://openrouter.ai/perplexity/pplx-decider-v1.2"],"result":"Primary model identities/access checked. Strands 26B first release is October 9; E2B/E4B/12B family announcement is October 15. Perplexity uses October 16 hosted listing with month-only first-party changelog uncertainty disclosed. No shared architecture or partnership inferred from protocol similarity."},
+    {"lab":"Other open and specialist models","sourceURLs":["https://bfl.ai/blog/flux-3-image-klein","https://prismml.com/news/bonsai-2-family","https://ifm.ai/jais3/press-release/","https://huggingface.co/tencent/Hy-Memory-30B-A3B","https://huggingface.co/GoToCompany/gemma3-27b-cpt-gotoai-v3-instruct","https://unbiased.ai/blog/pareto-26-10/","https://x.ai/news/grok-voice-3","https://elorian.ai/blog/introducing-glimpse","https://reflection.ai/blog/beam-is-available","https://huggingface.co/stepfun-ai/Step-5-Preview-BF16","https://heymaxwell.ai/"],"result":"Checked primary announcements/cards for named additions and preserved their access restrictions. Glimpse uses October 16 announcement, not October 17 distribution. Hy-Memory uses the October 16 stack announcement; exact prior upload timing unverified. GoTo and Maxwell October 19 launch dates cross-checked against the registry; Maxwell remains controlled early access."},
+    {"lab":"OpenAI / Anthropic / Google","sourceURLs":["https://developers.openai.com/api/docs/changelog","https://www.anthropic.com/news","https://ai.google.dev/gemini-api/docs/changelog"],"result":"No later underlying model launch established in checked indexes. OpenAI voice customization/Decisions integration, Anthropic API-version changes, and Google Cloud distribution are service features or deployment changes. This is a curated update with partial discovery coverage, not an exhaustive all-clear."}
+  ],
+  "exclusions": [
+    {"candidate":"Next Fable/Mythos, Gemini Carbon, GPT-6.1 Terra","reason":"Rumors or unannounced identifiers do not establish a dated model release; no verified launch added.","sources":["https://www.anthropic.com/news","https://developers.openai.com/api/docs/changelog"]},
+    {"candidate":"Nemotron 3.5 Bolt E4B 4GB","reason":"October 23 planned release is after the October 22 check.","sources":["https://blogs.nvidia.com/blog/nemotron-3-5-super-vl/"]},
+    {"candidate":"Mistral Large 4 open weights / October 21 standard prices","reason":"Public weight availability was not established in this check; expiry of launch pricing does not create a new model event.","sources":["https://docs.mistral.ai/models/mistral-large-4-0"]},
+    {"candidate":"OpenAI models on Google Cloud / DeepSeek on Model Garden","reason":"Additional distribution of existing models, without a verified new checkpoint.","sources":["https://cloud.google.com/blog/products/ai-machine-learning/google-cloud-brings-openai-models-to-customers"]},
+    {"candidate":"OpenAI prompt-to-voice / native Live Decisions / Anthropic API version 2026-10-21","reason":"Service capabilities and request compatibility changes, rather than new model versions.","sources":["https://developers.openai.com/api/docs/changelog","https://platform.claude.com/docs/en/api/migration-2026-10-21"]},
+    {"candidate":"Qwen-Image-2.1-Pro October 16 gateway listing","reason":"Already recorded as an October 2 API release; later gateway distribution is not a second underlying launch.","sources":["https://openrouter.ai/qwen/qwen-image-2.1-pro"]}
+  ]
+}
