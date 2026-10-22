@@ -72,6 +72,8 @@ enum PortControlBlock: Equatable, Sendable { case anotherPortChanging, disconnec
     private var portRequests: [UUID: Task<Void, Never>] = [:]
     /// Changes whenever the controller sees the link go down or come up.
     private var linkSession = UUID()
+    /// A closed-link publish result waiting for the backend's loss status.
+    private var pendingLinkFailure: (any Cancellable)?
     var needsSetup: Bool { !secrets.configured }
 
     init(backend: any ChargerBackend, secrets: any SecretStore, state: StateStore, events: SystemEvents,
@@ -528,22 +530,40 @@ extension MonitorController {
     }
     private func finishPortOperation(_ outcome: PortOperationOutcome) {
         portOperation = nil; portOperationID = nil
+        pendingLinkFailure?.cancel(); pendingLinkFailure = nil
         portOutcome = outcome.kind == .confirmed ? nil : outcome
         // No publish completed: take a fence now so later evidence can clear it.
         if portOutcome != nil, outcome.boundary == nil { refreshPortFences() }
     }
     private func publishSwitch(_ target: PortSwitch, on: Bool, id: PortPublishID) {
         let operation = portOperationID, expected = generation, attempt = connectionGeneration
-        let selected = selectionGeneration, write = UUID()
+        let selected = selectionGeneration, link = linkSession, write = UUID()
         switchWrites[write] = Task { [weak self, backend] in
-            let event: PortOperationEvent
+            var event: PortOperationEvent? = .publishFailed(id: id)
             do { event = .published(try await backend.setPortSwitch(target, on: on), id: id) }
-            catch { event = .publishFailed(id: id) }
+            catch ChargerBackendError.linkClosed { event = nil }
+            catch {}
             guard let self else { return }
             self.switchWrites[write] = nil
             guard self.running, self.generation == expected, self.connectionGeneration == attempt,
                   self.selectionGeneration == selected, self.portOperationID == operation else { return }
-            self.feedPort(event)
+            if let event { self.feedPort(event) } else { self.publishLinkClosed(id, link: link) }
+        }
+    }
+    /// A write failed because its link closed. The backend also reports the loss as a
+    /// status, in either order. If that status already arrived (`linkSession` moved),
+    /// the operation was suspended, and perhaps resumed, by it: this result is
+    /// obsolete. Otherwise wait for the status rather than fail the phase; when none
+    /// follows within the confirmation deadline, report the publish as failed.
+    private func publishLinkClosed(_ id: PortPublishID, link: UUID) {
+        guard linkSession == link else { return }
+        let operation = portOperationID
+        pendingLinkFailure?.cancel()
+        pendingLinkFailure = scheduler.schedule(after: PortControlPolicy.confirmationDeadline) { [weak self] in
+            guard let self else { return }
+            self.pendingLinkFailure = nil
+            guard self.linkSession == link, self.portOperationID == operation else { return }
+            self.feedPort(.publishFailed(id: id))
         }
     }
     /// Independent of polling: an in-flight poll never absorbs it. Recorded with
@@ -563,6 +583,7 @@ extension MonitorController {
     /// Sleep, network loss or a dropped link: the operation suspends publishing.
     private func portLinkLost() {
         linkSession = UUID()
+        pendingLinkFailure?.cancel(); pendingLinkFailure = nil
         if portOperation?.isSuspended == false { feedPort(.disconnected) }
     }
     /// After a (re)connection, or for an outcome without a boundary: read the
@@ -587,11 +608,12 @@ extension MonitorController {
         }
     }
     /// Ends the running operation for a context change. Synchronously finishes it
-    /// (blocking new dispatch) and captures the old link before the caller
-    /// invalidates anything. A restart's ending "on" write runs in a bounded task,
-    /// serialized after in-flight switch writes, that becomes `cleanup`: the
-    /// caller's disconnect, and so any replacement connection, waits for it.
-    /// Overlapping endings share that task.
+    /// (blocking new dispatch) and notes whether the current connection is usable
+    /// before the caller invalidates anything. A restart's ending "on" write runs in
+    /// a bounded task, serialized after in-flight switch writes, that becomes
+    /// `cleanup`: the caller's disconnect, and so any replacement connection, waits
+    /// for it. No link is captured; that ordering and the backend's context check
+    /// keep the write on the old connection. Overlapping endings share that task.
     @discardableResult
     private func endPortOperation(_ reason: PortOperationEndingReason) -> Task<Void, Never>? {
         guard var operation = portOperation else { return portEnding?.task }
@@ -615,7 +637,7 @@ extension MonitorController {
             _ = try? await backend.setPortSwitch(write.target, on: write.on)
         }
         let task = Task {
-            let expired = await self.expires(attemptWrite, after: PortControlPolicy.exitAttemptTimeout)
+            let expired = await self.expires(attemptWrite, after: Self.portEndingWriteBudget)
             if expired {
                 // Revoke the old command context, close its link and drain its sends;
                 // the cancelled attempt can no longer write.
@@ -626,6 +648,13 @@ extension MonitorController {
         portEnding = PortEnding(id: id, task: task); cleanup = task
         return task
     }
+    /// Part of `PortControlPolicy.exitAttemptTimeout` kept for abort and drain: the
+    /// ending write gets the rest, so an abort normally finishes within the budget.
+    /// A drain that outlasts the reserve is still awaited, not abandoned: the link
+    /// must be closed and its sends resumed before a replacement may connect, and
+    /// bytes already written cannot be recalled.
+    static let portEndingDrainReserve: TimeInterval = 1
+    static var portEndingWriteBudget: TimeInterval { PortControlPolicy.exitAttemptTimeout - portEndingDrainReserve }
     /// True when the scheduler deadline passes before `work` finishes.
     private func expires(_ work: Task<Void, Never>, after seconds: TimeInterval) async -> Bool {
         let race = DeadlineRace()

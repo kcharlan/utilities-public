@@ -696,7 +696,7 @@ private func outcome(_ result: Result<PortCommandReceipt, Error>) -> SwitchOutco
     switch result {
     case let .success(receipt): .receipt(receipt)
     case let .failure(error):
-        if case MQTTConnectionError.closed? = error as? MQTTConnectionError { .closed }
+        if error as? ChargerBackendError == .linkClosed { .closed }
         else if error is CancellationError { .cancelled } else { .other }
     }
 }
@@ -722,11 +722,11 @@ extension AnkerCloudBackendTests {
 @Test func setPortSwitchAndFenceThrowWhenNotConnected() async throws {
     let link = TestMQTTLink(), cloud = try backend(link)
     await cloud.restore(testSession, credentials: testCredentials)
-    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.setPortSwitch(.c1, on: true) }
+    await #expect(throws: ChargerBackendError.linkClosed) { _ = try await cloud.setPortSwitch(.c1, on: true) }
     await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
     try await cloud.connect(to: testCharger)
     await cloud.disconnect()
-    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.setPortSwitch(.c1, on: true) }
+    await #expect(throws: ChargerBackendError.linkClosed) { _ = try await cloud.setPortSwitch(.c1, on: true) }
     await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
     #expect(await link.sent.contains(where: isHeldPublish) == false)
 }
@@ -857,6 +857,28 @@ extension AnkerCloudBackendTests {
     #expect(await transport.calls == 2)
     await cloud.disconnect()
     #expect(await links[1].sent.last == .disconnect)
+}
+
+/// A link the backend loses during a write (not a caller's context change) reports
+/// `linkClosed`, alongside the backend's own loss status, so callers can suspend.
+@Test func switchWriteOnALinkThatDropsReportsLinkClosed() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate(), log = EventLog()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    let events = Task { for await event in cloud.events { await log.append(event) } }
+    defer { events.cancel() }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    await links[0].hold(isHeldPublish)
+    let writing = Task { try await cloud.setPortSwitch(.c2, on: true) }
+    try await eventually { await links[0].held.count == 1 }
+    links[0].input.finish()
+    #expect(outcome(await writing.result) == .closed)
+    try await eventually { await gate.pending(1) == 1 }
+    await gate.advance(1)
+    try await eventually { (try? await cloud.commandFence()) != nil }
+    await cloud.disconnect()
 }
 
 /// An abort during a graceful disconnect closes that link at once instead of

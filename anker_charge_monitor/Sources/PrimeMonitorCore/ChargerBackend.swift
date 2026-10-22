@@ -59,6 +59,14 @@ public struct PortCommandReceipt: Hashable, Sendable {
     public init(fence: ReceiveMark) { self.fence = fence }
 }
 
+/// Backend failures callers act on by kind.
+public enum ChargerBackendError: Error, Equatable, Sendable {
+    /// The command link was not up, or closed during the write. The write may or may
+    /// not have reached the charger. A backend-detected loss also reports a status
+    /// event; the caller cannot rely on which of the two it sees first.
+    case linkClosed
+}
+
 public enum BackendEvent: Sendable {
     /// A decoded status reply and its position in the backend's receive order.
     case snapshot(ChargerSnapshot, ReceiveMark)
@@ -76,8 +84,10 @@ public protocol ChargerBackend: Sendable {
     /// Publishes one port switch command and returns when the write completed. It is
     /// publish-only: it never waits for, or implies, a change in the charger's state;
     /// a later status reply newer than the receipt's fence is the only confirmation.
-    /// Throws when not connected, or when the connection or its context was replaced
-    /// during the write.
+    /// Throws `ChargerBackendError.linkClosed` when not connected, or when the link
+    /// closed (dropped, or closed by a disconnect or abort) or was replaced during the
+    /// write; throws `CancellationError` when the write completed but the caller's
+    /// context was replaced meanwhile, or the task was cancelled.
     func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt
     /// A fence for the current connection without publishing (a resumed operation
     /// after reconnection). Throws when not connected.

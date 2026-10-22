@@ -285,15 +285,22 @@ public actor AnkerCloudBackend: ChargerBackend {
     /// `_send_mqtt_command` without its wait-for-state). The fence is read here, at
     /// write completion, on the connection the command was written to.
     public func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
-        guard connected, let link, let info, let charger, let epoch else { throw MQTTConnectionError.closed }
+        guard connected, let link, let info, let charger, let epoch else { throw ChargerBackendError.linkClosed }
         let expected = context, attempt = attemptID
         let timestamp = UInt32(clamping: Int64(now().timeIntervalSince1970))
         let frame = PortSwitchCommand.frame(target: target, on: on, timestamp: timestamp)
-        try await link.send(.publish(topic: AnkerTopics.publish(info: info, charger: charger),
-                                     payload: MQTTEnvelope.command(info: info, charger: charger, frame: frame, timestamp: timestamp)))
+        do {
+            try await link.send(.publish(topic: AnkerTopics.publish(info: info, charger: charger),
+                                         payload: MQTTEnvelope.command(info: info, charger: charger, frame: frame, timestamp: timestamp)))
+        } catch {
+            // A failed write on the MQTT stream means its link closed (a drop, or a
+            // disconnect or abort that closed it) or is failing; a drop is also
+            // reported as a status event, in either order relative to this throw.
+            throw ChargerBackendError.linkClosed
+        }
         try check(expected)
         // A replacement connection in the same context must not adopt this write.
-        guard attemptID == attempt, connected else { throw MQTTConnectionError.closed }
+        guard attemptID == attempt, connected else { throw ChargerBackendError.linkClosed }
         lastOutbound = now()
         return PortCommandReceipt(fence: ReceiveMark(connection: epoch, sequence: receiveSequence))
     }

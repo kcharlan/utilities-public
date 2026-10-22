@@ -334,7 +334,7 @@ let otherCharger = ChargerInfo(serial: "synthetic-other-charger", model: "A2345"
 }
 
 @Suite @MainActor struct PortFreshnessTests {
-    @Test func staleGenerationPublishResultIsIgnored() async throws {
+    @Test func publishResultClosedByADisconnectIsIgnored() async throws {
         let rig = try ControllerRig(); await rig.ready()
         await rig.backend.blockSwitches()
         rig.controller.turnPort(.c2, on: false); await settle()
@@ -420,18 +420,24 @@ let otherCharger = ChargerInfo(serial: "synthetic-other-charger", model: "A2345"
         #expect(rig.controller.portOutcome?.kind == .mayStillBeOff)
         await rig.finish()
     }
-    @Test func writeHeldBeyondTheBudgetAbortsAndTheReplacementWaitsForTheDrain() async throws {
+    @Test func writeHeldPastItsBudgetAbortsEarlyAndTheReplacementWaitsForTheDrain() async throws {
         let rig = try ControllerRig(); await rig.ready()
         await rig.backend.blockSwitches()
         rig.controller.restartPort(.c2); await settle()
         let start = await rig.backend.log.count
         let selecting = Task { await rig.controller.select(otherCharger) }; await settle()
-        await rig.clock.advance(PortControlPolicy.exitAttemptTimeout - 0.5)
+        let began = rig.clock.date
+        await rig.clock.advance(MonitorController.portEndingWriteBudget - 0.5)
+        #expect(await rig.logIndex("abort", after: start) == nil)
         #expect(await rig.logIndex("disconnect", after: start) == nil)
         #expect(await rig.count("connect") == 1)
         #expect(rig.controller.portControlBlock == .anotherPortChanging)
-        await rig.clock.advance(0.5); await selecting.value; await settle()
+        await rig.clock.advance(0.5)
+        // The abort starts with the reserve still left, and its drain finished within the budget.
         let abort = try #require(await rig.logIndex("abort", after: start))
+        #expect(rig.clock.date.timeIntervalSince(began) == MonitorController.portEndingWriteBudget)
+        #expect(MonitorController.portEndingWriteBudget < PortControlPolicy.exitAttemptTimeout)
+        await selecting.value; await settle()
         let disconnect = try #require(await rig.logIndex("disconnect", after: start))
         let connect = try #require(await rig.logIndex("connect", after: start))
         #expect(abort < disconnect && disconnect < connect)
@@ -468,6 +474,86 @@ let otherCharger = ChargerInfo(serial: "synthetic-other-charger", model: "A2345"
         #expect(await rig.commands() == ["c2 off", "c2 on"]); #expect(!ended)
         await rig.clock.advance(PortControlPolicy.exitAttemptTimeout); await ending.value
         #expect(ended); #expect(await rig.count("abort") == 1)
+        await rig.finish()
+    }
+}
+
+/// A backend-detected link drop reaches the controller twice: the held write throws
+/// `linkClosed` and the backend reports `.error`, then `.connected` on the replacement
+/// link. Either may arrive first; the operation suspends and resumes either way.
+@Suite @MainActor struct PortLinkDropTests {
+    private func lose(_ rig: ControllerRig) async { rig.backend.output.yield(.status(.error("dropped"))); await settle() }
+    private func recover(_ rig: ControllerRig) async {
+        rig.backend.output.connected(); rig.backend.output.yield(.status(.connected)); await settle()
+    }
+    @Test func throwBeforeTheLossStatusSuspendsThenResumesWithoutResending() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        await rig.backend.blockSwitches()
+        rig.controller.turnPort(.c2, on: false); await settle()
+        await rig.backend.dropHeldSwitches(); await settle()
+        // Not a publish failure: the loss status is still on its way.
+        #expect(operationPhase(rig.controller) == .turningOff); #expect(rig.controller.portOutcome == nil)
+        await lose(rig)
+        #expect(rig.controller.portOperation?.isSuspended == true)
+        await recover(rig)
+        #expect(rig.controller.portOperation?.isSuspended == false)
+        #expect(await rig.commands() == ["c2 off"])
+        await rig.switchReply(.c2, false)
+        #expect(rig.controller.portOperation == nil); #expect(rig.controller.portOutcome == nil)
+        await rig.finish()
+    }
+    @Test func throwBeforeTheLossStatusInTheOnPhaseResendsOnce() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        await rig.pausedRestart(); await rig.backend.blockSwitches()
+        await rig.clock.advance(PortControlPolicy.restartPause)
+        #expect(await rig.backend.heldSwitchWrites == 1)
+        await rig.backend.dropHeldSwitches(); await settle()
+        #expect(operationPhase(rig.controller) == .turningOn); #expect(rig.controller.portOutcome == nil)
+        await lose(rig); await recover(rig)
+        await rig.backend.releaseSwitches(); await settle()
+        #expect(await rig.commands() == ["c2 off", "c2 on", "c2 on"])
+        await rig.switchReply(.c2, true)
+        #expect(rig.controller.portOperation == nil); #expect(rig.controller.portOutcome == nil)
+        await rig.finish()
+    }
+    @Test func throwAfterTheReplacementConnectedIsObsolete() async throws {
+        for restart in [false, true] {
+            let rig = try ControllerRig(); await rig.ready()
+            if restart { await rig.pausedRestart() }
+            await rig.backend.blockSwitches()
+            if restart { await rig.clock.advance(PortControlPolicy.restartPause) } else { rig.controller.turnPort(.c2, on: false); await settle() }
+            let published = await rig.commands()
+            await lose(rig); await recover(rig)
+            // Resumed already: a restart's on phase resent once; a plain turn-off did not.
+            #expect(await rig.commands().count == published.count + (restart ? 1 : 0))
+            await rig.backend.dropHeldSwitches(1); await settle()
+            #expect(rig.controller.portOperation?.isSuspended == false)
+            #expect(rig.controller.portOutcome == nil)
+            await rig.backend.releaseSwitches(); await settle()
+            #expect(await rig.commands().count == published.count + (restart ? 1 : 0))
+            await rig.switchReply(.c2, restart)
+            #expect(rig.controller.portOperation == nil); #expect(rig.controller.portOutcome == nil)
+            await rig.finish()
+        }
+    }
+    @Test func closedLinkWithoutALossStatusFailsAtTheConfirmationDeadline() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        await rig.backend.blockSwitches()
+        rig.controller.turnPort(.c2, on: false); await settle()
+        await rig.backend.dropHeldSwitches(); await settle()
+        await rig.clock.advance(PortControlPolicy.confirmationDeadline - 1)
+        #expect(operationPhase(rig.controller) == .turningOff)
+        await rig.clock.advance(1)
+        #expect(rig.controller.portOperation == nil)
+        #expect(rig.controller.portOutcome?.kind == .offNotConfirmed)
+        await rig.finish()
+    }
+    @Test func aPublishErrorOnALiveLinkFailsAtOnce() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        await rig.backend.failSwitchWrites()
+        rig.controller.restartPort(.c2); await settle()
+        #expect(rig.controller.portOperation == nil)
+        #expect(rig.controller.portOutcome?.kind == .offNotConfirmed)
         await rig.finish()
     }
 }

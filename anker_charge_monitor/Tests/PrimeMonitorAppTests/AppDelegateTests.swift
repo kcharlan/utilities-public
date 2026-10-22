@@ -95,7 +95,7 @@ extension AppDelegateTests {
             await rig.finish()
         }
     }
-    @Test func terminationWithABlockedPublishAbortsWithinTheBudgetBeforeStopping() async throws {
+    @Test func terminationWithABlockedPublishAbortsAtTheWriteBudgetBeforeStopping() async throws {
         let rig = try ControllerRig(); var replies = 0
         let delegate = await launched(rig) { replies += 1 }
         await rig.backend.blockSwitches()
@@ -107,7 +107,15 @@ extension AppDelegateTests {
         #expect(await rig.logIndex("disconnect", after: start) == nil)
         // The ending attempt runs before stop(): the controller is still running.
         #expect(!rig.events.stopped)
-        await rig.clock.advance(PortControlPolicy.exitAttemptTimeout); await delegate.terminationTask?.value
+        let began = rig.clock.date
+        await rig.clock.advance(MonitorController.portEndingWriteBudget - 0.5)
+        #expect(await rig.logIndex("abort", after: start) == nil)
+        await rig.clock.advance(0.5)
+        #expect(await rig.logIndex("abort", after: start) != nil)
+        // Abort, drain, stop and reply complete without the clock reaching the budget.
+        await delegate.terminationTask?.value
+        #expect(rig.clock.date.timeIntervalSince(began) == MonitorController.portEndingWriteBudget)
+        #expect(rig.clock.date.timeIntervalSince(began) < PortControlPolicy.exitAttemptTimeout)
         #expect(replies == 1)
         let abort = try #require(await rig.logIndex("abort", after: start))
         let stop = try #require(await rig.logIndex("disconnect", after: start))

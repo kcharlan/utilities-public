@@ -27,16 +27,26 @@ normal polling, which the staleness tracker still records. The 1 s
 `scheduleTick` drives operation time. Link loss suspends the operation; each
 reconnection reads `commandFence()` to resume it and to move the outcome's
 clearing boundary onto the new connection. Publish results are accepted only
-for the same operation, account, selection and connection generations.
+for the same operation, account, selection and connection generations. A write
+that fails with `ChargerBackendError.linkClosed` is a link loss, not a publish
+failure: the backend also reports the loss as a status, in either order. If that
+status already arrived, the result is obsolete; otherwise the controller waits for
+it and reports the publish as failed only if none follows within the confirmation
+deadline. Any other write error fails the phase at once.
 
 Sign-out, charger selection, credential edits, Retry, Reload Credentials, sign-in
 and quit end the operation synchronously at entry, before they invalidate
-anything. A restart's ending "on" write runs against the captured old link,
-after any in-flight switch write, in one task that becomes `cleanup`. The
-caller's disconnect, and so any replacement connection, waits for it, and
-overlapping endings share it. `PortControlPolicy.exitAttemptTimeout`, on the
-injected scheduler, bounds that attempt. On expiry the controller calls
-`abortCommands()`, which revokes the context and drains pending sends. If no
+anything. A restart's ending "on" write is issued to the backend while its old
+connection is still current, after any in-flight switch write, in one task that
+becomes `cleanup`. No link is captured: ordering comes from that task running
+before the caller's disconnect (which awaits `cleanup`), and so before any
+replacement connection, plus the backend's own context check on the write.
+Overlapping endings share the task. `PortControlPolicy.exitAttemptTimeout`, on
+the injected scheduler, bounds the attempt: the write gets the budget less
+`MonitorController.portEndingDrainReserve`, and on expiry the controller calls
+`abortCommands()`, which revokes the context and drains pending sends within the
+reserve. A drain that outlasts the reserve is still awaited, since bytes already
+written cannot be recalled and a replacement must not start first. If no
 context change replaced the connection, it then reconnects through the
 ordinary disconnect path. Terminal authentication statuses end the operation
 without a write. `AppDelegate` awaits `endPortOperation()` before

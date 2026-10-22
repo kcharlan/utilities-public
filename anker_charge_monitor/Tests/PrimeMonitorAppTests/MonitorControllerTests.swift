@@ -90,12 +90,19 @@ actor AppBackend: ChargerBackend {
     private var fenceWaits: [CheckedContinuation<Bool, Never>] = []
     var heldSwitchWrites: Int { switchWaits.count }
     var heldFences: Int { fenceWaits.count }
-    struct LinkClosed: Error {}
+    /// A publish error on a link that stays up (not a closed link).
+    struct PublishRejected: Error {}
     /// Holds every later switch write until released, or until the link closes.
     func blockSwitches() { holdSwitches = true }
     func failSwitchWrites(_ fail: Bool = true) { failSwitches = fail }
     /// Completes held writes; their receipts take the fence at completion.
     func releaseSwitches() { holdSwitches = false; finish(&switchWaits, completed: true) }
+    /// Fails the oldest held writes with `linkClosed` while the link stays up, as a
+    /// transport error can reach the caller before the backend reports the loss.
+    func dropHeldSwitches(_ count: Int = .max) {
+        let dropped = switchWaits.prefix(count); switchWaits.removeFirst(dropped.count)
+        for wait in dropped { wait.resume(returning: false) }
+    }
     func blockFences() { holdFences = true }
     func failFenceReads(_ fail: Bool = true) { failFences = fail }
     func releaseFences() { holdFences = false; finish(&fenceWaits, completed: true) }
@@ -107,16 +114,17 @@ actor AppBackend: ChargerBackend {
     private func closeLink() { linkUp = false; finish(&switchWaits, completed: false); finish(&fenceWaits, completed: false) }
     func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
         switchCommands.append((target, on)); switchChargers.append(connectedChargers.last?.serial); log.append("switch")
-        guard linkUp, !failSwitches else { throw LinkClosed() }
-        if holdSwitches { guard await withCheckedContinuation({ switchWaits.append($0) }) else { throw LinkClosed() } }
-        guard linkUp else { throw LinkClosed() }
+        guard linkUp else { throw ChargerBackendError.linkClosed }
+        guard !failSwitches else { throw PublishRejected() }
+        if holdSwitches { guard await withCheckedContinuation({ switchWaits.append($0) }) else { throw ChargerBackendError.linkClosed } }
+        guard linkUp else { throw ChargerBackendError.linkClosed }
         return PortCommandReceipt(fence: output.fence)
     }
     func commandFence() async throws -> PortCommandReceipt {
         log.append("fence")
-        guard linkUp, !failFences else { throw LinkClosed() }
-        if holdFences { guard await withCheckedContinuation({ fenceWaits.append($0) }) else { throw LinkClosed() } }
-        guard linkUp else { throw LinkClosed() }
+        guard linkUp, !failFences else { throw ChargerBackendError.linkClosed }
+        if holdFences { guard await withCheckedContinuation({ fenceWaits.append($0) }) else { throw ChargerBackendError.linkClosed } }
+        guard linkUp else { throw ChargerBackendError.linkClosed }
         return PortCommandReceipt(fence: output.fence)
     }
     func abortCommands() async { log.append("abort"); closeLink() }
