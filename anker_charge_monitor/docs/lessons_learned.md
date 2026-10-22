@@ -12,6 +12,32 @@ When specifying Core value types for other package targets, declare public
 initializers: Swift's synthesized memberwise construction stays internal. Use
 ordinary Core imports in decoder and naming regressions to check that boundary.
 
+## 2026-10-21: Let decoded identities outrank protocol comments
+
+Upstream's `b7` comment says identity support 2 gates the `bd` read. The owner's
+charger reported 2 while one USB-C port carried a fully resolved `bd`/`be`
+identity, so the planned "This charger can't identify connected devices."
+state would have hidden real data and was dropped: decoded identities always
+win, and missing ones read "Not reported by this charger". The same check
+showed a charging device staying at `{0, 0}` for minutes, because some devices
+never answer USB-PD Discover Identity; "Identifying…" promised progress that
+never came, so the label is now "Unidentified device". An invented support-2
+frame with resolved, no-device and unresolved ports pins both decisions.
+
+## 2026-10-21: Pump hosted SwiftUI tests in short, yielding slices
+
+A nested `RunLoop.run` inside a main-actor test does not drain the main queue,
+so a 0.08 s pump blocked every other main-actor test. Under the parallel suite
+the wall-clock LiveCheck timeout then failed although it passed alone. Run 5 ms
+slices with `Task.yield()` between them. Yielding exposed a second interaction:
+beginning to edit a field in one offscreen window ended editing in another
+test's window, so hosted-field tests in different suites hold one shared lock.
+Treating any field editor as panel naming also broke the retained Escape test
+with an added search field; only a field inside the hosted content counts.
+Hosted Escape dispatch did not reproduce the field's late value push that the
+cancellation mark guards against; the model regression covers that mark, and
+removing it fails that test.
+
 ## 2026-10-20: Draw the status item as one image; tints and titles misrender
 
 The 0.2.0 status item set a template symbol and an attributed title on the

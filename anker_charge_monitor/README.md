@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.2.1 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.3.0 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -65,6 +65,27 @@ bar's own spacing. Stale data and errors dim the icon and retained reading to
 grey in light and dark menu bars while data age continues advancing;
 a session-ended error offers Sign In Again. A new setup opens Settings.
 
+Each port row shows its connected USB-C device label beside the readings. A
+reported port fault turns the row's label red with a warning triangle and "Fault
+reported"; the charger reports one fault bit for both USB-A ports, shown as
+"USB-A fault" on each. A charger over-temperature report appears as a red
+warning above the rows. Click a row, or press Space or Return on it, to expand
+it; one row is expanded at a time and it stays expanded as readings update. The
+expanded row shows the fault state and raw fault bits and, for an identified
+USB-C device, a **Name this device** field, the brand class (or "Unknown class
+N"), the hexadecimal USB IDs and the device model code. Values the charger did
+not report read "Not reported by this charger". The charger's identity-support
+value is not used to hide identities: a charger reporting 2 has still
+identified devices.
+
+Press Return or move focus away to save a name; closing the panel or expanding
+another row also saves it, and a blank name removes it. Escape abandons the edit
+and keeps the panel open; a second Escape closes the panel. If a save fails, the
+typed name and an inline error stay, the edited row stays expanded, and the name
+remains available for retry after the panel is reopened (in memory only; quitting
+discards it). A problem in `devices.json` is
+shown once, as a warning below the rows naming the failing entry.
+
 Only nonsecret provider configuration, charger selection, cadence and menu bar
 text size are saved in `state.json` under
 `~/Library/Application Support/Prime Monitor/`, beside `instance.lock`.
@@ -83,7 +104,9 @@ class keys), `vendors` (four hexadecimal digits) and `devices` (`VID:PID`)
 objects, either hex letter case. Names are strings of 1–64 characters after
 trimming; two spellings of one key are rejected. `source` and other top-level
 keys are kept. A label uses the device name, then the brand class, then the
-vendor, then the uppercase hexadecimal `VID:PID`.
+vendor, then the uppercase hexadecimal `VID:PID`. A device that has not reported
+its identity is labelled "Unidentified device"; some devices never answer, so
+that label can persist while the device charges.
 While the panel is open the app checks the file every second and decodes it
 when its device, inode, size or modification time changes, so editor saves apply
 without a restart. An invalid file is left untouched: the last loaded names stay

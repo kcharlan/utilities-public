@@ -32,6 +32,18 @@ tests and snapshot fixtures cannot reach the owner's runtime file.
 `StatusItemController` pairs the store's `panelOpened`/`panelClosed` with the
 monitor's, which bounds the one-second reload loop to panel visibility.
 
+`PortDetailState`, owned by `StatusItemController` and passed through
+`StatusContent` to `PanelView`, holds the one expanded port row, the naming draft
+bound to its charger, port and device key, editing state and the last naming
+failure, so they survive snapshot replacement and panel closing. Return, focus
+loss, closing and row switching all save through `DeviceCatalogStore.setName`.
+Escape has one owner action, `StatusItemController.cancel`, reached from
+`StatusPanel.performKeyEquivalent`, `StatusPanel.cancelOperation`,
+`StatusHostingController.cancelOperation` and the naming field's
+`onExitCommand`; none forwards the command to another. While a field in the
+hosted content is editing, it cancels the edit (marking cancellation before
+clearing focus); otherwise it dismisses the panel.
+
 The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen
 renders exercise maintained sources; physical click/Space behavior and system
