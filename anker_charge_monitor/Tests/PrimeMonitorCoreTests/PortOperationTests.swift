@@ -238,10 +238,12 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     _ = on.handle(.requested, at: at(0))
     #expect(try #require(outcome(on.handle(.publishFailed(id: pub(1)), at: at(1)))).kind == .onNotConfirmed)
 
+    // A restart's off phase does not finish on a publish failure: it turns on instead
+    // (see "Unconfirmed restart off phase" below).
     var restartOff = PortOperation(.restart, target: .c4, context: context)
     _ = restartOff.handle(.requested, at: at(0))
-    let restartOffResult = try #require(outcome(restartOff.handle(.publishFailed(id: pub(1)), at: at(1))))
-    #expect(restartOffResult.kind == .offNotConfirmed && restartOffResult.operation == .restart)
+    #expect(restartOff.handle(.publishFailed(id: pub(1)), at: at(1)) == [.publish(.c4, on: true, id: pub(2))])
+    #expect(!restartOff.isFinished)
 
     // A restart's on phase failing to publish after a confirmed off: couldn't confirm on,
     // keeping the off confirmation as its boundary.
@@ -551,11 +553,9 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
 }
 
 @Test func anExpiredDeadlineWinsOverLifecycleEvents() throws {
-    var ending = confirming(.restart, published: 1)
-    let endingActions = ending.handle(.ending(.quit), at: at(11))
-    #expect(try #require(outcome(endingActions)).kind == .offNotConfirmed)
-
-    var lost = confirming(.restart, published: 1)
+    // A restart's expired off deadline moves it to the on phase instead; see
+    // lifecycleEventsAfterAnExpiredRestartOffDeadlineNeverPublishTheOnPhase.
+    var lost = confirming(.turnOff, published: 1)
     #expect(try #require(outcome(lost.handle(.disconnected, at: at(11)))).kind == .offNotConfirmed)
 
     var restartOn = turningOnRestart()
@@ -563,16 +563,19 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
 }
 
 @Test func everyRestartOutcomeWantsOnAndOnlyAnOnReportClearsIt() throws {
+    // Off phases that failed to confirm, each followed by a confirmed on phase.
     var publishFailed = PortOperation(.restart, target: .c4, context: context)
     _ = publishFailed.handle(.requested, at: at(0))
-    _ = publishFailed.handle(.disconnected, at: at(0.5))
-    _ = publishFailed.handle(.reconnected(receipt(1, 10)), at: at(1))
+    _ = publishFailed.handle(.publishFailed(id: pub(1)), at: at(1))
+    _ = publishFailed.handle(.published(receipt(1, 20), id: pub(2)), at: at(2))
     var deadline = confirming(.restart, .c4, published: 1)
+    _ = deadline.handle(.tick, at: at(11))
+    _ = deadline.handle(.published(receipt(1, 20), id: pub(2)), at: at(12))
     var ended = paused()
     var confirmed = turningOnRestart()
     let results = [
-        try #require(outcome(publishFailed.handle(.tick, at: at(11)))),
-        try #require(outcome(deadline.handle(.tick, at: at(11)))),
+        try #require(outcome(publishFailed.handle(.snapshot(report(.c4, on: true, receivedAt: at(2.5)), mark(1, 21)), at: at(2.5)))),
+        try #require(outcome(deadline.handle(.snapshot(report(.c4, on: true, receivedAt: at(12.5)), mark(1, 21)), at: at(12.5)))),
         try #require(outcome(ended.handle(.ending(.terminalAuthentication), at: at(3)))),
         try #require(outcome(confirmed.handle(.snapshot(report(.c2, on: true, receivedAt: at(8.5)), mark(1, 21)), at: at(8.5))))
     ]
@@ -605,4 +608,147 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
     let result = try #require(outcome(restart.handle(
         .snapshot(report(.c2, on: true, receivedAt: at(9.6)), mark(2, 32)), at: at(9.6))))
     #expect(result.kind == .confirmed && result.boundary == mark(2, 32))
+}
+
+// MARK: - Unconfirmed restart off phase
+// A restart whose off phase is not confirmed turns on at once, without the pause:
+// leaving the port off is the one result the user did not ask for.
+
+@Test func restartOffDeadlineTurnsOnAndReportsTheUnconfirmedOff() throws {
+    var operation = confirming(.restart, published: 1)
+    #expect(operation.handle(.tick, at: at(10)) == [.requestStatus])
+    #expect(operation.handle(.tick, at: at(11)) == [.publish(.c2, on: true, id: pub(2))])
+    #expect(operation.phase == .turningOn && !operation.isFinished && operation.pauseEnd == nil)
+    // The old phase's late results and off reports cannot touch the on phase.
+    #expect(operation.handle(.published(receipt(1, 15), id: pub(1)), at: at(11.2)) == [])
+    #expect(operation.handle(.snapshot(report(.c2, on: false, receivedAt: at(11.3)), mark(1, 16)), at: at(11.3)) == [])
+    #expect(operation.latestFreshReport == nil)
+    #expect(operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(12)) == [.requestStatus])
+    #expect(operation.nextDue == at(13))
+    let result = try #require(outcome(operation.handle(
+        .snapshot(report(.c2, on: true, receivedAt: at(12.5)), mark(1, 21)), at: at(12.5))))
+    #expect(result == PortOperationOutcome(context: context, operation: .restart, target: .c2, wantedOn: true,
+                                           kind: .offNotConfirmed, boundary: mark(1, 21)))
+    // A later on report clears it; an off report does not.
+    #expect(result.isCleared(by: report(.c2, on: true, receivedAt: at(13)), mark: mark(1, 22), in: context))
+    #expect(!result.isCleared(by: report(.c2, on: false, receivedAt: at(13)), mark: mark(1, 22), in: context))
+}
+
+@Test func anOffDeadlineExpiringWithAnEventTurnsOnBeforeTheEvent() {
+    var operation = confirming(.restart, published: 1)
+    // The deadline applies first; the off report then belongs to no confirming phase.
+    let actions = operation.handle(.snapshot(report(.c2, on: false, receivedAt: at(11)), mark(1, 30)), at: at(11))
+    #expect(actions == [.publish(.c2, on: true, id: pub(2))])
+    #expect(operation.phase == .turningOn && operation.latestFreshReport == nil)
+}
+
+@Test func restartOffPublishFailureTurnsOnAndReportsTheUnconfirmedOff() throws {
+    var operation = PortOperation(.restart, target: .c1, context: context)
+    #expect(operation.handle(.requested, at: at(0)) == [.publish(.c1, on: false, id: pub(1))])
+    #expect(operation.handle(.publishFailed(id: pub(1)), at: at(0.5)) == [.publish(.c1, on: true, id: pub(2))])
+    #expect(operation.phase == .turningOn)
+    #expect(operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(1)) == [.requestStatus])
+    let result = try #require(outcome(operation.handle(
+        .snapshot(report(.c1, on: true, receivedAt: at(1.5)), mark(1, 21)), at: at(1.5))))
+    #expect(result.kind == .offNotConfirmed && result.wantedOn && result.boundary == mark(1, 21))
+}
+
+@Test func anOnPhaseFailureAfterAnUnconfirmedOffKeepsTheOnFailure() throws {
+    // Off deadline, then a fresh off report and the on deadline: still off.
+    var stillOff = confirming(.restart, published: 1)
+    _ = stillOff.handle(.tick, at: at(11))
+    _ = stillOff.handle(.published(receipt(1, 20), id: pub(2)), at: at(12))
+    _ = stillOff.handle(.snapshot(report(.c2, on: false, receivedAt: at(12.5)), mark(1, 21)), at: at(12.5))
+    #expect(stillOff.handle(.tick, at: at(21)) == [.requestStatus])
+    let stillOffResult = try #require(outcome(stillOff.handle(.tick, at: at(22))))
+    #expect(stillOffResult.kind == .stillOff && stillOffResult.wantedOn && stillOffResult.boundary == mark(1, 20))
+
+    // Off deadline, then a silent on phase: couldn't confirm on.
+    var silent = confirming(.restart, published: 1)
+    _ = silent.handle(.tick, at: at(11))
+    _ = silent.handle(.published(receipt(1, 20), id: pub(2)), at: at(12))
+    #expect(try #require(outcome(silent.handle(.tick, at: at(22)))).kind == .onNotConfirmed)
+
+    // Both publishes fail: couldn't confirm on, with no boundary.
+    var rejected = PortOperation(.restart, target: .c3, context: context)
+    _ = rejected.handle(.requested, at: at(0))
+    _ = rejected.handle(.publishFailed(id: pub(1)), at: at(0.5))
+    let rejectedResult = try #require(outcome(rejected.handle(.publishFailed(id: pub(2)), at: at(1))))
+    #expect(rejectedResult.kind == .onNotConfirmed && rejectedResult.boundary == nil)
+}
+
+@Test(arguments: PortOperationEndingReason.allCases)
+func endingTheOnPhaseAfterAnUnconfirmedOffFollowsTheRestartEndingRules(reason: PortOperationEndingReason) throws {
+    var inFlight = confirming(.restart, published: 1)
+    _ = inFlight.handle(.tick, at: at(11))
+    var confirmingOn = inFlight
+    _ = confirmingOn.handle(.published(receipt(1, 20), id: pub(2)), at: at(12))
+    for (start, now) in [(inFlight, at(11.5)), (confirmingOn, at(12.5))] {
+        var operation = start
+        let actions = operation.handle(.ending(reason), at: now)
+        let expectedPublish: [PortOperationAction] = reason == .terminalAuthentication ? [] : [.endingPublish(.c2, on: true)]
+        #expect(Array(actions.dropLast()) == expectedPublish)
+        guard case .finish(let result) = actions.last else { Issue.record("no finish"); continue }
+        #expect(result.kind == .mayStillBeOff && result.wantedOn)
+    }
+}
+
+@Test func lifecycleEventsAfterAnExpiredRestartOffDeadlineNeverPublishTheOnPhase() throws {
+    // Ending: the attempt is the ending write, not a phase publish.
+    var ending = confirming(.restart, published: 1)
+    let endingActions = ending.handle(.ending(.quit), at: at(11))
+    #expect(endingActions.count == 2)
+    #expect(endingActions.first == .endingPublish(.c2, on: true))
+    guard case .finish(let endingResult) = endingActions.last else { Issue.record("no finish"); return }
+    #expect(endingResult.kind == .mayStillBeOff)
+
+    var terminal = confirming(.restart, published: 1)
+    #expect(try #require(outcome(terminal.handle(.ending(.terminalAuthentication), at: at(11)))).kind == .mayStillBeOff)
+
+    // Disconnection: suspended in the on phase, which resends "on" after reconnecting.
+    var lost = confirming(.restart, published: 1)
+    #expect(lost.handle(.disconnected, at: at(11)) == [])
+    #expect(lost.isSuspended && lost.phase == .turningOn && !lost.isFinished)
+    #expect(lost.handle(.tick, at: at(30)) == [])
+    #expect(lost.handle(.reconnected(receipt(2, 30)), at: at(40)) == [.publish(.c2, on: true, id: pub(2))])
+    #expect(lost.handle(.published(receipt(2, 31), id: pub(2)), at: at(41)) == [.requestStatus])
+    let result = try #require(outcome(lost.handle(
+        .snapshot(report(.c2, on: true, receivedAt: at(41.5)), mark(2, 32)), at: at(41.5))))
+    #expect(result.kind == .offNotConfirmed && result.boundary == mark(2, 32))
+}
+
+@Test func disconnectionDuringTheOnPhaseAfterAnUnconfirmedOffResendsOn() throws {
+    var operation = confirming(.restart, published: 1)
+    _ = operation.handle(.tick, at: at(11))
+    _ = operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(12))
+    _ = operation.handle(.disconnected, at: at(12.5))
+    #expect(operation.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true, id: pub(3))])
+    _ = operation.handle(.published(receipt(2, 31), id: pub(3)), at: at(21))
+    let result = try #require(outcome(operation.handle(
+        .snapshot(report(.c2, on: true, receivedAt: at(21.5)), mark(2, 32)), at: at(21.5))))
+    #expect(result.kind == .offNotConfirmed)
+}
+
+// MARK: - Stray reconnection
+
+@Test func reconnectionWithoutADisconnectionIsIgnored() throws {
+    // A restart's on phase does not resend "on" or move its fence.
+    var restart = turningOnRestart()
+    #expect(restart.handle(.reconnected(receipt(2, 30)), at: at(8.5)) == [])
+    #expect(restart.phase == .turningOn && restart.nextDue == at(9))
+    let restartResult = try #require(outcome(restart.handle(
+        .snapshot(report(.c2, on: true, receivedAt: at(8.6)), mark(1, 21)), at: at(8.6))))
+    #expect(restartResult.kind == .confirmed && restartResult.boundary == mark(1, 21))
+
+    // A confirming phase keeps its receipt, deadline and fresh reports.
+    var plain = confirming(.turnOn, published: 1)
+    _ = plain.handle(.snapshot(report(.c2, on: false, receivedAt: at(1.2)), mark(1, 11)), at: at(1.2))
+    #expect(plain.handle(.reconnected(receipt(2, 30)), at: at(1.5)) == [])
+    #expect(plain.latestFreshReport == false)
+    #expect(try #require(outcome(plain.handle(.tick, at: at(11)))).kind == .stillOff)
+
+    // A paused restart keeps waiting.
+    var waiting = paused()
+    #expect(waiting.handle(.reconnected(receipt(2, 30)), at: at(3)) == [])
+    #expect(waiting.phase == .paused(until: at(7)))
 }

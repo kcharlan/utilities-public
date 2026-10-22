@@ -1,5 +1,21 @@
 # Lessons learned
 
+## 2026-10-22: Fail a compound device action toward the state the user asked for
+
+A restart is off, a pause, then on. Its first design finished the operation
+whenever a phase went unconfirmed, as plain turn-off and turn-on do. For the off
+phase that meant a missed deadline or a failed publish never sent "on": a charger
+slow to report (a risk the plan itself listed) could still have turned the port
+off, and it then stayed off, while the outcome, which only an "on" report clears,
+said only that "off" was unconfirmed. Every phase test passed because each phase
+was checked on its own terms. The final review found it by asking where the
+device ends up on each failure path. An unconfirmed off phase now goes straight
+to the on phase without the pause and reports the unconfirmed off only once that
+on phase confirms. When one step of a multi-step device action cannot be
+confirmed, assume it may have happened, and steer the failure path toward the
+state the user asked for, never leave the device in an intermediate state. Test
+each failure path for where the device ends up, not only for the message shown.
+
 ## 2026-10-22: Inspect control states in the snapshots, not only their text
 
 The first port-control render marked the armed button with

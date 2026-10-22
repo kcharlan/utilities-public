@@ -190,6 +190,23 @@ let otherCharger = ChargerInfo(serial: "synthetic-other-charger", model: "A2345"
         rig.controller.dismissPortOutcome(); #expect(rig.controller.portOutcome == nil)
         await rig.finish()
     }
+    /// A restart whose off phase is never confirmed must not leave the port off.
+    @Test func restartWithAnUnconfirmedOffStillTurnsOn() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        rig.controller.restartPort(.c2); await settle()
+        await rig.clock.advance(PortControlPolicy.confirmationDeadline)
+        #expect(await rig.commands() == ["c2 off", "c2 on"])
+        #expect(operationPhase(rig.controller) == .turningOn)
+        #expect(rig.controller.portOutcome == nil)
+        await rig.switchReply(.c2, true)
+        #expect(rig.controller.portOperation == nil)
+        let outcome = try #require(rig.controller.portOutcome)
+        #expect(outcome.kind == .offNotConfirmed && outcome.operation == .restart && outcome.wantedOn)
+        // An off report never clears it; a later on report does.
+        await rig.switchReply(.c2, false); #expect(rig.controller.portOutcome == outcome)
+        await rig.switchReply(.c2, true); #expect(rig.controller.portOutcome == nil)
+        await rig.finish()
+    }
     @Test func reconnectionReplacesTheOutcomeBoundaryBeforeClearing() async throws {
         let rig = try ControllerRig(); await rig.ready()
         rig.controller.turnPort(.c2, on: false); await settle()
@@ -551,9 +568,21 @@ let otherCharger = ChargerInfo(serial: "synthetic-other-charger", model: "A2345"
     @Test func aPublishErrorOnALiveLinkFailsAtOnce() async throws {
         let rig = try ControllerRig(); await rig.ready()
         await rig.backend.failSwitchWrites()
-        rig.controller.restartPort(.c2); await settle()
+        rig.controller.turnPort(.c2, on: false); await settle()
         #expect(rig.controller.portOperation == nil)
         #expect(rig.controller.portOutcome?.kind == .offNotConfirmed)
+        await rig.finish()
+    }
+    /// A restart's rejected off write moves straight to "on"; when that is rejected
+    /// too, the on failure is reported.
+    @Test func aRestartWhoseWritesAreRejectedStillTriesOn() async throws {
+        let rig = try ControllerRig(); await rig.ready()
+        await rig.backend.failSwitchWrites()
+        rig.controller.restartPort(.c2); await settle()
+        #expect(await rig.commands() == ["c2 off", "c2 on"])
+        #expect(rig.controller.portOperation == nil)
+        #expect(rig.controller.portOutcome?.kind == .onNotConfirmed)
+        #expect(rig.controller.portOutcome?.wantedOn == true)
         await rig.finish()
     }
 }

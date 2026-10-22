@@ -123,6 +123,11 @@ port is off. A confirmed change simply clears the phase text. A change that is
 not confirmed within 10 seconds is reported above the rows, prefixed with the
 name of the charger it was sent to, with a **Dismiss** button; the in-app
 [wording](docs/port_control_implementation_plan.md#wording) lists each message.
+A restart whose "off" is not confirmed, because no report arrives in time or the
+command fails, does not stop there: it sends "on" at once, without the pause, so
+the port is not left off. If that "on" is confirmed, the restart still reports
+"Couldn't confirm {port} turned off." because the off-and-on cycle was never
+confirmed; if it is not, the "on" failure is reported instead.
 That result stays after sign-out or a charger change and is never shown on another
 charger's rows. Dismiss, a new operation or a later matching report from the same
 charger clears it. Phase changes and results are announced to VoiceOver.
@@ -132,9 +137,11 @@ dropped connection pauses it, and it resumes from its phase after reconnecting:
 a restart's pause keeps its original end, a restart that was turning on sends
 "on" again, and otherwise the app only requests status again. Quitting, signing out,
 choosing a charger, editing the credential settings, Retry, Reload Credentials
-and Sign In Again end it. Ending a restart sends one "on" command over the
-existing connection, within 3 seconds. A sent command is not confirmation, so a
-restart ended this way reports that the port may still be off. Ending a plain
+and Sign In Again end it. Ending a restart attempts one "on" command over the
+existing connection if it is still up and signed in; sleep, network loss, an
+ended session or a failed sign-in skips it. The whole attempt is bounded to 3 seconds. A sent command
+is not confirmation, so a restart ended this way reports that the port may still
+be off. Ending a plain
 turn-off does not turn the port back on. Check the device itself after any
 reported result.
 

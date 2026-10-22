@@ -92,7 +92,10 @@ the cited upstream code does.
   satisfy "Confirmation freshness" before the pause begins; the pause uses
   `PortControlPolicy.restartPause`, then the on phase begins. The ending attempt
   is the exception to this sequence. Confirming either switch change uses the
-  policy's interval and deadline; an unconfirmed phase finishes with an outcome.
+  policy's interval and deadline; an unconfirmed phase finishes with an outcome,
+  except a restart's off phase: a missed deadline or failed publish there starts
+  the on phase at once, without the pause, and the off failure is reported only
+  if that on phase confirms (final review fix).
 - **One operation at a time.** While one runs, the other ports' actions are
   unavailable and say why. Reject overlapping requests for the active target
   too. Finished results follow "Outcome lifetime".

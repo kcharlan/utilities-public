@@ -62,7 +62,10 @@ public enum PortOperationEndingReason: CaseIterable, Hashable, Sendable {
 public enum PortOperationOutcomeKind: Hashable, Sendable {
     /// The final switch change was confirmed by fresh evidence.
     case confirmed
-    /// An off phase (plain or restart) failed to confirm.
+    /// A plain turn-off failed to confirm, or a restart's off phase failed to confirm
+    /// and its on phase then confirmed. A restart's unconfirmed off phase turns the
+    /// port on at once, without the pause, so it is never left off by that failure;
+    /// when that on phase also fails, the on-phase outcome is reported instead.
     case offNotConfirmed
     /// An on phase failed after a fresh report of the target still off.
     case stillOff
@@ -151,7 +154,8 @@ public enum PortOperationEvent: Equatable, Sendable {
     /// The connection was lost (sleep, network loss): publishing is suspended.
     case disconnected
     /// Reconnected in the same process; the receipt is the replacement connection's
-    /// fence from `ChargerBackend.commandFence()`. Send it only after `disconnected`.
+    /// fence from `ChargerBackend.commandFence()`. Ignored unless suspended by
+    /// `disconnected`, so a stray reconnection never resends or moves a fence.
     case reconnected(PortCommandReceipt)
     case ending(PortOperationEndingReason)
 }
@@ -184,6 +188,13 @@ public enum PortOperationAction: Hashable, Sendable {
 /// of another state never fails a phase early; the latest one picks the failure at
 /// the deadline. Replies buffered before the command pass the fence and the receive
 /// time alike (protocol reference §7), so only the reported value limits them.
+///
+/// A restart whose off phase misses its deadline or fails to publish does not
+/// finish: it enters the on phase at once, without the pause, because leaving the
+/// port off is the one result the user did not ask for. That on phase follows the
+/// ordinary on-phase rules; when it confirms, the outcome is `offNotConfirmed`.
+/// A lifecycle event that finds the off deadline expired enters the on phase
+/// without its publish: reconnection then resends "on" and ending attempts it.
 public struct PortOperation: Hashable, Sendable {
     private struct Confirmation: Hashable, Sendable {
         let receipt: PortCommandReceipt
@@ -204,6 +215,8 @@ public struct PortOperation: Hashable, Sendable {
     private var outstanding: PortPublishID?
     private var confirmation: Confirmation?
     private var boundary: ReceiveMark?
+    /// A restart's off phase failed to confirm; reported once the on phase confirms.
+    private var offUnconfirmed = false
 
     public init(_ kind: PortOperationKind, target: PortSwitch, context: PortOperationContext) {
         self.kind = kind
@@ -263,13 +276,14 @@ public struct PortOperation: Hashable, Sendable {
         case .publishFailed(let id):
             guard outstanding == id else { break }
             outstanding = nil
-            actions.append(finish(failure))
+            actions += phaseFailed(publishing: true)
         case .snapshot(let snapshot, let mark):
             actions += accept(snapshot, mark, at: now)
         case .disconnected:
             isSuspended = true
             outstanding = nil
         case .reconnected(let receipt):
+            guard isSuspended else { break }
             isSuspended = false
             outstanding = nil
             actions += resume(receipt, at: now)
@@ -291,6 +305,21 @@ public struct PortOperation: Hashable, Sendable {
         return confirmation?.latestFresh == false ? .stillOff : .onNotConfirmed
     }
 
+    /// The current phase failed to confirm. A restart's off phase moves to the on
+    /// phase instead of finishing; `publishing` is false for lifecycle events, which
+    /// never start a phase publish.
+    private mutating func phaseFailed(publishing: Bool) -> [PortOperationAction] {
+        guard kind == .restart, phase == .turningOff else { return [finish(failure)] }
+        offUnconfirmed = true
+        guard publishing else {
+            phase = .turningOn
+            confirmation = nil
+            outstanding = nil
+            return []
+        }
+        return enter(.turningOn)
+    }
+
     private mutating func enter(_ next: PortOperationPhase) -> [PortOperationAction] {
         phase = next
         confirmation = nil
@@ -310,7 +339,7 @@ public struct PortOperation: Hashable, Sendable {
 
     private mutating func expireDeadline(at now: Date) -> [PortOperationAction] {
         guard !isSuspended, let current = confirmation, now >= current.deadline else { return [] }
-        return [finish(failure)]
+        return phaseFailed(publishing: false)
     }
 
     private mutating func advance(to now: Date) -> [PortOperationAction] {
@@ -319,7 +348,7 @@ public struct PortOperation: Hashable, Sendable {
             return now >= pauseEnd ? enter(.turningOn) : []
         }
         guard let current = confirmation else { return [] }
-        if now >= current.deadline { return [finish(failure)] }
+        if now >= current.deadline { return phaseFailed(publishing: true) }
         guard now >= current.nextRequest else { return [] }
         confirmation?.nextRequest = now.addingTimeInterval(PortControlPolicy.confirmationInterval)
         return [.requestStatus]
@@ -336,7 +365,7 @@ public struct PortOperation: Hashable, Sendable {
             return []
         }
         boundary = mark
-        guard kind == .restart, phase == .turningOff else { return [finish(.confirmed)] }
+        guard kind == .restart, phase == .turningOff else { return [finish(offUnconfirmed ? .offNotConfirmed : .confirmed)] }
         confirmation = nil
         phase = .paused(until: snapshot.receivedAt.addingTimeInterval(PortControlPolicy.restartPause))
         return advance(to: now)

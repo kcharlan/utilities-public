@@ -18,7 +18,11 @@ decisions"](port_control_implementation_plan.md#design-decisions). `PortOperatio
 (Core) is a clock-free state machine for one turn-off, turn-on or restart: it
 takes `requested`, publish results, snapshots with their receive marks, ticks,
 disconnection, reconnection fences and ending reasons, and returns publish,
-status-request and finish actions. `MonitorController` owns the one running
+status-request and finish actions. A restart whose off phase misses its
+confirmation deadline or fails to publish does not finish there: it enters the on
+phase at once, without the pause, so the port is not left off, and reports
+`offNotConfirmed` if that on phase confirms (the on-phase failure otherwise). A
+`reconnected` event is ignored unless the operation is suspended. `MonitorController` owns the one running
 operation (`portOperation`) and the last unconfirmed result (`portOutcome`), so
 closing the panel changes nothing. It refuses a second operation, and any while
 disconnected or stale (`portControlBlock`). It executes publishes through
