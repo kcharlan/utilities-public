@@ -4,6 +4,7 @@ import errno
 import hashlib
 import http.client
 import json
+import re
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -431,6 +432,17 @@ def test_run_browse_closes_database_when_server_creation_fails(
 
     assert close_calls == 1
     assert captured_context.display_invocation == "renamed-sentinel"
+
+
+def test_run_browse_hosts_view_prints_reproducible_fragment(tmp_path: Path, monkeypatch, capsys) -> None:
+    database_path = tmp_path / "hosts-view.db"
+    build_fixture_db(database_path)
+    db = open_readonly(database_path)
+    loaded = SimpleNamespace(providers=(EXAMPLE_PROVIDER, OTHER_PROVIDER), settings=browse_settings())
+    monkeypatch.setattr(server_module._BrowseHTTPServer, "serve_forever", lambda self: None)
+    server_module.run_browse(db=db, loaded=loaded, port=0, open_browser=False,
+                             initial_provider=None, initial_view="hosts")
+    assert re.search(r"http://127\.0\.0\.1:\d+/#view=hosts", capsys.readouterr().out)
 
 
 def test_endpoint_reason_states_served_over_http(tmp_path: Path) -> None:

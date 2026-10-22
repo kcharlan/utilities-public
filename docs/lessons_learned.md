@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-22: Validate snapshot ownership before requesting a new provider
+
+Model Sentinel's shared Providers controls preserve view-specific hash keys.
+Hosts initially reused `hasof` after the selected provider changed, sending an
+exact scrape ID owned by the previous provider and receiving a 400. Validate
+the requested ID against the selected provider's saved successful scrapes
+before issuing the request. If it does not belong there, request the default
+capture and canonicalize the returned ID with `replaceState`. Keep explicit
+valid uncaptured and failed snapshots exact; do not substitute another capture
+for them. Regress provider changes, malformed IDs, and Back navigation with
+the isolated synthetic Hosts fixture and the browser's console-error guard.
+
 ## 2026-10-22: Mark telemetry processing separately from sample presence
 
 A missing numeric sample cannot distinguish an unprocessed archive from a

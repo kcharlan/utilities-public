@@ -447,6 +447,7 @@ def test_browse_dispatches_resolved_invocation_before_runtime_writes(
         (("browse", "--port", "0"), None, 1),
         (("browse", "--port", "0", "--provider", "openrouter"), "#providers=openrouter", 1),
         (("browse", "--port", "0", "--view", "catalog", "--no-open"), "#view=catalog", 0),
+        (("browse", "--port", "0", "--view", "hosts", "--no-open"), "#view=hosts", 0),
         (("browse", "--port", "0", "--model", "openrouter/fake-org/test-model-a", "--no-open"), "#view=model&model=openrouter%2Ffake-org%2Ftest-model-a", 0),
         (("browse", "--port", "0", "--provider", "openrouter", "--model", "openrouter/fake-org/test-model-a", "--no-open"), "#view=model&model=openrouter%2Ffake-org%2Ftest-model-a&providers=openrouter", 0),
     ),

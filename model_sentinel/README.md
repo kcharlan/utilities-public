@@ -15,8 +15,8 @@ The CLI is implemented and includes:
 - SQLite-backed saved snapshots and change history
 - `history` queries for a provider/model pair
 - `changes` cross-provider/cross-model change log with date range filtering
-- `browse` read-only, fully offline history browser with Activity, Models, and
-  Catalog views
+- `browse` read-only, fully offline history browser with Activity, Models,
+  Catalog, and Hosts views
 - `providers` config inspection
 - `healthcheck` runtime/config validation
 - explicit `credentials refresh` acquisition into a private persistent cache
@@ -476,6 +476,7 @@ artifact.
 ./model-sentinel browse
 ./model-sentinel browse --provider openrouter
 ./model-sentinel browse --view catalog
+./model-sentinel browse --view hosts
 ./model-sentinel browse --model example-provider/fake-org/test-model-a
 ./model-sentinel browse --no-open --port 8110
 ```
@@ -496,6 +497,16 @@ browser, and `Ctrl-C` stops the server.
   sparklines, and links back to the timeline or feed. Compare mode initially
   shows changed models only; turn off **Changed only** to inspect the full
   snapshot.
+- **Hosts** compares serving companies in an exact saved endpoint capture.
+  Select no hosts for the best-across-hosts matrix, one for its profile and
+  history, or several for side-by-side columns. Shared model lists appear
+  once with their mapped model dossier links and aliases. Rank by exact price,
+  sampled uptime, context length, or max output; equal values share a rank.
+  Missing values remain visible without a best marker. Expand additional
+  endpoints to inspect precision, capabilities, tiers, and raw prices. Roster
+  counts describe observed coverage, and incomplete history captures break
+  uptime trends. On narrow screens the roster collapses above the scrolling
+  matrix. Snapshot, host selection, ranking, and row match survive reloads.
 
 Every model name opens a dossier containing identity and presence evidence,
 current facts, field-history sparklines, and the complete stored changelog.
@@ -540,7 +551,8 @@ with Model Sentinel, so viewing history makes no network request.
 
 The URL hash contains the selected view and filters, making browser
 back/forward and copied local URLs reproducible. Press `/` to focus **Find
-model**, `1`, `2`, or `3` to switch among Activity, Models, and Catalog, and
+model**, `1`, `2`, `3`, or `4` to switch among Activity, Models, Catalog, and
+Hosts, and
 `Esc` to close search results, drawers, or popovers. The Appearance disclosure
 offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.

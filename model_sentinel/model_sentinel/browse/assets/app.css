@@ -32,6 +32,61 @@
   --series-8: #535f73;
 }
 
+/* Hosts follows Sources' instrument surfaces; the question is the primary
+   hierarchy, while table markers encode rank without price-change colors. */
+.hosts-view { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; }
+.hosts-view > *, .hosts-workbench > * { min-width: 0; }
+.host-roster { align-self: start; }
+.host-roster > summary { padding: 14px; font-weight: 700; }
+.host-roster > div { padding: 0 14px 14px; }
+.host-roster label, .hosts-controls label { display: grid; gap: 6px; }
+.host-roster input, .host-roster select { width: 100%; min-width: 0; }
+.host-roster input, .host-roster select, .hosts-controls select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--border-strong); padding: 5px; }
+.host-roster ul { padding: 0; list-style: none; }
+.host-roster li + li { border-top: 1px solid var(--border); }
+.host-roster li button { display: grid; gap: 5px; padding: 12px 6px; width: 100%; text-align: left; background: transparent; border: 0; }
+.host-roster li button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+.host-roster small, .host-list-title small, .host-matrix small { display: block; color: var(--ink-muted); }
+.hosts-question { font-size: clamp(22px, 2.1vw, 32px); line-height: 1.3; font-weight: 600; margin: 8px 0 20px; }
+.hosts-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin-bottom: 20px; }
+.hosts-controls select { max-width: 100%; }
+.host-capture-status { flex-basis: 100%; color: var(--ink-muted); }
+.host-matrix-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--border); }
+.host-matrix { width: 100%; border-collapse: collapse; }
+.host-matrix th, .host-matrix td { min-width: 210px; max-width: 400px; padding: 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.host-matrix thead th { background: var(--ground); }
+.host-matrix tr > th:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); min-width: 240px; }
+.host-matrix td { background: var(--panel); }
+.host-best { box-shadow: inset 4px 0 var(--ink-strong); }
+.host-profile-list > .host-best { padding-left: 12px; font-weight: 700; }
+.host-matrix td strong { font-weight: 500; }
+.host-matrix .host-best > div > strong { font-weight: 750; }
+.host-matrix .host-capacity { color: var(--capacity); }
+.host-matrix .host-precision { color: var(--capability); }
+.host-matrix strong { font-variant-numeric: tabular-nums; }
+.host-matrix details { margin-top: 10px; }
+.host-matrix summary { cursor: pointer; color: var(--accent); }
+.host-list-title { display: grid; gap: 7px; overflow-wrap: anywhere; }
+.host-list-title .model-link { font-size: 12px; text-align: left; }
+.host-endpoint-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); margin: 12px 0 0; }
+.host-endpoint-facts dt { font-size: 12px; color: var(--ink-muted); }
+.host-endpoint-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.host-endpoint-facts .capacity { color: var(--capacity); }
+.host-endpoint-facts .capability { color: var(--capability); }
+.host-profile { display: grid; gap: 18px; }
+.host-profile .instrument { padding: 18px; }
+.host-summary { display: flex; flex-wrap: wrap; gap: 20px; }
+.host-summary dt { color: var(--ink-muted); }
+.host-summary dd { margin: 5px 0 0; font-size: 20px; }
+.host-history svg { width: 100%; max-height: 140px; }
+@media (min-width: 761px) { .host-roster > summary { pointer-events: none; list-style: none; } }
+@media (max-width: 760px) {
+  .hosts-view { grid-template-columns: minmax(0, 1fr); }
+  .hosts-controls { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .hosts-controls .snapshot-picker, .hosts-controls input { min-width: 0; max-width: 100%; }
+  .host-matrix tr > th:first-child { min-width: 165px; max-width: 165px; }
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -248,7 +303,7 @@ legend,
 
 .view-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-block-end: 1px solid var(--border);
 }
 

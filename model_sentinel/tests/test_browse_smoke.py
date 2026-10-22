@@ -28,6 +28,7 @@ from tests.browse_fixtures import (
     browse_context,
     browse_settings,
     build_fixture_db,
+    build_hosts_fixture_db,
     mark_failed_list_unsent,
 )
 
@@ -64,6 +65,28 @@ def endpoint_server(tmp_path_factory: pytest.TempPathFactory):
     with _serve(database_path, facts) as served:
         yield served
     # The browser only reads endpoint history.
+    assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
+
+
+@pytest.fixture(scope="module")
+def hosts_server(tmp_path_factory: pytest.TempPathFactory, request):
+    database_path = tmp_path_factory.mktemp("browse-hosts-smoke") / "fixture.db"
+    facts = build_hosts_fixture_db(database_path)
+    variant = getattr(request, "param", None)
+    if variant:
+        with sqlite3.connect(database_path) as connection:
+            if variant == "legacy":
+                tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'endpoint_%'").fetchall()
+                for (table,) in tables:
+                    connection.execute(f'DROP TABLE "{table}"')
+            elif variant == "no_telemetry":
+                connection.execute("DROP TABLE endpoint_telemetry")
+                connection.execute("DROP TABLE endpoint_telemetry_captures")
+            else:
+                raise AssertionError(f"Unknown Hosts fixture variant: {variant}")
+    before = hashlib.sha256(database_path.read_bytes()).hexdigest()
+    with _serve(database_path, facts) as served:
+        yield served
     assert hashlib.sha256(database_path.read_bytes()).hexdigest() == before
 
 
@@ -127,6 +150,260 @@ def page(browser: Browser) -> Iterator[Page]:
             yield instance
     finally:
         context.close()
+
+
+@pytest.fixture
+def hosts_page(browser: Browser, hosts_server) -> Iterator[Page]:
+    context = browser.new_context()
+    try:
+        with _guarded_page(context, _origin(hosts_server)) as instance:
+            yield instance
+    finally:
+        context.close()
+
+
+def _hosts_fragment(facts, **changes):
+    values = {"view": "hosts", "providers": facts.provider_id, "hasof": facts.scrapes["first"], **changes}
+    return "#" + "&".join(f"{key}={quote(str(value), safe=',')}" for key, value in values.items())
+
+
+def test_hosts_grouping_ties_navigation_and_exact_prices(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta"))
+    matrix = hosts_page.get_by_role("table", name="Host comparison")
+    expect(matrix).to_be_visible()
+    tabs = hosts_page.locator(".view-tabs button")
+    assert tabs.first.bounding_box()["y"] == tabs.last.bounding_box()["y"]
+    shared = matrix.locator("tbody tr").filter(has_text="synthetic-response-shared")
+    expect(shared).to_have_count(1)
+    expect(shared.locator('[aria-label="best in row"]')).to_have_count(3)
+    expect(shared.locator("td").first).to_contain_text("alpha-cheap")
+    expect(shared).to_contain_text("1 additional")
+    shared.locator("td").first.get_by_text("1 additional", exact=False).click()
+    expect(shared).to_contain_text("alpha-fast")
+    expect(shared.locator("td").first.locator("details")).to_contain_text("alpha-cheap")
+    exact = matrix.locator("tbody tr").filter(has_text="synthetic-response-exact")
+    expect(exact.locator('[aria-label="best in row"]')).to_have_count(2)
+    hosts_page.get_by_label("Ranking").select_option("context")
+    expect(shared.locator('[aria-label="best in row"]')).to_have_count(2)
+    hosts_page.reload()
+    expect(hosts_page.get_by_label("Ranking")).to_have_value("context")
+    shared.get_by_role("button", name="fake-org/hosts-twin", exact=True).click()
+    expect(hosts_page.locator(".model-breadcrumb")).to_contain_text("hosts-twin")
+    hosts_page.go_back()
+    expect(matrix).to_be_visible()
+    hosts_page.keyboard.press("1")
+    expect(hosts_page.locator(".app-shell")).to_have_attribute("data-view", "activity")
+    hosts_page.keyboard.press("4")
+    expect(matrix).to_be_visible()
+
+
+def test_hosts_profile_precision_rank_difference_history_and_roster(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Gamma"))
+    profile = hosts_page.get_by_role("region", name="Host profile")
+    expect(profile).to_contain_text("Synthetic Gamma")
+    expect(profile).to_contain_text("200% above the best")
+    expect(profile).to_contain_text("3 / 3")
+    expect(profile).to_contain_text("fp16")
+    expect(profile).to_contain_text('"null"')
+    expect(hosts_page.get_by_role("region", name="Host history")).to_contain_text("Capture")
+    hosts_page.get_by_label("Search hosts").fill("beta")
+    expect(hosts_page.locator(".host-roster li")).to_have_count(1)
+    hosts_page.get_by_label("Search hosts").fill("")
+    hosts_page.get_by_label("Sort hosts").select_option("lists")
+    hosts_page.get_by_role("button", name="Select Synthetic Alpha", exact=True).click()
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+def test_hosts_missing_ranking_empty_capture_and_narrow_layout(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, rank="uptime:5m"))
+    expect(hosts_page.get_by_label("Ranking").locator('option[value="uptime:5m"]')).to_have_attribute("disabled", "")
+    expect(hosts_page.get_by_label("Ranking")).to_have_value("price:pricing.prompt")
+    unranked = hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr").filter(has_text="synthetic-response-unranked")
+    expect(unranked).to_contain_text("No values for this ranking")
+    hosts_page.set_viewport_size({"width": 390, "height": 844})
+    expect(hosts_page.locator(".host-roster > summary")).to_be_visible()
+    expect(hosts_page.locator(".host-roster")).not_to_have_attribute("open", "")
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta"))
+    scroll = hosts_page.locator(".host-matrix-scroll")
+    expect(hosts_page.get_by_role("columnheader", name="Synthetic Alpha", exact=True)).to_be_visible()
+    assert scroll.evaluate("node => node.scrollWidth > node.clientWidth")
+    title = hosts_page.locator(".host-matrix tbody tr").first.locator("th")
+    before = title.bounding_box()["x"]
+    scroll.evaluate("node => node.scrollLeft = 200")
+    assert abs(title.bounding_box()["x"] - before) <= 1
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["empty"]))
+    expect(hosts_page.get_by_text("No endpoints were recorded in this capture.", exact=True)).to_be_visible()
+
+
+def test_hosts_snapshot_and_history_resource_changes_hide_previous_rows(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha"))
+    expect(hosts_page.get_by_role("region", name="Host profile")).to_be_visible()
+    held = []
+    hosts_page.route(re.compile(r"/api/hosts\?.*scrape_id=" + str(facts.scrapes["empty"]) + r"(?:&|$)"), lambda route: held.append(route))
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["empty"]))
+    _wait_for(hosts_page, lambda: held)
+    expect(hosts_page.get_by_role("region", name="Host profile")).to_have_count(0)
+    held.pop().continue_()
+    expect(hosts_page.get_by_text("No endpoints were recorded in this capture.", exact=True)).to_be_visible()
+
+
+def test_hosts_exact_price_winner_difference_unranked_counts_and_order(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta,Synthetic Gamma"))
+    rows = hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")
+    expect(rows.first).to_contain_text("hosts-bare")  # The negative price wins before positive rows.
+    exact = rows.filter(has_text="synthetic-response-exact")
+    expect(exact.locator("td").nth(0).locator("strong").first).to_have_attribute("title", "0.00000100000000000000001")
+    expect(exact.locator("td").nth(0).locator('[aria-label="best in row"]')).to_have_count(1)
+    expect(exact.locator("td").nth(1)).to_contain_text("9.99999e-16% above the best")
+    expect(exact.locator("td").nth(2)).to_contain_text("—")
+    expect(exact.locator("td").last).to_contain_text("3 qualifying hosts")
+    hosts_page.get_by_label("Ranking").select_option("context")
+    expect(rows.first).to_contain_text("synthetic-response-exact")
+    expect(exact.locator("td").nth(2).locator('[aria-label="best in row"]')).to_have_count(1)
+    hosts_page.get_by_label("Ranking").select_option("uptime:1d")
+    shared = rows.filter(has_text="synthetic-response-shared")
+    expect(shared.locator("td").first).to_contain_text("100%")
+    expect(shared.locator("td").nth(1)).to_contain_text("3% below the best")
+
+
+def test_hosts_single_capture_pending_uptime_and_requested_unavailable_capture(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"], hosts="Synthetic Missing", rank="price:pricing.prompt"))
+    expect(hosts_page.get_by_label("Ranking")).to_have_value("context")
+    expect(hosts_page.get_by_text("Uptime isn't stored for this snapshot yet.", exact=False)).to_contain_text("The next saved scan can backfill it from its archive.")
+    history = hosts_page.get_by_role("region", name="Host history")
+    expect(history).to_contain_text("History starts 2026-09-05. Later usable captures add points.")
+    expect(history.locator("polyline")).to_have_count(0)
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["uncaptured"]))
+    expect(hosts_page.get_by_text("No endpoint capture was saved for this snapshot.", exact=True)).to_be_visible()
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["error"]))
+    expect(hosts_page.get_by_text("Endpoint capture failed for this snapshot, so no endpoint lists were saved.", exact=True)).to_be_visible()
+
+
+def test_hosts_row_rules_pin_bound_and_normalization_do_not_trap_back(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Missing", match="all"))
+    expect(hosts_page.get_by_text("No qualifying list matches the selected hosts and row rule.", exact=True)).to_be_visible()
+    hosts_page.get_by_label("Row match").select_option("any")
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+    hosts_page.go_back()
+    expect(hosts_page.get_by_label("Row match")).to_have_value("all")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Alpha,Synthetic Invented", rank="invented", match="invalid"))
+    expect(hosts_page.get_by_role("region", name="Host profile")).to_be_visible()
+    expect(hosts_page).not_to_have_url(re.compile("Synthetic%20Invented"))
+    expect(hosts_page).not_to_have_url(re.compile("Synthetic%20Alpha,Synthetic%20Alpha"))
+    expect(hosts_page.get_by_label("Ranking")).to_have_value("price:pricing.prompt")
+    # Selecting eight distinct observed hosts bounds the ninth selection.
+    _switch_hash(hosts_page, _hosts_fragment(facts))
+    buttons = hosts_page.locator(".host-roster li button")
+    expect(buttons).to_have_count(10)
+    for index in range(8):
+        buttons.nth(index).click()
+    expect(buttons.nth(8)).to_be_disabled()
+
+
+def test_hosts_history_changed_identity_loading_errors_and_partial_coverage(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Solo"))
+    history = hosts_page.get_by_role("region", name="Host history")
+    expect(history).to_contain_text("Incomplete coverage.")
+    # Only the first two captures have uptime: partial and later complete
+    # absences must never extend that two-point segment.
+    expect(history.locator("polyline")).to_have_count(1)
+    expect(history.locator('circle[data-complete="false"] title').first).to_contain_text("partial")
+    held = []
+    hosts_page.route(re.compile(r"/api/host_history\?.*host=Synthetic%20Alpha"), lambda route: held.append(route))
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha"))
+    _wait_for(hosts_page, lambda: held)
+    expect(history.get_by_role("table", name="Host history captures")).to_have_count(0)
+    hosts_page._allowed_console_errors.append("503 (Service Unavailable)")
+    held.pop().fulfill(status=503, json={"error": "Synthetic history unavailable"})
+    expect(history.get_by_role("alert")).to_contain_text("Synthetic history unavailable")
+    hosts_page.unroute(re.compile(r"/api/host_history\?.*host=Synthetic%20Alpha"))
+    history.get_by_role("button", name="Try again").click()
+    expect(history.get_by_role("table", name="Host history captures")).to_be_visible()
+
+
+def test_hosts_changed_capture_failure_never_displays_previous_matrix(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+    hosts_page._allowed_console_errors.append("503 (Service Unavailable)")
+    pattern = re.compile(r"/api/hosts\?.*scrape_id=" + str(facts.scrapes["second"]) + r"(?:&|$)")
+    hosts_page.route(pattern, lambda route: route.fulfill(status=503, json={"error": "Synthetic capture unavailable"}))
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["second"]))
+    expect(hosts_page.get_by_role("alert")).to_contain_text("Synthetic capture unavailable")
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
+    hosts_page.unroute(pattern)
+    hosts_page.get_by_role("button", name="Try again").click()
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+def test_hosts_precision_distribution_and_history_truncation(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Beta"))
+    profile = hosts_page.get_by_role("region", name="Host profile")
+    for precision in ["fp32", "bf16", "fp16", "fp8", "int8", "fp6", "fp4", "mxfp4", "nvfp4", "int4", "unknown", "synthetic-q"]:
+        expect(profile).to_contain_text(precision)
+    expect(profile).to_contain_text("unknown: 3")
+    expect(profile).to_contain_text('"standard"')
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Bulk"))
+    history = hosts_page.get_by_role("region", name="Host history")
+    expect(history).to_contain_text("Showing the 200 most recent endpoint changes; older changes are not shown.")
+    expect(history.locator(".endpoint-changes tbody tr")).to_have_count(200)
+    expect(history.locator(".endpoint-changes tbody tr").first).to_contain_text("synthetic-response-bulk")
+
+
+def test_hosts_snapshot_picker_and_unmapped_list_titles(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    matrix = hosts_page.get_by_role("table", name="Host comparison")
+    unmapped = matrix.locator("tbody tr").filter(has_text="synthetic-response-unmapped")
+    expect(unmapped.get_by_role("button")).to_have_count(0)
+    expect(unmapped).to_contain_text("2 additional qualifying endpoints")
+    expect(matrix.locator("tbody tr").filter(has_text="fake-org/hosts-bare")).to_contain_text("/api/v1/models/fake-org/hosts-bare/endpoints")
+    hosts_page.get_by_role("button", name="Later Host capture snapshot").click()
+    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value("2026-09-02")
+    hosts_page.go_back()
+    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value("2026-09-01")
+
+
+def test_hosts_provider_change_normalizes_other_provider_capture_without_bad_request(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+    # A shared global provider control leaves hasof untouched; Hosts must
+    # canonicalize it before making an exact-scrape request for a new provider.
+    _switch_hash(hosts_page, _hosts_fragment(facts, providers=facts.single_provider_id))
+    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value("2026-09-05")
+    expect(hosts_page.get_by_role("alert")).to_have_count(0)
+    expect(hosts_page).to_have_url(re.compile(rf"[&#]hasof={facts.scrapes['no_prices']}(?:&|$)"))
+    _switch_hash(hosts_page, _hosts_fragment(facts, hasof="invalid"))
+    expect(hosts_page.get_by_text("No endpoints were recorded in this capture.", exact=True)).to_be_visible()
+    expect(hosts_page).to_have_url(re.compile(rf"[&#]hasof={facts.scrapes['empty']}(?:&|$)"))
+
+
+@pytest.mark.parametrize(("hosts_server", "legacy"), [("legacy", True), ("no_telemetry", False)], indirect=["hosts_server"])
+def test_hosts_legacy_and_missing_telemetry_are_read_only_unavailable_states(hosts_page, hosts_server, legacy):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, rank="uptime:1d"))
+    if not legacy:
+        expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+        expect(hosts_page.get_by_label("Ranking")).to_have_value("price:pricing.prompt")
+        expect(hosts_page.get_by_label("Ranking").locator('option[value="uptime:1d"]')).to_have_attribute("disabled", "")
+        expect(hosts_page.get_by_text("Uptime isn't stored for this snapshot yet. The next saved scan can backfill it from its archive.", exact=True)).to_be_visible()
+    else:
+        expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
+        expect(hosts_page.get_by_text("Synthetic Hosts has no saved endpoint capture yet. Saved scans record hosts while endpoint capture is on.", exact=True)).to_be_visible()
+    expect(hosts_page.get_by_role("alert")).to_have_count(0)
+
 
 
 @pytest.fixture

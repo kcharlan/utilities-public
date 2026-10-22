@@ -305,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     browse_parser.add_argument("--port", type=int, default=8110, help="preferred local server port")
     browse_parser.add_argument("--no-open", action="store_true", help="do not open a browser window")
     browse_parser.add_argument("--provider", help="initial configured provider ID")
-    browse_parser.add_argument("--view", choices=("activity", "models", "catalog"), default="activity", help="initial browser view")
+    browse_parser.add_argument("--view", choices=("activity", "models", "catalog", "hosts"), default="activity", help="initial browser view (activity, models, catalog, hosts)")
     browse_parser.add_argument("--model", type=_browse_model_pin, help="initial model dossier as PROVIDER/MODEL_ID")
 
     healthcheck_parser = subparsers.add_parser(
