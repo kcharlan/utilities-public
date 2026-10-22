@@ -60,7 +60,7 @@ public enum PortDecoder {
         let ids = value(0xbd)
         let metadata = value(0xbe)
         var identities: [PortID: PortIdentity] = [:]
-        for (index, port) in [PortID.c1, .c2, .c3, .c4].enumerated() {
+        for (index, port) in PortID.usbC.enumerated() {
             guard let vendor = word(ids, at: 4 * index),
                   let product = word(ids, at: 4 * index + 2) else { continue }
             identities[port] = .reported(vendorID: vendor, productID: product,

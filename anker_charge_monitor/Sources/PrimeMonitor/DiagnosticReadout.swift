@@ -15,11 +15,11 @@ import PrimeMonitorCore
     private static func detailLines(_ details: ChargerDetails?) -> [String] {
         guard let details else { return ["Details: unavailable"] }
         let faults = details.faultBits.map { bits in
-            let ports = [PortID.c1, .c2, .c3, .c4].map { "\($0.label) fault=\(details.fault($0) == true)" }
+            let ports = PortID.usbC.map { "\($0.label) fault=\(details.fault($0) == true)" }
             return (["Fault bits: 0x\(hex(bits))", "over-temperature=\(details.overTemperature == true)"]
                 + ports + ["USB-A fault=\(details.fault(.a1) == true)"]).joined(separator: "; ")
         } ?? "Fault bits: unavailable"
-        let identities = [PortID.c1, .c2, .c3, .c4].map { port in
+        let identities = PortID.usbC.map { port in
             "\(port.label) identity: " + identity(details.identities[port])
         }
         let raw = ChargerDetails.fieldIDs.map { id in

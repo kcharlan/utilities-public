@@ -149,6 +149,28 @@ private func constructedDetails(_ extra: [UInt8: [UInt8]]) throws -> ChargerDeta
     #expect(try details(frames[20]).rawFields[0xbe]?.first == 0x01)
 }
 
+/// Owner-gate shape, invented values: identity support 2 alongside one resolved
+/// identity, a no-device sentinel and an unresolved {0, 0} port. Support 2 must
+/// not hide decoded identities (upstream's b7 comment says it gates bd; the
+/// owner's charger showed otherwise).
+private let supportTwoMixedDetailFields: [UInt8] = {
+    let ports = PortID.allCases.flatMap { [$0.fieldID, 8, 4, 0, 0, 0, 7, 0, 0, 0] as [UInt8] }
+    return ports + [
+        0xa3, 3, 0x04, 0x00, 0x00,
+        0xb7, 3, 0x04, 0xff, 0x02,
+        0xbd, 17, 0x04, 0xed, 0xfe, 0xef, 0xbe, 0xfa, 0xff, 0xfb, 0xff, 0x00, 0x00, 0x00, 0x00, 0xfa, 0xff, 0xfb, 0xff,
+        0xbe, 17, 0x04, 0x0a, 0x00, 0x07, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    ]
+}()
+
+@Test func identitySupportTwoKeepsDecodedIdentities() throws {
+    let details = try details(syntheticFrame(fields: supportTwoMixedDetailFields))
+    #expect(details.identitySupport == 2 && details.faultBits == 0)
+    #expect(details.identities == [
+        .c1: device(0xfeed, 0xbeef, 10, 7), .c2: .nothingAttached, .c3: .identifying, .c4: .nothingAttached,
+    ])
+}
+
 @Test func existingCorpusHasNoDetails() throws {
     for frame in try syntheticCorpusFrames() {
         #expect(try #require(PortDecoder.snapshot(from: HexFrame.parse(frame), receivedAt: receivedAt)).details == nil)

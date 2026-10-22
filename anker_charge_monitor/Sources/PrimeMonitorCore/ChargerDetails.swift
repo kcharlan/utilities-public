@@ -28,6 +28,11 @@ public enum PortIdentity: Equatable, Sendable {
 /// decoded; `rawFields` keeps every present detail payload, type byte included.
 public struct ChargerDetails: Equatable, Sendable {
     public let faultBits: UInt8?
+    /// `b7` byte 01. Upstream says 6 when every port's PD controller reports
+    /// protocol revision 4 or later, else 2, and that it gates the `bd` read.
+    /// The owner's charger reported a resolved `bd`/`be` identity on one port
+    /// while this value was 2, so it is informational only: presentation never
+    /// treats any value as "cannot identify"; decoded `identities` always win.
     public let identitySupport: UInt8?
     public let identities: [PortID: PortIdentity]
     public let rawFields: [UInt8: [UInt8]]

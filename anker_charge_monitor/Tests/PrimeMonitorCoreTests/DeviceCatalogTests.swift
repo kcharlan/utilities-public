@@ -85,7 +85,7 @@ private func rejection(_ data: Data) -> String? {
             brands: #"{"7": "Synthetic Brand"}"#, vendors: #"{"0a1b": "Synthetic Vendor"}"#,
             devices: #"{"0a1b:2c3d": "Synthetic Desk Lamp"}"#))
         #expect(catalog.label(for: .nothingAttached) == nil)
-        #expect(catalog.label(for: .identifying) == "Identifying…")
+        #expect(catalog.label(for: .identifying) == "Unidentified device")
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3)) == "Synthetic Desk Lamp")
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x0001, brandClass: 7, modelCode: nil)) == "Synthetic Brand")
         #expect(catalog.label(for: .identified(vendorID: 0x0a1b, productID: 0x0001, brandClass: 8, modelCode: nil)) == "Synthetic Vendor")

@@ -99,11 +99,14 @@ public struct DeviceCatalog: Equatable, Sendable {
     }
 
     /// Resolves the user's device name, then brand-class, then vendor names,
-    /// and otherwise the uppercase hexadecimal `VID:PID`.
+    /// and otherwise the uppercase hexadecimal `VID:PID`. An unresolved `{0, 0}`
+    /// identity is "Unidentified device", not "Identifying…": on the owner's
+    /// charger a charging device stayed unresolved for minutes, since some
+    /// devices never answer USB-PD Discover Identity.
     public func label(for identity: PortIdentity) -> String? {
         switch identity {
         case .nothingAttached: nil
-        case .identifying: "Identifying…"
+        case .identifying: "Unidentified device"
         case let .identified(vendorID, productID, brandClass, _):
             devices[DeviceKey(vendorID: vendorID, productID: productID)]
                 ?? brandClass.flatMap { brands[$0] }
