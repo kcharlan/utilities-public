@@ -1,0 +1,27 @@
+{
+  "brands" : {
+    "1" : "Apple",
+    "10" : "Anker",
+    "12" : "HP",
+    "13" : "Dell",
+    "14" : "Lenovo",
+    "15" : "Microsoft",
+    "17" : "ASUS",
+    "18" : "MSI",
+    "19" : "Razer",
+    "2" : "Samsung",
+    "3" : "Xiaomi",
+    "4" : "Huawei"
+  },
+  "devices" : {},
+  "schema" : 1,
+  "source" : {
+    "commit" : "9e72894181aef868e7b3ed0ba05bd322d54bb5d7",
+    "entry" : "_A2345_0a00 key be, brand-class comment",
+    "license" : "MIT",
+    "note" : "Named brand classes only. Classes 11 and 16 are described only by a USB vendor ID upstream and are not named here.",
+    "path" : "src/anker_solix_api/mqttmap.py",
+    "repository" : "https://github.com/thomluther/anker-solix-api"
+  },
+  "vendors" : {}
+}
