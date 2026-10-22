@@ -13,6 +13,7 @@ private func mark(_ connection: UInt64, _ sequence: UInt64) -> ReceiveMark {
 private func receipt(_ connection: UInt64, _ sequence: UInt64) -> PortCommandReceipt {
     PortCommandReceipt(fence: mark(connection, sequence))
 }
+private func pub(_ value: UInt64) -> PortPublishID { PortPublishID(value) }
 private func report(_ target: PortSwitch, on: Bool?, receivedAt: Date) -> ChargerSnapshot {
     let switches: [PortSwitch: Bool] = on.map { [target: $0] } ?? [:]
     return ChargerSnapshot(receivedAt: receivedAt, readings: [],
@@ -34,7 +35,7 @@ private func confirming(_ kind: PortOperationKind, _ target: PortSwitch = .c2,
                         published: TimeInterval = 1) -> PortOperation {
     var operation = PortOperation(kind, target: target, context: context)
     _ = operation.handle(.requested, at: at(0))
-    _ = operation.handle(.published(receipt(1, 10)), at: at(published))
+    _ = operation.handle(.published(receipt(1, 10), id: pub(1)), at: at(published))
     return operation
 }
 
@@ -49,7 +50,7 @@ private func paused(confirmedAt: TimeInterval = 2) -> PortOperation {
 private func turningOnRestart() -> PortOperation {
     var operation = paused()
     _ = operation.handle(.tick, at: at(7))
-    _ = operation.handle(.published(receipt(1, 20)), at: at(8))
+    _ = operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(8))
     return operation
 }
 
@@ -69,9 +70,9 @@ private func turningOnRestart() -> PortOperation {
 func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted: Bool) throws {
     var operation = PortOperation(kind, target: .usbA, context: context)
     #expect(operation.phase == .idle)
-    #expect(operation.handle(.requested, at: at(0)) == [.publish(.usbA, on: wanted)])
+    #expect(operation.handle(.requested, at: at(0)) == [.publish(.usbA, on: wanted, id: pub(1))])
     #expect(operation.phase == (wanted ? .turningOn : .turningOff))
-    #expect(operation.handle(.published(receipt(1, 10)), at: at(1)) == [.requestStatus])
+    #expect(operation.handle(.published(receipt(1, 10), id: pub(1)), at: at(1)) == [.requestStatus])
     let result = try #require(outcome(operation.handle(
         .snapshot(report(.usbA, on: wanted, receivedAt: at(1.5)), mark(1, 12)), at: at(1.5))))
     #expect(result == PortOperationOutcome(context: context, operation: kind, target: .usbA, wantedOn: wanted,
@@ -82,9 +83,9 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
 
 @Test func restartTurnsOffPausesFromTheConfirmingReplyThenTurnsOn() throws {
     var operation = PortOperation(.restart, target: .c3, context: context)
-    #expect(operation.handle(.requested, at: at(0)) == [.publish(.c3, on: false)])
+    #expect(operation.handle(.requested, at: at(0)) == [.publish(.c3, on: false, id: pub(1))])
     #expect(operation.phase == .turningOff)
-    #expect(operation.handle(.published(receipt(1, 10)), at: at(1)) == [.requestStatus])
+    #expect(operation.handle(.published(receipt(1, 10), id: pub(1)), at: at(1)) == [.requestStatus])
     // Reply received at 1.5 s, delivered at 1.9 s: the pause counts from the reply.
     #expect(operation.handle(.snapshot(report(.c3, on: false, receivedAt: at(1.5)), mark(1, 11)), at: at(1.9)) == [])
     #expect(operation.phase == .paused(until: at(6.5)))
@@ -93,9 +94,9 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     #expect(operation.pauseSecondsRemaining(at: at(5.7)) == 1)
     #expect(operation.nextDue == at(6.5))
     #expect(operation.handle(.tick, at: at(6.4)) == [])
-    #expect(operation.handle(.tick, at: at(6.5)) == [.publish(.c3, on: true)])
+    #expect(operation.handle(.tick, at: at(6.5)) == [.publish(.c3, on: true, id: pub(2))])
     #expect(operation.phase == .turningOn && operation.pauseEnd == nil)
-    #expect(operation.handle(.published(receipt(1, 20)), at: at(8)) == [.requestStatus])
+    #expect(operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(8)) == [.requestStatus])
     let result = try #require(outcome(operation.handle(
         .snapshot(report(.c3, on: true, receivedAt: at(8.5)), mark(1, 21)), at: at(8.5))))
     #expect(result.kind == .confirmed && result.wantedOn && result.operation == .restart)
@@ -106,7 +107,7 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     var operation = confirming(.restart)
     // Delivered 5.5 s after it was received: the overdue status request comes first.
     let actions = operation.handle(.snapshot(report(.c2, on: false, receivedAt: at(2)), mark(1, 11)), at: at(7.5))
-    #expect(actions == [.requestStatus, .publish(.c2, on: true)])
+    #expect(actions == [.requestStatus, .publish(.c2, on: true, id: pub(2))])
     #expect(operation.phase == .turningOn)
 }
 
@@ -201,7 +202,7 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     #expect(operation.phase == .turningOff && operation.latestFreshReport == nil)
     #expect(operation.nextDue == nil)
     #expect(operation.handle(.tick, at: at(60)) == [])
-    #expect(operation.handle(.published(receipt(1, 40)), at: at(61)) == [.requestStatus])
+    #expect(operation.handle(.published(receipt(1, 40), id: pub(1)), at: at(61)) == [.requestStatus])
     // Its replay (same mark) is not newer than the receipt, nor received after the request.
     #expect(operation.handle(.snapshot(report(.c1, on: false, receivedAt: at(0.5)), mark(1, 40)), at: at(61)) == [])
     let result = try #require(outcome(operation.handle(
@@ -214,7 +215,7 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     _ = operation.handle(.tick, at: at(7))
     // On-phase publish in flight: an "on" reply from before cannot confirm.
     #expect(operation.handle(.snapshot(report(.c2, on: true, receivedAt: at(7.5)), mark(1, 15)), at: at(7.5)) == [])
-    _ = operation.handle(.published(receipt(1, 20)), at: at(8))
+    _ = operation.handle(.published(receipt(1, 20), id: pub(2)), at: at(8))
     // Past the off phase's fence but not the on phase's: ignored.
     #expect(operation.handle(.snapshot(report(.c2, on: true, receivedAt: at(8.5)), mark(1, 19)), at: at(8.5)) == [])
     // Received before this phase's status request: ignored.
@@ -230,35 +231,35 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
 @Test func publishFailureFinishesWithThePhaseFailure() throws {
     var off = PortOperation(.turnOff, target: .c4, context: context)
     _ = off.handle(.requested, at: at(0))
-    let offResult = try #require(outcome(off.handle(.publishFailed, at: at(1))))
+    let offResult = try #require(outcome(off.handle(.publishFailed(id: pub(1)), at: at(1))))
     #expect(offResult.kind == .offNotConfirmed && !offResult.wantedOn && offResult.boundary == nil)
 
     var on = PortOperation(.turnOn, target: .c4, context: context)
     _ = on.handle(.requested, at: at(0))
-    #expect(try #require(outcome(on.handle(.publishFailed, at: at(1)))).kind == .onNotConfirmed)
+    #expect(try #require(outcome(on.handle(.publishFailed(id: pub(1)), at: at(1)))).kind == .onNotConfirmed)
 
     var restartOff = PortOperation(.restart, target: .c4, context: context)
     _ = restartOff.handle(.requested, at: at(0))
-    let restartOffResult = try #require(outcome(restartOff.handle(.publishFailed, at: at(1))))
+    let restartOffResult = try #require(outcome(restartOff.handle(.publishFailed(id: pub(1)), at: at(1))))
     #expect(restartOffResult.kind == .offNotConfirmed && restartOffResult.operation == .restart)
 
     // A restart's on phase failing to publish after a confirmed off: couldn't confirm on,
     // keeping the off confirmation as its boundary.
     var restartOn = paused()
     _ = restartOn.handle(.tick, at: at(7))
-    let restartOnResult = try #require(outcome(restartOn.handle(.publishFailed, at: at(7.5))))
+    let restartOnResult = try #require(outcome(restartOn.handle(.publishFailed(id: pub(2)), at: at(7.5))))
     #expect(restartOnResult.kind == .onNotConfirmed && restartOnResult.wantedOn)
     #expect(restartOnResult.boundary == mark(1, 11))
 }
 
 @Test func publishResultsWithoutAPublishInFlightAreIgnored() {
     var operation = confirming(.turnOff)
-    #expect(operation.handle(.publishFailed, at: at(1.5)) == [])
-    #expect(operation.handle(.published(receipt(1, 30)), at: at(1.5)) == [])
+    #expect(operation.handle(.publishFailed(id: pub(1)), at: at(1.5)) == [])
+    #expect(operation.handle(.published(receipt(1, 30), id: pub(1)), at: at(1.5)) == [])
     #expect(operation.phase == .turningOff)
     var waiting = paused()
-    #expect(waiting.handle(.publishFailed, at: at(3)) == [])
-    #expect(waiting.handle(.published(receipt(1, 30)), at: at(3)) == [])
+    #expect(waiting.handle(.publishFailed(id: pub(1)), at: at(3)) == [])
+    #expect(waiting.handle(.published(receipt(1, 30), id: pub(1)), at: at(3)) == [])
     #expect(waiting.phase == .paused(until: at(7)))
 }
 
@@ -276,8 +277,8 @@ func plainOperationPublishesRequestsAndConfirms(kind: PortOperationKind, wanted:
     var inFlight = PortOperation(.turnOn, target: .c1, context: context)
     _ = inFlight.handle(.requested, at: at(0))
     _ = inFlight.handle(.disconnected, at: at(0.5))
-    #expect(inFlight.handle(.published(receipt(1, 5)), at: at(0.6)) == [])
-    #expect(inFlight.handle(.publishFailed, at: at(0.7)) == [])
+    #expect(inFlight.handle(.published(receipt(1, 5), id: pub(1)), at: at(0.6)) == [])
+    #expect(inFlight.handle(.publishFailed(id: pub(1)), at: at(0.7)) == [])
     #expect(inFlight.phase == .turningOn && inFlight.isSuspended)
 
     // A paused restart does not turn on while suspended.
@@ -344,21 +345,21 @@ func reconnectionInAConfirmingPhaseRequestsStatusWithTheReplacementFence(kind: P
     _ = early.handle(.disconnected, at: at(3))
     #expect(early.handle(.reconnected(receipt(2, 30)), at: at(5)) == [])
     #expect(early.phase == .paused(until: at(7)))
-    #expect(early.handle(.tick, at: at(7)) == [.publish(.c2, on: true)])
+    #expect(early.handle(.tick, at: at(7)) == [.publish(.c2, on: true, id: pub(2))])
 
     var late = paused()
     _ = late.handle(.disconnected, at: at(3))
-    #expect(late.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true)])
+    #expect(late.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true, id: pub(2))])
     #expect(late.phase == .turningOn)
 }
 
 @Test func restartTurningOnResendsOnAndTakesTheNewReceipt() throws {
     var operation = turningOnRestart()
     _ = operation.handle(.disconnected, at: at(9))
-    #expect(operation.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true)])
+    #expect(operation.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true, id: pub(3))])
     // Before the resend completes, nothing confirms, not even fresh-connection replies.
     #expect(operation.handle(.snapshot(report(.c2, on: true, receivedAt: at(20.5)), mark(2, 31)), at: at(20.5)) == [])
-    #expect(operation.handle(.published(receipt(2, 31)), at: at(21)) == [.requestStatus])
+    #expect(operation.handle(.published(receipt(2, 31), id: pub(3)), at: at(21)) == [.requestStatus])
     #expect(operation.handle(.snapshot(report(.c2, on: true, receivedAt: at(21.5)), mark(2, 31)), at: at(21.5)) == [])
     let result = try #require(outcome(operation.handle(
         .snapshot(report(.c2, on: true, receivedAt: at(21.5)), mark(2, 32)), at: at(21.5))))
@@ -368,8 +369,8 @@ func reconnectionInAConfirmingPhaseRequestsStatusWithTheReplacementFence(kind: P
 @Test func outcomesAfterReconnectionCarryTheReplacementFence() throws {
     var operation = paused()
     _ = operation.handle(.disconnected, at: at(3))
-    #expect(operation.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true)])
-    let result = try #require(outcome(operation.handle(.publishFailed, at: at(21))))
+    #expect(operation.handle(.reconnected(receipt(2, 30)), at: at(20)) == [.publish(.c2, on: true, id: pub(2))])
+    let result = try #require(outcome(operation.handle(.publishFailed(id: pub(2)), at: at(21))))
     #expect(result.kind == .onNotConfirmed && result.boundary == mark(2, 30))
     #expect(result.isCleared(by: report(.c2, on: true, receivedAt: at(22)), mark: mark(2, 31), in: context))
 }
@@ -391,7 +392,7 @@ func endingARestartInAnyPhaseAttemptsOnThenReportsMayStillBeOff(reason: PortOper
     operations.append((publishing, at(0.5)))
     var confirmingOff = PortOperation(.restart, target: .c1, context: context)
     _ = confirmingOff.handle(.requested, at: at(0))
-    _ = confirmingOff.handle(.published(receipt(1, 10)), at: at(1))
+    _ = confirmingOff.handle(.published(receipt(1, 10), id: pub(1)), at: at(1))
     operations.append((confirmingOff, at(1.5)))
     var waiting = confirmingOff
     _ = waiting.handle(.snapshot(report(.c1, on: false, receivedAt: at(2)), mark(1, 11)), at: at(2))
@@ -399,7 +400,7 @@ func endingARestartInAnyPhaseAttemptsOnThenReportsMayStillBeOff(reason: PortOper
     var on = waiting
     _ = on.handle(.tick, at: at(7))
     operations.append((on, at(7.5)))
-    _ = on.handle(.published(receipt(1, 20)), at: at(8))
+    _ = on.handle(.published(receipt(1, 20), id: pub(2)), at: at(8))
     operations.append((on, at(8.5)))
 
     for (start, now) in operations {
@@ -410,7 +411,7 @@ func endingARestartInAnyPhaseAttemptsOnThenReportsMayStillBeOff(reason: PortOper
         guard case .finish(let result) = actions.last else { Issue.record("no finish"); continue }
         #expect(result.kind == .mayStillBeOff && result.wantedOn && result.operation == .restart)
         #expect(operation.outcome == result)
-        #expect(operation.handle(.published(receipt(1, 30)), at: now + 0.1) == [])
+        #expect(operation.handle(.published(receipt(1, 30), id: pub(2)), at: now + 0.1) == [])
         #expect(operation.handle(.snapshot(report(.c1, on: true, receivedAt: now), mark(1, 31)), at: now + 0.1) == [])
     }
 }
@@ -451,7 +452,7 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
 
 @Test func eventsBeforeTheRequestAndAfterTheFinishAreIgnored() throws {
     var idle = PortOperation(.restart, target: .c1, context: context)
-    for event: PortOperationEvent in [.published(receipt(1, 1)), .publishFailed, .tick, .disconnected,
+    for event: PortOperationEvent in [.published(receipt(1, 1), id: pub(1)), .publishFailed(id: pub(1)), .tick, .disconnected,
                                       .reconnected(receipt(1, 1)), .ending(.quit),
                                       .snapshot(report(.c1, on: false, receivedAt: at(1)), mark(1, 2))] {
         #expect(idle.handle(event, at: at(1)) == [])
@@ -460,7 +461,7 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
 
     var done = confirming(.turnOff)
     let result = try #require(outcome(done.handle(.snapshot(report(.c2, on: false, receivedAt: at(1.5)), mark(1, 11)), at: at(1.5))))
-    for event: PortOperationEvent in [.requested, .published(receipt(1, 1)), .publishFailed, .tick, .disconnected,
+    for event: PortOperationEvent in [.requested, .published(receipt(1, 1), id: pub(1)), .publishFailed(id: pub(1)), .tick, .disconnected,
                                       .reconnected(receipt(1, 1)), .ending(.quit)] {
         #expect(done.handle(event, at: at(30)) == [])
     }
@@ -525,4 +526,83 @@ func endingAPlainOperationIsNotReversed(reason: PortOperationEndingReason) throw
     let renamed = PortOperationContext(account: accountA, charger: "SYNTHETIC-CHARGER-1", chargerLabel: "Renamed")
     #expect(context.isSameOrigin(as: renamed) && context != renamed)
     #expect(!context.isSameOrigin(as: PortOperationContext(account: accountB, charger: "SYNTHETIC-CHARGER-1", chargerLabel: "Test Charger")))
+}
+
+// MARK: - Fix round 1
+
+@Test func lifecycleEventsAfterThePauseEndNeverStartTheOnPhase() throws {
+    // Pause ended at 7 s; no tick has run yet.
+    var terminal = paused()
+    let terminalActions = terminal.handle(.ending(.terminalAuthentication), at: at(8))
+    #expect(terminalActions.count == 1)
+    #expect(try #require(outcome(terminalActions)).kind == .mayStillBeOff)
+
+    var quit = paused()
+    let quitActions = quit.handle(.ending(.quit), at: at(8))
+    #expect(quitActions.count == 2)
+    #expect(quitActions.first == .endingPublish(.c2, on: true))
+    guard case .finish(let result) = quitActions.last else { Issue.record("no finish"); return }
+    #expect(result.kind == .mayStillBeOff)
+
+    var lost = paused()
+    #expect(lost.handle(.disconnected, at: at(8)) == [])
+    #expect(lost.isSuspended && lost.phase == .paused(until: at(7)))
+    #expect(lost.handle(.reconnected(receipt(2, 30)), at: at(9)) == [.publish(.c2, on: true, id: pub(2))])
+}
+
+@Test func anExpiredDeadlineWinsOverLifecycleEvents() throws {
+    var ending = confirming(.restart, published: 1)
+    let endingActions = ending.handle(.ending(.quit), at: at(11))
+    #expect(try #require(outcome(endingActions)).kind == .offNotConfirmed)
+
+    var lost = confirming(.restart, published: 1)
+    #expect(try #require(outcome(lost.handle(.disconnected, at: at(11)))).kind == .offNotConfirmed)
+
+    var restartOn = turningOnRestart()
+    #expect(try #require(outcome(restartOn.handle(.ending(.chargerChange), at: at(18)))).kind == .onNotConfirmed)
+}
+
+@Test func everyRestartOutcomeWantsOnAndOnlyAnOnReportClearsIt() throws {
+    var publishFailed = PortOperation(.restart, target: .c4, context: context)
+    _ = publishFailed.handle(.requested, at: at(0))
+    _ = publishFailed.handle(.disconnected, at: at(0.5))
+    _ = publishFailed.handle(.reconnected(receipt(1, 10)), at: at(1))
+    var deadline = confirming(.restart, .c4, published: 1)
+    var ended = paused()
+    var confirmed = turningOnRestart()
+    let results = [
+        try #require(outcome(publishFailed.handle(.tick, at: at(11)))),
+        try #require(outcome(deadline.handle(.tick, at: at(11)))),
+        try #require(outcome(ended.handle(.ending(.terminalAuthentication), at: at(3)))),
+        try #require(outcome(confirmed.handle(.snapshot(report(.c2, on: true, receivedAt: at(8.5)), mark(1, 21)), at: at(8.5))))
+    ]
+    #expect(results.map(\.kind) == [.offNotConfirmed, .offNotConfirmed, .mayStillBeOff, .confirmed])
+    for result in results {
+        #expect(result.wantedOn)
+        let later = mark(result.boundary!.connection.value, result.boundary!.sequence + 1)
+        #expect(!result.isCleared(by: report(result.target, on: false, receivedAt: at(30)), mark: later, in: context))
+        #expect(result.isCleared(by: report(result.target, on: true, receivedAt: at(30)), mark: later, in: context))
+    }
+}
+
+@Test func onlyTheLatestPublishesResultCounts() throws {
+    var operation = PortOperation(.turnOff, target: .c1, context: context)
+    #expect(operation.handle(.requested, at: at(0)) == [.publish(.c1, on: false, id: pub(1))])
+    #expect(operation.handle(.published(receipt(1, 5), id: pub(7)), at: at(0.5)) == [])
+    #expect(operation.handle(.publishFailed(id: pub(7)), at: at(0.5)) == [])
+    #expect(operation.phase == .turningOff && operation.nextDue == nil)
+
+    // A restart's on phase resent after reconnection: the pre-disconnect publish's
+    // late results cannot stand in for the resend.
+    var restart = paused()
+    #expect(restart.handle(.tick, at: at(7)) == [.publish(.c2, on: true, id: pub(2))])
+    _ = restart.handle(.disconnected, at: at(7.2))
+    #expect(restart.handle(.reconnected(receipt(2, 30)), at: at(9)) == [.publish(.c2, on: true, id: pub(3))])
+    #expect(restart.handle(.published(receipt(1, 25), id: pub(2)), at: at(9.1)) == [])
+    #expect(restart.handle(.publishFailed(id: pub(2)), at: at(9.2)) == [])
+    #expect(restart.phase == .turningOn && restart.nextDue == nil)
+    #expect(restart.handle(.published(receipt(2, 31), id: pub(3)), at: at(9.5)) == [.requestStatus])
+    let result = try #require(outcome(restart.handle(
+        .snapshot(report(.c2, on: true, receivedAt: at(9.6)), mark(2, 32)), at: at(9.6))))
+    #expect(result.kind == .confirmed && result.boundary == mark(2, 32))
 }

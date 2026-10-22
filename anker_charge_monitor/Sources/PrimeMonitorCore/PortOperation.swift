@@ -78,8 +78,9 @@ public struct PortOperationOutcome: Hashable, Sendable {
     public let context: PortOperationContext
     public let operation: PortOperationKind
     public let target: PortSwitch
-    /// The switch state the outcome is about: off for `offNotConfirmed`, on for the
-    /// on-phase and restart failures, the operation's final state for `confirmed`.
+    /// The switch state that clears the outcome: on for every restart outcome (a
+    /// restart is never resolved by the port reporting off) and for the plain turn-on
+    /// outcomes; off for the plain turn-off outcomes.
     public let wantedOn: Bool
     public let kind: PortOperationOutcomeKind
     /// Clearing evidence must be newer than this on the same connection. It is the
@@ -118,6 +119,12 @@ public struct PortOperationOutcome: Hashable, Sendable {
     }
 }
 
+/// Identifies one `publish` action of an operation; its result reports the same value.
+public struct PortPublishID: Hashable, Sendable {
+    public let value: UInt64
+    public init(_ value: UInt64) { self.value = value }
+}
+
 public enum PortOperationPhase: Hashable, Sendable {
     /// Created, not yet requested.
     case idle
@@ -131,13 +138,13 @@ public enum PortOperationPhase: Hashable, Sendable {
 public enum PortOperationEvent: Equatable, Sendable {
     /// Start the operation: publishes its first phase.
     case requested
-    /// The phase's switch publish completed with this receipt. Publish results carry
-    /// no correlation: report only the result of the latest `publish` action, and
-    /// drop results of publishes issued before a `disconnected`.
-    case published(PortCommandReceipt)
-    /// The phase's switch publish threw. A thrown publish is "not confirmed
-    /// published", not "not transmitted".
-    case publishFailed
+    /// The `publish` action with this id completed with this receipt. Only the result
+    /// of the latest publish counts; others (superseded by a resend, or outstanding at
+    /// `disconnected`) are ignored.
+    case published(PortCommandReceipt, id: PortPublishID)
+    /// The `publish` action with this id threw. A thrown publish is "not confirmed
+    /// published", not "not transmitted". Ignored under the same rule as `published`.
+    case publishFailed(id: PortPublishID)
     /// A delivered status reply with the backend's receive mark.
     case snapshot(ChargerSnapshot, ReceiveMark)
     case tick
@@ -151,8 +158,8 @@ public enum PortOperationEvent: Equatable, Sendable {
 
 /// Work the controller executes. The state machine schedules nothing.
 public enum PortOperationAction: Hashable, Sendable {
-    /// Publish a switch command and report `published` or `publishFailed`.
-    case publish(PortSwitch, on: Bool)
+    /// Publish a switch command and report `published` or `publishFailed` with this id.
+    case publish(PortSwitch, on: Bool, id: PortPublishID)
     /// The bounded ending write ("Bounded ending"). The operation has already
     /// finished; its completion is not reported back and never claims restored power.
     case endingPublish(PortSwitch, on: Bool)
@@ -164,9 +171,10 @@ public enum PortOperationAction: Hashable, Sendable {
 /// One port switch operation: a clock-free state machine driven by events, each
 /// carrying the current time. Every event first applies the passage of time, as
 /// `tick` does (confirmation deadline, restart pause end, repeated status
-/// requests), then the event itself. Events before `requested` and after the
-/// finish are ignored. One operation per instance; exclusion across ports
-/// belongs to the owner.
+/// requests), then the event itself; `disconnected` and `ending` apply only an
+/// expired confirmation deadline first, so they never start a phase publish.
+/// Events before `requested` and after the finish are ignored. One operation per
+/// instance; exclusion across ports belongs to the owner.
 ///
 /// Confirmation freshness: a phase accepts evidence only after its publish
 /// completed (or, when resumed after reconnection, from its replacement fence).
@@ -192,7 +200,8 @@ public struct PortOperation: Hashable, Sendable {
     /// Disconnected: no actions until `reconnected`; the confirmation deadline does
     /// not run, and a paused restart turns on only after reconnection.
     public private(set) var isSuspended = false
-    private var publishing = false
+    private var publishCount: UInt64 = 0
+    private var outstanding: PortPublishID?
     private var confirmation: Confirmation?
     private var boundary: ReceiveMark?
 
@@ -237,27 +246,32 @@ public struct PortOperation: Hashable, Sendable {
         case .turningOff, .paused, .turningOn:
             break
         }
-        var actions = advance(to: now)
+        let lifecycle: Bool
+        switch event {
+        case .disconnected, .ending: lifecycle = true
+        default: lifecycle = false
+        }
+        var actions = lifecycle ? expireDeadline(at: now) : advance(to: now)
         guard !isFinished else { return actions }
         switch event {
         case .requested, .tick:
             break
-        case .published(let receipt):
-            guard publishing else { break }
-            publishing = false
+        case .published(let receipt, let id):
+            guard outstanding == id else { break }
+            outstanding = nil
             actions += beginConfirmation(receipt, at: now)
-        case .publishFailed:
-            guard publishing else { break }
-            publishing = false
+        case .publishFailed(let id):
+            guard outstanding == id else { break }
+            outstanding = nil
             actions.append(finish(failure))
         case .snapshot(let snapshot, let mark):
             actions += accept(snapshot, mark, at: now)
         case .disconnected:
             isSuspended = true
-            publishing = false
+            outstanding = nil
         case .reconnected(let receipt):
             isSuspended = false
-            publishing = false
+            outstanding = nil
             actions += resume(receipt, at: now)
         case .ending(let reason):
             if kind == .restart {
@@ -280,8 +294,10 @@ public struct PortOperation: Hashable, Sendable {
     private mutating func enter(_ next: PortOperationPhase) -> [PortOperationAction] {
         phase = next
         confirmation = nil
-        publishing = true
-        return [.publish(target, on: next == .turningOn)]
+        publishCount += 1
+        let id = PortPublishID(publishCount)
+        outstanding = id
+        return [.publish(target, on: next == .turningOn, id: id)]
     }
 
     private mutating func beginConfirmation(_ receipt: PortCommandReceipt, at now: Date) -> [PortOperationAction] {
@@ -290,6 +306,11 @@ public struct PortOperation: Hashable, Sendable {
                                     deadline: now.addingTimeInterval(PortControlPolicy.confirmationDeadline),
                                     nextRequest: now.addingTimeInterval(PortControlPolicy.confirmationInterval))
         return [.requestStatus]
+    }
+
+    private mutating func expireDeadline(at now: Date) -> [PortOperationAction] {
+        guard !isSuspended, let current = confirmation, now >= current.deadline else { return [] }
+        return [finish(failure)]
     }
 
     private mutating func advance(to now: Date) -> [PortOperationAction] {
@@ -336,16 +357,14 @@ public struct PortOperation: Hashable, Sendable {
     }
 
     private mutating func finish(_ outcomeKind: PortOperationOutcomeKind) -> PortOperationAction {
-        let wantedOn = switch outcomeKind {
-        case .confirmed: kind.wantedOn
-        case .offNotConfirmed: false
-        case .stillOff, .onNotConfirmed, .mayStillBeOff: true
-        }
-        let outcome = PortOperationOutcome(context: context, operation: kind, target: target, wantedOn: wantedOn,
+        // Every outcome is about the operation's final state: the plain turn-off kinds
+        // are off; plain turn-on and every restart outcome, off-phase failure included,
+        // are on, so a port left off never clears a restart's outcome.
+        let outcome = PortOperationOutcome(context: context, operation: kind, target: target, wantedOn: kind.wantedOn,
                                            kind: outcomeKind, boundary: boundary)
         phase = .finished(outcome)
         confirmation = nil
-        publishing = false
+        outstanding = nil
         return .finish(outcome)
     }
 }
