@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-22: Make cancellation and lifecycle boundaries explicit in control plans
+
+Disarming an armed action must consume Escape before naming cancellation or
+panel dismissal. Delegate to the existing cancel owner before applying a
+standalone-view fallback, and test the draft, focus and visibility transitions.
+For asynchronous device controls, generation guards need a receipt-time boundary
+as well: queued readings from the same connection can otherwise confirm a later
+operation. Specify context-bound outcomes and pending-write disposal when a
+deadline ends a lifecycle action; task cancellation alone does not drain a
+continuation-based network send.
+
 ## 2026-10-21: Check dispatch and responder paths when reviewing plans
 
 The device-details plan review excluded upstream's `sile` extraction branch and
