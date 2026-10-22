@@ -11,7 +11,7 @@ public struct ChargerInfo: Equatable, Codable, Sendable {
         self.name = name
     }
 
-    /// The name a person gave the charger, else its product name. The panel header
-    /// and Settings picker apply the same rule (`PanelView.alias`, `SettingsView`).
+    /// The name a person gave the charger, else its product name: the panel header,
+    /// the Settings picker and port outcomes (`PortOperationContext.chargerLabel`).
     public var label: String { alias.isEmpty ? name : alias }
 }

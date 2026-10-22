@@ -81,12 +81,29 @@ loss, closing and row switching all save through `DeviceCatalogStore.setName`.
 Escape has one owner action, `StatusItemController.cancel`, reached from
 `StatusPanel.performKeyEquivalent`, `StatusPanel.cancelOperation`,
 `StatusHostingController.cancelOperation` and the naming field's
-`onExitCommand`; none forwards the command to another. While a field in the
+`onExitCommand`; none forwards the command to another. An armed port action
+comes first: disarming it consumes the Escape and returns, leaving naming,
+focus and the panel unchanged. While a field in the
 hosted content is editing, it cancels the edit (marking cancellation before
 clearing focus); it also discards a shown draft left by a failed save when the
 field is not focused; otherwise it dismisses the panel. A field removed by a row
 or snapshot change ends editing without saving, and `AppDelegate` settles a
 pending draft through the same save path before termination.
+
+`PortDetailState` also holds the one armed port action (target, action, expiry
+and the `MonitorController.portControlGenerations` it was armed under: account,
+charger selection, connection and backend link). `armedAction(in:available:)`
+treats an expired, unavailable or superseded action as disarmed, so the
+confirming click (`press`) rechecks the context before `PanelView` dispatches
+`turnPort` or `restartPort`; the shown panel also clears it when availability or
+the context changes. Row changes and `StatusItemController.hidePanel` disarm.
+A standalone `PanelView` has no cancel owner, so its `cancelNaming` disarms
+before cancelling the edit. `PanelView` derives the buttons from the reported
+switch, shows the running operation's phase on the target's rows and detail,
+the block reason elsewhere, and the controller's outcome above the empty and
+readings branches with its original charger label. It posts phase changes and
+outcomes as accessibility announcements, keyed so the pause countdown is
+announced once.
 
 The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen

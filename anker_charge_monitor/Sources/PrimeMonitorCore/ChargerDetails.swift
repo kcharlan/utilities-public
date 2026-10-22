@@ -54,6 +54,18 @@ public enum PortSwitch: CaseIterable, Hashable, Sendable {
 
     /// The `0a00` detail field reporting this switch: `_A2345_0a00` keys `aa`...`ae`.
     public var fieldID: UInt8 { 0xaa + wireIndex }
+
+    /// The ports the target powers, as control and outcome text names them:
+    /// "C1"..."C4", or "A1 and A2" for the shared USB-A switch.
+    public var label: String {
+        switch self {
+        case .c1: PortID.c1.label
+        case .c2: PortID.c2.label
+        case .c3: PortID.c3.label
+        case .c4: PortID.c4.label
+        case .usbA: "\(PortID.a1.label) and \(PortID.a2.label)"
+        }
+    }
 }
 
 /// Status detail decoded from the A2345 `0a00` reply. `nil` members were not

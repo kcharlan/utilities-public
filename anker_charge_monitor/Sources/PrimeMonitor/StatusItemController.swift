@@ -13,8 +13,9 @@ struct StatusContent: View {
     let settings: SettingsWindowController
     let focus: PopoverFocus
     var dismiss: () -> Void = {}
-    /// The panel's single cancellation action (Escape): cancels a naming edit,
-    /// otherwise dismisses. Omitted, cancellation dismisses.
+    /// The panel's single cancellation action (Escape): disarms an armed port
+    /// action, else cancels a naming edit, otherwise dismisses. Omitted,
+    /// cancellation dismisses.
     var cancel: (() -> Void)?
     var sizeChanged: (NSSize) -> Void = { _ in }
     var body: some View {
@@ -192,8 +193,11 @@ extension PopoverPresenting {
     /// cancelOperation, StatusHostingController.cancelOperation and the naming
     /// field's onExitCommand. While naming it cancels the edit, marked before
     /// focus leaves the field so the focus-loss save cannot commit it; it then
-    /// clears the field's focus so a later Escape dismisses the panel.
+    /// clears the field's focus so a later Escape dismisses the panel. An armed
+    /// Turn off or Restart comes first: disarming it consumes the Escape and
+    /// leaves naming, focus and the panel as they were.
     func cancel() {
+        if detail.disarm(in: controller.portControlGenerations, available: controller.portControlBlock == nil) { return }
         if detail.cancelEditing(fieldFocused: namingFieldFocused, context: NamingContext(monitor: controller, store: catalog)) {
             _ = panel.makeFirstResponder(nil)
         }
@@ -223,6 +227,7 @@ extension PopoverPresenting {
     }
     private func hidePanel() {
         guard panel.isVisible else { return }
+        detail.disarm()
         detail.settle(NamingContext(monitor: controller, store: catalog))
         panel.orderOut(nil)
         controller.panelClosed(); catalog.panelClosed()

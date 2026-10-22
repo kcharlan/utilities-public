@@ -92,6 +92,13 @@ private func details(_ bits: UInt8?) -> ChargerDetails {
     #expect(sendable as? PortSwitch == .c3)
 }
 
+/// Control and outcome text names a target by the ports it powers; the shared
+/// USB-A switch powers both A1 and A2.
+@Test func portSwitchLabelsNameThePortsTheyPower() {
+    #expect(PortSwitch.allCases.map(\.label) == ["C1", "C2", "C3", "C4", "A1 and A2"])
+    #expect(PortID.usbC.allSatisfy { PortSwitch($0).label == $0.label })
+}
+
 private func switched(_ switches: [PortSwitch: Bool]) -> ChargerDetails {
     ChargerDetails(faultBits: nil, identitySupport: nil, identities: [:], rawFields: [:], switches: switches)
 }

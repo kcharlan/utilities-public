@@ -89,7 +89,7 @@ struct SettingsView: View {
                         Text("Choose a charger").tag(String?.none)
                         ForEach(chargers, id: \.serial) { charger in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("\(charger.alias.isEmpty ? charger.name : charger.alias) (\(charger.model))")
+                                Text("\(charger.label) (\(charger.model))")
                                 Text(charger.serial).font(.caption).foregroundStyle(.secondary)
                             }.tag(Optional(charger.serial))
                         }

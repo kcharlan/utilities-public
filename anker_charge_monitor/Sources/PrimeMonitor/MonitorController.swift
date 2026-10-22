@@ -6,6 +6,17 @@ import PrimeMonitorCore
 /// operation at a time").
 enum PortControlBlock: Equatable, Sendable { case anotherPortChanging, disconnected, stale }
 
+/// What an armed port action is bound to (plan "Confirmation"): the account,
+/// the charger selection and the connection, including the backend link seen by
+/// the controller. Any change means the confirming click must not dispatch.
+struct PortControlGenerations: Hashable, Sendable {
+    let account: UUID
+    let charger: String?
+    let selection: UUID
+    let connection: UUID
+    let link: UUID
+}
+
 @MainActor @Observable final class MonitorController {
     private(set) var snapshot: ChargerSnapshot?
     /// The running port operation; the controller owns it, so closing the panel
@@ -489,6 +500,11 @@ extension MonitorController {
         if portOperation != nil || portEnding != nil { return .anotherPortChanging }
         guard allowed, connected, appState.charger != nil else { return .disconnected }
         return isStale ? .stale : nil
+    }
+    /// Read-only: the generations an armed confirmation captures and rechecks.
+    var portControlGenerations: PortControlGenerations {
+        PortControlGenerations(account: generation, charger: appState.charger?.serial, selection: selectionGeneration,
+                               connection: connectionGeneration, link: linkSession)
     }
     /// Starts a plain turn-off or turn-on. Returns false, doing nothing, while
     /// `portControlBlock` is set.

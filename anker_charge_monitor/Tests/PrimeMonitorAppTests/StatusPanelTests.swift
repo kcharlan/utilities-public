@@ -716,6 +716,132 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         await naming.finish()
     }
 }
+/// Escape against "Confirmation": an armed Turn off or Restart is disarmed by
+/// the first Escape on every route, which then returns without touching the
+/// naming draft, the field's focus or the panel's visibility.
+@MainActor struct StatusPanelPortControlTests {
+    /// Arms Turn off on the expanded C1 under the controller's current context.
+    fileprivate static func arm(_ naming: NamingPanel) async {
+        let controller = naming.fixture.rig.controller
+        naming.detail.now = { [clock = naming.fixture.rig.clock] in clock.date }
+        #expect(!naming.detail.press(.turnOff, target: .c1, in: controller.portControlGenerations, available: controller.portControlBlock == nil))
+        #expect(naming.detail.armed?.target == .c1)
+        await pumpRunLoop()
+    }
+    fileprivate static func escape(_ naming: NamingPanel, _ route: String) {
+        switch route {
+        case "escape-event": naming.panel.sendEvent(NamingPanel.escape)
+        case "key-equivalent": #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        case "panel-cancel": naming.panel.cancelOperation(nil)
+        case "hosting-cancel": naming.host.cancelOperation(nil)
+        default: naming.fixture.status.cancel()
+        }
+    }
+    @Test(arguments: ["escape-event", "key-equivalent", "panel-cancel", "hosting-cancel", "direct"])
+    func armedWhileNamingTheFirstEscapeOnlyDisarms(_ route: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Armed Draft")
+        await Self.arm(naming)
+        Self.escape(naming, route)
+        #expect(naming.detail.armed == nil)
+        #expect(naming.detail.draft?.text == "Synthetic Armed Draft" && naming.detail.editing && naming.fieldEditing)
+        #expect(naming.panel.isVisible && naming.fixture.cancelCount == 0 && naming.panel.hides == 0)
+        await pumpRunLoop()
+        #expect(naming.detail.draft?.text == "Synthetic Armed Draft" && naming.detail.editing && naming.fieldEditing)
+        #expect(try naming.field().stringValue == "Synthetic Armed Draft" && naming.catalog.files.count("replace") == 0)
+        // The subsequent Escape cancels the edit as before, still keeping the panel.
+        Self.escape(naming, route)
+        #expect(naming.detail.draft == nil && !naming.detail.editing && !naming.fieldEditing && naming.panel.isVisible)
+        await pumpRunLoop()
+        #expect(naming.catalog.files.count("replace") == 0 && naming.fixture.cancelCount == 0)
+        // Then Escape dismisses.
+        Self.escape(naming, route == "escape-event" ? "key-equivalent" : route)
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    @Test(arguments: ["key-equivalent", "panel-cancel", "hosting-cancel", "direct"])
+    func armedWithoutNamingTheFirstEscapeDisarmsAndTheNextDismisses(_ route: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        await Self.arm(naming)
+        Self.escape(naming, route)
+        #expect(naming.detail.armed == nil && naming.detail.expanded == .c1 && naming.detail.draft == nil && !naming.fieldEditing)
+        #expect(naming.panel.isVisible && naming.fixture.cancelCount == 0 && naming.panel.hides == 0)
+        Self.escape(naming, route)
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    /// The shown panel disarms on its own when availability or the armed context
+    /// changes, so the action does not come back when the link does.
+    @Test(arguments: ["link", "network"])
+    func shownPanelDisarmsOnAContextOrAvailabilityChange(_ change: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        await Self.arm(naming)
+        let rig = naming.fixture.rig
+        if change == "link" { rig.backend.output.yield(.status(.error("Synthetic link drop"))) }
+        else { await rig.events.send(.network(false)) }
+        await settle(); await pumpRunLoop()
+        #expect(naming.detail.armed == nil)
+        await naming.finish()
+    }
+    @Test func expiredArmingLeavesEscapeToDismissal() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        await Self.arm(naming)
+        await naming.fixture.rig.clock.advance(PortControlPolicy.confirmationWindow)
+        Self.escape(naming, "key-equivalent")
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1)
+        await naming.finish()
+    }
+    @Test func closingThePanelDisarms() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        await Self.arm(naming)
+        naming.fixture.end()
+        #expect(!naming.panel.isVisible && naming.detail.armed == nil)
+        naming.fixture.begin(); await pumpRunLoop()
+        #expect(naming.detail.armed == nil && naming.detail.expanded == .c1)
+        // Owned dismissal (for example Settings) closes through the same path.
+        await Self.arm(naming)
+        naming.fixture.status.dismiss()
+        #expect(naming.detail.armed == nil)
+        await naming.finish()
+    }
+    /// A hosted PanelView without StatusItemController: the naming field's
+    /// Escape reaches `cancelNaming`, which delegates to an owner when one is
+    /// present and otherwise disarms before cancelling the edit.
+    @Test(arguments: ["fallback", "delegated"])
+    func standaloneFieldEscapeDelegatesOrDisarmsFirst(_ path: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let p = try await ControlPanel(syntheticDetails())
+        var delegated = 0
+        var view = p.view
+        if path == "delegated" { view.cancelAction = { delegated += 1 } }
+        let window = StatusPanel()
+        defer { window.contentViewController = nil }
+        window.setFrame(NSRect(x: -10000, y: -10000, width: 400, height: 600), display: false)
+        window.contentViewController = NSHostingController(rootView: view)
+        p.detail.toggle(.c1, p.naming); await pumpRunLoop()
+        let field = try #require(editableTextFields(in: window.contentView!).first)
+        #expect(window.makeFirstResponder(field)); await pumpRunLoop()
+        try await typeIntoFieldEditor(window, "Synthetic Standalone Draft")
+        await p.press(.turnOff, .c1); await pumpRunLoop()
+        #expect(p.detail.armed != nil && p.detail.editing)
+        window.sendEvent(NamingPanel.escape); await pumpRunLoop()
+        #expect(p.detail.draft?.text == "Synthetic Standalone Draft" && p.detail.editing && window.firstResponder is NSText)
+        if path == "delegated" {
+            #expect(delegated == 1 && p.detail.armed != nil)
+        } else {
+            #expect(p.detail.armed == nil)
+            window.sendEvent(NamingPanel.escape); await pumpRunLoop()
+            #expect(p.detail.draft == nil && !p.detail.editing)
+        }
+        #expect(p.catalog.files.count("replace") == 0); #expect(await p.rig.commands().isEmpty)
+        await p.rig.finish()
+    }
+}
 @MainActor struct StatusPanelIntegrationTests {
     @Test func nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)

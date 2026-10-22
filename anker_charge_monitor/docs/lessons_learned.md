@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-22: Inspect control states in the snapshots, not only their text
+
+The first port-control render marked the armed button with
+`.borderedProminent` and a red tint. In the offscreen snapshot window, which is
+not key, macOS greyed the tint, so "Confirm turn off" looked like any other
+button. The status panel is also not guaranteed to be the active window. The
+armed label now sets its own red, semibold text. A first fix set `.primary` on
+every unarmed label too. That overrode the disabled colour, so the paused
+restart's disabled **Turn on** looked enabled. Only the armed (always enabled)
+label sets a colour now. The same review found that "Off · On again in 5 s"
+truncated in the row and hid the countdown, so phase text now leads the row's
+secondary text. All three looked right in tests that compared strings. Each was
+visible only in the rendered PNGs.
+
 ## 2026-10-22: A defensive fallback can mask the ordering a test claims
 
 Quit must end a port operation before `MonitorController.stop()`. `stop()`
