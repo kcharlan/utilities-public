@@ -8,13 +8,14 @@ this module only renders those records, so the HTML cannot drift from the text
 and Markdown reports. Price ladders render `alias_check.price_ladder`'s
 positions as given and never recompute the scale.
 
-The report has no JavaScript (README HTML Auto-Reports): the disclosure is a
+The report has no JavaScript (README HTML Auto-Reports): the disclosures are
 native `<details>`, raw values ride the page's CSS-only `Show raw values`
-checkbox, and the ladders are static SVG. Color follows README Color
-Semantics: red and green appear only on a price cell or row that moved up or
-down; endpoint presence and price coverage are the neutral coverage blue; the
-ladders' endpoint dots and target/alias marks are neutral and told apart by
-shape and label, never by a cost color.
+checkbox, the ladders are static SVG and the rate card's strips are
+CSS-positioned. Color follows README Color Semantics: red and green appear
+only on a price cell or row that moved up or down; endpoint presence and price
+coverage are the neutral coverage blue; the alias and target prices are
+reference prices in the one reference violet, told apart from each other by
+shape (filled ▼ alias, outlined ◇ target) and label, never by a cost color.
 
 This module imports `reporting`'s card-row helpers, so `reporting` imports
 this module inside `_render_scan_html` rather than at module level.
@@ -47,6 +48,7 @@ from .endpoint_report import (
     ProviderEndpointReport,
     Quote,
     ScanEndpointSections,
+    alias_detail_summary,
     alias_event_heading,
     alias_event_reason,
     alias_ladders,
@@ -55,11 +57,12 @@ from .endpoint_report import (
     alias_unavailable_leaf_sentence,
     detail_only_lists_phrase,
     endpoint_list_heading,
+    ladder_endpoints_phrase,
     ladder_position_text,
     ladder_unplaced_text,
     omitted_lists_phrase,
 )
-from .models import Ladder, ProviderScanResult, canonical_json
+from .models import AliasLeafComparison, Ladder, LadderPosition, ProviderScanResult, canonical_json
 from .provider_profiles import ProviderProfile
 from .reporting import (
     _CARD_TABLE_COLGROUP,
@@ -175,7 +178,10 @@ def _alias_section(
     ]
     for report in reports:
         parts.append(_provider_name(report.provider_label, report.provider_id, "alias-provider"))
-        parts.extend(_alias_event(view, profiles[report.provider_id], ids) for view in report.events)
+        parts.extend(
+            _alias_event(view, profiles[report.provider_id], ids, open_detail=report.full_detail)
+            for view in report.events
+        )
     parts.append("</section>")
     return "".join(parts)
 
@@ -184,8 +190,13 @@ def _provider_name(label: str, provider_id: str, css_class: str) -> str:
     return f'<div class="{css_class}">{_h(label)} <code>{_h(provider_id)}</code></div>'
 
 
-def _alias_event(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> str:
-    """One alias event: heading, a sentence per leaf, match evidence and ladders."""
+def _alias_event(view: AliasEventView, profile: ProviderProfile, ids: _Ids, *, open_detail: bool) -> str:
+    """One alias event: heading, its leaves, match evidence and endpoint detail.
+
+    A divergence shows its leaves as a rate card, one row per leaf with a
+    compact price strip, and keeps the full ladders in a disclosure that is
+    open only in the full-detail report. Other kinds keep a sentence per leaf.
+    """
     parts = [
         f'<article class="alias-event" data-kind="{_h(view.kind)}">'
         '<div class="alias-event-header">'
@@ -196,7 +207,10 @@ def _alias_event(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> s
     reason = alias_event_reason(view)
     if reason:
         parts.append(f'<div class="alias-event-reason">{_h(_capitalized(reason))}</div>')
-    if view.leaves:
+    ladders = _event_ladders(view, profile)
+    if view.leaves and view.kind in _LADDER_KINDS:
+        parts.append(_rate_card(view.leaves, ladders, with_strips=view.target_list is not None))
+    elif view.leaves:
         items = []
         for leaf in view.leaves:
             sentence = alias_leaf_sentence(leaf, view.kind, raw_first=False)
@@ -216,19 +230,99 @@ def _alias_event(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> s
     if view.unavailable_leaves:
         items = "".join(f"<li>{_h(alias_unavailable_leaf_sentence(leaf))}</li>" for leaf in view.unavailable_leaves)
         parts.append(f'<ul class="alias-unavailable">{items}</ul>')
-    parts.extend(_alias_ladders(view, profile, ids))
+    if ladders and view.target_list is not None:
+        summary = alias_detail_summary(ladders, len(view.target_list.observations))
+        figures = "".join(_ladder_figure(ladder, view.target_list.display_id, ids) for ladder in ladders)
+        parts.append(
+            f'<details class="alias-detail"{" open" if open_detail else ""}>'
+            f"<summary>{_h(summary)}</summary>{figures}</details>"
+        )
     parts.append("</article>")
     return "".join(parts)
 
 
-def _alias_ladders(view: AliasEventView, profile: ProviderProfile, ids: _Ids) -> list[str]:
+def _event_ladders(view: AliasEventView, profile: ProviderProfile) -> tuple[Ladder, ...]:
     """A ladder per displayed divergent leaf, when the target's list has endpoints."""
     if view.kind not in _LADDER_KINDS or view.target_list is None:
-        return []
-    return [
-        _ladder_figure(ladder, view.target_list.display_id, ids)
-        for ladder in alias_ladders(view.leaves, view.target_list, profile)
-    ]
+        return ()
+    return alias_ladders(view.leaves, view.target_list, profile)
+
+
+# ---------------------------------------------------------------------------
+# Rate card
+# ---------------------------------------------------------------------------
+
+# The alias and target are reference prices, not moves: they share the one
+# reference color and are told apart by these glyphs, the same shapes the
+# ladders draw.
+_MARK_GLYPH: Final = {"alias": "▼", "target": "◇"}
+
+
+def _rate_card(leaves: Sequence[AliasLeafComparison], ladders: Sequence[Ladder], *, with_strips: bool) -> str:
+    """One row per divergent leaf: alias and target prices and, when the
+    target's endpoint list was captured, a compact strip of its ladder."""
+    by_leaf = {ladder.leaf: ladder for ladder in ladders}
+    strip_head = '<th scope="col">Endpoints, low to high</th>' if with_strips else ""
+    rows = []
+    for leaf in leaves:
+        cells = [
+            f'<th scope="row" class="alias-rate-label">{_h(leaf.label)}</th>',
+            _rate_value("alias", leaf, leaf.alias_display, leaf.alias_raw),
+            _rate_value("target", leaf, leaf.target_display, leaf.target_raw),
+        ]
+        if with_strips:
+            ladder = by_leaf.get(leaf.path)
+            strip = _price_strip(ladder) if ladder else '<span class="strip-none">No endpoint prices</span>'
+            cells.append(f'<td class="alias-rate-strip">{strip}</td>')
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    return (
+        '<table class="alias-rates"><thead><tr><th scope="col">Price</th>'
+        f'<th scope="col">Alias</th><th scope="col">Target</th>{strip_head}</tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _rate_value(name: str, leaf: AliasLeafComparison, display: str, raw: object) -> str:
+    return (
+        f'<td class="alias-rate-value ref-{name}">'
+        f'<span class="ref-glyph" aria-hidden="true">{_MARK_GLYPH[name]}</span> '
+        f'<span class="ref-value">{_h(display)}</span> <span class="alias-rate-unit">{_h(leaf.unit_label)}</span>'
+        f' <span class="ep-raw">raw {_h(str(raw))}</span></td>'
+    )
+
+
+def _price_strip(ladder: Ladder) -> str:
+    """The ladder's positions on one compact track, without endpoint labels.
+
+    Dots and marks sit at the ladder's own positions; the strip never
+    recomputes the scale. An endpoint dot sharing the alias or target price
+    takes the reference color.
+    """
+    glyphs = []
+    marks = []
+    for position in ladder.positions:
+        left = f"left: {_fmt(position.position * 100)}%"
+        mark_names = [entry.label for entry in position.entries if entry.kind != LADDER_ENDPOINT]
+        if ladder_endpoints_phrase(position.entries):
+            css = "strip-dot strip-dot-ref" if mark_names else "strip-dot"
+            tooltip = f"{position.display}: {ladder_position_text(position.entries)}"
+            glyphs.append(f'<span class="{css}" style="{left}" title="{_h(tooltip)}"></span>')
+        for name in mark_names:
+            glyphs.append(
+                f'<span class="strip-mark strip-mark-{_h(name)}" style="{left}"'
+                f' title="{_h(f"{name} price {position.display}")}"></span>'
+            )
+            marks.append(f"{name} price {position.display}")
+    low, high = ladder.domain_min_display, ladder.domain_max_display
+    domain = f"<span>{_h(low)}</span> <span>{_h(high)}</span>" if low != high else f"<span>{_h(low)}</span>"
+    label = f"{ladder.label} endpoint prices {ladder.unit_label}, log scale, {low} to {high}"
+    if marks:
+        label += "; " + ", ".join(marks)
+    return (
+        f'<div class="price-strip" role="img" aria-label="{_h(label)}">'
+        f'<div class="strip-track">{"".join(glyphs)}</div>'
+        f'<div class="strip-domain">{domain}</div></div>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +508,9 @@ def _ladder_figure(ladder: Ladder, list_display_id: str, ids: _Ids) -> str:
         tooltip = f"{position.display} {ladder.unit_label}: {ladder_position_text(position.entries)}"
         glyphs = []
         if any(entry.kind == LADDER_ENDPOINT for entry in position.entries):
-            glyphs.append(f'<circle class="ladder-endpoint" cx="{_fmt(x)}" cy="{_fmt(layout.axis_y)}" r="4"/>')
+            shares_mark = any(entry.kind != LADDER_ENDPOINT for entry in position.entries)
+            css = "ladder-endpoint ladder-endpoint-ref" if shares_mark else "ladder-endpoint"
+            glyphs.append(f'<circle class="{css}" cx="{_fmt(x)}" cy="{_fmt(layout.axis_y)}" r="4"/>')
         for entry in position.entries:
             if entry.kind == LADDER_ENDPOINT:
                 continue
@@ -449,20 +545,35 @@ def _ladder_figure(ladder: Ladder, list_display_id: str, ids: _Ids) -> str:
         )
     svg.append("</svg>")
 
-    items = "".join(
-        f"<li>{_h(position.display)}: {_h(ladder_position_text(position.entries))}</li>"
-        for position in ladder.positions
-    )
+    items = "".join(_ladder_item(position) for position in ladder.positions)
     unplaced = (
         f'<p class="ladder-unplaced">Not placed: {_h(ladder_unplaced_text(ladder))}</p>' if ladder.unplaced else ""
     )
     return (
         f'<figure class="price-ladder" id="{figure_id}">'
+        f'<div class="ladder-heading">{_h(ladder.label)}'
+        f' <span class="ladder-heading-unit">{_h(ladder.unit_label)}, log scale</span></div>'
         f'<div class="ladder-scroll">{"".join(svg)}</div>'
         f'<figcaption class="ladder-text" id="{text_id}">'
-        f'<span class="ladder-text-lead">{_h(ladder.label)} {_h(ladder.unit_label)}, low to high:</span>'
+        '<span class="ladder-text-lead">Low to high:</span>'
         f"<ol>{items}</ol>{unplaced}</figcaption></figure>"
     )
+
+
+def _ladder_item(position: LadderPosition) -> str:
+    """One text-equivalent row; a row carrying the alias or target price leads
+    with that reference and is banded so it stands out of the list."""
+    mark_names = [entry.label for entry in position.entries if entry.kind != LADDER_ENDPOINT]
+    parts = [
+        f'<span class="ref-chip ref-{_h(name)}"><span class="ref-glyph" aria-hidden="true">'
+        f"{_MARK_GLYPH.get(name, '')}</span> {_h(name)} price</span>"
+        for name in mark_names
+    ]
+    endpoints = ladder_endpoints_phrase(position.entries)
+    if endpoints:
+        parts.append(_h(endpoints))
+    css = ' class="ladder-ref"' if mark_names else ""
+    return f'<li{css}><span class="ladder-price">{_h(position.display)}</span>: {"; ".join(parts)}</li>'
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +643,7 @@ def _endpoint_provider(
     ]
     if report.no_change_line:
         parts.append(f'<p class="endpoint-no-change">{_h(_capitalized(report.no_change_line))}</p>')
-    parts.extend(_alias_event(view, profile, ids) for view in report.persisting)
+    parts.extend(_alias_event(view, profile, ids, open_detail=report.full_detail) for view in report.persisting)
     parts.extend(_endpoint_list(listing, profile, full_detail=report.full_detail) for listing in report.lists)
     forward = companion_link is not None and not report.full_detail
     for count, phrase, pronoun_text in (
@@ -759,7 +870,119 @@ ENDPOINT_HTML_CSS: Final = """\
 .alias-match,
 .alias-event-reason,
 .alias-unavailable { color: var(--text-dim); margin-top: 0.3rem; }
+.ref-glyph,
+.ref-value,
+.ref-chip { color: var(--accent-violet); }
+.ref-value { font-weight: 700; }
+.alias-rates {
+  width: 100%;
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.alias-rates thead th {
+  padding: 0 0.9rem 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+.alias-rates tbody th,
+.alias-rates tbody td {
+  padding: 0.4rem 0.9rem 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+.alias-rates tbody tr:last-child > * { border-bottom: 0; }
+.alias-rate-label {
+  color: var(--text-bright);
+  font-family: var(--font-body);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.alias-rate-value { white-space: nowrap; }
+.alias-rate-unit { color: var(--text-dim); font-size: 0.72rem; white-space: nowrap; }
+.alias-rates td.alias-rate-strip { width: 100%; min-width: 12rem; padding-right: 0; }
+.price-strip { padding: 0 6px; }
+.strip-track { position: relative; height: 34px; }
+.strip-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 16px;
+  border-top: 1.5px solid var(--border-accent);
+}
+.strip-dot,
+.strip-mark { position: absolute; }
+.strip-dot {
+  top: 13px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.strip-dot-ref { background: var(--accent-violet); }
+.strip-mark-alias {
+  top: 2px;
+  margin-left: -5px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 8px solid var(--accent-violet);
+}
+.strip-mark-target {
+  top: 24px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border: 1.5px solid var(--accent-violet);
+  transform: rotate(45deg);
+}
+.strip-domain {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+}
+.strip-none { color: var(--text-dim); font-size: 0.72rem; }
+@media (max-width: 640px) {
+  .alias-rates thead tr { display: none; }
+  .alias-rates tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .alias-rates tbody tr:last-child { border-bottom: 0; }
+  .alias-rates tbody th,
+  .alias-rates tbody td { padding: 0.15rem 0.5rem 0.15rem 0; border-bottom: 0; }
+  .alias-rates .alias-rate-label,
+  .alias-rates td.alias-rate-strip { grid-column: 1 / -1; min-width: 0; }
+  .alias-rate-value { white-space: normal; }
+}
+.alias-detail { margin-top: 0.6rem; }
+.alias-detail > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+.alias-detail > summary:hover,
+.alias-detail[open] > summary { color: var(--text-bright); }
 .price-ladder { margin-top: 0.6rem; }
+.ladder-heading {
+  margin-bottom: 0.3rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-bright);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.ladder-heading-unit { color: var(--text-dim); font-size: 0.75rem; font-weight: 400; }
 .ladder-scroll { max-width: 100%; overflow-x: auto; }
 .ladder-svg {
   display: block;
@@ -769,8 +992,9 @@ ENDPOINT_HTML_CSS: Final = """\
 .ladder-axis { stroke: var(--border-accent); stroke-width: 1.5; }
 .ladder-leader { stroke: var(--border-accent); stroke-width: 1; }
 .ladder-endpoint { fill: var(--text-dim); }
-.ladder-mark-target { fill: none; stroke: var(--text-bright); stroke-width: 1.5; }
-.ladder-mark-alias { fill: var(--text-bright); }
+.ladder-endpoint-ref { fill: var(--accent-violet); }
+.ladder-mark-target { fill: none; stroke: var(--accent-violet); stroke-width: 1.5; }
+.ladder-mark-alias { fill: var(--accent-violet); }
 .ladder-label {
   fill: var(--text);
   paint-order: stroke;
@@ -778,7 +1002,7 @@ ENDPOINT_HTML_CSS: Final = """\
   stroke-width: 3px;
   stroke-linejoin: round;
 }
-.ladder-label-mark { fill: var(--text-bright); }
+.ladder-label-mark { fill: var(--accent-violet); font-weight: 700; }
 .ladder-domain { fill: var(--text-dim); }
 .ladder-text {
   margin-top: 0.35rem;
@@ -788,6 +1012,14 @@ ENDPOINT_HTML_CSS: Final = """\
   overflow-wrap: anywhere;
 }
 .ladder-text ol { margin: 0.2rem 0 0 1.4rem; }
+.ladder-text li { padding: 0.05rem 0.4rem; }
+.ladder-text li.ladder-ref {
+  background: var(--accent-violet-dim);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.ladder-ref .ladder-price { color: var(--accent-violet); }
 .endpoint-disclosure {
   margin-top: 2.5rem;
   border-top: 1px solid var(--border);

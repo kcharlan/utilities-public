@@ -86,6 +86,14 @@ def _open_disclosure(page: Page) -> None:
     expect(page.locator(".endpoint-list").first).to_be_visible()
 
 
+def _open_alias_details(page: Page) -> None:
+    """Open every alias event's endpoint detail by its own summary."""
+    summaries = page.locator("details.alias-detail:not([open]) > summary")
+    while summaries.count():
+        summaries.first.click()
+    expect(page.locator("svg.ladder-svg").first).to_be_visible()
+
+
 def _no_page_overflow(page: Page) -> None:
     scroll_width, inner_width = page.evaluate(
         "() => [document.documentElement.scrollWidth, window.innerWidth]"
@@ -142,6 +150,8 @@ def test_endpoint_price_and_field_table_columns_align(page: Page, report_pair) -
 
 def test_endpoint_ladders_are_accessible_images_with_text_equivalents(page: Page, report_pair) -> None:
     _open(page, report_pair["concise"])
+    _open_disclosure(page)
+    _open_alias_details(page)
     ladders = page.get_by_role("img", name=re.compile(r"^Input price ladder: endpoints of "))
     expect(ladders.first).to_be_visible()
     count = page.locator("svg.ladder-svg").count()
@@ -167,6 +177,53 @@ def test_endpoint_ladders_are_accessible_images_with_text_equivalents(page: Page
     assert fills and not any(red in value or green in value for value in fills)
 
 
+def test_alias_rate_card_collapses_detail_and_marks_reference_prices(page: Page, report_pair) -> None:
+    violet = "rgb(167, 139, 250)"
+    _open(page, report_pair["concise"])
+    event = page.locator("#alias-check article.alias-event").first
+    # The rate card and its strips are the collapsed view; the ladders wait
+    # behind the event's own disclosure.
+    expect(event.locator("table.alias-rates")).to_be_visible()
+    expect(event.locator(".price-strip").first).to_be_visible()
+    detail = event.locator("details.alias-detail")
+    assert detail.evaluate("element => element.open") is False
+    expect(event.locator("svg.ladder-svg").first).to_be_hidden()
+    # Alias and target values, marks and matching dots carry the reference color.
+    value = event.locator("td.ref-alias .ref-value").first
+    assert value.evaluate("node => getComputedStyle(node).color") == violet
+    assert int(value.evaluate("node => getComputedStyle(node).fontWeight")) >= 700
+    assert event.locator(".strip-mark-alias").first.evaluate("node => getComputedStyle(node).borderTopColor") == violet
+    assert event.locator(".strip-mark-target").first.evaluate("node => getComputedStyle(node).borderTopColor") == violet
+    # Raw values ride the page's toggle.
+    raw = event.locator("td.ref-alias .ep-raw").first
+    expect(raw).to_be_hidden()
+    page.locator("#show-raw").check()
+    expect(raw).to_be_visible()
+    # Opening the detail shows each ladder under its heading, with the
+    # reference rows banded apart from the plain endpoint rows.
+    detail.locator("> summary").click()
+    figure = event.locator("figure.price-ladder").first
+    expect(figure.locator("svg.ladder-svg")).to_be_visible()
+    expect(figure.locator(".ladder-heading")).to_have_text(re.compile(r"^Input /1M tokens, log scale$"))
+    heading_box = figure.locator(".ladder-heading").bounding_box()
+    svg_box = figure.locator("svg.ladder-svg").bounding_box()
+    assert heading_box["y"] + heading_box["height"] <= svg_box["y"]
+    styles = figure.evaluate(
+        """figure => [...figure.querySelectorAll('figcaption li')].map(li => ({
+            ref: li.classList.contains('ladder-ref'),
+            background: getComputedStyle(li).backgroundColor,
+            weight: Number(getComputedStyle(li).fontWeight)}))"""
+    )
+    refs = [style for style in styles if style["ref"]]
+    plain = [style for style in styles if not style["ref"]]
+    assert refs and plain
+    assert all(style["background"] != plain[0]["background"] and style["weight"] >= 600 for style in refs)
+    assert figure.locator(".ladder-mark-alias").evaluate("node => getComputedStyle(node).fill") == violet
+    # The full-detail companion opens every endpoint detail.
+    _open(page, report_pair["full"])
+    assert page.locator("details.alias-detail").first.evaluate("element => element.open") is True
+
+
 def _label_boxes(page: Page) -> list[list[dict]]:
     return page.evaluate(
         """() => [...document.querySelectorAll('svg.ladder-svg')].map(svg => {
@@ -189,6 +246,7 @@ def test_endpoint_ladder_labels_never_collide_and_narrow_pages_do_not_overflow(
     for name in ("concise", "full"):
         _open(page, report_pair[name])
         _open_disclosure(page)
+        _open_alias_details(page)
         _no_page_overflow(page)
         ladders = _label_boxes(page)
         assert ladders
