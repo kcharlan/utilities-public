@@ -706,7 +706,7 @@ Semantically unchanged or unresolved direct prices appear only in the neutral
 
 **Wherever an HTML report states a field change, color carries one meaning and only one: cost.** Red/salmon marks a price going up, green a price going down. Nothing that reports a change is allowed to borrow those two colors, so a red change cell always means "this got more expensive" and a green one always means "this got cheaper" — a reader never has to check which axis a color is on. This holds in all three HTML documents: the scan report's model cards, its automatically generated `_full.html` companion, and the standalone `changes` report's change table — plus the Price Movement card and the Change Summary in each.
 
-Everything else takes a non-cost color: capacity changes (context windows, output limits) are amber, capability changes are blue, a disabled capability and purely informational changes are dim, list membership is blue for a member arriving and dim for one leaving (in every card type and in the `changes` report alike), and a price field appearing or disappearing is the neutral coverage blue — coverage is not a direction, and painting an added price red would claim a price rise that was never measured.
+Everything else takes a non-cost color: capacity changes (context windows, output limits) are amber, capability changes are blue, a disabled capability and purely informational changes are dim, list membership is blue for a member arriving and dim for one leaving (in every card type and in the `changes` report alike), and a price field appearing or disappearing is the neutral coverage blue — coverage is not a direction, and painting an added price red would claim a price rise that was never measured. Violet marks a **reference price** and nothing else: an alias's and its target's catalog prices in the Alias check and on its price strips and ladders, and the endpoint prices that equal them. A reference price is a point of comparison, not a change, so violet never appears on a change row or in the Change Summary.
 
 Two things outside that vocabulary still use red and green, and neither reports a field change: **run status** — a provider card and its badge are green when clean and red when the fetch failed, and an error message is red — and the **added/removed model lists**, where a whole model arriving is green and one departing is red. Both are presence-or-health signals about the scan itself rather than statements about a value moving, and neither appears in a change table, a model card row, or the Change Summary.
 
@@ -754,21 +754,30 @@ headline still elevates the largest dollar movements.
 
 **Alias events follow the Price Movement card.** For a provider with alias
 checks (see Alias Check and Provider Endpoints), an `Alias check` card lists
-`new`, `changed`, and `resolved` divergences, each with one labelled
-alias-versus-target sentence per differing price, normalized figure first and
-the raw provider value in parentheses; the full-detail companion adds
-`unavailable` events and prices that could not be compared. Divergences are
-not price moves, so the card is neutral: red and green stay reserved for
-prices that went up or down. When the target's endpoint list was captured in
-this scan, each divergent price gets a **price ladder**: a static SVG on a
-log scale with a neutral dot per endpoint price and two labelled reference
-marks, a hollow diamond for the target's catalog price and a solid triangle
-for the alias's. Coincident or crowded labels move to separate rows instead of
-overlapping, the ladder keeps a legible size and scrolls inside its frame on a
-narrow screen, and each ladder is an accessible image whose title names it and
-whose caption lists every placed price low to high, plus any endpoint that
-could not be placed (free, missing, or in another unit). A leaf no endpoint
-carries gets no ladder.
+`new`, `changed`, and `resolved` divergences; the full-detail companion adds
+`unavailable` events and prices that could not be compared. A divergence
+(new, changed, or persisting) is a **rate card**: one row per differing price
+with the alias's and the target's normalized figures (the raw provider values
+on the `Show raw values` sub-line) and, when the target's endpoint list was
+captured in this scan, a compact **price strip** of that list on a log scale:
+a dot per endpoint price, the alias's solid triangle above the track, the
+target's hollow diamond below it, and the low and high prices at its ends.
+Other events keep one labelled sentence per price. Divergences are not price
+moves, so the card never uses red or green; the alias and target are
+reference prices and take the reference violet (see Color Semantics).
+
+The full **price ladders** sit in a closed `Endpoint prices for …` disclosure
+under each rate card, open by default in the full-detail companion. Each
+ladder is a static SVG under a heading naming its price and unit, with a dot
+per endpoint price and the two labelled reference marks; an endpoint dot that
+shares the alias's or target's price is violet too. Coincident or crowded
+labels move to separate rows instead of overlapping, the ladder keeps a
+legible size and scrolls inside its frame on a narrow screen, and each ladder
+is an accessible image whose title names it and whose caption lists every
+placed price low to high, plus any endpoint that could not be placed (free,
+missing, or in another unit). The caption rows carrying the alias or target
+price lead with it and are banded so they stand out of the list. A leaf no
+endpoint carries gets no ladder, and its strip cell says so.
 
 **Endpoint detail is one closed disclosure.** `Provider endpoints` sits after
 `Other changes`, closed in both companions, and its summary line carries the

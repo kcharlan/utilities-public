@@ -972,12 +972,24 @@ _UNPLACED_TEXT: Final = {
 def ladder_position_text(entries: Iterable) -> str:
     """`endpoints a#0 and b#0; alias price` for one ladder position."""
     entries = tuple(entries)
-    keys = [entry.label for entry in entries if entry.kind == LADDER_ENDPOINT]
-    parts = []
-    if keys:
-        parts.append(f"{'endpoint' if len(keys) == 1 else 'endpoints'} {_join_words(keys)}")
+    endpoints = ladder_endpoints_phrase(entries)
+    parts = [endpoints] if endpoints else []
     parts.extend(f"{entry.label} price" for entry in entries if entry.kind != LADDER_ENDPOINT)
     return "; ".join(parts)
+
+
+def ladder_endpoints_phrase(entries: Iterable) -> str | None:
+    """`endpoints a#0 and b#0` for a position's endpoints, or None without any."""
+    keys = [entry.label for entry in entries if entry.kind == LADDER_ENDPOINT]
+    if not keys:
+        return None
+    return f"{'endpoint' if len(keys) == 1 else 'endpoints'} {_join_words(keys)}"
+
+
+def alias_detail_summary(ladders: Sequence[Ladder], endpoint_count: int) -> str:
+    """The label of an alias event's collapsed endpoint detail."""
+    labels = [ladder.label for ladder in ladders]
+    return f"Endpoint prices for {_join_words(labels)} across {plural(endpoint_count, 'endpoint')}"
 
 
 def ladder_unplaced_text(ladder: Ladder) -> str:

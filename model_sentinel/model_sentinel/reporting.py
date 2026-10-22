@@ -4606,6 +4606,8 @@ _HTML_CSS = """\
   --accent-amber: #fbbf24;
   --accent-amber-dim: rgba(251, 191, 36, 0.12);
   --accent-blue: #60a5fa;
+  --accent-violet: #a78bfa;
+  --accent-violet-dim: rgba(167, 139, 250, 0.14);
   --font-mono: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
   --font-body: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }

@@ -7406,11 +7406,18 @@ def test_alias_leaf_presentation_html_events_follow_the_price_movement_card() ->
     assert _text(_element(event, 'class="alias-event-header"')) == (
         f"New alias price divergence {_EP_ALIAS} → {_EP_TARGET}"
     )
-    # One labelled sentence per differing leaf, normalized figure first, raw kept.
-    assert [_text(item) for item in re.findall(r"<li>.*?</li>", _element(event, 'class="alias-leaves"'))] == [
-        "Input: alias $2.00 /1M tokens (raw 0.000002) vs target $3.00 /1M tokens (raw 0.000003)",
-        "Per request: alias $0.03 /request (raw 0.03) vs target $0.02 /request (raw 0.02)",
+    # A rate card: one row per differing leaf, normalized figure first, raw kept
+    # behind the raw-values toggle. Without a capture there is no strip column.
+    card = _element(event, 'class="alias-rates"')
+    assert "alias-leaves" not in event
+    assert [_text(cell) for cell in _cells(_element(card, "<thead"))] == ["Price", "Alias", "Target"]
+    rows = re.findall(r"<tr>.*?</tr>", _element(card, "<tbody"))
+    assert [_text(row) for row in rows] == [
+        "Input ▼ $2.00 /1M tokens raw 0.000002 ◇ $3.00 /1M tokens raw 0.000003",
+        "Per request ▼ $0.03 /request raw 0.03 ◇ $0.02 /request raw 0.02",
     ]
+    assert all(row.count('class="ep-raw"') == 2 for row in rows)
+    assert "alias-rate-strip" not in card
     # Output agrees, so no Output sentence stands in for another leaf.
     assert "Output" not in _text(section)
     # A divergence is not a price move: no cost colors, and no ladder without
@@ -7473,8 +7480,35 @@ def test_alias_leaf_presentation_html_ladders_are_accessible_and_neutral() -> No
         " 1 endpoint was not checkable on every compared price: partial#0"
     )
     assert "<code>match#0</code>" in _element(event, 'class="alias-match"')
+    # The rate card's strip places the ladder's own positions: two endpoint
+    # dots ($2.00 shared with the alias, so it takes the reference color, and
+    # $3.00 shared with the target) and both marks, with the domain ends.
+    strip = _element(_element(event, 'class="alias-rates"'), 'class="price-strip"')
+    assert 'role="img"' in strip
+    assert (
+        'aria-label="Input endpoint prices /1M tokens, log scale, $2.00 to $3.00;'
+        ' alias price $2.00, target price $3.00"'
+    ) in strip
+    assert re.findall(r'class="(strip-dot[^"]*)" style="left: ([\d.]+)%"', strip) == [
+        ("strip-dot strip-dot-ref", "0"),
+        ("strip-dot strip-dot-ref", "100"),
+    ]
+    assert re.findall(r'class="strip-mark strip-mark-(\w+)" style="left: ([\d.]+)%"', strip) == [
+        ("alias", "0"),
+        ("target", "100"),
+    ]
+    assert _text(_element(strip, 'class="strip-domain"')) == "$2.00 $3.00"
+    # The full ladders sit in a closed disclosure named for what it holds.
+    detail = _element(event, 'class="alias-detail"')
+    assert detail.startswith('<details class="alias-detail">')
+    assert _text(_element(detail, "<summary")) == "Endpoint prices for Input across 4 endpoints"
+    full_event = _element(_element(_ep_html(_ladder_result(), "all"), 'id="alias-check"'), 'class="alias-event"')
+    assert '<details class="alias-detail" open>' in full_event
     # One ladder per displayed divergent leaf (only Input differs).
-    (figure,) = _elements(event, 'class="price-ladder"')
+    (figure,) = _elements(detail, 'class="price-ladder"')
+    # The heading names the price above its chart.
+    assert figure.index('class="ladder-heading"') < figure.index("<svg")
+    assert _text(_element(figure, 'class="ladder-heading"')) == "Input /1M tokens, log scale"
     svg = _element(figure, "<svg")
     assert 'role="img"' in svg
     title_id = re.search(r'aria-labelledby="([^"]+)"', svg).group(1)
@@ -7484,13 +7518,17 @@ def test_alias_leaf_presentation_html_ladders_are_accessible_and_neutral() -> No
     caption = _element(figure, f'id="{text_id}"')
     assert caption.startswith("<figcaption")
     # The equivalent text names every placed entry and every unplaced one.
-    assert [_text(item) for item in re.findall(r"<li>.*?</li>", caption)] == [
-        "$2.00: endpoints match#0 and partial#0; alias price",
-        "$3.00: endpoint other#0; target price",
+    # A row carrying a reference price leads with it and is banded.
+    items = re.findall(r"<li\b[^>]*>.*?</li>", caption)
+    assert [_text(item) for item in items] == [
+        "$2.00: ▼ alias price; endpoints match#0 and partial#0",
+        "$3.00: ◇ target price; endpoint other#0",
     ]
+    assert all(item.startswith('<li class="ladder-ref">') for item in items)
     assert "free#0 (free)" in _text(_element(caption, 'class="ladder-unplaced"'))
-    # Neutral endpoint dots; distinguishable, labelled target and alias marks.
-    assert svg.count('class="ladder-endpoint"') == 2
+    # Endpoint dots sharing a reference price take the reference color;
+    # distinguishable, labelled target and alias marks.
+    assert svg.count('class="ladder-endpoint ladder-endpoint-ref"') == 2
     assert svg.count('class="ladder-mark ladder-mark-target"') == 1
     assert svg.count('class="ladder-mark ladder-mark-alias"') == 1
     labels = [_text(label) for label in re.findall(r"<text\b[^>]*ladder-label[^>]*>.*?</text>", svg)]
@@ -7505,7 +7543,10 @@ def test_alias_leaf_presentation_html_no_ladder_without_placed_endpoints() -> No
     catalog = _alias_catalog(prompt="0.000002", request="0.03")
     events = _divergence_events(None, catalog, _EP_PROFILE, capture.lists)
     event = _element(_ep_html(_ep_result(capture, alias_events=events)), 'class="alias-event"')
-    assert "Per request: alias $0.03" in _text(event)
+    rows = re.findall(r"<tr>.*?</tr>", _element(_element(event, 'class="alias-rates"'), "<tbody"))
+    assert [_text(row).split(" ▼")[0] for row in rows] == ["Input", "Per request"]
+    assert 'class="price-strip"' in rows[0]
+    assert _text(_element(rows[1], 'class="alias-rate-strip"')) == "No endpoint prices"
     figures = _elements(event, 'class="price-ladder"')
     assert [_text(_element(figure, "<title")) .split(":")[0] for figure in figures] == ["Input price ladder"]
 
