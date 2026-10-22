@@ -9,18 +9,22 @@ import PrimeMonitorCore
 struct StatusContent: View {
     let controller: MonitorController
     var catalog = DeviceCatalogStore()
+    var detail = PortDetailState()
     let settings: SettingsWindowController
     let focus: PopoverFocus
     var dismiss: () -> Void = {}
+    /// The panel's single cancellation action (Escape): cancels a naming edit,
+    /// otherwise dismisses. Omitted, cancellation dismisses.
+    var cancel: (() -> Void)?
     var sizeChanged: (NSSize) -> Void = { _ in }
     var body: some View {
-        PanelView(monitor: controller, catalog: catalog, openSettings: showSettings).fixedSize(horizontal: false, vertical: true)
+        PanelView(monitor: controller, catalog: catalog, detail: detail, openSettings: showSettings, cancelAction: cancel).fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: NSSize.self, of: { $0.size }, action: sizeChanged)
     }
     func showSettings() { dismiss(); settings.show() }
     func makeHostingController() -> StatusHostingController {
         let hosting = StatusHostingController(rootView: self)
-        hosting.dismiss = dismiss
+        hosting.cancel = cancel ?? dismiss
         var content = self
         content.sizeChanged = { [weak hosting] in hosting?.measuredSizeChanged($0) }
         hosting.rootView = content
@@ -31,9 +35,11 @@ struct StatusContent: View {
     }
 }
 @MainActor final class StatusHostingController: NSHostingController<StatusContent> {
-    var dismiss: () -> Void = {}
+    var cancel: () -> Void = {}
     var measuredSizeChanged: (NSSize) -> Void = { _ in }
-    override func cancelOperation(_ sender: Any?) { dismiss() }
+    /// Calls the panel's cancellation action directly; never forwards the
+    /// command to the panel, which would run the action twice.
+    override func cancelOperation(_ sender: Any?) { cancel() }
 }
 @MainActor protocol PopoverPresenting: AnyObject {
     func showPopover()
@@ -50,8 +56,12 @@ extension PopoverPresenting { func showSettings() {} }
 @MainActor final class StatusItemController: NSObject, @MainActor NSStatusItemExpandedInterfaceDelegate, NSWindowDelegate, PopoverPresenting {
     private let controller: MonitorController
     let catalog: DeviceCatalogStore
+    /// Expansion and naming state, retained across snapshots and panel closing.
+    let detail = PortDetailState()
     private let item: NSStatusItem
     private let panel: StatusPanel
+    /// The SwiftUI content, whose only editable control is the naming field.
+    private weak var hostedContent: NSView?
     private let focus = PopoverFocus()
     private let settings: SettingsWindowController
     private let notifications: NotificationCenter
@@ -105,7 +115,9 @@ extension PopoverPresenting { func showSettings() {} }
             return window.convertToScreen(button.convert(button.bounds, to: nil))
         }
         super.init()
-        let hosting = StatusContent(controller: controller, catalog: catalog, settings: settings, focus: focus, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
+        let hosting = StatusContent(controller: controller, catalog: catalog, detail: detail, settings: settings, focus: focus,
+                                    dismiss: { [weak self] in self?.dismiss() }, cancel: { [weak self] in self?.cancel() }).makeHostingController()
+        hostedContent = hosting.view
         let content = StatusPanelContentController(hosting: hosting)
         content.sizeChanged = { [weak self] in self?.positionPanel() }
         panel.contentViewController = content
@@ -123,7 +135,7 @@ extension PopoverPresenting { func showSettings() {} }
         NotificationCenter.default.addObserver(self, selector: #selector(buttonFrameChanged), name: NSView.frameDidChangeNotification, object: item.button)
         item.expandedInterfaceDelegate = self
         panel.delegate = self
-        panel.dismiss = { [weak self] in self?.dismiss() }
+        panel.cancel = { [weak self] in self?.cancel() }
         notifications.addObserver(self, selector: #selector(applicationResignedActive), name: NSApplication.didResignActiveNotification, object: NSApp)
         workspaceNotifications.addObserver(self, selector: #selector(workspaceActivatedApplication), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         globalMouseMonitor = monitorGlobalMouse { [weak self] type, location, time in
@@ -168,6 +180,21 @@ extension PopoverPresenting { func showSettings() {} }
         activate()
         presentPanel()
     }
+    /// Escape, from every route: StatusPanel.performKeyEquivalent and
+    /// cancelOperation, StatusHostingController.cancelOperation and the naming
+    /// field's onExitCommand. While naming it cancels the edit, marked before
+    /// focus leaves the field so the focus-loss save cannot commit it; it then
+    /// clears the field's focus so a later Escape dismisses the panel.
+    func cancel() {
+        if detail.cancelEditing(fieldFocused: namingFieldFocused) { _ = panel.makeFirstResponder(nil) }
+        else { dismiss() }
+    }
+    /// A field editor is editing a control of the hosted panel content; other
+    /// responders, such as an added search field, keep normal dismissal.
+    private var namingFieldFocused: Bool {
+        guard let editor = panel.firstResponder as? NSText, let field = editor.delegate as? NSView, let hostedContent else { return false }
+        return field.isDescendant(of: hostedContent)
+    }
     func dismiss() {
         hidePanel()
         guard let ending = session else { return }
@@ -180,9 +207,13 @@ extension PopoverPresenting { func showSettings() {} }
         positionPanel()
         controller.panelOpened(); catalog.panelOpened()
         panel.makeKeyAndOrderFront(nil)
+        // Open without editing: AppKit can focus the naming field when the
+        // window becomes key, and a field left focused at closing stays so.
+        if namingFieldFocused { _ = panel.makeFirstResponder(nil) }
     }
     private func hidePanel() {
         guard panel.isVisible else { return }
+        detail.settle(NamingContext(monitor: controller, store: catalog))
         panel.orderOut(nil)
         controller.panelClosed(); catalog.panelClosed()
     }

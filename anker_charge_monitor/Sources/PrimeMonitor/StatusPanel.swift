@@ -55,7 +55,8 @@ enum StatusPanelFrame {
     }
 }
 @MainActor class StatusPanel: NSPanel {
-    var dismiss: () -> Void = {}
+    /// The owner's single cancellation action.
+    var cancel: () -> Void = {}
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isReleasedWhenClosed = false
@@ -71,10 +72,11 @@ enum StatusPanelFrame {
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    override func cancelOperation(_ sender: Any?) { dismiss() }
+    override func cancelOperation(_ sender: Any?) { cancel() }
+    /// Escape reaches the owner before a field editor can consume it.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.charactersIgnoringModifiers == "\u{1b}" {
-            cancelOperation(nil)
+            cancel()
             return true
         }
         return super.performKeyEquivalent(with: event)

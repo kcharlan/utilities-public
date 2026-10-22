@@ -565,6 +565,104 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
     }
 }
+
+/// A shown panel with an expanded identified device on C1 and a persistent
+/// private catalog; `focusAndType` edits its real hosted naming field.
+@MainActor private final class NamingPanel {
+    let catalog: CatalogRig
+    let fixture: PanelFixture
+    var detail: PortDetailState { fixture.status.detail }
+    var panel: OffscreenStatusPanel { fixture.panel }
+    static let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
+                                         characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+    init() async throws {
+        catalog = try CatalogRig()
+        fixture = try PanelFixture(home: FileManager.default.temporaryDirectory, catalog: catalog.store)
+        await fixture.rig.start()
+        await detailReply(fixture.rig, syntheticDetails())
+        fixture.begin()
+        detail.toggle(.c1, NamingContext(monitor: fixture.rig.controller, store: catalog.store))
+        await pumpRunLoop()
+    }
+    var host: StatusHostingController { panel.contentViewController!.children.first as! StatusHostingController }
+    func field() throws -> NSTextField { try #require(editableTextFields(in: panel.contentView!).first) }
+    var fieldEditing: Bool { panel.firstResponder is NSText }
+    func focusAndType(_ text: String) async throws {
+        #expect(panel.makeFirstResponder(try field())); await pumpRunLoop()
+        try await typeIntoFieldEditor(panel, text)
+        #expect(detail.editing && detail.draft?.text == text && fieldEditing)
+    }
+    func finish() async { fixture.status.dismiss(); catalog.store.panelClosed(); await fixture.rig.finish() }
+}
+@MainActor struct StatusPanelNamingTests {
+    /// Every cancellation route cancels the edit while naming, keeps the panel
+    /// open and clears the field's focus; the focus transition commits nothing,
+    /// and a later Escape outside editing dismisses normally.
+    @Test(arguments: ["escape-event", "key-equivalent", "panel-cancel", "hosting-cancel"])
+    func escapeWhileNamingCancelsTheEditThenDismisses(_ route: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Abandoned Name")
+        switch route {
+        // The field editor receives the key: AppKit's cancelOperation reaches
+        // the TextField's onExitCommand.
+        case "escape-event": naming.panel.sendEvent(NamingPanel.escape)
+        case "key-equivalent": #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        case "panel-cancel": naming.panel.cancelOperation(nil)
+        default: naming.host.cancelOperation(nil)
+        }
+        #expect(naming.panel.isVisible && naming.fixture.cancelCount == 0 && naming.panel.hides == 0)
+        #expect(!naming.detail.dirty && !naming.detail.editing && !naming.fieldEditing)
+        // The subsequent focus transition and field value push.
+        await pumpRunLoop()
+        #expect(!naming.detail.dirty && naming.catalog.files.count("replace") == 0)
+        #expect(try naming.catalog.store.catalog.devices.isEmpty && naming.field().stringValue == "")
+        #expect(naming.detail.expanded == .c1)
+        // Outside editing, the same route dismisses once.
+        switch route {
+        case "escape-event", "key-equivalent": #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        case "panel-cancel": naming.panel.cancelOperation(nil)
+        default: naming.host.cancelOperation(nil)
+        }
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    @Test func closingSavesTheEditAndReopeningLeavesTheFieldUnfocused() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Closing Name")
+        naming.fixture.end()
+        #expect(!naming.panel.isVisible && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Closing Name"])
+        #expect(try naming.catalog.devices() == ["0A1B:2C3D": "Synthetic Closing Name"] && !naming.detail.dirty)
+        naming.fixture.begin(); await pumpRunLoop()
+        #expect(naming.panel.isVisible && !naming.fieldEditing && naming.detail.expanded == .c1)
+        #expect(try naming.field().stringValue == "Synthetic Closing Name")
+        // A first Escape with nothing to cancel dismisses.
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        #expect(!naming.panel.isVisible)
+        await naming.finish()
+    }
+    @Test func failedSaveAtClosingShowsItsDraftAndErrorAfterReopening() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        naming.catalog.files.failWrites = true
+        try await naming.focusAndType("Synthetic Unsaved Name")
+        naming.fixture.end(); await pumpRunLoop()
+        #expect(!naming.panel.isVisible && naming.detail.dirty)
+        naming.fixture.begin(); await pumpRunLoop()
+        let lamp = NamingTarget(charger: appCharger.serial, port: .c1, key: syntheticLamp)
+        let failure = try #require(naming.detail.failure(for: lamp))
+        #expect(try naming.detail.expanded == .c1 && naming.field().stringValue == "Synthetic Unsaved Name")
+        // Retry through Return in the real field.
+        naming.catalog.files.failWrites = false
+        #expect(naming.panel.makeFirstResponder(try naming.field())); await pumpRunLoop()
+        let editor = try #require(naming.panel.firstResponder as? NSTextView)
+        editor.insertNewline(nil); await pumpRunLoop()
+        #expect(!naming.detail.dirty && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Unsaved Name"])
+        #expect(naming.detail.failure(for: lamp) == nil && failure.inlineText.hasPrefix("Name not saved"))
+        await naming.finish()
+    }
+}
 @MainActor struct StatusPanelIntegrationTests {
     @Test func nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
