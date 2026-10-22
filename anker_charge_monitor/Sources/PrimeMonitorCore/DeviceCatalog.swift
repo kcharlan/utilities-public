@@ -142,8 +142,5 @@ public struct DeviceCatalog: Equatable, Sendable {
         return UInt16(text, radix: 16)
     }
 
-    static func hex(_ value: UInt16) -> String {
-        let digits = String(value, radix: 16, uppercase: true)
-        return String(repeating: "0", count: 4 - digits.count) + digits
-    }
+    static func hex(_ value: UInt16) -> String { DisplayFormatter.hex(value) }
 }

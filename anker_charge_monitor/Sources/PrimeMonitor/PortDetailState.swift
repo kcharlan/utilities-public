@@ -123,6 +123,11 @@ struct NamingFailure: Equatable {
             return false
         }
         expanded = expanded == port ? nil : port
+        // Any change of expansion removes the expanded row's field, and a
+        // removed field reports no focus loss. Without this, a stale editing
+        // state made the next Escape cancel nothing instead of dismissing.
+        cancelling = false
+        if editing { editing = false }
         return true
     }
 

@@ -13,6 +13,12 @@ public enum DisplayFormatter {
             + String(repeating: "0", count: places - fraction.count) + fraction
     }
 
+    /// Uppercase hexadecimal padded to the type's full width, without a prefix.
+    public static func hex(_ value: some FixedWidthInteger) -> String {
+        let digits = String(value, radix: 16, uppercase: true)
+        return String(repeating: "0", count: max(0, value.bitWidth / 4 - digits.count)) + digits
+    }
+
     public static func age(_ seconds: TimeInterval) -> String {
         let whole = seconds.isFinite ? max(0, seconds.rounded(.down)) : 0
         // Clamp before converting, including TimeInterval values outside Int's range.

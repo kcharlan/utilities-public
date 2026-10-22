@@ -10,6 +10,11 @@ import Testing
     #expect(DisplayFormatter.watts(centi: -456) == "-4.56 W")
     #expect(DisplayFormatter.amps(milli: Int.min) == "-9223372036854775.808 A")
 }
+
+@Test func hexPadsToTheTypeWidth() {
+    #expect(DisplayFormatter.hex(UInt8(0)) == "00" && DisplayFormatter.hex(UInt8(0x0b)) == "0B" && DisplayFormatter.hex(UInt8(0xff)) == "FF")
+    #expect(DisplayFormatter.hex(UInt16(0x0a1b)) == "0A1B" && DisplayFormatter.hex(UInt16(0xfeed)) == "FEED")
+}
 @Test func wattsAcceptsACompactUnitSeparator() {
     #expect(DisplayFormatter.watts(centi: 448, separator: "\u{2009}") == "4.48\u{2009}W")
     #expect(DisplayFormatter.watts(centi: -5, separator: "") == "-0.05W")

@@ -550,7 +550,9 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     }
 }
 @MainActor struct StatusPanelKeyboardTests {
-    @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() throws {
+    @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() async throws {
+        // Focusing a field ends editing in any other test window: hold the lock.
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
         let home = FileManager.default.temporaryDirectory.appending(path: "synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
@@ -624,6 +626,22 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         case "panel-cancel": naming.panel.cancelOperation(nil)
         default: naming.host.cancelOperation(nil)
         }
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    /// Switching or collapsing the edited row saves and removes the focused
+    /// field; the next Escape must dismiss rather than cancel a stale edit.
+    @Test(arguments: [PortID.c2, .c1])
+    func rowChangeWhileNamingSavesAndTheNextEscapeDismisses(_ destination: PortID) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Switched Name")
+        #expect(naming.detail.toggle(destination, NamingContext(monitor: naming.fixture.rig.controller, store: naming.catalog.store)))
+        await pumpRunLoop()
+        #expect(naming.detail.expanded == (destination == .c1 ? nil : destination))
+        #expect(naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Switched Name"] && !naming.detail.dirty)
+        #expect(!naming.detail.editing && !naming.fieldEditing)
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
         #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
         await naming.finish()
     }

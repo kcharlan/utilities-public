@@ -37,6 +37,12 @@ with an added search field; only a field inside the hosted content counts.
 Hosted Escape dispatch did not reproduce the field's late value push that the
 cancellation mark guards against; the model regression covers that mark, and
 removing it fails that test.
+Review then found that a focused SwiftUI field removed with its view (switching
+the expanded row) may report no focus loss, so the editing state stayed set and
+the next Escape cancelled nothing instead of dismissing. The action that removes
+the field now ends editing itself; a hosted switch-then-Escape regression failed
+before the fix. Every test that focuses a field, including the retained
+search-field Escape test, holds the hosted-field lock.
 
 ## 2026-10-20: Draw the status item as one image; tints and titles misrender
 

@@ -269,6 +269,8 @@ func supportTwoMixedDetails() -> ChargerDetails {
         let view = PanelView(monitor: rig.controller, openSettings: {})
         await detailReply(rig, syntheticDetails(faultBits: 0x23))
         #expect(view.faultLines(.c1).map(\.text) == ["Fault Fault reported", "Fault bits 0x23"])
+        // Only a reported fault value is styled as an alert.
+        #expect(view.faultLines(.c1).map(\.alert) == [true, false] && view.faultLines(.c2).map(\.alert) == [false, false])
         #expect(view.faultLines(.c2).map(\.text) == ["Fault None", "Fault bits 0x23"])
         #expect(view.faultLines(.a2).map(\.text) == ["USB-A fault Fault reported", "Fault bits 0x23"])
         await detailReply(rig, syntheticDetails(faultBits: 0x04))

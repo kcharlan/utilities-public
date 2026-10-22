@@ -95,11 +95,8 @@ struct PanelView: View {
         case false?: "None"
         case nil: Self.unavailable
         }
-        var lines = [DetailLine(label: port.isUSBC ? "Fault" : "USB-A fault", value: value)]
-        if let bits = details?.faultBits {
-            let digits = String(bits, radix: 16, uppercase: true)
-            lines.append(DetailLine(label: "Fault bits", value: "0x" + (digits.count < 2 ? "0" : "") + digits))
-        }
+        var lines = [DetailLine(label: port.isUSBC ? "Fault" : "USB-A fault", value: value, alert: details?.fault(port) == true)]
+        if let bits = details?.faultBits { lines.append(DetailLine(label: "Fault bits", value: "0x" + DisplayFormatter.hex(bits))) }
         return lines
     }
     /// Row click, Space and Return.
@@ -177,6 +174,8 @@ struct PanelView: View {
 struct DetailLine: Hashable {
     let label: String
     let value: String
+    /// Shown in red: a reported fault.
+    var alert = false
     var text: String { "\(label) \(value)" }
 }
 
@@ -252,7 +251,7 @@ private struct DetailLines: View {
             ForEach(lines, id: \.self) { line in
                 GridRow {
                     Text(line.label).foregroundStyle(.secondary)
-                    Text(line.value).foregroundStyle(line.value == "Fault reported" ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                    Text(line.value).foregroundStyle(line.alert ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                         .lineLimit(1).truncationMode(.tail)
                 }.accessibilityElement(children: .combine)
             }

@@ -38,8 +38,5 @@ import PrimeMonitorCore
         }
     }
 
-    private static func hex(_ value: some FixedWidthInteger) -> String {
-        let digits = String(value, radix: 16, uppercase: true)
-        return String(repeating: "0", count: max(0, value.bitWidth / 4 - digits.count)) + digits
-    }
+    private static func hex(_ value: some FixedWidthInteger) -> String { DisplayFormatter.hex(value) }
 }
