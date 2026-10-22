@@ -13,6 +13,51 @@ account boundaries so queued old events cannot cross into a new session. Polling
 has one guarded connected transition. Sleep/network recovery cleans up before
 reconnecting; terminal authentication failure requires explicit sign-in.
 
+Port switch control follows [the port-control plan's "Design
+decisions"](port_control_implementation_plan.md#design-decisions). `PortOperation`
+(Core) is a clock-free state machine for one turn-off, turn-on or restart: it
+takes `requested`, publish results, snapshots with their receive marks, ticks,
+disconnection, reconnection fences and ending reasons, and returns publish,
+status-request and finish actions. A restart whose off phase misses its
+confirmation deadline or fails to publish does not finish there: it enters the on
+phase at once, without the pause, so the port is not left off, and reports
+`offNotConfirmed` if that on phase confirms (the on-phase failure otherwise). A
+`reconnected` event is ignored unless the operation is suspended. `MonitorController` owns the one running
+operation (`portOperation`) and the last unconfirmed result (`portOutcome`), so
+closing the panel changes nothing. It refuses a second operation, and any while
+disconnected or stale (`portControlBlock`). It executes publishes through
+`ChargerBackend.setPortSwitch` and issues operation status requests beside
+normal polling, which the staleness tracker still records. The 1 s
+`scheduleTick` drives operation time. Link loss suspends the operation; each
+reconnection reads `commandFence()` to resume it and to move the outcome's
+clearing boundary onto the new connection. Publish results are accepted only
+for the same operation, account, selection and connection generations. A write
+that fails with `ChargerBackendError.linkClosed` is a link loss, not a publish
+failure: the backend also reports the loss as a status, in either order. If that
+status already arrived, the result is obsolete; otherwise the controller waits for
+it and reports the publish as failed only if none follows within the confirmation
+deadline. Any other write error fails the phase at once.
+
+Sign-out, charger selection, credential edits, Retry, Reload Credentials, sign-in
+and quit end the operation synchronously at entry, before they invalidate
+anything. A restart's ending "on" write is issued to the backend while its old
+connection is still current, after any in-flight switch write, in one task that
+becomes `cleanup`. No link is captured: ordering comes from that task running
+before the caller's disconnect (which awaits `cleanup`), and so before any
+replacement connection, plus the backend's own context check on the write.
+Overlapping endings share the task. `PortControlPolicy.exitAttemptTimeout`, on
+the injected scheduler, bounds the attempt: the write gets the budget less
+`MonitorController.portEndingDrainReserve`, and on expiry the controller calls
+`abortCommands()`, which revokes the context and drains pending sends within the
+reserve. A drain that outlasts the reserve is still awaited, since bytes already
+written cannot be recalled and a replacement must not start first. If no
+context change replaced the connection, it then reconnects through the
+ordinary disconnect path. Terminal authentication statuses end the operation
+without a write. `AppDelegate` awaits `endPortOperation()` before
+`MonitorController.stop()`. The outcome survives these context changes. Dismiss,
+a new operation, or fresh matching evidence from its own account and charger
+clears it.
+
 `MemorySessionStore` retains credentials and renewed service sessions only in
 RAM. `StateStore` persists nonsecret configuration using private modes and atomic
 replacement (`PrivateFile.replace`). `AppInstanceGate` holds an exclusive process lease. No backend,
@@ -40,12 +85,29 @@ loss, closing and row switching all save through `DeviceCatalogStore.setName`.
 Escape has one owner action, `StatusItemController.cancel`, reached from
 `StatusPanel.performKeyEquivalent`, `StatusPanel.cancelOperation`,
 `StatusHostingController.cancelOperation` and the naming field's
-`onExitCommand`; none forwards the command to another. While a field in the
+`onExitCommand`; none forwards the command to another. An armed port action
+comes first: disarming it consumes the Escape and returns, leaving naming,
+focus and the panel unchanged. While a field in the
 hosted content is editing, it cancels the edit (marking cancellation before
 clearing focus); it also discards a shown draft left by a failed save when the
 field is not focused; otherwise it dismisses the panel. A field removed by a row
 or snapshot change ends editing without saving, and `AppDelegate` settles a
 pending draft through the same save path before termination.
+
+`PortDetailState` also holds the one armed port action (target, action, expiry
+and the `MonitorController.portControlGenerations` it was armed under: account,
+charger selection, connection and backend link). `armedAction(in:available:)`
+treats an expired, unavailable or superseded action as disarmed, so the
+confirming click (`press`) rechecks the context before `PanelView` dispatches
+`turnPort` or `restartPort`; the shown panel also clears it when availability or
+the context changes. Row changes and `StatusItemController.hidePanel` disarm.
+A standalone `PanelView` has no cancel owner, so its `cancelNaming` disarms
+before cancelling the edit. `PanelView` derives the buttons from the reported
+switch, shows the running operation's phase on the target's rows and detail,
+the block reason elsewhere, and the controller's outcome above the empty and
+readings branches with its original charger label. It posts phase changes and
+outcomes as accessibility announcements, keyed so the pause countdown is
+announced once.
 
 The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen

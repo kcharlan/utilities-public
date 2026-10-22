@@ -26,8 +26,50 @@ public struct AccountSession: Codable, Equatable, Sendable {
     }
 }
 
+/// One backend MQTT connection. Each connection attempt, and so each successful
+/// connect, takes a new value; replies and receipts from different connections
+/// never share one.
+public struct ConnectionEpoch: Hashable, Sendable {
+    public let value: UInt64
+    public init(_ value: UInt64) { self.value = value }
+}
+
+/// Position in the backend's receive order: the connection a reply arrived on and
+/// a receive sequence that increases with every reply the backend receives, across
+/// connections. The backend assigns it when it takes the reply from its connection,
+/// before the reply is decoded or queued to subscribers.
+public struct ReceiveMark: Hashable, Sendable {
+    public let connection: ConnectionEpoch
+    public let sequence: UInt64
+    public init(connection: ConnectionEpoch, sequence: UInt64) {
+        self.connection = connection
+        self.sequence = sequence
+    }
+}
+
+/// Backend-issued freshness fence for a port command: the connection and the latest
+/// receive sequence when the command write completed (or, for
+/// `ChargerBackend.commandFence()`, when the fence was read). A reply can be newer
+/// than the command only when its mark has this connection and a greater sequence.
+/// That is necessary, not sufficient: a reply still buffered in the transport when
+/// the write completed is processed later and gets a greater sequence (and a later
+/// receive time) although the charger sent it before the command.
+public struct PortCommandReceipt: Hashable, Sendable {
+    public let fence: ReceiveMark
+    public init(fence: ReceiveMark) { self.fence = fence }
+}
+
+/// Backend failures callers act on by kind.
+public enum ChargerBackendError: Error, Equatable, Sendable {
+    /// The command link was not up, or closed during the write. The write may or may
+    /// not have reached the charger. A backend-detected loss also reports a status
+    /// event; the caller cannot rely on which of the two it sees first.
+    case linkClosed
+}
+
 public enum BackendEvent: Sendable {
-    case snapshot(ChargerSnapshot)
+    /// A decoded status reply and its position in the backend's receive order.
+    case snapshot(ChargerSnapshot, ReceiveMark)
     case status(ConnectionStatus)
     case sessionUpdated(AccountSession)
     case alive(Date)
@@ -39,6 +81,23 @@ public protocol ChargerBackend: Sendable {
     func listChargers() async throws -> [ChargerInfo]
     func connect(to charger: ChargerInfo) async throws
     func requestSnapshot() async throws
+    /// Publishes one port switch command and returns when the write completed. It is
+    /// publish-only: it never waits for, or implies, a change in the charger's state;
+    /// a later status reply newer than the receipt's fence is the only confirmation.
+    /// Throws `ChargerBackendError.linkClosed` when not connected, or when the link
+    /// closed (dropped, or closed by a disconnect or abort) or was replaced during the
+    /// write; throws `CancellationError` when the write completed but the caller's
+    /// context was replaced meanwhile, or the task was cancelled.
+    func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt
+    /// A fence for the current connection without publishing (a resumed operation
+    /// after reconnection). Throws when not connected.
+    func commandFence() async throws -> PortCommandReceipt
+    /// Bounded-ending abort: revoke the current command context, close the captured
+    /// link without the graceful MQTT DISCONNECT, cancel queued writes and resume
+    /// pending sends with an error, and return only after they drained, so a
+    /// replacement connection cannot start before. Authentication is kept: the
+    /// backend can connect again later. Emits no status event.
+    func abortCommands() async
     /// A fresh, independent, non-replaying subscription on each access.
     /// Cancellation removes only that subscription. Events emitted before the
     /// subscription is created cannot appear in its queue.

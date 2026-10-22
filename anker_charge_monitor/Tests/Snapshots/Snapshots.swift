@@ -9,8 +9,15 @@ import PrimeMonitorCore
     static let menuStates: [(String, MenuBarTextSize)] = [("live", .default), ("stale", .default), ("error", .default), ("not-set-up", .default), ("live", .pt10)]
     /// "details": invented faults, over-temperature, identity support 2 beside
     /// a resolved, a no-device and an unresolved port, and a catalog problem.
+    /// "switches-off": invented switch states, C2 and the shared USB-A switch off,
+    /// with C2 expanded to show its port-switch line.
     /// "expanded-named": an expanded row naming a synthetic device.
-    static let panelStates = ["live", "stale", "signed-out", "choose-charger", "error", "session-ended", "details", "expanded-named"]
+    /// "armed": Turn off armed on the expanded C4, with its caption.
+    /// "restart-paused": a C1 restart held in its pause; the backend confirmed
+    /// off and then stopped replying, under the non-firing scheduler.
+    /// "outcome-off": a turn-on of C2 the charger ignored, reported as still off.
+    static let panelStates = ["live", "stale", "signed-out", "choose-charger", "error", "session-ended", "details", "switches-off", "expanded-named",
+                              "armed", "restart-paused", "outcome-off"]
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         guard CommandLine.arguments.count == 2 else { fatalError("Expected private temporary output directory") }
@@ -124,7 +131,25 @@ import PrimeMonitorCore
                 .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
                 .c2: .identified(vendorID: 0xfeed, productID: 0xbeef, brandClass: 42, modelCode: nil),
                 .c3: .identifying, .c4: .nothingAttached,
-            ], rawFields: [:])
+            ], rawFields: [:], switches: [.c1: true, .c2: true, .c3: true, .c4: true, .usbA: true])
+        case "switches-off":
+            // C2 and the shared USB-A switch off; C3 reports no switch, so it makes no claim.
+            ChargerDetails(faultBits: 0, identitySupport: 6, identities: [
+                .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+                .c2: .nothingAttached, .c3: .identifying, .c4: .nothingAttached,
+            ], rawFields: [:], switches: [.c1: true, .c2: false, .c4: true, .usbA: false])
+        case "armed":
+            // C4 supplies the fixture's only power to the named lamp.
+            ChargerDetails(faultBits: 0, identitySupport: 6, identities: [
+                .c1: .nothingAttached, .c2: .nothingAttached, .c3: .identifying,
+                .c4: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+            ], rawFields: [:], switches: [.c1: true, .c2: true, .c3: true, .c4: true, .usbA: true])
+        case "restart-paused", "outcome-off":
+            // Every switch on, except C2 for the ignored turn-on.
+            ChargerDetails(faultBits: 0, identitySupport: 6, identities: [
+                .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+                .c2: .nothingAttached, .c3: .identifying, .c4: .nothingAttached,
+            ], rawFields: [:], switches: [.c1: true, .c2: state != "outcome-off", .c3: true, .c4: true, .usbA: true])
         default: nil
         }
     }
@@ -134,8 +159,11 @@ import PrimeMonitorCore
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
         let charger = ChargerInfo(serial: "synthetic-charger", model: "A2345", alias: "Desk charger", name: "Anker Prime")
         if !empty { try store.save(.init(charger: state == "choose-charger" ? nil : charger, closedInterval: .default, credentials: OnePasswordConfiguration(item: "Anker", vault: nil, country: "US").selection)) }
-        let date = Date(), scheduler = SnapshotScheduler()
-        let backend = SnapshotBackend(charger: charger, receivedAt: state == "stale" ? date.addingTimeInterval(-180) : date, details: details(for: state))
+        let scheduler = SnapshotScheduler(), date = scheduler.date
+        // The paused restart's backend reports the commanded switch once, then
+        // stops replying; the outcome's backend ignores commands.
+        let backend = SnapshotBackend(charger: charger, receivedAt: state == "stale" ? date.addingTimeInterval(-180) : date, details: details(for: state),
+                                      followsCommandOnce: state == "restart-paused")
         let events = SnapshotEvents()
         let monitor = MonitorController(backend: backend, secrets: MemorySessionStore(), state: store, events: SystemEvents(sources: [events]), now: { scheduler.date }, scheduler: scheduler, makeProvider: { _ in SnapshotProvider() })
         monitor.start()
@@ -165,6 +193,35 @@ import PrimeMonitorCore
             detail.toggle(.c1, NamingContext(monitor: monitor, store: catalog))
             guard detail.expanded == .c1 else { fatalError("Synthetic row not expanded") }
         }
+        if state == "switches-off" {
+            detail.toggle(.c2, NamingContext(monitor: monitor, store: catalog))
+            guard detail.expanded == .c2 else { fatalError("Synthetic row not expanded") }
+        }
+        let naming = NamingContext(monitor: monitor, store: catalog)
+        detail.now = { scheduler.date }
+        switch state {
+        case "armed":
+            detail.toggle(.c4, naming)
+            guard monitor.portControlBlock == nil, !detail.press(.turnOff, target: .c4, in: monitor.portControlGenerations, available: true),
+                  detail.armedAction(in: monitor.portControlGenerations, available: true) != nil else { fatalError("Synthetic action not armed") }
+        case "restart-paused":
+            guard monitor.restartPort(.c1) else { fatalError("Synthetic restart refused") }
+            for _ in 0..<10000 where monitor.portOperation?.pauseEnd == nil { await Task.yield() }
+            guard monitor.portOperation?.pauseSecondsRemaining(at: scheduler.date) == Int(PortControlPolicy.restartPause) else { fatalError("Synthetic restart not paused") }
+            detail.toggle(.c1, naming)
+        case "outcome-off":
+            guard monitor.turnPort(.c2, on: true) else { fatalError("Synthetic turn-on refused") }
+            for _ in 0..<10000 where monitor.portOperation?.latestFreshReport != false { await Task.yield() }
+            guard monitor.portOperation?.latestFreshReport == false else { fatalError("Synthetic off report not delivered") }
+            // Past the confirmation deadline, the next reply still reports C2 off.
+            scheduler.date = scheduler.date.addingTimeInterval(PortControlPolicy.confirmationDeadline)
+            await backend.setReceivedAt(scheduler.date)
+            monitor.refreshNow()
+            for _ in 0..<10000 where monitor.portOutcome == nil { await Task.yield() }
+            guard monitor.portOutcome?.kind == .stillOff else { fatalError("Synthetic outcome not reported") }
+            detail.toggle(.c2, naming)
+        default: break
+        }
         return .init(monitor: monitor, catalog: catalog, detail: detail)
     }
 }
@@ -177,7 +234,7 @@ private struct SnapshotProvider: CredentialProvider {
     func stop() { handler = nil }
 }
 @MainActor private final class SnapshotScheduler: PollScheduler {
-    let date = Date()
+    var date = Date()
     private final class Token: Cancellable { func cancel() {} }
     func schedule(after: TimeInterval, _ fire: @escaping @MainActor () -> Void) -> any Cancellable { Token() }
 }
@@ -202,9 +259,16 @@ private actor SnapshotBackend: ChargerBackend {
     }
     nonisolated let output = Output()
     let charger: ChargerInfo
-    let receivedAt: Date
-    let details: ChargerDetails?
-    init(charger: ChargerInfo, receivedAt: Date, details: ChargerDetails?) { self.charger = charger; self.receivedAt = receivedAt; self.details = details }
+    private var receivedAt: Date
+    private var details: ChargerDetails?
+    /// Applies the first switch command to the reported switches, answers one
+    /// more request, then stops replying.
+    private let followsCommandOnce: Bool
+    private var repliesLeft: Int?
+    init(charger: ChargerInfo, receivedAt: Date, details: ChargerDetails?, followsCommandOnce: Bool = false) {
+        self.charger = charger; self.receivedAt = receivedAt; self.details = details; self.followsCommandOnce = followsCommandOnce
+    }
+    func setReceivedAt(_ date: Date) { receivedAt = date }
     nonisolated var events: AsyncStream<BackendEvent> { output.subscribe() }
     func subscribeToEvents() async -> AsyncStream<BackendEvent> { output.subscribe() }
     func signIn(_ credentials: AnkerCredentials) async throws -> AccountSession { .init(authToken: "synthetic-token", userID: "synthetic-user", expiresAt: .distantFuture, nickname: "") }
@@ -212,11 +276,34 @@ private actor SnapshotBackend: ChargerBackend {
     func listChargers() async throws -> [ChargerInfo] { [charger] }
     func connect(to charger: ChargerInfo) async throws {}
     func requestSnapshot() async throws {
+        if let left = repliesLeft {
+            guard left > 0 else { return }
+            repliesLeft = left - 1
+        }
         let readings = PortID.allCases.map { port in
             PortReading(port: port, active: port == .c4, voltageMilli: port == .c4 ? 20000 : 0,
                         currentMilli: port == .c4 ? 1490 : (port.rawValue.hasPrefix("c") ? 20 : 0), powerCenti: port == .c4 ? 4321 : 0)
         }
-        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings, details: details)))
+        replies += 1
+        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings, details: details),
+                               ReceiveMark(connection: ConnectionEpoch(1), sequence: replies)))
     }
+    private var replies: UInt64 = 0
+    /// Recorded only; the snapshot renderer never sends a command to a charger.
+    private(set) var switchCommands: [(target: PortSwitch, on: Bool)] = []
+    func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
+        switchCommands.append((target, on))
+        if followsCommandOnce, repliesLeft == nil, let current = details {
+            var switches = current.switches; switches[target] = on
+            details = ChargerDetails(faultBits: current.faultBits, identitySupport: current.identitySupport,
+                                     identities: current.identities, rawFields: current.rawFields, switches: switches)
+            repliesLeft = 1
+        }
+        return PortCommandReceipt(fence: ReceiveMark(connection: ConnectionEpoch(1), sequence: replies))
+    }
+    func commandFence() async throws -> PortCommandReceipt {
+        PortCommandReceipt(fence: ReceiveMark(connection: ConnectionEpoch(1), sequence: replies))
+    }
+    func abortCommands() async {}
     func disconnect() async {}
 }

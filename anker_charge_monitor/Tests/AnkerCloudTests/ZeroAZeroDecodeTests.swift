@@ -70,6 +70,8 @@ private let fourWithoutMetadata: [PortID: PortIdentity] = [
     .c3: device(0xfeed, 0x0001, nil, nil), .c4: device(0xfeed, 0x0002, nil, nil),
 ]
 private let detailIDs: Set<UInt8> = [0xa3, 0xb7, 0xbd, 0xbe]
+private let switchIDs: Set<UInt8> = [0xaa, 0xab, 0xac, 0xad, 0xae]
+private let allDetailIDs = detailIDs.union(switchIDs)
 /// Six valid port readings for directly constructed frames.
 private let idlePorts = Dictionary(uniqueKeysWithValues: PortID.allCases.map { ($0.fieldID, [0x04, 0, 0, 0, 7, 0, 0, 0] as [UInt8]) })
 
@@ -111,7 +113,8 @@ private func constructedDetails(_ extra: [UInt8: [UInt8]]) throws -> ChargerDeta
                    .c3: device(0xfeed, 0x0001, 19, 0), .c4: device(0xfeed, 0x0002, 0x1234, 0)], detailIDs),
         (nil, 2, [:], [0xb7]),
     ]
-    #expect(frames.count == expected.count)
+    // Rows 0-22 predate the switch fields; the rest are covered by the switch corpus test.
+    #expect(frames.count == expected.count + switchExpected.count)
     #expect(Set(frames).count == frames.count)
     let detailFree = try snapshot(row: 0, frames: try syntheticCorpusFrames())
     for (row, expectation) in expected.enumerated() {
@@ -129,6 +132,8 @@ private func constructedDetails(_ extra: [UInt8: [UInt8]]) throws -> ChargerDeta
         #expect(details.identities == identities, "row \(row)")
         #expect(Set(details.rawFields.keys) == present, "row \(row)")
         #expect(details.rawFields == frame.fields.filter { detailIDs.contains($0.key) }, "row \(row)")
+        // Original rows carry no switch field: every switch is unknown, none off.
+        #expect(details.switches.isEmpty, "row \(row)")
     }
     // Verbatim payloads, type byte included.
     #expect(try details(frames[0]).rawFields == [
@@ -147,6 +152,77 @@ private func constructedDetails(_ extra: [UInt8: [UInt8]]) throws -> ChargerDeta
         #expect(try details(frames[7 + offset]).rawFields.values.allSatisfy { $0.first == type }, "type \(type)")
     }
     #expect(try details(frames[20]).rawFields[0xbe]?.first == 0x01)
+}
+
+// Switch fields aa...ae (`{port}_switch`, 9e72894): C1-C4, then the one USB-A switch.
+// Rows 23-27 of the details corpus; expectations are written from the map.
+private let switchExpected: [(switches: [PortSwitch: Bool], present: Set<UInt8>)] = [
+    ([.c1: true, .c2: false, .c3: true, .c4: false, .usbA: false], switchIDs), // 23 on/off mix
+    ([.c1: true, .usbA: true], [0xaa, 0xae]), // 24 only C1 and USB-A reported
+    ([:], switchIDs), // 25 every field ui-typed: nothing extracted
+    ([.c1: true, .c2: false, .c3: true, .usbA: true], switchIDs), // 26 sile, strb, var; C4 ui
+    ([.c3: true, .c4: false, .usbA: true], switchIDs), // 27 C1 value 2 and C2 empty: no claim
+]
+
+@Test func switchCorpusDecodesToKnownValues() throws {
+    let frames = try fixtureFrames("synthetic_0a00_details_frames")
+    for (offset, expectation) in switchExpected.enumerated() {
+        let row = 23 + offset
+        let frame = try HexFrame.parse(frames[row])
+        let value = try #require(PortDecoder.snapshot(from: frame, receivedAt: receivedAt), "row \(row)")
+        #expect(value.readings == detailRowReadings, "row \(row)")
+        let details = try #require(value.details, "row \(row)")
+        #expect(details.switches == expectation.switches, "row \(row)")
+        #expect(details.faultBits == 0 && details.identitySupport == nil && details.identities.isEmpty, "row \(row)")
+        #expect(Set(details.rawFields.keys) == expectation.present.union([0xa3]), "row \(row)")
+        #expect(details.rawFields == frame.fields.filter { allDetailIDs.contains($0.key) }, "row \(row)")
+        // The stripped frame has no details at all, whatever the switches said.
+        let stripped = HexFrame(messageType: 0x0a00, fields: frame.fields.filter { !allDetailIDs.contains($0.key) })
+        #expect(PortDecoder.snapshot(from: stripped, receivedAt: receivedAt) == ChargerSnapshot(receivedAt: receivedAt, readings: detailRowReadings))
+    }
+    let mix = try details(frames[23])
+    #expect(PortID.allCases.map { mix.switchedOn($0) } == [true, false, true, false, false, false])
+    #expect(mix.rawFields[0xaa] == [0x04, 0x01] && mix.rawFields[0xab] == [0x04, 0x00] && mix.rawFields[0xae] == [0x04, 0x00])
+    // Both USB-A ports read the one shared switch.
+    let usbA = try details(frames[24])
+    #expect(PortID.allCases.map { usbA.switchedOn($0) } == [true, nil, nil, nil, true, true])
+    // Unaccepted and unrecognized values keep their raw evidence but claim nothing.
+    #expect(try details(frames[25]).rawFields[0xaa] == [0x01, 0x01])
+    let edge = try details(frames[27])
+    #expect(edge.rawFields[0xaa] == [0x04, 0x02] && edge.rawFields[0xab] == [0x04])
+    #expect(edge.switchedOn(.c1) == nil && edge.switchedOn(.c2) == nil)
+    for (offset, type) in ([0x02, 0x06, 0x03, 0x01, 0x04] as [UInt8]).enumerated() {
+        #expect(try details(frames[26]).rawFields[0xaa + UInt8(offset)]?.first == type, "type \(type)")
+    }
+}
+
+@Test func switchFieldTypesMatchTheOtherDetailFields() throws {
+    // aa...ae are dictionary byte maps like b7: sile, var, bin and strb extract
+    // them; ui and every other type byte extract nothing.
+    let accepted: Set<UInt8> = [0x02, 0x03, 0x04, 0x06]
+    for type in UInt8.min...UInt8.max {
+        for target in PortSwitch.allCases {
+            for (byte, expected) in [(UInt8(0), false), (1, true)] {
+                let decoded = try #require(try constructedDetails([target.fieldID: [type, byte]]))
+                #expect(decoded.switches == (accepted.contains(type) ? [target: expected] : [:]), "type \(type) \(target)")
+                #expect(decoded.rawFields == [target.fieldID: [type, byte]])
+            }
+        }
+    }
+}
+
+@Test func switchValuesOtherThanZeroAndOneMakeNoClaim() throws {
+    for byte in 2...UInt8.max {
+        #expect(try #require(try constructedDetails([0xaa: [0x04, byte]])).switches.isEmpty, "value \(byte)")
+    }
+    // Only the first value byte counts, as upstream reads the byte at position 00.
+    let decoded = try #require(try constructedDetails([0xaa: [0x04, 0x01, 0x00, 0xff], 0xab: [0x04, 0x00, 0x01]]))
+    #expect(decoded.switches == [.c1: true, .c2: false])
+    // A switch field alone yields details without faults or identities.
+    #expect(decoded.faultBits == nil && decoded.identitySupport == nil && decoded.identities.isEmpty)
+    // A missing or empty value is unknown, not off.
+    let empty = try #require(try constructedDetails([0xac: [0x04], 0xad: []]))
+    #expect(empty.switches.isEmpty && empty.rawFields == [0xac: [0x04], 0xad: []])
 }
 
 /// Owner-gate shape, invented values: identity support 2 alongside one resolved

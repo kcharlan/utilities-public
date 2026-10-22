@@ -31,6 +31,14 @@ public actor AnkerCloudBackend: ChargerBackend {
     private var connected = false
     private var pingSentAt: Date?
     private var cleanup: (id: UUID, task: Task<Void, Never>)?
+    /// Links in graceful cleanup; an abort closes them at once rather than waiting
+    /// for their bounded DISCONNECT.
+    private var gracefulCloses: [UUID: any MQTTLink] = [:]
+    /// Receive order for port-command freshness: one epoch per connection attempt
+    /// and one sequence step per received publish, monotonic across connections.
+    private var epochCount: UInt64 = 0
+    private var epoch: ConnectionEpoch?
+    private var receiveSequence: UInt64 = 0
     private var lastInbound = Date.distantPast
     private var lastOutbound = Date.distantPast
 
@@ -181,6 +189,7 @@ public actor AnkerCloudBackend: ChargerBackend {
         let body = info.rootCAPEM.components(separatedBy: .newlines).filter { !$0.hasPrefix("-----") }.joined()
         guard let data = Data(base64Encoded: body), let root = SecCertificateCreateWithData(nil, data as CFData) else { throw MQTTConnectionError.invalidCertificate }
         attemptID = UUID(); let attempt = attemptID
+        epochCount += 1; epoch = ConnectionEpoch(epochCount)
         let link = makeLink(), inbox = MQTTInbox(); self.link = link; self.inbox = inbox
         reader = Task { [weak self] in
             do { for try await packet in link.packets { await inbox.push(packet) }; await inbox.fail(MQTTConnectionError.closed) }
@@ -225,10 +234,13 @@ public actor AnkerCloudBackend: ChargerBackend {
         guard context == expected, attemptID == attempt, link != nil else { return }
         lastInbound = now()
         if packet == .pingresp { pingSentAt = nil }
-        guard case let .publish(_, payload) = packet else { return }
+        guard case let .publish(_, payload) = packet, let epoch else { return }
+        // Take the receive position before decoding or queuing to subscribers.
+        receiveSequence += 1
+        let mark = ReceiveMark(connection: epoch, sequence: receiveSequence)
         let date = now(); emit(.alive(date))
         if let bytes = MQTTEnvelope.frame(fromMessage: payload), let frame = try? HexFrame.parse(bytes),
-           let snapshot = PortDecoder.snapshot(from: frame, receivedAt: date) { emit(.snapshot(snapshot)) }
+           let snapshot = PortDecoder.snapshot(from: frame, receivedAt: date) { emit(.snapshot(snapshot, mark)) }
     }
     private func startKeepalive(_ expected: UUID) {
         lastInbound = now(); lastOutbound = lastInbound
@@ -269,18 +281,54 @@ public actor AnkerCloudBackend: ChargerBackend {
         try check(expected)
         lastOutbound = now()
     }
-    private func cleanupAttempt() async {
-        let wasConnected = connected
+    /// Published as `requestSnapshot` publishes (upstream `mqtt_device.py`
+    /// `_send_mqtt_command` without its wait-for-state). The fence is read here, at
+    /// write completion, on the connection the command was written to.
+    public func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
+        guard connected, let link, let info, let charger, let epoch else { throw ChargerBackendError.linkClosed }
+        let expected = context, attempt = attemptID
+        let timestamp = UInt32(clamping: Int64(now().timeIntervalSince1970))
+        let frame = PortSwitchCommand.frame(target: target, on: on, timestamp: timestamp)
+        do {
+            try await link.send(.publish(topic: AnkerTopics.publish(info: info, charger: charger),
+                                         payload: MQTTEnvelope.command(info: info, charger: charger, frame: frame, timestamp: timestamp)))
+        } catch {
+            // A failed write on the MQTT stream means its link closed (a drop, or a
+            // disconnect or abort that closed it) or is failing; a drop is also
+            // reported as a status event, in either order relative to this throw.
+            throw ChargerBackendError.linkClosed
+        }
+        try check(expected)
+        // A replacement connection in the same context must not adopt this write.
+        guard attemptID == attempt, connected else { throw ChargerBackendError.linkClosed }
+        lastOutbound = now()
+        return PortCommandReceipt(fence: ReceiveMark(connection: epoch, sequence: receiveSequence))
+    }
+    public func commandFence() throws -> PortCommandReceipt {
+        guard connected, link != nil, let epoch else { throw MQTTConnectionError.closed }
+        return PortCommandReceipt(fence: ReceiveMark(connection: epoch, sequence: receiveSequence))
+    }
+    /// Revokes the context before its first await, then closes the current link
+    /// without DISCONNECT. Closing resumes its pending sends with an error; links
+    /// still in graceful cleanup are closed at once too. Authentication is kept.
+    public func abortCommands() async {
+        _ = await stopMQTT(abortive: true)
+    }
+    private func cleanupAttempt(abortive: Bool = false) async {
+        let wasConnected = connected && !abortive
         let oldDeadline = deadline, oldKeepalive = keepalive
-        attemptID = UUID(); draining?.cancel(); draining = nil
+        attemptID = UUID(); draining?.cancel(); draining = nil; epoch = nil
         connected = false; deadline?.cancel(); deadline = nil; keepalive?.cancel(); keepalive = nil
         reader?.cancel(); reader = nil
         let oldLink = link, oldIdentity = identity, oldInbox = inbox
         link = nil; identity = nil; inbox = nil; pingSentAt = nil
         let previous = cleanup?.task, id = UUID()
+        let expedite = abortive ? Array(gracefulCloses.values) : []
+        if wasConnected, let oldLink { gracefulCloses[id] = oldLink }
         // Replacement callers must also await cleanup already in progress. This
         // prevents an actor reentry from opening a new link before the old closes.
         let task = Task {
+            for link in expedite { await link.close() }
             await previous?.value
             await oldInbox?.fail(CancellationError())
             if wasConnected, let oldLink {
@@ -307,13 +355,14 @@ public actor AnkerCloudBackend: ChargerBackend {
         await task.value
     }
     private func finishedCleanup(_ id: UUID) {
+        gracefulCloses[id] = nil
         if cleanup?.id == id { cleanup = nil }
     }
 
-    private func stopMQTT() async -> UUID {
+    private func stopMQTT(abortive: Bool = false) async -> UUID {
         context = UUID(); let expected = context; recovery?.cancel(); recovery = nil
         info = nil; charger = nil
-        await cleanupAttempt()
+        await cleanupAttempt(abortive: abortive)
         return expected
     }
     public func disconnect() async {

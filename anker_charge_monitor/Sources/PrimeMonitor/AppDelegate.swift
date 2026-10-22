@@ -41,6 +41,9 @@ import PrimeMonitorCore
             status?.settlePendingEdits()
             terminationTask = Task {
                 await startupTask?.value
+                // A restart attempts "on" while the connection is still intact;
+                // the attempt is bounded by PortControlPolicy.exitAttemptTimeout.
+                await controller.endPortOperation()
                 await controller.stop(); lease?.release(); lease = nil
                 reply(sender)
             }

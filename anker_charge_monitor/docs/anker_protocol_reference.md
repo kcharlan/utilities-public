@@ -1,8 +1,14 @@
-# A2345 read-only cloud protocol
+# A2345 cloud protocol: readings and port switch commands
+
+Scope: the app reads charger status (readings, faults, connected-device identity
+and port switch states) and sends one command, the port switch (section 7), from
+the panel's port controls. It sends no other command: no timers, schedules,
+priority, usage modes, power limits or display settings.
 
 Baseline: [anker-solix-api](https://github.com/thomluther/anker-solix-api) commit
 `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, under its retained MIT license;
-detail fields (§6.2) follow commit `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`.
+detail fields (§6.2) and the port switch command (§7) follow commit
+`9e72894181aef868e7b3ed0ba05bd322d54bb5d7`.
 References below are upstream module/symbol names under `src/anker_solix_api/`;
 the maintained Swift code defines the port's actual behavior. No private capture
 or owner activity is part of this reference.
@@ -71,7 +77,8 @@ The head includes version `1.0.0.1`, client ID built from application/user/cert 
 Payload fields are device serial, account ID (owner user ID if shared, otherwise
 MQTT user ID) and base64 wire frame. Incoming payload data is decoded only when
 valid; heartbeat JSON, malformed data and echoed status requests do not create
-port snapshots. Tests use only synthetic IDs and timestamp `0x12345678`.
+port snapshots. Every command, including the port switch (section 7), uses this
+envelope around its own frame. Tests use only synthetic IDs and timestamp `0x12345678`.
 
 ## 5. Hex framing
 
@@ -82,7 +89,7 @@ port snapshots. Tests use only synthetic IDs and timestamp `0x12345678`.
 | `ff 09` | Prefix |
 | `LL LL` | Total frame bytes, little endian, including checksum |
 | `03 00 0f` | Request pattern (`03 01 0f` for reply fixtures) |
-| `TT TT` | Message type, `02 00` status request or `0a 00` reply |
+| `TT TT` | Message type: `02 00` status request, `02 07` port switch command (section 7) or `0a 00` reply |
 | optional increment | Byte 9 is an increment unless it is in `a0...a9` |
 | fields | ID, length, payload including type byte when present |
 | checksum | XOR of all preceding bytes; whole-frame XOR is zero |
@@ -136,3 +143,64 @@ mandatory port-reading validation. `--live-check` prints the decoded values
 and raw payloads as owner-gate evidence. `synthetic_0a00_details_frames.txt`
 covers identity sentinels, unknown classes, support values, mask combinations
 and the type matrix, including a `sile`-encoded `a3`.
+
+### 6.3 Port switch state
+
+Each port's on/off switch follows the same commit,
+`9e72894181aef868e7b3ed0ba05bd322d54bb5d7`:
+[`mqttmap.py`, `_A2345_0a00`](https://github.com/thomluther/anker-solix-api/blob/9e72894181aef868e7b3ed0ba05bd322d54bb5d7/src/anker_solix_api/mqttmap.py#L3550)
+keys `aa` through `ae`, entry `00` (`{port}_switch`), one per
+`mqttcmdmap.py` `CHARGER_PORT_IDS` target. `PortSwitch` carries those targets and
+indexes; A1 and A2 both resolve to the one USB-A target. The keys accept the wire
+types of `b7` (section 6.2), and `PortDecoder` treats a value of 0 as off and 1 as
+on. A missing, mistyped, short or other value leaves that switch undecoded, which
+`ChargerDetails.switchedOn(_:)` returns as nil, never off. The raw payloads are
+kept in `rawFields` and printed by `--live-check`. Rows 23 to 27 of
+`synthetic_0a00_details_frames.txt` cover on, off, missing, unaccepted-type and
+unrecognized-value cases.
+
+## 7. Port switch command
+
+Turning a port's power on or off follows anker-solix-api commit
+`9e72894181aef868e7b3ed0ba05bd322d54bb5d7`. `mqttmap.py` gives A2345 message type
+`"0207"` a command list of five targets, each mapped to `mqttcmdmap.py`
+`CMD_USB_PORT_SWITCH`: `CMD_COMMON` (`a1` `pattern_22` and the `fe` var
+timestamp) plus `a2` `set_port_switch_select`, a `ui` field holding the
+`CHARGER_PORT_IDS` index (USB-C 1 to 4 are 0 to 3, the shared USB-A target is 4),
+and `a3` `set_port_switch`, a `ui` field with 0 for off and 1 for on.
+
+`CommandFrame` builds frames as `mqtt.py` `generate_mqtt_command` does with the
+`mqtttypes.py` hex types: the `ff 09` header with the `03 00 0f` request pattern
+and no increment, fields sorted by ID, each written as ID, length, type byte (when
+present) and value, and the XOR checksum counted in the length. `StatusRequest`
+and `PortSwitchCommand` both use it. A switch frame is therefore `a1 01 22`,
+`a2 02 01` target, `a3 02 01` value and `fe 05 03` plus four little-endian
+timestamp bytes. `CommandFrameTests` pins the builder to the function's docstring
+example (with the checksum computed) and to independent synthetic vectors for
+every target and value at timestamp `0x12345678`.
+
+The envelope is the section 4 envelope, published to the `req` topic.
+Publishing follows `mqtt_device.py` `_send_mqtt_command`: the command is complete
+when it is written. The charger sends no reply correlated with the command, so
+the app treats only a later `0a00` switch report (section 6.3) as confirmation.
+Each such report carries the backend's receive position (connection and receive
+sequence), and each command write returns a receipt with the position at write
+completion; a report counts as evidence after a command only when it is on the
+receipt's connection with a greater sequence. The fence excludes only replies the
+backend processed before the write completed. A reply already sent by the charger
+but still buffered in the transport or the backend inbox at that moment is
+processed later and gets a later sequence and a later receive time, so neither
+the fence nor a rule that the receive time be no earlier than a subsequent status
+request can tell it apart from a reply to that request: the protocol has no
+request correlation. Only the reported switch value limits such a reply, and only
+when the old state differs from the wanted one; a stale report of the old state
+can still be taken as a fresh failure to change.
+
+Owner evidence is in
+[anker-solix-api discussion #252](https://github.com/thomluther/anker-solix-api/discussions/252):
+owner captures of the Anker app's own `0207` commands for every target and value,
+and owner and maintainer comments on the follow-up `0a07` and `0302` messages, on
+`0a00` carrying the switch states in reply to a status request, and on when the
+Anker app requests that reply. Its captures stay in the discussion; none is copied here or
+into tests. A private check outside the repository encoded each of those
+target/value commands with its own timestamp and matched it byte for byte.

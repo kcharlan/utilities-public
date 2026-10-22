@@ -10,4 +10,8 @@ public struct ChargerInfo: Equatable, Codable, Sendable {
         self.alias = alias
         self.name = name
     }
+
+    /// The name a person gave the charger, else its product name: the panel header,
+    /// the Settings picker and port outcomes (`PortOperationContext.chargerLabel`).
+    public var label: String { alias.isEmpty ? name : alias }
 }

@@ -30,8 +30,16 @@ actor TestMQTTLink: MQTTLink {
     func waitForOpen() async throws {
         if stallOpen { try await withCheckedThrowingContinuation { openWait = $0 } }
     }
+    /// Held writes stay pending until released or until close disposes of them, as
+    /// NWMQTTLink does; nothing cancels them.
+    var holdWhere: (@Sendable (MQTTPacket) -> Bool)?
+    var held: [CheckedContinuation<Void, Error>] = []
+    func hold(_ predicate: @escaping @Sendable (MQTTPacket) -> Bool) { holdWhere = predicate }
+    func releaseHeld() { holdWhere = nil; let pending = held; held = []; for write in pending { write.resume() } }
     func send(_ packet: MQTTPacket) async throws {
+        if closed { throw MQTTConnectionError.closed }
         sent.append(packet)
+        if let holdWhere, holdWhere(packet) { try await withCheckedThrowingContinuation { held.append($0) } }
         if automatic {
             switch packet {
             case .connect: input.yield(.connack(returnCode: connack))
@@ -46,6 +54,8 @@ actor TestMQTTLink: MQTTLink {
         closeStarted = true
         if blockClose { blockClose = false; await withCheckedContinuation { closeWait = $0 } }
         closed = true; openWait?.resume(throwing: MQTTConnectionError.closed); openWait = nil; input.finish()
+        let pending = held; held = []
+        for write in pending { write.resume(throwing: MQTTConnectionError.closed) }
     }
 }
 
@@ -108,11 +118,13 @@ fileprivate func backend(_ link: TestMQTTLink, gate: SleepGate? = nil, transport
 private actor EventLog {
     var statuses: [ConnectionStatus] = []
     var alive = 0, snapshots = 0, sessions = 0
+    var delivered: [(snapshot: ChargerSnapshot, mark: ReceiveMark)] = []
+    var marks: [ReceiveMark] { delivered.map(\.mark) }
     func append(_ event: BackendEvent) {
         switch event {
         case let .status(status): statuses.append(status)
         case .alive: alive += 1
-        case .snapshot: snapshots += 1
+        case let .snapshot(snapshot, mark): snapshots += 1; delivered.append((snapshot, mark))
         case .sessionUpdated: sessions += 1
         }
     }
@@ -231,13 +243,7 @@ func connectTimesOut(stage: String) async throws {
     try await eventually { await log.alive == 1 }
     #expect(await log.snapshots == 0)
     link.input.yield(.publish(topic: topic, payload: Data("broken".utf8)))
-    let fixture = try String(contentsOf: Bundle.module.url(forResource: "synthetic_0a00_frames", withExtension: "txt", subdirectory: "Fixtures")!, encoding: .utf8)
-    let line = try #require(fixture.split(separator: "\n").first { !$0.hasPrefix("#") })
-    let chars = Array(line)
-    let bytes = stride(from: 0, to: chars.count, by: 2).compactMap { UInt8(String(chars[$0...($0 + 1)]), radix: 16) }
-    let nested = try JSONSerialization.data(withJSONObject: ["data": Data(bytes).base64EncodedString()])
-    let payload = try JSONSerialization.data(withJSONObject: ["payload": String(decoding: nested, as: UTF8.self)])
-    link.input.yield(.publish(topic: "dt/synthetic/param_info", payload: payload))
+    link.input.yield(.publish(topic: "dt/synthetic/param_info", payload: try syntheticReply().payload))
     try await eventually { await log.snapshots == 1 }
     #expect(await log.alive == 3)
     #expect(await log.snapshots == 1)
@@ -672,4 +678,233 @@ private actor AcceptedSessionLog {
     try await eventually { await log.tokens == ["synthetic-current"] }
     #expect(await log.tokens == ["synthetic-current"])
     await cloud.disconnect()
+}
+
+/// Row zero of the synthetic 0a00 corpus, wrapped as a device reply envelope.
+private func syntheticReply() throws -> (payload: Data, frame: HexFrame) {
+    let fixture = try String(contentsOf: Bundle.module.url(forResource: "synthetic_0a00_frames", withExtension: "txt", subdirectory: "Fixtures")!, encoding: .utf8)
+    let line = try #require(fixture.split(separator: "\n").first { !$0.hasPrefix("#") })
+    let chars = Array(line)
+    let bytes = stride(from: 0, to: chars.count, by: 2).compactMap { UInt8(String(chars[$0...($0 + 1)]), radix: 16) }
+    let nested = try JSONSerialization.data(withJSONObject: ["data": Data(bytes).base64EncodedString()])
+    let payload = try JSONSerialization.data(withJSONObject: ["payload": String(decoding: nested, as: UTF8.self)])
+    return (payload, try HexFrame.parse(bytes))
+}
+
+private enum SwitchOutcome: Equatable { case receipt(PortCommandReceipt), closed, cancelled, other }
+private func outcome(_ result: Result<PortCommandReceipt, Error>) -> SwitchOutcome {
+    switch result {
+    case let .success(receipt): .receipt(receipt)
+    case let .failure(error):
+        if error as? ChargerBackendError == .linkClosed { .closed }
+        else if error is CancellationError { .cancelled } else { .other }
+    }
+}
+private func isHeldPublish(_ packet: MQTTPacket) -> Bool { if case .publish = packet { true } else { false } }
+
+/// Port switch publication, receipt fences and receive-order evidence.
+extension AnkerCloudBackendTests {
+@Test func setPortSwitchPublishesCommandToRequestTopic() async throws {
+    let link = TestMQTTLink(), cloud = try backend(link)
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    let receipt = try await cloud.setPortSwitch(.c2, on: false)
+    guard case let .publish(topic, payload) = await link.sent.last else { Issue.record("missing command"); return }
+    #expect(topic == "cmd/anker_power/A2345/synthetic-charger/req")
+    #expect(MQTTEnvelope.frame(fromMessage: payload) == PortSwitchCommand.frame(target: .c2, on: false, timestamp: 1000))
+    let outer = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+    let head = try #require(outer["head"] as? [String: Any])
+    #expect(head["timestamp"] as? Int == 1000); #expect(head["cmd"] as? Int == 17)
+    #expect(try await cloud.commandFence() == receipt)
+    await cloud.disconnect()
+}
+
+@Test func setPortSwitchAndFenceThrowWhenNotConnected() async throws {
+    let link = TestMQTTLink(), cloud = try backend(link)
+    await cloud.restore(testSession, credentials: testCredentials)
+    await #expect(throws: ChargerBackendError.linkClosed) { _ = try await cloud.setPortSwitch(.c1, on: true) }
+    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
+    try await cloud.connect(to: testCharger)
+    await cloud.disconnect()
+    await #expect(throws: ChargerBackendError.linkClosed) { _ = try await cloud.setPortSwitch(.c1, on: true) }
+    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
+    #expect(await link.sent.contains(where: isHeldPublish) == false)
+}
+
+/// The write completes successfully after disconnect replaced the context, so only
+/// the context check can reject it.
+@Test func switchWriteCompletingAfterContextReplacementIsRejected() async throws {
+    let link = TestMQTTLink(), cloud = try backend(link)
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    await link.hold(isHeldPublish)
+    let writing = Task { try await cloud.setPortSwitch(.c4, on: false) }
+    try await eventually { await link.held.count == 1 }
+    await link.holdClose()
+    let disconnecting = Task { await cloud.disconnect() }
+    try await eventually { await link.closeStarted }
+    await link.releaseHeld()
+    #expect(outcome(await writing.result) == .cancelled)
+    await link.releaseClose()
+    await disconnecting.value
+}
+
+@Test func snapshotsCarryReceiveMarksOrderedAgainstReceipts() async throws {
+    let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
+    let events = Task { for await event in cloud.events { await log.append(event) } }
+    defer { events.cancel() }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    let reply = try syntheticReply()
+    link.input.yield(.publish(topic: "dt/synthetic/param_info", payload: reply.payload))
+    try await eventually { await log.snapshots == 1 }
+    let first = try #require(await log.marks.first)
+    // Evidence leaves measurements and their receive time unchanged.
+    let delivered = try #require(await log.delivered.first?.snapshot)
+    #expect(delivered == PortDecoder.snapshot(from: reply.frame, receivedAt: Date(timeIntervalSince1970: 1000)))
+    let receipt = try await cloud.setPortSwitch(.usbA, on: true)
+    #expect(receipt.fence == first, "The fence is the latest receive position at write completion")
+    // Every received publish advances the sequence, including a command echo.
+    guard case let .publish(topic, echo) = await link.sent.last else { Issue.record("missing command"); return }
+    link.input.yield(.publish(topic: topic, payload: echo))
+    link.input.yield(.publish(topic: "dt/synthetic/param_info", payload: reply.payload))
+    try await eventually { await log.snapshots == 2 }
+    let second = try #require(await log.marks.last)
+    #expect(second.connection == receipt.fence.connection)
+    #expect(second.sequence == receipt.fence.sequence + 2)
+    await cloud.disconnect()
+}
+
+/// A reply processed while the command write is pending is not newer than its receipt.
+@Test func replyBeforeWriteCompletionIsNotNewerThanReceipt() async throws {
+    let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
+    let events = Task { for await event in cloud.events { await log.append(event) } }
+    defer { events.cancel() }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    await link.hold(isHeldPublish)
+    let writing = Task { try await cloud.setPortSwitch(.c1, on: false) }
+    try await eventually { await link.held.count == 1 }
+    link.input.yield(.publish(topic: "dt/synthetic/param_info", payload: try syntheticReply().payload))
+    try await eventually { await log.snapshots == 1 }
+    await link.releaseHeld()
+    guard case let .receipt(receipt) = outcome(await writing.result) else { Issue.record("write failed"); return }
+    let early = try #require(await log.marks.first)
+    #expect(early.connection == receipt.fence.connection)
+    #expect(early.sequence <= receipt.fence.sequence)
+    await cloud.disconnect()
+}
+
+@Test func reconnectionTakesNewEpochWhileSequenceKeepsIncreasing() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate(), log = EventLog()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    let events = Task { for await event in cloud.events { await log.append(event) } }
+    defer { events.cancel() }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    let reply = try syntheticReply().payload
+    links[0].input.yield(.publish(topic: "dt/synthetic/param_info", payload: reply))
+    try await eventually { await log.snapshots == 1 }
+    let before = try await cloud.commandFence()
+    links[0].input.finish()
+    try await eventually { await gate.pending(1) == 1 }
+    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
+    await gate.advance(1)
+    try await eventually { await links[1].sent.count == 3 }
+    try await eventually { (try? await cloud.commandFence()) != nil }
+    let after = try await cloud.commandFence()
+    #expect(after.fence.connection != before.fence.connection)
+    #expect(after.fence.sequence == before.fence.sequence)
+    links[1].input.yield(.publish(topic: "dt/synthetic/param_info", payload: reply))
+    try await eventually { await log.snapshots == 2 }
+    let mark = try #require(await log.marks.last)
+    #expect(mark.connection == after.fence.connection)
+    #expect(mark.sequence > after.fence.sequence)
+    await cloud.disconnect()
+}
+
+/// A write held past any deadline ends only because abort closed its link: the
+/// test link has no cancellation path for held writes.
+@Test func abortClosesHeldWriteWithoutDisconnectAndKeepsReconnection() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    let before = try await cloud.commandFence()
+    await links[0].hold(isHeldPublish)
+    let writing = Task { try await cloud.setPortSwitch(.c3, on: true) }
+    try await eventually { await links[0].held.count == 1 }
+    let aborted = Flag()
+    let aborting = Task { await cloud.abortCommands(); aborted.set() }
+    try await eventually { aborted.value }
+    await aborting.value
+    // Drained before abort returned; no graceful DISCONNECT on the aborted link.
+    #expect(await links[0].closed)
+    #expect(await links[0].held.isEmpty)
+    #expect(await links[0].sent.contains(.disconnect) == false)
+    #expect(identityTracker.liveCount == 0)
+    #expect(outcome(await writing.result) == .closed)
+    await #expect(throws: MQTTConnectionError.self) { _ = try await cloud.commandFence() }
+    // Authentication survives: the backend connects again without signing in.
+    try await cloud.connect(to: testCharger)
+    let receipt = try await cloud.setPortSwitch(.c3, on: true)
+    #expect(receipt.fence.connection != before.fence.connection)
+    #expect(await links[1].sent.contains(where: isHeldPublish))
+    #expect(await transport.calls == 2)
+    await cloud.disconnect()
+    #expect(await links[1].sent.last == .disconnect)
+}
+
+/// A link the backend loses during a write (not a caller's context change) reports
+/// `linkClosed`, alongside the backend's own loss status, so callers can suspend.
+@Test func switchWriteOnALinkThatDropsReportsLinkClosed() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate(), log = EventLog()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    let events = Task { for await event in cloud.events { await log.append(event) } }
+    defer { events.cancel() }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    await links[0].hold(isHeldPublish)
+    let writing = Task { try await cloud.setPortSwitch(.c2, on: true) }
+    try await eventually { await links[0].held.count == 1 }
+    links[0].input.finish()
+    #expect(outcome(await writing.result) == .closed)
+    try await eventually { await gate.pending(1) == 1 }
+    await gate.advance(1)
+    try await eventually { (try? await cloud.commandFence()) != nil }
+    await cloud.disconnect()
+}
+
+/// An abort during a graceful disconnect closes that link at once instead of
+/// waiting for the bounded DISCONNECT timeout, which never fires here.
+@Test func abortExpeditesGracefulCleanupBlockedOnDisconnect() async throws {
+    let link = TestMQTTLink(), gate = SleepGate(), cloud = try backend(link, gate: gate)
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    await link.hold { $0 == .disconnect }
+    let disconnecting = Task { await cloud.disconnect() }
+    try await eventually { await link.held.count == 1 }
+    let aborted = Flag()
+    let aborting = Task { await cloud.abortCommands(); aborted.set() }
+    do { try await eventually { aborted.value } }
+    catch { await gate.advance(1); await aborting.value; await disconnecting.value; throw error }
+    await aborting.value
+    await disconnecting.value
+    #expect(await link.closed)
+    #expect(await link.held.isEmpty)
+    #expect(await gate.delays.contains(1))
+}
+}
+
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raised = false
+    func set() { lock.withLock { raised = true } }
+    var value: Bool { lock.withLock { raised } }
 }

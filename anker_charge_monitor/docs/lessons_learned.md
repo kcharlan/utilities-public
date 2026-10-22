@@ -1,5 +1,64 @@
 # Lessons learned
 
+## 2026-10-22: Fail a compound device action toward the state the user asked for
+
+A restart is off, a pause, then on. Its first design finished the operation
+whenever a phase went unconfirmed, as plain turn-off and turn-on do. For the off
+phase that meant a missed deadline or a failed publish never sent "on": a charger
+slow to report (a risk the plan itself listed) could still have turned the port
+off, and it then stayed off, while the outcome, which only an "on" report clears,
+said only that "off" was unconfirmed. Every phase test passed because each phase
+was checked on its own terms. The final review found it by asking where the
+device ends up on each failure path. An unconfirmed off phase now goes straight
+to the on phase without the pause and reports the unconfirmed off only once that
+on phase confirms. When one step of a multi-step device action cannot be
+confirmed, assume it may have happened, and steer the failure path toward the
+state the user asked for, never leave the device in an intermediate state. Test
+each failure path for where the device ends up, not only for the message shown.
+
+## 2026-10-22: Inspect control states in the snapshots, not only their text
+
+The first port-control render marked the armed button with
+`.borderedProminent` and a red tint. In the offscreen snapshot window, which is
+not key, macOS greyed the tint, so "Confirm turn off" looked like any other
+button. The status panel is also not guaranteed to be the active window. The
+armed label now sets its own red, semibold text. A first fix set `.primary` on
+every unarmed label too. That overrode the disabled colour, so the paused
+restart's disabled **Turn on** looked enabled. Only the armed (always enabled)
+label sets a colour now. The same review found that "Off · On again in 5 s"
+truncated in the row and hid the countdown, so phase text now leads the row's
+secondary text. All three looked right in tests that compared strings. Each was
+visible only in the rendered PNGs.
+
+## 2026-10-22: A defensive fallback can mask the ordering a test claims
+
+Quit must end a port operation before `MonitorController.stop()`. `stop()`
+also ends any operation, as a fallback for other callers, and its disconnect
+waits for that ending write. The AppDelegate termination tests therefore passed
+before `applicationShouldTerminate` awaited `endPortOperation()`: the write still
+preceded the disconnect. Asserting the logs alone could not show which path
+performed the write. The tests now also check that the controller's system events
+are still running while the ending attempt is held, and that check failed until
+the delegate change. When a lower layer repeats a guarantee, assert a
+precondition only the intended caller can satisfy.
+
+The TERM-resistant credential-process test once read an empty PID under full
+suite load. The script's `printf ... > marker` creates the file before
+writing to it, and the test waited only for the file to exist. It now waits until
+the content parses as a PID. Wait for the content a test needs, not only for the
+file that will hold it.
+
+## 2026-10-22: Make cancellation and lifecycle boundaries explicit in control plans
+
+Disarming an armed action must consume Escape before naming cancellation or
+panel dismissal. Delegate to the existing cancel owner before applying a
+standalone-view fallback, and test the draft, focus and visibility transitions.
+For asynchronous device controls, generation guards need a receipt-time boundary
+as well: queued readings from the same connection can otherwise confirm a later
+operation. Specify context-bound outcomes and pending-write disposal when a
+deadline ends a lifecycle action; task cancellation alone does not drain a
+continuation-based network send.
+
 ## 2026-10-21: Check dispatch and responder paths when reviewing plans
 
 The device-details plan review excluded upstream's `sile` extraction branch and

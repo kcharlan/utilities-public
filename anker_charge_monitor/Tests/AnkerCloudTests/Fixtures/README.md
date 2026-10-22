@@ -16,7 +16,7 @@ generator; all 115 replies must parse, preserve port order and retain idle data.
 Separate tests cover signed Int16 extremes, malformed/truncated data, checksums,
 one/two-byte lengths, optional increments, envelope handling and CLI output.
 
-`synthetic_0a00_details_frames.txt` contains 23 generated frames from the same
+`synthetic_0a00_details_frames.txt` contains 28 generated frames from the same
 command, adding invented detail fields `a3`, `b7`, `bd` and `be` (anker-solix-api
 commit `9e72894`, `mqttmap.py:_A2345_0a00`) to row zero's port readings above.
 Vendor/product IDs `FEED`, `BEEF`, `C0DE` and `0042`, model codes and the
@@ -25,8 +25,12 @@ unknown classes are invented, not taken from any device. Its padding TLV spells
 Rows cover the identity sentinels, independently absent class/model code,
 unknown classes, identity-support values, fault mask combinations, a
 `sile`-encoded fault field, each wire type for all four fields, and missing,
-short or unsupported fields. Literal expectations in Swift are independent of
-the generator, and the earlier corpus is generated unchanged.
+short or unsupported fields. Rows 23 to 27 add invented switch fields `aa` to `ae`
+(one byte each, 0 off and 1 on, index 4 the shared USB-A switch): an on/off mix
+with USB-A off, only C1 and USB-A present, every field `ui`-typed (unaccepted),
+accepted `sile`, `strb` and `var` types beside one `ui` field, and an unrecognized
+value 2 beside an empty value. Literal expectations in Swift are independent of
+the generator, and the earlier corpus and rows 0 to 22 are generated unchanged.
 
 `login_vectors.json` is demonstrably synthetic: its scalar is 32 repeated `01`
 bytes and its only password input is `synthetic-password-123`. The original
@@ -36,7 +40,9 @@ point/shared secret/ciphertext are retained as cross-implementation vectors;
 they are not usable account secrets. No original development environment or
 upstream authentication cache is needed or distributed.
 
-Status-request and envelope literals use the invented timestamp `0x12345678`.
+Status-request, port-switch command (`CommandFrameTests`) and envelope literals use
+the invented timestamp `0x12345678`; the port-switch vectors were written from the
+public field layout with separately computed checksums, not from any capture.
 App, formatting and snapshot fixtures likewise contain invented inputs. Public
 fixtures do not establish installed-app authorization, real charger behavior or
 native login-item registration.

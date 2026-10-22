@@ -29,7 +29,7 @@ for (let row = 0; row < 115; row++) {
 const destination = fileURLToPath(new URL('../Tests/AnkerCloudTests/Fixtures/synthetic_0a00_frames.txt', import.meta.url));
 writeFileSync(destination, `${rows.join('\n')}\n`);
 
-// Detail fields a3/b7/bd/be (anker-solix-api 9e72894, mqttmap.py _A2345_0a00).
+// Detail fields a3/b7/bd/be and switches aa-ae (anker-solix-api 9e72894, mqttmap.py _A2345_0a00).
 // Every vendor/product ID, class and code is invented (FEED, BEEF, C0DE).
 const BIN = 0x04;
 const words = values => values.flatMap(littleEndian);
@@ -38,6 +38,9 @@ const faults = (type, low, high = 0) => field(0xa3, type, [low, high]);
 const support = (type, value) => field(0xb7, type, [0xff, value]);
 const ids = (type, pairs) => field(0xbd, type, words(pairs.flat()));
 const metadata = (type, pairs) => field(0xbe, type, words(pairs.flat()));
+// Switch fields aa-ae: one byte each, 0 off and 1 on; index 4 is the shared USB-A switch.
+const switchField = (index, type, value) => field(0xaa + index, type, [value].flat());
+const switches = (type, values) => values.map((value, index) => switchField(index, type, value));
 const NONE = [0xfffa, 0xfffb], PENDING = [0, 0], ABSENT = [0xffff, 0xffff];
 const mixedIDs = [NONE, PENDING, [0xfeed, 0xbeef], [0xc0de, 0x0042]];
 const mixedMetadata = [ABSENT, ABSENT, [10, 7], [99, 0x0101]];
@@ -64,6 +67,15 @@ const detailRows = [
   [faults(BIN, 0), support(BIN, 6), ids(BIN, fourIDs),
     metadata(BIN, [[0xffff, 7], [10, 0xffff], [19, 0], [0x1234, 0]])], // 21 independent metadata
   [support(BIN, 2)],                                                 // 22 support only
+  // 23-27: switch fields aa-ae, invented states (anker-solix-api 9e72894, _A2345_0a00;
+  // wire index per mqttcmdmap.py CHARGER_PORT_IDS: C1-C4 then the shared USB-A switch).
+  [faults(BIN, 0), ...switches(BIN, [1, 0, 1, 0, 0])],                // 23 on/off mix, USB-A off
+  [faults(BIN, 0), switchField(0, BIN, 1), switchField(4, BIN, 1)],  // 24 only C1 and USB-A reported
+  [faults(BIN, 0), ...switches(0x01, [1, 0, 1, 0, 1])],              // 25 every switch ui-typed: unaccepted
+  [faults(BIN, 0), switchField(0, 0x02, 1), switchField(1, 0x06, 0), switchField(2, 0x03, 1),
+    switchField(3, 0x01, 1), switchField(4, BIN, 1)],                // 26 sile, strb, var accepted; C4 ui
+  [faults(BIN, 0), switchField(0, BIN, 2), field(0xab, BIN, []), switchField(2, BIN, 1),
+    switchField(3, BIN, 0), switchField(4, BIN, 1)],                 // 27 value 2 and empty: no claim
 ];
 const detailFrames = detailRows.map((details, row) => {
   // Row zero's readings from the corpus above, for parity with detail-free frames.
