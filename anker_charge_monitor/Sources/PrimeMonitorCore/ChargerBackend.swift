@@ -49,8 +49,11 @@ public struct ReceiveMark: Hashable, Sendable {
 
 /// Backend-issued freshness fence for a port command: the connection and the latest
 /// receive sequence when the command write completed (or, for
-/// `ChargerBackend.commandFence()`, when the fence was read). A reply is newer than
-/// the command only when its mark has this connection and a greater sequence.
+/// `ChargerBackend.commandFence()`, when the fence was read). A reply can be newer
+/// than the command only when its mark has this connection and a greater sequence.
+/// That is necessary, not sufficient: a reply still buffered in the transport when
+/// the write completed is processed later and gets a greater sequence (and a later
+/// receive time) although the charger sent it before the command.
 public struct PortCommandReceipt: Hashable, Sendable {
     public let fence: ReceiveMark
     public init(fence: ReceiveMark) { self.fence = fence }

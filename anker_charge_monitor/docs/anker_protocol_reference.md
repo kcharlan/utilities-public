@@ -180,9 +180,15 @@ the app treats only a later `0a00` switch report (section 6.3) as confirmation.
 Each such report carries the backend's receive position (connection and receive
 sequence), and each command write returns a receipt with the position at write
 completion; a report counts as evidence after a command only when it is on the
-receipt's connection with a greater sequence. A reply still in transport buffers
-at write completion is ordered after the receipt; the receive time and the
-reported switch value bound what such a reply can confirm.
+receipt's connection with a greater sequence. The fence excludes only replies the
+backend processed before the write completed. A reply already sent by the charger
+but still buffered in the transport or the backend inbox at that moment is
+processed later and gets a later sequence and a later receive time, so neither
+the fence nor a rule that the receive time be no earlier than a subsequent status
+request can tell it apart from a reply to that request: the protocol has no
+request correlation. Only the reported switch value limits such a reply, and only
+when the old state differs from the wanted one; a stale report of the old state
+can still be taken as a fresh failure to change.
 
 Owner evidence is in
 [anker-solix-api discussion #252](https://github.com/thomluther/anker-solix-api/discussions/252):
