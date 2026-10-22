@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.3.0 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.4.0 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -79,7 +79,7 @@ USB-C device, a **Name this device** field, the brand class (or "Unknown class
 N"), the hexadecimal USB IDs and the device model code. Values the charger did
 not report read "Not reported by this charger". The charger's identity-support
 value is not used to hide identities: a charger reporting 2 has still
-identified devices.
+identified devices. The port controls follow these lines (see "Port control").
 
 Press Return or move focus away to save a name; closing the panel, expanding
 another row or quitting the app also saves it, and a blank name removes it.
@@ -90,6 +90,59 @@ edited row stays expanded, and the name remains available for retry after the
 panel is reopened. It is kept in memory only: a save that still fails when you
 quit does not stop quitting, and the name is lost. A problem in `devices.json` is
 shown once, as a warning below the rows naming the failing entry.
+
+## Port control
+
+The expanded row also turns the port's power off and on. The buttons follow
+the switch state the charger reports: a port reported on offers **Restart** and
+**Turn off**, one reported off offers **Turn on**, and a port whose switch was not
+reported offers all three. A1 and A2 share one switch, so their buttons read
+**Restart USB-A ports**, **Turn off USB-A ports** and **Turn on USB-A ports** and act
+on both. Never turn off the port that powers this Mac: the app cannot tell which
+port that is.
+
+Turn on acts at once. Turn off and Restart cut power, so the first click only arms
+them: the button becomes **Confirm turn off** or **Confirm restart** and a caption
+names the port, the power it is supplying and the connected device. A second
+click of the same button within 5 seconds acts. The action disarms when that time
+passes, when you click any other action or change the expanded row, when the panel
+closes, when controls become unavailable, and when the account, charger or
+connection changes. Escape also disarms it; that Escape does nothing else, so a
+name being typed stays as it is and the panel stays open, and the next Escape
+behaves as described above.
+
+One operation runs at a time. While it runs, the other ports' controls are
+disabled with "Another port is changing."; controls also read "Reconnect to
+control ports." while disconnected and "Readings are stale." when readings are
+stale. The changing port shows its phase in its row and expanded detail:
+"Turning off…", "On again in N s" during a restart's 5-second pause, and
+"Turning on…". The charger sends no acknowledgment of a command, so the app
+requests status after each command and treats only a later report of the wanted
+switch state as confirmation; a restart's pause starts from the report that the
+port is off. A confirmed change simply clears the phase text. A change that is
+not confirmed within 10 seconds is reported above the rows, prefixed with the
+name of the charger it was sent to, with a **Dismiss** button; the in-app
+[wording](docs/port_control_implementation_plan.md#wording) lists each message.
+That result stays after sign-out or a charger change and is never shown on another
+charger's rows. Dismiss, a new operation or a later matching report from the same
+charger clears it. Phase changes and results are announced to VoiceOver.
+
+Closing the panel does not interrupt an operation. Sleep, network loss or a
+dropped connection pauses it, and it resumes from its phase after reconnecting:
+a restart's pause keeps its original end, a restart that was turning on sends
+"on" again, and otherwise the app only requests status again. Quitting, signing out,
+choosing a charger, editing the credential settings, Retry, Reload Credentials
+and Sign In Again end it. Ending a restart sends one "on" command over the
+existing connection, within 3 seconds. A sent command is not confirmation, so a
+restart ended this way reports that the port may still be off. Ending a plain
+turn-off does not turn the port back on. Check the device itself after any
+reported result.
+
+The Anker app may not show a change made here right away. Owner reports in
+[anker-solix-api discussion #252](https://github.com/thomluther/anker-solix-api/discussions/252)
+describe it receiving the switch states when it opens its connection to the
+charger, such as when its device page opens. That is an observation, not a
+guarantee: confirm a change on the device and in this panel.
 
 Only nonsecret provider configuration, charger selection, cadence and menu bar
 text size are saved in `state.json` under
@@ -214,7 +267,8 @@ at `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, notably `mqttmap.py:_A2345_0a00`,
 `mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Fault, temperature and
 connected-device detail fields follow `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`
 (`mqttmap.py:_A2345_0a00` keys `a3`, `b7`, `bd`, `be`, the `aa` to `ae` port switches and
-`mqtttypes.py:DeviceHexDataField.extract_value`). Its applicable
+`mqtttypes.py:DeviceHexDataField.extract_value`), as does the `0207` port switch
+command (`mqttcmdmap.py:CMD_USB_PORT_SWITCH` and `mqtt.py:generate_mqtt_command`). Its applicable
 [MIT license and copyright notice](docs/anker-solix-api-LICENSE.txt) are retained.
 The public server key is a protocol constant, not an owner credential.
 App/menu/plist/release and snapshot structure derive from `brew_version` at

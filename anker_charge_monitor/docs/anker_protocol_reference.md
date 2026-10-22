@@ -1,8 +1,14 @@
-# A2345 read-only cloud protocol
+# A2345 cloud protocol: readings and port switch commands
+
+Scope: the app reads charger status (readings, faults, connected-device identity
+and port switch states) and sends one command, the port switch (section 7), from
+the panel's port controls. It sends no other command: no timers, schedules,
+priority, usage modes, power limits or display settings.
 
 Baseline: [anker-solix-api](https://github.com/thomluther/anker-solix-api) commit
 `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, under its retained MIT license;
-detail fields (§6.2) follow commit `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`.
+detail fields (§6.2) and the port switch command (§7) follow commit
+`9e72894181aef868e7b3ed0ba05bd322d54bb5d7`.
 References below are upstream module/symbol names under `src/anker_solix_api/`;
 the maintained Swift code defines the port's actual behavior. No private capture
 or owner activity is part of this reference.

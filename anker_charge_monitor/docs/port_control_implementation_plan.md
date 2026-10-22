@@ -1,7 +1,9 @@
 # Port control: implementation plan
 
-Status: proposed, not approved for implementation. Builds on the merged device
-identity and fault display (`023737f`).
+Status: implemented on branch `anker-port-control` (release 0.4.0, build 6),
+pending the owner gates (real-charger acceptance before merge, installed
+acceptance after merge). Builds on the merged device identity and fault
+display (`023737f`).
 
 Paths below are relative to `anker_charge_monitor/` unless marked repository
 root. Defaults below are selected; implementation approval remains separate.
