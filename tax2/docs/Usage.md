@@ -210,8 +210,11 @@ Tax is floored at zero; this is not a full dependent-eligibility/refund model.
 
 Pennsylvania 2026 uses flat 3.07% personal income tax without a standard
 deduction and does not distinguish qualified from ordinary dividends. Local
-EIT is earned-only, disabled by default and has a placeholder rate; set the
-applicable resident rate before enabling and rerun. Exclude return of capital
+EIT is enabled at a generic configured 1% rate on earned income only, added to
+state tax. The state allocation applies to both components before calculation.
+Verify the applicable local rate before use; edit private rules and rebuild if
+it differs. No specific locality is identified by the bundled rules.
+Exclude return of capital
 until basis is exhausted, then enter it as gain; Tax2 does not track basis.
 Tax Forgiveness, residency timelines, estimated-payment thresholds/due dates,
 county property tax and local services tax are omitted.

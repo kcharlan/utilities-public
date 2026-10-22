@@ -1,6 +1,6 @@
 # Tax2
 
-Tax2 3.0 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.0.1 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
@@ -159,8 +159,9 @@ An existing non-mapping config (including an empty YAML document) warns
 
 Add `rules/federal/YEAR.yaml` or `rules/states/STATE/YEAR.yaml`, or supply a
 private `--rules-dir`, then rebuild. Use generic locality labels in this public
-repo. Pennsylvania's earned-only local EIT is disabled by default; set the
-applicable rate before enabling it and rerun.
+repo. Pennsylvania's earned-only local EIT is enabled at a generic configured
+rate of 1%, added to the 3.07% state tax on both income buckets. Verify the
+applicable local rate before use; edit private rules and rebuild if it differs.
 
 ## Project layout
 

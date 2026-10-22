@@ -48,3 +48,25 @@ def test_live_bundled_federal_hand_calculations(engine_page, year, status, month
     result = engine_page.evaluate('({rules,year,status,monthly}) => Tax2Engine.computeAnnual(0,monthly,status,year,[{code:"GA",allocation_pct:100}],rules)',
                                   dict(rules=rules, year=year, status=status, monthly=monthly))
     assert result['federal_annual'] == annual
+
+
+@pytest.mark.parametrize('status', ['single', 'married_joint'])
+@pytest.mark.parametrize('earned,unearned,allocation,pa_cents', [
+    (0, 5000, 100, 15350),
+    (1000, 4000, 100, 16350),
+    (5000, 0, 100, 20350),
+    (1000, 4000, 50, 8175),
+    (1000, 4000, 0, 0),
+    (0, 0, 100, 0),
+])
+def test_bundled_pa_adds_eit_only_to_allocated_earned_income(
+        engine_page, status, earned, unearned, allocation, pa_cents):
+    # Synthetic amounts: 5,000 * 3.07% = 153.50; 1,000 * 1% adds 10.00.
+    # Halving both buckets gives 76.75 state tax plus 5.00 local EIT.
+    rules = build_payload(PROJECT / 'rules', rules_source='bundled')
+    result = engine_page.evaluate('''({rules,status,earned,unearned,allocation}) =>
+        Tax2Engine.computeMonthly({earnedCents:earned*100,unearnedCents:unearned*100,
+            filingStatus:status,year:2026,states:[{code:'PA',allocation_pct:allocation}]},rules)
+    ''', dict(rules=rules, status=status, earned=earned, unearned=unearned,
+              allocation=allocation))
+    assert result['states'][0]['state_cents'] == pa_cents

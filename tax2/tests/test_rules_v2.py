@@ -136,10 +136,15 @@ def test_empty_components_fail(tmp_path):
         load_rules(str(write_synthetic(tmp_path / "empty.yaml", data)))
 
 
-def test_bundled_normalization_matches_frozen_rules():
+def test_bundled_normalization_preserves_frozen_rules_except_enabled_pa_eit():
     for path in Path("rules").rglob("*.yaml"):
         frozen = Path("tests/fixtures/parity/bundled") / path
-        assert load_rules(str(path)).model_dump(mode="json") == load_rules(str(frozen)).model_dump(mode="json")
+        expected = load_rules(str(frozen)).model_dump(mode="json")
+        if path == Path("rules/states/PA/2026.yaml"):
+            # The retired-engine oracle retains disabled EIT; 3.0.1 enables it.
+            # Keep comparing every other field, including the rate and basis.
+            next(c for c in expected['components'] if c['name'] == 'local_eit')['enabled'] = True
+        assert load_rules(str(path)).model_dump(mode="json") == expected
 
 
 @pytest.mark.parametrize("status", ["single", "married_joint"])
@@ -261,7 +266,7 @@ def test_pa_2026_components_and_ga_qif_defaults():
 
     assert pa_rules.display_name == "Pennsylvania"
     assert len(pa_rules.components) == 2
-    assert sum(1 for component in pa_rules.components if component.enabled) == 1
+    assert sum(1 for component in pa_rules.components if component.enabled) == 2
     assert pa_rules.components[1].label == "Local EIT (resident municipality and school district)"
     assert pa_rules.components[1].applies_to == [IncomeClass.earned]
     assert ga_rules.qif.state_transfer == "[GA State Income Taxes]"

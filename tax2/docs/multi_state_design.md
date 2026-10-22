@@ -62,7 +62,7 @@ no additional restrictions. Zero-rate/all-disabled rules remain valid.
 Roots require federal rules and at least one state with valid rules.
 
 Federal/Georgia currently normalize legacy files; Pennsylvania 2026 uses
-components for 3.07% state tax and disabled earned-only local EIT. Names are
+components for 3.07% state tax and enabled 1% earned-only local EIT. Names are
 identifiers, never jurisdiction-specific engine branches. Generic labels and
 rates stay in YAML; private locality names/codes never enter this public repo.
 
@@ -149,10 +149,12 @@ Tests cover legacy normalization, exact annual parity against an independent
 test oracle, bundled rule expectations, fixed-amount Georgia QIF text, independent
 allocations, generic YAML components, intentional zero tax and negative net,
 config/storage fallbacks, publication safety and offline Chromium downloads.
-Bundled rules remain unchanged. Georgia 2025's historical federal-like
+Frozen parity rules remain unchanged. Georgia 2025's historical federal-like
 deductions are preserved for its fixture, not corrected silently. Pennsylvania
-has only 2026 rules and its local EIT stays disabled until its placeholder rate
-is deliberately edited and the page rebuilt.
+has only 2026 rules. Starting with 3.0.1, its bundled local EIT is enabled at a
+generic configured rate of 1%; the frozen parity inputs retain disabled EIT.
+Live bundled-rule tests cover the uplift on earned income, state allocations
+and the resulting display, QIF, rate schedule and lookup downloads.
 
 `tests/fixtures/parity/python_parity.json` records output from the retired
 Python engine, including its generator revision and interpreter. The adjacent

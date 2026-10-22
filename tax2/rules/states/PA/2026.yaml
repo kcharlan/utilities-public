@@ -16,14 +16,13 @@ components:
         - { up_to: null, rate: 0.0307 }
   - name: local_eit
     label: "Local EIT (resident municipality and school district)"
-    enabled: false
+    enabled: true
     applies_to: [earned]
     standard_deduction:
       single: 0
       married_joint: 0
     brackets:
-      # Placeholder rate. Before enabling, look up the total resident EIT rate for
-      # your PSD with the PA DCED EIT/PSD lookup and set it here.
+      # Generic configured local EIT rate; verify applicability before use.
       single:
         - { up_to: null, rate: 0.01 }
       married_joint:

@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-22: Validate bundled tax rules separately from frozen parity inputs
+
+Tax2's engine correctly supported earned-only components, but its bundled PA
+EIT component was disabled, so entering earned income never added local EIT.
+Exercise the live bundled rules with synthetic mixed income, earned-only and
+unearned-only cases, and state allocations. Check the displayed result and
+downloads too. Preserve historical parity rules and outputs; document and
+compare intentional live-rule differences explicitly rather than regenerating
+the retired-engine oracle. Keep bundled locality labels generic.
+
 ## 2026-10-20: Use the system CLI consistently in usage exports
 
 `usage-monthly-csv` invoked a pinned npm package while the user's `ccusage`

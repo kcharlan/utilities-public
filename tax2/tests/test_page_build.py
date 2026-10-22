@@ -150,7 +150,7 @@ def test_payload_schema_sorting_projection_and_unchanged_config(monkeypatch, tmp
     payload = build_payload(synthetic_root(tmp_path), rules_source="custom", built_at="2026-01-01T00:00:00+00:00")
     assert set(payload) == {"schema", "app", "built_at", "rules_source", "federal", "states", "config"}
     assert payload["schema"] == 1
-    assert payload["app"] == {"name": "Tax2", "version": "3.0"}
+    assert payload["app"] == {"name": "Tax2", "version": "3.0.1"}
     assert list(payload["federal"]) == ["2025", "2026"]
     assert [state["code"] for state in payload["states"]] == ["XE", "XF"]
     assert payload["states"][0] == {"code": "XE", "display_name": "XE", "years": [], "qif": None, "rules": {}}

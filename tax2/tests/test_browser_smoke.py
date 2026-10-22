@@ -84,6 +84,26 @@ def download_text(page, label):
     return download.suggested_filename, Path(download.path()).read_text()
 
 
+def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser):
+    page = built_browser(instant='2026-10-01T12:00:00Z')
+    page.get_by_label('Pennsylvania', exact=True).check()
+    page.get_by_label('Georgia', exact=True).uncheck()
+    income(page, '4000', earned='1000')
+    # Synthetic monthly income: 153.50 state tax plus 10.00 earned-only EIT.
+    expect(page.locator('.state .result-amount')).to_have_text('$163.50')
+    _, qif = download_text(page, 'Download QIF')
+    assert '\nT-163.50\n' in qif
+    assert '\nT163.50\n' in qif
+    _, schedule = download_text(page, 'Download rate schedule')
+    pa_schedule = schedule.split('## PA', 1)[1]
+    assert 'disabled — not included' not in pa_schedule
+    assert '1%' in pa_schedule
+    _, lookup = download_text(page, 'Download lookup table')
+    rows = list(csv.DictReader(io.StringIO(lookup)))
+    assert rows[20]['PA monthly tax (earned income only)'] == '10.00'
+    assert rows[100]['PA monthly tax (total income)'] == '153.50'
+
+
 def test_parsers_exact_money_grammar_and_allocation(engine_page):
     page = engine_page
     valid = {'': 0, '   ': 0, '1,234.56': 123456, '12.': 1200, '.5': 50,
@@ -373,8 +393,9 @@ def test_defaults_format_reconciliation_and_current_qif(built_browser):
     page.get_by_label('Pennsylvania allocation', exact=True).fill('50')
     expect(page.locator('.total .result-amount')).to_have_text('$698.69')
     income(page, '5000', '250')
-    expect(page.locator('.total .result-amount')).to_have_text('$745.26')
-    expect(page.locator('.net .result-amount')).to_have_text('$4,504.74')
+    # Enabled EIT adds 250 * 50% * 1% = 1.25 to the previous total.
+    expect(page.locator('.total .result-amount')).to_have_text('$746.51')
+    expect(page.locator('.net .result-amount')).to_have_text('$4,503.49')
     expect(page.locator('.income-sublabel')).to_have_text('Total $5,250.00 monthly = $63,000.00 annually')
     for value in ['8000', '3000', '5000']:
         income(page, value, '250')

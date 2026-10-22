@@ -47,7 +47,7 @@ def build_payload(rules_root: Path, *, rules_source: str, built_at: str | None =
     if not any(state["years"] for state in states):
         raise ValueError(f"No valid state rules in {state_root}")
     cfg = load_config()
-    return {"schema": 1, "app": {"name": "Tax2", "version": "3.0"},
+    return {"schema": 1, "app": {"name": "Tax2", "version": "3.0.1"},
             "built_at": built_at if built_at is not None else datetime.now(timezone.utc).isoformat(),
             "rules_source": rules_source, "federal": federal, "states": states,
             "config": {"default_states": cfg["default_states"],
