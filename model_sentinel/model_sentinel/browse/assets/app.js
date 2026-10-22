@@ -1238,7 +1238,12 @@
       const current = latest.current;
       if (current.draft === "" || current.valid(current.draft)) {
         if (override || current.draft !== current.value) (override || current.commit)(current.draft);
-      } else setDraft(current.value);
+      } else {
+        setDraft(current.value);
+        // A target change still applies when invalid intermediate text falls
+        // back to the last committed exact value (or to no limit).
+        if (override) override(current.value);
+      }
     };
     if (editorRef) editorRef.current = {cancel, flush, deferBlur: () => { deferBlur.current = true; }};
     useEffect(() => setDraft(value), [value]);

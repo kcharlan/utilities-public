@@ -402,6 +402,39 @@ def test_hosts_pending_price_draft_commits_to_current_column(hosts_page, hosts_s
 
 
 @pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+@pytest.mark.parametrize(("prior", "removed"), [("", None), ("7", 134), ("1.000000000000000015", 135)])
+def test_hosts_invalid_price_draft_switches_column_with_last_valid_exact_limit(hosts_page, hosts_server, prior, removed):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        changes = {"plimit": "pricing.prompt:" + prior} if prior else {}
+        goto(hosts_page, hosts_server, _hosts_fragment(facts, **changes))
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        field = hosts_page.get_by_label("Maximum price", exact=True)
+        field.fill("-")
+        expect(field).to_have_attribute("aria-invalid", "true")
+        hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
+        expect(field).to_have_value(prior)
+        expect(hosts_page.get_by_label("Price column", exact=True)).to_have_value("pricing.completion")
+        hosts_page.wait_for_timeout(350)
+        if prior:
+            expect(hosts_page).to_have_url(re.compile("plimit=" + re.escape(quote("pricing.completion:" + prior, safe="")) + r"(?:&|$)"))
+            expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"Price limit: removes {removed} endpoints")
+            if removed == 134:
+                expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(1)
+            else:
+                expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Price limit removes the most (135 endpoints).")
+        else:
+            expect(hosts_page).not_to_have_url(re.compile("plimit="))
+            expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+        # Cancellation must still win after invalid text and the target switch.
+        field.fill("-")
+        hosts_page.get_by_role("dialog", name="Price limit").get_by_role("button", name="Remove condition", exact=True).click()
+        hosts_page.wait_for_timeout(350)
+        assert "plimit" not in hosts_page.evaluate("location.hash")
+        expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
 def test_hosts_remove_after_price_column_switch_cancels_drafts_without_hanging(hosts_page, hosts_server):
     with _responsive_renderer_deadline():
         _, facts = hosts_server

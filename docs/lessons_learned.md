@@ -12,6 +12,9 @@ same race can happen when a pending value precedes a checkbox change. Keep
 typing as replace and deliberate presets as push; let their displayed value follow URL state
 so fast Back/Forward cannot leave an optimistic draft behind. Regress the
 whole edit/switch/remove sequence with a watchdog outside the browser renderer.
+When invalid intermediate text falls back to the last committed value, apply
+that same exact text to a newly selected target too; restoring only the field
+leaves its visible target and the active URL filter inconsistent.
 
 ## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
 
