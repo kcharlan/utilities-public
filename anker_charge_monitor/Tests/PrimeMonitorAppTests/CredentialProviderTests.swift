@@ -355,9 +355,13 @@ actor OrderedCredentialProvider: CredentialProvider {
             let config = OnePasswordConfiguration(item: "Synthetic item", vault: nil, country: "US")
             let task = Task { try await OnePasswordProvider(configuration: config, executable: script.url, timeout: 0.5).retrieve() }
             let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-            while !FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-            let pidText = try String(contentsOf: marker, encoding: .utf8)
-            let pid = try #require(Int32(pidText))
+            // The shell creates the marker before printf writes the PID: wait for content.
+            var written: Int32?
+            while written == nil, ContinuousClock.now < deadline {
+                written = (try? String(contentsOf: marker, encoding: .utf8)).flatMap { Int32($0) }
+                if written == nil { try await Task.sleep(for: .milliseconds(5)) }
+            }
+            let pid = try #require(written)
             if cancel {
                 task.cancel()
                 await #expect(throws: CancellationError.self) { try await task.value }
