@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
+
+Model Sentinel's acceptance builder originally checked only the checkout
+containing its source. From a linked worktree that allowed synthetic runtime
+files inside the main public checkout. Resolve Git's common directory and
+check both checkout roots by filesystem identity before writing. Exercise the
+shared isolation helper through each runtime builder, including symlink/case
+aliases, and clean only the exact fresh test-created target in a failure path.
+
 ## 2026-10-22: Exercise primary navigation targets, not only nearby links
 
 Model Sentinel's Hosts rows exposed individual mapped-model dossier buttons,

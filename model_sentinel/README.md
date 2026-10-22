@@ -508,6 +508,30 @@ browser, and `Ctrl-C` stops the server.
   uptime trends. On narrow screens the roster collapses above the scrolling
   matrix. Snapshot, host selection, ranking, and row match survive reloads.
 
+  The question's phrases open keyboard-accessible condition editors for host
+  exclusions, normal status (code 0), precision, minimum uptime, context and
+  output capacity, supported parameters/native tools and implicit caching,
+  service tiers, exact price limits, and model-list search. Conditions combine
+  with AND; each removal count measures that condition alone across the capture.
+  Precision's 16-bit and 8-bit shortcuts preserve unknown/unrecognized chips.
+  An empty active precision or tier selection matches nothing; remove its
+  condition to restore unrestricted matching. Null service tiers display as
+  `standard`, while string tiers retain JSON quotes, including `"standard"` and
+  `"null"`. Price limits preserve decimal text and compare exact values.
+
+  **Any selected host** admits a list if one selected host qualifies; **All
+  selected hosts** requires each host. **Show excluded** uses endpoint presence
+  for the same row rule and shows failing endpoints dimmed with their first
+  failing condition, without awarding them ranks. With no selection, any host
+  can admit a list. Missing uptime can be included explicitly, and the uptime
+  condition pauses for snapshots without stored telemetry; see [Endpoint
+  capture](#endpoint-capture) for the saved telemetry facts. **Reset** removes
+  conditions and restores default ranking/row settings while keeping provider,
+  selected hosts, and capture. Conditions and empty chip selections survive
+  copied URLs/reloads. Numeric typing replaces the current history entry;
+  deliberate selections retain Back/Forward navigation. Editors close with
+  `Esc` and return focus to their phrase.
+
 Every model name opens a dossier containing identity and presence evidence,
 current facts, field-history sparklines, and the complete stored changelog.
 Use the **Timeline** action to graph that model or **That day in Activity** to
@@ -959,6 +983,15 @@ python3 -m venv .venv
 The Playwright browser smoke suite is part of the ordinary test run. It is not
 silently skipped when Chromium is unavailable; install the browser dependency
 before running the suite.
+
+For isolated Hosts visual acceptance, create a new or empty directory outside
+all repository checkouts, then run `.venv/bin/python -m
+tests.hosts_validation_fixture /private/tmp/synthetic-hosts-runtime`. The builder
+rejects occupied and repository-contained paths, including filesystem aliases,
+and prints the resolved runtime path. Use it as `MODEL_SENTINEL_HOME` for
+`browse --no-open --view hosts --port 0`. Its newest capture is intentionally
+empty; select the first capture (2026-09-01) to inspect the synthetic comparison
+cases. Stop the server before removing that exact temporary runtime directory.
 
 ## Documents
 

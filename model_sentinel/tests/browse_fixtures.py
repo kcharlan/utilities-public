@@ -703,12 +703,12 @@ class HostsFixtureFacts:
     host_legacy_and_reasons: dict
 
 
-def build_hosts_fixture_db(path: Path) -> HostsFixtureFacts:
+def build_hosts_fixture_db(path: Path, *, provider_id: str = "hosts-synthetic", single_provider_id: str = "hosts-single-synthetic", with_output_prices: bool = False) -> HostsFixtureFacts:
     """Build only synthetic Hosts evidence, independent of the existing browse fixture."""
     from dataclasses import replace
 
-    provider = replace(ENDPOINT_PROVIDER, provider_id="hosts-synthetic", label="Synthetic Hosts")
-    single = replace(provider, provider_id="hosts-single-synthetic", label="Synthetic Single Host")
+    provider = replace(ENDPOINT_PROVIDER, provider_id=provider_id, label="Synthetic Hosts")
+    single = replace(provider, provider_id=single_provider_id, label="Synthetic Single Host")
     store = Store(path)
     store.initialize()
     store.upsert_provider_configs((provider, single), updated_at="2026-09-01T12:00:00+00:00")
@@ -730,6 +730,8 @@ def build_hosts_fixture_db(path: Path) -> HostsFixtureFacts:
         endpoint("beta", beta, "0.000001", context_length=64000, uptime_last_1d=97, service_tier="standard"),
         endpoint("gamma", gamma, "0.000003", service_tier="null", supported_parameters=["response_format"], native_tools={"code": {}, "search": {}}, supports_implicit_caching="true", status=2),
     ]
+    if with_output_prices:
+        shared[0]["pricing"]["completion"] = "0.000004"
     bare = [endpoint(f"precision-{i}", beta, quantization=q, service_tier=[None, "standard", "null", "priority", 9][i % 5]) for i, q in enumerate(quants)]
     bare += [endpoint("exact-low", price="0.00000100000000000000001"), endpoint("exact-high", beta, "0.00000100000000000000002"),
              endpoint("tiny", gamma, "1e-10000"), endpoint("negative", gamma, "-0.000001"), endpoint("zero", gamma, "0")]
