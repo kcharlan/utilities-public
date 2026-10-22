@@ -106,6 +106,8 @@ exe="$app/Contents/MacOS/PrimeMonitor"
 vtool -show-build "$exe" | rg -q '\bminos 27\.0\b'
 [ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = '27.0' ]
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = 'local.utilities.prime-monitor' ]
+# The bundled device-catalog seed is the tracked resource, byte for byte.
+cmp "$root/Resources/device_catalog.json" "$app/Contents/Resources/device_catalog.json"
 # Keep an open reader of the prior executable: release must replace, not truncate.
 printf 'synthetic prior executable\n' > "$scratch/prior"
 rm "$exe"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
@@ -114,6 +116,7 @@ exec 9< "$exe"
 old_inode=$(stat -f %i "$exe")
 make release >> "$scratch/release.log" 2>&1
 [ ! -e "$app/Contents/Resources/synthetic-stale.txt" ]
+cmp "$root/Resources/device_catalog.json" "$app/Contents/Resources/device_catalog.json"
 [ "$(stat -f %i "$exe")" != "$old_inode" ]
 cat <&9 > "$scratch/held"; cmp "$scratch/prior" "$scratch/held"; exec 9<&-
 # Successful activation, failed activation recovery, and notice preserve old readers.

@@ -46,7 +46,7 @@ test('app source inventory includes maintained installer/signing and root depend
 
 test('first install, update, current, rebuild and independent rollback preserve receipts and held readers',t=>{
   const f=fixture(t);const empty=backup(ok(f.run()));const first=state(f);
-  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,'0.2.1');assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
+  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,'0.3.0');assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
   ok(f.run('--audit'));const before=tree(f.home);assert.match(ok(f.run()).stdout,/already current/);assert.deepEqual(tree(f.home),before);
   const exe=path.join(f.app,'Contents/MacOS/PrimeMonitor'),reader=fs.openSync(exe,'r'),old=fs.readFileSync(reader);fs.closeSync(reader);
   const held=fs.openSync(exe,'r');f.release('second');const saved=backup(ok(f.run()));assert.notDeepEqual(state(f),first);assert.deepEqual(fs.readFileSync(held),old);fs.closeSync(held);

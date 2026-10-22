@@ -5,6 +5,11 @@ public enum PortID: String, CaseIterable, Sendable {
 
     public var label: String { rawValue.uppercased() }
 
+    /// The USB-C ports, in front-panel order. Only these report connected-device
+    /// identity (`bd`/`be`); C1–C4 also have their own fault bits.
+    public static let usbC: [PortID] = [.c1, .c2, .c3, .c4]
+    public var isUSBC: Bool { Self.usbC.contains(self) }
+
     public var fieldID: UInt8 {
         switch self {
         case .c1: 0xa4

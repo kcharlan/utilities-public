@@ -3,9 +3,14 @@ import Testing
 @testable import AnkerCloud
 
 func syntheticCorpusFrames() throws -> [[UInt8]] {
-    let url = try #require(Bundle.module.url(forResource: "synthetic_0a00_frames", withExtension: "txt", subdirectory: "Fixtures"))
+    try fixtureFrames("synthetic_0a00_frames", lineLength: 652)
+}
+
+/// Reads one hex frame per line from a synthetic fixture.
+func fixtureFrames(_ name: String, lineLength: Int? = nil) throws -> [[UInt8]] {
+    let url = try #require(Bundle.module.url(forResource: name, withExtension: "txt", subdirectory: "Fixtures"))
     return try String(contentsOf: url, encoding: .utf8).split(whereSeparator: \.isNewline).map { line in
-        #expect(line.count == 652)
+        if let lineLength { #expect(line.count == lineLength) }
         let chars = Array(line)
         return try stride(from: 0, to: chars.count, by: 2).map { index in
             try #require(UInt8(String(chars[index...index + 1]), radix: 16))

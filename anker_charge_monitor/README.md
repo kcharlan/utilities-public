@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.2.1 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.3.0 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -65,6 +65,30 @@ bar's own spacing. Stale data and errors dim the icon and retained reading to
 grey in light and dark menu bars while data age continues advancing;
 a session-ended error offers Sign In Again. A new setup opens Settings.
 
+Each port row shows its connected USB-C device label beside the readings;
+hovering shows the full text of a shortened label. A
+reported port fault turns the row's label red with a warning triangle and "Fault
+reported"; the charger reports one fault bit for both USB-A ports, shown as
+"USB-A fault" on each. A charger over-temperature report appears as a red
+warning above the rows. Click a row, or press Space or Return on it, to expand
+it; one row is expanded at a time and it stays expanded as readings update. The
+expanded row shows the fault state and raw fault bits and, for an identified
+USB-C device, a **Name this device** field, the brand class (or "Unknown class
+N"), the hexadecimal USB IDs and the device model code. Values the charger did
+not report read "Not reported by this charger". The charger's identity-support
+value is not used to hide identities: a charger reporting 2 has still
+identified devices.
+
+Press Return or move focus away to save a name; closing the panel, expanding
+another row or quitting the app also saves it, and a blank name removes it.
+Escape abandons the edit and keeps the panel open, and also discards a typed name
+left after a failed save when the field is no longer focused; a second Escape
+closes the panel. If a save fails, the typed name and an inline error stay, the
+edited row stays expanded, and the name remains available for retry after the
+panel is reopened. It is kept in memory only: a save that still fails when you
+quit does not stop quitting, and the name is lost. A problem in `devices.json` is
+shown once, as a warning below the rows naming the failing entry.
+
 Only nonsecret provider configuration, charger selection, cadence and menu bar
 text size are saved in `state.json` under
 `~/Library/Application Support/Prime Monitor/`, beside `instance.lock`.
@@ -73,6 +97,28 @@ and modules retain `PrimeMonitor`; the bundle identifier remains
 `local.utilities.prime-monitor`. These internal names preserve settings across
 the display-name change. They do not promise continuity of 1Password/TCC grants.
 MQTT private identities use transient Security objects rather than disk files.
+
+Names for connected USB-C devices live in `devices.json` in the same directory.
+When it is absent, the app copies its bundled `device_catalog.json` there: the
+brand classes named by the protocol authority, with empty `vendors` and
+`devices`. Existing content is never replaced, and deleting the file restores the
+bundled names on the next check. The file is schema `1` with `brands` (decimal
+class keys), `vendors` (four hexadecimal digits) and `devices` (`VID:PID`)
+objects, either hex letter case. Names are strings of 1–64 characters after
+trimming; two spellings of one key are rejected. `source` and other top-level
+keys are kept. A label uses the device name, then the brand class, then the
+vendor, then the uppercase hexadecimal `VID:PID`. A device that has not reported
+its identity is labelled "Unidentified device"; some devices never answer, so
+that label can persist while the device charges.
+While the panel is open the app checks the file every second and decodes it
+when its device, inode, size or modification time changes, so editor saves apply
+without a restart. An invalid file is left untouched: the last loaded names stay
+in use, the panel reports the failing entry and naming is refused until the file
+is fixed. Saving a name rereads and validates the file immediately before
+writing, matches entries by their decoded key, removes the entry for a blank name
+and writes sorted, pretty-printed JSON by private atomic replacement. It is not a
+lock shared with editors, so don't save the file in an editor during an in-app
+naming write.
 
 Launch at login uses the native service and reports registration failures and
 approval requirements. Synthetic tests exercise its adapter contract. Confirm
@@ -126,6 +172,8 @@ The installed executable at
 `/Applications/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor` supports
 `--live-check` (`make live-check`): with the GUI quit, it retrieves
 the configured account, prints one fresh reading and awaits cleanup before exit.
+The reading includes decoded fault bits, identity support, USB-C device
+identities and raw detail payloads, with unavailable values marked.
 Exit codes are 0 success, 2 missing account/charger, 3 timeout, 4 concurrent
 instance, and 5 startup/persistence/backend failure. This contacts the real vault
 and service; it is a separate operator acceptance check, outside `make test`.
@@ -161,7 +209,10 @@ All protocol fixtures are conspicuously synthetic. See [fixture provenance](Test
 
 Protocol port: [thomluther/anker-solix-api](https://github.com/thomluther/anker-solix-api)
 at `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, notably `mqttmap.py:_A2345_0a00`,
-`mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Its applicable
+`mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Fault, temperature and
+connected-device detail fields follow `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`
+(`mqttmap.py:_A2345_0a00` keys `a3`, `b7`, `bd`, `be` and
+`mqtttypes.py:DeviceHexDataField.extract_value`). Its applicable
 [MIT license and copyright notice](docs/anker-solix-api-LICENSE.txt) are retained.
 The public server key is a protocol constant, not an owner credential.
 App/menu/plist/release and snapshot structure derive from `brew_version` at

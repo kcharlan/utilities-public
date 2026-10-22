@@ -152,17 +152,25 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     let rig: ControllerRig
     let directory: URL
     var currentAnchor = PanelFixture.icon
-    init(home: URL) throws {
+    /// nil when the caller supplied the catalog.
+    let catalogFile: URL?
+    init(home: URL, catalog suppliedCatalog: DeviceCatalogStore? = nil) throws {
         _ = NSApplication.shared
         rig = try ControllerRig()
         directory = rig.directory
         let controller = rig.controller
+        // An explicit temporary store, removed with the rig directory.
+        let catalog: DeviceCatalogStore
+        if let suppliedCatalog { catalogFile = nil; catalog = suppliedCatalog } else {
+            let file = rig.directory.appending(path: "Catalog café/devices.json", directoryHint: .notDirectory)
+            catalogFile = file; catalog = DeviceCatalogStore(fileURL: file, seedURL: nil, scheduler: rig.clock)
+        }
         let settings = SettingsWindowController(controller: controller, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { [weak self] _ in
             guard let self else { return }
             settingsPresentations += 1
             visibleAtSettingsPresentation = panel.isVisible
         })
-        status = StatusItemController(controller: controller,
+        status = StatusItemController(controller: controller, catalog: catalog,
  item: item, panel: panel, settings: settings, notifications: notifications, workspaceNotifications: workspaceNotifications,
             screens: { [Self.screen] }, anchor: { [weak self] in self?.currentAnchor },
             pointer: { [weak self] in self?.pointer ?? .zero },
@@ -542,7 +550,9 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     }
 }
 @MainActor struct StatusPanelKeyboardTests {
-    @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() throws {
+    @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() async throws {
+        // Focusing a field ends editing in any other test window: hold the lock.
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
         let home = FileManager.default.temporaryDirectory.appending(path: "synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
@@ -555,6 +565,155 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
         #expect(fixture.panel.performKeyEquivalent(with: escape))
         #expect(!fixture.panel.isVisible && fixture.cancelCount == 1)
+    }
+}
+
+/// A shown panel with an expanded identified device on C1 and a persistent
+/// private catalog; `focusAndType` edits its real hosted naming field.
+@MainActor private final class NamingPanel {
+    let catalog: CatalogRig
+    let fixture: PanelFixture
+    var detail: PortDetailState { fixture.status.detail }
+    var panel: OffscreenStatusPanel { fixture.panel }
+    static let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
+                                         characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+    init() async throws {
+        catalog = try CatalogRig()
+        fixture = try PanelFixture(home: FileManager.default.temporaryDirectory, catalog: catalog.store)
+        await fixture.rig.start()
+        await detailReply(fixture.rig, syntheticDetails())
+        fixture.begin()
+        detail.toggle(.c1, NamingContext(monitor: fixture.rig.controller, store: catalog.store))
+        await pumpRunLoop()
+    }
+    var host: StatusHostingController { panel.contentViewController!.children.first as! StatusHostingController }
+    func field() throws -> NSTextField { try #require(editableTextFields(in: panel.contentView!).first) }
+    var fieldEditing: Bool { panel.firstResponder is NSText }
+    func focusAndType(_ text: String) async throws {
+        #expect(panel.makeFirstResponder(try field())); await pumpRunLoop()
+        try await typeIntoFieldEditor(panel, text)
+        #expect(detail.editing && detail.draft?.text == text && fieldEditing)
+    }
+    func finish() async { fixture.status.dismiss(); catalog.store.panelClosed(); await fixture.rig.finish() }
+}
+@MainActor struct StatusPanelNamingTests {
+    /// Every cancellation route cancels the edit while naming, keeps the panel
+    /// open and clears the field's focus; the focus transition commits nothing,
+    /// and a later Escape outside editing dismisses normally.
+    @Test(arguments: ["escape-event", "key-equivalent", "panel-cancel", "hosting-cancel"])
+    func escapeWhileNamingCancelsTheEditThenDismisses(_ route: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Abandoned Name")
+        switch route {
+        // The field editor receives the key: AppKit's cancelOperation reaches
+        // the TextField's onExitCommand.
+        case "escape-event": naming.panel.sendEvent(NamingPanel.escape)
+        case "key-equivalent": #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        case "panel-cancel": naming.panel.cancelOperation(nil)
+        default: naming.host.cancelOperation(nil)
+        }
+        #expect(naming.panel.isVisible && naming.fixture.cancelCount == 0 && naming.panel.hides == 0)
+        #expect(!naming.detail.dirty && !naming.detail.editing && !naming.fieldEditing)
+        // The subsequent focus transition and field value push.
+        await pumpRunLoop()
+        #expect(!naming.detail.dirty && naming.catalog.files.count("replace") == 0)
+        #expect(try naming.catalog.store.catalog.devices.isEmpty && naming.field().stringValue == "")
+        #expect(naming.detail.expanded == .c1)
+        // Outside editing, the same route dismisses once.
+        switch route {
+        case "escape-event", "key-equivalent": #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        case "panel-cancel": naming.panel.cancelOperation(nil)
+        default: naming.host.cancelOperation(nil)
+        }
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    /// Switching or collapsing the edited row saves and removes the focused
+    /// field; the next Escape must dismiss rather than cancel a stale edit.
+    @Test(arguments: [PortID.c2, .c1])
+    func rowChangeWhileNamingSavesAndTheNextEscapeDismisses(_ destination: PortID) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Switched Name")
+        #expect(naming.detail.toggle(destination, NamingContext(monitor: naming.fixture.rig.controller, store: naming.catalog.store)))
+        await pumpRunLoop()
+        #expect(naming.detail.expanded == (destination == .c1 ? nil : destination))
+        #expect(naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Switched Name"] && !naming.detail.dirty)
+        #expect(!naming.detail.editing && !naming.fieldEditing)
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1 && naming.panel.hides == 1)
+        await naming.finish()
+    }
+    /// A snapshot that removes the focused field (device unplugged, unresolved
+    /// or replaced) must not leave Escape cancelling an unseen edit.
+    @Test(arguments: ["unplugged", "unresolved", "replaced"])
+    func snapshotRemovingTheFieldLetsEscapeDismissWithoutWriting(_ change: String) async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Vanished Draft")
+        switch change {
+        case "unplugged": await detailReply(naming.fixture.rig, syntheticDetails(c1: .nothingAttached))
+        case "unresolved": await detailReply(naming.fixture.rig, syntheticDetails(c1: .identifying))
+        default:
+            await detailReply(naming.fixture.rig, syntheticDetails(c1: .identified(vendorID: 0xfeed, productID: 0x0001, brandClass: nil, modelCode: nil)))
+        }
+        await pumpRunLoop()
+        if change == "replaced" { #expect(try naming.field().stringValue == "") }
+        else { #expect(editableTextFields(in: naming.panel.contentView!).isEmpty) }
+        #expect(!naming.detail.editing && !naming.fieldEditing)
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        #expect(!naming.panel.isVisible && naming.fixture.cancelCount == 1)
+        // Closing settled the unshown draft by discarding it: nothing was written.
+        #expect(naming.catalog.files.count("replace") == 0 && naming.catalog.store.catalog.devices.isEmpty && !naming.detail.dirty)
+        await naming.finish()
+    }
+    @Test func quittingSavesThePendingNameAndAFailureDoesNotThrow() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Quit Name")
+        naming.fixture.status.settlePendingEdits()
+        #expect(naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Quit Name"] && !naming.detail.dirty)
+        naming.catalog.files.failWrites = true
+        try await typeIntoFieldEditor(naming.panel, "Synthetic Unsaved Quit Name")
+        naming.fixture.status.settlePendingEdits()
+        #expect(naming.detail.dirty && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Quit Name"])
+        await naming.finish()
+    }
+    @Test func closingSavesTheEditAndReopeningLeavesTheFieldUnfocused() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        try await naming.focusAndType("Synthetic Closing Name")
+        naming.fixture.end()
+        #expect(!naming.panel.isVisible && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Closing Name"])
+        #expect(try naming.catalog.devices() == ["0A1B:2C3D": "Synthetic Closing Name"] && !naming.detail.dirty)
+        naming.fixture.begin(); await pumpRunLoop()
+        #expect(naming.panel.isVisible && !naming.fieldEditing && naming.detail.expanded == .c1)
+        #expect(try naming.field().stringValue == "Synthetic Closing Name")
+        // A first Escape with nothing to cancel dismisses.
+        #expect(naming.panel.performKeyEquivalent(with: NamingPanel.escape))
+        #expect(!naming.panel.isVisible)
+        await naming.finish()
+    }
+    @Test func failedSaveAtClosingShowsItsDraftAndErrorAfterReopening() async throws {
+        await HostedFieldLock.shared.acquire(); defer { HostedFieldLock.shared.release() }
+        let naming = try await NamingPanel()
+        naming.catalog.files.failWrites = true
+        try await naming.focusAndType("Synthetic Unsaved Name")
+        naming.fixture.end(); await pumpRunLoop()
+        #expect(!naming.panel.isVisible && naming.detail.dirty)
+        naming.fixture.begin(); await pumpRunLoop()
+        let lamp = NamingTarget(charger: appCharger.serial, port: .c1, key: syntheticLamp)
+        let failure = try #require(naming.detail.failure(for: lamp))
+        #expect(try naming.detail.expanded == .c1 && naming.field().stringValue == "Synthetic Unsaved Name")
+        // Retry through Return in the real field.
+        naming.catalog.files.failWrites = false
+        #expect(naming.panel.makeFirstResponder(try naming.field())); await pumpRunLoop()
+        let editor = try #require(naming.panel.firstResponder as? NSTextView)
+        editor.insertNewline(nil); await pumpRunLoop()
+        #expect(!naming.detail.dirty && naming.catalog.store.catalog.devices == [syntheticLamp: "Synthetic Unsaved Name"])
+        #expect(naming.detail.failure(for: lamp) == nil && failure.inlineText.hasPrefix("Name not saved"))
+        await naming.finish()
     }
 }
 @MainActor struct StatusPanelIntegrationTests {
@@ -633,6 +792,73 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         await fixture.rig.clock.advance(1)
         #expect(await fixture.rig.backend.log.filter { $0 == "request" }.count == before + 3)
         await fixture.rig.finish()
+    }
+}
+
+private func catalogText(vendor: String) -> Data {
+    Data(#"{"schema": 1, "brands": {}, "vendors": {"0a1b": "\#(vendor)"}, "devices": {}}"#.utf8)
+}
+private func path(_ operation: DeviceCatalogFileOperation) -> String {
+    switch operation {
+    case .inspect(let url), .read(let url), .create(let url), .replace(let url): url.path(percentEncoded: false)
+    }
+}
+@MainActor struct StatusPanelCatalogTests {
+    @Test func panelPresentationPairsCatalogReloadLifecycle() async throws {
+        let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
+        let file = try #require(fixture.catalogFile)
+        let catalog = fixture.status.catalog
+        #expect(catalog.fileURL == file)
+        fixture.begin()
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(1)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Vendor"])
+        fixture.end(); #expect(!fixture.panel.isVisible)
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Later Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(3)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Vendor"])
+        // Reopening refreshes immediately; a programmatic dismissal also stops the loop.
+        fixture.status.showPopover()
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Later Vendor"])
+        fixture.status.dismiss()
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Closed Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(3)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Later Vendor"])
+    }
+    @Test func omittedCatalogsStayFilelessThroughOpeningClosingReloadingAndNaming() async throws {
+        var events: [(store: ObjectIdentifier, operation: DeviceCatalogFileOperation)] = []
+        let token = UUID()
+        DeviceCatalogStore.fileAccessObservers[token] = { events.append(($0, $1)) }
+        defer { DeviceCatalogStore.fileAccessObservers[token] = nil }
+        let rig = try ControllerRig()
+        // AppDelegate's omitted catalog is what its default status factory passes on.
+        let delegate = AppDelegate(controller: rig.controller, acquireLease: { AppInstanceLease {} })
+        let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory, catalog: delegate.catalog)
+        let catalog = fixture.status.catalog
+        #expect(catalog === delegate.catalog && catalog.fileURL == nil && fixture.catalogFile == nil)
+        let settings = SettingsWindowController(controller: rig.controller, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
+        #expect(StatusContent(controller: rig.controller, settings: settings, focus: PopoverFocus()).catalog.fileURL == nil)
+        #expect(PanelView(monitor: rig.controller, openSettings: {}).catalog.fileURL == nil)
+        fixture.begin()
+        await fixture.rig.clock.advance(3)
+        fixture.end()
+        fixture.status.showPopover()
+        let key = DeviceKey(vendorID: 0x0a1b, productID: 0x2c3d)
+        try catalog.setName("Synthetic Desk Lamp", for: key)
+        #expect(catalog.catalog.devices == [key: "Synthetic Desk Lamp"])
+        await fixture.rig.clock.advance(2)
+        fixture.status.dismiss()
+        try catalog.setName(nil, for: key)
+        #expect(catalog.catalog == DeviceCatalog() && catalog.problem == nil)
+        #expect(!events.contains { $0.store == ObjectIdentifier(catalog) })
+        // No store touched the owner's runtime directory meanwhile.
+        let owner = StateStore().fileURL.deletingLastPathComponent().path(percentEncoded: false)
+        #expect(!events.contains { path($0.operation).hasPrefix(owner) })
+        // Positive control: the same instrumentation observes a persistent store.
+        let control = try CatalogRig()
+        control.store.load()
+        #expect(events.contains { $0.store == ObjectIdentifier(control.store) })
+        await rig.finish()
     }
 }
 

@@ -6,6 +6,11 @@ import PrimeMonitorCore
 // Synthetic source-copy entry only. Never starts native event observation,
 // provider commands, Keychain, networking, login registration or desktop input.
 @main struct Snapshots {
+    static let menuStates: [(String, MenuBarTextSize)] = [("live", .default), ("stale", .default), ("error", .default), ("not-set-up", .default), ("live", .pt10)]
+    /// "details": invented faults, over-temperature, identity support 2 beside
+    /// a resolved, a no-device and an unresolved port, and a catalog problem.
+    /// "expanded-named": an expanded row naming a synthetic device.
+    static let panelStates = ["live", "stale", "signed-out", "choose-charger", "error", "session-ended", "details", "expanded-named"]
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         guard CommandLine.arguments.count == 2 else { fatalError("Expected private temporary output directory") }
@@ -15,7 +20,7 @@ import PrimeMonitorCore
               (try FileManager.default.attributesOfItem(atPath: home.path(percentEncoded: false))[.posixPermissions] as? NSNumber)?.intValue == 0o700 else { fatalError("Snapshots require a private OS temporary directory") }
         for dark in [false, true] {
             let palette = dark ? "dark" : "light"
-            for (state, size) in [("live", MenuBarTextSize.default), ("stale", .default), ("error", .default), ("not-set-up", .default), ("live", .pt10)] {
+            for (state, size) in menuStates {
                 let name = size == .default ? state : "\(state)-\(size.rawValue)pt"
                 let fixture = try await Fixture.make(state: state, directory: home.appending(path: "menu-\(name)-\(palette)", directoryHint: .isDirectory))
                 let presentation = StatusPresentation.make(status: fixture.monitor.status, snapshot: fixture.monitor.snapshot, isStale: fixture.monitor.isStale, now: Date(), textSize: size)
@@ -29,10 +34,10 @@ import PrimeMonitorCore
                 try capture(background, size: background.frame.size, dark: dark, to: home.appending(path: "menu-\(name)-\(palette).png", directoryHint: .notDirectory))
                 await fixture.monitor.stop()
             }
-            for state in ["live", "stale", "signed-out", "choose-charger", "error", "session-ended"] {
+            for state in panelStates {
                 let fixture = try await Fixture.make(state: state, directory: home.appending(path: "panel-\(state)-\(palette)", directoryHint: .isDirectory))
                 let settings = SettingsWindowController(controller: fixture.monitor, login: LoginItem(service: SnapshotLogin()), activate: {}, present: { _ in })
-                let hosting = StatusContent(controller: fixture.monitor, settings: settings, focus: PopoverFocus()).makeHostingController()
+                let hosting = StatusContent(controller: fixture.monitor, catalog: fixture.catalog, detail: fixture.detail, settings: settings, focus: PopoverFocus()).makeHostingController()
                 let view = hosting.view
                 view.layoutSubtreeIfNeeded()
                 let size = view.fittingSize
@@ -50,8 +55,10 @@ import PrimeMonitorCore
             await fixture.monitor.stop()
         }
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 26 else { fatalError("Expected 26 PNGs, got \(pngs.count)") }
-        print("Validated 26 maintained-view PNGs: real status presentation at standard and 10 pt, owned panel hosting and grouped Settings in both appearances.")
+        // Both appearances of every menu and panel state plus two Settings scroll positions.
+        let expected = 2 * (menuStates.count + panelStates.count + 2)
+        guard pngs.count == expected else { fatalError("Expected \(expected) PNGs, got \(pngs.count)") }
+        print("Validated \(expected) maintained-view PNGs: real status presentation at standard and 10 pt (\(menuStates.count) states), owned panel hosting (\(panelStates.count) states: \(panelStates.joined(separator: ", "))) and grouped Settings in both appearances.")
     }
 
     // Port: BV Snapshots.swift render, 579ebb7. Offscreen NSWindow capture,
@@ -101,13 +108,34 @@ import PrimeMonitorCore
 
 @MainActor private struct Fixture {
     let monitor: MonitorController
+    let catalog: DeviceCatalogStore
+    let detail: PortDetailState
+    /// Invented detail values; never captured from a charger.
+    static func details(for state: String) -> ChargerDetails? {
+        switch state {
+        case "details":
+            // Over-temperature, C2 and the shared USB-A bit.
+            ChargerDetails(faultBits: 0x25, identitySupport: 2, identities: [
+                .c1: .identified(vendorID: 0xfeed, productID: 0xbeef, brandClass: 10, modelCode: 7),
+                .c2: .nothingAttached, .c3: .identifying, .c4: .nothingAttached,
+            ], rawFields: [:])
+        case "expanded-named":
+            ChargerDetails(faultBits: 0, identitySupport: 6, identities: [
+                .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+                .c2: .identified(vendorID: 0xfeed, productID: 0xbeef, brandClass: 42, modelCode: nil),
+                .c3: .identifying, .c4: .nothingAttached,
+            ], rawFields: [:])
+        default: nil
+        }
+    }
+    static let syntheticCatalog = Data(#"{"brands": {"10": "Synthetic Brand Ten", "7": "Synthetic Brand"}, "devices": {"0A1B:2C3D": "Synthetic Desk Lamp"}, "schema": 1, "source": "synthetic snapshot catalog", "vendors": {}}"#.utf8)
     static func make(state: String, directory: URL) async throws -> Self {
         let empty = state == "signed-out" || state == "not-set-up"
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
         let charger = ChargerInfo(serial: "synthetic-charger", model: "A2345", alias: "Desk charger", name: "Anker Prime")
         if !empty { try store.save(.init(charger: state == "choose-charger" ? nil : charger, closedInterval: .default, credentials: OnePasswordConfiguration(item: "Anker", vault: nil, country: "US").selection)) }
         let date = Date(), scheduler = SnapshotScheduler()
-        let backend = SnapshotBackend(charger: charger, receivedAt: state == "stale" ? date.addingTimeInterval(-180) : date)
+        let backend = SnapshotBackend(charger: charger, receivedAt: state == "stale" ? date.addingTimeInterval(-180) : date, details: details(for: state))
         let events = SnapshotEvents()
         let monitor = MonitorController(backend: backend, secrets: MemorySessionStore(), state: store, events: SystemEvents(sources: [events]), now: { scheduler.date }, scheduler: scheduler, makeProvider: { _ in SnapshotProvider() })
         monitor.start()
@@ -121,7 +149,23 @@ import PrimeMonitorCore
         if !empty && state != "choose-charger" { guard monitor.snapshot != nil else { fatalError("Synthetic snapshot not delivered") } }
         if state == "error" { await events.handler?(.network(false)) }
         if state == "session-ended" { backend.output.yield(.status(.sessionEnded)); for _ in 0..<100 { await Task.yield() } }
-        return .init(monitor: monitor)
+        // An explicit private temporary catalog; never the owner's runtime file.
+        let catalogFile = directory.appending(path: "devices.json", directoryHint: .notDirectory)
+        let catalog = DeviceCatalogStore(fileURL: catalogFile, seedURL: nil, scheduler: scheduler)
+        if details(for: state) != nil { try PrivateFile.replace(catalogFile, with: syntheticCatalog, temporaryPrefix: ".snapshot-") }
+        catalog.load()
+        if state == "details" {
+            // An invalid edit: the last good names stay and the panel reports the entry.
+            try PrivateFile.replace(catalogFile, with: Data(#"{"brands": {}, "devices": {"0a1b:2c3d": ""}, "schema": 1, "vendors": {}}"#.utf8), temporaryPrefix: ".snapshot-")
+            catalog.load()
+            guard catalog.problem != nil, !catalog.catalog.brands.isEmpty else { fatalError("Synthetic catalog problem not reported") }
+        }
+        let detail = PortDetailState()
+        if state == "expanded-named" {
+            detail.toggle(.c1, NamingContext(monitor: monitor, store: catalog))
+            guard detail.expanded == .c1 else { fatalError("Synthetic row not expanded") }
+        }
+        return .init(monitor: monitor, catalog: catalog, detail: detail)
     }
 }
 private struct SnapshotProvider: CredentialProvider {
@@ -159,7 +203,8 @@ private actor SnapshotBackend: ChargerBackend {
     nonisolated let output = Output()
     let charger: ChargerInfo
     let receivedAt: Date
-    init(charger: ChargerInfo, receivedAt: Date) { self.charger = charger; self.receivedAt = receivedAt }
+    let details: ChargerDetails?
+    init(charger: ChargerInfo, receivedAt: Date, details: ChargerDetails?) { self.charger = charger; self.receivedAt = receivedAt; self.details = details }
     nonisolated var events: AsyncStream<BackendEvent> { output.subscribe() }
     func subscribeToEvents() async -> AsyncStream<BackendEvent> { output.subscribe() }
     func signIn(_ credentials: AnkerCredentials) async throws -> AccountSession { .init(authToken: "synthetic-token", userID: "synthetic-user", expiresAt: .distantFuture, nickname: "") }
@@ -171,7 +216,7 @@ private actor SnapshotBackend: ChargerBackend {
             PortReading(port: port, active: port == .c4, voltageMilli: port == .c4 ? 20000 : 0,
                         currentMilli: port == .c4 ? 1490 : (port.rawValue.hasPrefix("c") ? 20 : 0), powerCenti: port == .c4 ? 4321 : 0)
         }
-        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings)))
+        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings, details: details)))
     }
     func disconnect() async {}
 }

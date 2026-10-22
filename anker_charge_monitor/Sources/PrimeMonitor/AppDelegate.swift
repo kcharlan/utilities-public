@@ -5,6 +5,7 @@ import PrimeMonitorCore
 /// async shutdown and lease ownership are Prime Monitor's checkpoint contract.
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller: MonitorController
+    let catalog: DeviceCatalogStore
     private let acquireLease: () throws -> AppInstanceLease
     private let reply: (NSApplication) -> Void
     private let reportFailure: (String) -> Void
@@ -14,13 +15,13 @@ import PrimeMonitorCore
     private var lease: AppInstanceLease?
     private(set) var startupTask: Task<Void, Never>?
     private(set) var terminationTask: Task<Void, Never>?
-    init(controller: MonitorController, acquireLease: @escaping () throws -> AppInstanceLease,
+    init(controller: MonitorController, catalog: DeviceCatalogStore = DeviceCatalogStore(), acquireLease: @escaping () throws -> AppInstanceLease,
          statusFactory: (() -> any PopoverPresenting)? = nil,
          show: @escaping () -> Void = {},
          reportFailure: @escaping (String) -> Void = { message in let alert = NSAlert(); alert.messageText = message; alert.runModal() },
          reply: @escaping (NSApplication) -> Void = { $0.reply(toApplicationShouldTerminate: true) }) {
-        self.controller = controller; self.acquireLease = acquireLease
-        self.statusFactory = statusFactory ?? { StatusItemController(controller: controller) }
+        self.controller = controller; self.catalog = catalog; self.acquireLease = acquireLease
+        self.statusFactory = statusFactory ?? { StatusItemController(controller: controller, catalog: catalog) }
         self.show = show; self.reportFailure = reportFailure; self.reply = reply
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -36,6 +37,8 @@ import PrimeMonitorCore
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if terminationTask == nil {
+            // Save a name being typed before shutdown; failure does not block quitting.
+            status?.settlePendingEdits()
             terminationTask = Task {
                 await startupTask?.value
                 await controller.stop(); lease?.release(); lease = nil

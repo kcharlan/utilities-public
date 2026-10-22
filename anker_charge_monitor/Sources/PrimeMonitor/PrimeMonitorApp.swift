@@ -20,9 +20,13 @@ import PrimeMonitorCore
         if liveCheck {
             let result = await LiveCheck.run(controller: controller, acquireLease: { lease }, timeout: 30, output: { print($0) }); exit(result)
         }
+        // Only the GUI owns the persistent catalog; live-check exits above without it.
+        let catalog = DeviceCatalogStore(fileURL: StateStore().fileURL.deletingLastPathComponent().appending(path: "devices.json", directoryHint: .notDirectory),
+                                         seedURL: Bundle.main.url(forResource: "device_catalog", withExtension: "json"), scheduler: TimerPollScheduler())
+        catalog.load()
         let app = NSApplication.shared
         ApplicationMenu.install()
-        let delegate = AppDelegate(controller: controller, acquireLease: { lease })
+        let delegate = AppDelegate(controller: controller, catalog: catalog, acquireLease: { lease })
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
     }

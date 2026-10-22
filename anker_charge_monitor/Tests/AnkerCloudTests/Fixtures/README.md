@@ -16,6 +16,18 @@ generator; all 115 replies must parse, preserve port order and retain idle data.
 Separate tests cover signed Int16 extremes, malformed/truncated data, checksums,
 one/two-byte lengths, optional increments, envelope handling and CLI output.
 
+`synthetic_0a00_details_frames.txt` contains 23 generated frames from the same
+command, adding invented detail fields `a3`, `b7`, `bd` and `be` (anker-solix-api
+commit `9e72894`, `mqttmap.py:_A2345_0a00`) to row zero's port readings above.
+Vendor/product IDs `FEED`, `BEEF`, `C0DE` and `0042`, model codes and the
+unknown classes are invented, not taken from any device. Its padding TLV spells
+`SYNTHETIC-NOT-A-DEVICE-DETAILS-ROW-…`; odd rows reverse wire field order.
+Rows cover the identity sentinels, independently absent class/model code,
+unknown classes, identity-support values, fault mask combinations, a
+`sile`-encoded fault field, each wire type for all four fields, and missing,
+short or unsupported fields. Literal expectations in Swift are independent of
+the generator, and the earlier corpus is generated unchanged.
+
 `login_vectors.json` is demonstrably synthetic: its scalar is 32 repeated `01`
 bytes and its only password input is `synthetic-password-123`. The original
 development generator derived P-256 ECDH against the upstream public server

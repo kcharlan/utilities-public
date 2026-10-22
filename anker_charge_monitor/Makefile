@@ -23,6 +23,7 @@ release:
 		cp -p "$$(swift build -c release -Xswiftc -warnings-as-errors --show-bin-path)/PrimeMonitor" "$$app_tmp"; \
 		mv "$$app_tmp" "build/release/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor"; \
 		cp Resources/Info.plist "build/release/Anker Charge Monitor.app/Contents/Info.plist"; \
+		cp Resources/device_catalog.json "build/release/Anker Charge Monitor.app/Contents/Resources/device_catalog.json"; \
 		codesign --force --sign "$$identity" --timestamp=none "build/release/Anker Charge Monitor.app"; \
 		codesign --verify --strict "build/release/Anker Charge Monitor.app"
 install deploy:

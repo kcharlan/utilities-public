@@ -15,8 +15,37 @@ reconnecting; terminal authentication failure requires explicit sign-in.
 
 `MemorySessionStore` retains credentials and renewed service sessions only in
 RAM. `StateStore` persists nonsecret configuration using private modes and atomic
-replacement. `AppInstanceGate` holds an exclusive process lease. No backend,
+replacement (`PrivateFile.replace`). `AppInstanceGate` holds an exclusive process lease. No backend,
 credential provider or shell redesign is required for the repository migration.
+
+`DeviceCatalog` (Core) validates the device-name JSON document by hand and
+resolves port labels. `DeviceCatalogStore` owns `devices.json`: seeding from
+the bundled catalog, signature-checked reload, retained last-good catalog with
+a recoverable problem, and read/validate/write naming through the same private
+replacement as `StateStore`. File access sits behind `DeviceCatalogFiles`.
+Only the GUI branch of `PrimeMonitorApp.main` creates the persistent store
+(beside `StateStore().fileURL`, seeded from `Bundle.main`) and injects it
+through `AppDelegate`, `StatusItemController`, `StatusContent` and `PanelView`;
+live-check never creates it. An omitted dependency is the memory-only
+`DeviceCatalogStore()`, which has no file URL, seed, file access or timer, so
+tests and snapshot fixtures cannot reach the owner's runtime file.
+`StatusItemController` pairs the store's `panelOpened`/`panelClosed` with the
+monitor's, which bounds the one-second reload loop to panel visibility.
+
+`PortDetailState`, owned by `StatusItemController` and passed through
+`StatusContent` to `PanelView`, holds the one expanded port row, the naming draft
+bound to its charger, port and device key, editing state and the last naming
+failure, so they survive snapshot replacement and panel closing. Return, focus
+loss, closing and row switching all save through `DeviceCatalogStore.setName`.
+Escape has one owner action, `StatusItemController.cancel`, reached from
+`StatusPanel.performKeyEquivalent`, `StatusPanel.cancelOperation`,
+`StatusHostingController.cancelOperation` and the naming field's
+`onExitCommand`; none forwards the command to another. While a field in the
+hosted content is editing, it cancels the edit (marking cancellation before
+clearing focus); it also discards a shown draft left by a failed save when the
+field is not focused; otherwise it dismisses the panel. A field removed by a row
+or snapshot change ends editing without saving, and `AppDelegate` settles a
+pending draft through the same save path before termination.
 
 The expanded status-item session owns a nonactivating panel, with native Escape,
 outside-dismissal and Settings window behavior. Synthetic tests and offscreen
