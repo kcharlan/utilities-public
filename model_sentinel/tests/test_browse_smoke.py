@@ -402,6 +402,53 @@ def test_hosts_pending_price_draft_commits_to_current_column(hosts_page, hosts_s
 
 
 @pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_price_editor_target_and_results_follow_back_forward(hosts_page, hosts_server):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        goto(hosts_page, hosts_server, _hosts_fragment(facts, plimit="pricing.prompt:7"))
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        column = hosts_page.get_by_label("Price column", exact=True)
+        field = hosts_page.get_by_label("Maximum price", exact=True)
+
+        def assert_constraint(path, missing, removed, rows):
+            expect(column).to_have_value(path)
+            expect(field).to_have_value("7")
+            expect(dialog).to_contain_text(f"{missing} endpoints with missing values.")
+            expect(hosts_page).to_have_url(re.compile("plimit=" + re.escape(quote(path + ":7", safe="")) + r"(?:&|$)"))
+            expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"Price limit: removes {removed} endpoints")
+            expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(rows)
+
+        assert_constraint("pricing.prompt", 5, 5, 5)
+        column.select_option("pricing.completion")
+        assert_constraint("pricing.completion", 134, 134, 1)
+        hosts_page.go_back()
+        assert_constraint("pricing.prompt", 5, 5, 5)
+        hosts_page.go_forward()
+        assert_constraint("pricing.completion", 134, 134, 1)
+        hosts_page.go_back()
+        expect(column).to_have_value("pricing.prompt")
+        field.fill("8.000000000000000001")
+        hosts_page.keyboard.press("Escape")
+        expect(hosts_page).to_have_url(re.compile("plimit=pricing.prompt%3A8.000000000000000001(?:&|$)"))
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_uncommitted_price_column_survives_unrelated_hash_change(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    column = hosts_page.get_by_label("Price column", exact=True)
+    column.select_option("pricing.completion")
+    expect(hosts_page).not_to_have_url(re.compile("plimit="))
+    _switch_hash(hosts_page, _hosts_fragment(facts, rank="context"))
+    expect(column).to_have_value("pricing.completion")
+    hosts_page.get_by_label("Maximum price", exact=True).fill("7.000000000000000001")
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A7.000000000000000001(?:&|$)"))
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
 @pytest.mark.parametrize(("prior", "removed"), [("", None), ("7", 134), ("1.000000000000000015", 135)])
 def test_hosts_invalid_price_draft_switches_column_with_last_valid_exact_limit(hosts_page, hosts_server, prior, removed):
     with _responsive_renderer_deadline():

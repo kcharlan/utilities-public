@@ -15,6 +15,9 @@ whole edit/switch/remove sequence with a watchdog outside the browser renderer.
 When invalid intermediate text falls back to the last committed value, apply
 that same exact text to a newly selected target too; restoring only the field
 leaves its visible target and the active URL filter inconsistent.
+Resynchronize the editor's local price-column selection when the committed URL
+path changes, even if its numeric text does not. Preserve a column-only draft
+while no limit exists by following path changes rather than every rerender.
 
 ## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
 
@@ -24,6 +27,10 @@ files inside the main public checkout. Resolve Git's common directory and
 check both checkout roots by filesystem identity before writing. Exercise the
 shared isolation helper through each runtime builder, including symlink/case
 aliases, and clean only the exact fresh test-created target in a failure path.
+Known checkout roots are not exhaustive. Check resolved target ancestry for
+Git checkout markers (directories or linked-worktree files) before creating
+directories, and regress unrelated checkouts using disposable synthetic Git
+repositories and the preflight alone so no runtime files are written there.
 
 ## 2026-10-22: Exercise primary navigation targets, not only nearby links
 

@@ -17,6 +17,16 @@ def _is_within_repository(candidate: Path, repository_root: Path) -> bool:
     )
 
 
+def _is_repository_target(candidate: Path, known_roots: tuple[Path, ...]) -> bool:
+    resolved = candidate.expanduser().resolve()
+    return any(_is_within_repository(resolved, root) for root in known_roots) or any(
+        # A normal checkout has a .git directory; linked worktrees have a file.
+        # Walk resolved ancestry before creating any part of a runtime target.
+        (ancestor / ".git").exists()
+        for ancestor in (resolved, *resolved.parents)
+    )
+
+
 def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
     # The common Git directory belongs to the main checkout when this helper
     # runs in a linked worktree. Both checkout trees are public source trees.
@@ -26,7 +36,7 @@ def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
     ).strip())
     repository_roots = (_GIT_REPOSITORY_ROOT, common_directory.parent)
     resolved = runtime_home.expanduser().resolve()
-    if any(_is_within_repository(resolved, root) for root in repository_roots):
+    if _is_repository_target(resolved, repository_roots):
         raise ValueError(
             f"Synthetic validation runtime must be outside the git repository: {resolved}"
         )
@@ -38,7 +48,7 @@ def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
     else:
         resolved.mkdir(parents=True)
         resolved = runtime_home.expanduser().resolve()
-        if any(_is_within_repository(resolved, root) for root in repository_roots):
+        if _is_repository_target(resolved, repository_roots):
             raise ValueError(
                 f"Synthetic validation runtime must be outside the git repository: {resolved}"
             )
