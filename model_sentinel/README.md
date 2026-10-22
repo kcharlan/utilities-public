@@ -68,6 +68,14 @@ cd model_sentinel
 ./install_standalone.sh
 ```
 
+Building requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). The
+installer packages the staged source with `build_standalone.py`, a PEP 723
+script it runs through `uv run --no-python-downloads --script`, so uv selects
+the build interpreter from that header and never downloads one; the build
+never runs on whatever `python3` is first on `PATH`. The installed zipapp
+still runs on `/usr/bin/env python3` and stays stdlib-only. `--check` does not
+need uv.
+
 That builds a single-file executable zipapp at:
 
 ```text

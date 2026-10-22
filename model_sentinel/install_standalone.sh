@@ -12,6 +12,10 @@ target path. Default target:
 
   ~/Library/Scripts/model-sentinel
 
+Building requires uv, which runs build_standalone.py on an interpreter it
+selects from that script's header (never downloading one). --check needs
+no uv: it only compares the installed target with the source.
+
 The installer also seeds runtime-home config files if they do not already
 exist:
 
@@ -157,10 +161,21 @@ if [ "$ACTION" = "check" ]; then
   exit 1
 fi
 
+# uv selects and owns the build interpreter (build_standalone.py's PEP 723
+# header) and never downloads one; the build never runs on whatever python3
+# is first on PATH.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required to build the standalone: https://docs.astral.sh/uv/ (brew install uv)." >&2
+  exit 1
+fi
+
 mkdir -p "$RUNTIME_HOME" "$TARGET_DIR"
 TMP_TARGET="$(mktemp "$TARGET_DIR/model-sentinel.XXXXXX")"
 
-python3 -m zipapp "$STAGING_DIR" -o "$TMP_TARGET" -p "/usr/bin/env python3"
+if ! uv run --no-python-downloads --script "$SCRIPT_DIR/build_standalone.py" "$STAGING_DIR" "$TMP_TARGET"; then
+  echo "Standalone build failed; the existing target was not changed." >&2
+  exit 1
+fi
 chmod +x "$TMP_TARGET"
 
 if ! VERSION_OUTPUT="$(target_version "$TMP_TARGET")"; then
