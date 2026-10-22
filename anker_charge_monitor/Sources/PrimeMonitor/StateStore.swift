@@ -39,14 +39,25 @@ struct StateStore {
         }
     }
     func save(_ state: AppState) throws {
+        try PrivateFile.replace(fileURL, with: JSONEncoder().encode(state), temporaryPrefix: ".state-")
+    }
+}
+
+/// Private atomic replacement shared by persisted app files: a 0700 parent,
+/// a same-directory 0600 temporary file and a rename, so open readers keep
+/// the bytes they had. `exclusive` refuses to replace an existing file (EEXIST).
+enum PrivateFile {
+    static func replace(_ fileURL: URL, with data: Data, temporaryPrefix: String, exclusive: Bool = false) throws {
         let directory = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path(percentEncoded: false))
-        let temporary = directory.appending(path: ".state-\(UUID().uuidString).tmp", directoryHint: .notDirectory)
+        let temporary = directory.appending(path: "\(temporaryPrefix)\(UUID().uuidString).tmp", directoryHint: .notDirectory)
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard FileManager.default.createFile(atPath: temporary.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
-        try JSONEncoder().encode(state).write(to: temporary)
+        try data.write(to: temporary)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path(percentEncoded: false))
-        guard rename(temporary.path(percentEncoded: false), fileURL.path(percentEncoded: false)) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let source = temporary.path(percentEncoded: false), destination = fileURL.path(percentEncoded: false)
+        let moved = exclusive ? renamex_np(source, destination, UInt32(RENAME_EXCL)) : rename(source, destination)
+        guard moved == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 }
