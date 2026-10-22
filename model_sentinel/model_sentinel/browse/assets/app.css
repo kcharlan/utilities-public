@@ -68,6 +68,7 @@
 .host-matrix summary { cursor: pointer; color: var(--accent); }
 .host-list-title { display: grid; gap: 7px; overflow-wrap: anywhere; }
 .host-list-title .model-link { font-size: 12px; text-align: left; }
+.host-list-title .host-title-link, .host-list-title .host-title-link strong { font-size: inherit; }
 .host-endpoint-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); margin: 12px 0 0; }
 .host-endpoint-facts dt { font-size: 12px; color: var(--ink-muted); }
 .host-endpoint-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }

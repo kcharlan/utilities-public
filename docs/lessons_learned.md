@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-22: Exercise primary navigation targets, not only nearby links
+
+Model Sentinel's Hosts rows exposed individual mapped-model dossier buttons,
+but the primary list title remained plain text despite its action contract.
+Testing only the secondary links missed that gap. Exercise the primary title
+itself against a real synthetic dossier, retain each shared-list model link,
+and assert unmapped titles remain noninteractive. Similarly, test the visible
+view tab directly in addition to keyboard shortcuts.
+
 ## 2026-10-22: Validate snapshot ownership before requesting a new provider
 
 Model Sentinel's shared Providers controls preserve view-specific hash keys.

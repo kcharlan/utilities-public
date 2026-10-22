@@ -194,8 +194,30 @@ def test_hosts_grouping_ties_navigation_and_exact_prices(hosts_page, hosts_serve
     expect(matrix).to_be_visible()
     hosts_page.keyboard.press("1")
     expect(hosts_page.locator(".app-shell")).to_have_attribute("data-view", "activity")
+    hosts_page.get_by_role("button", name="4 Hosts", exact=True).click()
+    expect(hosts_page.locator(".app-shell")).to_have_attribute("data-view", "hosts")
+    expect(matrix).to_be_visible()
+    hosts_page.keyboard.press("1")
     hosts_page.keyboard.press("4")
     expect(matrix).to_be_visible()
+
+
+def test_hosts_mapped_primary_title_opens_dossier_and_unmapped_title_stays_plain(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    matrix = hosts_page.get_by_role("table", name="Host comparison")
+    shared = matrix.locator("tbody tr").filter(has_text="synthetic-response-shared")
+    expect(shared.get_by_role("button", name="fake-org/hosts-shared", exact=True)).to_be_visible()
+    expect(shared.get_by_role("button", name="fake-org/hosts-twin", exact=True)).to_be_visible()
+    shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
+    expect(hosts_page.locator(".model-breadcrumb")).to_contain_text("hosts-shared")
+    expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-shared")
+    hosts_page.go_back()
+    expect(matrix).to_be_visible()
+    unmapped = matrix.locator("tbody tr").filter(has_text="synthetic-response-unmapped")
+    expect(unmapped.locator(".host-list-title > strong")).to_have_text("synthetic-response-unmapped")
+    expect(unmapped.locator(".host-list-title").get_by_role("button")).to_have_count(0)
+    expect(unmapped.locator(".host-list-title").get_by_role("link")).to_have_count(0)
 
 
 def test_hosts_profile_precision_rank_difference_history_and_roster(hosts_page, hosts_server):
