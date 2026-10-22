@@ -553,8 +553,10 @@ expected `__main__.py`, `model_sentinel/*.py`, and
 `model_sentinel/browse/**` inventory from the same validated Git-index snapshot
 used for other deployments, then validates and streams only those entries. It
 also validates the generated `model_sentinel/_packaged_build.py` provenance
-file, including its bounded size, exact structure, and source hash. Run the
-installer with a venv-provided `python3` on Homebrew-managed macOS.
+file, including its bounded size, exact structure, and source hash. The
+installer builds through uv (`uv run --no-python-downloads --script
+model_sentinel/build_standalone.py`), so it needs uv on `PATH` but no project
+venv or particular `python3`; run it as is.
 
 `time_machine_snapshot_monitor` is a maintained multi-file copy under
 `~/Library/Scripts/time_machine_snapshot_monitor`. Deploy or update it from the

@@ -27,6 +27,7 @@ def _copy_installer_project(tmp_path: Path) -> Path:
     project.mkdir()
     for name in (
         "install_standalone.sh",
+        "build_standalone.py",
         "__main__.py",
         "providers.env.template",
         "settings.env.template",
@@ -325,6 +326,50 @@ def test_check_is_read_only_when_the_target_is_missing(tmp_path: Path) -> None:
     assert "stale" in (result.stdout + result.stderr).lower()
     assert not target.parent.exists()
     assert not runtime_home.exists()
+
+
+def test_installer_builds_through_uv_and_never_on_path_python(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    real_uv = shutil.which("uv", path=env["PATH"])
+    assert real_uv, "uv is a documented build prerequisite"
+    # Spies first on PATH record every uv and python3 call, then delegate.
+    spy_dir = tmp_path / "synthetic-spy-bin"
+    spy_dir.mkdir()
+    uv_log, python_log = tmp_path / "synthetic-uv.log", tmp_path / "synthetic-python3.log"
+    for name, log, real in (("uv", uv_log, real_uv), ("python3", python_log, sys.executable)):
+        spy = spy_dir / name
+        spy.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\nexec "{real}" "$@"\n')
+        spy.chmod(0o755)
+    env["PATH"] = f"{spy_dir}{os.pathsep}{env['PATH']}"
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+
+    result = _run_installer(project, env, str(target))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    (call,) = uv_log.read_text().splitlines()
+    assert call.startswith(f"run --no-python-downloads --script {project / 'build_standalone.py'} ")
+    assert "zipapp" not in (python_log.read_text() if python_log.exists() else "")
+    assert target.read_bytes().startswith(b"#!/usr/bin/env python3\n")
+
+
+def test_installer_without_uv_fails_before_touching_the_target(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    assert shutil.which("uv", path=env["PATH"]) is None
+    target = tmp_path / "synthetic-bin" / "model-sentinel"
+    target.parent.mkdir()
+    target.write_bytes(b"#!/bin/sh\necho synthetic-existing-target\n")
+    original = target.read_bytes()
+
+    result = _run_installer(project, env, str(target))
+
+    assert result.returncode == 1
+    assert "uv is required to build the standalone" in result.stderr
+    assert target.read_bytes() == original
+    assert list(target.parent.iterdir()) == [target]
+    assert not Path(env["MODEL_SENTINEL_HOME"]).exists()
 
 
 def test_installer_rejects_unknown_or_excess_arguments(tmp_path: Path) -> None:

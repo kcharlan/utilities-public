@@ -3,7 +3,7 @@
 > [!WARNING]
 > This repository is public. Never commit sensitive data; use synthetic examples and keep private configuration and runtime data outside the checkout.
 
-Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
+Personal collection of automation scripts, data tooling, static browser apps, and local services. Each project documents its own runtime model. Eighteen Python launchers and Model Sentinel's standalone build step use [uv](https://docs.astral.sh/uv/) with PEP 723 inline metadata; other projects are shell utilities, static HTML/JavaScript applications, conventional Python environments, or Docker Compose stacks.
 
 ## Flagship Utilities
 

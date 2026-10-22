@@ -46,8 +46,9 @@ IMPORT_DISTRIBUTION_ALIASES = {
     "yaml": "pyyaml",
 }
 
-# The migrated launchers (repo-relative). model_sentinel is intentionally
-# excluded: it is the zipapp-form reference and has no bootstrap layer.
+# The migrated launchers (repo-relative). model_sentinel's own entry point is
+# intentionally excluded: it is the zipapp-form reference and has no bootstrap
+# layer. Its standalone build step is a uv script and is verified here.
 LAUNCHERS = [
     "editdb/editdb",
     "jtree/jtree",
@@ -67,6 +68,7 @@ LAUNCHERS = [
     "benchmark-llm/bench",
     "cognitive_switchyard/switchyard",
     "vid-compiler/video_compiler.py",
+    "model_sentinel/build_standalone.py",
 ]
 
 # Each tracked manifest must contain every launcher dependency and may contain
@@ -165,6 +167,11 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "requirements",
         "vid-compiler/requirements-dev.txt",
         frozenset({"pytest"}),
+    ),
+    "model_sentinel/build_standalone.py": (
+        "requirements",
+        "model_sentinel/requirements-dev.txt",
+        frozenset({"playwright", "pytest"}),
     ),
 }
 
