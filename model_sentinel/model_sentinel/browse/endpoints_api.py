@@ -100,16 +100,7 @@ def endpoint_response(
         list_error["label"] = failed_list_label(list_error["code"])
         list_error["sentence"] = failed_list_state_sentence(list_error["code"])
     if capture is not None:
-        capture["status_line"] = capture_counts_line(
-            status=capture["status"],
-            capture_id=capture["capture_id"],
-            paths_requested=capture["paths_requested"],
-            paths_attempted=capture["paths_attempted"],
-            paths_failed=capture["paths_failed"],
-            paths_unsent=capture["paths_unsent"],
-            mapping_failures=capture["mapping_failures"],
-            error_summary=capture["error_summary"],
-        )
+        capture.update(capture_status(capture))
         for gap in capture["list_gaps"]:
             gap["text"] = endpoint_gap_description(gap["reason"], gap["list_error_code"])
         succeeded = True if response["captured"] else False if response["reason"] == REASON_FETCH_ERROR else None
@@ -232,7 +223,7 @@ def _endpoint_projection(
     )
     response["limit"] = limit
     response["truncated"] = len(rows) > limit
-    response["changes"] = [_change_json(row, listing, label_profile) for row in rows[:limit]]
+    response["changes"] = [endpoint_change_json(row, listing, label_profile) for row in rows[:limit]]
     return response
 
 
@@ -299,7 +290,7 @@ def _ladder_json(ladder: Ladder) -> dict[str, Any]:
     return payload
 
 
-def _change_json(row: Mapping[str, Any], listing: EndpointListRecord, profile: ProviderProfile) -> dict[str, Any]:
+def endpoint_change_json(row: Mapping[str, Any], listing: EndpointListRecord, profile: ProviderProfile) -> dict[str, Any]:
     change = EndpointChangeRecord(
         from_capture_id=row["from_capture_id"],
         to_capture_id=row["to_capture_id"],
@@ -335,3 +326,16 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     return value
+
+
+def capture_status(capture: Mapping[str, Any]) -> dict[str, Any]:
+    """Shared capture evidence; dossier-only list comparison wording stays local."""
+    return {
+        **capture,
+        "status_line": capture_counts_line(
+            status=capture["status"], capture_id=capture["capture_id"],
+            paths_requested=capture["paths_requested"], paths_attempted=capture["paths_attempted"],
+            paths_failed=capture["paths_failed"], paths_unsent=capture["paths_unsent"],
+            mapping_failures=capture["mapping_failures"], error_summary=capture["error_summary"],
+        ),
+    }

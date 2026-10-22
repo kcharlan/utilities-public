@@ -704,24 +704,26 @@ def endpoint_list_changes(
            LIMIT ?""",
         (provider_id, list_path, provider_id, completed_at, completed_at, scrape_id, limit),
     ).fetchall()
-    return [
-        {
-            "endpoint_change_id": int(row["endpoint_change_id"]),
-            "from_capture_id": int(row["from_capture_id"]),
-            "to_capture_id": int(row["to_capture_id"]),
-            "from_list_path": row["from_list_path"],
-            "list_path": row["list_path"],
-            "endpoint_key": row["endpoint_key"],
-            "change_kind": row["change_kind"],
-            "field_name": row["field_name"],
-            "old_value": load_json_value(row["old_value_json"]),
-            "new_value": load_json_value(row["new_value_json"]),
-            "detected_at": row["detected_at"],
-            "from_scrape": _scrape_summary(row, "from_"),
-            "to_scrape": _scrape_summary(row, "to_"),
-        }
-        for row in rows
-    ]
+    return [_endpoint_change_row(row) for row in rows]
+
+
+def _endpoint_change_row(row: sqlite3.Row) -> dict[str, Any]:
+    """The decoded change shape shared by dossier and host history queries."""
+    return {
+        "endpoint_change_id": int(row["endpoint_change_id"]),
+        "from_capture_id": int(row["from_capture_id"]),
+        "to_capture_id": int(row["to_capture_id"]),
+        "from_list_path": row["from_list_path"],
+        "list_path": row["list_path"],
+        "endpoint_key": row["endpoint_key"],
+        "change_kind": row["change_kind"],
+        "field_name": row["field_name"],
+        "old_value": load_json_value(row["old_value_json"]),
+        "new_value": load_json_value(row["new_value_json"]),
+        "detected_at": row["detected_at"],
+        "from_scrape": _scrape_summary(row, "from_"),
+        "to_scrape": _scrape_summary(row, "to_"),
+    }
 
 
 @_translate_busy
@@ -746,3 +748,136 @@ def first_usable_endpoint_capture_date(connection: sqlite3.Connection, *, provid
     if row is None:
         return None
     return local_date_for(str(row["completed_at"]))
+
+
+@_translate_busy
+def endpoint_telemetry_present(connection: sqlite3.Connection) -> bool:
+    names = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('endpoint_telemetry', 'endpoint_telemetry_captures')"
+    )}
+    return names == {"endpoint_telemetry", "endpoint_telemetry_captures"}
+
+
+@_translate_busy
+def capture_telemetry_status(connection: sqlite3.Connection, *, capture_id: int) -> dict[str, bool]:
+    """Read marker/archive existence without requiring optional legacy tables."""
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    return {
+        "available": endpoint_telemetry_present(connection) and bool(connection.execute(
+            "SELECT 1 FROM endpoint_telemetry_captures WHERE capture_id = ?", (capture_id,)
+        ).fetchone()),
+        "archive": "endpoint_capture_archives" in tables and bool(connection.execute(
+            "SELECT 1 FROM endpoint_capture_archives WHERE capture_id = ?", (capture_id,)
+        ).fetchone()),
+    }
+
+
+@_translate_busy
+def host_captures(connection: sqlite3.Connection, *, provider_id: str) -> list[dict[str, Any]]:
+    """Usable saved captures in descending catalog order, including empty lists."""
+    if not endpoint_tables_present(connection):
+        return []
+    rows = connection.execute(
+        """SELECT s.scrape_id, s.provider_id, s.completed_at, s.status, s.saved_snapshot,
+                  s.model_count, c.capture_id, c.status AS capture_status
+           FROM scrapes s JOIN endpoint_captures c ON c.scrape_id = s.scrape_id
+           WHERE s.provider_id = ? AND c.provider_id = s.provider_id
+             AND s.status = 'success' AND s.saved_snapshot = 1
+             AND EXISTS (SELECT 1 FROM endpoint_lists l WHERE l.capture_id = c.capture_id
+                         AND l.outcome IN ('ok', 'empty'))
+           ORDER BY s.completed_at DESC, s.scrape_id DESC""", (provider_id,)
+    ).fetchall()
+    return [{"scrape_id": row["scrape_id"], "provider_id": row["provider_id"],
+             "completed_at": row["completed_at"], "date": local_date_for(row["completed_at"]),
+             "status": row["status"], "saved": bool(row["saved_snapshot"]),
+             "model_count": row["model_count"], "capture_id": row["capture_id"],
+             "capture_status": row["capture_status"]} for row in rows]
+
+
+@_translate_busy
+def capture_endpoint_rows(connection: sqlite3.Connection, *, capture_id: int) -> list[dict[str, Any]]:
+    telemetry = endpoint_telemetry_present(connection)
+    columns = "t.uptime_1d, t.uptime_30m, t.uptime_5m" if telemetry else "NULL AS uptime_1d, NULL AS uptime_30m, NULL AS uptime_5m"
+    join = """LEFT JOIN endpoint_telemetry t ON t.capture_id = o.capture_id
+              AND t.list_path = o.list_path AND t.endpoint_key = o.endpoint_key
+              AND EXISTS (SELECT 1 FROM endpoint_telemetry_captures m WHERE m.capture_id = o.capture_id)""" if telemetry else ""
+    rows = connection.execute(
+        f"""SELECT o.list_path, o.endpoint_key, o.status_code, s.state_json, {columns}
+            FROM endpoint_observations o JOIN endpoint_states s ON s.state_hash = o.state_hash
+            {join} WHERE o.capture_id = ? ORDER BY o.list_path, o.rowid""", (capture_id,)
+    ).fetchall()
+    return [{**dict(row), "state": load_json_value(row["state_json"])} for row in rows]
+
+
+@_translate_busy
+def capture_list_models(connection: sqlite3.Connection, *, capture_id: int) -> dict[str, list[dict[str, Any]]]:
+    rows = connection.execute(
+        """SELECT list_path, provider_model_id, outcome, alias_target_model_id FROM endpoint_capture_models
+           WHERE capture_id = ? AND list_path IS NOT NULL AND error_code IS NULL
+           ORDER BY provider_model_id""", (capture_id,)
+    ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        result.setdefault(row["list_path"], []).append({"model_id": row["provider_model_id"], "outcome": row["outcome"], "alias_target_model_id": row["alias_target_model_id"]})
+    return result
+
+
+@_translate_busy
+def host_series(connection: sqlite3.Connection, *, provider_id: str, host: str,
+                since: date | None = None, until: date | None = None) -> list[dict[str, Any]]:
+    from statistics import median
+    from .hosts_api import host_name
+    result = []
+    for scrape in reversed(host_captures(connection, provider_id=provider_id)):
+        if not _in_local_range(scrape["completed_at"], since, until):
+            continue
+        capture = endpoint_capture_for_scrape(connection, scrape_id=scrape["scrape_id"])
+        rows = [row for row in capture_endpoint_rows(connection, capture_id=capture["capture_id"])
+                if host_name(row["state"].get("provider_name"), row["state"].get("name"), row["state"].get("tag"), row["endpoint_key"]) == host]
+        samples = [row["uptime_1d"] for row in rows if row["uptime_1d"] is not None]
+        unknown = not rows and capture["status"] != "complete"
+        result.append({"scrape_id": scrape["scrape_id"], "date": scrape["date"],
+                       "lists": None if unknown else len({row["list_path"] for row in rows}),
+                       "endpoints": None if unknown else len(rows),
+                       "not_normal": None if unknown else sum(row["status_code"] != 0 for row in rows),
+                       "uptime_1d_median": median(samples) if samples else None,
+                       "uptime_1d_min": min(samples) if samples else None, "capture": capture})
+    return result
+
+
+@_translate_busy
+def host_changes(connection: sqlite3.Connection, *, provider_id: str, host: str,
+                 since: date | None = None, until: date | None = None, limit: int) -> list[dict[str, Any]]:
+    from .hosts_api import host_name
+    if not endpoint_tables_present(connection):
+        return []
+    connection.create_function("sentinel_host", 4, host_name, deterministic=True)
+    # Removals use the baseline observation, including its original list path;
+    # every other change uses the target observation. Serialization still uses
+    # the target list, loaded by the response layer.
+    fields = [f"CASE WHEN json_type(st.state_json, '$.{key}') = 'text' THEN json_extract(st.state_json, '$.{key}') END" for key in ("provider_name", "name", "tag")]
+    rows = connection.execute(
+        f"""SELECT ec.*, fs.scrape_id AS from_scrape_id, fs.completed_at AS from_completed_at,
+                   fs.status AS from_status, ts.scrape_id AS to_scrape_id,
+                   ts.completed_at AS to_completed_at, ts.status AS to_status
+            FROM endpoint_changes ec
+            JOIN endpoint_captures fc ON fc.capture_id = ec.from_capture_id
+            JOIN endpoint_captures tc ON tc.capture_id = ec.to_capture_id
+            JOIN scrapes fs ON fs.scrape_id = fc.scrape_id
+            JOIN scrapes ts ON ts.scrape_id = tc.scrape_id
+            JOIN endpoint_observations o ON o.endpoint_key = ec.endpoint_key
+              AND o.capture_id = CASE WHEN ec.change_kind = 'endpoint_removed' THEN ec.from_capture_id ELSE ec.to_capture_id END
+              AND o.list_path = CASE WHEN ec.change_kind = 'endpoint_removed' THEN ec.from_list_path ELSE ec.list_path END
+            JOIN endpoint_states st ON st.state_hash = o.state_hash
+            WHERE ec.provider_id = ? AND ts.provider_id = ? AND ts.status = 'success' AND ts.saved_snapshot = 1
+              AND sentinel_host({', '.join(fields)}, ec.endpoint_key) = ?
+            ORDER BY ts.completed_at DESC, ts.scrape_id DESC, ec.endpoint_change_id DESC""", (provider_id, provider_id, host)
+    )
+    result = []
+    for row in rows:
+        if not _in_local_range(row["to_completed_at"], since, until):
+            continue
+        result.append(_endpoint_change_row(row))
+        if len(result) >= limit:
+            break
+    return result

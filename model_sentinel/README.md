@@ -523,6 +523,16 @@ capture failed. Failures show the saved error evidence;
 **Re-read saved capture** only asks the local browse server again and never
 contacts the provider.
 
+The read-only JSON API also exposes `GET /api/hosts?provider=<id>` and
+`GET /api/host_history?provider=<id>&host=<name>`. Hosts selects the newest
+usable saved endpoint capture unless `scrape_id` selects an exact saved
+successful catalog scrape. It returns list/model/alias identities, serving
+hosts, endpoint capabilities, normalized precision, exact hexadecimal rational
+prices, and sampled uptime. Host history accepts local-date `from`/`to` bounds
+and returns observed coverage and up to 200 changes, newest first. Missing
+telemetry remains null; absence from an incomplete capture is unknown rather
+than zero. These routes never backfill or fetch provider data.
+
 The browser is read-only: it opens SQLite in read-only/query-only mode and does
 not create or update database, config, log, report, or cache files. It is also
 fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged

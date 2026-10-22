@@ -949,3 +949,14 @@ def profiles_for(providers: Iterable[ProviderConfig]) -> dict[str, ProviderProfi
         )
         for provider in providers
     }
+
+
+QUANTIZATION_BITS = MappingProxyType({
+    "fp32": 32, "bf16": 16, "fp16": 16, "fp8": 8, "int8": 8,
+    "fp6": 6, "fp4": 4, "mxfp4": 4, "nvfp4": 4, "int4": 4,
+})
+
+
+def quantization_bits(value: Any) -> int | None:
+    """Recognized precision width; malformed and unknown values have no width."""
+    return QUANTIZATION_BITS.get(value) if isinstance(value, str) else None

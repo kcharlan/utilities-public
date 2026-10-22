@@ -27,7 +27,7 @@ _SAFE_STATIC_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
 _BUSY_MESSAGE = "The database is busy — a scan may be writing. Try again in a moment."
 _API_ROUTES = frozenset(
-    ("meta", "activity", "heatmap", "series", "events", "catalog", "model", "models", "endpoints")
+    ("meta", "activity", "heatmap", "series", "events", "catalog", "model", "models", "endpoints", "hosts", "host_history")
 )
 
 

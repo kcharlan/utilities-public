@@ -330,6 +330,8 @@ def test_locked_database_returns_retryable_503_from_every_query_path(
         "/api/series?models=example-provider/fake-org/test-model-a&aspects=example-provider:input_price",
         "/api/events?models=example-provider/fake-org/test-model-a",
         "/api/endpoints?provider=example-provider&model=fake-org/test-model-a",
+        "/api/hosts?provider=example-provider",
+        "/api/host_history?provider=example-provider&host=Synthetic%20Host",
     )
     server, _, database_path, _ = browse_server
     writer = sqlite3.connect(database_path, timeout=0)
@@ -527,3 +529,37 @@ def test_a_connection_burst_before_the_accept_loop_runs_is_served(tmp_path: Path
         server.server_close()
         thread.join(timeout=5)
         db.close_all()
+
+
+def test_hosts_http_routes_results_validation_and_integrity_errors(tmp_path, monkeypatch):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    from tests.test_browse_api import _context
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    before = path.read_bytes()
+    db = open_readonly(path)
+    server = make_server(_context(db, ()), port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, headers, body = _request(server, "GET", "/api/hosts?provider=" + facts.provider_id)
+        assert status == 200 and headers["Content-Type"].startswith("application/json")
+        assert json.loads(body)["scrape_id"] == facts.scrapes["empty"]
+        status, _, body = _request(server, "GET", "/api/host_history?provider=" + facts.provider_id + "&host=Synthetic%20Solo")
+        assert status == 200 and len(json.loads(body)["series"]) == 5
+        for target in ("/api/hosts", "/api/hosts?provider=unknown", "/api/hosts?provider=" + facts.provider_id + "&scrape_id=invalid", "/api/host_history?provider=" + facts.provider_id, "/api/host_history?provider=" + facts.provider_id + "&host=Synthetic&from=invalid"):
+            status, _, body = _request(server, "GET", target)
+            assert status == 400 and "error" in json.loads(body)
+        def corrupt(*args, **kwargs):
+            from model_sentinel.browse.endpoints_api import EndpointDataIntegrityError
+            raise EndpointDataIntegrityError("Synthetic private integrity evidence")
+        monkeypatch.setattr(api, "host_history", corrupt)
+        status, _, body = _request(server, "GET", "/api/host_history?provider=" + facts.provider_id + "&host=Synthetic")
+        assert status == 500 and json.loads(body) == {"error": "internal error: EndpointDataIntegrityError"}
+        assert b"private integrity" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        db.close_all()
+    assert path.read_bytes() == before

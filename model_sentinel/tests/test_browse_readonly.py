@@ -268,3 +268,43 @@ def test_endpoint_tables_optional_for_legacy_database(tmp_path: Path) -> None:
         assert "endpoint_captures" in tables
     finally:
         database.close_all()
+
+
+@pytest.mark.parametrize("legacy", ["none", "telemetry", "endpoints"])
+def test_hosts_legacy_reads_leave_database_bytes_and_schema_unchanged(tmp_path, legacy):
+    from model_sentinel.browse import api
+    from tests.browse_fixtures import build_hosts_fixture_db
+    from tests.test_browse_api import _context
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    with sqlite3.connect(path) as connection:
+        if legacy != "none":
+            connection.execute("DROP TABLE endpoint_telemetry")
+            connection.execute("DROP TABLE endpoint_telemetry_captures")
+        if legacy == "endpoints":
+            names = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'endpoint_%'")]
+            for name in names:
+                connection.execute(f'DROP TABLE "{name}"')
+        schema = connection.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+    connection.close()
+    before = path.read_bytes()
+    database = open_readonly(path)
+    try:
+        context = _context(database, ())
+        trace = []
+        database.connection().set_trace_callback(trace.append)
+        result = api.hosts(context, {"provider": facts.provider_id, "scrape_id": str(facts.scrapes["first"])})
+        history = api.host_history(context, {"provider": facts.provider_id, "host": "Synthetic Alpha"})
+        api.meta(context, {})
+        if legacy == "endpoints":
+            assert result["reason"] == "no_tables" and history["series"] == history["changes"] == []
+        else:
+            assert result["reason"] is None and result["endpoints"] and history["series"]
+        if legacy != "none":
+            assert result["telemetry"] == history["telemetry"] == "no_tables"
+            assert all(row["uptime"] == {"1d": None, "30m": None, "5m": None} for row in result["endpoints"])
+        assert not any(statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP")) for statement in trace)
+        assert [tuple(row) for row in database.connection().execute("SELECT sql FROM sqlite_master ORDER BY name")] == schema
+    finally:
+        database.close_all()
+    assert path.read_bytes() == before

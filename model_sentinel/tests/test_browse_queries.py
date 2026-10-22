@@ -624,3 +624,74 @@ def test_endpoint_reason_states_table_detection(tmp_path: Path) -> None:
         connection.execute("DROP TABLE endpoint_observations")
     with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
         assert queries.endpoint_tables_present(connection) is False
+
+
+def test_host_captures_follow_catalog_order_and_require_usable_saved_lists(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    with _connection(path) as connection:
+        # Endpoint capture completion order deliberately disagrees with catalog order.
+        connection.execute("UPDATE endpoint_captures SET completed_at = '2026-12-01T12:00:00+00:00' WHERE capture_id = ?", (facts.captures["first"],))
+        rows = queries.host_captures(connection, provider_id=facts.provider_id)
+        assert [row["scrape_id"] for row in rows] == [facts.scrapes[k] for k in ("empty", "absent", "partial", "second", "first")]
+        connection.execute("UPDATE scrapes SET saved_snapshot = 0 WHERE scrape_id = ?", (facts.scrapes["empty"],))
+        assert queries.host_captures(connection, provider_id=facts.provider_id)[0]["scrape_id"] == facts.scrapes["absent"]
+
+
+def test_host_rows_keep_observations_without_telemetry_and_do_not_carry_samples(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    with _connection(path) as connection:
+        cid = facts.captures["first"]
+        rows = queries.capture_endpoint_rows(connection, capture_id=cid)
+        alpha = next(row for row in rows if row["endpoint_key"] == "alpha-fast#0")
+        assert alpha["uptime_1d"] == 98
+        connection.execute("DELETE FROM endpoint_telemetry WHERE capture_id = ? AND endpoint_key = 'alpha-fast#0'", (cid,))
+        remaining = queries.capture_endpoint_rows(connection, capture_id=cid)
+        assert len(remaining) == len(rows)
+        assert next(row for row in remaining if row["endpoint_key"] == "alpha-fast#0")["uptime_1d"] is None
+        connection.execute("DELETE FROM endpoint_telemetry_captures WHERE capture_id = ?", (cid,))
+        assert all(row["uptime_1d"] is None for row in queries.capture_endpoint_rows(connection, capture_id=cid))
+        series = queries.host_series(connection, provider_id=facts.provider_id, host="Synthetic Alpha")
+        assert series[0]["endpoints"] > 0 and series[0]["uptime_1d_median"] is None
+        assert series[1]["uptime_1d_median"] is not None
+        connection.execute("DROP TABLE endpoint_telemetry")
+        connection.execute("DROP TABLE endpoint_telemetry_captures")
+        assert not queries.endpoint_telemetry_present(connection)
+        assert len(queries.capture_endpoint_rows(connection, capture_id=cid)) == len(rows)
+        assert all(row["uptime_1d"] is None for row in queries.capture_endpoint_rows(connection, capture_id=cid))
+
+
+def test_host_changes_use_baseline_host_for_removal_and_target_host_for_other_changes(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    with _connection(path) as connection:
+        case = facts.host_history_attribution
+        rows = queries.host_changes(connection, provider_id=facts.provider_id, host=case["moved_removed_host"], limit=201)
+        assert len(rows) == 1
+        assert rows[0]["change_kind"] == "endpoint_removed"
+        assert (rows[0]["from_list_path"], rows[0]["list_path"]) == (case["from_path"], case["moved_path"])
+        assert rows[0]["old_value"]["provider_name"] == "Synthetic Moved Removed"
+        assert rows[0]["to_scrape"]["scrape_id"] == facts.scrapes["second"]
+        rows = queries.host_changes(connection, provider_id=facts.provider_id, host="Synthetic Alpha", since=date(2026, 9, 2), until=date(2026, 9, 2), limit=201)
+        assert {row["change_kind"] for row in rows} == {"endpoint_added", "field_changed", "status_changed"}
+        mappings = queries.capture_list_models(connection, capture_id=facts.captures["first"])
+        shared = mappings[facts.host_grouping_and_ties["path"]]
+        assert [row["model_id"] for row in shared] == ["fake-org/hosts-alias", "fake-org/hosts-shared", "fake-org/hosts-twin"]
+
+
+@pytest.mark.parametrize("call", [
+    lambda c: queries.endpoint_telemetry_present(c),
+    lambda c: queries.capture_telemetry_status(c, capture_id=1),
+    lambda c: queries.host_captures(c, provider_id="synthetic"),
+    lambda c: queries.capture_endpoint_rows(c, capture_id=1),
+    lambda c: queries.capture_list_models(c, capture_id=1),
+    lambda c: queries.host_series(c, provider_id="synthetic", host="Synthetic Host"),
+    lambda c: queries.host_changes(c, provider_id="synthetic", host="Synthetic Host", limit=201),
+])
+def test_host_queries_translate_busy_errors(call):
+    with pytest.raises(DatabaseBusyError):
+        call(_FailingConnection("database is locked"))
