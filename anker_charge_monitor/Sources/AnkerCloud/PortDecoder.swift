@@ -3,8 +3,8 @@ import PrimeMonitorCore
 
 /// Per-port map ported from anker-solix-api `mqttmap.py`, `_A2345_0a00`,
 /// and `mqtttypes.py`, `DeviceHexDataField` signed little-endian `sile`
-/// decoding, commit 8a5222b. See PR §6.1. Detail fields follow commit
-/// 9e72894181aef868e7b3ed0ba05bd322d54bb5d7; see protocol reference §6.2.
+/// decoding, commit 8a5222b. See PR §6.1. Detail fields and port switches follow
+/// commit 9e72894181aef868e7b3ed0ba05bd322d54bb5d7; see protocol reference §6.2, §6.3.
 public enum PortDecoder {
     /// Rejects missing, mistyped or truncated port data so a partial reply cannot
     /// replace the last complete snapshot. Values stay in their signed wire units.
@@ -30,8 +30,8 @@ public enum PortDecoder {
     /// each map's `BYTES` extraction: `sile` and `var` reach it through the `bin`
     /// branch with the whole map; `ui` passes only the inner byte map, which the
     /// `bin` branch then cannot read; `strb` reads the dictionary byte maps of
-    /// `b7`/`bd`/`be` but fails on `a3`'s bit-mask list. Every other type,
-    /// including a typeless one-byte field, extracts nothing.
+    /// `b7`/`bd`/`be` and the `aa`...`ae` switches but fails on `a3`'s bit-mask
+    /// list. Every other type, including a typeless one-byte field, extracts nothing.
     static func acceptsType(_ type: UInt8, for fieldID: UInt8) -> Bool {
         switch type {
         case 0x02, 0x03, 0x04: true // sile, var, bin
@@ -59,6 +59,15 @@ public enum PortDecoder {
         let support = value(0xb7)
         let ids = value(0xbd)
         let metadata = value(0xbe)
+        // aa...ae byte 00 is `ui` 0 (off) or 1 (on); any other value makes no claim.
+        var switches: [PortSwitch: Bool] = [:]
+        for target in PortSwitch.allCases {
+            switch value(target.fieldID)?.first {
+            case 0?: switches[target] = false
+            case 1?: switches[target] = true
+            default: break
+            }
+        }
         var identities: [PortID: PortIdentity] = [:]
         for (index, port) in PortID.usbC.enumerated() {
             guard let vendor = word(ids, at: 4 * index),
@@ -71,7 +80,8 @@ public enum PortDecoder {
             faultBits: faults?.first,
             identitySupport: support.flatMap { $0.count >= 2 ? $0[$0.startIndex + 1] : nil },
             identities: identities,
-            rawFields: raw
+            rawFields: raw,
+            switches: switches
         )
     }
 

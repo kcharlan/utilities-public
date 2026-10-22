@@ -9,8 +9,10 @@ import PrimeMonitorCore
     static let menuStates: [(String, MenuBarTextSize)] = [("live", .default), ("stale", .default), ("error", .default), ("not-set-up", .default), ("live", .pt10)]
     /// "details": invented faults, over-temperature, identity support 2 beside
     /// a resolved, a no-device and an unresolved port, and a catalog problem.
+    /// "switches-off": invented switch states, C2 and the shared USB-A switch off,
+    /// with C2 expanded to show its port-switch line.
     /// "expanded-named": an expanded row naming a synthetic device.
-    static let panelStates = ["live", "stale", "signed-out", "choose-charger", "error", "session-ended", "details", "expanded-named"]
+    static let panelStates = ["live", "stale", "signed-out", "choose-charger", "error", "session-ended", "details", "switches-off", "expanded-named"]
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         guard CommandLine.arguments.count == 2 else { fatalError("Expected private temporary output directory") }
@@ -124,7 +126,13 @@ import PrimeMonitorCore
                 .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
                 .c2: .identified(vendorID: 0xfeed, productID: 0xbeef, brandClass: 42, modelCode: nil),
                 .c3: .identifying, .c4: .nothingAttached,
-            ], rawFields: [:])
+            ], rawFields: [:], switches: [.c1: true, .c2: true, .c3: true, .c4: true, .usbA: true])
+        case "switches-off":
+            // C2 and the shared USB-A switch off; C3 reports no switch, so it makes no claim.
+            ChargerDetails(faultBits: 0, identitySupport: 6, identities: [
+                .c1: .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+                .c2: .nothingAttached, .c3: .identifying, .c4: .nothingAttached,
+            ], rawFields: [:], switches: [.c1: true, .c2: false, .c4: true, .usbA: false])
         default: nil
         }
     }
@@ -164,6 +172,10 @@ import PrimeMonitorCore
         if state == "expanded-named" {
             detail.toggle(.c1, NamingContext(monitor: monitor, store: catalog))
             guard detail.expanded == .c1 else { fatalError("Synthetic row not expanded") }
+        }
+        if state == "switches-off" {
+            detail.toggle(.c2, NamingContext(monitor: monitor, store: catalog))
+            guard detail.expanded == .c2 else { fatalError("Synthetic row not expanded") }
         }
         return .init(monitor: monitor, catalog: catalog, detail: detail)
     }

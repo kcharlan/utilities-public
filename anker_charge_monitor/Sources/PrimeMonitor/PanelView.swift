@@ -99,6 +99,17 @@ struct PanelView: View {
         if let bits = details?.faultBits { lines.append(DetailLine(label: "Fault bits", value: "0x" + DisplayFormatter.hex(bits))) }
         return lines
     }
+    /// The charger-reported switch for a port; A1 and A2 read the one USB-A switch.
+    func switchLine(_ port: PortID) -> DetailLine {
+        let value = switch details?.switchedOn(port) {
+        case true?: "On"
+        case false?: "Off"
+        case nil: Self.unavailable
+        }
+        return DetailLine(label: "Port switch", value: value)
+    }
+    /// The expanded row's state lines: fault, then the switch beside it.
+    func statusLines(_ port: PortID) -> [DetailLine] { faultLines(port) + [switchLine(port)] }
     /// Row click, Space and Return.
     func toggle(_ port: PortID) {
         PanelMotion.perform(reduceMotion: reduceMotion) { [detail, naming] in detail.toggle(port, naming) }
@@ -154,7 +165,7 @@ struct PanelView: View {
                                 .accessibilityValue(row.accessibilityValue)
                                 .accessibilityHint("Shows device details")
                             if detail.expanded == port {
-                                PortDetailView(identity: expandedIdentity(port), faultLines: faultLines(port),
+                                PortDetailView(identity: expandedIdentity(port), statusLines: statusLines(port),
                                                detail: detail, catalog: catalog, naming: naming, cancel: cancelNaming)
                             }
                         } else {
@@ -203,10 +214,10 @@ enum ExpandedIdentity: Equatable {
 }
 
 /// Expanded detail for one port: the naming field and device metadata for an
-/// identified device, otherwise one identity statement, then the fault lines.
+/// identified device, otherwise one identity statement, then the fault and switch lines.
 struct PortDetailView: View {
     let identity: ExpandedIdentity
-    let faultLines: [DetailLine]
+    let statusLines: [DetailLine]
     let detail: PortDetailState
     let catalog: DeviceCatalogStore
     let naming: NamingContext
@@ -235,11 +246,11 @@ struct PortDetailView: View {
                 if let failure = detail.failure(for: target) {
                     Text(failure.inlineText).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
-                // One grid, so identity and fault values share a column.
-                DetailLines(lines: lines + faultLines)
+                // One grid, so identity and status values share a column.
+                DetailLines(lines: lines + statusLines)
             } else {
                 if let message = identity.message { Text(message).foregroundStyle(.secondary) }
-                DetailLines(lines: faultLines)
+                DetailLines(lines: statusLines)
             }
         }.font(.system(size: 11))
             .padding(.leading, PortRowView.labelWidth + PortRowView.spacing).padding(.bottom, 8)

@@ -7,18 +7,23 @@ struct PortRowPresentation: Equatable {
     let port: PortID
     /// nil when the fault bits were not decoded: no fault claim is made.
     let fault: Bool?
+    /// nil when the switch was not decoded: no off claim is made.
+    let switchOn: Bool?
     /// The catalog label of the USB-C device reported at this port.
     let device: String?
 
     static func make(_ port: PortID, details: ChargerDetails?, catalog: DeviceCatalog) -> Self {
         let identity = port.isUSBC ? details?.identities[port] : nil
-        return .init(port: port, fault: details?.fault(port), device: identity.flatMap(catalog.label(for:)))
+        return .init(port: port, fault: details?.fault(port), switchOn: details?.switchedOn(port),
+                     device: identity.flatMap(catalog.label(for:)))
     }
     var faulted: Bool { fault == true }
     /// A3's USB-A bit is shared by both USB-A ports, so it names neither one.
     var faultText: String? { faulted ? (port.isUSBC ? "Fault reported" : "USB-A fault") : nil }
+    /// Only a reported-off switch is worth a row; on is the expected state.
+    var switchText: String? { switchOn == false ? "Off" : nil }
     var secondaryText: String? {
-        let parts = [faultText, device].compactMap { $0 }
+        let parts = [faultText, switchText, device].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
@@ -45,9 +50,9 @@ struct PortRowView: View {
     var voltage: String { DisplayFormatter.volts(milli: reading.voltageMilli) }
     var current: String { DisplayFormatter.amps(milli: reading.currentMilli) }
     var accessibilityValue: String { expanded ? "Expanded" : "Collapsed" }
-    /// Known fault and device information precede the readings.
+    /// Known fault, switch and device information precede the readings.
     var accessibilityText: String {
-        ([reading.port.label] + [presentation?.faultText, presentation?.device].compactMap { $0 } + [power, voltage, current])
+        ([reading.port.label] + [presentation?.faultText, presentation?.switchText, presentation?.device].compactMap { $0 } + [power, voltage, current])
             .joined(separator: ", ")
     }
     var body: some View {

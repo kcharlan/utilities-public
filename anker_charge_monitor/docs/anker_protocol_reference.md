@@ -136,3 +136,18 @@ mandatory port-reading validation. `--live-check` prints the decoded values
 and raw payloads as owner-gate evidence. `synthetic_0a00_details_frames.txt`
 covers identity sentinels, unknown classes, support values, mask combinations
 and the type matrix, including a `sile`-encoded `a3`.
+
+### 6.3 Port switch state
+
+Each port's on/off switch follows the same commit,
+`9e72894181aef868e7b3ed0ba05bd322d54bb5d7`:
+[`mqttmap.py`, `_A2345_0a00`](https://github.com/thomluther/anker-solix-api/blob/9e72894181aef868e7b3ed0ba05bd322d54bb5d7/src/anker_solix_api/mqttmap.py#L3550)
+keys `aa` through `ae`, entry `00` (`{port}_switch`), one per
+`mqttcmdmap.py` `CHARGER_PORT_IDS` target. `PortSwitch` carries those targets and
+indexes; A1 and A2 both resolve to the one USB-A target. The keys accept the wire
+types of `b7` (section 6.2), and `PortDecoder` treats a value of 0 as off and 1 as
+on. A missing, mistyped, short or other value leaves that switch undecoded, which
+`ChargerDetails.switchedOn(_:)` returns as nil, never off. The raw payloads are
+kept in `rawFields` and printed by `--live-check`. Rows 23 to 27 of
+`synthetic_0a00_details_frames.txt` cover on, off, missing, unaccepted-type and
+unrecognized-value cases.

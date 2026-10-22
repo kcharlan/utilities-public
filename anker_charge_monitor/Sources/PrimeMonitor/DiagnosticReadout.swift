@@ -22,10 +22,15 @@ import PrimeMonitorCore
         let identities = PortID.usbC.map { port in
             "\(port.label) identity: " + identity(details.identities[port])
         }
+        // One line per target; the two USB-A ports have the one switch.
+        let targets = PortID.usbC.map { ($0.label, PortSwitch($0)) } + [("USB-A", PortSwitch.usbA)]
+        let switches = targets.map { label, target in
+            "\(label) switch: " + (details.switches[target].map { $0 ? "on" : "off" } ?? "unavailable")
+        }
         let raw = ChargerDetails.fieldIDs.map { id in
             "Raw \(hex(id)): " + (details.rawFields[id].map { $0.isEmpty ? "empty" : $0.map(hex).joined(separator: " ") } ?? "unavailable")
         }
-        return [faults, "Identity support: \(details.identitySupport.map(String.init) ?? "unavailable")"] + identities + raw
+        return [faults, "Identity support: \(details.identitySupport.map(String.init) ?? "unavailable")"] + identities + switches + raw
     }
 
     private static func identity(_ identity: PortIdentity?) -> String {

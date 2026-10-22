@@ -125,11 +125,12 @@ let syntheticDock = DeviceKey(vendorID: 0xfeed, productID: 0xbeef)
 /// class without model code, C3 unresolved, C4 nothing attached; C1 and the
 /// USB-A ports report faults and the charger over-temperature.
 func syntheticDetails(faultBits: UInt8? = 0x23, support: UInt8? = 6,
-                      c1: PortIdentity = .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3)) -> ChargerDetails {
+                      c1: PortIdentity = .identified(vendorID: 0x0a1b, productID: 0x2c3d, brandClass: 7, modelCode: 3),
+                      switches: [PortSwitch: Bool] = [:]) -> ChargerDetails {
     ChargerDetails(faultBits: faultBits, identitySupport: support, identities: [
         .c1: c1, .c2: .identified(vendorID: 0xfeed, productID: 0xbeef, brandClass: 42, modelCode: nil),
         .c3: .identifying, .c4: .nothingAttached,
-    ], rawFields: [:])
+    ], rawFields: [:], switches: switches)
 }
 /// The owner-gate shape with invented values: support 2 does not stop a
 /// resolved identity beside the no-device sentinel and an unresolved port.
@@ -200,6 +201,31 @@ func supportTwoMixedDetails() -> ChargerDetails {
         #expect(view.rowPresentation(.a1).secondaryText == nil)
         await detailReply(rig, nil)
         #expect(PortID.allCases.allSatisfy { view.rowPresentation($0).secondaryText == nil })
+        await rig.finish()
+    }
+    @Test func rowsShowAnOffSwitchBetweenFaultAndDevice() async throws {
+        let rig = try ControllerRig(), catalog = try CatalogRig()
+        try catalog.save(#"{"schema": 1, "brands": {"7": "Synthetic Brand"}, "vendors": {}, "devices": {"0A1B:2C3D": "Synthetic Desk Lamp"}}"#)
+        catalog.store.load()
+        await rig.start()
+        // C1 off with a fault and a named device; C2 on; C4 off without a device; USB-A off beside its fault.
+        await detailReply(rig, syntheticDetails(switches: [.c1: false, .c2: true, .c4: false, .usbA: false]))
+        let view = PanelView(monitor: rig.controller, catalog: catalog.store, openSettings: {})
+        let rows = PortID.allCases.map(view.rowPresentation)
+        #expect(rows.map(\.secondaryText) == ["Fault reported · Off · Synthetic Desk Lamp", "FEED:BEEF", "Unidentified device", "Off", "USB-A fault · Off", "USB-A fault · Off"])
+        #expect(rows.map(\.switchOn) == [false, true, nil, false, false, false])
+        // Off is not a fault: only the fault text turns a row red.
+        #expect(rows.map(\.faulted) == [true, false, false, false, true, true])
+        #expect(PortRowView(reading: view.rows[0], presentation: rows[0]).accessibilityText == "C1, Fault reported, Off, Synthetic Desk Lamp, 0.00 W, 0.000 V, 0.020 A")
+        #expect(PortRowView(reading: view.rows[1], presentation: rows[1]).accessibilityText == "C2, FEED:BEEF, 0.00 W, 0.000 V, 0.020 A")
+        #expect(PortRowView(reading: view.rows[3], presentation: rows[3]).accessibilityText == "C4, Off, 43.21 W, 20.000 V, 1.490 A")
+        #expect(PortRowView(reading: view.rows[5], presentation: rows[5]).accessibilityText == "A2, USB-A fault, Off, 0.00 W, 0.000 V, 0.000 A")
+        // Unknown and on make no off claim, even beside a decoded fault bit.
+        await detailReply(rig, syntheticDetails(switches: [.c1: true]))
+        #expect(view.rowPresentation(.c1).secondaryText == "Fault reported · Synthetic Desk Lamp")
+        #expect(PortID.allCases.dropFirst().allSatisfy { view.rowPresentation($0).switchOn == nil })
+        await detailReply(rig, nil)
+        #expect(PortID.allCases.allSatisfy { view.rowPresentation($0).secondaryText == nil && view.rowPresentation($0).switchOn == nil })
         await rig.finish()
     }
     @Test func numericColumnsFitWireExtremes() {
@@ -280,6 +306,25 @@ func supportTwoMixedDetails() -> ChargerDetails {
         #expect(view.faultLines(.a1).map(\.text) == ["USB-A fault None", "Fault bits 0x04"])
         await detailReply(rig, syntheticDetails(faultBits: nil))
         #expect(view.faultLines(.c1).map(\.text) == ["Fault Not reported by this charger"])
+        await rig.finish()
+    }
+    @Test func expandedDetailShowsThePortSwitchBesideTheFaultLines() async throws {
+        let rig = try ControllerRig(); await rig.start()
+        let view = PanelView(monitor: rig.controller, openSettings: {})
+        await detailReply(rig, syntheticDetails(faultBits: 0x23, switches: [.c1: false, .c2: true, .usbA: false]))
+        #expect(PortID.allCases.map { view.switchLine($0).text } == [
+            "Port switch Off", "Port switch On", "Port switch Not reported by this charger",
+            "Port switch Not reported by this charger", "Port switch Off", "Port switch Off",
+        ])
+        // A switch is state, not a fault alert.
+        #expect(PortID.allCases.allSatisfy { !view.switchLine($0).alert })
+        #expect(view.statusLines(.c1).map(\.text) == ["Fault Fault reported", "Fault bits 0x23", "Port switch Off"])
+        #expect(view.statusLines(.a2).map(\.text) == ["USB-A fault Fault reported", "Fault bits 0x23", "Port switch Off"])
+        // Without fault bits the switch line still shows beside the unavailable fault.
+        await detailReply(rig, syntheticDetails(faultBits: nil, switches: [.c2: true]))
+        #expect(view.statusLines(.c2).map(\.text) == ["Fault Not reported by this charger", "Port switch On"])
+        await detailReply(rig, nil)
+        #expect(view.statusLines(.c1).map(\.text) == ["Fault Not reported by this charger", "Port switch Not reported by this charger"])
         await rig.finish()
     }
     @Test func warningsReportTemperatureAndCatalogWithoutDimming() async throws {

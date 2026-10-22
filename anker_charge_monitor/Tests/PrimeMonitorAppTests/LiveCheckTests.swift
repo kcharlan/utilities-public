@@ -66,10 +66,24 @@ import AnkerCloud
             "C2 identity: identifying",
             "C3 identity: vendor=0xFEED; product=0xBEEF; class=10; model code=7",
             "C4 identity: vendor=0xC0DE; product=0x0042; class=99; model code=257",
+            "C1 switch: unavailable", "C2 switch: unavailable", "C3 switch: unavailable", "C4 switch: unavailable", "USB-A switch: unavailable",
             "Raw A3: 04 00 00",
             "Raw B7: 04 FF 06",
             "Raw BD: 04 FA FF FB FF 00 00 00 00 ED FE EF BE DE C0 42 00",
             "Raw BE: 04 FF FF FF FF FF FF FF FF 0A 00 07 00 63 00 01 01",
+            "Raw AA: unavailable", "Raw AB: unavailable", "Raw AC: unavailable", "Raw AD: unavailable", "Raw AE: unavailable",
+        ])
+    }
+    /// Owner-gate evidence for the port switches: row 23 invents C1 and C3 on, C2, C4 and USB-A off.
+    @Test func printsSwitchStatesFromWireFrame() async throws {
+        let (output, _) = try await liveCheckOutput(fixture: "synthetic_0a00_details_frames.txt", row: 23)
+        #expect(output == Self.rowZeroReadings + [
+            "Fault bits: 0x00; over-temperature=false; C1 fault=false; C2 fault=false; C3 fault=false; C4 fault=false; USB-A fault=false",
+            "Identity support: unavailable",
+            "C1 identity: unavailable", "C2 identity: unavailable", "C3 identity: unavailable", "C4 identity: unavailable",
+            "C1 switch: on", "C2 switch: off", "C3 switch: on", "C4 switch: off", "USB-A switch: off",
+            "Raw A3: 04 00 00", "Raw B7: unavailable", "Raw BD: unavailable", "Raw BE: unavailable",
+            "Raw AA: 04 01", "Raw AB: 04 00", "Raw AC: 04 01", "Raw AD: 04 00", "Raw AE: 04 00",
         ])
     }
     @Test func readoutShowsUnavailableDetailValues() {
@@ -77,7 +91,8 @@ import AnkerCloud
             .c1: .identified(vendorID: 0xfeed, productID: 0x0001, brandClass: nil, modelCode: 0),
             .c2: .identified(vendorID: 0x00ed, productID: 0xbeef, brandClass: 0x1234, modelCode: nil),
             .c3: .nothingAttached,
-        ], rawFields: [0xa3: [0x02, 0x29, 0x00], 0xbd: [], 0xbe: [0x01]])
+        ], rawFields: [0xa3: [0x02, 0x29, 0x00], 0xbd: [], 0xbe: [0x01], 0xab: [0x04, 0x00], 0xae: [0x04, 0x01]],
+           switches: [.c1: true, .c2: false, .usbA: true])
         let lines = DiagnosticReadout.lines(ChargerSnapshot(receivedAt: .distantPast, readings: [], details: details))
         #expect(lines == [
             "C1: unavailable", "C2: unavailable", "C3: unavailable", "C4: unavailable", "A1: unavailable", "A2: unavailable",
@@ -88,17 +103,21 @@ import AnkerCloud
             "C2 identity: vendor=0x00ED; product=0xBEEF; class=4660; model code=unavailable",
             "C3 identity: nothing attached",
             "C4 identity: unavailable",
+            "C1 switch: on", "C2 switch: off", "C3 switch: unavailable", "C4 switch: unavailable", "USB-A switch: on",
             "Raw A3: 02 29 00",
             "Raw B7: unavailable",
             "Raw BD: empty",
             "Raw BE: 01",
+            "Raw AA: unavailable", "Raw AB: 04 00", "Raw AC: unavailable", "Raw AD: unavailable", "Raw AE: 04 01",
         ])
         let unknown = ChargerDetails(faultBits: nil, identitySupport: 2, identities: [:], rawFields: [0xb7: [0x04, 0xff, 0x02]])
-        #expect(Array(DiagnosticReadout.lines(ChargerSnapshot(receivedAt: .distantPast, readings: [], details: unknown)).suffix(10)) == [
+        #expect(Array(DiagnosticReadout.lines(ChargerSnapshot(receivedAt: .distantPast, readings: [], details: unknown)).suffix(20)) == [
             "Fault bits: unavailable",
             "Identity support: 2",
             "C1 identity: unavailable", "C2 identity: unavailable", "C3 identity: unavailable", "C4 identity: unavailable",
+            "C1 switch: unavailable", "C2 switch: unavailable", "C3 switch: unavailable", "C4 switch: unavailable", "USB-A switch: unavailable",
             "Raw A3: unavailable", "Raw B7: 04 FF 02", "Raw BD: unavailable", "Raw BE: unavailable",
+            "Raw AA: unavailable", "Raw AB: unavailable", "Raw AC: unavailable", "Raw AD: unavailable", "Raw AE: unavailable",
         ])
     }
 
@@ -111,16 +130,16 @@ import AnkerCloud
         "A2: active=false; reported=0.00 W; voltage=0.000 V; current=0.000 A",
         "Total: reported=5.79 W"
     ]
-    /// Runs the live check on row zero of a synthetic AnkerCloud fixture corpus.
-    private func liveCheckOutput(fixture: String) async throws -> ([String], ChargerSnapshot) {
+    /// Runs the live check on a row (default zero) of a synthetic AnkerCloud fixture corpus.
+    private func liveCheckOutput(fixture: String, row index: Int = 0) async throws -> ([String], ChargerSnapshot) {
         let rig = try ControllerRig(); var output: [String] = []
         let task = Task { await LiveCheck.run(controller: rig.controller, acquireLease: { AppInstanceLease {} }, timeout: 2, output: { output.append($0) }) }
         await settle(); await rig.events.send(.network(true)); await settle()
         let root = URL(filePath: #filePath, directoryHint: .notDirectory).deletingLastPathComponent().deletingLastPathComponent()
         let text = try String(contentsOf: root.appending(path: "AnkerCloudTests/Fixtures/\(fixture)", directoryHint: .notDirectory), encoding: .utf8)
-        let row = try #require(text.split(separator: "\n").first)
-        var bytes: [UInt8] = []; var index = row.startIndex
-        while index < row.endIndex { let next = row.index(index, offsetBy: 2); bytes.append(try #require(UInt8(row[index..<next], radix: 16))); index = next }
+        let row = try #require(text.split(separator: "\n").dropFirst(index).first)
+        var bytes: [UInt8] = []; var position = row.startIndex
+        while position < row.endIndex { let next = row.index(position, offsetBy: 2); bytes.append(try #require(UInt8(row[position..<next], radix: 16))); position = next }
         let snapshot = try #require(PortDecoder.snapshot(from: HexFrame.parse(bytes), receivedAt: rig.clock.date))
         rig.backend.output.yield(.snapshot(snapshot))
         #expect(await task.value == 0)

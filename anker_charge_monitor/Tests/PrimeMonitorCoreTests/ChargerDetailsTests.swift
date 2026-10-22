@@ -75,3 +75,45 @@ private func details(_ bits: UInt8?) -> ChargerDetails {
     let value = details(0x01)
     #expect(ChargerSnapshot(receivedAt: .distantPast, readings: [], details: value).details == value)
 }
+
+// Switch targets from anker-solix-api 9e72894: `mqttcmdmap.py` CHARGER_PORT_IDS
+// (usbc_1...usbc_4 = 0...3, usba = 4) and `mqttmap.py` `_A2345_0a00` keys
+// aa...ae (`{port}_switch`), one shared USB-A switch beside the four USB-C ones.
+@Test func portSwitchTargetsMatchProtocolAuthority() {
+    #expect(PortSwitch.allCases == [.c1, .c2, .c3, .c4, .usbA])
+    #expect(PortSwitch.allCases.map(\.wireIndex) == [0, 1, 2, 3, 4])
+    #expect(PortSwitch.allCases.map(\.fieldID) == [0xaa, 0xab, 0xac, 0xad, 0xae])
+    // A1 and A2 share the one USB-A switch.
+    #expect(PortID.allCases.map(PortSwitch.init) == [.c1, .c2, .c3, .c4, .usbA, .usbA])
+    // Later commands key and send on the target, so it must hash and cross isolation.
+    let targets: Set<PortSwitch> = [.c1, .usbA, .usbA]
+    #expect(targets.count == 2)
+    let sendable: any Sendable = PortSwitch.c3
+    #expect(sendable as? PortSwitch == .c3)
+}
+
+private func switched(_ switches: [PortSwitch: Bool]) -> ChargerDetails {
+    ChargerDetails(faultBits: nil, identitySupport: nil, identities: [:], rawFields: [:], switches: switches)
+}
+
+@Test func switchStateResolvesThroughTheTargetMapping() {
+    let value = switched([.c1: true, .c2: false, .usbA: false])
+    #expect(PortID.allCases.map { value.switchedOn($0) } == [true, false, nil, nil, false, false])
+    // The shared USB-A switch reports for both ports whichever way it reads.
+    let on = switched([.usbA: true])
+    #expect(on.switchedOn(.a1) == true && on.switchedOn(.a2) == true)
+    #expect(on.switches == [.usbA: true])
+}
+
+@Test func undecodedSwitchesMakeNoClaim() {
+    // Absent is unknown, never off; the four-argument construction still works.
+    let none = ChargerDetails(faultBits: 0, identitySupport: 6, identities: [:], rawFields: [:])
+    #expect(none.switches.isEmpty)
+    #expect(PortID.allCases.allSatisfy { none.switchedOn($0) == nil })
+    #expect(switched([:]) == ChargerDetails(faultBits: nil, identitySupport: nil, identities: [:], rawFields: [:], switches: [:]))
+    #expect(switched([.c1: true]) != switched([.c1: false]))
+}
+
+@Test func switchFieldIDsJoinTheDetailFieldIDs() {
+    #expect(ChargerDetails.fieldIDs == [0xa3, 0xb7, 0xbd, 0xbe, 0xaa, 0xab, 0xac, 0xad, 0xae])
+}

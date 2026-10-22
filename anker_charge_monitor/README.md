@@ -70,9 +70,11 @@ hovering shows the full text of a shortened label. A
 reported port fault turns the row's label red with a warning triangle and "Fault
 reported"; the charger reports one fault bit for both USB-A ports, shown as
 "USB-A fault" on each. A charger over-temperature report appears as a red
-warning above the rows. Click a row, or press Space or Return on it, to expand
+warning above the rows. A port whose switch the charger reports off shows "Off" in its row, and the two
+USB-A ports share one switch, so both show it. Click a row, or press Space or Return on it, to expand
 it; one row is expanded at a time and it stays expanded as readings update. The
-expanded row shows the fault state and raw fault bits and, for an identified
+expanded row shows the fault state, raw fault bits and **Port switch** (On, Off or the
+not-reported wording) and, for an identified
 USB-C device, a **Name this device** field, the brand class (or "Unknown class
 N"), the hexadecimal USB IDs and the device model code. Values the charger did
 not report read "Not reported by this charger". The charger's identity-support
@@ -173,7 +175,7 @@ The installed executable at
 `--live-check` (`make live-check`): with the GUI quit, it retrieves
 the configured account, prints one fresh reading and awaits cleanup before exit.
 The reading includes decoded fault bits, identity support, USB-C device
-identities and raw detail payloads, with unavailable values marked.
+identities, port switch states and raw detail payloads, with unavailable values marked.
 Exit codes are 0 success, 2 missing account/charger, 3 timeout, 4 concurrent
 instance, and 5 startup/persistence/backend failure. This contacts the real vault
 and service; it is a separate operator acceptance check, outside `make test`.
@@ -211,7 +213,7 @@ Protocol port: [thomluther/anker-solix-api](https://github.com/thomluther/anker-
 at `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, notably `mqttmap.py:_A2345_0a00`,
 `mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Fault, temperature and
 connected-device detail fields follow `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`
-(`mqttmap.py:_A2345_0a00` keys `a3`, `b7`, `bd`, `be` and
+(`mqttmap.py:_A2345_0a00` keys `a3`, `b7`, `bd`, `be`, the `aa` to `ae` port switches and
 `mqtttypes.py:DeviceHexDataField.extract_value`). Its applicable
 [MIT license and copyright notice](docs/anker-solix-api-LICENSE.txt) are retained.
 The public server key is a protocol constant, not an owner credential.
