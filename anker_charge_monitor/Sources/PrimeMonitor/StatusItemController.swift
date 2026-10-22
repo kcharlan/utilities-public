@@ -8,12 +8,13 @@ import PrimeMonitorCore
 @MainActor @Observable final class PopoverFocus { var generation = UUID() }
 struct StatusContent: View {
     let controller: MonitorController
+    var catalog = DeviceCatalogStore()
     let settings: SettingsWindowController
     let focus: PopoverFocus
     var dismiss: () -> Void = {}
     var sizeChanged: (NSSize) -> Void = { _ in }
     var body: some View {
-        PanelView(monitor: controller, openSettings: showSettings).fixedSize(horizontal: false, vertical: true)
+        PanelView(monitor: controller, catalog: catalog, openSettings: showSettings).fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: NSSize.self, of: { $0.size }, action: sizeChanged)
     }
     func showSettings() { dismiss(); settings.show() }
@@ -48,6 +49,7 @@ extension PopoverPresenting { func showSettings() {} }
 /// mouse monitor recognizes that one closing press.
 @MainActor final class StatusItemController: NSObject, @MainActor NSStatusItemExpandedInterfaceDelegate, NSWindowDelegate, PopoverPresenting {
     private let controller: MonitorController
+    let catalog: DeviceCatalogStore
     private let item: NSStatusItem
     private let panel: StatusPanel
     private let focus = PopoverFocus()
@@ -68,7 +70,7 @@ extension PopoverPresenting { func showSettings() {} }
     /// System uptime when the visible session began, on the NSEvent clock.
     private var sessionBegan: TimeInterval = 0
     private var iconPressStartedWhileOpen = false
-    init(controller: MonitorController,
+    init(controller: MonitorController, catalog: DeviceCatalogStore = DeviceCatalogStore(),
          item suppliedItem: NSStatusItem? = nil, panel suppliedPanel: StatusPanel? = nil,
          settings suppliedSettings: SettingsWindowController? = nil, notifications: NotificationCenter = .default,
          workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
@@ -86,6 +88,7 @@ extension PopoverPresenting { func showSettings() {} }
          cancelSession: @escaping (NSStatusItemExpandedInterfaceSession) -> Void = { $0.cancel() },
          activate: @escaping () -> Void = { NSApp.activate() }) {
         self.controller = controller
+        self.catalog = catalog
         let item = suppliedItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.item = item
         panel = suppliedPanel ?? StatusPanel()
@@ -102,7 +105,7 @@ extension PopoverPresenting { func showSettings() {} }
             return window.convertToScreen(button.convert(button.bounds, to: nil))
         }
         super.init()
-        let hosting = StatusContent(controller: controller, settings: settings, focus: focus, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
+        let hosting = StatusContent(controller: controller, catalog: catalog, settings: settings, focus: focus, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
         let content = StatusPanelContentController(hosting: hosting)
         content.sizeChanged = { [weak self] in self?.positionPanel() }
         panel.contentViewController = content
@@ -175,13 +178,13 @@ extension PopoverPresenting { func showSettings() {} }
         guard !panel.isVisible else { return }
         focus.generation = UUID()
         positionPanel()
-        controller.panelOpened()
+        controller.panelOpened(); catalog.panelOpened()
         panel.makeKeyAndOrderFront(nil)
     }
     private func hidePanel() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
-        controller.panelClosed()
+        controller.panelClosed(); catalog.panelClosed()
     }
     @objc private func applicationResignedActive(_ notification: Notification) { focusLeft() }
     @objc private func workspaceActivatedApplication(_ notification: Notification) {

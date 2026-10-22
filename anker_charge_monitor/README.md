@@ -74,6 +74,26 @@ and modules retain `PrimeMonitor`; the bundle identifier remains
 the display-name change. They do not promise continuity of 1Password/TCC grants.
 MQTT private identities use transient Security objects rather than disk files.
 
+Names for connected USB-C devices live in `devices.json` in the same directory.
+When it is absent, the app copies its bundled `device_catalog.json` there: the
+brand classes named by the protocol authority, with empty `vendors` and
+`devices`. Existing content is never replaced, and deleting the file restores the
+bundled names on the next check. The file is schema `1` with `brands` (decimal
+class keys), `vendors` (four hexadecimal digits) and `devices` (`VID:PID`)
+objects, either hex letter case. Names are strings of 1–64 characters after
+trimming; two spellings of one key are rejected. `source` and other top-level
+keys are kept. A label uses the device name, then the brand class, then the
+vendor, then the uppercase hexadecimal `VID:PID`.
+While the panel is open the app checks the file every second and decodes it
+when its device, inode, size or modification time changes, so editor saves apply
+without a restart. An invalid file is left untouched: the last loaded names stay
+in use, the panel reports the failing entry and naming is refused until the file
+is fixed. Saving a name rereads and validates the file immediately before
+writing, matches entries by their decoded key, removes the entry for a blank name
+and writes sorted, pretty-printed JSON by private atomic replacement. It is not a
+lock shared with editors, so don't save the file in an editor during an in-app
+naming write.
+
 Launch at login uses the native service and reports registration failures and
 approval requirements. Synthetic tests exercise its adapter contract. Confirm
 actual registration, system approval and logout/reboot behavior on the installed

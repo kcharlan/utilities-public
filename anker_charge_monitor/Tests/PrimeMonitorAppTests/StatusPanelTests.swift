@@ -152,17 +152,25 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     let rig: ControllerRig
     let directory: URL
     var currentAnchor = PanelFixture.icon
-    init(home: URL) throws {
+    /// nil when the caller supplied the catalog.
+    let catalogFile: URL?
+    init(home: URL, catalog suppliedCatalog: DeviceCatalogStore? = nil) throws {
         _ = NSApplication.shared
         rig = try ControllerRig()
         directory = rig.directory
         let controller = rig.controller
+        // An explicit temporary store, removed with the rig directory.
+        let catalog: DeviceCatalogStore
+        if let suppliedCatalog { catalogFile = nil; catalog = suppliedCatalog } else {
+            let file = rig.directory.appending(path: "Catalog café/devices.json", directoryHint: .notDirectory)
+            catalogFile = file; catalog = DeviceCatalogStore(fileURL: file, seedURL: nil, scheduler: rig.clock)
+        }
         let settings = SettingsWindowController(controller: controller, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { [weak self] _ in
             guard let self else { return }
             settingsPresentations += 1
             visibleAtSettingsPresentation = panel.isVisible
         })
-        status = StatusItemController(controller: controller,
+        status = StatusItemController(controller: controller, catalog: catalog,
  item: item, panel: panel, settings: settings, notifications: notifications, workspaceNotifications: workspaceNotifications,
             screens: { [Self.screen] }, anchor: { [weak self] in self?.currentAnchor },
             pointer: { [weak self] in self?.pointer ?? .zero },
@@ -633,6 +641,73 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         await fixture.rig.clock.advance(1)
         #expect(await fixture.rig.backend.log.filter { $0 == "request" }.count == before + 3)
         await fixture.rig.finish()
+    }
+}
+
+private func catalogText(vendor: String) -> Data {
+    Data(#"{"schema": 1, "brands": {}, "vendors": {"0a1b": "\#(vendor)"}, "devices": {}}"#.utf8)
+}
+private func path(_ operation: DeviceCatalogFileOperation) -> String {
+    switch operation {
+    case .inspect(let url), .read(let url), .create(let url), .replace(let url): url.path(percentEncoded: false)
+    }
+}
+@MainActor struct StatusPanelCatalogTests {
+    @Test func panelPresentationPairsCatalogReloadLifecycle() async throws {
+        let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
+        let file = try #require(fixture.catalogFile)
+        let catalog = fixture.status.catalog
+        #expect(catalog.fileURL == file)
+        fixture.begin()
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(1)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Vendor"])
+        fixture.end(); #expect(!fixture.panel.isVisible)
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Later Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(3)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Vendor"])
+        // Reopening refreshes immediately; a programmatic dismissal also stops the loop.
+        fixture.status.showPopover()
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Later Vendor"])
+        fixture.status.dismiss()
+        try PrivateFile.replace(file, with: catalogText(vendor: "Synthetic Closed Vendor"), temporaryPrefix: ".editor-")
+        await fixture.rig.clock.advance(3)
+        #expect(catalog.catalog.vendors == [0x0a1b: "Synthetic Later Vendor"])
+    }
+    @Test func omittedCatalogsStayFilelessThroughOpeningClosingReloadingAndNaming() async throws {
+        var events: [(store: ObjectIdentifier, operation: DeviceCatalogFileOperation)] = []
+        let token = UUID()
+        DeviceCatalogStore.fileAccessObservers[token] = { events.append(($0, $1)) }
+        defer { DeviceCatalogStore.fileAccessObservers[token] = nil }
+        let rig = try ControllerRig()
+        // AppDelegate's omitted catalog is what its default status factory passes on.
+        let delegate = AppDelegate(controller: rig.controller, acquireLease: { AppInstanceLease {} })
+        let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory, catalog: delegate.catalog)
+        let catalog = fixture.status.catalog
+        #expect(catalog === delegate.catalog && catalog.fileURL == nil && fixture.catalogFile == nil)
+        let settings = SettingsWindowController(controller: rig.controller, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
+        #expect(StatusContent(controller: rig.controller, settings: settings, focus: PopoverFocus()).catalog.fileURL == nil)
+        #expect(PanelView(monitor: rig.controller, openSettings: {}).catalog.fileURL == nil)
+        fixture.begin()
+        await fixture.rig.clock.advance(3)
+        fixture.end()
+        fixture.status.showPopover()
+        let key = DeviceKey(vendorID: 0x0a1b, productID: 0x2c3d)
+        try catalog.setName("Synthetic Desk Lamp", for: key)
+        #expect(catalog.catalog.devices == [key: "Synthetic Desk Lamp"])
+        await fixture.rig.clock.advance(2)
+        fixture.status.dismiss()
+        try catalog.setName(nil, for: key)
+        #expect(catalog.catalog == DeviceCatalog() && catalog.problem == nil)
+        #expect(!events.contains { $0.store == ObjectIdentifier(catalog) })
+        // No store touched the owner's runtime directory meanwhile.
+        let owner = StateStore().fileURL.deletingLastPathComponent().path(percentEncoded: false)
+        #expect(!events.contains { path($0.operation).hasPrefix(owner) })
+        // Positive control: the same instrumentation observes a persistent store.
+        let control = try CatalogRig()
+        control.store.load()
+        #expect(events.contains { $0.store == ObjectIdentifier(control.store) })
+        await rig.finish()
     }
 }
 

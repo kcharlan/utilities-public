@@ -5,6 +5,8 @@ import PrimeMonitorCore
 // at 579ebb7; StatusContent keeps its owned macOS27 host and measurement path.
 struct PanelView: View {
     let monitor: MonitorController
+    /// Device names for connected ports; omitted, it is memory only.
+    var catalog = DeviceCatalogStore()
     var openSettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var rows: [PortReading] { monitor.snapshot?.readings ?? [] }

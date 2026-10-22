@@ -136,7 +136,7 @@ struct DeviceNamingError: LocalizedError, Equatable {
         loopGeneration += 1
         let generation = loopGeneration
         tick = persistence.scheduler.schedule(after: Self.reloadInterval) { [weak self] in
-            guard let self, self.loopGeneration == generation else { return }
+            guard let self, self.loopGeneration == generation, let persistence = self.persistence else { return }
             self.refresh(persistence)
             self.scheduleReload(persistence)
         }

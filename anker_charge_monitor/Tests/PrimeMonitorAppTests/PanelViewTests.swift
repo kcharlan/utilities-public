@@ -62,6 +62,14 @@ let panelReadings = PortID.allCases.map {
         let row = PortRowView(reading: panelReadings[3])
         #expect(row.accessibilityText == "C4, 43.21 W, 20.000 V, 1.490 A")
     }
+    @Test func panelCarriesInjectedCatalogAndOmittedCatalogIsMemoryOnly() async throws {
+        let rig = try ControllerRig(), catalog = try CatalogRig()
+        catalog.store.load()
+        let view = PanelView(monitor: rig.controller, catalog: catalog.store, openSettings: {})
+        #expect(view.catalog === catalog.store && view.catalog.catalog.brands == [7: "Synthetic Seed Brand"])
+        #expect(PanelView(monitor: rig.controller, openSettings: {}).catalog.fileURL == nil)
+        await rig.finish()
+    }
     @Test func animationsRespectReduceMotion() {
         var changes = 0, animated = 0
         PanelMotion.perform(reduceMotion: true, animate: { _ in animated += 1 }) { changes += 1 }

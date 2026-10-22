@@ -32,7 +32,7 @@ import PrimeMonitorCore
             for state in ["live", "stale", "signed-out", "choose-charger", "error", "session-ended"] {
                 let fixture = try await Fixture.make(state: state, directory: home.appending(path: "panel-\(state)-\(palette)", directoryHint: .isDirectory))
                 let settings = SettingsWindowController(controller: fixture.monitor, login: LoginItem(service: SnapshotLogin()), activate: {}, present: { _ in })
-                let hosting = StatusContent(controller: fixture.monitor, settings: settings, focus: PopoverFocus()).makeHostingController()
+                let hosting = StatusContent(controller: fixture.monitor, catalog: fixture.catalog, settings: settings, focus: PopoverFocus()).makeHostingController()
                 let view = hosting.view
                 view.layoutSubtreeIfNeeded()
                 let size = view.fittingSize
@@ -101,6 +101,7 @@ import PrimeMonitorCore
 
 @MainActor private struct Fixture {
     let monitor: MonitorController
+    let catalog: DeviceCatalogStore
     static func make(state: String, directory: URL) async throws -> Self {
         let empty = state == "signed-out" || state == "not-set-up"
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
@@ -121,7 +122,10 @@ import PrimeMonitorCore
         if !empty && state != "choose-charger" { guard monitor.snapshot != nil else { fatalError("Synthetic snapshot not delivered") } }
         if state == "error" { await events.handler?(.network(false)) }
         if state == "session-ended" { backend.output.yield(.status(.sessionEnded)); for _ in 0..<100 { await Task.yield() } }
-        return .init(monitor: monitor)
+        // An explicit private temporary catalog; never the owner's runtime file.
+        let catalog = DeviceCatalogStore(fileURL: directory.appending(path: "devices.json", directoryHint: .notDirectory), seedURL: nil, scheduler: scheduler)
+        catalog.load()
+        return .init(monitor: monitor, catalog: catalog)
     }
 }
 private struct SnapshotProvider: CredentialProvider {
