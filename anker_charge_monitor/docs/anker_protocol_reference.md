@@ -1,7 +1,8 @@
 # A2345 read-only cloud protocol
 
 Baseline: [anker-solix-api](https://github.com/thomluther/anker-solix-api) commit
-`8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, under its retained MIT license.
+`8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, under its retained MIT license;
+detail fields (§6.2) follow commit `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`.
 References below are upstream module/symbol names under `src/anker_solix_api/`;
 the maintained Swift code defines the port's actual behavior. No private capture
 or owner activity is part of this reference.
@@ -109,3 +110,29 @@ are invented from constants, not captured or transformed owner readings. Separat
 regressions cover sign extremes, incomplete messages, checksum/prefix/length
 corruption, binary/string length forms and optional increments. See
 [fixture provenance](../Tests/AnkerCloudTests/Fixtures/README.md).
+
+### 6.2 Detail fields
+
+Fault bits, over-temperature, identity support and per-USB-C connected-device
+identity follow anker-solix-api commit `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`:
+[`mqttmap.py`, `_A2345_0a00`](https://github.com/thomluther/anker-solix-api/blob/9e72894181aef868e7b3ed0ba05bd322d54bb5d7/src/anker_solix_api/mqttmap.py#L3550)
+keys `a3`, `b7`, `bd` and `be` define the masks, value offsets, sentinels,
+identity-support meaning and brand classes. Value offsets index upstream
+`DeviceHexDataField.f_value`, the payload after its type byte; `HexFrame`
+retains that type byte. Consult the pinned map for the layout and for the
+uncertainty markers on its fault names; this reference does not restate them.
+
+Accepted wire types follow
+[`DeviceHexDataField.extract_value`](https://github.com/thomluther/anker-solix-api/blob/9e72894181aef868e7b3ed0ba05bd322d54bb5d7/src/anker_solix_api/mqtttypes.py#L394)'s
+dispatch into `BYTES` extraction, not the base-type enum: `sile`, `var` and
+`bin` reach it for all four fields, `strb` for every field except `a3`, and
+`ui` and all other types extract nothing. Identity words are unsigned; port
+readings stay signed.
+
+`PortDecoder` decodes each detail field independently. A missing, short or
+unsupported field leaves only its own values unknown, and every present detail
+payload is kept verbatim for diagnostics. Detail fields never relax the
+mandatory port-reading validation. `--live-check` prints the decoded values
+and raw payloads as owner-gate evidence. `synthetic_0a00_details_frames.txt`
+covers identity sentinels, unknown classes, support values, mask combinations
+and the type matrix, including a `sile`-encoded `a3`.

@@ -126,6 +126,8 @@ The installed executable at
 `/Applications/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor` supports
 `--live-check` (`make live-check`): with the GUI quit, it retrieves
 the configured account, prints one fresh reading and awaits cleanup before exit.
+The reading includes decoded fault bits, identity support, USB-C device
+identities and raw detail payloads, with unavailable values marked.
 Exit codes are 0 success, 2 missing account/charger, 3 timeout, 4 concurrent
 instance, and 5 startup/persistence/backend failure. This contacts the real vault
 and service; it is a separate operator acceptance check, outside `make test`.
@@ -161,7 +163,10 @@ All protocol fixtures are conspicuously synthetic. See [fixture provenance](Test
 
 Protocol port: [thomluther/anker-solix-api](https://github.com/thomluther/anker-solix-api)
 at `8a5222bebad7bb56b99b17ae5e86c2750b94ec83`, notably `mqttmap.py:_A2345_0a00`,
-`mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Its applicable
+`mqtttypes.py`, `session.py`, `mqtt.py` and `errors.py`. Fault, temperature and
+connected-device detail fields follow `9e72894181aef868e7b3ed0ba05bd322d54bb5d7`
+(`mqttmap.py:_A2345_0a00` keys `a3`, `b7`, `bd`, `be` and
+`mqtttypes.py:DeviceHexDataField.extract_value`). Its applicable
 [MIT license and copyright notice](docs/anker-solix-api-LICENSE.txt) are retained.
 The public server key is a protocol constant, not an owner credential.
 App/menu/plist/release and snapshot structure derive from `brew_version` at
