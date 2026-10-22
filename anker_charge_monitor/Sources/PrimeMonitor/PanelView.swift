@@ -232,11 +232,12 @@ struct PortDetailView: View {
                 if let failure = detail.failure(for: target) {
                     Text(failure.inlineText).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
-                DetailLines(lines: lines)
-            } else if let message = identity.message {
-                Text(message).foregroundStyle(.secondary)
+                // One grid, so identity and fault values share a column.
+                DetailLines(lines: lines + faultLines)
+            } else {
+                if let message = identity.message { Text(message).foregroundStyle(.secondary) }
+                DetailLines(lines: faultLines)
             }
-            DetailLines(lines: faultLines)
         }.font(.system(size: 11))
             .padding(.leading, PortRowView.labelWidth + PortRowView.spacing).padding(.bottom, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
