@@ -38,3 +38,27 @@ private let envelopeCharger = ChargerInfo(serial: "<SN>", model: "A2345", alias:
     let inner = try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
     #expect(inner["device_sn"] as? String == charger.serial)
 }
+
+@Test func commandEnvelopeCarriesFrameInStatusRequestShape() throws {
+    let frame = PortSwitchCommand.frame(target: .usbA, on: false, timestamp: 0x12345678)
+    let message = MQTTEnvelope.command(info: envelopeInfo, charger: envelopeCharger, frame: frame, timestamp: 0x12345678)
+    // Identical to the status-request envelope except for the base64 frame.
+    let statusRequest = String(decoding: MQTTEnvelope.statusRequest(info: envelopeInfo, charger: envelopeCharger, timestamp: 0x12345678), as: UTF8.self)
+    let expected = statusRequest.replacingOccurrences(of: Data(StatusRequest.frame(timestamp: 0x12345678)).base64EncodedString(),
+                                                      with: Data(frame).base64EncodedString())
+    #expect(String(decoding: message, as: UTF8.self) == expected)
+    #expect(expected != statusRequest)
+    #expect(MQTTEnvelope.frame(fromMessage: message) == frame)
+}
+
+@Test func commandEnvelopeEchoYieldsNoSnapshot() throws {
+    for target in PortSwitch.allCases {
+        for on in [false, true] {
+            let echo = MQTTEnvelope.command(info: envelopeInfo, charger: envelopeCharger,
+                                            frame: PortSwitchCommand.frame(target: target, on: on, timestamp: 0x12345678), timestamp: 0x12345678)
+            let frame = try HexFrame.parse(#require(MQTTEnvelope.frame(fromMessage: echo)))
+            #expect(frame.messageType == 0x0207)
+            #expect(PortDecoder.snapshot(from: frame, receivedAt: Date()) == nil)
+        }
+    }
+}

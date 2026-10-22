@@ -10,7 +10,7 @@ let panelReadings = PortID.allCases.map {
                 currentMilli: $0 == .c4 ? 1490 : ($0.rawValue.hasPrefix("c") ? 20 : 0), powerCenti: $0 == .c4 ? 4321 : 0)
 }
 @MainActor private func panelReply(_ rig: ControllerRig) async {
-    rig.backend.output.yield(.snapshot(.init(receivedAt: rig.clock.date, readings: panelReadings.reversed())))
+    rig.backend.output.snapshot(.init(receivedAt: rig.clock.date, readings: panelReadings.reversed()))
     await settle()
 }
 @Suite @MainActor struct PanelViewTests {
@@ -141,7 +141,7 @@ func supportTwoMixedDetails() -> ChargerDetails {
     ], rawFields: [:])
 }
 @MainActor func detailReply(_ rig: ControllerRig, _ details: ChargerDetails?) async {
-    rig.backend.output.yield(.snapshot(.init(receivedAt: rig.clock.date, readings: panelReadings, details: details)))
+    rig.backend.output.snapshot(.init(receivedAt: rig.clock.date, readings: panelReadings, details: details))
     await settle()
 }
 /// Lets AppKit and SwiftUI process hosted-view work. A nested run loop inside a

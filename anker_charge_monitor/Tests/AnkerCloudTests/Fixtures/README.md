@@ -40,7 +40,9 @@ point/shared secret/ciphertext are retained as cross-implementation vectors;
 they are not usable account secrets. No original development environment or
 upstream authentication cache is needed or distributed.
 
-Status-request and envelope literals use the invented timestamp `0x12345678`.
+Status-request, port-switch command (`CommandFrameTests`) and envelope literals use
+the invented timestamp `0x12345678`; the port-switch vectors were written from the
+public field layout with separately computed checksums, not from any capture.
 App, formatting and snapshot fixtures likewise contain invented inputs. Public
 fixtures do not establish installed-app authorization, real charger behavior or
 native login-item registration.

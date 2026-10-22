@@ -11,18 +11,47 @@ protocol MQTTLink: Sendable {
 
 enum MQTTConnectionError: Error { case closed, timeout, refused, subscription, invalidCertificate }
 
+/// The write and cancel operations NWMQTTLink needs from its connection, so a test
+/// fixture can hold writes beneath the real link. Completions run on the link queue.
+protocol MQTTByteConnection: AnyObject {
+    func transmit(_ data: Data, completion: @escaping @Sendable (Error?) -> Void)
+    func cancel()
+}
+
+extension NWConnection: MQTTByteConnection {
+    func transmit(_ data: Data, completion: @escaping @Sendable (Error?) -> Void) {
+        send(content: data, completion: .contentProcessed { completion($0) })
+    }
+}
+
 /// Network state is confined to queue. TLS matches mqtt.py create_client,
 /// anker-solix-api 8a5222b / PR §3.2: supplied root only, hostname verified.
+/// Every pending send is resumed exactly once: by its write completion, or with
+/// `closed` when the link finishes. Cancelling the connection does not guarantee a
+/// completion, so finishing disposes of pending sends itself and a later
+/// completion finds nothing to resume.
 final class NWMQTTLink: MQTTLink, @unchecked Sendable {
     let packets: AsyncThrowingStream<MQTTPacket, Error>
     private let output: AsyncThrowingStream<MQTTPacket, Error>.Continuation
-    private let queue = DispatchQueue(label: "PrimeMonitor.MQTT")
-    private var connection: NWConnection?
+    private let queue: DispatchQueue
+    private var connection: (any MQTTByteConnection)?
+    private var pendingSends: [UInt64: CheckedContinuation<Void, Error>] = [:]
+    private var nextSendID: UInt64 = 0
     private var opening: CheckedContinuation<Void, Error>?
     private var decoder = MQTTDecoder()
     private var closed = false
 
-    init() { (packets, output) = AsyncThrowingStream.makeStream() }
+    init(queue: DispatchQueue = DispatchQueue(label: "PrimeMonitor.MQTT")) {
+        self.queue = queue
+        (packets, output) = AsyncThrowingStream.makeStream()
+    }
+
+    /// A link already open on `connection`, whose completions run on `queue`. Tests
+    /// use it to exercise send disposal beneath the real link.
+    convenience init(queue: DispatchQueue, attached connection: any MQTTByteConnection) {
+        self.init(queue: queue)
+        queue.sync { self.connection = connection }
+    }
 
     static func evaluate(_ trust: SecTrust, host: String, root: SecCertificate) -> Bool {
         guard SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, host as CFString)) == errSecSuccess,
@@ -64,10 +93,17 @@ final class NWMQTTLink: MQTTLink, @unchecked Sendable {
     func send(_ packet: MQTTPacket) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
-                guard let connection = self.connection else { continuation.resume(throwing: MQTTConnectionError.closed); return }
-                connection.send(content: Data(packet.encoded()), completion: .contentProcessed { error in
+                guard !self.closed, let connection = self.connection else {
+                    continuation.resume(throwing: MQTTConnectionError.closed); return
+                }
+                let id = self.nextSendID
+                self.nextSendID += 1
+                self.pendingSends[id] = continuation
+                connection.transmit(Data(packet.encoded())) { error in
+                    // Inert after finish: close already resumed this send.
+                    guard let continuation = self.pendingSends.removeValue(forKey: id) else { return }
                     if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-                })
+                }
             }
         }
     }
@@ -87,6 +123,10 @@ final class NWMQTTLink: MQTTLink, @unchecked Sendable {
         opening?.resume(throwing: error); opening = nil
         output.finish(throwing: error)
         connection?.cancel(); connection = nil
+        // Cancelling also discards queued writes; their sends end here, once.
+        let pending = pendingSends
+        pendingSends = [:]
+        for continuation in pending.values { continuation.resume(throwing: MQTTConnectionError.closed) }
     }
     func close() async {
         await withCheckedContinuation { continuation in

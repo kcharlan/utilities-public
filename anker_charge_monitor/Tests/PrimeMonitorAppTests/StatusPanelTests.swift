@@ -868,7 +868,7 @@ private func path(_ operation: DeviceCatalogFileOperation) -> String {
         let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
         await fixture.rig.start()
         let reading = PortReading(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)
-        fixture.rig.backend.output.yield(.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading])))
+        fixture.rig.backend.output.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading]))
         await settle()
         let reason: String
         switch state {
@@ -918,7 +918,7 @@ private func path(_ operation: DeviceCatalogFileOperation) -> String {
         let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
         await fixture.rig.start()
         let reading = PortReading(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)
-        fixture.rig.backend.output.yield(.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading])))
+        fixture.rig.backend.output.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading]))
         await settle()
         let button = try #require(fixture.item.button)
         // One image holds the symbol and reading, so the button has no title
@@ -951,7 +951,7 @@ private func path(_ operation: DeviceCatalogFileOperation) -> String {
         let fixture = try PanelFixture(home: FileManager.default.temporaryDirectory)
         await fixture.rig.start()
         let reading = PortReading(port: .c4, active: true, voltageMilli: 20000, currentMilli: 1551, powerCenti: 4321)
-        fixture.rig.backend.output.yield(.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading])))
+        fixture.rig.backend.output.snapshot(.init(receivedAt: fixture.rig.clock.date, readings: [reading]))
         await settle()
         let button = try #require(fixture.item.button)
         for size in MenuBarTextSize.allCases.reversed() {

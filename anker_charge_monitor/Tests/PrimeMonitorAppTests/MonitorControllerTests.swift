@@ -35,6 +35,19 @@ actor AppBackend: ChargerBackend {
             let current = lock.withLock { Array(channels.values) }
             for channel in current { channel.yield(event) }
         }
+        // Synthetic receive order, as AnkerCloudBackend keeps it: a new epoch per
+        // connect and one sequence step per reply, monotonic across connections.
+        private var epoch: UInt64 = 0
+        private var sequence: UInt64 = 0
+        func connected() { lock.withLock { epoch += 1 } }
+        /// The receipt fence a command written now would carry.
+        var fence: ReceiveMark { lock.withLock { ReceiveMark(connection: ConnectionEpoch(epoch), sequence: sequence) } }
+        /// Delivers a reply at the next receive position and returns that position.
+        @discardableResult func snapshot(_ value: ChargerSnapshot) -> ReceiveMark {
+            let mark = lock.withLock { sequence += 1; return ReceiveMark(connection: ConnectionEpoch(epoch), sequence: sequence) }
+            yield(.snapshot(value, mark))
+            return mark
+        }
     }
     nonisolated let output = Output()
     nonisolated var events: AsyncStream<BackendEvent> { output.subscribe() }
@@ -54,10 +67,18 @@ actor AppBackend: ChargerBackend {
     func restore(_ session: AccountSession, credentials: AnkerCredentials) async { log.append("restore") }
     func listChargers() async throws -> [ChargerInfo] { log.append("list"); return [appCharger] }
     func connect(to charger: ChargerInfo) async throws {
-        connectedChargers.append(charger); log.append("connect"); output.yield(.status(.connected))
+        connectedChargers.append(charger); log.append("connect"); output.connected(); output.yield(.status(.connected))
         if holdConnection { holdConnection = false; await withCheckedContinuation { connectionWait = $0 } }
     }
     func requestSnapshot() async throws { log.append("request") }
+    /// Synthetic switch commands are recorded, never sent anywhere.
+    var switchCommands: [(target: PortSwitch, on: Bool)] = []
+    func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
+        switchCommands.append((target, on)); log.append("switch")
+        return PortCommandReceipt(fence: output.fence)
+    }
+    func commandFence() async throws -> PortCommandReceipt { log.append("fence"); return PortCommandReceipt(fence: output.fence) }
+    func abortCommands() async { log.append("abort") }
     func disconnect() async {
         log.append("disconnect")
         if holdDisconnect { holdDisconnect = false; await withCheckedContinuation { disconnectWait = $0 } }
@@ -105,7 +126,7 @@ actor AppBackend: ChargerBackend {
     }
     func start() async { controller.start(); await events.send(.network(true)); await settle() }
     func finish() async { await controller.stop(); try? FileManager.default.removeItem(at: directory) }
-    func reply() async { backend.output.yield(.snapshot(.init(receivedAt: clock.date, readings: []))); await settle() }
+    func reply() async { backend.output.snapshot(.init(receivedAt: clock.date, readings: [])); await settle() }
 }
 
 @Suite @MainActor struct MonitorControllerTests {
@@ -222,7 +243,7 @@ actor AppBackend: ChargerBackend {
         await settle(); #expect(!stopped); #expect(rig.events.stopped)
         await rig.backend.releaseDisconnection(); await stopping.value; #expect(stopped)
         let previous = rig.controller.snapshot
-        rig.backend.output.yield(.snapshot(.init(receivedAt: .distantFuture, readings: []))); await settle()
+        rig.backend.output.snapshot(.init(receivedAt: .distantFuture, readings: [])); await settle()
         #expect(rig.controller.snapshot == previous)
         #expect(rig.clock.entries.allSatisfy { $0.cancelled })
         await rig.finish()

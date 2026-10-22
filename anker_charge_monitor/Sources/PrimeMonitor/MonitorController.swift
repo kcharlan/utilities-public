@@ -196,7 +196,7 @@ import PrimeMonitorCore
     private func receive(_ event: BackendEvent) {
         guard running, active != nil else { return }
         switch event {
-        case .snapshot(let value):
+        case .snapshot(let value, _):
             guard allowed, wantsConnection else { return }
             snapshot = value; tracker.replyReceived(at: now()); refreshing = false; refreshDeadline = nil
         case .alive: break // An echo or heartbeat never satisfies a status request.

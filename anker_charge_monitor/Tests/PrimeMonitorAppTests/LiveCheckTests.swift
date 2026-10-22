@@ -141,7 +141,7 @@ import AnkerCloud
         var bytes: [UInt8] = []; var position = row.startIndex
         while position < row.endIndex { let next = row.index(position, offsetBy: 2); bytes.append(try #require(UInt8(row[position..<next], radix: 16))); position = next }
         let snapshot = try #require(PortDecoder.snapshot(from: HexFrame.parse(bytes), receivedAt: rig.clock.date))
-        rig.backend.output.yield(.snapshot(snapshot))
+        rig.backend.output.snapshot(snapshot)
         #expect(await task.value == 0)
         await rig.finish()
         return (output, snapshot)

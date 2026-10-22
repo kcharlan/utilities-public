@@ -228,7 +228,20 @@ private actor SnapshotBackend: ChargerBackend {
             PortReading(port: port, active: port == .c4, voltageMilli: port == .c4 ? 20000 : 0,
                         currentMilli: port == .c4 ? 1490 : (port.rawValue.hasPrefix("c") ? 20 : 0), powerCenti: port == .c4 ? 4321 : 0)
         }
-        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings, details: details)))
+        replies += 1
+        output.yield(.snapshot(.init(receivedAt: receivedAt, readings: readings, details: details),
+                               ReceiveMark(connection: ConnectionEpoch(1), sequence: replies)))
     }
+    private var replies: UInt64 = 0
+    /// Recorded only; the snapshot renderer never sends a command.
+    private(set) var switchCommands: [(target: PortSwitch, on: Bool)] = []
+    func setPortSwitch(_ target: PortSwitch, on: Bool) async throws -> PortCommandReceipt {
+        switchCommands.append((target, on))
+        return PortCommandReceipt(fence: ReceiveMark(connection: ConnectionEpoch(1), sequence: replies))
+    }
+    func commandFence() async throws -> PortCommandReceipt {
+        PortCommandReceipt(fence: ReceiveMark(connection: ConnectionEpoch(1), sequence: replies))
+    }
+    func abortCommands() async {}
     func disconnect() async {}
 }
