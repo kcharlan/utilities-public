@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-21: Check dispatch and responder paths when reviewing plans
+
+The device-details plan review excluded upstream's `sile` extraction branch and
+missed cancellation overrides outside the window shortcut handler. Check
+`DeviceHexDataField.extract_value` at the pinned protocol revision and search
+`cancelOperation` across the maintained app before specifying these changes.
+Keep persistent catalog paths explicit in GUI composition; test defaults must
+remain fileless.
+When specifying Core value types for other package targets, declare public
+initializers: Swift's synthesized memberwise construction stays internal. Use
+ordinary Core imports in decoder and naming regressions to check that boundary.
+
 ## 2026-10-20: Draw the status item as one image; tints and titles misrender
 
 The 0.2.0 status item set a template symbol and an attributed title on the
