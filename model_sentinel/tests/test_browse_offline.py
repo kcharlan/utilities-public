@@ -830,7 +830,7 @@ def test_model_dossier_route_wires_changelog_and_sparklines_without_a_dossier_ta
 
 def test_hosts_exact_rationals_preserve_tiny_negative_zero_ties_and_decimal_limits() -> None:
     source = _read_asset("app.js")
-    helpers = source[source.index("  function exactRational(") : source.index("  function HostListTitle(")]
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
     # Wrong direction, Number coercion, tag-based ranks, or zero division
     # would each change these independently hand-derived results.
     probe = subprocess.run(["node", "-e", helpers + r'''
@@ -845,7 +845,7 @@ const exact = bestEndpoints([high, low, tied, endpoint("missing", "m", null)], "
 assert.equal(exact.winner.host, "alpha");
 assert.equal(exact.groups.get("beta").rank, 2);
 assert.equal(exact.groups.get("beta").denominator, 2);
-assert.equal(winnerDifference(exact.groups.get("beta")), "9.99999e-16% above the best");
+assert.deepEqual(gapText(exact.groups.get("beta").value, exact.winner.value, "price:p"), {text:"+<1%", title:"Approximate magnitude: +9.99999e-16%"});
 const threshold = decimalRational("1.000000000000000015");
 assert.equal(compareRational(rankValue(low, "price:p"), threshold), -1);
 assert.equal(compareRational(rankValue(high, "price:p"), threshold), 1);
@@ -854,12 +854,75 @@ assert.equal(compareRational(tiny, decimalRational("0")), 1);
 assert.equal(rationalMagnitude(tiny), "1e-9994");
 assert.equal(compareRational(exactRational({numerator_hex: "-1", denominator_hex: "1"}), tiny), -1);
 const zero = bestEndpoints([endpoint("zero", "z", ["0", "1"]), endpoint("one", "o", ["1", "1"])], "price:p");
-assert.equal(winnerDifference(zero.groups.get("one")), "—");
+assert.equal(gapText(zero.groups.get("one").value, zero.winner.value, "price:p").text, "");
+assert.equal(gapText(zero.winner.value, zero.winner.value, "price:p").text, "best");
+assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"-3.00 pp", title:"Approximate magnitude: -3 pp"});
+for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","-1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","-<0.01 pp"],["99.995","100","uptime:1d","-0.01 pp"],["0","1","context","-100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
+for (const values of [["-1","0","1"],["1e-9994","2e-9994","1e9994"],["1.00000000000000001","1.00000000000000002"],["0","0"],["-1e9994","0","1e9994"]]) {
+  const rational = values.map(decimalRational);
+  const points = spreadPositions(rational,"price:p");
+  assert.equal(points.length,values.length);
+  assert.ok(points.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+}
+assert.deepEqual(spreadPositions(["-1","0","1"].map(decimalRational),"price:p"),[0,0.5,1]);
+assert.deepEqual(spreadPositions(["100","50","0"].map(decimalRational),"context"),[0,0.5,1]);
 const ties = bestEndpoints([endpoint("a", "a", ["1", "1"]), endpoint("b", "b", ["1", "1"]), endpoint("c", "c", ["2", "1"])], "price:p");
 assert.deepEqual(ties.ranked.map(group => group.rank), [1, 1, 3]);
 assert.equal(rankValue({...low, context_length: Infinity}, "context"), null);
 assert.equal(rankValue({...low, context_length: true}, "context"), null);
 assert.equal(decimalRational("."), null);
+'''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_sort_stack_cycle_missing_stability_and_exact_values() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
+    # Missing helpers deliberately fail as an assertion, before slicing their body.
+    assert "  function clickSort(" in source, "Hosts sort cycle is not implemented"
+    helpers += source[source.index("  function clickSort(") : source.index("  function HostsTable(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+let list = clickSort([], "model");
+assert.deepEqual(list, ["a:model"]);
+list = clickSort(list, "best");
+assert.deepEqual(list, ["a:model", "a:best"]);
+assert.deepEqual(clickSort(list, "model"), ["d:model", "a:best"]);
+assert.deepEqual(clickSort(["d:model", "a:best"], "model"), ["a:best"]);
+const rows = [{id:"missing", n:null}, {id:"two",n:2}, {id:"one-b",n:1}, {id:"one-a",n:1}];
+const columns = [{key:"n", value:r=>r.n}, {key:"id",value:r=>r.id}];
+const ids = (stack, fallback=()=>0) => stackSort(rows, stack, columns, fallback).map(r=>r.id);
+assert.deepEqual(ids(["a:n"]), ["one-b","one-a","two","missing"]);
+assert.deepEqual(ids(["d:n"]), ["two","one-b","one-a","missing"]);
+assert.deepEqual(ids(["a:n","a:id"]), ["one-a","one-b","two","missing"]);
+assert.deepEqual(ids(["a:n"],(a,b)=>a.id.localeCompare(b.id)), ["one-a","one-b","two","missing"]);
+assert.deepEqual(ids(["a:hidden"]), ["missing","two","one-b","one-a"]);
+const exact = [{n:decimalRational("1.00000000000000002")}, {n:decimalRational("1.00000000000000001")}, {n:null}];
+assert.equal(Number("1.00000000000000001"),Number("1.00000000000000002"));
+assert.equal(stackSort(exact,["a:n"],columns,()=>0)[0],exact[1]);
+assert.equal(stackSort(exact,["d:n"],columns,()=>0)[0],exact[0]);
+assert.deepEqual(normalizeSort(["a:model","d:model","bad","a:host:Synthetic Fake","a:other"],[{key:"model"},{key:"host:Synthetic Fake"}]),["a:model","a:host:Synthetic Fake"]);
+const rational = values => ({ranked:values.map(value=>({value:decimalRational(value)}))});
+assert.equal(compareRational(spreadSortValue(rational(["0.00000000000000001","2"]),"price:p"),decimalRational("200000000000000000")),0);
+assert.equal(spreadSortValue(rational(["0","2"]),"price:p"),null);
+assert.equal(spreadSortValue(rational(["-1","2"]),"price:p"),null);
+assert.equal(spreadSortValue(rational(["1"]),"context"),null);
+assert.equal(compareRational(spreadSortValue(rational(["100","60"]),"context"),decimalRational("40")),0);
+assert.deepEqual(precisionSortValue({precision_bits:8,quantization:"fp8"}),[8,"fp8"]);
+assert.equal(precisionSortValue({precision_bits:null,quantization:"unknown"}),null);
+const data = {hosts:[{name:"Synthetic Alpha"},{name:"Synthetic Beta"}],price_columns:[{path:"p",label:"Input",unit_label:"USD"}]};
+const ep = {precision_bits:16,quantization:"fp16",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99,"5m":0},status:-2,prices:{p:{exact:{numerator_hex:"1",denominator_hex:"2"}}}};
+const row = {list:{display_id:"Synthetic Model"},best:{winner:{value:decimalRational("0.5")},ranked:[{},{}],groups:new Map([["Synthetic Alpha",{endpoint:ep,value:decimalRational("0.5"),rank:1}]])}};
+let main = hostsColumns(data,["Synthetic Alpha"],"price:p",{upwin:"5m"});
+assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Alpha","rank","precision","context","uptime","status"]);
+assert.equal(main.find(c=>c.key==="uptime").value(row),0);
+assert.equal(main.find(c=>c.key==="status").value(row),2);
+assert.deepEqual(hostsColumns(data,[],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","hosts"]);
+assert.deepEqual(hostsColumns(data,["Synthetic Beta","Synthetic Alpha"],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Beta","host:Synthetic Alpha","hosts"]);
+const drawer = drawerColumns(data,{upwin:"5m"}), item={endpoint:ep};
+assert.equal(drawer.find(c=>c.key==="uptime").value(item),0);
+assert.equal(drawer.find(c=>c.key==="status").value(item),2);
+assert.equal(compareRational(drawer.find(c=>c.key==="price:p").value(item),decimalRational("0.5")),0);
 '''], capture_output=True, text=True, check=False)
     assert probe.returncode == 0, probe.stdout + probe.stderr
 

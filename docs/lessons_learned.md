@@ -1,5 +1,30 @@
 # Lessons learned
 
+## 2026-10-22: Treat unselected combobox navigation and focus departure explicitly
+
+A suggestion index of -1 means no active option; it is not an existing index
+to wrap. Handle the first ArrowUp as selecting the last option and the first
+ArrowDown as selecting the first, then wrap ordinary navigation. Close a
+suggestion list when keyboard focus leaves the search control as well as on
+Escape and outside pointer interaction. Keep pointer selection from causing a
+premature blur, and retain the editor's pending-draft cancellation when a
+suggestion is chosen. Test initial upward navigation, keyboard departure into
+another menu, and both Enter and pointer selection before debounce.
+
+## 2026-10-22: Keep independent history visible when result filters exclude every row
+
+Model Sentinel's one-host history was nested inside its qualifying profile
+results, so an empty condition result also hid the host's history and its date
+controls. Render an independently keyed history resource from the selected host,
+outside the filtered-results branch. Regress both its ordinary view and the
+same host with no qualifying rows; result admission must not control access to
+unfiltered history.
+
+When a capture selector adds an explicit unavailable capture to an API's ordered
+options, retain the timestamp ordering and use IDs only to break ties. Import
+identity need not follow observation time; test with those orders deliberately
+different.
+
 ## 2026-10-22: Give debounced condition editors an explicit commit lifecycle
 
 Model Sentinel's price editor captured an old column in its timer. Blurring
@@ -1219,3 +1244,40 @@ reserve locale grouping for integer token capacities. Keep browser coverage
 for high precision alongside real zero and missing samples in both themes
 and at narrow widths. Validate these cases with isolated synthetic runtime
 data rather than reading real provider captures.
+
+## 2026-10-22: Keep compact comparison descriptions inside their scroll container
+
+Model Sentinel's absolutely positioned accessible spread descriptions escaped
+an unpositioned table scroller and enlarged the document on narrow screens.
+Anchor them to the spread component even when they are visually clipped, and
+exercise document width with both no compared hosts and the full selection.
+Compact rows also need a larger isolated fixture to exercise real vertical
+scrolling and pagination; endpoint count alone does not create additional list
+rows. Retain a focusable results heading when filters remove every row so a
+copied endpoint drawer can still close to a useful focus target.
+
+A derived pagination fallback is not a state reset: showing 50 rows when the
+comparison key differs still leaves the previous key's expanded limit stored.
+Returning with Back can revive all 112 rows. Replace the retained paging key
+and limit when comparison inputs change, and regress expand, change ranking,
+then Back to the original ranking; both transitions must show only 50 rows.
+
+## 2026-10-22: Scope browser URL normalization checks to the fragment
+
+A browser assertion searching the complete URL for an invalid numeric value
+can match the synthetic server's randomly assigned port instead of URL state.
+Model Sentinel's invalid uptime value `101` matched port `51019` even after
+the hash was correctly normalized. Anchor invalid-state patterns after `#`
+so they still catch every malformed saved value without depending on the
+ephemeral origin.
+
+## 2026-10-22: Keep saved interaction state valid across empty results and history
+
+Model Sentinel's active sort survived filtering while its summary and Clear sort
+disappeared with the results table. Keep controls for retained state in the
+persistent toolbar. A connected drawer origin can still belong to another list
+after Back navigation; verify its list identity before restoring focus, then
+fall back to the closing list's row or the results heading. Search option
+navigation must ignore an empty suggestion list, and its active descendant
+must name an existing option. Regress these transitions in the real browser,
+including recovery from empty suggestions to a selectable result.
