@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-23: Deliberate presets must replace uncommitted editor text
+
+When a numeric preset equals the already committed value, cancelling a pending
+draft and writing that same value does not trigger the editor's value-change
+effect. Its field can keep showing the abandoned draft even though the URL and
+filter still use the preset. Apply deliberate presets through the existing
+`replaceDraft` lifecycle only when reselecting the committed value. Other
+presets cancel the draft and follow the URL update; an optimistic field update
+can race immediate Back/Forward ahead of the hash render. Regress reselecting
+the current price and capacity preset while a different exact draft is pending,
+then wait beyond debounce.
+Focus traps also need `:disabled` checks so descendants of a disabled fieldset
+cannot become their first or last focus target when telemetry is paused.
+
 ## 2026-10-23: Separate page stickiness from horizontal comparison scrolling
 
 When a table uses page scrolling, an overflowing horizontal wrapper becomes

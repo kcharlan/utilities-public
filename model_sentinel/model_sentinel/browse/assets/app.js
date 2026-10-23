@@ -464,6 +464,21 @@
       : {left, width, maxHeight, top: anchor.bottom};
   }
 
+  // Shared with the non-modal endpoint drawer: Escape belongs to open Hosts overlays.
+  let hostsOpenOverlayCount = 0;
+  function useHostsOverlay(active) {
+    useLayoutEffect(() => {
+      if (!active) return;
+      hostsOpenOverlayCount += 1;
+      return () => { hostsOpenOverlayCount -= 1; };
+    }, [active]);
+  }
+  function conditionPlacement(anchor, viewport) {
+    const width = Math.min(320, viewport.width - 16);
+    return {width, left: Math.max(8, Math.min(anchor.left, viewport.width - width - 8)), top: anchor.bottom + 6,
+      maxHeight: Math.max(0, Math.min(460, viewport.height - 140, viewport.height - anchor.bottom - 14))};
+  }
+
   function Portal({children}) {
     const host = useMemo(() => {
       const element = document.createElement("div");
@@ -512,7 +527,7 @@
           setPlacement(null);
           return;
         }
-        setPlacement(typeaheadPlacement(bounds, viewportBounds));
+        setPlacement(className === "condition-overlay" ? conditionPlacement(bounds, viewportBounds) : typeaheadPlacement(bounds, viewportBounds));
       };
       const schedule = () => {
         if (frame !== null) return;
@@ -530,7 +545,7 @@
         window.removeEventListener("resize", schedule);
         window.removeEventListener("scroll", schedule, true);
       };
-    }, [anchorRef, open]);
+    }, [anchorRef, open, className]);
     if (!open) return null;
     return html`<${Portal}>${placement ? html`<div class=${className} style=${placement}>${children}</div>` : null}</${Portal}>`;
   }
@@ -1231,6 +1246,7 @@
     const clean = {};
     const list = (key, allowed) => clean[key] = [...new Set(state[key] || [])].filter(value => allowed.includes(value));
     list("xhosts", data.hosts.map(host => host.name));
+    clean.xmode = state.xmode === "only" ? "only" : "";
     list("quant", data.vocab.quantizations);
     list("params", data.vocab.parameters);
     list("ntools", data.vocab.native_tools);
@@ -1250,7 +1266,7 @@
     const query = state.hq.toLowerCase(), split = state.plimit.lastIndexOf(":");
     const pricePath = state.plimit.slice(0, split), limit = split > 0 ? decimalRational(state.plimit.slice(split + 1)) : null;
     const tests = {
-      hosts: state.xhosts.length && (endpoint => !state.xhosts.includes(endpoint.host)),
+      hosts: state.xhosts.length && (endpoint => state.xmode === "only" ? state.xhosts.includes(endpoint.host) : !state.xhosts.includes(endpoint.host)),
       status: state.healthy === "1" && (endpoint => endpoint.status === 0),
       precision: state.quantset === "1" && (endpoint => state.quant.includes(endpoint.quantization)),
       uptime: state.upmin !== "" && data.telemetry === "available" && (endpoint => endpoint.uptime[state.upwin] == null ? state.upmiss === "1" : endpoint.uptime[state.upwin] >= Number(state.upmin)),
@@ -1268,7 +1284,7 @@
     const reasons = conditions.filter(condition => !condition.test(endpoint)).map(condition => condition.name);
     return {pass: reasons.length === 0, reasons};
   }
-  function ConditionText({label, value, valid, commit, presets = [], onPreset, editorRef, inputProps = {}, onKeyDown, onDraft}) {
+  function ConditionText({label, value, valid, commit, editorRef, inputProps = {}, onKeyDown, onDraft, caption, suffix}) {
     const [draft, setDraft] = useState(value);
     const timer = useRef(null), cancelled = useRef(false), deferBlur = useRef(false);
     const latest = useRef(null);
@@ -1300,30 +1316,55 @@
       return clearPending;
     }, [draft, value]);
     useEffect(() => cancel, []);
-    return html`<label>${label}<input type="text" ...${inputProps} aria-label=${label} value=${draft} onInput=${event => { cancelled.current = false; deferBlur.current = false; setDraft(event.currentTarget.value); onDraft?.(event.currentTarget.value); }} aria-invalid=${draft !== "" && !valid(draft) ? "true" : undefined} onKeyDown=${event => { if (onKeyDown?.(event) === true || event.defaultPrevented) return; if (event.key === "Escape" || event.key === "Enter") flush(); }} onBlur=${() => { if (deferBlur.current) deferBlur.current = false; else flush(); }} />${presets.length ? html`<span class="condition-presets">${presets.map(preset => html`<button type="button" key=${preset} onPointerDown=${() => { deferBlur.current = true; }} onClick=${() => { cancel(); onPreset(preset); }}>${preset}</button>`)}</span>` : null}</label>`;
+    return html`<label class="condition-custom">${caption || label}<span class="condition-custom-field"><input type="text" ...${inputProps} aria-label=${label} value=${draft} onInput=${event => { cancelled.current = false; deferBlur.current = false; setDraft(event.currentTarget.value); onDraft?.(event.currentTarget.value); }} aria-invalid=${draft !== "" && !valid(draft) ? "true" : undefined} onKeyDown=${event => { if (onKeyDown?.(event) === true || event.defaultPrevented) return; if (event.key === "Escape" || event.key === "Enter") flush(); }} onBlur=${() => { if (deferBlur.current) deferBlur.current = false; else flush(); }} />${suffix ? html`<span>${suffix}</span>` : null}</span></label>`;
   }
   function ThresholdMenu({id, name, data, state, write, replaceState, close, editorRef, removal}) {
     const panel = useRef(null), ownEditor = useRef(null);
     const textEditor = editorRef || ownEditor;
     const finish = () => { textEditor.current?.flush(); close(); };
-    useFocusTrap(panel, true, finish, {inert: false});
+    const paused = id === "uptime" && data.telemetry !== "available";
+    const conditions = hostConditions(data, state);
     const condition = HOST_CONDITIONS.find(condition => condition.id === id);
-    const chips = (key, values, label = value => value) => {
-      const active = key === "quant" ? state.quantset === "1" : key === "tiers" ? state.tierset === "1" : true;
-      const other = hostConditions(data, state).filter(condition => condition.id !== id);
-      const matches = (endpoint, value) => key === "xhosts" ? endpoint.host === value : key === "quant" ? endpoint.quantization === value : key === "tiers" ? JSON.stringify(endpoint.service_tier) === value : endpoint[key === "params" ? "parameters" : "native_tools"].includes(data.vocab[key === "params" ? "parameters" : "native_tools"].indexOf(value));
-      const options = values.map(value => ({value, label: label(value), count: data.endpoints.filter(endpoint => evaluateEndpoint(endpoint, other).pass && matches(endpoint, value)).length,
-        group: key === "quant" ? ((data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits ?? null) === null ? "Width not published" : data.endpoints.find(endpoint => endpoint.quantization === value).precision_bits + "-bit") : null}));
-      if (key === "quant") options.sort((a,b) => (data.endpoints.find(endpoint => endpoint.quantization === b.value)?.precision_bits ?? -1) - (data.endpoints.find(endpoint => endpoint.quantization === a.value)?.precision_bits ?? -1) || a.label.localeCompare(b.label));
-      return html`<${OptionList} options=${options} selected=${active ? state[key] : values} onToggle=${value => { const selected = active ? state[key] : values; write({[key]: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value], ...(key === "quant" ? {quantset: "1"} : key === "tiers" ? {tierset: "1"} : {})}); }} />`;
+    const configured = conditionConfigured(condition, state, conditions);
+    const initialFocus = paused ? (configured ? "footer button" : "h3") : ["uptime", "context", "output", "price"].includes(id) ? 'input[type="text"]' : id === "status" ? 'input[type="checkbox"]' : 'input[type="search"]';
+    useFocusTrap(panel, true, finish, {inert: false, initialFocus});
+    const other = conditions.filter(condition => condition.id !== id);
+    const matchingCount = test => data.endpoints.filter(endpoint => evaluateEndpoint(endpoint, other).pass && test(endpoint)).length;
+    const listOptions = (key, values, label = value => value) => values.map(value => ({value, label: label(value), count: matchingCount(endpoint => key === "xhosts" ? endpoint.host === value : key === "quant" ? endpoint.quantization === value : JSON.stringify(endpoint.service_tier) === value),
+      group: key === "quant" ? ((data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits ?? null) === null ? "Width not published" : data.endpoints.find(endpoint => endpoint.quantization === value).precision_bits + "-bit") : null}));
+    const listKey = id === "precision" ? "quant" : id === "tier" ? "tiers" : "xhosts";
+    let options = id === "precision" ? listOptions("quant", data.vocab.quantizations) : id === "tier" ? listOptions("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : id === "hosts" ? listOptions("xhosts", data.hosts.map(host => host.name)) : [];
+    if (id === "precision") options.sort((a,b) => (data.endpoints.find(endpoint => endpoint.quantization === b.value)?.precision_bits ?? -1) - (data.endpoints.find(endpoint => endpoint.quantization === a.value)?.precision_bits ?? -1) || a.label.localeCompare(b.label));
+    const listActive = id === "precision" ? state.quantset === "1" : id === "tier" ? state.tierset === "1" : true;
+    let selected = listActive ? state[listKey] : options.map(option => option.value);
+    const toggle = value => {
+      if (id === "supports") {
+        const [key, option] = JSON.parse(value);
+        write(key === "caching" ? {caching: state.caching === "1" ? "" : "1"} : {[key]: state[key].includes(option) ? state[key].filter(item => item !== option) : [...state[key], option]});
+      } else write({[listKey]: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value], ...(id === "precision" ? {quantset: "1"} : id === "tier" ? {tierset: "1"} : {})});
     };
+    if (id === "supports") {
+      options = [["params", "parameters", "Request parameters"], ["ntools", "native_tools", "Native tools"]].flatMap(([key, field, group]) => data.vocab[field].map((value,index) => ({value: JSON.stringify([key,value]), label: value, group, count: matchingCount(endpoint => endpoint[field].includes(index))})));
+      options.push({value: JSON.stringify(["caching", "implicit caching"]), label: "implicit caching", group: "Caching", count: matchingCount(endpoint => endpoint.implicit_caching)});
+      selected = [...state.params.map(value => JSON.stringify(["params",value])), ...state.ntools.map(value => JSON.stringify(["ntools",value])), ...(state.caching === "1" ? [JSON.stringify(["caching", "implicit caching"])] : [])];
+    }
     const remove = () => { textEditor.current?.cancel(); write(Object.fromEntries(condition.keys.map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
     const priceSplit = state.plimit.lastIndexOf(":"), pricePath = priceSplit > 0 ? state.plimit.slice(0, priceSplit) : null;
     const [column, setColumn] = useState(pricePath || data.price_columns[0]?.path);
     // Active URL targets own the selection, including Back/Forward restores.
     // With no ceiling the column stays a local draft, even after clearing one.
     useEffect(() => { if (pricePath) setColumn(pricePath); }, [pricePath]);
-    const applyPreset = value => write({[id === "uptime" ? "upmin" : id === "context" ? "ctxmin" : "outmin"]: value});
+    const applyPreset = value => {
+      const key = id === "uptime" ? "upmin" : id === "context" ? "ctxmin" : id === "output" ? "outmin" : "plimit";
+      const next = id === "uptime" && state.upmin === value ? "" : value;
+      const committed = id === "price" ? `${column}:${next}` : next;
+      // A same-value preset needs explicit draft replacement. New values must
+      // follow committed URL state so immediate Back/Forward cannot race an
+      // optimistic field update ahead of the corresponding hash render.
+      if (committed === state[key]) textEditor.current?.replaceDraft(next);
+      else textEditor.current?.cancel();
+      write({[key]: committed});
+    };
     const choosePriceColumn = event => {
       const next = event.currentTarget.value;
       setColumn(next);
@@ -1340,23 +1381,33 @@
       supports: endpoint => !endpoint.parameters.length && !endpoint.native_tools.length
     };
     const missing = data.endpoints.filter(missingFields[id] || (() => false)).length;
-    return html`<section class="condition-popover" role="dialog" aria-label=${name} ref=${panel}><header><h3>${name}</h3><button type="button" onClick=${finish}>Close</button></header>${removal != null ? html`<p>${name}: removes ${removal} endpoints</p>` : null}<p>${missing} endpoints with missing values${id === "precision" ? " or unrecognized precision" : ""}.</p>${id === "hosts" ? html`<p>Checked hosts are left out of comparisons.</p>${chips("xhosts", data.hosts.map(host => host.name))}` : id === "status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal only (code 0)</label>` : id === "precision" ? html`<div class="condition-presets">${["Any", "16-bit or better", "8-bit or better"].map((label, index) => html`<button type="button" key=${label} onClick=${() => !index ? write({quant: [], quantset: ""}) : write({quant: data.vocab.quantizations.filter(quant => !index || data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits == null ? !index || state.quantset !== "1" || state.quant.includes(quant) : data.endpoints.find(endpoint => endpoint.quantization === quant).precision_bits >= (index === 1 ? 16 : 8)), quantset: "1"})}>${label}</button>`)}</div>${chips("quant", data.vocab.quantizations)}` : id === "uptime" ? html`<${UptimeUnavailable} data=${data} /><fieldset disabled=${data.telemetry !== "available"}><label>Uptime window<select aria-label="Uptime window" value=${state.upwin} onChange=${event => write({upwin: event.currentTarget.value})}>${["1d", "30m", "5m"].map(value => html`<option value=${value}>${value}</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Minimum uptime percent" value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin: value})} presets=${["99", "99.5", "99.9", "99.99"]} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Include missing uptime</label></fieldset>` : id === "context" || id === "output" ? html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label=${id === "context" ? "Minimum context length" : "Minimum max output"} value=${state[id === "context" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[id === "context" ? "ctxmin" : "outmin"]: value})} presets=${id === "output" ? ["8K", "32K", "64K", "128K"] : ["32K", "128K", "200K", "1M"]} />` : id === "supports" ? html`<h4>Request parameters</h4>${chips("params", data.vocab.parameters)}<h4>Native tools</h4>${chips("ntools", data.vocab.native_tools)}<label><input type="checkbox" checked=${state.caching === "1"} onChange=${event => write({caching: event.currentTarget.checked ? "1" : ""})} />Implicit caching</label>` : id === "tier" ? chips("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : id === "price" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onPointerDown=${() => textEditor.current?.deferBlur()} onChange=${choosePriceColumn}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Maximum price" value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit: value ? `${column}:${value}` : ""})} />` : html`<p>No price columns in this capture.</p>` : html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Search models" value=${state.hq} valid=${() => true} commit=${value => replaceState({hq: value})} />`}<footer><button type="button" onPointerDown=${() => textEditor.current?.cancel()} onClick=${remove}>Clear</button></footer></section>`;
+    const note = id === "precision" || id === "tier" ? `Allow · ${options.length} values` : id === "supports" ? `Require · ${options.length} values` : id === "hosts" ? `${options.length} hosts` : id === "price" ? "at most" : id === "status" ? "" : "at least";
+    const presets = values => html`<div class="condition-control"><span>Presets</span><div class="condition-segments">${values.map(value => html`<button type="button" aria-pressed=${id === "price" ? state.plimit === column + ":" + value : state[id === "uptime" ? "upmin" : id === "context" ? "ctxmin" : "outmin"] === value} onPointerDown=${() => textEditor.current?.deferBlur()} onClick=${() => applyPreset(value)}>${id === "uptime" ? value + "%" : id === "price" ? "≤ $" + value : value}</button>`)}</div></div>`;
+    const shortcuts = id === "precision" ? html`<div class="condition-presets">${["16-bit or better", "8-bit or better", "Any"].map((label,index) => html`<button type="button" onClick=${() => index === 2 ? write({quant: [], quantset: ""}) : write({quant: data.vocab.quantizations.filter(quant => { const bits = data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits; return bits == null ? state.quantset !== "1" || state.quant.includes(quant) : bits >= (index === 0 ? 16 : 8); }), quantset: "1"})}>${label}</button>`)}</div>` : null;
+    return html`<section class="condition-popover" role="dialog" aria-label=${name} ref=${panel}>
+      ${id === "uptime" ? html`<${UptimeUnavailable} data=${data} />` : null}
+      <header><h3 tabindex="-1">${name}</h3><small>${note}</small></header>
+      ${["precision", "tier", "hosts", "supports"].includes(id) ? html`${id === "hosts" ? html`<div class="condition-segments" aria-label="Host scope">${[["", "Exclude these"], ["only", "Only these"]].map(([mode,label]) => html`<button type="button" aria-pressed=${state.xmode === mode} onClick=${() => write({xmode:mode})}>${label}</button>`)}</div>` : null}<${OptionList} label=${`Filter ${name.toLowerCase()}…`} options=${options} selected=${selected} onToggle=${toggle} shortcuts=${shortcuts} />` : id === "status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal status only</label><p class="condition-hint">Hides endpoints the provider reports with a non-zero status code.</p>` : id === "uptime" ? html`<fieldset disabled=${paused}><div class="condition-control"><span>Window</span><div class="condition-segments" aria-label="Uptime window">${[["1d", "1 day"], ["30m", "30 min"], ["5m", "5 min"]].map(([value,label]) => html`<button type="button" aria-pressed=${state.upwin === value} onClick=${() => { textEditor.current?.flush(); write({upwin:value}); }}>${label}</button>`)}</div></div>${presets(["99", "99.5", "99.9", "99.99"])}<${ConditionText} editorRef=${textEditor} caption="Custom" suffix="%" label="Minimum uptime percent" inputProps=${{placeholder:"e.g. 99.95"}} value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin:value})} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Keep endpoints without uptime (${missing})</label></fieldset>` : id === "context" || id === "output" ? html`${presets(id === "output" ? ["8K", "32K", "64K", "128K"] : ["32K", "128K", "200K", "1M"])}<${ConditionText} editorRef=${textEditor} caption="Custom" suffix="tokens" label=${id === "context" ? "Minimum context length" : "Minimum max output"} inputProps=${{placeholder:"e.g. 100K"}} value=${state[id === "context" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[id === "context" ? "ctxmin" : "outmin"]:value})} /><p class="condition-hint">Endpoints without a value are hidden while this is set.</p>` : id === "price" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onPointerDown=${() => textEditor.current?.deferBlur()} onChange=${choosePriceColumn}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} editorRef=${textEditor} caption="Custom" label="Maximum price" inputProps=${{placeholder:"e.g. 2.5"}} value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit:value ? `${column}:${value}` : ""})} />${data.price_columns.find(item => item.path === column)?.unit_label === "/1M tokens" ? presets(["0.5", "1", "5", "15"]) : null}` : html`<p>No price columns in this capture.</p>` : null}
+      ${missing > 0 ? html`<p class="condition-hint condition-missing">Endpoints with missing values: ${missing.toLocaleString()}</p>` : null}
+      <footer><span>${paused ? "Paused" : configured ? html`Removes <strong>${(removal || 0).toLocaleString()}</strong> of ${data.endpoints.length.toLocaleString()} endpoints` : "No effect yet"}</span>${configured ? html`<button type="button" onPointerDown=${() => textEditor.current?.cancel()} onClick=${remove}>Clear</button>` : null}</footer>
+    </section>`;
   }
   function HighlightMatch({text, query}) {
     const index = text.toLowerCase().indexOf(query.toLowerCase());
     return query && index >= 0 ? html`${text.slice(0, index)}<mark>${text.slice(index, index + query.length)}</mark>${text.slice(index + query.length)}` : text;
   }
-  function OptionList({options, selected, onToggle, label = "Filter options"}) {
+  function OptionList({options, selected, onToggle, label = "Filter options", shortcuts, countSuffix = ""}) {
     const [query, setQuery] = useState("");
     const visible = options.filter(option => option.label.toLowerCase().includes(query.toLowerCase()));
     const navigate = event => {
       if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
       event.preventDefault();
-      const fields = [...event.currentTarget.querySelectorAll('input:not(:disabled)')];
+      const fields = [...event.currentTarget.querySelectorAll('.option-row input:not(:disabled)')];
       const index = fields.indexOf(document.activeElement);
-      fields[(index + (event.key === "ArrowDown" ? 1 : -1) + fields.length) % fields.length]?.focus();
+      const next = index < 0 ? (event.key === "ArrowDown" ? 0 : fields.length - 1) : (index + (event.key === "ArrowDown" ? 1 : -1) + fields.length) % fields.length;
+      fields[next]?.focus();
     };
-    return html`<div class="option-list" onKeyDown=${navigate}><label>${label}<input type="search" value=${query} onInput=${event => setQuery(event.currentTarget.value)} /></label><div class="option-list-options">${visible.map((option, index) => html`<div key=${option.value}>${option.group && visible[index - 1]?.group !== option.group ? html`<h4>${option.group}</h4>` : null}<label class="option-row"><input type="checkbox" aria-label=${option.label} checked=${selected.includes(option.value)} disabled=${option.disabled} onKeyDown=${event => { if (event.key === "Enter") { event.preventDefault(); onToggle(option.value); } }} onChange=${() => onToggle(option.value)} /><span><${HighlightMatch} text=${option.label} query=${query} /></span><small>${option.count}</small></label></div>`)}</div>${!visible.length ? html`<p>No matching options.</p>` : null}</div>`;
+    return html`<div class="option-list" onKeyDown=${navigate}><input type="search" aria-label=${label} placeholder=${label} value=${query} onInput=${event => setQuery(event.currentTarget.value)} />${shortcuts}<div class="option-list-options">${visible.map((option, index) => html`<div key=${option.value}>${option.group && visible[index - 1]?.group !== option.group ? html`<h4>${option.group}</h4>` : null}<label class=${`option-row${option.count === 0 ? " is-empty" : ""}`}><input type="checkbox" aria-label=${option.label} checked=${selected.includes(option.value)} disabled=${option.disabled} onKeyDown=${event => { if (event.key === "Enter") { event.preventDefault(); onToggle(option.value); } }} onChange=${() => onToggle(option.value)} /><span><${HighlightMatch} text=${option.label} query=${query} /></span><small>${option.count.toLocaleString()}${countSuffix}</small></label></div>`)}${!visible.length ? html`<p>No matching options.</p>` : null}</div></div>`;
   }
   function ListMenu(props) {
     return html`<${ThresholdMenu} ...${props} />`;
@@ -1365,7 +1416,7 @@
     const panel = useRef(null);
     useFocusTrap(panel, true, close, {inert: false});
     const options = [...data.hosts].sort((a,b) => b.list_count - a.list_count || a.name.localeCompare(b.name)).map(host => ({value: host.name, label: host.name, count: host.list_count, disabled: !selected.includes(host.name) && selected.length >= limit}));
-    return html`<section ref=${panel} class="condition-popover" role="dialog" aria-label="Add host"><header><h3>Add host</h3><button type="button" onClick=${close}>Close</button></header><p>${selected.length} / ${limit} compared hosts · counts are models served</p><${OptionList} label="Search hosts" options=${options} selected=${selected} onToggle=${name => write({hosts: selected.includes(name) ? selected.filter(host => host !== name) : [...selected, name]})} /><footer><button type="button" onClick=${() => write({hosts: []})}>Clear</button></footer></section>`;
+    return html`<section ref=${panel} class="condition-popover" role="dialog" aria-label="Compare hosts"><header><h3>Compare hosts</h3><small>${selected.length} of ${limit}</small></header><${OptionList} label="Find a host…" options=${options} selected=${selected} countSuffix=" models" onToggle=${name => write({hosts:selected.includes(name) ? selected.filter(host => host !== name) : [...selected,name]})} /><footer><span>Sorted by models served</span>${selected.length ? html`<button type="button" onClick=${() => write({hosts:[]})}>Clear</button>` : null}</footer></section>`;
   }
   function SearchField({data, state, write, replaceState, editorRef, inputRef}) {
     const [query, setQuery] = useState(state.hq), [open, setOpen] = useState(false), [active, setActive] = useState(-1);
@@ -1377,6 +1428,7 @@
       document.addEventListener("pointerdown", outside);
       return () => document.removeEventListener("pointerdown", outside);
     }, []);
+    useHostsOverlay(open && suggestions.length > 0);
     const choose = text => { editorRef.current?.replaceDraft(text); setQuery(text); setOpen(false); setActive(-1); write({hq: text}); };
     return html`<div class="hosts-search" ref=${anchor} onFocusOut=${event => { if (!anchor.current?.contains(event.relatedTarget) && !list.current?.contains(event.relatedTarget)) setOpen(false); }}><span class="hosts-search-icon" aria-hidden="true">⌕</span><${ConditionText} label="Search models" value=${state.hq} valid=${() => true} editorRef=${editorRef} commit=${value => replaceState({hq: value})} inputProps=${{ref: inputRef, type: "search", placeholder: "Filter models…", role: "combobox", "aria-autocomplete": "list", "aria-expanded": open && suggestions.length > 0, "aria-controls": "host-search-results", "aria-activedescendant": open && active >= 0 && active < suggestions.length ? `host-search-${active}` : undefined, onFocus: () => setOpen(true), onInput: undefined}} onKeyDown=${event => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { if (!suggestions.length) return; event.preventDefault(); setOpen(true); setActive(index => index < 0 ? (event.key === "ArrowDown" ? 0 : suggestions.length - 1) : (index + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length); return true; }
@@ -1413,6 +1465,7 @@
   }
   function HostsToolbar({meta, inputRef, rowCount, data, captures = data.captures, state, rawState, selected, limit, dimension, dimensions, conditions, removal, qualifying, write, replaceState}) {
     const [menu,setMenu] = useState(null), anchor = useRef(null), panel = useRef(null), editor = useRef(null), searchEditor = useRef(null), opening = useRef(null), toolbar = useRef(null);
+    useHostsOverlay(menu !== null);
     const close = (cancel = false) => { if (cancel) editor.current?.cancel(); else editor.current?.flush(); setMenu(null); };
     const open = (name,event) => { editor.current?.flush(); editor.current = null; anchor.current = event.currentTarget; opening.current = {...rawState}; setMenu(name); };
     const owned = menu === "Add host" ? ["hosts"] : HOST_CONDITIONS.find(condition => condition.id === menu)?.keys || [];
@@ -1920,15 +1973,15 @@
     return html`<div class="model-detail"><div class="model-breadcrumb"><span>Model</span><b>${dossier.display_name}</b><button type="button" aria-label="Close model dossier" onClick=${() => write({view: "activity", model: null, at: null})}>×</button></div><div class="dossier-layout"><aside class="dossier-identity instrument"><p>01 / identity</p><h2>${dossier.display_name}</h2><code>${dossier.model_id}</code><span>${dossier.provider_label}</span><dl><div><dt>First seen</dt><dd>${firstSeen}</dd></div><div><dt>Last seen</dt><dd>${lastSeen}</dd></div><div><dt>Observations</dt><dd>${dossier.observations}</dd></div></dl><strong class=${dossier.present_in_latest ? "is-present" : "is-removed"}>${dossier.present_in_latest ? "Present in latest" : "Not in latest"}</strong><button type="button" onClick=${timeline}>Timeline</button></aside><main><${FactsList} meta=${meta} dossier=${dossier} openRaw=${openRaw} openSparkline=${setSparkline} /><${EndpointsSection} dossier=${dossier} fresh=${request.fresh} />${changelog}</main></div>${sparkline ? html`<${SparklinePopover} meta=${meta} pin=${sparkline.pin} aspect=${sparkline.aspect} write=${write} close=${() => setSparkline(null)} themeKey=${themeKey} />` : null}</div>`;
   }
 
-  function useFocusTrap(panelRef, active, onClose, {inert = true} = {}) {
+  function useFocusTrap(panelRef, active, onClose, {inert = true, initialFocus} = {}) {
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
     useLayoutEffect(() => {
       if (!active || !panelRef.current) return;
       const panel = panelRef.current;
       const previous = document.activeElement;
-      const focusableElements = () => [...panel.querySelectorAll('button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.disabled);
-      const timer = setTimeout(() => { const first = focusableElements()[0]; if (first) first.focus(); }, 0);
+      const focusableElements = () => [...panel.querySelectorAll('button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(element => !element.matches(":disabled"));
+      const timer = setTimeout(() => { const first = (initialFocus && panel.querySelector(initialFocus)) || focusableElements()[0]; if (first) first.focus(); }, 0);
       const inerted = [];
       let branch = panel.closest(".drawer-layer, .spark-layer") || panel;
       while (inert && branch && branch.parentElement) {
@@ -1948,7 +2001,7 @@
       };
       addEventListener("keydown", keyboard);
       return () => { clearTimeout(timer); removeEventListener("keydown", keyboard); for (const element of inerted) element.inert = false; if (inert || document.activeElement === document.body || panel.contains(document.activeElement)) previous && previous.isConnected && previous.focus(); };
-    }, [active]);
+    }, [active, initialFocus]);
   }
 
   function RawDrawer({id, close}) {

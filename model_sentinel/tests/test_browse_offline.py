@@ -1052,7 +1052,7 @@ def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> Non
         overlay,
         re.DOTALL,
     )
-    assert "}, [anchorRef, open]);" in overlay
+    assert "}, [anchorRef, open, className]);" in overlay
 
 
 def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
@@ -1707,5 +1707,33 @@ const data = {vocab:{quantizations:['fp8']},endpoints:[{quantization:'fp8',preci
 assert.equal(conditionSummary('precision', data, {quant:[],quantset:'1'}), 'none');
 assert.equal(conditionSummary('precision', {vocab:{quantizations:[]},endpoints:[]}, {quant:[],quantset:'1'}), 'none');
 assert.equal(conditionSummary('precision', data, {quant:['fp8'],quantset:'1'}), '8-bit or better');
+'''], capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_scope_mode_controls_endpoint_evaluation_and_hash_roundtrip() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  const HOST_CONDITIONS ="):source.index("  function decode(")]
+    helpers += source[source.index("  function decode("):source.index("  function useHashState(")]
+    helpers += source[source.index("  function capacityMinimum("):source.index("  function ConditionText(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require('node:assert/strict');
+const data = {hosts:[{name:'Synthetic Alpha'},{name:'Synthetic Beta'}],vocab:{quantizations:[],parameters:[],native_tools:[],tiers:[]},price_columns:[]};
+const base = {xhosts:[],quant:[],params:[],ntools:[],tiers:[],hq:'',plimit:''};
+for (const mode of ['', 'only', 'invalid']) {
+  const clean = normalizeHostConditions(data, {...base,xmode:mode});
+  assert.equal(clean.xmode, mode === 'only' ? 'only' : '');
+  assert.equal(hostConditions(data, clean).length, 0, 'empty selection remains inactive');
+}
+for (const mode of ['', 'only']) {
+  const state = normalizeHostConditions(data, {...base,xmode:mode,xhosts:['Synthetic Alpha']});
+  const conditions = hostConditions(data,state);
+  assert.equal(evaluateEndpoint({host:'Synthetic Alpha'},conditions).pass, mode === 'only');
+  assert.equal(evaluateEndpoint({host:'Synthetic Beta'},conditions).pass, mode !== 'only');
+  global.location = {hash:''};
+  hashState.write(state);
+  assert.equal(hashState.read().xmode || '', mode);
+  assert.deepEqual(hashState.read().xhosts, ['Synthetic Alpha']);
+}
 '''], capture_output=True, text=True)
     assert probe.returncode == 0, probe.stdout + probe.stderr

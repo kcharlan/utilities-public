@@ -555,7 +555,7 @@ browser, and `Ctrl-C` stops the server.
   fills the width.
 
   The toolbar opens keyboard-accessible condition menus for host
-  exclusions, normal status (code 0), precision, minimum uptime, context and
+  scope, normal status (code 0), precision, minimum uptime, context and
   output capacity, supported parameters/native tools and implicit caching,
   service tiers and exact price limits. Opening a menu leaves conditions
   unchanged. Checkbox lists support local substring filtering with highlighted
@@ -569,6 +569,14 @@ browser, and `Ctrl-C` stops the server.
   condition to restore unrestricted matching. Null service tiers display as
   `standard`, while string tiers retain JSON quotes, including `"standard"` and
   `"null"`. Price limits preserve decimal text and compare exact values.
+  **Hosts** switches between **Exclude these** and **Only these**; either mode
+  is inactive when its selection is empty. Supports uses one search across
+  Request parameters, Native tools and Caching. Menus keep their header,
+  search, shortcuts and effect footer visible while options scroll, and become
+  bottom sheets on narrow screens. Clear appears only for a configured
+  condition. Add host opens **Compare hosts**, ordered by models served.
+  Uptime presets toggle off when pressed again. Token-price columns offer
+  exact maximum presets of $0.5, $1, $5 and $15 per million tokens.
 
   **Rows: any** admits a model if one selected host qualifies; **Rows: all**
   requires each host. **Show excluded** uses endpoint presence
@@ -586,7 +594,10 @@ browser, and `Ctrl-C` stops the server.
   Conditions and empty chip selections survive
   copied URLs/reloads. Numeric typing replaces the current history entry;
   deliberate selections retain Back/Forward navigation. Editors close with
-  `Esc` and return focus to their trigger. Tab stays within an open menu;
+  `Esc` and return focus to their trigger. Menus focus search or their custom
+  field (the checkbox for Status); paused Uptime focuses Clear, or its heading
+  without a configured threshold. Menus have no Close button.
+  Tab stays within an open menu;
   clicking another trigger switches directly. Arrow keys navigate checkbox
   options, and Space or Enter selects them. Search suggestions keep focus in
   the input: use arrows then Enter, or select with a pointer. Host history owns

@@ -665,8 +665,7 @@ Test scenarios:
   zero-count rows; shortcuts and grouped Supports selection.
 - Uptime toggling and Price-column draft/preset behavior.
 - Host scope selection, empty selection, invalid mode and Back/Forward.
-- At 1440×1000, opening Precision exposes its options without scrolling;
-  overflowing option content scrolls under fixed menu chrome.
+- Desktop Precision geometry and option reachability, following Menus.
 - Narrow viewport bottom-sheet placement according to Menus.
 
 ### Task 3 (Results task)
