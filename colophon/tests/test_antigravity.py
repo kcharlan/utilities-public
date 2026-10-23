@@ -317,3 +317,65 @@ def test_antigravity_summary_fifo_is_diagnosed_without_opening(native):
     diagnostic, = native.payload()["diagnostics"]["antigravity_source_diagnostics"]
     assert diagnostic["context"] == "conversation_summaries"
     assert "regular file" in diagnostic["reason"]
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+@pytest.mark.parametrize("kind", ["fifo", "directory"])
+@pytest.mark.parametrize("summary", [False, True])
+def test_antigravity_nonregular_sidecar_rejected_before_sqlite_open(native, suffix, kind, summary):
+    path = database(native)
+    good = database(native, identity=ID[:-1] + "2")
+    if summary:
+        path = path.parent.parent / "conversation_summaries.db"
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE conversation_summaries(conversation_id,title)")
+    sidecar = Path(str(path) + suffix)
+    if kind == "fifo":
+        os.mkfifo(sidecar)
+    else:
+        sidecar.mkdir()
+    result = subprocess.run([str(native.binary), "--codex-home", str(native.codex),
+                             "--offline", "--no-open"], env=native.env,
+                            text=True, capture_output=True, timeout=2)
+    assert result.returncode == 0, result.stderr
+    data = source(native)
+    assert data["databases"][1]["path"] == str(good)
+    assert data["databases"][1]["accepted_sessions"] == 1
+    if summary:
+        assert data["sessions"] == 2
+        diagnostics = native.payload()["diagnostics"]["antigravity_source_diagnostics"]
+        assert len(diagnostics) == 2
+        assert all(d["context"] == "conversation_summaries" and "sidecar is not a regular file" in d["reason"] for d in diagnostics)
+    else:
+        assert data["sessions"] == 1
+        assert data["databases"][0]["status"] == "unreadable"
+        assert "sidecar is not a regular file" in data["databases"][0]["reason"]
+
+@pytest.mark.parametrize("later,archived", [(proto_field(1, "Synthetic"), 1), (proto_field(4, 0), 0), (b"", 1)])
+def test_antigravity_summary_singular_annotations_merge(native, later, archived):
+    path = database(native)
+    with sqlite3.connect(path.parent.parent / "conversation_summaries.db") as db:
+        db.execute("CREATE TABLE conversation_summaries(conversation_id,title,raw_summary)")
+        db.execute("INSERT INTO conversation_summaries VALUES (?,?,?)", (ID, "Synthetic merged summary", proto_field(15, proto_field(4, 1)) + proto_field(15, later)))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert source(native)["archived"] == archived
+    assert native.payload()["diagnostics"]["antigravity_source_diagnostics"] == []
+    annotation = path.parent.parent / "annotations" / (ID + ".pbtxt")
+    annotation.parent.mkdir()
+    annotation.write_text("archived: false")
+    assert native.build().returncode == 0
+    assert source(native)["archived"] == 0
+    assert native.payload()["diagnostics"]["antigravity_archive_disagreements"] == archived
+
+@pytest.mark.parametrize("bad", ["synthetic-enum", 1.5, b"SYNTHETIC-ENUM"])
+def test_antigravity_malformed_optional_enum_keeps_indexed_step(native, bad):
+    path = database(native)
+    metadata = proto_field(9, proto_field(2, 9))
+    payload = proto_field(19, proto_field(1, "Synthetic request"))
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO steps VALUES (1,?,NULL,?,?,0)", (bad, metadata, payload))
+        db.execute("INSERT INTO steps VALUES (?,1,1,?,?,0)", (bad, metadata, payload))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert source(native)["databases"][0]["accepted_steps"] == 1
+    assert native.payload()["diagnostics"]["antigravity_malformed_rows"] == 2

@@ -10,6 +10,11 @@ decoding must reject a NUL after backslash before using C string lookup helpers.
 Check summary indexes are regular files before asking SQLite to open them: a
 FIFO with a database filename can block a read-only source scan. Enforce binary
 collation for exact identity joins rather than inheriting source-table collation.
+The same regular-file admission applies to all SQLite sidecars, including a
+rollback journal: busy timeouts do not bound an OS FIFO open. Singular protobuf
+submessages merge across occurrences; apply last-wins only to present scalar
+fields within the merged message. Treat malformed optional SQL enums as distinct
+raw states so they cannot erase independently valid indexed protobuf facts.
 
 Native details toggle events are queued and may arrive after a footer rerender.
 Snapshot connected panels' live open properties before replacement, ignore

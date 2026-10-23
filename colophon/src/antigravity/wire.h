@@ -16,7 +16,9 @@ typedef enum {
     AG_TIMESTAMP, AG_DURATION, AG_ANNOTATIONS, AG_SUMMARY
 } AgMessageType;
 AgResult ag_wire_next(AgCursor *cursor, AgField *field);
-/* Scans the complete message: a malformed tail cannot masquerade as found. */
+/* Last raw occurrence; scans the complete message so malformed tails cannot
+ * masquerade as found. Singular message fields require merging occurrences,
+ * rather than treating the last occurrence as a complete message replacement. */
 AgResult ag_wire_last(Str input, uint32_t number, AgField *field);
 AgResult ag_wire_integer_next(AgCursor *cursor, uint32_t number, uint64_t *value);
 AgResult ag_wire_validate(Str input, AgMessageType type);

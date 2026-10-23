@@ -4,9 +4,12 @@
 #include "util/omap.h"
 #include <signal.h>
 typedef enum { AG_DB_OK,AG_DB_ABSENT,AG_DB_UNREADABLE,AG_DB_UNSUPPORTED } AntigravityDatabaseStatus;
-typedef struct { int64_t idx,step_type,status,step_format;bool has_step_type,has_status,has_step_format;Str metadata,payload; } AntigravityStep;
+/* Value is meaningful only for INTEGER. Invalid optional enums retain their
+ * independent record facts, and must never masquerade as absent/default. */
+typedef enum { AG_SQL_ABSENT,AG_SQL_INTEGER,AG_SQL_INVALID } AntigravityIntegerState;
+typedef struct { int64_t idx,step_type,status,step_format;AntigravityIntegerState step_type_state,status_state,step_format_state;Str metadata,payload; } AntigravityStep;
 typedef struct { int64_t idx;bool has_idx;Str data; } AntigravityBlob;
-typedef struct { Str trajectory_id,cascade_id;int64_t trajectory_type,source;bool has_trajectory_type,has_source; } AntigravityMeta;
+typedef struct { Str trajectory_id,cascade_id;int64_t trajectory_type,source;AntigravityIntegerState trajectory_type_state,source_state; } AntigravityMeta;
 typedef struct {
     Str id,database,surface,title,archive_reason;
     bool archived,annotation_valid,summary_valid,annotation_archived,summary_archived;

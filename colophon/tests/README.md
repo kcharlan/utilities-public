@@ -11,6 +11,10 @@ duplicates, title-only summaries, lock failures, large unrelated database data,
 source database/WAL/annotation byte/mode preservation and unopened Codex caches.
 The discovery acceptance case asserts source counts and runtime initialization
 while every other provider is disabled/absent, without creating corpus sessions.
+Regressions bound FIFO/directory sidecar checks for both database kinds, merge
+repeated singular summary annotations, and preserve usage/payload blobs under
+malformed optional SQL enums while rejecting invalid row indexes. Raw enum
+states distinguish valid integers, absent NULLs and invalid dynamic types.
 Privacy canaries exercise unrelated tables/settings and excluded prompt/thinking
 text. Wrappers strip all three ignored Antigravity environment names and deny
 real Gemini root reads/writes. A separate mutation invocation proves removing

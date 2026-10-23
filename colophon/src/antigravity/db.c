@@ -53,8 +53,11 @@ static Err db_open(Str root,const char *path,Access *access,sqlite3 **out){
     const char *suffixes[]={"-wal","-shm","-journal"};
     for(size_t i=0;i<3;i++){
         size_t n=strlen(path)+strlen(suffixes[i])+1;char *p=malloc(n);if(!p)return err_make(ERR_NOMEM,"Antigravity sidecar path allocation failed");
-        snprintf(p,n,"%s%s",path,suffixes[i]);bool safe=antigravity_safe_path(root,p);free(p);
+        snprintf(p,n,"%s%s",path,suffixes[i]);bool safe=antigravity_safe_path(root,p);
+        struct stat sidecar;int status=safe?lstat(p,&sidecar):-1,error=errno;free(p);
         if(!safe)return err_make(ERR_IO,"Antigravity SQLite sidecar symlink excluded");
+        if(status&&error!=ENOENT)return err_make(ERR_IO,"Antigravity SQLite sidecar inaccessible");
+        if(!status&&!S_ISREG(sidecar.st_mode))return err_make(ERR_IO,"Antigravity SQLite sidecar is not a regular file");
     }
     char *uri=NULL;sqlite3 *db=NULL;Err e=metadata_database_uri(path,&uri);
     if(!e.code&&sqlite3_open_v2(uri,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_URI,NULL)!=SQLITE_OK)e=sql_error(db);free(uri);
@@ -102,15 +105,22 @@ static bool integer(sqlite3_stmt *st,int col,int64_t *value,bool *present){
     if(sqlite3_column_type(st,col)!=SQLITE_INTEGER)return false;
     *value=sqlite3_column_int64(st,col);return true;
 }
-static Err malformed_row(AntigravityStore *s,AntigravityDatabase *d,const char *context){
-    s->malformed_rows++;return antigravity_diagnostic(s,d,context,0,"noninteger enum/index or absent required row index");
+static AntigravityIntegerState enum_integer(sqlite3_stmt *st,int col,int64_t *value){
+    bool present=false;
+    if(!integer(st,col,value,&present))return AG_SQL_INVALID;
+    return present?AG_SQL_INTEGER:AG_SQL_ABSENT;
+}
+static Err malformed_row(AntigravityStore *s,AntigravityDatabase *d,const char *context,int64_t idx,const char *reason){
+    s->malformed_rows++;return antigravity_diagnostic(s,d,context,idx,reason);
 }
 static Err read_rows(AntigravityStore *s,AntigravityDatabase *d,sqlite3 *db,AntigravitySession *r,volatile sig_atomic_t *interrupted){
     sqlite3_stmt *st=NULL;Err e=prepare(db,"SELECT trajectory_id,cascade_id,trajectory_type,source FROM trajectory_meta",&st);int rc=SQLITE_DONE;
     while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
         if(interrupted&&*interrupted){e=err_make(ERR_IO,"Antigravity read interrupted");break;}
         AntigravityMeta m={0};
-        if(!integer(st,2,&m.trajectory_type,&m.has_trajectory_type)||!integer(st,3,&m.source,&m.has_source)){e=malformed_row(s,d,"trajectory_meta");continue;}
+        m.trajectory_type_state=enum_integer(st,2,&m.trajectory_type);m.source_state=enum_integer(st,3,&m.source);
+        if(m.trajectory_type_state==AG_SQL_INVALID||m.source_state==AG_SQL_INVALID)e=malformed_row(s,d,"trajectory_meta",0,"noninteger optional enum; independent source facts retained");
+        if(e.code)break;
         e=cell(&d->arena,st,0,false,&m.trajectory_id);if(!e.code)e=cell(&d->arena,st,1,false,&m.cascade_id);
         if(!e.code)e=APPEND(&d->arena,r->meta,r->meta_count,r->meta_capacity,m);
         if(!e.code&&((m.trajectory_id.n&&!str_equal(m.trajectory_id,r->id))||(m.cascade_id.n&&!str_equal(m.cascade_id,r->id))))e=antigravity_diagnostic(s,d,"trajectory_meta",0,"metadata identity differs from filename conversation id");
@@ -122,12 +132,14 @@ static Err read_rows(AntigravityStore *s,AntigravityDatabase *d,sqlite3 *db,Anti
         while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
             if(interrupted&&*interrupted){e=err_make(ERR_IO,"Antigravity read interrupted");break;}
             int64_t idx=0;bool has_idx=false,valid=false;
-            if(!integer(st,0,&idx,&has_idx)||(!has_idx&&k)){e=malformed_row(s,d,k==0?"trajectory_metadata_blob":k==1?"gen_metadata":"steps");continue;}
+            if(!integer(st,0,&idx,&has_idx)||(!has_idx&&k)){e=malformed_row(s,d,k==0?"trajectory_metadata_blob":k==1?"gen_metadata":"steps",0,"noninteger index or absent required row index");continue;}
             if(k<2){AntigravityBlob b={.idx=idx,.has_idx=has_idx};e=blob(s,d,st,1,k?AG_GENERATOR:AG_TRAJECTORY,idx,&b.data,&valid);
                 if(!e.code&&valid){if(k)e=APPEND(&d->arena,r->generators,r->generator_count,r->generator_capacity,b);else e=APPEND(&d->arena,r->metadata,r->metadata_count,r->metadata_capacity,b);}
             }else{
                 AntigravityStep step={.idx=idx};bool payload_valid=false;
-                if(!integer(st,1,&step.step_type,&step.has_step_type)||!integer(st,2,&step.status,&step.has_status)||!integer(st,5,&step.step_format,&step.has_step_format)){e=malformed_row(s,d,"steps");continue;}
+                step.step_type_state=enum_integer(st,1,&step.step_type);step.status_state=enum_integer(st,2,&step.status);step.step_format_state=enum_integer(st,5,&step.step_format);
+                if(step.step_type_state==AG_SQL_INVALID||step.status_state==AG_SQL_INVALID||step.step_format_state==AG_SQL_INVALID)e=malformed_row(s,d,"steps",idx,"noninteger optional enum; independent source facts retained");
+                if(e.code)break;
                 e=blob(s,d,st,3,AG_STEP_METADATA,idx,&step.metadata,&valid);if(!e.code)e=blob(s,d,st,4,AG_STEP,idx,&step.payload,&payload_valid);
                 if(!e.code&&valid&&payload_valid)e=APPEND(&d->arena,r->steps,r->step_count,r->step_capacity,step);
             }
@@ -216,9 +228,18 @@ static Err summary(AntigravityStore *s,AntigravityDatabase *d,AntigravitySession
             else if(!e.code){Str bytes={0};e=cell(&d->arena,q,1,true,&bytes);
                 if(!e.code&&ag_wire_validate(bytes,AG_SUMMARY)!=AG_MALFORMED){
                     r->summary_blob=bytes;
-                    AgField annotations={0},archived={0};AgResult result=ag_wire_last(bytes,15,&annotations);
-                    if(result==AG_FOUND&&annotations.wire==2){result=ag_wire_last(annotations.bytes,4,&archived);r->summary_valid=result!=AG_MALFORMED&&(result!=AG_FOUND||archived.wire==0);r->summary_archived=result==AG_FOUND&&archived.integer!=0;}
-                    else r->summary_valid=result==AG_ABSENT;
+                    /* Singular embedded messages merge. Only a found archived
+                     * scalar overwrites prior state; empty/title-only instances
+                     * cannot erase a scalar from an earlier occurrence. */
+                    AgCursor cursor={.input=bytes};AgField annotations={0};AgResult result;
+                    r->summary_valid=true;
+                    while((result=ag_wire_next(&cursor,&annotations))==AG_FOUND){
+                        if(annotations.number!=15)continue;
+                        AgField archived={0};AgResult scalar=ag_wire_last(annotations.bytes,4,&archived);
+                        if(annotations.wire!=2||scalar==AG_MALFORMED||(scalar==AG_FOUND&&archived.wire!=0)){r->summary_valid=false;break;}
+                        if(scalar==AG_FOUND)r->summary_archived=archived.integer!=0;
+                    }
+                    if(result==AG_MALFORMED)r->summary_valid=false;
                 }
                 if(!e.code&&!r->summary_valid)e=err_make(ERR_INVALID,"malformed summary protobuf blob");
             }

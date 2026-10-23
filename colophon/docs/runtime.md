@@ -30,6 +30,9 @@ Each database uses one coordinated read-only transaction and no database-size
 cap. Database/WAL/annotation bytes and modes remain unchanged; SQLite may
 create or update shared-memory coordination files, as for OpenCode. A failed
 snapshot never consumes its ID or removes successful siblings.
+Every existing SQLite sidecar must be a regular file before SQLite opens either
+a conversation or summary database; FIFOs, directories and symlinks are rejected
+with a source diagnostic so they cannot block later readable siblings.
 
 The bounded wire decoder validates the pinned public schema projection,
 retains unknown fields and raw blobs only in memory, and distinguishes absent,
@@ -40,13 +43,18 @@ unknown nested messages. A valid annotation wins over its own surface's summary,
 including absent `archived` meaning false. Unusable annotations diagnose and
 fall back to summary; valid disagreement is counted. With neither source,
 archive defaults false. Resolved true records use archive reason `session`.
+Repeated occurrences of the singular summary annotations message merge: the
+last explicitly present archived scalar wins across them. Empty or title-only
+occurrences preserve an earlier archived scalar.
 Titles independently use a nonempty valid annotation title, then the own-surface
 summary title. Explicit empty annotation titles preserve their raw presence but
 allow that fallback; later corpus projection supplies request/ID fallbacks.
 
-SQL enum/index columns accept INTEGER values losslessly. NULL enum values
-retain absence; noninteger values diagnose and discard their source record.
-Steps/generators need an INTEGER index for row identity; trajectory metadata
+SQL enum/index columns accept INTEGER values losslessly. Optional enums retain
+three distinct states: integer, NULL/absent and malformed. A malformed enum is
+diagnosed while independently valid identities and indexed protobuf facts remain
+available. Steps/generators need an INTEGER index for row identity; malformed or
+missing required indexes reject that unidentifiable row. Trajectory metadata
 blob IDs can remain explicitly absent. These rules do not coerce textual enum
 names or floating-point numbers into integer facts.
 
