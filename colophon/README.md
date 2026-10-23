@@ -39,7 +39,7 @@ expanded text, and end actions for follow-ups and footer panels. Collapsing
 returns focus and brings an offscreen section start into view. Footer panels
 retain their independent open states when sources or metrics change.
 
-The page's All/Codex/Claude/OpenCode switch preserves filters and uses green/blue/violet
+The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI
 origins with known cwd/config root; copying never runs the CLI. See

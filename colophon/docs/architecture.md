@@ -46,15 +46,16 @@ usage diagnostics and borrowed display provenance; it is destroyed after corpus
 teardown on every path. The payload exposes authoritative typed diagnostic
 shapes and accepted provider counters without changing legacy provider counts.
 Antigravity discovery/read follows OpenCode before the same source gate; its
-store is destroyed on every exit after corpus teardown. `PROVIDER_ANTIGRAVITY`
-and its stable ID are introduced for source summaries; no Antigravity corpus
-insertion or usage composer is called in this deliverable. Raw per-database
+store is destroyed on every exit after corpus teardown. `antigravity_corpus_add`
+follows OpenCode insertion before shared workspace resolution. After OpenCode
+composition, `antigravity_compose` initializes empty usage summaries on every
+run; token extraction and pricing remain a separate deliverable. Raw per-database
 arenas survive successful commits through rendering and are discarded on failed
 snapshots. `schema.inc` and the public fixture projection pin fully qualified
 message references and the language-server binary digest, avoiding unqualified
-descriptor-name collisions. Later projection/composition borrows these owned
+descriptor-name collisions. Projection/composition borrows these owned
 blobs and source-row indexes rather than reparsing or persisting private data.
-`corpus/provider.h` names Codex, Claude and OpenCode consistently in session
+`corpus/provider.h` names Codex, Claude, OpenCode and Antigravity consistently in session
 rows and usage buckets. Its shared adoption/status/idle helpers preserve
 Claude's wide tool counts and independent map ownership; tool adoption uses
 the existing wide-count merger in `assemble.c`. Session archive reasons are

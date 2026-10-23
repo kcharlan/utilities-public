@@ -87,44 +87,61 @@ static Err workspace(AntigravityStore *store,const AntigravitySession *r,Corpus 
     Str parent=scalar(input,5);if(parent.n)s->parent_id=parent;
     return ERR_SUCCESS;
 }
-static Err tools(AntigravityStore *store,const AntigravitySession *r,Corpus *c,SessionModel *s,TurnModel *t) {
-    CorpusTools counted={0};Err e=ERR_SUCCESS;
-    for(size_t i=0;!e.code&&i<r->step_count;i++) {
-        const AntigravityStep *step=&r->steps[i];if(!str_equal(step->turn,t->id))continue;
-        Str planner={0};e=antigravity_message_merge(&c->arena,step->payload,20,&planner);if(e.code)break;
-        AgCursor cur={.input=planner};AgField f;
-        while(!e.code&&ag_wire_next(&cur,&f)==AG_FOUND)if(f.number==7) {
-            Str name=scalar(f.bytes,2),id=scalar(f.bytes,1);bool failed=false;
-            Str arguments=scalar(f.bytes,3);
-            if(arguments.n&&!str_equal(name,STR_LIT("call_mcp_tool"))) {
-                JsonRead read=json_read(arguments,STRICT,JSON_CONSTANTS_REJECT,"antigravity.tool_arguments");
-                if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"Antigravity tool argument allocation failed");
-                else if(read.status!=JSON_OK)e=diagnose(store,r,"tool_arguments",step->idx,"malformed tool arguments JSON");
-                json_read_free(&read);
-            }
-            for(size_t j=0;!e.code&&j<r->step_count;j++) {
-                const AntigravityStep *execution=&r->steps[j];int64_t status=0;if(!antigravity_step_enum(execution,true,&status)||status!=7)continue;
-                Str call={0};e=antigravity_message_merge(&c->arena,execution->metadata,4,&call);
-                if(id.n&&str_equal(id,scalar(call,1)))failed=true;
-            }
-            if(str_equal(name,STR_LIT("run_command")))name=STR_LIT("Bash");
-            else if(str_equal(name,STR_LIT("write_to_file"))||str_equal(name,STR_LIT("write_file"))||str_equal(name,STR_LIT("replace_file_content"))||str_equal(name,STR_LIT("multi_replace_file_content")))name=STR_LIT("Edit");
-            else if(str_equal(name,STR_LIT("call_mcp_tool"))) {
-                Str args=scalar(f.bytes,3);JsonRead read=json_read(args,STRICT,JSON_CONSTANTS_REJECT,"antigravity.tool_arguments");
-                yyjson_val *root=read.doc?yyjson_doc_get_root(read.doc):NULL;
-                yyjson_val *server=root?yyjson_obj_get(root,"ServerName"):NULL,*tool=root?yyjson_obj_get(root,"ToolName"):NULL;
-                if(read.status==JSON_OK&&yyjson_is_str(server)&&yyjson_is_str(tool)&&yyjson_get_len(server)&&yyjson_get_len(tool)) {
-                    JsonWriter w={0};jsonw_raw(&w,"mcp__");jsonw_bytes(&w,yyjson_get_str(server),yyjson_get_len(server));jsonw_raw(&w,"__");jsonw_bytes(&w,yyjson_get_str(tool),yyjson_get_len(tool));
-                    e=w.error;if(!e.code)e=str_copy(&c->arena,(Str){w.data,(uint32_t)w.length},&name);jsonw_free(&w);
-                }else if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"Antigravity tool argument allocation failed");
-                else e=diagnose(store,r,"tool_arguments",step->idx,"call_mcp_tool arguments require ServerName and ToolName strings");
-                json_read_free(&read);
-            }
-            if(!e.code)e=claude_tool_count(&c->arena,&counted,name,failed);
+static Err tool_calls(AntigravityStore *store,const AntigravitySession *r,Corpus *c,
+                      const AntigravityStep *step,Str planner,const Omap *failed_ids,CorpusTools *counted) {
+    Err e=ERR_SUCCESS;
+    AgCursor cur={.input=planner};AgField f;
+    while(!e.code&&ag_wire_next(&cur,&f)==AG_FOUND)if(f.number==7) {
+        Str name=scalar(f.bytes,2),id=scalar(f.bytes,1);bool failed=id.n&&omap_get(failed_ids,id);
+        Str arguments=scalar(f.bytes,3);
+        if(arguments.n&&!str_equal(name,STR_LIT("call_mcp_tool"))) {
+            JsonRead read=json_read(arguments,STRICT,JSON_CONSTANTS_REJECT,"antigravity.tool_arguments");
+            if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"Antigravity tool argument allocation failed");
+            else if(read.status!=JSON_OK)e=diagnose(store,r,"tool_arguments",step->idx,"malformed tool arguments JSON");
+            json_read_free(&read);
         }
+        if(str_equal(name,STR_LIT("run_command")))name=STR_LIT("Bash");
+        else if(str_equal(name,STR_LIT("write_to_file"))||str_equal(name,STR_LIT("write_file"))||str_equal(name,STR_LIT("replace_file_content"))||str_equal(name,STR_LIT("multi_replace_file_content")))name=STR_LIT("Edit");
+        else if(str_equal(name,STR_LIT("call_mcp_tool"))) {
+            Str args=scalar(f.bytes,3);JsonRead read=json_read(args,STRICT,JSON_CONSTANTS_REJECT,"antigravity.tool_arguments");
+            yyjson_val *root=read.doc?yyjson_doc_get_root(read.doc):NULL;
+            yyjson_val *server=root?yyjson_obj_get(root,"ServerName"):NULL,*tool=root?yyjson_obj_get(root,"ToolName"):NULL;
+            if(read.status==JSON_OK&&yyjson_is_str(server)&&yyjson_is_str(tool)&&yyjson_get_len(server)&&yyjson_get_len(tool)) {
+                JsonWriter w={0};jsonw_raw(&w,"mcp__");jsonw_bytes(&w,yyjson_get_str(server),yyjson_get_len(server));jsonw_raw(&w,"__");jsonw_bytes(&w,yyjson_get_str(tool),yyjson_get_len(tool));
+                e=w.error;if(!e.code)e=str_copy(&c->arena,(Str){w.data,(uint32_t)w.length},&name);jsonw_free(&w);
+            }else if(read.status==JSON_NOMEM)e=err_make(ERR_NOMEM,"Antigravity tool argument allocation failed");
+            else e=diagnose(store,r,"tool_arguments",step->idx,"call_mcp_tool arguments require ServerName and ToolName strings");
+            json_read_free(&read);
+        }
+        if(!e.code)e=claude_tool_count(&c->arena,counted,name,failed);
     }
-    if(!e.code)e=corpus_turn_tools_adopt(&c->arena,s,t,&counted);
-    omap_destroy(&counted.mcp);omap_destroy(&counted.other);return e;
+    return e;
+}
+static Err session_tools(AntigravityStore *store,const AntigravitySession *r,Corpus *c,SessionModel *s) {
+    if(!s->turn_count)return ERR_SUCCESS;
+    Arena scratch={0};Omap failed_ids={0},turns={0};CorpusTools *counted=NULL;
+    Err e=alloc(&scratch,s->turn_count,sizeof *counted,alignof(CorpusTools),(void**)&counted);
+    /* Error execution IDs are session-local. Merge each execution once; the
+     * map copies keys before temporary merged bytes are destroyed. */
+    for(size_t i=0;!e.code&&i<r->step_count;i++) {
+        const AntigravityStep *step=&r->steps[i];int64_t status=0;
+        if(!antigravity_step_enum(step,true,&status)||status!=7)continue;
+        Str call={0};e=antigravity_message_merge(&scratch,step->metadata,4,&call);
+        Str id=scalar(call,1);if(!e.code&&id.n)e=omap_put(&failed_ids,id,(void*)r);
+    }
+    for(size_t i=0;!e.code&&i<s->turn_count;i++)e=omap_put(&turns,s->turns[i].id,&counted[i]);
+    /* One source pass routes planner calls to their already-constructed turn,
+     * rather than visiting every session step again for every display turn. */
+    for(size_t i=0;!e.code&&i<r->step_count;i++) {
+        const AntigravityStep *step=&r->steps[i];if(!step->turn.n)continue;
+        CorpusTools *target=omap_get(&turns,step->turn);
+        if(!target){e=err_make(ERR_INVALID,"Antigravity tool turn identity missing");break;}
+        Str planner={0};e=antigravity_message_merge(&scratch,step->payload,20,&planner);
+        if(!e.code)e=tool_calls(store,r,c,step,planner,&failed_ids,target);
+    }
+    for(size_t i=0;!e.code&&i<s->turn_count;i++)e=corpus_turn_tools_adopt(&c->arena,s,&s->turns[i],&counted[i]);
+    if(counted)for(size_t i=0;i<s->turn_count;i++){omap_destroy(&counted[i].mcp);omap_destroy(&counted[i].other);}
+    omap_destroy(&failed_ids);omap_destroy(&turns);arena_destroy(&scratch);return e;
 }
 static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t snapshot,Corpus *c,SessionModel *s) {
     *s=(SessionModel){.id=r->id,.key=r->id,.identity=r->id,.provider=PROVIDER_ANTIGRAVITY,
@@ -184,8 +201,9 @@ static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t
         TurnModel *t=&s->turns[i];size_t source=0;while(source<count&&!str_equal(t->id,facts[source].key))source++;
         if(source==count)return err_make(ERR_INVALID,"Antigravity turn identity missing");
         TRY(alloc(&c->arena,1,sizeof *t->requests,alignof(Request*),(void**)&t->requests));
-        t->requests[0]=&s->requests[source];t->request_count=1;t->final_answer=answers[source];s->ordered_requests[i]=t->requests[0];corpus_status_flags(s,t->status);TRY(tools(store,r,c,s,t));
+        t->requests[0]=&s->requests[source];t->request_count=1;t->final_answer=answers[source];s->ordered_requests[i]=t->requests[0];corpus_status_flags(s,t->status);
     }
+    TRY(session_tools(store,r,c,s));
     if(!metadata_text(s->title_full))for(size_t i=0;i<count;i++)if(metadata_text(s->requests[i].text)){s->title_full=s->requests[i].text;s->title_source=STR_LIT("first_request");break;}
     if(!metadata_text(s->title_full)){s->title_full=r->id;s->title_source=STR_LIT("session_id");}
     TRY(title_display(&c->arena,s->title_full,&s->title));if(s->is_subagent){s->kind=STR_LIT("subagent");s->agent_label=s->title_full;}

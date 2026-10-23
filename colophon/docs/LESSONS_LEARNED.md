@@ -1,5 +1,13 @@
 # Lessons learned
 
+Index failed Antigravity execution IDs once per session before counting planner
+calls, then route each step to its turn through an index. Merging split tool-call
+metadata inside each planner call retains a fresh arena copy every time and can
+turn small inputs into quadratic retained memory. Keep those merges in temporary
+session scratch, copy index keys and destroy scratch/maps on every exit. Assert
+both failed-tool behavior and an arena-capacity budget on split synthetic inputs;
+wall-clock timing alone cannot reliably catch this retained-allocation defect.
+
 Antigravity nested singular protobuf messages merge before scalar lookup;
 choosing the last raw message loses earlier response text or timestamp seconds.
 Keep raw optional SQL enum states separate from effective projection: an explicit

@@ -4,6 +4,7 @@
 #include "antigravity/compose.h"
 #include "corpus/workspaces.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 static SessionModel *project(AntigravityStore *store,Corpus *c,AntigravitySession **rows,size_t n,int64_t snapshot) {
     store->sessions=rows;store->session_count=n;
@@ -193,5 +194,42 @@ TEST(antigravity_corpus_zero_turns_trajectory_clock_and_foreign_parent) {
         ASSERT_EQ(i!=0,p->start_ms.present);ASSERT_EQ(i!=0,p->end_ms.present);
         if(i){ASSERT_EQ(1000,p->start_ms.value);ASSERT_EQ(3000,p->end_ms.value);ASSERT_TRUE(p->flags&F_ORPHAN);ASSERT_EQ(1,s.orphaned_subagents.count);}
         ASSERT_EQ(0,foreign.children.count);ASSERT_EQ(0,leading.turn.n);cleanup(&s,&c);
+    }
+}
+/* A split execution message must not be retained once per planner call. The
+ * fixed budget leaves room for display models, but rejects megabytes of copies. */
+TEST(antigravity_corpus_failed_tool_index_bounds_split_metadata_retention) {
+    const size_t sizes[]={32,128};
+    for(size_t sample=0;sample<2;sample++) {
+        size_t count=sizes[sample];AntigravityStep *steps=calloc(count*3,sizeof *steps);
+        JsonWriter *payload=calloc(count,sizeof *payload),*metadata=calloc(count,sizeof *metadata);
+        ASSERT_TRUE(steps&&payload&&metadata);
+        char padding[256];memset(padding,'x',sizeof padding);
+        for(size_t i=0;i<count;i++) {
+            char identity[64];int length=snprintf(identity,sizeof identity,"synthetic-failed-%zu",i);
+            Str id={identity,(uint32_t)length};JsonWriter call={0},planner={0},tail={0};
+            field(&call,1,id);field(&call,2,STR_LIT("run_command"));field(&planner,7,bytes(&call));jsonw_free(&call);
+            field(&call,1,STR_LIT("synthetic-unmatched"));field(&call,2,STR_LIT("run_command"));field(&planner,7,bytes(&call));jsonw_free(&call);
+            field(&payload[i],20,bytes(&planner));jsonw_free(&planner);
+            field(&call,1,id);field(&metadata[i],4,bytes(&call));jsonw_free(&call);
+            field(&tail,3,(Str){padding,sizeof padding});field(&metadata[i],4,bytes(&tail));jsonw_free(&tail);
+            steps[i*3]=user();steps[i*3].idx=(int64_t)(i*3);
+            steps[i*3+1]=(AntigravityStep){.idx=(int64_t)(i*3+1),.payload=bytes(&payload[i])};
+            steps[i*3+2]=(AntigravityStep){.idx=(int64_t)(i*3+2),.metadata=bytes(&metadata[i]),
+                .status_state=i%2?AG_SQL_ABSENT:AG_SQL_INTEGER,.status=7,.payload=i%2?STR_LIT("\40\7"):(Str){0}};
+        }
+        AntigravityStep sibling_steps[]={user(),steps[1]};
+        AntigravitySession raw={.id=STR_LIT("synthetic-bounded-tools"),.steps=steps,.step_count=count*3},
+            sibling={.id=STR_LIT("synthetic-independent-tools"),.steps=sibling_steps,.step_count=2},*rows[]={&raw,&sibling};
+        Corpus c={0};AntigravityStore s={0};SessionModel *p=project(&s,&c,rows,2,5000);
+        SessionModel *independent=omap_get(&c.sessions,sibling.id);ASSERT_TRUE(independent);
+        ASSERT_EQ(2,independent->tools.shell);ASSERT_EQ(0,independent->tools.shell_failed);
+        ASSERT_EQ(count,p->turn_count);ASSERT_EQ(count*2,p->tools.shell);ASSERT_EQ(count,p->tools.shell_failed);
+        for(size_t i=0;i<count;i++){ASSERT_EQ(2,p->turns[i].tools.shell);ASSERT_EQ(1,p->turns[i].tools.shell_failed);}
+        size_t retained=cp_test_arena_capacity(&c.arena);
+        fprintf(stderr,"synthetic Antigravity tool retention: turns=%zu calls=%zu split_errors=%zu arena_capacity=%zu bound=524288\n",count,count*2,count,retained);
+        ASSERT_TRUE(retained<=524288);
+        cleanup(&s,&c);for(size_t i=0;i<count;i++){jsonw_free(&payload[i]);jsonw_free(&metadata[i]);}
+        free(steps);free(payload);free(metadata);
     }
 }

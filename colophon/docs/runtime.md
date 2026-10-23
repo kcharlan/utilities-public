@@ -116,18 +116,18 @@ window starts at or before the earliest session. The forward arrow stops at the
 current period, or for Custom once the range reaches the snapshot day. `[` and
 `]` step back and forward unless focus is in a text field.
 
-The page defaults to all sources. Its All/Codex/Claude/OpenCode segmented
-switch persists as `src=all|codex|claude|opencode` in the URL hash and retains the
+The page defaults to all sources. Its All/Codex/Claude/OpenCode/Antigravity segmented
+switch persists as `src=all|codex|claude|opencode|antigravity` in the URL hash and retains the
 other filters. Switching away from a selected reader's provider closes that
 reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
-switch; accepted OpenCode database counts are shown separately. The footer
+switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
 displays the embedded payload's release version (`colophon 0.4.2`).
 
-Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
+Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
-selected metric (ties follow Codex, Claude, OpenCode order). Model, recent and list rows carry provider
+selected metric (ties follow Codex, Claude, OpenCode, Antigravity order). Model, recent and list rows carry provider
 marks. Costs retain each provider's independent availability; a known subtotal
 also names unavailable providers. Absent/disabled sources remain selectable
 with a no-data label and explain the checked paths or disabling flag.
@@ -224,6 +224,8 @@ runtime state. Version is currently `colophon 0.4.2`.
 | `--no-claude` | Disable Claude inputs and reconciliation. |
 | `--opencode-db PATH` | Select only this OpenCode database; expand tilde and resolve relative paths against cwd. Reject `:memory:`. |
 | `--no-opencode` | Disable OpenCode discovery and reads before inspecting source paths. |
+| `--antigravity-home PATH` | Select the Gemini root; expand tilde and resolve relative paths against cwd. |
+| `--no-antigravity` | Disable Antigravity discovery and reads before inspecting source paths. |
 
 OpenCode discovery defaults to `~/.local/share/opencode`; nonempty
 `XDG_DATA_HOME` replaces `~/.local/share` (relative values resolve against cwd,
@@ -336,16 +338,16 @@ Legacy `meta.counts` remains Codex-only. Claude log/parse counters are additive
 under `meta.sources.claude`, independently of the legacy counts.
 
 Long flags accept unique prefixes. `--no` is now ambiguous between
-`--no-open`, `--no-claude` and `--no-opencode`; `--no-op` matches both
+`--no-open`, `--no-claude`, `--no-opencode` and `--no-antigravity`; `--no-op` matches both
 `--no-open` and `--no-opencode`. `--o` matches `--offline`, `--output` and
 `--opencode-db`; `--claude` is ambiguous between the two Claude
 path flags. `--c` is also ambiguous between Codex and Claude path flags.
 Use the full flag names when scripting.
 
 Presence is decided before creating the runtime home. A readable source
-directory, a usable Claude history entry or a reportable OpenCode candidate
+directory, a usable Claude history entry or a reportable OpenCode/Antigravity candidate
 is sufficient. With no source,
-exit 1 names the Codex home, Claude roots/history and OpenCode paths checked, and
+exit 1 names the Codex home, Claude roots/history, OpenCode paths and Antigravity home checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
 opening, recovery and replacement, including with `--rebuild`. Eligible Claude
 history entries render history-only sessions. Decodable retained records and eligible
