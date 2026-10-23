@@ -835,7 +835,10 @@ Capability selection belongs to the provider profile: parameter membership,
 Parameters and Capabilities categories, supplied defaults, architecture, and
 implicit caching are included by default. Pricing, conditional selectors,
 status, and Context & Limits retain their existing routing. Supplied objects
-expand into named leaf transitions; parameter reorder/duplicate-only changes
+expand into named leaf transitions; descendant capability patterns apply even
+when their parent first appears or disappears. Expansion stops at recognized
+parameter-name fields at every nesting depth, keeping malformed operands
+neutral. Parameter reorder/duplicate-only changes
 leave no empty list heading in either report. The capability summary counts
 each changed list once before the display cap, even when multiple endpoints,
 fields, or catalog models share that list. Raw JSON and saved evidence remain

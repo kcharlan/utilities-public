@@ -74,6 +74,55 @@ def test_invalid_parameter_shapes_cannot_expand_or_bulk_group(old, new):
     assert change.old_value is old and change.new_value is new
 
 
+@pytest.mark.parametrize("added", [True, False])
+@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize("operand", [[{"supports_tools": True}], {"supports_tools": True}])
+def test_nested_parameter_parent_expansion_keeps_malformed_operands_neutral(added, custom, operand):
+    from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
+    from model_sentinel.endpoint_report import endpoint_report
+    from tests.endpoint_report_fixtures import _ep_capture, _ep_list, _ep_obs, _ep_result, _ep_state
+
+    leaf = "synthetic_names" if custom else "supported_parameters"
+    path = "default_parameters." + leaf
+    profile = replace(OPENROUTER_PROFILE, parameter_membership_fields=(path,)) if custom else OPENROUTER_PROFILE
+    parent = {leaf: operand}
+    old, new = (None, parent) if added else (parent, None)
+    change = FieldChange("default_parameters", old, new)
+    event = PricingComparisonEvent(LiveComparisonIdentity("synthetic", "synthetic/nested", 1, 2), "synthetic", "synthetic/nested", "Synthetic Nested", "2030-01-02T00:00:00+00:00", None, None, (change,), None, None)
+    frozen_before = repr(event.field_changes)
+    core = reporting.build_model_event_semantic_core(event, profile)
+    for mode in ("default", "all"):
+        policy = make_report_detail_policy(mode=mode)
+        plans = (
+            reporting._field_display_plan((change,), policy, profile),
+            reporting.project_model_event_semantics(core, policy, profile).display,
+        )
+        for plan in plans:
+            assert [item.field_name for item in plan.visible] == [path]
+            rendered = classify_change_with_profile(plan.visible[0], profile=profile)
+            assert rendered.kind == "scalar" and rendered.semantic == "neutral"
+            assert rendered.list_added == rendered.list_removed == ()
+            assert reporting._bulk_change_signature(plan, profile=profile) is None
+    before_state = {**_ep_state("synthetic-host"), **({"default_parameters": old} if old is not None else {})}
+    after_state = {**_ep_state("synthetic-host"), **({"default_parameters": new} if new is not None else {})}
+    capture = _ep_capture(
+        (_ep_list("synthetic/nested", _ep_obs("synthetic-host", before_state)),),
+        (_ep_list("synthetic/nested", _ep_obs("synthetic-host", after_state)),),
+    )
+    result = replace(_ep_result(capture), profile=profile)
+    for full_detail in (False, True):
+        projection = endpoint_report(result, full_detail=full_detail)
+        assert projection.summary_clauses == ("1 list with capability changes",)
+        (row,) = projection.lists[0].metadata_rows
+        assert row.change is capture.changes[0]
+        assert row.change.field_name == "default_parameters"
+        assert row.rendered.field_path == path
+        assert row.rendered.kind == "scalar" and row.rendered.semantic == "neutral"
+        assert row.rendered.list_added == row.rendered.list_removed == ()
+    assert repr(event.field_changes) == frozen_before
+    assert change.old_value is old and change.new_value is new
+
+
 def test_parameter_bulk_grouping_after_semantic_projection():
     from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
     deltas, cores = [], {}
@@ -8024,6 +8073,73 @@ def test_endpoint_capabilities_share_price_routing_and_keep_full_remainder():
     assert {row.rendered.field_path for row in full.lists[0].metadata_rows} == {
         "architecture.modality", "supports_tools", "supports_implicit_caching", "context_length", "description",
     }
+
+
+@pytest.mark.parametrize("added", [True, False])
+@pytest.mark.parametrize("policy_kind", ["wildcard", "exact", "membership"])
+def test_endpoint_descendant_capability_policy_survives_parent_presence(added, policy_kind):
+    from model_sentinel.endpoint_report import endpoint_report
+    parent = {"mode": "synthetic-mode", "names": ["synthetic-tool"], "description": "synthetic-note"}
+    custom_membership = policy_kind == "membership"
+    profile = replace(
+        OPENROUTER_PROFILE,
+        endpoint_capability_fields=() if custom_membership else (
+            "synthetic_options.*" if policy_kind == "wildcard" else "synthetic_options.mode",
+        ),
+        parameter_membership_fields=("synthetic_options.names",) if custom_membership else (),
+    )
+    expected = "synthetic_options.names" if custom_membership else "synthetic_options.mode"
+    summaries = []
+    for empty_parent in (False, True):
+        absent = {"synthetic_options": {}} if empty_parent else {}
+        present = {"synthetic_options": parent}
+        old, new = (absent, present) if added else (present, absent)
+        capture = _ep_capture(
+            (_ep_list("synthetic/descendant", _ep_obs("host", {**_ep_state("host"), **old})),),
+            (_ep_list("synthetic/descendant", _ep_obs("host", {**_ep_state("host"), **new})),),
+        )
+        result = replace(_ep_result(capture), profile=profile)
+        for full_detail in (False, True):
+            projection = endpoint_report(result, full_detail=full_detail)
+            assert len(projection.lists) == 1
+            assert projection.summary_clauses == ("1 list with capability changes",)
+            summaries.append(projection.summary_clauses)
+            assert projection.detail_only_list_count == projection.omitted_list_count == 0
+            rows = projection.lists[0].metadata_rows
+            assert {row.rendered.field_path for row in rows} == (
+                {"synthetic_options.mode", "synthetic_options.names", "synthetic_options.description"}
+                if full_detail or policy_kind == "wildcard" else {expected}
+            )
+            selected = next(row for row in rows if row.rendered.field_path == expected)
+            assert any(selected.change is source for source in capture.changes)
+            if not empty_parent:
+                assert selected.change is capture.changes[0]
+                assert selected.change.field_name == "synthetic_options"
+    assert len(set(summaries)) == 1
+
+
+@pytest.mark.parametrize("field_name", ["pricing", "context_length", "synthetic_metadata"])
+@pytest.mark.parametrize("added", [True, False])
+def test_noncapability_parent_expansion_preserves_routing_and_full_metadata(field_name, added):
+    from model_sentinel.endpoint_report import endpoint_report
+    # The nested name is capability-like, but the parent routing wins. An
+    # unrelated metadata object keeps its established full-detail JSON row.
+    parent = {"description": "synthetic-note"} if field_name == "synthetic_metadata" else {"supports_tools": True}
+    old, new = ({}, {field_name: parent}) if added else ({field_name: parent}, {})
+    capture = _ep_capture(
+        (_ep_list("synthetic/routing", _ep_obs("host", {"tag": "host", **old})),),
+        (_ep_list("synthetic/routing", _ep_obs("host", {"tag": "host", **new})),),
+    )
+    result = _ep_result(capture)
+    concise = endpoint_report(result, full_detail=False)
+    full = endpoint_report(result, full_detail=True)
+    assert concise.lists == () and concise.detail_only_list_count == 1
+    assert concise.summary_clauses == full.summary_clauses == ()
+    (row,) = full.lists[0].metadata_rows
+    # Endpoint comparison itself normalizes missing pricing to an empty
+    # object, so this source event already names its direct pricing child.
+    assert row.rendered.field_path == ("pricing.supports_tools" if field_name == "pricing" else field_name)
+    assert row.change is capture.changes[0]
 
 
 def test_endpoint_companion_cap_navigation_concise_links_to_full_companion() -> None:

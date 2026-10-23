@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-23: Apply provider policy throughout structured expansion
+
+Checking parameter membership only at the original changed path lets an
+introduced parent bypass malformed-operand validation. Pass the active profile
+through recursive flattening and stop at every recognized membership path,
+including exact custom nested paths. Endpoint capability admission must also
+consider expanded descendants when the original parent is not admitted; an
+absent parent and an empty parent must give the same capability selection and
+summary. Preserve unrelated full-detail parent metadata and original source
+records while selecting eligible leaves.
+
 ## 2026-10-23: Count endpoint capabilities before selecting report detail
 
 Concise endpoint reports previously selected only price, presence and

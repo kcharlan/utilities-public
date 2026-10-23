@@ -669,20 +669,24 @@ def _analyse_list(
             else:
                 # Reuse the catalog presentation expansion with detached JSON,
                 # retaining the endpoint record as the audit source of each leaf.
-                renderings = (rendered,)
-                if profile.is_endpoint_capability_field(field_name):
-                    # Local import: reporting consumes this shared projection.
-                    from .reporting import _expand_structured_field_changes
+                # Local import: reporting consumes this shared projection.
+                from .reporting import _expand_structured_field_changes
 
-                    detached = FieldChange(
-                        field_name,
-                        mutable_json_value(change.old_value),
-                        mutable_json_value(change.new_value),
-                    )
-                    renderings = tuple(
-                        _strict_change(field.field_name, field.old_value, field.new_value, profile)
-                        for field in _expand_structured_field_changes((detached,), profile)
-                    )
+                renderings = (rendered,)
+                detached = FieldChange(
+                    field_name,
+                    mutable_json_value(change.old_value),
+                    mutable_json_value(change.new_value),
+                )
+                expanded = tuple(
+                    _strict_change(field.field_name, field.old_value, field.new_value, profile)
+                    for field in _expand_structured_field_changes((detached,), profile)
+                )
+                if profile.is_endpoint_capability_field(field_name) or any(
+                    leaf.kind != "noop" and profile.is_endpoint_capability_field(leaf.field_path)
+                    for leaf in expanded
+                ):
+                    renderings = expanded
                 for leaf in renderings:
                     if leaf.kind == "noop":
                         continue

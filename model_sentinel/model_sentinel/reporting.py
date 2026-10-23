@@ -1040,14 +1040,14 @@ def _expand_structured_field_change(
             return expanded
 
     if old_value is None and isinstance(new_value, dict):
-        return _flatten_one_sided_structure(field_change.field_name, new_value, added=True)
+        return _flatten_one_sided_structure(field_change.field_name, new_value, profile, added=True)
     if new_value is None and isinstance(old_value, dict):
-        return _flatten_one_sided_structure(field_change.field_name, old_value, added=False)
+        return _flatten_one_sided_structure(field_change.field_name, old_value, profile, added=False)
 
     if old_value is None and _is_structured_list(new_value):
-        return _flatten_one_sided_structure(field_change.field_name, new_value, added=True)
+        return _flatten_one_sided_structure(field_change.field_name, new_value, profile, added=True)
     if new_value is None and _is_structured_list(old_value):
-        return _flatten_one_sided_structure(field_change.field_name, old_value, added=False)
+        return _flatten_one_sided_structure(field_change.field_name, old_value, profile, added=False)
 
     return (field_change,)
 
@@ -1084,11 +1084,11 @@ def _expand_pricing_override_changes(
         old_item = old_by_identity.get(identity)
         new_item = new_by_identity.get(identity)
         if old_item is None:
-            changes.extend(_flatten_one_sided_structure(path, new_item, added=True))
+            changes.extend(_flatten_one_sided_structure(path, new_item, profile, added=True))
         elif new_item is None:
-            changes.extend(_flatten_one_sided_structure(path, old_item, added=False))
+            changes.extend(_flatten_one_sided_structure(path, old_item, profile, added=False))
         else:
-            changes.extend(_diff_structured_values(path, old_item, new_item))
+            changes.extend(_diff_structured_values(path, old_item, new_item, profile))
     return tuple(changes)
 
 
@@ -1119,17 +1119,19 @@ def _pricing_override_path(
     return f"{field_name}[{condition}]"
 
 
-def _diff_structured_values(path: str, old_value: Any, new_value: Any) -> tuple[FieldChange, ...]:
-    if isinstance(old_value, dict) and isinstance(new_value, dict):
+def _diff_structured_values(
+    path: str, old_value: Any, new_value: Any, profile: ProviderProfile,
+) -> tuple[FieldChange, ...]:
+    if not profile.is_parameter_membership_field(path) and isinstance(old_value, dict) and isinstance(new_value, dict):
         changes: list[FieldChange] = []
         for key in sorted(set(old_value) | set(new_value)):
             child_path = f"{path}.{key}"
             if key not in old_value:
-                changes.extend(_flatten_one_sided_structure(child_path, new_value[key], added=True))
+                changes.extend(_flatten_one_sided_structure(child_path, new_value[key], profile, added=True))
             elif key not in new_value:
-                changes.extend(_flatten_one_sided_structure(child_path, old_value[key], added=False))
+                changes.extend(_flatten_one_sided_structure(child_path, old_value[key], profile, added=False))
             else:
-                changes.extend(_diff_structured_values(child_path, old_value[key], new_value[key]))
+                changes.extend(_diff_structured_values(child_path, old_value[key], new_value[key], profile))
         return tuple(changes)
     if old_value != new_value:
         return (FieldChange(path, old_value, new_value),)
@@ -1139,17 +1141,19 @@ def _diff_structured_values(path: str, old_value: Any, new_value: Any) -> tuple[
 def _flatten_one_sided_structure(
     field_name: str,
     value: Any,
+    profile: ProviderProfile,
     *,
     added: bool,
 ) -> tuple[FieldChange, ...]:
     leaves: list[FieldChange] = []
 
     def visit(path: str, current: Any) -> None:
-        if isinstance(current, dict) and current:
+        parameter_field = profile.is_parameter_membership_field(path)
+        if not parameter_field and isinstance(current, dict) and current:
             for key in sorted(current):
                 visit(f"{path}.{key}", current[key])
             return
-        if isinstance(current, list) and current and _is_structured_list(current):
+        if not parameter_field and isinstance(current, list) and current and _is_structured_list(current):
             for index, item in enumerate(current):
                 visit(f"{path}[{index}]", item)
             return
