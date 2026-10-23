@@ -23,7 +23,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.4.0`).
+displays the embedded payload's release version (`colophon 0.4.1`).
 
 Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -33,7 +33,19 @@ also names unavailable providers. Absent/disabled sources remain selectable
 with a no-data label and explain the checked paths or disabling flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
-The Claude boundary note appears only in Claude and All views. OpenCode's
+The Claude boundary note appears only in Claude and All views.
+
+A session's workspace is, in order: a matching `workspaces.json` alias; its
+repository's normalized remote origin; its git root path; or its working
+folder ("(no repo)"). Codex records the remote; for Claude and OpenCode, which
+do not, Colophon reads `remote "origin"`'s first url from the repository's git
+config (a linked worktree's `.git` file leads to the shared config). A working
+folder that no longer exists is searched from its nearest existing ancestor,
+so deleted worktrees join their repository and keep the path as subfolder.
+Workspace bars put the full name above the bar and wrap long paths. Beside an
+open reader, the session list can be resized by dragging or with the arrow
+keys on its divider (Shift for larger steps; double-click resets). The width
+is kept in this browser's `colophon.sessionListWidth` storage. OpenCode's
 unsupported/unreadable views name database reasons. An expandable database
 footer preserves successful, failed and skipped-preview entries even when a
 sibling database succeeded. Structured diagnostics retain their contextual
@@ -76,7 +88,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.4.0`.
+runtime state. Version is currently `colophon 0.4.1`.
 
 | Flag | Behavior |
 | --- | --- |

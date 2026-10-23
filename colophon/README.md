@@ -18,6 +18,12 @@ each run without a parse cache. The page retains database status/reasons,
 preview skips, missing usage and residual diagnostics. Continuation remains
 disabled: disposable CLI/database routing acceptance has not been established.
 
+Version 0.4.1 groups every provider's sessions in one repository into one
+workspace: Claude and OpenCode record no git remote, so it is read from the
+repository's config, and folders since deleted (such as removed worktrees)
+join the repository around them. Long workspace names wrap instead of being
+cut off, and the session list beside the reader is resizable.
+
 The page's All/Codex/Claude/OpenCode switch preserves filters and uses green/blue/violet
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

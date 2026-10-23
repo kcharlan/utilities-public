@@ -232,7 +232,19 @@ Err workspace_git_root(Arena *arena, Str cwd, Str *out) {
   struct stat st;
   Str p;
   TRY(str_copy(arena, cwd, &p));
-  if (stat(p.p, &st) || !S_ISDIR(st.st_mode))
+  if (stat(p.p, &st)) {
+    /* A removed folder, such as a deleted worktree, still belongs to the
+     * repository around it: search from its nearest existing ancestor. */
+    if (errno != ENOENT && errno != ENOTDIR)
+      return ERR_SUCCESS;
+    do {
+      p = parent(p);
+      if (!p.p)
+        return ERR_SUCCESS;
+      TRY(str_copy(arena, p, &p));
+    } while (stat(p.p, &st));
+  }
+  if (!S_ISDIR(st.st_mode))
     return ERR_SUCCESS;
   while (p.p) {
     Str marker;
@@ -246,6 +258,181 @@ Err workspace_git_root(Arena *arena, Str cwd, Str *out) {
       TRY(str_copy(arena, p, &p));
   }
   return ERR_SUCCESS;
+}
+/* Unreadable or oversized files read as absent; only allocation fails. */
+static Err read_text(Arena *arena, Str path, Str *out) {
+  *out = (Str){0};
+  char *bytes = NULL;
+  size_t n = 0;
+  Err e = file_read_all(path.p, &bytes, &n);
+  if (e.code)
+    return e.code == ERR_NOMEM ? e : ERR_SUCCESS;
+  if (n <= UINT32_MAX)
+    e = str_copy(arena, (Str){bytes, (uint32_t)n}, out);
+  free(bytes);
+  return e;
+}
+static Str first_line(Str s) {
+  const char *end = s.p ? memchr(s.p, '\n', s.n) : NULL;
+  if (end)
+    s.n = (uint32_t)(end - s.p);
+  return str_trim(s, true);
+}
+static Err beside(Arena *arena, Str base, Str path, Str *out) {
+  if (path.p[0] == '/')
+    return str_copy(arena, path, out);
+  TRY(join(arena, base, STR_LIT("/"), out));
+  return join(arena, *out, path, out);
+}
+/* The directory holding a repository's config. A linked worktree's .git file
+ * names its private gitdir, whose commondir names the shared directory. */
+static Err git_common_dir(Arena *arena, Str root, Str *out) {
+  *out = (Str){0};
+  Str dotgit, text, line, dir, file;
+  struct stat st;
+  TRY(join(arena, root, STR_LIT("/.git"), &dotgit));
+  if (stat(dotgit.p, &st))
+    return ERR_SUCCESS;
+  if (S_ISDIR(st.st_mode)) {
+    *out = dotgit;
+    return ERR_SUCCESS;
+  }
+  TRY(read_text(arena, dotgit, &text));
+  line = first_line(text);
+  if (line.n < 8 || memcmp(line.p, "gitdir:", 7))
+    return ERR_SUCCESS;
+  line = str_trim((Str){line.p + 7, line.n - 7}, true);
+  if (!line.n)
+    return ERR_SUCCESS;
+  TRY(beside(arena, root, line, &dir));
+  TRY(join(arena, dir, STR_LIT("/commondir"), &file));
+  TRY(read_text(arena, file, &text));
+  line = first_line(text);
+  if (!line.n) {
+    *out = dir;
+    return ERR_SUCCESS;
+  }
+  return beside(arena, dir, line, out);
+}
+static bool ascii_iequal(Str a, Str b) {
+  if (a.n != b.n)
+    return false;
+  for (uint32_t i = 0; i < a.n; i++) {
+    char x = a.p[i], y = b.p[i];
+    if (x >= 'A' && x <= 'Z')
+      x = (char)(x - 'A' + 'a');
+    if (y >= 'A' && y <= 'Z')
+      y = (char)(y - 'A' + 'a');
+    if (x != y)
+      return false;
+  }
+  return true;
+}
+static bool blank(char c) { return c == ' ' || c == '\t'; }
+/* Git config section header: [remote "origin"] (name case-insensitive,
+ * subsection exact with \-escapes) or the legacy [remote.origin]. */
+static bool origin_section(Str line) {
+  size_t i = 1;
+  while (i < line.n && line.p[i] != ']' && !blank(line.p[i]) &&
+         line.p[i] != '"')
+    i++;
+  Str name = {line.p + 1, (uint32_t)(i - 1)};
+  if (i < line.n && line.p[i] == ']')
+    return ascii_iequal(name, STR_LIT("remote.origin"));
+  if (!ascii_iequal(name, STR_LIT("remote")))
+    return false;
+  while (i < line.n && blank(line.p[i]))
+    i++;
+  if (i == line.n || line.p[i++] != '"')
+    return false;
+  const char *want = "origin";
+  size_t k = 0;
+  for (; i < line.n && line.p[i] != '"'; i++) {
+    char c = line.p[i];
+    if (c == '\\' && i + 1 < line.n)
+      c = line.p[++i];
+    if (k == 6 || c != want[k++])
+      return false;
+  }
+  return k == 6 && i + 1 < line.n && line.p[i + 1] == ']';
+}
+/* First url of [remote "origin"]: quotes, \-escapes and comments as git. */
+static Err config_origin_url(Arena *arena, Str text, Str *out) {
+  *out = (Str){0};
+  bool inside = false;
+  size_t at = 0;
+  while (text.p && at < text.n) {
+    const char *end = memchr(text.p + at, '\n', text.n - at);
+    size_t stop = end ? (size_t)(end - text.p) : text.n;
+    Str line = {text.p + at, (uint32_t)(stop - at)};
+    at = stop + 1;
+    while (line.n && blank(line.p[0])) {
+      line.p++;
+      line.n--;
+    }
+    if (line.n && line.p[line.n - 1] == '\r')
+      line.n--;
+    if (!line.n || line.p[0] == '#' || line.p[0] == ';')
+      continue;
+    if (line.p[0] == '[') {
+      inside = origin_section(line);
+      continue;
+    }
+    size_t i = 0;
+    while (i < line.n && ((line.p[i] >= 'a' && line.p[i] <= 'z') ||
+                          (line.p[i] >= 'A' && line.p[i] <= 'Z') ||
+                          (line.p[i] >= '0' && line.p[i] <= '9') ||
+                          line.p[i] == '-'))
+      i++;
+    if (!inside || !ascii_iequal((Str){line.p, (uint32_t)i}, STR_LIT("url")))
+      continue;
+    while (i < line.n && blank(line.p[i]))
+      i++;
+    if (i == line.n || line.p[i++] != '=')
+      continue;
+    while (i < line.n && blank(line.p[i]))
+      i++;
+    char *value;
+    TRY(arena_alloc(arena, line.n - i + 1, 1, (void **)&value));
+    size_t used = 0, keep = 0;
+    bool quoted = false;
+    for (; i < line.n; i++) {
+      char c = line.p[i];
+      if (c == '"') {
+        quoted = !quoted;
+        continue;
+      }
+      if (!quoted && (c == '#' || c == ';'))
+        break;
+      if (c == '\\' && i + 1 < line.n) {
+        c = line.p[++i];
+        c = c == 'n' ? '\n' : c == 't' ? '\t' : c == 'b' ? '\b' : c;
+        value[used++] = c;
+        keep = used;
+        continue;
+      }
+      value[used++] = c;
+      if (quoted || !blank(c))
+        keep = used;
+    }
+    value[keep] = 0;
+    *out = (Str){value, (uint32_t)keep};
+    return ERR_SUCCESS;
+  }
+  return ERR_SUCCESS;
+}
+Err workspace_git_origin(Arena *arena, Str root, Str *out) {
+  *out = (Str){0};
+  if (!root.p)
+    return ERR_SUCCESS;
+  Str common, config, text, url;
+  TRY(git_common_dir(arena, root, &common));
+  if (!common.p)
+    return ERR_SUCCESS;
+  TRY(join(arena, common, STR_LIT("/config"), &config));
+  TRY(read_text(arena, config, &text));
+  TRY(config_origin_url(arena, text, &url));
+  return url.p ? workspace_origin(arena, url, out) : ERR_SUCCESS;
 }
 static Err alias_error(WorkspaceAliases *out, const char *path,
                        const char *problem) {
@@ -435,7 +622,7 @@ static int string_order(const void *a, const void *b, void *ctx) {
 void corpus_workspaces_destroy(Corpus *c) { omap_destroy(&c->workspaces); }
 Err corpus_resolve_workspaces(Corpus *c, const WorkspaceAliases *aliases) {
   corpus_workspaces_destroy(c);
-  Omap memo = {0};
+  Omap memo = {0}, origins = {0};
   Err e = ERR_SUCCESS;
   const char *env = getenv("HOME");
   if (!env) {
@@ -480,6 +667,25 @@ Err corpus_resolve_workspaces(Corpus *c, const WorkspaceAliases *aliases) {
           goto done;
         *saved = root;
         e = omap_put(&memo, cwd, saved);
+        if (e.code)
+          goto done;
+      }
+    }
+    if (!origin.p && root.p) {
+      /* Claude and OpenCode record no remote; read the one Codex would. */
+      Str *saved = omap_get(&origins, root);
+      if (saved)
+        origin = *saved;
+      else {
+        e = workspace_git_origin(&c->arena, root, &origin);
+        if (e.code)
+          goto done;
+        e = arena_alloc(&c->arena, sizeof *saved, _Alignof(Str),
+                        (void **)&saved);
+        if (e.code)
+          goto done;
+        *saved = origin;
+        e = omap_put(&origins, root, saved);
         if (e.code)
           goto done;
       }
@@ -584,5 +790,6 @@ Err corpus_resolve_workspaces(Corpus *c, const WorkspaceAliases *aliases) {
   }
 done:
   omap_destroy(&memo);
+  omap_destroy(&origins);
   return e;
 }
