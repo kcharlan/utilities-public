@@ -13,7 +13,7 @@ SESSION = "synthetic-opencode-kite"
 CLOCK = 1767355200000
 
 
-def database(native, name="opencode.db", *, session=SESSION, cost=.25, tokens=10, messages=True, parent=None, archived=None, project_archived=None):
+def database(native, name="opencode.db", *, session=SESSION, cost=.25, tokens=10, messages=True, parent=None, archived=None, project_archived=None, embed_identity=True):
     path = native.home / ".local/share/opencode" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as db:
@@ -23,14 +23,17 @@ def database(native, name="opencode.db", *, session=SESSION, cost=.25, tokens=10
         db.execute("INSERT INTO session_v2 (id,project_id,parent_id,directory,title,version,cost,tokens_input,time_created,time_updated,time_archived) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (session, "synthetic-project", parent, "/synthetic/opencode", "Synthetic OpenCode kite", "synthetic-version", cost, tokens, CLOCK, CLOCK + 3000, archived))
         if messages:
-            message(db, session, "user", 1, {"text": "Invent a synthetic OpenCode kite"})
-            message(db, session, "assistant", 2, {"content": [{"type": "text", "text": "Synthetic kite done"}], "model": {"id": "synthetic-model", "providerID": "synthetic-provider"}, "tokens": {"input": tokens, "output": 0}, "cost": cost, "finish": "stop"})
+            message(db, session, "user", 1, {"text": "Invent a synthetic OpenCode kite"}, embed_identity)
+            message(db, session, "assistant", 2, {"content": [{"type": "text", "text": "Synthetic kite done"}], "model": {"id": "synthetic-model", "providerID": "synthetic-provider"}, "tokens": {"input": tokens, "output": 0}, "cost": cost, "finish": "stop"}, embed_identity)
     return path
 
 
-def message(db, session, kind, seq, fields):
+def message(db, session, kind, seq, fields, embed_identity=True):
     identity = f"synthetic-{session}-{seq}"
     data = {"id": identity, "type": kind, "time": {"created": CLOCK + seq * 1000, "completed": CLOCK + seq * 1000 + 100}, **fields}
+    if not embed_identity:
+        # OpenCode 2.1 keeps a message's id and type only in their columns.
+        del data["id"], data["type"]
     db.execute("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)", (identity, session, kind, seq, CLOCK + seq * 1000, CLOCK + seq * 1000, json.dumps(data)))
 
 
@@ -58,6 +61,21 @@ def test_opencode_only_build_counts_cost_actions_and_private_runtime(native):
     assert "opencode: 1 sessions" in result.stdout and "$0.25 est." in result.stdout
     assert stat.S_IMODE(native.runtime.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(p.stat().st_mode) == (0o700 if p.is_dir() else 0o600) for p in native.runtime.rglob("*"))
+
+
+def test_opencode_messages_without_embedded_identity_keep_request_usage(native):
+    database(native, embed_identity=False)
+    native.codex.rmdir()
+    result = native.build("--no-claude")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert payload["diagnostics"]["opencode_malformed_messages"] == 0
+    assert source(payload)["requests"] == 1
+    assert source(payload)["residual_sessions"] == 0
+    turn, = row["turns"]
+    assert turn["usage"]["input"] == 10
+    assert {bucket[1] for bucket in row["buckets"]} == {"synthetic-provider/synthetic-model"}
 
 
 @pytest.mark.parametrize("option", ["--opencode-db", "--no-opencode"])
@@ -465,7 +483,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.5.0"
+    assert payload["meta"]["version"] == "0.5.1"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):

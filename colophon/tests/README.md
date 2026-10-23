@@ -138,7 +138,9 @@ OpenCode reader units use only the public, schema-only projection in
 exception to runtime-fixtures-in-scratch; all invented rows, database/WAL
 files and canaries are created in fresh external scratch and removed by the
 fixture helper. Tests cover schema/migration rejection, optional columns,
-row-versus-payload identity/clocks, independent token/cost validity,
+row-versus-payload identity/clocks (including OpenCode 2.1 rows whose payload
+omits id and type, and embedded copies that contradict their columns),
+independent token/cost validity,
 authorizer exclusions, transaction staging/deduplication, lock timeout, WAL
 visibility and unchanged database/WAL bytes. Shared-memory side files retain
 SQLite's normal coordination allowance. Cancellation and partial-read failures

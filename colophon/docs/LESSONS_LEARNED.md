@@ -1,5 +1,13 @@
 # Lessons learned
 
+OpenCode 2.1 stopped repeating a message's id and type inside its JSON payload;
+they live only in `session_message` columns. Requiring the embedded copies made
+every real message malformed, and session rollups silently stood in for request
+usage as unattributed totals dated at session start, so totals still looked
+plausible. Take identity from the columns and validate embedded copies only when
+present. A rise in `opencode_malformed_messages` to the full message count is the
+signal of a format change; compare per-request models, not only token totals.
+
 Index failed Antigravity execution IDs once per session before counting planner
 calls, then route each step to its turn through an index. Merging split tool-call
 metadata inside each planner call retains a fresh arena copy every time and can

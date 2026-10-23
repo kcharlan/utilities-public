@@ -88,6 +88,31 @@ TEST(opencode_db_known_types_are_not_unknown) {
     ASSERT_EQ(1,count(&s.unknown_content_types,"future-content"));ASSERT_FALSE(s.sessions[0]->provenance_complete);
     opencode_store_destroy(&s);opencode_fixture_close(&f);
 }
+TEST(opencode_db_reads_messages_without_embedded_identity) {
+    /* OpenCode 2.1 keeps a message's id and type only in their columns. */
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
+    opencode_fixture_message(&f,"msg_user","synthetic-session","user",1,"{\"time\":{\"created\":1000},\"text\":\"Synthetic question\",\"files\":[]}");
+    opencode_fixture_message(&f,"msg_assistant","synthetic-session","assistant",2,
+       "{\"time\":{\"created\":1100,\"completed\":1200},\"model\":{\"id\":\"synthetic-model\",\"providerID\":\"synthetic-provider\"},\"content\":[{\"type\":\"text\",\"text\":\"Synthetic answer\"}],\"tokens\":{\"input\":11,\"output\":7,\"reasoning\":2,\"cache\":{\"read\":3,\"write\":4}},\"cost\":0}");
+    opencode_fixture_message(&f,"msg_compact","synthetic-session","compaction",3,"{\"time\":{\"created\":1300},\"status\":\"completed\",\"tokens\":{\"input\":5,\"output\":1},\"cost\":0}");
+    opencode_fixture_message(&f,"msg_idle","synthetic-session","idle",4,"{\"time\":{\"created\":1400},\"outcome\":\"succeeded\"}");
+    OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(1,s.session_count);
+    ASSERT_EQ(0,s.malformed_messages);ASSERT_EQ(4,s.sessions[0]->message_count);
+    OpencodeMessage *m=&s.sessions[0]->messages[1];ASSERT_EQ(OC_MSG_ASSISTANT,m->kind);
+    ASSERT_TRUE(str_equal(m->id,STR_LIT("msg_assistant")));ASSERT_TRUE(str_equal(m->type,STR_LIT("assistant")));
+    ASSERT_TRUE(m->tokens_valid);ASSERT_EQ(11,m->tokens.input);
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
+}
+TEST(opencode_db_rejects_embedded_identity_that_contradicts_columns) {
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
+    opencode_fixture_message(&f,"msg_wrong_type","synthetic-session","assistant",1,"{\"type\":\"user\",\"time\":{\"created\":1000},\"content\":[]}");
+    opencode_fixture_message(&f,"msg_empty_id","synthetic-session","assistant",2,"{\"id\":\"\",\"time\":{\"created\":1000},\"content\":[]}");
+    opencode_fixture_message(&f,"msg_number_id","synthetic-session","assistant",3,"{\"id\":7,\"time\":{\"created\":1000},\"content\":[]}");
+    opencode_fixture_message(&f,"msg_number_type","synthetic-session","assistant",4,"{\"type\":7,\"time\":{\"created\":1000},\"content\":[]}");
+    OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(1,s.session_count);
+    ASSERT_EQ(4,s.malformed_messages);ASSERT_EQ(0,s.sessions[0]->message_count);
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
+}
 TEST(opencode_db_numeric_validation) {
     OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
     opencode_fixture_sql(&f,"UPDATE session_v2 SET title=NULL,model=NULL,tokens_input='invalid',cost=0.75,time_created='invalid'");
