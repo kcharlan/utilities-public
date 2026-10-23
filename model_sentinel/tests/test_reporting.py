@@ -7948,7 +7948,8 @@ def test_endpoint_capability_summary_cap_and_shared_mapping():
 
 
 @pytest.mark.parametrize("old,new", [(None, ["synthetic-a"]), (["synthetic-a"], None), (["synthetic-a"], [1]), ([], ["synthetic-a"])])
-def test_endpoint_capability_unknowns_are_not_removals(old, new):
+@pytest.mark.parametrize("error_code", ["http_status", "budget_exceeded"])
+def test_endpoint_capability_unknowns_are_not_removals(old, new, error_code):
     from model_sentinel.endpoint_report import endpoint_report
     before = (_ep_list("synthetic/unknown", _ep_obs("host", {**_ep_state("host"), "parameters": old})),)
     after = (_ep_list("synthetic/unknown", _ep_obs("host", {**_ep_state("host"), "parameters": new})),)
@@ -7963,13 +7964,38 @@ def test_endpoint_capability_unknowns_are_not_removals(old, new):
     else:
         assert not row.rendered.list_added and not row.rendered.list_removed
         assert row.rendered.semantic == "neutral"
-    # Failed captures and unpaired paths cannot imply support loss.
-    failed = _ep_list("synthetic/unknown", outcome="error")
-    gap = _ep_result(_ep_capture(before, (failed,)))
-    projection = endpoint_report(gap, full_detail=False)
-    assert projection.lists == ()
-    assert "1 comparison gap" in projection.summary_clauses
-    assert not any("capability" in clause for clause in projection.summary_clauses)
+    # Neither failed nor unsent lists can imply capability loss.
+    unsent = error_code == "budget_exceeded"
+    failed = replace(
+        _ep_list("synthetic/unknown", outcome="error"),
+        error_code=error_code,
+        error_message="request admission deadline passed" if unsent else "HTTP 503",
+    )
+    gap_capture = _ep_capture(before, (failed,), paths_attempted=0 if unsent else 1)
+    assert gap_capture.paths_requested == gap_capture.paths_failed == 1
+    assert gap_capture.changes == ()
+    assert len(gap_capture.comparison_gaps) == 1
+    gap_record = gap_capture.comparison_gaps[0]
+    assert gap_record.reason == "current_observation_failed"
+    assert gap_record.list_error_code == error_code
+    gap = _ep_result(gap_capture)
+    for full_detail in (False, True):
+        projection = endpoint_report(gap, full_detail=full_detail)
+        assert projection.lists == ()
+        assert projection.summary_clauses == (
+            "1 list not sent before the fetch budget ran out" if unsent else "1 list failed to fetch",
+            "1 comparison gap",
+        )
+        assert projection.no_change_line is None
+        assert projection.omitted_list_count == projection.detail_only_list_count == 0
+        if unsent:
+            assert projection.capture_line == (
+                "partial (capture 2): 1 list requested, 0 attempted, 0 failed,"
+                " 1 not sent before the fetch budget ran out, 0 mapping failures"
+            )
+        if full_detail:
+            assert len(projection.gaps) == 1
+            assert projection.failed_lists == (failed,)
 
 
 def test_endpoint_capabilities_share_price_routing_and_keep_full_remainder():
