@@ -9,8 +9,8 @@
   const ASPECT_LIMIT = 12;
   const CATALOG_PAGE_SIZE = 50;
   const HOST_CONDITION_KEYS = ["hq", "xhosts", "quant", "quantset", "upwin", "upmin", "upmiss", "healthy", "ctxmin", "outmin", "params", "ntools", "caching", "tiers", "tierset", "plimit"];
-  const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers"]);
-  const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir", "hosts", "hasof", "rank", "match", "showx", "hlist", "dsort", ...HOST_CONDITION_KEYS];
+  const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers", "hsort", "dsort"]);
+  const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir", "hosts", "hasof", "rank", "match", "showx", "hlist", "hsort", "dsort", ...HOST_CONDITION_KEYS];
 
   function decode(value) {
     try { return decodeURIComponent(value); } catch (error) { return value; }
@@ -206,7 +206,7 @@
     if (!resolved.providers.length) resolved.providers = fallback.providers;
     resolved.categories = list(state.categories, knownCategories);
     resolved.kinds = list(state.kinds, kinds);
-    for (const key of ["models", "pins", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers"]) resolved[key] = list(state[key]);
+    for (const key of ["models", "pins", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers", "hsort", "dsort"]) resolved[key] = list(state[key]);
     resolved.match = state.match === "all" ? "all" : "any";
     resolved.hq = typeof state.hq === "string" ? state.hq : "";
     resolved.aspects = list(state.aspects, knownAspects).slice(0, ASPECT_LIMIT);
@@ -1462,12 +1462,90 @@
     const gap = gapText(group.value,winner.value,dimension), best = compareRational(group.value,winner.value) === 0;
     return html`<span class=${best ? "host-value host-best" : "host-value"}><span aria-label=${best ? "best in row" : undefined} title=${dimension.startsWith("price:") ? String(group.endpoint.prices[dimension.slice(6)]?.raw ?? "") : undefined}>${best ? "◆ " : ""}${rankingText(group.endpoint,dimension)}</span> <small title=${gap.title}>${gap.text}</small></span>`;
   }
-  function HostsTable({rows, selected, dimension, data, state, openList}) {
+  function clickSort(list, key) {
+    const index = list.findIndex(item => item.slice(2) === key);
+    if (index < 0) return [...list, `a:${key}`];
+    return list[index].startsWith("a:") ? list.map((item,i) => i === index ? `d:${key}` : item) : list.filter((_,i) => i !== index);
+  }
+  function normalizeSort(list, columns) {
+    const keys = new Set(columns.map(column => column.key)), seen = new Set();
+    return (Array.isArray(list) ? list : []).filter(item => {
+      if (typeof item !== "string" || !/^[ad]:/.test(item) || !keys.has(item.slice(2)) || seen.has(item.slice(2))) return false;
+      seen.add(item.slice(2)); return true;
+    });
+  }
+  function sortCompare(a, b) {
+    if (Array.isArray(a)) {
+      for (let i=0; i<a.length; i++) { const order = sortCompare(a[i],b[i]); if (order) return order; }
+      return 0;
+    }
+    if (typeof a === "object") return compareRational(a,b);
+    return typeof a === "string" ? a.localeCompare(b) : a < b ? -1 : a > b ? 1 : 0;
+  }
+  function displayedSort(list, columns) {
+    return list.map(item => ({direction:item[0],column:columns.find(column => column.key === item.slice(2) && column.visible !== false)})).filter(item => item.column);
+  }
+  function stackSort(items, list, columns, fallback = () => 0) {
+    const active = displayedSort(list,columns);
+    return items.map((item,index) => ({item,index})).sort((a,b) => {
+      for (const {direction,column} of active) {
+        const av = column.value(a.item), bv = column.value(b.item);
+        const order = av == null ? (bv == null ? 0 : 1) : bv == null ? -1 : sortCompare(av,bv) * (direction === "d" ? -1 : 1);
+        if (order) return order;
+      }
+      return fallback(a.item,b.item) || a.index-b.index;
+    }).map(entry => entry.item);
+  }
+  function SortHeader({column, list, columns, change}) {
+    const active = displayedSort(list,columns), index = active.findIndex(item => item.column.key === column.key), direction = active[index]?.direction;
+    return html`<th scope="col" aria-sort=${index === 0 ? direction === "a" ? "ascending" : "descending" : undefined}><button type="button" class="sort-header" onClick=${() => change(clickSort(list,column.key))}>${column.label}${direction ? html`<span aria-hidden="true"> ${direction === "a" ? "↑" : "↓"}${active.length > 1 ? ` ${index+1}` : ""}</span>` : null}</button></th>`;
+  }
+  function SortSummary({list, columns, change, className = ""}) {
+    const active = displayedSort(list,columns);
+    return html`<div class=${`sort-summary ${className}`}>${active.length ? html`<span>${active.map(({direction,column}) => `${column.label} ${direction === "a" ? "ascending" : "descending"}`).join(" · ")}</span><button type="button" onClick=${() => change([])}>Clear sort</button>` : html`<span>Click a column: ascending → descending → remove. Add columns in priority order.</span>`}</div>`;
+  }
+  function precisionSortValue(endpoint) { return endpoint?.precision_bits == null ? null : [endpoint.precision_bits,endpoint.quantization]; }
+  function spreadSortValue(best, dimension) {
+    if (best.ranked.length < 2) return null;
+    const first = best.ranked[0].value, last = best.ranked[best.ranked.length-1].value;
+    if (dimension.startsWith("price:")) return first.n <= 0n ? null : {n:last.n*first.d,d:last.d*first.n};
+    return {n:first.n*last.d-last.n*first.d,d:first.d*last.d};
+  }
+  function hostsColumns(data, selected, dimension, state) {
+    const single = selected.length === 1, endpoint = row => row.best.groups.get(selected[0])?.endpoint;
+    return [
+      {key:"model",label:"Model",value:row=>row.list.display_id},
+      {key:"best",label:"Best",value:row=>row.best.winner?.value},
+      {key:"spread",label:"Spread",value:row=>spreadSortValue(row.best,dimension)},
+      ...data.hosts.map(host => ({key:`host:${host.name}`,label:host.name,visible:selected.includes(host.name),value:row=>row.best.groups.get(host.name)?.value})).sort((a,b)=>selected.indexOf(a.label)-selected.indexOf(b.label)),
+      {key:"rank",label:"Rank",visible:single,value:row=>row.best.groups.get(selected[0])?.rank},
+      {key:"precision",label:"Precision",visible:single,value:row=>precisionSortValue(endpoint(row))},
+      {key:"context",label:"Context",visible:single,value:row=>endpoint(row)?.context_length},
+      {key:"uptime",label:"Uptime",visible:single,value:row=>endpoint(row)?.uptime[state.upwin]},
+      {key:"status",label:"Status",visible:single,value:row=>endpoint(row)?.status == null ? null : Math.abs(endpoint(row).status)},
+      {key:"hosts",label:"Hosts",visible:!single,value:row=>row.best.ranked.length}
+    ];
+  }
+  function drawerColumns(data, state) {
+    return [
+      {key:"host",label:"Host",value:item=>item.endpoint.host},
+      {key:"endpoint",label:"Endpoint",value:item=>item.endpoint.tag || item.endpoint.key},
+      ...data.price_columns.map(column=>({key:`price:${column.path}`,label:`${column.label} (${column.unit_label})`,value:item=>rankValue(item.endpoint,`price:${column.path}`)})),
+      {key:"precision",label:"Precision",value:item=>precisionSortValue(item.endpoint)},
+      {key:"context",label:"Context",value:item=>item.endpoint.context_length},
+      {key:"output",label:"Max output",value:item=>item.endpoint.max_completion_tokens},
+      {key:"uptime",label:"Uptime",value:item=>item.endpoint.uptime[state.upwin]},
+      {key:"status",label:"Status",value:item=>item.endpoint.status == null ? null : Math.abs(item.endpoint.status)}
+    ];
+  }
+  function HostsTable({rows, selected, dimension, data, state, openList, write}) {
     const resetKey = JSON.stringify([HOST_CONDITION_KEYS.map(key => state[key]),selected,state.match,state.showx,dimension,state.hsort,data.provider_id,data.scrape_id]);
     const [paging,setPaging] = useState({key:resetKey,limit:50});
     useEffect(() => setPaging(current => current.key === resetKey ? current : {key:resetKey,limit:50}),[resetKey]);
-    const limit = paging.key === resetKey ? paging.limit : 50, visible = rows.slice(0,limit), single = selected.length === 1;
-    return html`<section aria-label="Hosts results"><div class="hosts-table-scroll"><table class="hosts-table" aria-label="Host comparison"><thead><tr><th scope="col">Model</th><th scope="col">Best</th><th scope="col">Spread</th>${selected.map(host => html`<th scope="col" key=${host}>${host}</th>`)}${single ? html`<th scope="col">Rank</th><th scope="col">Precision</th><th scope="col">Context</th><th scope="col">Uptime</th><th scope="col">Status</th>` : html`<th scope="col">Hosts</th>`}</tr></thead><tbody>${visible.map(row => {
+    const columns = hostsColumns(data,selected,dimension,state), change = list => write({hsort:list});
+    const ordered = stackSort(rows,state.hsort,columns);
+    const limit = paging.key === resetKey ? paging.limit : 50, visible = ordered.slice(0,limit), single = selected.length === 1;
+    return html`<section aria-label="Hosts results"><${SortSummary} list=${state.hsort} columns=${columns} change=${change} className="hosts-sort-summary" /><div class="hosts-table-scroll"><table class="hosts-table" aria-label="Host comparison"><thead><tr>${columns.filter(column=>column.visible !== false).map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.hsort} columns=${columns} change=${change} />`)}</tr></thead><tbody>${visible.map(row => {
       const winner = row.best.winner, group = row.best.groups.get(selected[0]), endpoint = group?.endpoint, ties = winner ? row.best.ranked.filter(item => compareRational(item.value,winner.value) === 0).length-1 : 0;
       return html`<tr key=${row.list.path} data-list-path=${row.list.path} class=${!row.endpoints.length ? "is-excluded" : ""}><th scope="row"><button type="button" class="model-link" data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} variants</small>` : null}</th><td>${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`${rankingText(winner.endpoint,dimension)} · ${winner.host}${ties ? ` +${ties} tied` : ""}`}</td><td><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>${selected.map(host => html`<td key=${host}><${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} /></td>`)}${single ? html`<td>${group?.value ? `${group.rank} / ${group.denominator}` : "—"}</td><td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint?.context_length)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td>` : html`<td>${row.best.ranked.length}</td>`}</tr>`;
     })}</tbody></table></div><div class="hosts-pagination"><span>Showing ${visible.length} of ${rows.length} lists</span>${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}</div></section>`;
@@ -1478,16 +1556,18 @@
     const mix = [...precision].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
     return html`<section class="host-summary-panel instrument" aria-label="Host summary"><h2>${host}</h2><dl class="host-summary"><div><dt>Served lists</dt><dd>${summary.list_count}</dd></div><div><dt>Endpoints</dt><dd>${endpoints.length}</dd></div><div><dt>Tags</dt><dd>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size}</dd></div><div><dt>Median 1-day uptime</dt><dd>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</dd></div><div><dt>Outside normal Status condition</dt><dd>${endpoints.filter(endpoint => endpoint.status !== 0).length}</dd></div></dl><div class="host-precision-mix" role="img" aria-label=${`Precision distribution: ${mix.map(([name,count]) => `${name}: ${count}`).join(", ")}`}>${mix.map(([name,count],index) => html`<span key=${name} style=${{flex:count,background:`var(--series-${index%8+1}, var(--accent))`}} title=${`${name}: ${count}`}></span>`)}</div><p>Precision distribution: ${mix.slice(0,3).map(([name,count]) => `${name}: ${count}`).join(", ")}</p></section>`;
   }
-  function EndpointDrawer({list, data, selected, dimension, conditions, state, close, openModel}) {
+  function EndpointDrawer({list, data, selected, dimension, conditions, state, close, openModel, write}) {
     const panel = useRef(null);
     useFocusTrap(panel,true,close);
     const observed = data.endpoints.filter(endpoint => data.lists[endpoint.list].path === list.path);
-    const ordered = observed.map(endpoint => ({endpoint,result:evaluateEndpoint(endpoint,conditions)})).sort((a,b) => {
-      if (a.result.pass !== b.result.pass) return a.result.pass ? -1 : 1;
+    const columns = drawerColumns(data,state), change = list => write({dsort:list});
+    const evaluated = observed.map(endpoint => ({endpoint,result:evaluateEndpoint(endpoint,conditions)}));
+    const fallback = (a,b) => {
       const av = rankValue(a.endpoint,dimension), bv = rankValue(b.endpoint,dimension);
       return (av && bv ? rankCompare(av,bv,dimension) : av ? -1 : bv ? 1 : 0) || a.endpoint.host.localeCompare(b.endpoint.host) || a.endpoint.key.localeCompare(b.endpoint.key);
-    });
-    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available for this list." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available for this list.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p class="drawer-sort-summary">Passing endpoints first · ranking, host, endpoint</p><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr><th>Host</th><th>Endpoint</th>${data.price_columns.map(column => html`<th key=${column.path}>${column.label} (${column.unit_label})</th>`)}<th>Precision</th><th>Context</th><th>Max output</th><th>Uptime</th><th>Status</th><th>Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? "—"}</td>`)}<td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint.context_length)}</td><td class="capacity">${endpointCapacity(endpoint.max_completion_tokens)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
+    };
+    const ordered = [true,false].flatMap(pass => stackSort(evaluated.filter(item=>item.result.pass === pass),state.dsort,columns,fallback));
+    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available for this list." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available for this list.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p>Passing endpoints first · ranking, host, endpoint fallback</p><${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" /><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${columns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? "—"}</td>`)}<td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint.context_length)}</td><td class="capacity">${endpointCapacity(endpoint.max_completion_tokens)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
   }
   function HostHistory({provider, host, state, write, span}) {
     const request = useApi("/api/host_history", {provider, host, from: state.from, to: state.to});
@@ -1528,7 +1608,9 @@
     const dimension = dimensions.some(item => item.value === state.rank && !item.disabled) ? state.rank : defaultRank;
     const selected = data ? [...new Set(state.hosts)].filter(host => data.hosts.some(item => item.name === host)).slice(0, meta.pin_limit) : [];
     const excluded = data ? [...new Set(state.xhosts)].filter(host => data.hosts.some(item => item.name === host)) : [];
-    const clean = data ? normalizeHostConditions(data, state) : null;
+    const clean = data ? {...normalizeHostConditions(data, state),
+      hsort:normalizeSort(state.hsort,hostsColumns(data,selected,dimension,state)),
+      dsort:normalizeSort(state.dsort,drawerColumns(data,state))} : null;
     useEffect(() => {
       if (!provider) return;
       const currentHash = hashState.read(), currentState = resolveState(meta, currentHash);
@@ -1570,9 +1652,9 @@
           : !data.endpoints.length ? html`<div class="empty"><p>No endpoints were recorded in this capture.</p></div>`
           : html`<h2 class="hosts-results-heading" tabindex="-1">Results</h2>${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every condition. ${largest.name} removes the most (${removal.get(largest.name)} endpoints). <button type="button" onClick=${() => write(Object.fromEntries(CONDITION_KEYS[CONDITION_NAMES.indexOf(largest.name)].map(key => [key,LIST_KEYS.has(key) ? [] : ""])))}>Clear ${largest.name}</button></p>` : null}
             ${selected.length === 1 ? html`<${HostSummary} host=${selected[0]} data=${data} />` : null}${!rows.length ? !largest || qualifying.length ? html`<div class="empty"><p>No qualifying list matches the selected hosts and row rule.</p></div>` : null
-            : html`<${HostsTable} rows=${rows} selected=${selected} dimension=${dimension} data=${data} state=${{...state,...clean}} openList=${openList} />`}`}` : null}
+            : html`<${HostsTable} rows=${rows} selected=${selected} dimension=${dimension} data=${data} state=${{...state,...clean}} openList=${openList} write=${write} />`}`}` : null}
         ${data ? html`<p class="host-capture-status">${data.capture?.status_line || ""}</p>${selected.length === 1 ? html`<${HostHistory} provider=${provider} host=${selected[0]} state=${state} write=${write} span=${meta.date_span} />` : null}` : null}
-        ${data && state.hlist && data.lists.find(list => list.path === state.hlist) ? html`<${EndpointDrawer} key=${`${data.provider_id}/${data.scrape_id}/${state.hlist}`} list=${data.lists.find(list => list.path === state.hlist)} data=${data} selected=${selected} dimension=${dimension} conditions=${conditions} state=${{...state,...clean}} close=${() => write({hlist:""})} openModel=${openModel} />` : null}
+        ${data && state.hlist && data.lists.find(list => list.path === state.hlist) ? html`<${EndpointDrawer} key=${`${data.provider_id}/${data.scrape_id}/${state.hlist}`} list=${data.lists.find(list => list.path === state.hlist)} data=${data} selected=${selected} dimension=${dimension} conditions=${conditions} state=${{...state,...clean}} close=${() => write({hlist:""})} openModel=${openModel} write=${write} />` : null}
       </main></div>`;
   }
 

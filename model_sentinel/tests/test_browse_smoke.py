@@ -187,6 +187,123 @@ def test_hosts_toolbar_menus_do_not_activate_on_open_and_switch_directly(hosts_p
     assert hosts_page.evaluate("location.hash") == before
 
 
+def test_hosts_sort_headers_stack_history_and_ranking(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    model = table.get_by_role("columnheader").filter(has=hosts_page.get_by_role("button", name="Model", exact=True))
+    model.get_by_role("button").click()
+    expect(model).to_have_attribute("aria-sort", "ascending")
+    names = table.locator("tbody tr th button").all_text_contents()
+    assert names == sorted(names)
+    table.get_by_role("button", name="Hosts", exact=True).click()
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Model ascending · Hosts ascending")
+    expect(table.locator("thead [aria-sort]")).to_have_count(1)
+    model.get_by_role("button").click()
+    expect(model).to_have_attribute("aria-sort", "descending")
+    names = table.locator("tbody tr th button").all_text_contents()
+    assert names == sorted(names, reverse=True)
+    hosts_page.reload()
+    expect(model).to_have_attribute("aria-sort", "descending")
+    model.get_by_role("button").click()
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    expect(model).not_to_have_attribute("aria-sort", "descending")
+    hosts_page.go_back()
+    expect(model).to_have_attribute("aria-sort", "descending")
+    hosts_page.go_forward()
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    model.get_by_role("button").click()
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending · Model ascending")
+    counts = table.locator("tbody tr").evaluate_all("rows=>rows.map(row=>Number(row.lastElementChild.textContent))")
+    assert counts == sorted(counts)
+    names = table.locator("tbody tr th button").all_text_contents()
+    for count in set(counts):
+        tied = [name for name, value in zip(names, counts) if value == count]
+        assert tied == sorted(tied)
+    hosts_page.get_by_label("Ranking", exact=True).select_option("context")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending · Model ascending")
+    hosts_page.locator(".hosts-sort-summary").get_by_role("button", name="Clear sort", exact=True).click()
+    expect(table.locator("thead [aria-sort]")).to_have_count(0)
+
+
+def test_hosts_hidden_sorts_canonicalization_and_drawer_history(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    history_length = hosts_page.evaluate("history.length")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha", hsort="a:context,d:context,bad,a:host:Synthetic Bogus,a:hosts", dsort="d:host,a:price:missing"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.get_by_role("columnheader", name=re.compile("Context"))).to_have_attribute("aria-sort", "ascending")
+    expect(hosts_page).not_to_have_url(re.compile("Bogus|bad|missing|d%3Acontext"))
+    assert hosts_page.evaluate("history.length") == history_length + 1
+    hosts_page.get_by_role("button", name="Remove compared Synthetic Alpha", exact=True).click()
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).not_to_contain_text("Context")
+    hosts_page.go_back()
+    expect(table.get_by_role("columnheader", name=re.compile("Context"))).to_have_attribute("aria-sort", "ascending")
+    table.get_by_role("button", name="synthetic-response-shared", exact=True).click()
+    drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
+    host = drawer.get_by_role("columnheader", name=re.compile("Host"))
+    expect(host).to_have_attribute("aria-sort", "descending")
+    assert drawer.locator("tbody tr th").all_text_contents() == ["Synthetic Gamma", "Synthetic Beta", "Synthetic Alpha", "Synthetic Alpha"]
+    host.get_by_role("button").click()
+    expect(host).not_to_have_attribute("aria-sort", "descending")
+    drawer.get_by_role("columnheader", name="Context", exact=True).get_by_role("button").click()
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Context ascending")
+    drawer.get_by_role("button", name="Close endpoint drawer").click()
+    expect(drawer).to_have_count(0)
+    hosts_page.go_back()
+    expect(drawer).to_be_visible()
+    expect(drawer.get_by_role("columnheader", name=re.compile("Context"))).to_have_attribute("aria-sort", "ascending")
+
+
+def test_hosts_drawer_sort_secondary_groups_exact_missing_and_reopen(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy="1", showx="1", hlist=facts.host_grouping_and_ties["path"], dsort="d:host,a:context"))
+    drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
+    rows = drawer.locator("tbody tr")
+    assert rows.locator("th").all_text_contents() == ["Synthetic Beta", "Synthetic Alpha", "Synthetic Alpha", "Synthetic Gamma"]
+    tags = lambda: rows.locator("td:nth-child(2)").evaluate_all("cells=>cells.map(cell=>cell.firstChild.textContent)")
+    assert tags() == ["beta", "alpha-cheap", "alpha-fast", "gamma"]
+    expect(rows.last).to_have_class("is-excluded")
+    expect(drawer.locator("thead [aria-sort]")).to_have_count(1)
+    expect(drawer.get_by_role("columnheader", name="Context", exact=True)).not_to_have_attribute("aria-sort", "ascending")
+    drawer.get_by_role("button", name="Context", exact=True).click()
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Host descending · Context descending")
+    assert tags() == ["beta", "alpha-fast", "alpha-cheap", "gamma"]
+    drawer.locator(".drawer-sort-summary").get_by_role("button", name="Clear sort", exact=True).click()
+    expect(drawer.locator("thead [aria-sort]")).to_have_count(0)
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("ascending → descending → remove")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hlist=facts.host_exact_prices["path"], dsort="d:price:pricing.prompt"))
+    drawer = hosts_page.get_by_role("dialog", name="synthetic-response-exact", exact=True)
+    rows = drawer.locator("tbody tr")
+    assert tags() == ["exact-high", "exact-low", "price-missing"]
+    drawer.get_by_role("button", name="Close endpoint drawer").click()
+    hosts_page.get_by_role("table", name="Host comparison").get_by_role("button", name="synthetic-response-exact", exact=True).click()
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("descending")
+    hosts_page.reload()
+    expect(drawer).to_be_visible()
+    assert tags() == ["exact-high", "exact-low", "price-missing"]
+
+
+def test_hosts_compared_host_sort_exact_values_missing_and_hidden_restore(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta", hsort="a:host:Synthetic Alpha"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    names = lambda: table.locator("tbody tr th button").all_text_contents()
+    expect(table.get_by_role("columnheader", name="Synthetic Alpha", exact=True)).to_have_attribute("aria-sort", "ascending")
+    assert names() == ["synthetic-response-shared", "synthetic-response-exact", facts.host_list_identity["missing_id_path"]]
+    table.get_by_role("button", name="Synthetic Alpha", exact=True).click()
+    expect(table.get_by_role("columnheader", name="Synthetic Alpha", exact=True)).to_have_attribute("aria-sort", "descending")
+    assert names() == ["synthetic-response-exact", "synthetic-response-shared", facts.host_list_identity["missing_id_path"]]
+    hosts_page.get_by_role("button", name="Remove compared Synthetic Alpha", exact=True).click()
+    expect(table.locator("thead [aria-sort]")).to_have_count(0)
+    expect(hosts_page.locator(".hosts-sort-summary")).not_to_contain_text("Synthetic Alpha")
+    expect(hosts_page).to_have_url(re.compile("hsort=d%3Ahost%3ASynthetic%20Alpha"))
+    hosts_page.go_back()
+    expect(table.get_by_role("columnheader", name="Synthetic Alpha", exact=True)).to_have_attribute("aria-sort", "descending")
+    assert names() == ["synthetic-response-exact", "synthetic-response-shared", facts.host_list_identity["missing_id_path"]]
+
+
 @pytest.mark.parametrize("selection", ["enter", "pointer"])
 def test_hosts_search_suggestion_consumes_pending_draft(hosts_page, hosts_server, selection):
     _, facts = hosts_server
@@ -494,7 +611,7 @@ def test_hosts_all_excluded_any_all_presence_and_empty_copy_precedence(hosts_pag
 def test_hosts_clear_all_preserves_comparison_and_normalizes_bad_conditions(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha", healthy="1", rank="context", match="all", ctxmin="bogus", upmin="101", upwin="invalid", tiers="null,invalid", quant="invalid", showx="invalid", plimit="pricing.prompt:bad"))
-    expect(hosts_page).not_to_have_url(re.compile("bogus|invalid|101|bad"))
+    expect(hosts_page).not_to_have_url(re.compile(r"#[^#]*(?:bogus|invalid|101|bad)"))
     hosts_page.get_by_role("button", name="Clear all", exact=True).click()
     expect(hosts_page.get_by_role("region", name="Host summary")).to_be_visible()
     expect(hosts_page).to_have_url(re.compile("hosts=Synthetic%20Alpha"))
@@ -2271,6 +2388,12 @@ def test_hosts_pagination_counts_reset_and_pin_limit_geometry(hosts_page, hosts_
     hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
     expect(table.locator("tbody tr")).to_have_count(112)
     expect(hosts_page.get_by_role("button", name="Show 50 more", exact=True)).to_have_count(0)
+    table.get_by_role("button", name="Model", exact=True).click()
+    expect(table.locator("tbody tr")).to_have_count(50)
+    hosts_page.go_back()
+    expect(table.locator("thead [aria-sort]")).to_have_count(0)
+    expect(table.locator("tbody tr")).to_have_count(50)
+    hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
     hosts_page.get_by_label("Ranking", exact=True).select_option("context")
     expect(table.locator("tbody tr")).to_have_count(50)
     hosts_page.go_back()
@@ -2321,12 +2444,12 @@ def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, host
 
 def test_hosts_drawer_close_after_filter_removes_row_focuses_results(hosts_page, hosts_server):
     _, facts = hosts_server
-    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"], quantset="1", dsort="host:desc"))
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"], quantset="1", dsort="d:host"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
     expect(drawer.get_by_role("button", name="Close endpoint drawer")).to_be_focused()
     drawer.get_by_role("button", name="Close endpoint drawer").click()
     expect(hosts_page.locator(".hosts-results-heading")).to_be_focused()
-    expect(hosts_page).to_have_url(re.compile("dsort=host%3Adesc"))
+    expect(hosts_page).to_have_url(re.compile("dsort=d%3Ahost"))
 
 
 @pytest.mark.parametrize("hosts_server", ["spread_cases"], indirect=True)

@@ -875,6 +875,58 @@ assert.equal(decimalRational("."), null);
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
+def test_hosts_sort_stack_cycle_missing_stability_and_exact_values() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
+    # Missing helpers deliberately fail as an assertion, before slicing their body.
+    assert "  function clickSort(" in source, "Hosts sort cycle is not implemented"
+    helpers += source[source.index("  function clickSort(") : source.index("  function HostsTable(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+let list = clickSort([], "model");
+assert.deepEqual(list, ["a:model"]);
+list = clickSort(list, "best");
+assert.deepEqual(list, ["a:model", "a:best"]);
+assert.deepEqual(clickSort(list, "model"), ["d:model", "a:best"]);
+assert.deepEqual(clickSort(["d:model", "a:best"], "model"), ["a:best"]);
+const rows = [{id:"missing", n:null}, {id:"two",n:2}, {id:"one-b",n:1}, {id:"one-a",n:1}];
+const columns = [{key:"n", value:r=>r.n}, {key:"id",value:r=>r.id}];
+const ids = (stack, fallback=()=>0) => stackSort(rows, stack, columns, fallback).map(r=>r.id);
+assert.deepEqual(ids(["a:n"]), ["one-b","one-a","two","missing"]);
+assert.deepEqual(ids(["d:n"]), ["two","one-b","one-a","missing"]);
+assert.deepEqual(ids(["a:n","a:id"]), ["one-a","one-b","two","missing"]);
+assert.deepEqual(ids(["a:n"],(a,b)=>a.id.localeCompare(b.id)), ["one-a","one-b","two","missing"]);
+assert.deepEqual(ids(["a:hidden"]), ["missing","two","one-b","one-a"]);
+const exact = [{n:decimalRational("1.00000000000000002")}, {n:decimalRational("1.00000000000000001")}, {n:null}];
+assert.equal(Number("1.00000000000000001"),Number("1.00000000000000002"));
+assert.equal(stackSort(exact,["a:n"],columns,()=>0)[0],exact[1]);
+assert.equal(stackSort(exact,["d:n"],columns,()=>0)[0],exact[0]);
+assert.deepEqual(normalizeSort(["a:model","d:model","bad","a:host:Synthetic Fake","a:other"],[{key:"model"},{key:"host:Synthetic Fake"}]),["a:model","a:host:Synthetic Fake"]);
+const rational = values => ({ranked:values.map(value=>({value:decimalRational(value)}))});
+assert.equal(compareRational(spreadSortValue(rational(["0.00000000000000001","2"]),"price:p"),decimalRational("200000000000000000")),0);
+assert.equal(spreadSortValue(rational(["0","2"]),"price:p"),null);
+assert.equal(spreadSortValue(rational(["-1","2"]),"price:p"),null);
+assert.equal(spreadSortValue(rational(["1"]),"context"),null);
+assert.equal(compareRational(spreadSortValue(rational(["100","60"]),"context"),decimalRational("40")),0);
+assert.deepEqual(precisionSortValue({precision_bits:8,quantization:"fp8"}),[8,"fp8"]);
+assert.equal(precisionSortValue({precision_bits:null,quantization:"unknown"}),null);
+const data = {hosts:[{name:"Synthetic Alpha"},{name:"Synthetic Beta"}],price_columns:[{path:"p",label:"Input",unit_label:"USD"}]};
+const ep = {precision_bits:16,quantization:"fp16",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99,"5m":0},status:-2,prices:{p:{exact:{numerator_hex:"1",denominator_hex:"2"}}}};
+const row = {list:{display_id:"Synthetic Model"},best:{winner:{value:decimalRational("0.5")},ranked:[{},{}],groups:new Map([["Synthetic Alpha",{endpoint:ep,value:decimalRational("0.5"),rank:1}]])}};
+let main = hostsColumns(data,["Synthetic Alpha"],"price:p",{upwin:"5m"});
+assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Alpha","rank","precision","context","uptime","status"]);
+assert.equal(main.find(c=>c.key==="uptime").value(row),0);
+assert.equal(main.find(c=>c.key==="status").value(row),2);
+assert.deepEqual(hostsColumns(data,[],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","hosts"]);
+assert.deepEqual(hostsColumns(data,["Synthetic Beta","Synthetic Alpha"],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Beta","host:Synthetic Alpha","hosts"]);
+const drawer = drawerColumns(data,{upwin:"5m"}), item={endpoint:ep};
+assert.equal(drawer.find(c=>c.key==="uptime").value(item),0);
+assert.equal(drawer.find(c=>c.key==="status").value(item),2);
+assert.equal(compareRational(drawer.find(c=>c.key==="price:p").value(item),decimalRational("0.5")),0);
+'''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
 def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:
     source = _read_asset("app.js")
     portal = source[

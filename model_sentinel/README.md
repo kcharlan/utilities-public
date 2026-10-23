@@ -522,6 +522,22 @@ browser, and `Ctrl-C` stops the server.
   adds 50. Changes to comparison or filters reset this limit. The summary counts
   qualifying/captured endpoints separately from admitted lists.
 
+  Click a column heading to sort ascending, click again for descending, and
+  click once more to remove it. Additional columns join the sort in priority
+  order; arrows and numbers mark the active stack. The summary names displayed
+  keys and **Clear sort** removes the saved stack. Missing values stay last in
+  either direction, prices compare exactly, and ties retain the default order.
+  Drawer sorting stays within the passing and failing groups. The `hsort` and
+  `dsort` URL lists store `a:<key>` or `d:<key>` entries for results and drawer
+  sorting. Hidden result columns retain their keys and resume sorting when
+  displayed again; changing ranking keeps sorting. Sort clicks and clearing
+  support reload and Back/Forward. Invalid keys and duplicate columns are
+  removed without adding history entries.
+  Result keys are `model`, `best`, `spread`, `host:<name>`, `rank`, `precision`,
+  `context`, `uptime`, `status`, and `hosts`. Drawer keys are `host`, `endpoint`,
+  `price:<path>`, `precision`, `context`, `output`, `uptime`, and `status`.
+  Host names and price paths must belong to the selected capture.
+
   **Add host** opens a searchable checkbox list ordered by lists served; remove
   a compared host with its pill. Picker counts describe observed coverage, and
   incomplete history captures break uptime trends. **Host capture** selects an

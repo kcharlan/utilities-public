@@ -1261,3 +1261,12 @@ comparison key differs still leaves the previous key's expanded limit stored.
 Returning with Back can revive all 112 rows. Replace the retained paging key
 and limit when comparison inputs change, and regress expand, change ranking,
 then Back to the original ranking; both transitions must show only 50 rows.
+
+## 2026-10-22: Scope browser URL normalization checks to the fragment
+
+A browser assertion searching the complete URL for an invalid numeric value
+can match the synthetic server's randomly assigned port instead of URL state.
+Model Sentinel's invalid uptime value `101` matched port `51019` even after
+the hash was correctly normalized. Anchor invalid-state patterns after `#`
+so they still catch every malformed saved value without depending on the
+ephemeral origin.
