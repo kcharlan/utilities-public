@@ -24,6 +24,11 @@ repository's config, and folders since deleted (such as removed worktrees)
 join the repository around them. Long workspace names wrap instead of being
 cut off, and the session list beside the reader is resizable.
 
+Version 0.4.2 adds scope controls for Workspaces, collapse actions above long
+expanded text, and end actions for follow-ups and footer panels. Collapsing
+returns focus and brings an offscreen section start into view. Footer panels
+retain their independent open states when sources or metrics change.
+
 The page's All/Codex/Claude/OpenCode switch preserves filters and uses green/blue/violet
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

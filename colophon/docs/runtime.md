@@ -23,7 +23,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.4.1`).
+displays the embedded payload's release version (`colophon 0.4.2`).
 
 Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -45,8 +45,30 @@ so deleted worktrees join their repository and keep the path as subfolder.
 Workspace bars put the full name above the bar and wrap long paths. Beside an
 open reader, the session list can be resized by dragging or with the arrow
 keys on its divider (Shift for larger steps; double-click resets). The width
-is kept in this browser's `colophon.sessionListWidth` storage. OpenCode's
-unsupported/unreadable views name database reasons. An expandable database
+is kept in this browser's `colophon.sessionListWidth` storage.
+
+Workspaces has independent time/tokens and top 6/all scope controls when the
+filtered list exceeds six rows. The end action expands the preview or returns
+to the top six. Both collapse paths restore focus to the selected scope button
+and bring an offscreen section start back into view. Changing metrics preserves
+scope; lists of six or fewer omit both scope and end controls.
+
+Reader disclosure controls use `show more` and `show less` for requests and
+answers, including subagent answers. Expanded text taller than the viewport
+also has `show less` above it; resizing the window or session-list divider
+refits that action without changing expansion. Short unclipped text has no
+toggle. Additional requests start behind `+ N follow-ups sent while it worked`;
+when open, `hide N follow-ups` appears at both ends. Collapsing text or
+follow-ups restores focus to its surviving toggle and returns an offscreen
+block start to view, while an in-view start keeps its scroll position.
+
+Footer diagnostic and database panels retain independent open states across
+source and metric changes. Each native summary has a matching `hide` action
+at the panel's end. Closing from either end restores focus to its summary and
+returns an offscreen panel start to view; ordinary rerenders do not move focus
+into the footer.
+
+OpenCode's unsupported/unreadable views name database reasons. An expandable database
 footer preserves successful, failed and skipped-preview entries even when a
 sibling database succeeded. Structured diagnostics retain their contextual
 fields, count-map sums and residual-session counts.
@@ -88,7 +110,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.4.1`.
+runtime state. Version is currently `colophon 0.4.2`.
 
 | Flag | Behavior |
 | --- | --- |

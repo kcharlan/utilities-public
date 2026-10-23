@@ -416,6 +416,15 @@
     node.append(...children);
     return node;
   }
+  // Expanded text taller than the screen gets a collapse control above it.
+  const exceedsViewport = node => node.getBoundingClientRect().height > innerHeight;
+  // After collapsing, bring an offscreen block's start back into view.
+  function returnTo(anchor, control) {
+    if (!anchor.isConnected) return;
+    control.focus({preventScroll: true});
+    const top = anchor.getBoundingClientRect().top;
+    if (top < 0 || top >= innerHeight) anchor.scrollIntoView({block: "start"});
+  }
   function mountTopbar() {
     controls.sources = ["all", ...PROVIDERS].map(src => {
       const name = src === "all" ? "All" : PROVIDER_NAMES[src];
@@ -557,11 +566,38 @@
     if (value && typeof value === "object") return Object.entries(value).map(([key, entry]) => key + ": " + diagnosticText(entry)).join(" · ");
     return String(value);
   }
+  const openFooterPanels = new Set();
+  function footerPanel(key, props, ...children) {
+    const summary = children[0];
+    const row = el("details", props, ...children);
+    row.open = openFooterPanels.has(key);
+    let wasOpen = row.open;
+    row.addEventListener("toggle", () => {
+      if (!row.isConnected) return;
+      if (row.open) openFooterPanels.add(key);
+      else openFooterPanels.delete(key);
+      if (wasOpen && !row.open) returnTo(row, summary);
+      wasOpen = row.open;
+    });
+    row.append(el("button", {type: "button", class: "followup-toggle", "data-details-close": "", text: "hide", onclick: () => {
+      openFooterPanels.delete(key);
+      row.open = false;
+      wasOpen = false;
+      returnTo(row, summary);
+    }}));
+    return row;
+  }
   function renderFooter() {
+    const footer = document.getElementById("colophon-footer");
+    for (const row of footer.querySelectorAll("details")) {
+      const key = row.dataset.diagnostic || "opencode_databases";
+      if (row.open) openFooterPanels.add(key);
+      else openFooterPanels.delete(key);
+    }
     const diagnostic = data.diagnostics;
     const rows = Object.entries(diagnostic).filter(([key, value]) => key !== "page_size_bytes" && diagnosticCount(key, value) > 0).map(([key, value]) => {
       const items = diagnosticItems(key, value);
-      const row = el("details", {"data-diagnostic": key},
+      const row = el("div", {},
         el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(key, value)}),
         el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
@@ -579,14 +615,14 @@
       if (explanations[key]) row.append(el("p", {text: explanations[key]}));
       if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
       if (key === "page_size_over_limit") row.append(el("p", {text: "page size: " + diagnostic.page_size_bytes + " bytes"}));
-      return row;
+      return footerPanel(key, {"data-diagnostic": key}, ...row.childNodes);
     });
     const databases = data.meta.sources?.opencode?.databases || [];
     const overflow = costAggregateFailures();
-    document.getElementById("colophon-footer").replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
+    footer.replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
       ...(currentState.src === "all" ? PROVIDERS.filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
       ...tokenBoundaryNote(),
-      ...(databases.length ? [el("details", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
+      ...(databases.length ? [footerPanel("opencode_databases", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
       ...(overflow.length ? [el("p", {"data-cost-aggregate": "", text: "cost aggregate unavailable: " + overflow.join("; ") + ". Finite costs exceed the supported sum; valid individual costs are preserved."})] : []),
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
   }
@@ -724,18 +760,32 @@
     });
     return panel("hour × weekday", grid);
   }
+  const WORKSPACE_PREVIEW = 6;
   const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
   function renderWorkspaces(now) {
     const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
     const byProvider = Object.fromEntries(PROVIDERS.map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
     const maximum = rows.length ? rows[0][workspaceMetric] : 0;
-    const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
-      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
-      ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
+    const setExpanded = expanded => {
+      expandedWorkspaces = expanded;
+      render();
+      const anchor = document.querySelector("[data-workspaces]");
+      const control = anchor.querySelector("[data-workspace-scope][aria-pressed='true']");
+      if (expanded) control.focus({preventScroll: true});
+      else returnTo(anchor, control);
+    };
+    const metrics = el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}})));
+    const head = el("div", {class: "panel-head"}, metrics);
+    if (rows.length > WORKSPACE_PREVIEW) head.append(el("div", {class: "metric-toggle"}, ...[[false, "top " + WORKSPACE_PREVIEW], [true, "all " + rows.length]].map(([expanded, label]) =>
+      el("button", {type: "button", text: label, "data-workspace-scope": "", "aria-label": "Workspaces " + label, "aria-pressed": expandedWorkspaces === expanded, onclick: () => setExpanded(expanded)}))));
+    const result = panel("workspaces", head,
+      ...rows.slice(0, expandedWorkspaces ? rows.length : WORKSPACE_PREVIEW).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
         el("span", {class: "bar-label", text: workspaceName(row.key), title: workspaceName(row.key)}),
         el("span", {class: "bar-track"}, ...workspaceFills(row, maximum, byProvider)),
         el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
-    if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
+    result.setAttribute("data-workspaces", "");
+    if (rows.length > WORKSPACE_PREVIEW) result.append(el("button", {class: "expand-workspaces", type: "button", text: expandedWorkspaces ? "show top " + WORKSPACE_PREVIEW : "+ " + (rows.length - WORKSPACE_PREVIEW) + " more", onclick: () => setExpanded(!expandedWorkspaces)}));
     return result;
   }
   function workspaceFills(row, maximum, byProvider) {
@@ -961,14 +1011,19 @@
     }
     return ["API-equivalent estimate (not billed)", ...(recordedEstimate ? ["OpenCode catalog estimate (not an invoice; recorded by OpenCode)"] : []), ...refs.values(), ...(unknown || (rateBased && !refs.size) ? ["rate period unknown"] : []), ...(usages.some(usage => usage.unpriced_tokens > 0 || usage.cost_usd === null) ? ["unpriced"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
-  function expandableText(text, label = "more") {
+  function expandableText(text) {
     const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
-    const button = el("button", {type: "button", class: "text-expander", text: label, "aria-expanded": "false", onclick: () => {
+    const toggle = () => {
       const expanded = paragraph.classList.toggle("expanded");
-      button.textContent = expanded ? "less" : label;
+      button.textContent = expanded ? "show less" : "show more";
       button.setAttribute("aria-expanded", String(expanded));
-    }});
-    return el("div", {"data-expandable-text": ""}, paragraph, button);
+      top.hidden = !expanded || !exceedsViewport(paragraph);
+      if (!expanded) returnTo(wrap, button);
+    };
+    const top = el("button", {type: "button", class: "text-expander", "data-text-collapse-top": "", hidden: "", text: "show less", onclick: toggle});
+    const button = el("button", {type: "button", class: "text-expander", "data-text-toggle": "", text: "show more", "aria-expanded": "false", onclick: toggle});
+    const wrap = el("div", {"data-expandable-text": ""}, top, paragraph, button);
+    return wrap;
   }
   function renderRequest(request) {
     const tags = [];
@@ -989,7 +1044,7 @@
     return el("div", {class: "tool-chips", "data-tools": ""}, ...(chips.length ? chips : [el("span", {class: "reader-meta", text: "none recorded"})]));
   }
   function renderAnswer(answer) {
-    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text, "expand"));
+    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text));
   }
   function renderSubagentRow(child, matched, interaction = false) {
     const mini = el("div", {class: "mini-card", "data-mini-card": "", hidden: ""},
@@ -1014,9 +1069,15 @@
     asked.append(...requests.slice(0, 2).map(renderRequest));
     if (requests.length > 2) {
       const extra = el("div", {hidden: ""}, ...requests.slice(2).map(renderRequest));
-      const toggle = el("button", {type: "button", class: "followup-toggle", text: "+ " + (requests.length - 2) + " follow-ups sent while it worked", "aria-expanded": "false", onclick: () => {
-        extra.hidden = !extra.hidden; toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
-      }});
+      const collapsedLabel = "+ " + (requests.length - 2) + " follow-ups sent while it worked", expandedLabel = "hide " + (requests.length - 2) + " follow-ups";
+      const toggleState = () => {
+        extra.hidden = !extra.hidden;
+        toggle.textContent = extra.hidden ? collapsedLabel : expandedLabel;
+        toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
+        if (extra.hidden) returnTo(toggle, toggle);
+      };
+      const toggle = el("button", {type: "button", class: "followup-toggle", text: collapsedLabel, "aria-expanded": "false", onclick: toggleState});
+      extra.append(el("button", {type: "button", class: "followup-toggle", "data-followup-collapse": "", text: expandedLabel, onclick: toggleState}));
       asked.append(toggle, extra);
     }
     const card = el("article", {class: "turn-card", "data-turn-card": turn.id},
@@ -1085,8 +1146,12 @@
       }
     }
     for (const wrap of document.querySelectorAll("[data-expandable-text]")) {
-      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("button");
-      if (paragraph.getBoundingClientRect().width) button.hidden = !paragraph.classList.contains("expanded") && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("[data-text-toggle]");
+      if (paragraph.getBoundingClientRect().width) {
+        const expanded = paragraph.classList.contains("expanded");
+        button.hidden = !expanded && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+        wrap.querySelector("[data-text-collapse-top]").hidden = !expanded || !exceedsViewport(paragraph);
+      }
     }
   }
   function renderReader(row) {
