@@ -511,8 +511,16 @@ browser, and `Ctrl-C` stops the server.
   for uptime, percentage differences for other rankings. A nonzero difference
   below displayed precision retains its sign and a less-than label; tooltips
   give an approximate magnitude. Percentage gaps from zero remain undefined.
+  Gaps use a true minus sign and `pt` for uptime. Numeric columns align right;
+  one-host rows put the host value and rank before Best and Spread. Compact
+  precision shows the quantization, token capacities use K/M labels with full
+  integers in titles, and full endpoint details retain the published bit width.
+  Spread strips emphasize compared hosts and show text alone for a sole host
+  or equal values. The wrapping one-host summary includes models, endpoints,
+  tags, median uptime, non-normal endpoints and a precision mix.
 
-  Click any list name, including an unmapped list, to open its endpoint drawer.
+  Click any results row or its model name, including an unmapped model, to open
+  its endpoint drawer; activating the open row again closes it.
   The drawer shows every observed endpoint, passing rows before failing rows,
   the first failing condition, all capture price columns, precision, capacities,
   uptime, status and expandable endpoint facts. Its mapped-model buttons open

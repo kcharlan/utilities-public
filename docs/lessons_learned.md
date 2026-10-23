@@ -1310,6 +1310,17 @@ Returning with Back can revive all 112 rows. Replace the retained paging key
 and limit when comparison inputs change, and regress expand, change ranking,
 then Back to the original ranking; both transitions must show only 50 rows.
 
+## 2026-10-23: Separate compact endpoint cells from complete endpoint facts
+
+Model Sentinel's compact Hosts precision cells share data with expandable
+endpoint facts. Keep quantization-only cell rendering separate from the full
+precision formatter so published bit widths remain available in the details.
+Likewise, determine host absence from observed endpoints rather than the
+qualifying best group: Show excluded can admit an observed host whose endpoints
+all fail filters. Preserve that distinction without broadening row admission.
+Shorter cell copy can also remove expected horizontal overflow; retain column
+space and the existing sticky-corner scroll regression when tightening text.
+
 ## 2026-10-22: Scope browser URL normalization checks to the fragment
 
 A browser assertion searching the complete URL for an invalid numeric value

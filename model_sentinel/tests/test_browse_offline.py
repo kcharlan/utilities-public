@@ -856,8 +856,8 @@ assert.equal(compareRational(exactRational({numerator_hex: "-1", denominator_hex
 const zero = bestEndpoints([endpoint("zero", "z", ["0", "1"]), endpoint("one", "o", ["1", "1"])], "price:p");
 assert.equal(gapText(zero.groups.get("one").value, zero.winner.value, "price:p").text, "");
 assert.equal(gapText(zero.winner.value, zero.winner.value, "price:p").text, "best");
-assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"-3.00 pp", title:"Approximate magnitude: -3 pp"});
-for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","-1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","-<0.01 pp"],["99.995","100","uptime:1d","-0.01 pp"],["0","1","context","-100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
+assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"−3.00pt", title:"Approximate magnitude: −3pt"});
+for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","−1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","−<0.01pt"],["99.995","100","uptime:1d","−0.01pt"],["0","1","context","−100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
 for (const values of [["-1","0","1"],["1e-9994","2e-9994","1e9994"],["1.00000000000000001","1.00000000000000002"],["0","0"],["-1e9994","0","1e9994"]]) {
   const rational = values.map(decimalRational);
   const points = spreadPositions(rational,"price:p");
@@ -872,6 +872,30 @@ assert.equal(rankValue({...low, context_length: Infinity}, "context"), null);
 assert.equal(rankValue({...low, context_length: true}, "context"), null);
 assert.equal(decimalRational("."), null);
 '''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_compact_cells_keep_full_precision_facts_and_token_titles() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  function endpointPrecision(") : source.index("  function HostValue(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+const html = (strings,...values) => strings.reduce((text,part,index) => text + part + (values[index] ?? ""), "");
+for (const [value,text] of [[null,"—"],[0,"0"],[999,"999"],[1000,"1K"],[1499,"1K"],[1500,"2K"],[999999,"1000K"],[1000000,"1M"],[1250000,"1.3M"]]) {
+  assert.equal(endpointCapacity(value),text);
+  const cell = EndpointCapacity({value});
+  assert.ok(cell.includes(`>${text}</span>`));
+  if (value !== null) assert.ok(cell.includes(`title=${value}`));
+}
+const endpoint = {quantization:"fp16",precision_bits:16,status:-2};
+assert.equal(endpointPrecision(endpoint),"fp16 (16-bit)");
+assert.ok(EndpointPrecision({endpoint}).includes(">fp16</span>"));
+assert.ok(!EndpointPrecision({endpoint}).includes("bit"));
+assert.equal(endpointStatus(endpoint),"○ status -2");
+assert.equal(endpointStatus({status:0}),"normal");
+assert.equal(endpointStatus({status:null}),"—");
+assert.equal(endpointUptime({uptime:{"1d":99.9999}},"1d"),"99.9999%");
+'''], capture_output=True, text=True)
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
@@ -914,7 +938,7 @@ const data = {hosts:[{name:"Synthetic Alpha"},{name:"Synthetic Beta"}],price_col
 const ep = {precision_bits:16,quantization:"fp16",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99,"5m":0},status:-2,prices:{p:{exact:{numerator_hex:"1",denominator_hex:"2"}}}};
 const row = {list:{display_id:"Synthetic Model"},best:{winner:{value:decimalRational("0.5")},ranked:[{},{}],groups:new Map([["Synthetic Alpha",{endpoint:ep,value:decimalRational("0.5"),rank:1}]])}};
 let main = hostsColumns(data,["Synthetic Alpha"],"price:p",{upwin:"5m"});
-assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Alpha","rank","precision","context","uptime","status"]);
+assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","host:Synthetic Alpha","rank","best","spread","precision","context","uptime","status"]);
 assert.equal(main.find(c=>c.key==="uptime").value(row),0);
 assert.equal(main.find(c=>c.key==="status").value(row),2);
 assert.deepEqual(hostsColumns(data,[],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","hosts"]);

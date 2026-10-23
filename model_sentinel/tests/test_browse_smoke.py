@@ -1100,7 +1100,7 @@ def test_hosts_profile_precision_rank_difference_history_and_picker(hosts_page, 
     expect(profile).to_contain_text("Synthetic Gamma")
     table = hosts_page.get_by_role("table", name="Host comparison")
     expect(table).to_contain_text("+200%")
-    expect(table).to_contain_text("3 / 3")
+    expect(table).to_contain_text("3 of 3")
     expect(table).to_contain_text("fp16")
     table.locator("tbody tr").filter(has_text="synthetic-response-shared").get_by_role("button").click()
     expect(hosts_page.get_by_role("dialog")).to_contain_text('"null"')
@@ -1168,7 +1168,7 @@ def test_hosts_exact_price_winner_difference_unranked_counts_and_order(hosts_pag
     hosts_page.get_by_label("Ranking").select_option("uptime:1d")
     shared = rows.filter(has_text="synthetic-response-shared")
     expect(shared.locator("td").first).to_contain_text("100%")
-    expect(shared.locator("td").nth(3)).to_contain_text("-3.00 pp")
+    expect(shared.locator("td").nth(3)).to_contain_text("−3.00pt")
 
 
 def test_hosts_single_capture_pending_uptime_and_requested_unavailable_capture(hosts_page, hosts_server):
@@ -1251,7 +1251,7 @@ def test_hosts_precision_distribution_and_history_truncation(hosts_page, hosts_s
     profile = hosts_page.get_by_role("region", name="Host summary")
     for precision in ["fp32", "bf16", "fp16", "fp8", "int8", "fp6", "fp4", "mxfp4", "nvfp4", "int4", "unknown", "synthetic-q"]:
         expect(profile.get_by_role("img", name=re.compile("Precision distribution"))).to_have_attribute("aria-label", re.compile(re.escape(precision)))
-    expect(profile).to_contain_text("unknown: 3")
+    expect(profile).to_contain_text("unknown 3")
     hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr").filter(has_text="synthetic-response-shared").get_by_role("button").click()
     expect(hosts_page.get_by_role("dialog")).to_contain_text('"standard"')
     hosts_page.keyboard.press("Escape")
@@ -2387,6 +2387,75 @@ def test_endpoint_synthetic_dossier_acceptance(
             shutil.copy2(path, Path(target) / path.name)
 
 
+def test_hosts_results_row_activation_formats_and_numeric_alignment(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Gamma"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator("thead th")).to_have_text(["Model", "Synthetic Gamma", "Rank", "Best", "Spread", "Precision", "Context", "Uptime", "Status"])
+    shared = table.locator("tbody tr").filter(has_text="synthetic-response-shared")
+    expect(shared).to_contain_text("3 of 3")
+    expect(shared.locator("td").nth(4)).to_have_text("fp16")
+    expect(shared.locator("td").nth(7)).to_have_text("○ status 2")
+    expect(shared.locator("td").nth(5).locator("span")).to_have_text("128K")
+    expect(shared.locator("td").nth(5).locator("span")).to_have_attribute("title", "128000")
+    expect(shared.locator(".model-link")).to_have_attribute("title", "synthetic-response-shared")
+    shared.locator("td").nth(1).click()
+    expect(shared).to_have_attribute("aria-current", "true")
+    # The retained modal blocks a second pointer click on the underlying row.
+    # Task 4's non-modal acceptance covers physical open-row toggling.
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page.get_by_role("dialog")).to_have_count(0)
+    shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
+    expect(hosts_page.get_by_role("dialog")).to_be_visible()
+    expect(shared).to_have_attribute("aria-current", "true")
+    hosts_page.get_by_text("Endpoint details", exact=True).first.click()
+    expect(hosts_page.locator("details[open]")).to_contain_text("16-bit")
+    hosts_page.keyboard.press("Escape")
+    for rank, best in [("price:pricing.prompt", "$1.00"), ("uptime:1d", "100%"), ("context", "256,000"), ("output", "32,000")]:
+        _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta", rank=rank))
+        assert table.locator("thead th").evaluate_all("nodes => nodes.slice(1).every(n => getComputedStyle(n).textAlign === 'right')")
+        assert shared.locator("td").evaluate_all("nodes => nodes.every(n => getComputedStyle(n).textAlign === 'right')")
+        expect(shared.locator(".hosts-ranking")).to_have_text(best)
+        shared.locator("td").first.click()
+        expect(hosts_page.get_by_role("dialog")).to_be_visible()
+        hosts_page.keyboard.press("Escape")
+
+
+def test_hosts_summary_compact_facts_missing_uptime_and_narrow_wrapping(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Beta"))
+    profile = hosts_page.get_by_role("region", name="Host summary")
+    expect(profile).to_contain_text("models")
+    expect(profile).to_contain_text("tags")
+    expect(profile).to_contain_text("unknown 3")
+    for fact in ["3 models", "16 endpoints", "16 tags", "median uptime 99%", "0 not normal"]:
+        expect(profile).to_contain_text(fact)
+    assert profile.bounding_box()["height"] <= 60
+    expect(profile.locator('.host-precision-mix span[title="unknown: 3"]')).to_have_attribute("style", re.compile("border-strong"))
+    hosts_page.set_viewport_size({"width": 390, "height": 844})
+    long_name = "Synthetic" + "LongHostName" * 24
+    def long_host(route):
+        response = route.fetch()
+        payload = response.json()
+        for host in payload["hosts"]:
+            if host["name"] == "Synthetic Beta":
+                host["name"] = long_name
+        for endpoint in payload["endpoints"]:
+            if endpoint["host"] == "Synthetic Beta":
+                endpoint["host"] = long_name
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", long_host)
+    hosts_page.goto("about:blank")
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts=long_name))
+    expect(profile.locator("h2")).to_have_text(long_name)
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert profile.locator("h2").bounding_box()["width"] <= profile.bounding_box()["width"]
+    assert profile.bounding_box()["height"] > 60
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Missing"))
+    expect(profile).to_contain_text("median uptime —")
+
+
 def test_hosts_compact_results_drawer_roundtrip_and_copied_url_focus(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta"))
@@ -2394,7 +2463,7 @@ def test_hosts_compact_results_drawer_roundtrip_and_copied_url_focus(hosts_page,
     shared = table.locator('tr[data-list-path="' + facts.host_grouping_and_ties["path"] + '"]')
     expect(shared.get_by_role("button", name="synthetic-response-shared", exact=True)).to_be_visible()
     assert shared.evaluate("""node => { const sample = document.createElement('span'); sample.textContent = 'Body line'; document.body.append(sample); const line = sample.getBoundingClientRect().height; sample.remove(); return node.getBoundingClientRect().height <= 2 * line; }""")
-    expect(shared).to_contain_text("+1 variants")
+    expect(shared).to_contain_text("+1 variant")
     expect(shared.locator("details")).to_have_count(0)
     expect(shared.locator('[aria-label="best in row"]')).to_have_count(2)
     expect(shared.locator(".host-spread circle")).to_have_count(3)
@@ -2492,7 +2561,7 @@ def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, host
     shared = table.locator("tbody tr").filter(has_text="synthetic-response-shared")
     expect(shared).to_contain_text("Synthetic Alpha")
     expect(shared).not_to_have_class("is-excluded")
-    expect(shared.locator("td").nth(2)).to_have_text("—")
+    expect(shared.locator("td").nth(0)).to_have_text("—")
     _switch_hash(hosts_page, _hosts_fragment(facts))
     solo = table.locator("tbody tr").filter(has_text="synthetic-response-solo")
     bare = table.locator("tbody tr").filter(has_text="fake-org/hosts-bare")
@@ -2503,7 +2572,7 @@ def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, host
     expect(unranked.locator("circle")).to_have_count(0)
     _switch_hash(hosts_page, _hosts_fragment(facts, plimit="pricing.prompt:0", showx="1", hosts="Synthetic Gamma"))
     expect(bare.locator('[aria-label="best in row"]')).to_have_count(1)
-    expect(bare.locator("td").nth(2)).to_contain_text("best")
+    expect(bare.locator("td").nth(0)).to_contain_text("best")
     expect(shared).to_have_class("is-excluded")
     expect(shared).to_contain_text("No qualifying endpoint")
     expect(shared.locator("circle")).to_have_count(0)
@@ -2520,23 +2589,51 @@ def test_hosts_drawer_close_after_filter_removes_row_focuses_results(hosts_page,
 
 
 @pytest.mark.parametrize("hosts_server", ["spread_cases"], indirect=True)
+def test_hosts_spread_marks_and_missing_cells(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    close = table.locator("tbody tr").filter(has_text="synthetic-response-spread-close")
+    svg = close.locator("svg")
+    expect(svg).to_have_attribute("width", "150")
+    expect(svg).to_have_attribute("height", "18")
+    expect(svg.locator("rect")).to_have_attribute("width", "3")
+    expect(svg.locator("rect")).to_have_attribute("height", "16")
+    expect(svg.locator("circle")).to_have_count(1)
+    expect(svg.locator("circle")).to_have_attribute("r", "3")
+    expect(svg.locator("circle")).to_have_attribute("opacity", "0.65")
+    unranked = table.locator("tbody tr").filter(has_text="synthetic-response-unranked")
+    expect(unranked.locator("td").nth(1).locator(".hosts-missing")).to_have_text("—")
+    table.get_by_role("button", name="synthetic-response-exact", exact=True).click()
+    missing_price = hosts_page.get_by_role("dialog").locator("tbody tr").filter(has_text="price-missing")
+    expect(missing_price.locator(".hosts-price .hosts-missing")).to_have_text("—")
+    hosts_page.keyboard.press("Escape")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha"))
+    expect(close.locator("svg")).to_have_attribute("width", "120")
+    expect(close.locator('circle[r="5"]')).to_have_count(1)
+    expect(close.locator('circle[r="5"]')).to_have_attribute("stroke-width", "1.5")
+
+
+@pytest.mark.parametrize("hosts_server", ["spread_cases"], indirect=True)
 def test_hosts_spread_exact_identity_survives_extreme_and_overlapping_drawings(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta,Synthetic Gamma"))
     table = hosts_page.get_by_role("table", name="Host comparison")
     row = lambda name: table.locator("tbody tr").filter(has_text="synthetic-response-spread-" + name)
-    for name, count in [("tiny-huge", 3), ("signed", 3), ("zero", 3), ("close", 2), ("equal", 2), ("only", 1)]:
+    for name, count in [("tiny-huge", 3), ("signed", 3), ("zero", 3), ("close", 2), ("equal", 0), ("only", 0)]:
         dots = row(name).locator("circle")
         expect(dots).to_have_count(count)
-        assert dots.evaluate_all("nodes => nodes.every(n => Number.isFinite(Number(n.getAttribute('cx'))) && Number(n.getAttribute('cx')) >= 5 && Number(n.getAttribute('cx')) <= 115)")
-    expect(row("equal").get_by_role("img", name="all 2 hosts equal", exact=True)).to_be_visible()
-    expect(row("only").get_by_role("img", name="only host", exact=True)).to_be_visible()
+        assert dots.evaluate_all("nodes => nodes.every(n => Number.isFinite(Number(n.getAttribute('cx'))) && Number(n.getAttribute('cx')) >= 5 && Number(n.getAttribute('cx')) <= 145)")
+    expect(row("equal").get_by_text("all 2 hosts equal", exact=True)).to_be_visible()
+    expect(row("equal").locator("svg")).to_have_count(0)
+    expect(row("only").get_by_text("only host", exact=True)).to_be_visible()
+    expect(row("only").locator("svg")).to_have_count(0)
     expect(row("close").get_by_role("img", name="Host value spread", exact=True)).to_be_visible()
     expect(row("close").locator('[aria-label="best in row"]')).to_have_count(1)
     expect(row("close").locator("td").nth(3)).to_contain_text("+<1%")
     expect(row("zero").locator('[aria-label="best in row"]')).to_have_count(2)
     expect(row("zero").locator("td").nth(4).locator("small")).to_have_attribute("title", "A percentage gap from zero is undefined.")
-    assert row("signed").locator("circle").evaluate_all("nodes => nodes.map(n => Number(n.getAttribute('cx')))") == [5, 60, 115]
+    assert row("signed").locator("circle").evaluate_all("nodes => nodes.map(n => Number(n.getAttribute('cx')))") == [5, 75, 145]
     # Both entries remain separately titled and described when drawing precision overlaps.
     expect(row("close").locator("circle title")).to_have_count(2)
     expect(row("close").locator(".hosts-accessible")).to_contain_text("Synthetic Alpha")
