@@ -48,7 +48,8 @@ last explicitly present archived scalar wins across them. Empty or title-only
 occurrences preserve an earlier archived scalar.
 Titles independently use a nonempty valid annotation title, then the own-surface
 summary title. Explicit empty annotation titles preserve their raw presence but
-allow that fallback; later corpus projection supplies request/ID fallbacks.
+allow that fallback; corpus projection then supplies the first meaningful request
+or canonical filename ID.
 
 SQL enum/index columns accept INTEGER values losslessly. Optional enums retain
 three distinct states: integer, NULL/absent and malformed. A malformed enum is
@@ -58,8 +59,42 @@ missing required indexes reject that unidentifiable row. Trajectory metadata
 blob IDs can remain explicitly absent. These rules do not coerce textual enum
 names or floating-point numbers into integer facts.
 
-This reader deliverable emits source counts/status/reasons, ignored environment
-names and diagnostics, without corpus sessions, usage/pricing or UI actions.
+Antigravity sessions, including zero-step databases, enter the shared corpus.
+Session creation uses trajectory creation or first step creation; session end
+uses latest completion or latest creation. Explicit user-input steps start turns;
+pre-prompt steps have no display turn. A turn's end is its latest member completion,
+remaining unknown when no completion exists, even when the next prompt closes it.
+Errors take precedence over cancellation/interruption. Active statuses keep only
+the final turn open; earlier active turns are completed. Open turns use the shared
+two-hour quiet rule with the latest step creation/completion timestamp. Cleared,
+invalid, unspecified and unknown statuses default to completed.
+
+An explicit SQL type/status integer wins. If SQL is absent or invalid, a present
+payload type/status scalar supplies that fact; absent payload scalars never become
+an invented proto3 default. Conflicting explicit SQL/payload enums diagnose, and
+the SQL fact wins. User-input submessage presence alone does not create a turn.
+Nested singular messages merge before their scalar and repeated fields are read.
+Prompts prefer user_response, otherwise joined text items; images include image
+media. Answers use the last nonempty planner response, with modified-response
+fallback. Planner thinking and generator/system prompts never enter the page.
+
+Planner tools map shell/edit names to the shared counters. MCP calls use their
+ServerName/ToolName JSON arguments, and execution tool IDs determine failed
+counts. Malformed arguments diagnose while retaining the session and other tools.
+Workspace file URIs are percent-decoded; invalid schemes/escapes diagnose.
+Recorded git root and branch are retained and participate in shared workspace
+resolution. Parent links stay within Antigravity, without invented spawn links;
+source-marked subagents lacking a parent remain visible as orphans.
+
+The page offers an Antigravity source filter, APP/CLI/IDE tags and Copy session
+ID only. Source status, legacy exclusions, ignored environment remedies and each
+database's surface/status/reason appear in the footer. Each database disclosure
+retains its own open state. Usage/pricing remain unavailable; empty session/turn
+summaries are rebuilt after every shared composition so page refresh is safe.
+
+The reader emits source counts/status/reasons, ignored environment names and
+diagnostics alongside corpus sessions and capability-gated UI actions. Token
+usage and pricing remain a separate deliverable.
 Antigravity costs therefore have independent unavailable status. Raw system
 prompts and planner thinking never enter page/runtime output. No Antigravity
 cache is written. Absent/disabled input alone does not initialize the runtime;

@@ -18,8 +18,9 @@ static void antigravity_source(JsonWriter *w,const PayloadInputs *in){
         jsonw_raw(w,",\"status\":");text(w,antigravity_database_status(d->status));jsonw_raw(w,",\"reason\":");if(d->reason.n)jsonw_string(w,d->reason);else jsonw_raw(w,"null");
         jsonw_raw(w,",\"accepted_sessions\":");jsonw_i128(w,d->accepted_sessions);jsonw_raw(w,",\"accepted_steps\":");jsonw_i128(w,d->accepted_steps);jsonw_raw(w,"}");
     }
-    size_t archived=0;if(s)for(size_t i=0;i<s->session_count;i++)archived+=s->sessions[i]->archived;
-    jsonw_raw(w,"],\"sessions\":");jsonw_i128(w,s?s->session_count:0);jsonw_raw(w,",\"archived\":");jsonw_i128(w,archived);
+    size_t sessions=0,subagents=0,archived=0;
+    if(in->corpus)for(OmapEntry *q=in->corpus->sessions.first;q;q=q->next){const SessionModel *row=q->value;if(row->provider!=PROVIDER_ANTIGRAVITY)continue;if(row->is_subagent)subagents++;else sessions++;archived+=row->archived;}
+    jsonw_raw(w,"],\"sessions\":");jsonw_i128(w,sessions);jsonw_raw(w,",\"subagents\":");jsonw_i128(w,subagents);jsonw_raw(w,",\"archived\":");jsonw_i128(w,archived);
     jsonw_raw(w,",\"legacy_encrypted\":");jsonw_i128(w,s?s->legacy_encrypted:0);jsonw_raw(w,",\"ignored_environment\":[");
     if(s)for(size_t i=0;i<s->ignored_environment_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,s->ignored_environment[i]);}
     jsonw_raw(w,"],\"logs\":0,\"cached\":0,\"costs\":{\"available\":false,\"reason\":\"Antigravity usage projection is unavailable\"}}");
@@ -37,6 +38,8 @@ static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
     jsonw_raw(w,",\"antigravity_malformed_blobs\":");jsonw_i128(w,s?s->malformed_blobs:0);
     jsonw_raw(w,",\"antigravity_malformed_rows\":");jsonw_i128(w,s?s->malformed_rows:0);
     jsonw_raw(w,",\"antigravity_annotation_errors\":");jsonw_i128(w,s?s->annotation_errors:0);
+    jsonw_raw(w,",\"antigravity_orphaned_subagents\":");payload_corpus_strings(w,s?&s->orphaned_subagents:&(CorpusStrings){0});
+    jsonw_raw(w,",\"antigravity_session_id_collisions\":");payload_corpus_strings(w,s?&s->corpus_collisions:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_source_diagnostics\":[");
     if(s)for(size_t i=0;i<s->diagnostic_count;i++){const AntigravityDiagnostic *d=&s->diagnostics[i];if(i)jsonw_raw(w,",");
         jsonw_raw(w,"{\"database\":");jsonw_string(w,d->database);jsonw_raw(w,",\"session\":");jsonw_string(w,d->session);jsonw_raw(w,",\"surface\":");jsonw_string(w,d->surface);jsonw_raw(w,",\"context\":");jsonw_string(w,d->context);jsonw_raw(w,",\"idx\":");jsonw_i64(w,d->idx);jsonw_raw(w,",\"reason\":");jsonw_string(w,d->reason);jsonw_raw(w,"}");

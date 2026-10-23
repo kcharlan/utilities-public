@@ -9,8 +9,8 @@ empty/zero-step databases, malformed-record isolation, transaction rollback,
 independent metadata identities, archive defaults/precedence/fallback, surface
 duplicates, title-only summaries, lock failures, large unrelated database data,
 source database/WAL/annotation byte/mode preservation and unopened Codex caches.
-The discovery acceptance case asserts source counts and runtime initialization
-while every other provider is disabled/absent, without creating corpus sessions.
+The corpus acceptance case asserts source counts, runtime initialization and
+zero-turn sessions while every other provider is disabled/absent.
 Regressions bound FIFO/directory sidecar checks for both database kinds, merge
 repeated singular summary annotations, and preserve usage/payload blobs under
 malformed optional SQL enums while rejecting invalid row indexes. Raw enum
@@ -19,6 +19,20 @@ Privacy canaries exercise unrelated tables/settings and excluded prompt/thinking
 text. Wrappers strip all three ignored Antigravity environment names and deny
 real Gemini root reads/writes. A separate mutation invocation proves removing
 that explicit deny fails the policy regression under existing canonical scratch.
+
+Antigravity corpus units pin every descriptor status, mixed error/cancellation
+precedence, earlier/final turns, missing completion and quiet thresholds; SQL
+enum authority, explicit payload fallback and conflicts; pre-prompt steps,
+zero-step sessions, singular nested-message merges, prompt/image/answer rules,
+MCP/tool mapping and malformed arguments, workspace URI decoding and retained
+git roots, parentless subagents and cross-provider collisions. Native cases cover
+archived/unarchived sessions on all surfaces, summary-only archive, annotation
+default false, mixed/disabled providers and repeated empty composition/refresh.
+Chromium cases cover source filters/KPIs/calendar/workspaces, APP/CLI/IDE tags,
+capabilities and copy, source remedies, independent database footer state,
+4.5:1 provider contrast and 375px overflow, with browser-error/request guards.
+Set COLOPHON_SCREENSHOT_DIR to fresh private external scratch to retain the
+synthetic app overview/list/reader images during that browser case.
 
 History acceptance covers exact canonical/unique-alias resolution, ambiguous
 owners and collision-skipped aliases across deletion/rebuild, Codex filename

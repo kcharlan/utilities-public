@@ -23,7 +23,7 @@ def database(native, surface="antigravity", identity=ID):
         db.execute("INSERT INTO trajectory_meta VALUES (?,?,1,1)", (identity, identity))
     return path
 
-def test_antigravity_discovery_acceptance(native):
+def test_antigravity_corpus_acceptance(native):
     native.codex.rmdir()
     path = database(native)
     result = native.build("--no-claude", "--no-opencode")
@@ -33,7 +33,17 @@ def test_antigravity_discovery_acceptance(native):
     assert source["databases"][0]["path"] == str(path)
     assert source["databases"][0]["accepted_sessions"] == 1
     assert source["databases"][0]["surface"] == "app"
-    assert native.payload()["sessions"] == []
+    rows = native.payload()["sessions"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["id"] == ID
+    assert row["provider"] == "antigravity"
+    assert row["antigravity_surface"] == "app"
+    assert row["turns"] == []
+    assert row["capabilities"] == {"copy_session_id": True, "copy_log_path": False,
+                                   "open_in_codex": False, "continue_in_cli": False}
+    assert native.build().returncode == 0
+    assert native.payload()["sessions"][0]["turns"] == []
     assert "antigravity: 1 sessions" in result.stdout
     assert "1 databases (1 parsed" in result.stdout
     assert native.runtime.stat().st_mode & 0o777 == 0o700
@@ -63,14 +73,46 @@ def test_antigravity_mixed_disabled_and_environment_names_only(native):
     assert result.returncode == 0, result.stderr
     payload = native.payload()
     assert source(native)["sessions"] == 1
-    assert len(payload["sessions"]) == 1
+    assert len(payload["sessions"]) == 2
     assert source(native)["ignored_environment"] == ["ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"]
     assert "use --antigravity-home PATH" in result.stderr
     assert "SYNTHETIC-PRIVATE-ENVIRONMENT-CANARY" not in native.page.read_text() + result.stdout + result.stderr
     assert native.build("--no-antigravity").returncode == 0
     assert source(native)["status"] == "disabled"
     assert source(native)["databases"] == []
-    assert native.payload()["sessions"] == payload["sessions"]
+    assert native.payload()["sessions"] == [row for row in payload["sessions"] if row["provider"] != "antigravity"]
+
+
+@pytest.mark.parametrize('surface,label', [('antigravity','app'), ('antigravity-cli','cli'), ('antigravity-ide','ide')])
+@pytest.mark.parametrize('archive', ['annotation', 'summary', 'default-false'])
+def test_antigravity_corpus_archive_projection_and_summary(native, surface, label, archive):
+    path = database(native, surface)
+    annotations = path.parent.parent / 'annotations'
+    annotations.mkdir()
+    if archive != 'summary':
+        (annotations / (ID + '.pbtxt')).write_text('title: "Synthetic annotation"' + (' archived: true' if archive == 'annotation' else ''))
+    with sqlite3.connect(path.parent.parent / 'conversation_summaries.db') as db:
+        db.execute('CREATE TABLE conversation_summaries(conversation_id TEXT, title TEXT, raw_summary BLOB)')
+        db.execute('INSERT INTO conversation_summaries VALUES(?,?,?)', (ID, 'Synthetic summary', proto_field(15, proto_field(4, 1))))
+    metadata = proto_field(1, proto_field(1, 1767355200))
+    prompt = proto_field(19, proto_field(2, 'Synthetic corpus prompt'))
+    with sqlite3.connect(path) as db:
+        db.execute('INSERT INTO steps VALUES(0,14,3,?,?,0)', (metadata, prompt))
+    result = native.build('--no-claude', '--no-opencode')
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()['sessions']
+    assert row['antigravity_surface'] == label
+    assert row['title_full'] == ('Synthetic summary' if archive == 'summary' else 'Synthetic annotation')
+    assert row['title_source'] == 'antigravity_title'
+    assert row['archived'] == (archive != 'default-false')
+    assert row['archive_reason'] == ('session' if archive != 'default-false' else None)
+    assert len(row['turns']) == 1
+    assert row['turns'][0]['end_ms'] is None
+    assert source(native)['sessions'] == 1
+    assert source(native)['subagents'] == 0
+    assert 'antigravity: 1 sessions · 0 subagents' in result.stdout
+    assert native.build('--no-claude', '--no-opencode', '--rebuild').returncode == 0
+    assert native.payload()['sessions'] == [row]
 
 @pytest.mark.parametrize("args,reason", [
     (["--antigravity-home"], "expected one argument"),
@@ -88,6 +130,7 @@ def test_antigravity_options_preserve_unique_prefix_parser(native, args, reason)
 def test_antigravity_help_and_expanded_relative_home(native):
     result = native.invoke("--help")
     assert result.returncode == 0
+    assert 'Codex, Claude Code, OpenCode and Antigravity sessions' in result.stdout
     for value in ("--antigravity-home", "--no-antigravity", "ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"):
         assert value in result.stdout
     database(native)

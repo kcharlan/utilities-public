@@ -9,6 +9,8 @@
 #include "claude/compose.h"
 #include "opencode/scan.h"
 #include "antigravity/scan.h"
+#include "antigravity/corpus.h"
+#include "antigravity/compose.h"
 #include "opencode/corpus.h"
 #include "opencode/compose.h"
 #include "out/payload.h"
@@ -109,6 +111,7 @@ int cli_run(const Args *args){
     failure=claude_corpus_add(claude.records,claude.count,snapshot,&corpus,&claude.collisions);if(failure.code)goto fail;
     failure=claude_metadata_apply(&claude,&corpus);if(failure.code)goto fail;
     failure=opencode_corpus_add(&opencode,snapshot,&corpus);if(failure.code)goto fail;
+    failure=antigravity_corpus_add(&antigravity,snapshot,&corpus);if(failure.code)goto fail;
     char *alias_path=join(home,"workspaces.json");if(!alias_path){failure=err_make(ERR_NOMEM,"alias path allocation failed");goto fail;}
     failure=workspace_aliases_load(alias_path,&aliases);free(alias_path);if(failure.code)goto fail;
     failure=corpus_resolve_workspaces(&corpus,&aliases);if(failure.code)goto fail;
@@ -134,6 +137,7 @@ int cli_run(const Args *args){
     failure=claude_compose(&claude,&corpus);if(failure.code)goto fail;
     failure=claude_price_units(&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
     failure=opencode_compose(&opencode,&corpus);if(failure.code)goto fail;
+    failure=antigravity_compose(&antigravity,&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
     failure=compose_refresh_costs(&corpus,ledger.available);if(failure.code)goto fail;
     if(cp_fault("cache_abort_fail")){failure=err_make(ERR_INVALID,"synthetic injected cache_abort_fail");failure_type="ValueError";goto fail;}
     char *key=NULL;failure=file_codex_path_key(codex,&key);if(failure.code==ERR_OK)failure=file_abbreviate_home(key,&display);free(key);if(failure.code!=ERR_OK)goto fail;

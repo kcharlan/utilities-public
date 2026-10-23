@@ -69,6 +69,8 @@ typedef struct {
   bool history_only;
   Str resume_config_dir;
   Str opencode_database; /* Borrowed absolute source path, OpenCode only. */
+  Str antigravity_surface;
+  Str antigravity_git_root;
   const LogRecord *record;
   const LogRecord **records;
   size_t record_count, record_capacity;

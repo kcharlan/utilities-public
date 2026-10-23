@@ -4,8 +4,8 @@
   // --- data
   let data, currentState, searchTimer, earliestMs = null, dialShown = null;
   const controls = {};
-  const PROVIDERS = ["codex", "claude", "opencode"];
-  const PROVIDER_NAMES = {codex: "Codex", claude: "Claude", opencode: "OpenCode"};
+  const PROVIDERS = ["codex", "claude", "opencode", "antigravity"];
+  const PROVIDER_NAMES = {codex: "Codex", claude: "Claude", opencode: "OpenCode", antigravity: "Antigravity"};
   const usageProviders = new WeakMap();
   const providerOf = row => typeof row === "string" ? row : row.provider || "codex";
   const providerMatch = (row, state) => !state.src || state.src === "all" || providerOf(row) === state.src;
@@ -461,7 +461,10 @@
     const priceText = catalog.fetched_at_ms === null ? "catalog unavailable" : "catalog " + catalog.source_host + " " + localStamp(catalog.fetched_at_ms);
     document.getElementById("colophon-topbar").replaceChildren(
       el("div", {class: "topline"}, el("button", {class: "brand", type: "button", text: "COLOPHON", onclick: () => act({v: "overview", s: undefined})}), controls.breadcrumb),
-      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? PROVIDERS.reduce((sum, provider) => sum + (data.meta.sources[provider]?.logs || 0), 0) : data.meta.counts.logs) + " logs" + (data.meta.sources?.opencode ? " · " + data.meta.sources.opencode.databases.filter(db => db.status === "ok").length + " OpenCode databases" : "") + " · " + priceText}),
+      el("p", {id: "snapshot-meta", text: "data as of " + localStamp(data.meta.generated_at_ms) + " · " + (data.meta.sources ? PROVIDERS.reduce((sum, provider) => sum + (data.meta.sources[provider]?.logs || 0), 0) : data.meta.counts.logs) + " logs" + ["opencode", "antigravity"].filter(provider => data.meta.sources?.[provider]).map(provider => {
+        const count = data.meta.sources[provider].databases.filter(db => db.status === "ok").length;
+        return " · " + count + " " + PROVIDER_NAMES[provider] + " database" + (count === 1 ? "" : "s");
+      }).join("") + " · " + priceText}),
       el("div", {class: "controls"}, el("div", {class: "periods", role: "group", "aria-label": "Source"}, ...controls.sources), controls.search, el("div", {class: "period-controls"}, controls.dial, el("div", {class: "periods", role: "group", "aria-label": "Period"}, ...controls.periods)), controls.archive, controls.history), controls.chips);
   }
   // --- period dial
@@ -569,7 +572,7 @@
   const openFooterPanels = new Set();
   function footerPanel(key, props, ...children) {
     const summary = children[0];
-    const row = el("details", props, ...children);
+    const row = el("details", {...props, "data-footer-key": key}, ...children);
     row.open = openFooterPanels.has(key);
     let wasOpen = row.open;
     row.addEventListener("toggle", () => {
@@ -590,7 +593,7 @@
   function renderFooter() {
     const footer = document.getElementById("colophon-footer");
     for (const row of footer.querySelectorAll("details")) {
-      const key = row.dataset.diagnostic || "opencode_databases";
+      const key = row.dataset.footerKey;
       if (row.open) openFooterPanels.add(key);
       else openFooterPanels.delete(key);
     }
@@ -603,6 +606,12 @@
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
       if (key === "claude_unknown_record_types") row.append(el("p", {text: "Claude's log format may have changed"}));
       const explanations = {
+        antigravity_schema_errors: "Antigravity database schema is unsupported; these databases were skipped.",
+        antigravity_unreadable_databases: "Antigravity databases could not be read; check each path and reason.",
+        antigravity_archive_disagreements: "Own-surface annotations override summary archive state, including the default false value.",
+        antigravity_source_diagnostics: "Antigravity source records could not be interpreted completely; valid sibling records remain included. Context, surface and index identify each affected record.",
+        antigravity_orphaned_subagents: "Antigravity subagent sessions have no admitted parent; their sessions remain included.",
+        antigravity_session_id_collisions: "Antigravity sessions conflicting with another provider's public session ID were excluded.",
         opencode_schema_errors: "OpenCode database schema is unsupported; these databases were skipped.",
         opencode_untested_schema: "OpenCode schema is newer than the tested version; structural checks passed, but the format is untested.",
         opencode_unknown_message_types: "OpenCode's message format may have changed; unknown messages are not interpreted.",
@@ -618,11 +627,16 @@
       return footerPanel(key, {"data-diagnostic": key}, ...row.childNodes);
     });
     const databases = data.meta.sources?.opencode?.databases || [];
+    const antigravity = data.meta.sources?.antigravity;
+    const antigravityDatabases = antigravity?.databases || [];
     const overflow = costAggregateFailures();
-    footer.replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
+    footer.replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · " + ["opencode", "antigravity"].map(provider => PROVIDER_NAMES[provider] + " catalog estimates (not invoices)").join(" · ")}),
       ...(currentState.src === "all" ? PROVIDERS.filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
       ...tokenBoundaryNote(),
       ...(databases.length ? [footerPanel("opencode_databases", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
+      ...(antigravityDatabases.length ? [footerPanel("antigravity_databases", {"data-antigravity-databases": ""}, el("summary", {text: "Antigravity database details · " + antigravityDatabases.length}), el("ul", {}, ...antigravityDatabases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
+      ...(antigravity?.legacy_encrypted ? [el("p", {text: "Antigravity excluded legacy encrypted conversations · " + antigravity.legacy_encrypted})] : []),
+      ...(antigravity?.ignored_environment || []).map(name => el("p", {text: "Ignored " + name + "; use --antigravity-home PATH"})),
       ...(overflow.length ? [el("p", {"data-cost-aggregate": "", text: "cost aggregate unavailable: " + overflow.join("; ") + ". Finite costs exceed the supported sum; valid individual costs are preserved."})] : []),
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
   }
@@ -636,6 +650,11 @@
   function sourceAbsence(provider) {
     const source = data.meta.sources?.[provider];
     if (source?.status === "disabled") return PROVIDER_NAMES[provider] + " disabled by --no-" + provider;
+    if (provider === "antigravity") {
+      const databases = source?.databases || [];
+      if (["unsupported", "unreadable"].includes(source?.status)) return "Antigravity " + source.status + ": " + databases.filter(db => db.reason).map(db => db.path + ": " + db.reason).join(" · ");
+      return "No Antigravity data found. Checked " + ["antigravity", "antigravity-cli", "antigravity-ide"].map(surface => (source?.home || "~/.gemini") + "/" + surface + "/conversations").join(", ") + "; use --antigravity-home PATH";
+    }
     if (provider === "opencode") {
       const databases = source?.databases || [];
       if (["unsupported", "unreadable"].includes(source?.status)) return "OpenCode " + source.status + ": " + databases.filter(db => db.reason).map(db => db.path + ": " + db.reason).join(" · ");
@@ -649,6 +668,7 @@
   const countText = value => new Intl.NumberFormat(undefined, {maximumFractionDigits: 1, notation: value >= 10000 ? "compact" : "standard"}).format(value);
   const durationText = value => value === null ? "unknown" : value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : value >= 60000 ? (value / 60000).toFixed(1) + "m" : (value / 1000).toFixed(1) + "s";
   const costText = value => quantity(value) ? "$" + value.toFixed(2) : "costs unavailable";
+  const metricValueClass = (base, text) => base + (text === "costs unavailable" ? " unavailable-value" : "");
   function costAggregateFailures() {
     const now = data.meta.generated_at_ms, failures = [];
     const check = (state, context) => {
@@ -690,7 +710,7 @@
       const tile = el("article", {class: "kpi" + (key === "aborted" ? " warning" : ""), "data-kpi": key,
         onclick: event => {if (!event.target.closest("button")) open();}},
         el("button", {type: "button", class: "kpi-main", onclick: () => drill({sort: sorts[key], ...(key === "aborted" ? {st: "aborted"} : {})})},
-          el("span", {class: "kpi-label", text: label}), el("span", {class: "kpi-value", "data-value": totals[key], text: value})));
+          el("span", {class: "kpi-label", text: label}), el("span", {class: metricValueClass("kpi-value", value), "data-value": totals[key], text: value})));
       if (key === "cost" && value.includes(" · ")) {
         const [amount, ...notes] = value.split(" · ");
         tile.querySelector(".kpi-value").replaceChildren(el("span", {text: amount}), el("span", {class: "cost-note", text: " · " + notes.join(" · ")}));
@@ -865,7 +885,7 @@
   const workspaceLine = row => workspaceName(row.workspace) + (row.subfolder ? " › " + row.subfolder : "");
   const timeOnly = ms => validMs(ms) ? localStamp(ms).slice(-5) : "unknown";
   function flagsLine(row) {
-    return el("div", {class: "row-flags"}, ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: archiveLabel(row)})] : []),
+    return el("div", {class: "row-flags"}, ...(row.antigravity_surface ? [el("span", {class: "tag", text: row.antigravity_surface.toUpperCase()})] : []), ...(row.history_only ? [el("span", {class: "tag", text: "HISTORY ONLY"})] : []), ...(row.archived ? [el("span", {class: "tag", text: archiveLabel(row)})] : []),
       ...row.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag === "live" ? "LIVE" : flag.replace(/_/g, " ")})));
   }
   const archiveLabel = row => row.archive_reason === "project" ? "ARCHIVED (PROJECT)" : "ARCHIVED";
@@ -1205,7 +1225,7 @@
       ...(capable("copy_session_id") ? [el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)})] : []),
       ...((codex || claude) && capable("copy_log_path") && !row.history_only && !row.flags.includes("transcript_deleted") ? [el("button", {type: "button", text: "Copy log path", onclick: () => copy(row.log_path)})] : [])), copyArea);
     const stat = (key, label, value, text, sub, tooltip) => el("div", {class: "reader-stat", "data-reader-stat": key, title: tooltip},
-      el("span", {class: "kpi-label", text: label}), el("div", {class: "reader-stat-value", "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
+      el("span", {class: "kpi-label", text: label}), el("div", {class: metricValueClass("reader-stat-value", text), "data-value": value, text}), el("div", {class: "reader-stat-sub", text: sub}));
     const span = validMs(row.start_ms) && validMs(row.end_ms) && row.end_ms >= row.start_ms ? row.end_ms - row.start_ms : null;
     const agentActive = children.map(ownActive), agentMs = agentActive.every(quantity) ? agentActive.reduce((a, b) => a + b, 0) : null;
     reader.append(header, el("div", {class: "reader-stats"},

@@ -26,7 +26,7 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
     size_t sessions=0,agents=0,units=0;__int128 tokens=0;double sum=0.0,correction=0.0;bool overflow=false,available=provider!=PROVIDER_CODEX||in->ledger->available;
     const Corpus *corpus=in->corpus;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
-        const SessionModel *session=entry->value;if(session->provider!=provider)continue;if(str_equal(session->kind,STR_LIT("subagent"))||(provider==PROVIDER_OPENCODE&&session->is_subagent))agents++;else sessions++;
+        const SessionModel *session=entry->value;if(session->provider!=provider)continue;if(str_equal(session->kind,STR_LIT("subagent"))||((provider==PROVIDER_OPENCODE||provider==PROVIDER_ANTIGRAVITY)&&session->is_subagent))agents++;else sessions++;
         units+=session->unit_count;
         for(size_t i=0;i<session->unit_count;i++) {
             const UsageUnit *unit=&session->units[i];tokens+=unit->input+unit->output;
@@ -47,7 +47,7 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
     case PROVIDER_CODEX: logs=in->logs;parsed=in->parsed;cached=in->cached;break;
     case PROVIDER_CLAUDE: if(in->claude){logs=in->claude->logs;parsed=in->claude->parsed;cached=in->claude->cached;}break;
     case PROVIDER_OPENCODE: if(in->opencode){logs=in->opencode->database_count;for(size_t i=0;i<logs;i++)if(in->opencode->databases[i].status==OC_DB_OK)parsed++;}break;
-    case PROVIDER_ANTIGRAVITY: if(in->antigravity){sessions=in->antigravity->session_count;logs=in->antigravity->database_count;for(size_t i=0;i<logs;i++)if(in->antigravity->databases[i].status==AG_DB_OK)parsed++;}break;
+    case PROVIDER_ANTIGRAVITY: if(in->antigravity){logs=in->antigravity->database_count;for(size_t i=0;i<logs;i++)if(in->antigravity->databases[i].status==AG_DB_OK)parsed++;}break;
     }
     Str id=provider_id(provider);
     printf("colophon: %.*s: %zu sessions · %zu subagents · %zu %s (%zu parsed, %zu cached) · ",(int)id.n,id.p,sessions,agents,logs,provider==PROVIDER_OPENCODE||provider==PROVIDER_ANTIGRAVITY?"databases":"logs",parsed,cached);decimal(stdout,tokens,true);
@@ -96,6 +96,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         diagnostic("antigravity_duplicate_sessions",s->duplicate_sessions,&first);diagnostic("antigravity_archive_disagreements",s->archive_disagreements,&first);
         diagnostic("antigravity_malformed_blobs",s->malformed_blobs,&first);diagnostic("antigravity_annotation_errors",s->annotation_errors,&first);
         diagnostic("antigravity_malformed_rows",s->malformed_rows,&first);
+        diagnostic("antigravity_orphaned_subagents",s->orphaned_subagents.count,&first);diagnostic("antigravity_session_id_collisions",s->corpus_collisions.count,&first);
         diagnostic("antigravity_legacy_encrypted",s->legacy_encrypted,&first);diagnostic("antigravity_source_diagnostics",s->diagnostic_count,&first);
     }
     diagnostic("unknown_record_types",unknown,&first);diagnostic("db_threads_without_logs",corpus->db_threads_without_logs,&first);diagnostic("metadata_errors",metadata,&first);

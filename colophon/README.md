@@ -14,8 +14,10 @@ Antigravity discovery is enabled by default. `--antigravity-home PATH` selects
 the Gemini root (default `~/.gemini`); `--no-antigravity` suppresses all inspection.
 The reader admits conversation UUID databases from the app, CLI and IDE surfaces,
 plus their own annotation/summary archive metadata. Source counts and diagnostics
-appear in the payload and CLI summary. This first reader deliverable retains raw
-facts in memory; Antigravity sessions, usage and UI controls are not projected yet.
+appear in the payload and CLI summary. Sessions, prompts, answers, tools,
+workspaces and subagent relationships appear alongside the other providers;
+APP, CLI and IDE tags retain source surfaces independently of trajectory source.
+Only Copy session ID is available. Token usage and pricing are not projected yet.
 It creates no Antigravity parse cache and reads no Gemini credentials/settings.
 
 Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
@@ -85,9 +87,10 @@ COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --o
 
 Without overrides, sources include `~/.codex`, Claude's config projects,
 Desktop embedded project stores, macOS cswap sessions and OpenCode v2
-databases under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`).
+databases under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`), and
+Antigravity UUID databases in the admitted `~/.gemini` surfaces above.
 `--no-claude` disables Claude inspection. Readable Codex/Claude input or a reportable
-OpenCode database is sufficient; usable
+OpenCode or Antigravity database is sufficient; usable
 Claude history supplies history-only sessions when transcript roots are absent
 or an entry has no matching transcript identity. They show remembered prompts
 without active time, tokens or cost, with a separate shown-by-default toggle.

@@ -23,6 +23,14 @@ values. Enums remain raw wire integers here; usage/model normalization belongs
 to a later provider deliverable. Every mutable fixture remains fresh synthetic
 external scratch, constructed by unit helpers or the stdlib integration encoder.
 
+`enums.json` independently records the fully qualified CortexStepStatus,
+CortexStepType and CortexTrajectorySource definitions from the public
+Antigravity 2.26.0 language_server binary, SHA-256
+`6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d`.
+This separate provenance does not relabel the older message-schema projection.
+Status/type/source mapping is exercised through corpus projection; unknown
+integer enum values remain valid raw facts with the documented reducer default.
+
 The required SQLite projection uses INTEGER enum/index values, TEXT identities
 and BLOB protobuf data. Dynamic TEXT/REAL/BLOB values in integer columns are
 malformed facts, never coerced to integers. Optional enums explicitly retain

@@ -2,12 +2,13 @@
 #define CP_ANTIGRAVITY_DB_H
 #include "wire.h"
 #include "util/omap.h"
+#include "corpus/assemble.h"
 #include <signal.h>
 typedef enum { AG_DB_OK,AG_DB_ABSENT,AG_DB_UNREADABLE,AG_DB_UNSUPPORTED } AntigravityDatabaseStatus;
 /* Value is meaningful only for INTEGER. Invalid optional enums retain their
  * independent record facts, and must never masquerade as absent/default. */
 typedef enum { AG_SQL_ABSENT,AG_SQL_INTEGER,AG_SQL_INVALID } AntigravityIntegerState;
-typedef struct { int64_t idx,step_type,status,step_format;AntigravityIntegerState step_type_state,status_state,step_format_state;Str metadata,payload; } AntigravityStep;
+typedef struct { int64_t idx,step_type,status,step_format;AntigravityIntegerState step_type_state,status_state,step_format_state;Str metadata,payload;Str turn; } AntigravityStep;
 typedef struct { int64_t idx;bool has_idx;Str data; } AntigravityBlob;
 typedef struct { Str trajectory_id,cascade_id;int64_t trajectory_type,source;AntigravityIntegerState trajectory_type_state,source_state; } AntigravityMeta;
 typedef struct {
@@ -18,6 +19,7 @@ typedef struct {
     AntigravityBlob *metadata;size_t metadata_count,metadata_capacity;
     AntigravityStep *steps;size_t step_count,step_capacity;
     AntigravityBlob *generators;size_t generator_count,generator_capacity;
+    bool corpus_accepted;
 } AntigravitySession;
 typedef struct {
     Str path,id,surface,reason;
@@ -36,6 +38,7 @@ typedef struct {
     AntigravityDiagnostic *diagnostics;size_t diagnostic_count,diagnostic_capacity;
     Str *ignored_environment;size_t ignored_environment_count,ignored_environment_capacity;
     uint64_t legacy_encrypted,duplicate_sessions,archive_disagreements,malformed_blobs,malformed_rows,annotation_errors;
+    CorpusStrings corpus_collisions,orphaned_subagents;
 } AntigravityStore;
 Err antigravity_store_read(AntigravityStore *store,volatile sig_atomic_t *interrupted);
 void antigravity_store_destroy(AntigravityStore *store);

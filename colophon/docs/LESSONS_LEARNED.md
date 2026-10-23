@@ -1,5 +1,15 @@
 # Lessons learned
 
+Antigravity nested singular protobuf messages merge before scalar lookup;
+choosing the last raw message loses earlier response text or timestamp seconds.
+Keep raw optional SQL enum states separate from effective projection: an explicit
+integer wins, otherwise only an explicit payload scalar can supply the fact.
+Unknown completion clocks stay unknown when a later prompt closes a turn.
+Open-turn quiet detection uses the latest completion as well as creation, and
+provider aggregation must be rebuilt after every shared compose/destroy cycle,
+including empty usage. Database disclosures need explicit independent state keys;
+a shared fallback key couples otherwise separate provider panels.
+
 Antigravity descriptor names collide across protobuf packages. Resolve each
 fully qualified type through its owning FileDescriptorProto and typed fields:
 the Jetski annotation archive field and Cortex retry layout differ from the
