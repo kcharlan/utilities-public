@@ -1,5 +1,12 @@
 # Lessons learned
 
+- Workspace identity must not depend on which provider recorded a session.
+  Codex records the git remote while Claude and OpenCode record only cwd, so
+  the same repository resolved to an `origin:` and a `git:` workspace with the
+  same display name. Derive the missing remote from the repository's own
+  config (following linked worktrees to the common directory), and search a
+  deleted cwd from its nearest existing ancestor rather than dropping to cwd.
+
 - OpenCode forks can copy a parent's payload message id and clocks. Keep the
   SQLite row identity and creation clock independently from payload display
   clocks. Token validation has signed-integer bounds; a finite recorded cost

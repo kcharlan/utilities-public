@@ -6,9 +6,11 @@
 #include "util/events.h"
 #include "util/json_number.h"
 #include "util/json_read.h"
+#include <ftw.h>
 #include <stdalign.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 TEST(corpus_payload_wide_notes_once_before_repeated_rendering) {
   event_flush(NULL);
@@ -213,4 +215,120 @@ TEST(corpus_workspace_owns_alias_names_after_alias_teardown) {
   corpus_destroy(&corpus);
   metadata_destroy(&metadata);
   intern_destroy(&intern);
+}
+static void workspace_write(const char *path, const char *text) {
+  FILE *file = fopen(path, "w");
+  ASSERT_TRUE(file);
+  ASSERT_TRUE(fputs(text, file) >= 0);
+  ASSERT_EQ(0, fclose(file));
+}
+static int workspace_remove(const char *path, const struct stat *st, int flag,
+                            struct FTW *ftw) {
+  (void)st, (void)flag, (void)ftw;
+  return remove(path);
+}
+static LogRecord workspace_session(const char *id, const char *cwd,
+                                   const char *origin) {
+  LogRecord record = {
+      .status = STR_LIT("ok"),
+      .has_meta = true,
+      .key = {.path = {id, (uint32_t)strlen(id)}},
+      .meta = {.id = {id, (uint32_t)strlen(id)},
+               .cwd = {.kind = JS_STRING,
+                       .value.s = {cwd, (uint32_t)strlen(cwd)}}}};
+  if (origin)
+    record.meta.origin_url = (JScalar){
+        .kind = JS_STRING, .value.s = {origin, (uint32_t)strlen(origin)}};
+  return record;
+}
+TEST(corpus_workspace_reads_origin_from_repository_config) {
+  /* Codex records the remote; Claude/OpenCode record only cwd. Both resolve
+   * to one workspace, including linked and since-deleted worktrees. */
+  char base[512], repo[600], sub[700], linked[600], gone[700], plain[600],
+      loose[700], path[800];
+  snprintf(base, sizeof base, "%s/synthetic-workspaces-XXXXXX",
+           getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+  ASSERT_TRUE(mkdtemp(base));
+  snprintf(repo, sizeof repo, "%s/repo", base);
+  snprintf(sub, sizeof sub, "%s/nested", repo);
+  snprintf(linked, sizeof linked, "%s/linked", base);
+  snprintf(gone, sizeof gone, "%s/.claude/worktrees/removed", repo);
+  snprintf(plain, sizeof plain, "%s/plain", base);
+  snprintf(loose, sizeof loose, "%s/removed/deeper", base);
+  const char *dirs[] = {repo, sub, linked, plain};
+  for (size_t i = 0; i < 4; i++)
+    ASSERT_EQ(0, mkdir(dirs[i], 0700));
+  const char *repo_dirs[] = {"/.git", "/.git/worktrees",
+                             "/.git/worktrees/linked", "/.claude",
+                             "/.claude/worktrees"};
+  for (size_t i = 0; i < 5; i++) {
+    snprintf(path, sizeof path, "%s%s", repo, repo_dirs[i]);
+    ASSERT_EQ(0, mkdir(path, 0700));
+  }
+  snprintf(path, sizeof path, "%s/.git", plain);
+  ASSERT_EQ(0, mkdir(path, 0700));
+  snprintf(path, sizeof path, "%s/.git/config", plain);
+  workspace_write(path, "[core]\n\tbare = false\n");
+  snprintf(path, sizeof path, "%s/.git/config", repo);
+  workspace_write(path, "[core]\n\tbare = false\n"
+                        "[remote \"upstream\"]\n"
+                        "\turl = https://example.invalid/other/upstream.git\n"
+                        "; comment line\n"
+                        "[Remote \"origin\"]\n"
+                        "\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+                        "\tURL = \"git@github.com:synthetic-owner/"
+                        "synthetic-repo.git\" # trailing comment\r\n");
+  snprintf(path, sizeof path, "%s/.git/worktrees/linked/commondir", repo);
+  workspace_write(path, "../..\n");
+  /* A linked worktree's gitdir is relative to the worktree, not to cwd. */
+  snprintf(path, sizeof path, "%s/.git", linked);
+  workspace_write(path, "gitdir: ../repo/.git/worktrees/linked\n");
+  Intern intern;
+  ASSERT_EQ(ERR_OK, intern_init(&intern).code);
+  LogRecord records[] = {
+      workspace_session("synthetic-codex", sub,
+                        "https://github.com/synthetic-owner/synthetic-repo"),
+      workspace_session("synthetic-claude", repo, NULL),
+      workspace_session("synthetic-linked", linked, NULL),
+      workspace_session("synthetic-removed", gone, NULL),
+      workspace_session("synthetic-plain", plain, NULL),
+      workspace_session("synthetic-loose", loose, NULL)};
+  AssemblyRecord inputs[6];
+  for (size_t i = 0; i < 6; i++)
+    inputs[i] = assembly_record(&records[i]);
+  Corpus corpus = {0};
+  CodexMetadata metadata = {0};
+  ASSERT_EQ(ERR_OK,
+            corpus_build(inputs, 6, &metadata, 0, &intern, &corpus).code);
+  WorkspaceAliases aliases = {0};
+  ASSERT_EQ(ERR_OK, corpus_resolve_workspaces(&corpus, &aliases).code);
+  Str origin =
+      STR_LIT("origin:https://github.com/synthetic-owner/synthetic-repo");
+  const char *same[] = {"synthetic-codex", "synthetic-claude",
+                        "synthetic-linked", "synthetic-removed"};
+  for (size_t i = 0; i < 4; i++) {
+    SessionModel *s =
+        omap_get(&corpus.sessions, (Str){same[i], (uint32_t)strlen(same[i])});
+    ASSERT_TRUE(s);
+    ASSERT_TRUE(str_equal(origin, s->workspace));
+  }
+  SessionModel *removed =
+      omap_get(&corpus.sessions, STR_LIT("synthetic-removed"));
+  ASSERT_TRUE(
+      str_equal(STR_LIT(".claude/worktrees/removed"), removed->subfolder));
+  Workspace *w = omap_get(&corpus.workspaces, origin);
+  ASSERT_TRUE(w);
+  ASSERT_TRUE(str_equal(STR_LIT("synthetic-repo"), w->name));
+  ASSERT_TRUE(str_equal(STR_LIT("origin"), w->kind));
+  SessionModel *plain_session =
+      omap_get(&corpus.sessions, STR_LIT("synthetic-plain"));
+  ASSERT_TRUE(!strncmp("git:", plain_session->workspace.p, 4));
+  SessionModel *loose_session =
+      omap_get(&corpus.sessions, STR_LIT("synthetic-loose"));
+  ASSERT_TRUE(!strncmp("cwd:", loose_session->workspace.p, 4));
+  ASSERT_EQ(3, corpus.workspaces.size);
+  corpus_destroy(&corpus);
+  metadata_destroy(&metadata);
+  intern_destroy(&intern);
+  ASSERT_EQ(0, nftw(base, workspace_remove, 16, FTW_DEPTH | FTW_PHYS));
 }

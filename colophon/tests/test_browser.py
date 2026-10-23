@@ -27,10 +27,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.4.0"
+    assert payload["meta"]["version"] == "0.4.1"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.0")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.1")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -536,6 +536,57 @@ def test_native_page_renders_and_filters_synthetic_session(page, native_page):
         expect(page.get_by_text("No sessions match the active filters")).to_be_visible()
         search.fill("violet kite")
         expect(page.locator("[data-list-row]")).to_have_count(1)
+        assert requests == []
+
+def test_long_workspace_names_wrap_and_session_list_resizes(page, native):
+    long_name = "~/synthetic/" + "deeply-nested-folder/" * 6 + "synthetic-leaf (no repo)"
+    def mutate(payload):
+        for row in payload["sessions"]:
+            payload["workspaces"][row["workspace"]]["name"] = long_name
+    source_page(native, mutate)
+    clipped = "nodes => nodes.filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)"
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator(".brand").click()
+        labels = page.locator(".bar-label")
+        expect(labels.first).to_have_text(long_name)
+        assert labels.evaluate_all(clipped) == []
+        page.goto(native.page.as_uri() + "#v=session&p=all&s=" + SESSION)
+        expect(page.locator(f'[data-reader="{SESSION}"]')).to_be_visible()
+        assert page.locator(".list-workspace, .list-row .session-title").evaluate_all(clipped) == []
+        session_list, reader = page.locator(".session-list"), page.locator("[data-reader]")
+        splitter = page.get_by_role("separator", name="Resize session list")
+        width = lambda: session_list.bounding_box()["width"]
+        stored = lambda: page.evaluate("localStorage.getItem('colophon.sessionListWidth')")
+        start = width()
+        box = splitter.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + 40
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 150, y, steps=6)
+        page.mouse.up()
+        assert abs(width() - (start + 150)) <= 2
+        assert int(stored()) == round(width())
+        page.reload()
+        expect(reader).to_be_visible()
+        assert abs(width() - (start + 150)) <= 2
+        splitter.focus()
+        before = width()
+        page.keyboard.press("ArrowLeft")
+        assert abs(width() - (before - 24)) <= 2
+        # Dragging past the reserve (splitter, gaps and reader) stops at the clamp.
+        box = splitter.bounding_box()
+        page.mouse.move(box["x"] + 4, box["y"] + 40)
+        page.mouse.down()
+        page.mouse.move(page.viewport_size["width"], box["y"] + 40, steps=4)
+        page.mouse.up()
+        assert reader.bounding_box()["width"] >= 330
+        splitter.dblclick()
+        assert abs(width() - start) <= 2
+        assert stored() is None
+        page.set_viewport_size({"width": 375, "height": 812})
+        expect(splitter).to_be_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert requests == []
 
 def test_native_page_is_self_contained_and_error_free(page, native_page):

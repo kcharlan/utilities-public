@@ -829,6 +829,61 @@
       providers: [row, ...children].map(providerOf),
       unpriced: buckets.some(bucket => bucket[8] === null)};
   }
+  // The dragged list width survives rerenders and reloads; storage may be unavailable.
+  // RIGHT_MIN is the room kept for the splitter, its gaps and the reader.
+  const LIST_WIDTH_KEY = "colophon.sessionListWidth", LIST_MIN = 300, RIGHT_MIN = 360;
+  let listWidth = (() => {
+    try { const value = Number(localStorage.getItem(LIST_WIDTH_KEY)); return Number.isFinite(value) && value > 0 ? value : null; } catch { return null; }
+  })();
+  function applyListWidth(layout) {
+    if (listWidth) layout.style.setProperty("--list-width", "clamp(" + LIST_MIN + "px, " + Math.round(listWidth) + "px, calc(100% - " + RIGHT_MIN + "px))");
+    else layout.style.removeProperty("--list-width");
+  }
+  function saveListWidth() {
+    try { if (listWidth) localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(listWidth))); else localStorage.removeItem(LIST_WIDTH_KEY); } catch {}
+  }
+  function renderSplitter() {
+    const splitter = el("div", {class: "list-splitter", role: "separator", tabindex: "0", "aria-orientation": "vertical",
+      "aria-label": "Resize session list", title: "Drag to resize · double-click to reset"});
+    const layoutOf = () => splitter.parentElement;
+    const listOf = () => layoutOf().querySelector(".session-list");
+    const resize = width => {
+      const bounds = layoutOf().getBoundingClientRect();
+      listWidth = Math.max(LIST_MIN, Math.min(width, bounds.width - RIGHT_MIN));
+      applyListWidth(layoutOf());
+      splitter.setAttribute("aria-valuenow", Math.round(listOf().getBoundingClientRect().width));
+      fitReader();
+    };
+    // The list edge follows the pointer from where it grabbed the splitter.
+    let grab = 0;
+    splitter.addEventListener("pointerdown", event => {
+      event.preventDefault();
+      grab = event.clientX - listOf().getBoundingClientRect().right;
+      splitter.setPointerCapture(event.pointerId);
+      splitter.classList.add("dragging");
+    });
+    splitter.addEventListener("pointermove", event => {
+      if (splitter.hasPointerCapture(event.pointerId)) resize(event.clientX - grab - layoutOf().getBoundingClientRect().left);
+    });
+    const finish = event => {
+      if (!splitter.hasPointerCapture(event.pointerId)) return;
+      splitter.releasePointerCapture(event.pointerId);
+      splitter.classList.remove("dragging");
+      saveListWidth();
+    };
+    splitter.addEventListener("pointerup", finish);
+    splitter.addEventListener("pointercancel", finish);
+    splitter.addEventListener("dblclick", () => {listWidth = null; applyListWidth(layoutOf()); saveListWidth(); fitReader();});
+    splitter.addEventListener("keydown", event => {
+      const step = event.shiftKey ? 96 : 24, current = listOf().getBoundingClientRect().width;
+      if (event.key === "ArrowLeft") resize(current - step);
+      else if (event.key === "ArrowRight") resize(current + step);
+      else return;
+      event.preventDefault();
+      saveListWidth();
+    });
+    return splitter;
+  }
   function renderSessionList(rows) {
     const figures = new Map(rows.map(row => [row.id, listFigures(row)]));
     const newest = (a, b) => (validMs(b.start_ms) ? b.start_ms : -Infinity) - (validMs(a.start_ms) ? a.start_ms : -Infinity) || a.id.localeCompare(b.id);
@@ -1117,8 +1172,9 @@
     } else {
       const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
       const visible = selected && providerMatch(selected, currentState) && !(currentState.a === "0" && selected.archived) && !(currentState.h === "0" && selected.history_only);
-      app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}),
-        el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderReader(selected)] : [])));
+      const layout = el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderSplitter(), renderReader(selected)] : []));
+      if (visible) applyListWidth(layout);
+      app.replaceChildren(el("h2", {class: "section-label", text: "// sessions"}), layout);
       fitReader();
       document.fonts.ready.then(fitReader);
     }
