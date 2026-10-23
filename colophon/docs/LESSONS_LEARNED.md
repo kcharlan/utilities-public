@@ -1,5 +1,14 @@
 # Lessons learned
 
+- Collapse must restore both focus and position. After a rerender, resolve the
+  surviving state control before focusing without scrolling, then return an
+  offscreen section start explicitly. Browser regressions need tall expanded
+  content, trailing space, and DOM activation of offscreen start controls so
+  browser clamping and Playwright scrolling cannot mask missing return logic.
+  `test_workspaces_collapse_from_top_and_bottom` fails with scrolling disabled
+  while focus restoration remains enabled. Allow one CSS pixel for Chromium's
+  rounding of fractional starts after `scrollIntoView`.
+
 - Workspace identity must not depend on which provider recorded a session.
   Codex records the git remote while Claude and OpenCode record only cwd, so
   the same repository resolved to an `origin:` and a `git:` workspace with the

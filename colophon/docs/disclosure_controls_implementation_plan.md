@@ -187,10 +187,13 @@ mutation, error/request guards and viewport sizes. New cases retain those
 guards. Factor repeated browser setup and geometry assertions into test helpers.
 For scroll-return cases, make expanded content exceed the viewport and provide
 enough trailing content that document-end clamping cannot return the anchor.
-Assert a negative anchor top immediately before activation. Keep bottom actions
-visible when clicking; use DOM activation for offscreen start controls so
+Assert the anchor top is more than one viewport above the screen immediately
+before activation. Keep bottom actions visible when clicking; use DOM activation
+for offscreen start controls so
 Playwright's automatic scrolling cannot perform the return under test. Check
-`0 <= anchor.top < innerHeight` after collapse and the expected focused control.
+`-1 <= anchor.top < innerHeight` after collapse and the expected focused control.
+The one CSS pixel tolerance accommodates Chromium's integral scroll-offset
+rounding of fractional block starts; it does not permit a missing return.
 Add an in-view case that must not scroll. Separately exercise visible controls
 with keyboard activation. Prove the return regressions fail with only the
 helper's scrolling disabled; keep focus restoration enabled for that check.

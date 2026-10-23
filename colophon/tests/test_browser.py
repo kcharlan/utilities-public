@@ -297,6 +297,99 @@ def source_page(native, mutate=None):
     native.page.write_text(html)
     return payload
 
+def assert_disclosure_return(page, anchor, control):
+    expect(control).to_be_focused()
+    position = anchor.evaluate("e => ({top:e.getBoundingClientRect().top, height:innerHeight, scroll:scrollY})")
+    # Chromium rounds scroll offsets to CSS pixels, leaving fractional starts
+    # up to one pixel above the viewport after scrollIntoView.
+    assert -1 <= position["top"] < position["height"], position
+
+
+def scroll_disclosure_end(page, anchor, control):
+    control.scroll_into_view_if_needed()
+    expect(control).to_be_in_viewport()
+    assert anchor.evaluate("e => e.getBoundingClientRect().top < -innerHeight")
+
+
+def test_workspaces_collapse_from_top_and_bottom(page, native):
+    def mutate(payload):
+        template = copy.deepcopy(payload["sessions"][0])
+        payload["sessions"] = []
+        for index in range(36):
+            row = copy.deepcopy(template)
+            key = "synthetic-workspace-" + str(index)
+            row.update(id="synthetic-session-" + str(index), workspace=key,
+                       title="Synthetic " + ("small" if index < 4 else "medium" if index < 14 else "edge" if index < 20 else "large"))
+            row["title_full"] = row["title"]
+            payload["workspaces"][key] = {"name": key}
+            payload["sessions"].append(row)
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.set_viewport_size({"width": 1100, "height": 600})
+        page.locator(".brand").click()
+        # Leave room below the card so end-of-document clamping cannot return it.
+        page.evaluate("document.body.append(Object.assign(document.createElement('div'), {style:'height: 2000px'}))")
+        card = page.locator("[data-workspaces]")
+        top = page.get_by_role("button", name="Workspaces top 6", exact=True)
+        all_rows = page.get_by_role("button", name="Workspaces all 36", exact=True)
+        rows = card.locator("[data-workspace]")
+        expect(rows).to_have_count(6)
+        expect(top).to_have_attribute("aria-pressed", "true")
+        expect(all_rows).to_have_attribute("aria-pressed", "false")
+        # Every start/end combination must return and focus replacement controls.
+        for expand_at_end, collapse_at_end in [(False, False), (False, True), (True, False), (True, True)]:
+            expansion = card.locator(".expand-workspaces") if expand_at_end else all_rows
+            expansion.click()
+            expect(rows).to_have_count(36)
+            expect(all_rows).to_have_attribute("aria-pressed", "true")
+            expect(top).to_have_attribute("aria-pressed", "false")
+            expect(all_rows).to_be_focused()
+            assert card.evaluate("e => e.getBoundingClientRect().height > innerHeight")
+            end = card.get_by_role("button", name="show top 6", exact=True)
+            assert end.get_attribute("aria-expanded") is None
+            scroll_disclosure_end(page, card, end)
+            if collapse_at_end:
+                end.click()
+            else:
+                # DOM activation keeps Playwright from scrolling the start for us.
+                top.evaluate("e => e.click()")
+            expect(rows).to_have_count(6)
+            assert_disclosure_return(page, card, top)
+        # Visible state controls also work with keyboard; an in-view start stays put.
+        all_rows.focus()
+        all_rows.press("Enter")
+        card.evaluate("e => e.scrollIntoView({block:'start'})")
+        page.evaluate("scrollBy(0, -10)")
+        assert card.evaluate("e => 0 <= e.getBoundingClientRect().top && e.getBoundingClientRect().top < innerHeight")
+        before = page.evaluate("scrollY")
+        top.focus()
+        top.press("Space")
+        assert_disclosure_return(page, card, top)
+        assert page.evaluate("scrollY") == before
+        all_rows.click()
+        page.get_by_role("button", name="Workspaces tokens", exact=True).click()
+        expect(rows).to_have_count(36)
+        expect(all_rows).to_have_attribute("aria-pressed", "true")
+        page.get_by_role("searchbox").fill("medium")
+        expect(page.get_by_role("button", name="Workspaces all 10", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(rows).to_have_count(10)
+        # Filtering an expanded list below the preview removes both controls.
+        page.get_by_role("searchbox").fill("small")
+        expect(rows).to_have_count(4)
+        expect(card.locator(".metric-toggle")).to_have_count(1)
+        expect(card.locator(".expand-workspaces")).to_have_count(0)
+        page.reload()
+        expect(rows).to_have_count(4)
+        expect(card.locator(".metric-toggle")).to_have_count(1)
+        expect(card.locator(".expand-workspaces")).to_have_count(0)
+        page.get_by_role("searchbox").fill("edge")
+        expect(rows).to_have_count(6)
+        expect(card.locator(".metric-toggle")).to_have_count(1)
+        expect(card.locator(".expand-workspaces")).to_have_count(0)
+        assert requests == []
+
+
 def test_source_switch_hash_filters_and_direct_agents(page, native):
     def mutate(payload):
         parent = next(row for row in payload["sessions"] if row["provider"] == "claude")

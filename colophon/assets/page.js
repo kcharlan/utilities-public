@@ -416,6 +416,15 @@
     node.append(...children);
     return node;
   }
+  // Expanded text taller than the screen gets a collapse control above it.
+  const exceedsViewport = node => node.getBoundingClientRect().height > innerHeight;
+  // After collapsing, bring an offscreen block's start back into view.
+  function returnTo(anchor, control) {
+    if (!anchor.isConnected) return;
+    control.focus({preventScroll: true});
+    const top = anchor.getBoundingClientRect().top;
+    if (top < 0 || top >= innerHeight) anchor.scrollIntoView({block: "start"});
+  }
   function mountTopbar() {
     controls.sources = ["all", ...PROVIDERS].map(src => {
       const name = src === "all" ? "All" : PROVIDER_NAMES[src];
@@ -724,18 +733,32 @@
     });
     return panel("hour × weekday", grid);
   }
+  const WORKSPACE_PREVIEW = 6;
   const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
   function renderWorkspaces(now) {
     const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
     const byProvider = Object.fromEntries(PROVIDERS.map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
     const maximum = rows.length ? rows[0][workspaceMetric] : 0;
-    const result = panel("workspaces", el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
-      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}}))),
-      ...rows.slice(0, expandedWorkspaces ? rows.length : 6).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
+    const setExpanded = expanded => {
+      expandedWorkspaces = expanded;
+      render();
+      const anchor = document.querySelector("[data-workspaces]");
+      const control = anchor.querySelector("[data-workspace-scope][aria-pressed='true']");
+      if (expanded) control.focus({preventScroll: true});
+      else returnTo(anchor, control);
+    };
+    const metrics = el("div", {class: "metric-toggle"}, ...[["active_ms", "time"], ["tokens", "tokens"]].map(([key, label]) =>
+      el("button", {type: "button", text: label, "aria-label": "Workspaces " + label, "aria-pressed": workspaceMetric === key, onclick: () => {workspaceMetric = key; render();}})));
+    const head = el("div", {class: "panel-head"}, metrics);
+    if (rows.length > WORKSPACE_PREVIEW) head.append(el("div", {class: "metric-toggle"}, ...[[false, "top " + WORKSPACE_PREVIEW], [true, "all " + rows.length]].map(([expanded, label]) =>
+      el("button", {type: "button", text: label, "data-workspace-scope": "", "aria-label": "Workspaces " + label, "aria-pressed": expandedWorkspaces === expanded, onclick: () => setExpanded(expanded)}))));
+    const result = panel("workspaces", head,
+      ...rows.slice(0, expandedWorkspaces ? rows.length : WORKSPACE_PREVIEW).map(row => el("button", {type: "button", class: "bar-row", "data-workspace": row.key, title: workspaceName(row.key), onclick: () => drill({ws: row.key})},
         el("span", {class: "bar-label", text: workspaceName(row.key), title: workspaceName(row.key)}),
         el("span", {class: "bar-track"}, ...workspaceFills(row, maximum, byProvider)),
         el("span", {class: "bar-number", "data-value": row[workspaceMetric], text: metricText(workspaceMetric, row[workspaceMetric])}))));
-    if (!expandedWorkspaces && rows.length > 6) result.append(el("button", {class: "expand-workspaces", type: "button", text: "+ " + (rows.length - 6) + " more", onclick: () => {expandedWorkspaces = true; render();}}));
+    result.setAttribute("data-workspaces", "");
+    if (rows.length > WORKSPACE_PREVIEW) result.append(el("button", {class: "expand-workspaces", type: "button", text: expandedWorkspaces ? "show top " + WORKSPACE_PREVIEW : "+ " + (rows.length - WORKSPACE_PREVIEW) + " more", onclick: () => setExpanded(!expandedWorkspaces)}));
     return result;
   }
   function workspaceFills(row, maximum, byProvider) {
