@@ -434,6 +434,75 @@ def test_hosts_price_editor_target_and_results_follow_back_forward(hosts_page, h
 
 
 @pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_cleared_price_limit_keeps_column_for_exact_retyping(hosts_page, hosts_server):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        goto(hosts_page, hosts_server, _hosts_fragment(facts, plimit="pricing.completion:7"))
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        column = hosts_page.get_by_label("Price column", exact=True)
+        field = hosts_page.get_by_label("Maximum price", exact=True)
+        rows = hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")
+        expect(column).to_have_value("pricing.completion")
+        expect(field).to_have_value("7")
+        expect(rows).to_have_count(1)
+        before = hosts_page.evaluate("history.length")
+
+        field.fill("")
+        expect(hosts_page).not_to_have_url(re.compile("plimit="))
+        # Allow the committed empty limit and its effects to settle before
+        # retyping; an immediate refill would miss the unwanted default reset.
+        hosts_page.wait_for_timeout(350)
+        expect(column).to_have_value("pricing.completion")
+        expect(field).to_have_value("")
+        expect(dialog).to_contain_text("134 endpoints with missing values.")
+        expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+        expect(rows).to_have_count(7)
+
+        field.fill("8.000000000000000001")
+        hosts_page.keyboard.press("Escape")
+        expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A8.000000000000000001(?:&|$)"))
+        expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Price limit: removes 134 endpoints")
+        expect(rows).to_have_count(1)
+        expect(rows.first).to_have_attribute("data-list-path", facts.host_row_admission["shared_path"])
+        assert hosts_page.evaluate("history.length") == before
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        expect(column).to_have_value("pricing.completion")
+        expect(field).to_have_value("8.000000000000000001")
+        expect(dialog).to_contain_text("134 endpoints with missing values.")
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_restored_active_price_target_overrides_inactive_column_draft(hosts_page, hosts_server):
+    with _responsive_renderer_deadline():
+        _, facts = hosts_server
+        goto(hosts_page, hosts_server, _hosts_fragment(facts))
+        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        column = hosts_page.get_by_label("Price column", exact=True)
+        column.select_option("pricing.completion")
+        _switch_hash(hosts_page, _hosts_fragment(facts, plimit="pricing.prompt:7"))
+        for navigation in (None, "forward"):
+            if navigation:
+                hosts_page.go_forward()
+            expect(column).to_have_value("pricing.prompt")
+            expect(hosts_page.get_by_label("Maximum price", exact=True)).to_have_value("7")
+            expect(dialog).to_contain_text("5 endpoints with missing values.")
+            expect(hosts_page).to_have_url(re.compile("plimit=pricing.prompt%3A7(?:&|$)"))
+            expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Price limit: removes 5 endpoints")
+            expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(5)
+            if navigation is None:
+                hosts_page.go_back()
+                expect(hosts_page).not_to_have_url(re.compile("plimit="))
+                # Hash navigation precedes the corresponding render. Select
+                # an inactive draft only after the old ceiling has disappeared.
+                expect(hosts_page.get_by_label("Maximum price", exact=True)).to_have_value("")
+                expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+                expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(7)
+                column.select_option("pricing.completion")
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
 def test_hosts_uncommitted_price_column_survives_unrelated_hash_change(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))

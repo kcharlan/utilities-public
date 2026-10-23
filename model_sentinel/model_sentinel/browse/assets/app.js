@@ -1264,11 +1264,11 @@
     const index = CONDITION_NAMES.indexOf(name);
     const chips = (key, values, label = value => value) => html`<div class="condition-chips">${values.map(value => html`<button type="button" class="chip" key=${value} aria-pressed=${state[key].includes(value)} onClick=${() => write({[key]: state[key].includes(value) ? state[key].filter(item => item !== value) : [...state[key], value]})}>${label(value)}</button>`)}</div>`;
     const remove = () => { textEditor.current?.cancel(); write(Object.fromEntries(CONDITION_KEYS[index].map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
-    const priceSplit = state.plimit.lastIndexOf(":"), pricePath = priceSplit > 0 ? state.plimit.slice(0, priceSplit) : data.price_columns[0]?.path;
-    const [column, setColumn] = useState(pricePath);
-    // Committed/restored URL targets own the editor selection. A column-only
-    // draft with no limit leaves pricePath unchanged and remains local.
-    useEffect(() => setColumn(pricePath), [pricePath]);
+    const priceSplit = state.plimit.lastIndexOf(":"), pricePath = priceSplit > 0 ? state.plimit.slice(0, priceSplit) : null;
+    const [column, setColumn] = useState(pricePath || data.price_columns[0]?.path);
+    // Active URL targets own the selection, including Back/Forward restores.
+    // With no ceiling the column stays a local draft, even after clearing one.
+    useEffect(() => { if (pricePath) setColumn(pricePath); }, [pricePath]);
     const applyPreset = value => write({[name === "Uptime" ? "upmin" : name === "Context length" ? "ctxmin" : "outmin"]: value});
     const choosePriceColumn = event => {
       const next = event.currentTarget.value;

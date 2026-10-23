@@ -18,6 +18,11 @@ leaves its visible target and the active URL filter inconsistent.
 Resynchronize the editor's local price-column selection when the committed URL
 path changes, even if its numeric text does not. Preserve a column-only draft
 while no limit exists by following path changes rather than every rerender.
+Represent the absence of a committed target separately from the initial
+default: clearing a ceiling must retain the local column for retyping, while
+restoring an active URL ceiling must override that draft even when its target
+equals the initial default. Regress both transitions with exact text, missing
+counts, filter outcomes and Back/Forward navigation.
 
 ## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
 
