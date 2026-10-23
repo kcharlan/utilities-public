@@ -311,6 +311,186 @@ def scroll_disclosure_end(page, anchor, control):
     assert anchor.evaluate("e => e.getBoundingClientRect().top < -innerHeight")
 
 
+def open_disclosure_reader(page, native):
+    requests = open_native(page, native.page)
+    page.set_viewport_size({"width": 1100, "height": 600})
+    page.goto(native.page.as_uri() + "#v=session&p=all&s=" + SESSION)
+    expect(page.locator("[data-reader]")).to_be_visible()
+    # Prevent document-end clamping from doing the return under test.
+    page.evaluate("document.body.append(Object.assign(document.createElement('div'), {style:'height: 2000px'}))")
+    return requests
+
+
+def synthetic_lines(count):
+    return "\n".join("Synthetic disclosure line " + str(index) for index in range(count))
+
+
+def assert_text_state(wrap, expanded, tall=False):
+    expect(wrap.locator("[data-text-toggle]")).to_have_text("show less" if expanded else "show more")
+    expect(wrap.locator("[data-text-toggle]")).to_have_attribute("aria-expanded", str(expanded).lower())
+    expect(wrap.locator("[data-text-collapse-top]")).to_have_text("show less")
+    assert wrap.locator("[data-text-collapse-top]").get_attribute("aria-expanded") is None
+    assert wrap.locator("[data-long-text]").evaluate("e => e.classList.contains('expanded')") == expanded
+    if expanded:
+        assert wrap.locator("[data-long-text]").evaluate("e => e.getBoundingClientRect().height > innerHeight") == tall
+    if expanded and tall:
+        expect(wrap.locator("[data-text-collapse-top]")).to_be_visible()
+    else:
+        expect(wrap.locator("[data-text-collapse-top]")).to_be_hidden()
+
+
+def test_long_text_collapses_from_top_and_returns(page, native):
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["id"] == SESSION)
+        turn = row["turns"][0]
+        turn["requests"] = [dict(turn["requests"][0], text=synthetic_lines(90)),
+                            dict(turn["requests"][0], text=synthetic_lines(12))]
+        turn["final_answer"]["text"] = synthetic_lines(90)
+        child = copy.deepcopy(row)
+        child.update(id="synthetic-disclosure-child", parent_id=row["id"],
+                     label="Synthetic disclosure child", children=[])
+        child["turns"][0]["spawned"] = []
+        row["children"] = [child["id"]]
+        turn["spawned"] = [child["id"]]
+        payload["subagents"][child["id"]] = child
+        short_turn = copy.deepcopy(turn)
+        short_turn.update(id="synthetic-short-turn", n=2, spawned=[],
+                          requests=[dict(turn["requests"][0], text="Synthetic short request")],
+                          final_answer={"text": "Synthetic short answer", "voice": False})
+        row["turns"].append(short_turn)
+        flowing_turn = copy.deepcopy(short_turn)
+        flowing_turn.update(id="synthetic-flowing-turn", n=3,
+                            requests=[dict(turn["requests"][0], text="synthetic " * 225)])
+        row["turns"].append(flowing_turn)
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_disclosure_reader(page, native)
+        turn = page.locator("[data-turn-card]").first
+        request = turn.locator("[data-request] [data-expandable-text]").first
+        answer = turn.locator(":scope > .turn-section").last.locator("[data-expandable-text]")
+        turn.get_by_role("button", name="Expand Synthetic disclosure child", exact=True).click()
+        child = turn.locator("[data-mini-card] [data-expandable-text]")
+        for wrap in [request, answer, child]:
+            toggle, top = wrap.locator("[data-text-toggle]"), wrap.locator("[data-text-collapse-top]")
+            assert_text_state(wrap, False)
+            for collapse_at_end in [False, True]:
+                toggle.click()
+                assert_text_state(wrap, True, tall=True)
+                assert wrap.locator("[data-long-text]").evaluate("e => e.getBoundingClientRect().height > innerHeight")
+                scroll_disclosure_end(page, wrap, toggle)
+                if collapse_at_end:
+                    toggle.click()
+                else:
+                    top.evaluate("e => e.click()")
+                assert_text_state(wrap, False)
+                assert_disclosure_return(page, wrap, toggle)
+            toggle.click()
+            top.scroll_into_view_if_needed()
+            top.focus()
+            top.press("Enter")
+            assert_text_state(wrap, False)
+            assert_disclosure_return(page, wrap, toggle)
+        medium = turn.locator("[data-request] [data-expandable-text]").nth(1)
+        toggle = medium.locator("[data-text-toggle]")
+        toggle.click()
+        assert_text_state(medium, True)
+        # Visible controls support keyboard, and an in-view collapse stays put.
+        medium.evaluate("e => e.scrollIntoView({block:'start'})")
+        page.evaluate("scrollBy(0, -10)")
+        before = page.evaluate("scrollY")
+        toggle.focus()
+        toggle.press("Space")
+        assert_disclosure_return(page, medium, toggle)
+        assert page.evaluate("scrollY") == before
+        toggle.press("Enter")
+        assert_text_state(medium, True)
+        page.set_viewport_size({"width": 1100, "height": 180})
+        assert_text_state(medium, True, tall=True)
+        page.set_viewport_size({"width": 1100, "height": 600})
+        assert_text_state(medium, True)
+        # Flowing text crosses the same threshold when the splitter narrows it.
+        flowing = page.locator("[data-turn-card]").nth(2).locator("[data-request] [data-expandable-text]")
+        flowing.locator("[data-text-toggle]").click()
+        assert_text_state(flowing, True)
+        splitter = page.get_by_role("separator", name="Resize session list")
+        page.evaluate("scrollTo(0, 0)")
+        box = splitter.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + 40
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(1100, y, steps=6)
+        page.mouse.up()
+        assert_text_state(flowing, True, tall=True)
+        splitter.dblclick()
+        assert_text_state(flowing, True)
+        short = page.locator("[data-turn-card]").nth(1).locator("[data-expandable-text]")
+        for wrap in short.all():
+            assert_text_state(wrap, False)
+            expect(wrap.locator("[data-text-toggle]")).to_be_hidden()
+        assert requests == []
+
+
+def test_followups_label_and_bottom_hide(page, native):
+    count = 36
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["id"] == SESSION)
+        turn = row["turns"][0]
+        request = turn["requests"][0]
+        turn["requests"] = [dict(request, text="Synthetic initial request " + str(i)) for i in range(2)]
+        turn["requests"] += [dict(request, text=synthetic_lines(12)) for _ in range(count)]
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_disclosure_reader(page, native)
+        turn = page.locator("[data-turn-card]").first
+        toggle = turn.locator(".followup-toggle").first
+        end = turn.locator("[data-followup-collapse]")
+        extra = end.locator("..")
+        for collapse_at_end in [False, True]:
+            expect(toggle).to_have_text(f"+ {count} follow-ups sent while it worked")
+            expect(toggle).to_have_attribute("aria-expanded", "false")
+            expect(end).to_be_hidden()
+            toggle.click()
+            expect(toggle).to_have_text(f"hide {count} follow-ups")
+            expect(toggle).to_have_attribute("aria-expanded", "true")
+            expect(end).to_have_text(f"hide {count} follow-ups")
+            assert end.get_attribute("aria-expanded") is None
+            assert extra.locator(":scope > :last-child").get_attribute("data-followup-collapse") == ""
+            nested = extra.locator("[data-expandable-text]").first
+            expect(nested.locator("[data-text-toggle]")).to_be_visible()
+            if not collapse_at_end:
+                nested.locator("[data-text-toggle]").click()
+            assert_text_state(nested, True)
+            scroll_disclosure_end(page, toggle, end)
+            if collapse_at_end:
+                end.click()
+            else:
+                toggle.evaluate("e => e.click()")
+            expect(extra).to_be_hidden()
+            assert_disclosure_return(page, toggle, toggle)
+        # Reopening refits a nested expanded paragraph against the new viewport.
+        page.set_viewport_size({"width": 1100, "height": 180})
+        toggle.click()
+        assert_text_state(nested, True, tall=True)
+        page.set_viewport_size({"width": 1100, "height": 600})
+        assert_text_state(nested, True)
+        toggle.evaluate("e => e.scrollIntoView({block:'start'})")
+        page.evaluate("scrollBy(0, -10)")
+        before = page.evaluate("scrollY")
+        toggle.focus()
+        toggle.press("Space")
+        expect(extra).to_be_hidden()
+        assert_disclosure_return(page, toggle, toggle)
+        assert page.evaluate("scrollY") == before
+        toggle.press("Enter")
+        expect(extra).to_be_visible()
+        scroll_disclosure_end(page, toggle, end)
+        end.focus()
+        end.press("Enter")
+        expect(extra).to_be_hidden()
+        assert_disclosure_return(page, toggle, toggle)
+        assert requests == []
+
+
 def test_workspaces_collapse_from_top_and_bottom(page, native):
     def mutate(payload):
         template = copy.deepcopy(payload["sessions"][0])

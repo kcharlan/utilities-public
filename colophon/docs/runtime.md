@@ -53,6 +53,15 @@ to the top six. Both collapse paths restore focus to the selected scope button
 and bring an offscreen section start back into view. Changing metrics preserves
 scope; lists of six or fewer omit both scope and end controls.
 
+Reader disclosure controls use `show more` and `show less` for requests and
+answers, including subagent answers. Expanded text taller than the viewport
+also has `show less` above it; resizing the window or session-list divider
+refits that action without changing expansion. Short unclipped text has no
+toggle. Additional requests start behind `+ N follow-ups sent while it worked`;
+when open, `hide N follow-ups` appears at both ends. Collapsing text or
+follow-ups restores focus to its surviving toggle and returns an offscreen
+block start to view, while an in-view start keeps its scroll position.
+
 OpenCode's unsupported/unreadable views name database reasons. An expandable database
 footer preserves successful, failed and skipped-preview entries even when a
 sibling database succeeded. Structured diagnostics retain their contextual

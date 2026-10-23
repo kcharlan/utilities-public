@@ -984,14 +984,19 @@
     }
     return ["API-equivalent estimate (not billed)", ...(recordedEstimate ? ["OpenCode catalog estimate (not an invoice; recorded by OpenCode)"] : []), ...refs.values(), ...(unknown || (rateBased && !refs.size) ? ["rate period unknown"] : []), ...(usages.some(usage => usage.unpriced_tokens > 0 || usage.cost_usd === null) ? ["unpriced"] : []), ...availability.unavailable.map(provider => provider + " costs unavailable")].join("\n");
   }
-  function expandableText(text, label = "more") {
+  function expandableText(text) {
     const paragraph = el("p", {class: "long-text", "data-long-text": "", text, title: text});
-    const button = el("button", {type: "button", class: "text-expander", text: label, "aria-expanded": "false", onclick: () => {
+    const toggle = () => {
       const expanded = paragraph.classList.toggle("expanded");
-      button.textContent = expanded ? "less" : label;
+      button.textContent = expanded ? "show less" : "show more";
       button.setAttribute("aria-expanded", String(expanded));
-    }});
-    return el("div", {"data-expandable-text": ""}, paragraph, button);
+      top.hidden = !expanded || !exceedsViewport(paragraph);
+      if (!expanded) returnTo(wrap, button);
+    };
+    const top = el("button", {type: "button", class: "text-expander", "data-text-collapse-top": "", hidden: "", text: "show less", onclick: toggle});
+    const button = el("button", {type: "button", class: "text-expander", "data-text-toggle": "", text: "show more", "aria-expanded": "false", onclick: toggle});
+    const wrap = el("div", {"data-expandable-text": ""}, top, paragraph, button);
+    return wrap;
   }
   function renderRequest(request) {
     const tags = [];
@@ -1012,7 +1017,7 @@
     return el("div", {class: "tool-chips", "data-tools": ""}, ...(chips.length ? chips : [el("span", {class: "reader-meta", text: "none recorded"})]));
   }
   function renderAnswer(answer) {
-    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text, "expand"));
+    return el("div", {}, ...(answer.voice ? [el("span", {class: "request-meta", text: "voice reply"})] : []), expandableText(answer.text));
   }
   function renderSubagentRow(child, matched, interaction = false) {
     const mini = el("div", {class: "mini-card", "data-mini-card": "", hidden: ""},
@@ -1037,9 +1042,15 @@
     asked.append(...requests.slice(0, 2).map(renderRequest));
     if (requests.length > 2) {
       const extra = el("div", {hidden: ""}, ...requests.slice(2).map(renderRequest));
-      const toggle = el("button", {type: "button", class: "followup-toggle", text: "+ " + (requests.length - 2) + " follow-ups sent while it worked", "aria-expanded": "false", onclick: () => {
-        extra.hidden = !extra.hidden; toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
-      }});
+      const collapsedLabel = "+ " + (requests.length - 2) + " follow-ups sent while it worked", expandedLabel = "hide " + (requests.length - 2) + " follow-ups";
+      const toggleState = () => {
+        extra.hidden = !extra.hidden;
+        toggle.textContent = extra.hidden ? collapsedLabel : expandedLabel;
+        toggle.setAttribute("aria-expanded", String(!extra.hidden)); fitReader();
+        if (extra.hidden) returnTo(toggle, toggle);
+      };
+      const toggle = el("button", {type: "button", class: "followup-toggle", text: collapsedLabel, "aria-expanded": "false", onclick: toggleState});
+      extra.append(el("button", {type: "button", class: "followup-toggle", "data-followup-collapse": "", text: expandedLabel, onclick: toggleState}));
       asked.append(toggle, extra);
     }
     const card = el("article", {class: "turn-card", "data-turn-card": turn.id},
@@ -1108,8 +1119,12 @@
       }
     }
     for (const wrap of document.querySelectorAll("[data-expandable-text]")) {
-      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("button");
-      if (paragraph.getBoundingClientRect().width) button.hidden = !paragraph.classList.contains("expanded") && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+      const paragraph = wrap.querySelector("[data-long-text]"), button = wrap.querySelector("[data-text-toggle]");
+      if (paragraph.getBoundingClientRect().width) {
+        const expanded = paragraph.classList.contains("expanded");
+        button.hidden = !expanded && paragraph.scrollHeight <= paragraph.clientHeight + 1;
+        wrap.querySelector("[data-text-collapse-top]").hidden = !expanded || !exceedsViewport(paragraph);
+      }
     }
   }
   function renderReader(row) {

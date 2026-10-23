@@ -1,5 +1,10 @@
 # Lessons learned
 
+- Hidden follow-ups and subagent answers need the reader's existing refit
+  path when revealed. Select the long-text state toggle explicitly once a
+  separate top action exists; choosing the first button changes which control
+  gets hidden. Test viewport and splitter thresholds with expansion retained.
+
 - Collapse must restore both focus and position. After a rerender, resolve the
   surviving state control before focusing without scrolling, then return an
   offscreen section start explicitly. Browser regressions need tall expanded
