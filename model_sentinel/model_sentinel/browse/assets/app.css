@@ -91,7 +91,7 @@
 .hosts-table .hosts-numeric, .endpoint-drawer .hosts-numeric { text-align: right; }
 .hosts-table .hosts-host-value { min-width: 150px; }
 .hosts-table tbody tr { cursor: pointer; }
-.hosts-table tbody tr[data-list-path]:hover > * { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.hosts-table tbody tr:where([data-list-path]):hover > * { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
 .hosts-table tbody tr[aria-current="true"] > * { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
 .hosts-table tbody th { font-weight: 400; color: var(--ink-strong); }
 .hosts-table .model-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }

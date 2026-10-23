@@ -2577,6 +2577,27 @@ def test_hosts_group_heading_hover_is_inert_but_data_rows_highlight(hosts_page, 
 
 
 @pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_open_row_keeps_selected_background_on_hover(hosts_page, hosts_server, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    row = table.locator("tr[data-list-path]").first
+    row.get_by_role("button").click()
+    expect(hosts_page.locator(".endpoint-drawer")).to_be_visible()
+    expect(row).to_have_attribute("aria-current", "true")
+    cell = row.locator('th[scope="row"]')
+    hosts_page.mouse.move(0, 0)
+    selected_background = cell.evaluate("n => getComputedStyle(n).backgroundColor")
+    ordinary_background = table.locator('tr[data-list-path]:not([aria-current="true"]) th[scope="row"]').first.evaluate("n => getComputedStyle(n).backgroundColor")
+    assert selected_background != ordinary_background
+    cell.hover()
+    assert cell.evaluate("n => getComputedStyle(n).backgroundColor") == selected_background
+    expect(row).to_have_attribute("aria-current", "true")
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
 def test_hosts_sort_grouping_page_headings_bands_and_hidden_primary(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))

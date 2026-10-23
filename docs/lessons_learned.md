@@ -7,6 +7,9 @@ rules. A later heading background rule can still lose on specificity. Restrict
 interactive hover selectors to the existing model-row identity attribute,
 and regress both heading background stability and preserved data-row feedback
 with real pointer hover in light and dark themes.
+Keep identity-only selector conditions specificity-neutral with `:where()`:
+otherwise narrowing a hover rule can override the selected-row background.
+Include hovering the open `aria-current` row in that same state matrix.
 
 ## 2026-10-23: Keep exact sort-group equality and ratio headings together
 
