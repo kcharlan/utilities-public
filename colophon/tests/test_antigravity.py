@@ -103,6 +103,42 @@ def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent
     assert child["start_ms"] == 1767355200000
     assert payload["diagnostics"]["antigravity_malformed_rows"] == 0
 
+@pytest.mark.parametrize("timestamp", [b"\x80", proto_field(1,b"Synthetic wrong wire")])
+def test_antigravity_malformed_chat_start_timestamp_isolates_generator(native, timestamp):
+    path = database(native)
+    bad_chat = proto_field(4,proto_field(2,5)) + proto_field(9,proto_field(4,timestamp))
+    valid_chat = proto_field(4,proto_field(2,7)) + proto_field(9,proto_field(4,proto_field(1,1767355200)))
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES(1,?)", (proto_field(2,proto_field(1,1767355200)),))
+        db.executemany("INSERT INTO gen_metadata VALUES(?,?)", [(1,proto_field(1,bad_chat)),(2,proto_field(1,valid_chat))])
+    result = native.build("--no-claude","--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 1
+    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 0
+    assert row["own_usage"]["input"] == 7
+    assert len(row["buckets"]) == 1
+    assert row["buckets"][0][0] == 1963728
+    assert row["buckets"][0][3] == 7
+
+@pytest.mark.parametrize("created, bucket", [(proto_field(4,b""),0),
+    (proto_field(4,proto_field(1,0)+proto_field(2,0)),0),
+    (proto_field(4,proto_field(1,1767355200))+proto_field(4,proto_field(2,500000000)),1963728)])
+def test_antigravity_chat_start_empty_default_and_split_clocks(native, created, bucket):
+    path = database(native)
+    chat = proto_field(4,proto_field(2,5)) + proto_field(9,created)
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1,chat),))
+    result = native.build("--no-claude","--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 0
+    assert row["own_usage"]["input"] == 5
+    assert row["buckets"][0][0] == bucket
+
 def test_antigravity_corpus_acceptance(native):
     native.codex.rmdir()
     path = database(native)

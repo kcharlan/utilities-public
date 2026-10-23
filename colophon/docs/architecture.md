@@ -49,8 +49,8 @@ shapes and accepted provider counters without changing legacy provider counts.
 Antigravity discovery/read follows OpenCode before the same source gate; its
 store is destroyed on every exit after corpus teardown. `antigravity_corpus_add`
 follows OpenCode insertion before shared workspace resolution. After OpenCode
-composition, `antigravity_compose` initializes empty usage summaries on every
-run; token extraction and pricing remain a separate deliverable. Raw per-database
+composition, `antigravity_compose` collects and prices usage, then rebuilds usage
+summaries on every run, including empty sessions. Raw per-database
 arenas survive successful commits through rendering and are discarded on failed
 snapshots. `schema.inc` and the public fixture projection pin fully qualified
 message references and the language-server binary digest, avoiding unqualified

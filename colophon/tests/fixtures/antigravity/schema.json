@@ -1617,6 +1617,78 @@
         "type_name": ""
       }
     ],
+    ".exa.cortex_pb.ChatStartMetadata": [
+      {
+        "name": "created_at",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "start_step_index",
+        "number": 1,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "checkpoint_index",
+        "number": 2,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "steps_covered_by_checkpoint",
+        "number": 3,
+        "label": 3,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "time_since_last_invocation",
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      },
+      {
+        "name": "context_window_metadata",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ContextWindowMetadata"
+      },
+      {
+        "name": "latest_stable_message_index",
+        "number": 5,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "cache_breakpoints",
+        "number": 6,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheBreakpointMetadata"
+      },
+      {
+        "name": "system_prompt_cache",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheBreakpointMetadata"
+      },
+      {
+        "name": "cache_request",
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheRequestOptions"
+      }
+    ],
     ".exa.cortex_pb.RetryInfo": [
       {
         "name": "sherlog_link",

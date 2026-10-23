@@ -304,3 +304,10 @@ real database-to-payload path; raw-row count tests alone miss projection loss.
 When adapting pinned aliases, retain exact-alias lookup both before and after
 one routing suffix is stripped. Individual effort and suffix tests miss their
 composition; cached-price acceptance must exercise the composed spelling too.
+
+Every consumed nested clock needs its qualified schema at admission, including
+ChatStartMetadata.created_at. Structural validation of an opaque parent cannot
+validate a nested Timestamp. Clock decoding must also reject malformed framing
+and wrong wire types before applying protobuf's absent-scalar zero defaults.
+Retain empty/default epoch timestamps and singular-message merges, and test
+malformed generator isolation with an independent valid sibling through SQLite.

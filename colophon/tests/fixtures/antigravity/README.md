@@ -19,9 +19,10 @@ field 7; a different `RetryInfo` contains a field-1 retry delay. Steps use
 `.gemini_coder.Step`, not a fictitious `CortexStep`.
 
 Field `type` and `label` retain their standard protobuf descriptor numeric
-values. Enums remain raw wire integers here; usage/model normalization belongs
-to a later provider deliverable. Every mutable fixture remains fresh synthetic
-external scratch, constructed by unit helpers or the stdlib integration encoder.
+values. Enums remain raw wire integers here; the shipped usage reducer resolves
+models through its pinned model table and public oracle mappings. Every mutable
+fixture remains fresh synthetic external scratch, constructed by unit helpers or
+the stdlib integration encoder.
 
 `enums.json` independently records the fully qualified CortexStepStatus,
 CortexStepType and CortexTrajectorySource definitions from the public

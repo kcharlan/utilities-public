@@ -223,7 +223,7 @@ static const Rule rules[]={
     {AG_CHAT_MODEL,5,2,false,AG_OPAQUE}, /* model_cost */
     {AG_CHAT_MODEL,7,11,false,AG_OPAQUE}, /* tool_choice */
     {AG_CHAT_MODEL,8,11,true,AG_OPAQUE}, /* tools */
-    {AG_CHAT_MODEL,9,11,false,AG_OPAQUE}, /* chat_start_metadata */
+    {AG_CHAT_MODEL,9,11,false,AG_CHAT_START}, /* chat_start_metadata */
     {AG_CHAT_MODEL,11,11,false,AG_DURATION}, /* time_to_first_token */
     {AG_CHAT_MODEL,12,11,false,AG_DURATION}, /* streaming_duration */
     {AG_CHAT_MODEL,13,5,false,AG_OPAQUE}, /* credit_cost */
@@ -237,6 +237,17 @@ static const Rule rules[]={
     {AG_CHAT_MODEL,20,11,true,AG_OPAQUE}, /* custom_metadata */
     {AG_CHAT_MODEL,21,9,false,AG_OPAQUE}, /* model_display_name */
     {AG_CHAT_MODEL,6,13,false,AG_OPAQUE}, /* last_cache_index */
+    /* .exa.cortex_pb.ChatStartMetadata */
+    {AG_CHAT_START,4,11,false,AG_TIMESTAMP}, /* created_at */
+    {AG_CHAT_START,1,13,false,AG_OPAQUE}, /* start_step_index */
+    {AG_CHAT_START,2,5,false,AG_OPAQUE}, /* checkpoint_index */
+    {AG_CHAT_START,3,13,true,AG_OPAQUE}, /* steps_covered_by_checkpoint */
+    {AG_CHAT_START,8,11,false,AG_DURATION}, /* time_since_last_invocation */
+    {AG_CHAT_START,10,11,false,AG_OPAQUE}, /* context_window_metadata */
+    {AG_CHAT_START,5,5,false,AG_OPAQUE}, /* latest_stable_message_index */
+    {AG_CHAT_START,6,11,true,AG_OPAQUE}, /* cache_breakpoints */
+    {AG_CHAT_START,7,11,false,AG_OPAQUE}, /* system_prompt_cache */
+    {AG_CHAT_START,9,11,false,AG_OPAQUE}, /* cache_request */
     /* .exa.cortex_pb.RetryInfo */
     {AG_RETRY,1,9,false,AG_OPAQUE}, /* sherlog_link */
     {AG_RETRY,2,11,false,AG_USAGE}, /* usage */

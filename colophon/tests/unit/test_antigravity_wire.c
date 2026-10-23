@@ -54,3 +54,11 @@ TEST(antigravity_wire_field_budget_overflow_and_fixed_truncation){
     ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\11short"),AG_OPAQUE));
     ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\15xx"),AG_OPAQUE));
 }
+TEST(antigravity_wire_chat_start_timestamp_is_typed) {
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\5\112\3\42\1\200"),AG_GENERATOR));
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\7\112\5\42\3\12\1x"),AG_GENERATOR));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\4\112\2\42\0"),AG_GENERATOR));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\42\2\10\0"),AG_GENERATOR));
+    /* Unknown field99 bytes are opaque, even when not themselves a message. */
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\232\6\1\200"),AG_GENERATOR));
+}

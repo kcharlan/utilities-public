@@ -13,7 +13,7 @@ typedef enum {
     AG_OPAQUE, AG_TRAJECTORY, AG_WORKSPACE, AG_STEP_METADATA, AG_STEP,
     AG_GENERATOR, AG_CHAT_MODEL, AG_RETRY, AG_USAGE, AG_MODEL_INFO,
     AG_TOOL_CALL, AG_USER_INPUT, AG_PLANNER, AG_TEXT_ITEM, AG_MEDIA,
-    AG_TIMESTAMP, AG_DURATION, AG_ANNOTATIONS, AG_SUMMARY
+    AG_TIMESTAMP, AG_DURATION, AG_ANNOTATIONS, AG_SUMMARY, AG_CHAT_START
 } AgMessageType;
 AgResult ag_wire_next(AgCursor *cursor, AgField *field);
 /* Last raw occurrence; scans the complete message so malformed tails cannot

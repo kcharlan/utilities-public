@@ -235,3 +235,20 @@ TEST(antigravity_pinned_effort_aliases_after_routing_suffix) {
     }
     arena_destroy(&a);
 }
+TEST(antigravity_clock_invalid_wire_never_creates_epoch) {
+    const Str bad[]={STR_LIT("\42\1\200"),STR_LIT("\42\3\12\1x"),STR_LIT("\42\3\22\1x"),
+      STR_LIT("\40\0"),STR_LIT("\42\0\200"),STR_LIT("\42\5\12\1x\10\0")};
+    Arena a={0};for(size_t i=0;i<sizeof bad/sizeof *bad;i++){
+        MaybeMs at={0};ASSERT_EQ(ERR_OK,antigravity_clock(&a,bad[i],4,&at).code);ASSERT_FALSE(at.present);
+        at=(MaybeMs){true,77};ASSERT_EQ(ERR_OK,antigravity_clock(&a,bad[i],4,&at).code);ASSERT_TRUE(at.present);ASSERT_EQ(77,at.value);
+    }
+    arena_destroy(&a);
+}
+TEST(antigravity_clock_empty_defaults_and_split_singular_timestamp) {
+    Arena a={0};MaybeMs at={0};
+    ASSERT_EQ(ERR_OK,antigravity_clock(&a,STR_LIT("\42\0"),4,&at).code);ASSERT_TRUE(at.present);ASSERT_EQ(0,at.value);
+    at=(MaybeMs){0};ASSERT_EQ(ERR_OK,antigravity_clock(&a,STR_LIT("\42\4\10\0\20\0"),4,&at).code);ASSERT_TRUE(at.present);ASSERT_EQ(0,at.value);
+    JsonWriter parent={0},part={0};num(&part,1,1);msg(&parent,4,bytes(&part));jsonw_free(&part);num(&part,2,500000000);msg(&parent,4,bytes(&part));jsonw_free(&part);num(&part,1,2);msg(&parent,4,bytes(&part));
+    at=(MaybeMs){0};ASSERT_EQ(ERR_OK,antigravity_clock(&a,bytes(&parent),4,&at).code);ASSERT_TRUE(at.present);ASSERT_EQ(2500,at.value);
+    jsonw_free(&parent);jsonw_free(&part);arena_destroy(&a);
+}

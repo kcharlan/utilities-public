@@ -30,8 +30,16 @@ Err antigravity_message_merge(Arena *a,Str input,uint32_t n,Str *out) {
     *out=(Str){p,(uint32_t)bytes};return ERR_SUCCESS;
 }
 Err antigravity_clock(Arena *a,Str input,uint32_t n,MaybeMs *out) {
+    AgCursor cur={.input=input};AgField field;AgResult status;
+    while((status=ag_wire_next(&cur,&field))==AG_FOUND)
+        if(field.number==n&&field.wire!=2)return ERR_SUCCESS;
+    if(status==AG_MALFORMED)return ERR_SUCCESS;
     Str nested={0};TRY(antigravity_message_merge(a,input,n,&nested));if(!nested.p)return ERR_SUCCESS;
-    AgField seconds={0},nanos={0};ag_wire_last(nested,1,&seconds);ag_wire_last(nested,2,&nanos);
+    if(ag_wire_validate(nested,AG_TIMESTAMP)!=AG_FOUND)return ERR_SUCCESS;
+    AgField seconds={0},nanos={0};
+    AgResult sr=ag_wire_last(nested,1,&seconds),nr=ag_wire_last(nested,2,&nanos);
+    if(sr==AG_MALFORMED||nr==AG_MALFORMED||
+       (sr==AG_FOUND&&seconds.wire!=0)||(nr==AG_FOUND&&nanos.wire!=0))return ERR_SUCCESS;
     int64_t sec=(int64_t)seconds.integer;uint64_t ns=nanos.integer;
     __int128 ms=(__int128)sec*1000+ns/1000000;
     if(sec>=-62135596800LL&&sec<=253402300799LL&&ns<1000000000&&ms>=INT64_MIN&&ms<=INT64_MAX)
