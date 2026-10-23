@@ -1,5 +1,106 @@
 # Lessons learned
 
+## 2026-10-23: Check pointer layering and empty-menu focus with nonmodal panels
+
+A nonmodal drawer makes background triggers usable, so their portaled menus
+and suggestions must paint above it. Scope the higher layer to Hosts rather
+than changing the generic typeahead or raw evidence drawer. Assert actual
+overlap, elementFromPoint ownership and physical clicks in both themes and
+after narrow resizing; visibility assertions cannot detect occlusion. Retain
+first-Escape overlay dismissal and second-Escape drawer dismissal.
+An empty Price capture renders no custom editor and no unconfigured Clear
+button. Select the existing programmatically focusable heading instead of an
+absent text field, and exercise both Tab directions plus Escape trigger return.
+Keep the ordinary priced-capture custom-field focus regression alongside it.
+
+## 2026-10-23: Scope table hover feedback to actionable data rows
+
+Adding inert group headings to a tbody also subjects them to broad row-hover
+rules. A later heading background rule can still lose on specificity. Restrict
+interactive hover selectors to the existing model-row identity attribute,
+and regress both heading background stability and preserved data-row feedback
+with real pointer hover in light and dark themes.
+Keep identity-only selector conditions specificity-neutral with `:where()`:
+otherwise narrowing a hover rule can override the selected-row background.
+Include hovering the open `aria-current` row in that same state matrix.
+
+## 2026-10-23: Keep exact sort-group equality and ratio headings together
+
+Hosts grouping must use the same missing-value and exact rational comparator
+as sorting; display strings can round unequal values together or distinguish
+equal signed status magnitudes. Partition before grouping and group only the
+current page. Render shared status magnitudes explicitly rather than choosing
+one signed member's status. Round price-ratio headings with integer arithmetic:
+converting a finite exact ratio to Number can produce Infinity. Cover an
+extreme synthetic ratio alongside signed members, missing runs and pagination.
+
+## 2026-10-23: Make endpoint inspection nonmodal without losing saved sorts
+
+Model Sentinel's modal endpoint layer intercepted the second pointer click
+needed to toggle an open results row and prevented replacing it from another
+row. Use independent panel positioning and heading focus, preserving the raw
+evidence drawer's modal lifecycle. Gate panel Escape on the shared Hosts
+overlay count during capture, before descendant handlers can synchronously
+dismiss their overlay and lower the count during that same event. A bubble
+listener can otherwise close both suggestions and panel with one key. Force
+immediate rendering in a focused browser regression and check the settled
+first key preserves hlist, then the second closes and restores focus.
+Keep all capture-valid price descriptors when hiding all-empty columns for
+one model: normalization validates capture identity while displayed sort
+controls active ordering. Regress physical row toggling, replacement, nested
+model buttons, overlay Escape, and saved price sorts across models/captures.
+Filter the heading identity from mapped names and aliases before deciding
+whether to render an "Also served as" line; a single-model fixture whose
+display ID equals its mapped model catches otherwise redundant copy.
+
+## 2026-10-23: Deliberate presets must replace uncommitted editor text
+
+When a numeric preset equals the already committed value, cancelling a pending
+draft and writing that same value does not trigger the editor's value-change
+effect. Its field can keep showing the abandoned draft even though the URL and
+filter still use the preset. Apply deliberate presets through the existing
+`replaceDraft` lifecycle only when reselecting the committed value. Other
+presets cancel the draft and follow the URL update; an optimistic field update
+can race immediate Back/Forward ahead of the hash render. Regress reselecting
+the current price and capacity preset while a different exact draft is pending,
+then wait beyond debounce.
+Focus traps also need `:disabled` checks so descendants of a disabled fieldset
+cannot become their first or last focus target when telemetry is paused.
+When no enabled controls remain, prevent both Tab directions and retain the
+programmatically focused heading; returning early otherwise releases focus to
+the page while its menu remains open. Escape must still restore its trigger.
+Fixed popup chrome also needs a shrinkable body: nonshrinking threshold forms
+can exceed the space below a trigger on landscape screens. Keep the header and
+footer fixed, and let the form body alone scroll when constrained. Test every
+control with a real hit test after bringing it into view, check that the chrome
+does not move, and cover paused forms whose controls are all disabled.
+
+## 2026-10-23: Separate page stickiness from horizontal comparison scrolling
+
+When a table uses page scrolling, an overflowing horizontal wrapper becomes
+the sticky header's scrolling ancestor. Measure overflow and disable vertical
+header stickiness in that mode, including clearing the first column's inherited
+`top` offset while retaining its horizontal stickiness. Use `overflow: clip`
+before the resize observer settles to prevent a transient document-width leak
+without creating another scrolling ancestor. Check the real header and model
+column after horizontal scrolling, and check document width immediately after
+desktop-to-mobile resizing. Portaled suggestion options also inherit shared
+typeahead layout: explicitly use a single text line so marked matches do not
+become separate grid rows.
+
+Compact rendering also exposed a baseline overlay readiness race: a drawer
+could be visible before `useEffect` registered its Escape listener. Register
+focus-trap listeners with `useLayoutEffect`, retaining the existing deferred
+focus movement and cleanup. A DOM mutation observer that sends Escape as soon
+as the drawer exists reproduces the missing-listener interval deterministically;
+ordinary content visibility assertions can finish before deferred effects.
+
+An absolutely positioned disclosure panel must size to its own contents,
+bounded by the viewport, rather than inheriting a percentage limit from its
+small trigger. Check each option against its clipping ancestors and hit-test
+its visible center before clicking: browser automation can otherwise scroll
+a clipped row internally and make an inaccessible option look usable.
+
 ## 2026-10-22: Treat unselected combobox navigation and focus departure explicitly
 
 A suggestion index of -1 means no active option; it is not an existing index
@@ -1261,6 +1362,17 @@ comparison key differs still leaves the previous key's expanded limit stored.
 Returning with Back can revive all 112 rows. Replace the retained paging key
 and limit when comparison inputs change, and regress expand, change ranking,
 then Back to the original ranking; both transitions must show only 50 rows.
+
+## 2026-10-23: Separate compact endpoint cells from complete endpoint facts
+
+Model Sentinel's compact Hosts precision cells share data with expandable
+endpoint facts. Keep quantization-only cell rendering separate from the full
+precision formatter so published bit widths remain available in the details.
+Likewise, determine host absence from observed endpoints rather than the
+qualifying best group: Show excluded can admit an observed host whose endpoints
+all fail filters. Preserve that distinction without broadening row admission.
+Shorter cell copy can also remove expected horizontal overflow; retain column
+space and the existing sticky-corner scroll regression when tightening text.
 
 ## 2026-10-22: Scope browser URL normalization checks to the fragment
 

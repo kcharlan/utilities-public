@@ -856,8 +856,8 @@ assert.equal(compareRational(exactRational({numerator_hex: "-1", denominator_hex
 const zero = bestEndpoints([endpoint("zero", "z", ["0", "1"]), endpoint("one", "o", ["1", "1"])], "price:p");
 assert.equal(gapText(zero.groups.get("one").value, zero.winner.value, "price:p").text, "");
 assert.equal(gapText(zero.winner.value, zero.winner.value, "price:p").text, "best");
-assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"-3.00 pp", title:"Approximate magnitude: -3 pp"});
-for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","-1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","-<0.01 pp"],["99.995","100","uptime:1d","-0.01 pp"],["0","1","context","-100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
+assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"−3.00pt", title:"Approximate magnitude: −3pt"});
+for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","−1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","−<0.01pt"],["99.995","100","uptime:1d","−0.01pt"],["0","1","context","−100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
 for (const values of [["-1","0","1"],["1e-9994","2e-9994","1e9994"],["1.00000000000000001","1.00000000000000002"],["0","0"],["-1e9994","0","1e9994"]]) {
   const rational = values.map(decimalRational);
   const points = spreadPositions(rational,"price:p");
@@ -873,6 +873,70 @@ assert.equal(rankValue({...low, context_length: true}, "context"), null);
 assert.equal(decimalRational("."), null);
 '''], capture_output=True, text=True, check=False)
     assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_compact_cells_keep_full_precision_facts_and_token_titles() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  function endpointPrecision(") : source.index("  function HostValue(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+const html = (strings,...values) => strings.reduce((text,part,index) => text + part + (values[index] ?? ""), "");
+for (const [value,text] of [[null,"—"],[0,"0"],[999,"999"],[1000,"1K"],[1499,"1K"],[1500,"2K"],[999999,"1000K"],[1000000,"1M"],[1250000,"1.3M"]]) {
+  assert.equal(endpointCapacity(value),text);
+  const cell = EndpointCapacity({value});
+  assert.ok(cell.includes(`>${text}</span>`));
+  if (value !== null) assert.ok(cell.includes(`title=${value}`));
+}
+const endpoint = {quantization:"fp16",precision_bits:16,status:-2};
+assert.equal(endpointPrecision(endpoint),"fp16 (16-bit)");
+assert.ok(EndpointPrecision({endpoint}).includes(">fp16</span>"));
+assert.ok(!EndpointPrecision({endpoint}).includes("bit"));
+assert.equal(endpointStatus(endpoint),"○ status -2");
+assert.equal(endpointStatus({status:0}),"normal");
+assert.equal(endpointStatus({status:null}),"—");
+assert.equal(endpointUptime({uptime:{"1d":99.9999}},"1d"),"99.9999%");
+'''], capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_sort_runs_share_comparator_missing_boundaries_and_heading_values() -> None:
+    source = _read_asset("app.js")
+    assert "  function sortRuns(" in source, "Shared sort grouping is not implemented"
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
+    helpers += source[source.index("  function endpointCapacity(") : source.index("  function EndpointCapacity(")]
+    helpers += source[source.index("  function clickSort(") : source.index("  function HostsTable(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+const columns = [{key:"n",label:"Number",value:r=>r.n},{key:"hidden",visible:false,value:r=>r.id}];
+const rows = [{n:decimalRational("1"),id:1},{n:decimalRational("1.0"),id:2},{n:decimalRational("2"),id:3},{n:null,id:4},{id:5}];
+assert.deepEqual(sortRuns(rows,"n",columns).map(run=>run.rows.map(row=>row.id)),[[1,2],[3],[4,5]]);
+assert.deepEqual(sortRuns(rows,"hidden",columns).map(run=>run.rows.length),[5]);
+assert.deepEqual(sortRuns([],"n",columns),[]);
+assert.deepEqual(sortRuns(rows.slice(1,4),"n",columns).map(run=>run.rows.length),[1,1,1]);
+assert.equal(sortRunMode(sortRuns(rows,"n",columns)),"bands");
+assert.equal(sortRunMode(sortRuns(rows.slice(1,4),"n",columns)),"singletons");
+assert.equal(sortRunMode(sortRuns(Array(6).fill(rows[0]),"n",columns)),"headings");
+const ep = {status:-2,precision_bits:null,quantization:"unknown",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99.9999},prices:{p:{display_own:"$0.50",exact:{numerator_hex:"1",denominator_hex:"2"}}}};
+const state = {upwin:"1d"}, data={price_columns:[]};
+const signed = [{endpoint:ep},{endpoint:{...ep,status:2}},{endpoint:{...ep,status:null}}];
+const dc=drawerColumns(data,state,signed.map(r=>r.endpoint));
+assert.deepEqual(sortRuns(signed,"status",dc).map(r=>r.rows.length),[2,1]);
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="status"),"context",[],state),"absolute status code 2");
+assert.equal(sortHeadingValue(signed[2],dc.find(c=>c.key==="status"),"context",[],state),"No value");
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="precision"),"context",[],state),"Width not published");
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="context"),"context",[],state),"128K");
+assert.equal(sortHeadingValue({n:decimalRational("1.25")},{key:"spread",value:r=>r.n},"price:p",[],state),"×1.3");
+assert.equal(sortHeadingValue({n:{n:10n**400n,d:1n}},{key:"spread",value:r=>r.n},"price:p",[],state),"×1"+"0".repeat(400)+".0");
+const group={endpoint:ep,value:decimalRational("0.5")};
+const row={best:{winner:group,groups:new Map([["Synthetic Alpha",group]])}};
+for (const key of ["best","host:Synthetic Alpha"]) {
+ const column={key,value:r=>r.best.winner.value};
+ assert.equal(sortHeadingValue(row,column,"price:p",["Synthetic Alpha"],state),"$0.50");
+ assert.equal(sortHeadingValue(row,column,"uptime:1d",["Synthetic Alpha"],state),"99.9999%");
+ assert.equal(sortHeadingValue(row,column,"context",["Synthetic Alpha"],state),"128,000");
+}
+'''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stderr
 
 
 def test_hosts_sort_stack_cycle_missing_stability_and_exact_values() -> None:
@@ -914,7 +978,7 @@ const data = {hosts:[{name:"Synthetic Alpha"},{name:"Synthetic Beta"}],price_col
 const ep = {precision_bits:16,quantization:"fp16",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99,"5m":0},status:-2,prices:{p:{exact:{numerator_hex:"1",denominator_hex:"2"}}}};
 const row = {list:{display_id:"Synthetic Model"},best:{winner:{value:decimalRational("0.5")},ranked:[{},{}],groups:new Map([["Synthetic Alpha",{endpoint:ep,value:decimalRational("0.5"),rank:1}]])}};
 let main = hostsColumns(data,["Synthetic Alpha"],"price:p",{upwin:"5m"});
-assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","host:Synthetic Alpha","rank","precision","context","uptime","status"]);
+assert.deepEqual(main.filter(c=>c.visible!==false).map(c=>c.key),["model","host:Synthetic Alpha","rank","best","spread","precision","context","uptime","status"]);
 assert.equal(main.find(c=>c.key==="uptime").value(row),0);
 assert.equal(main.find(c=>c.key==="status").value(row),2);
 assert.deepEqual(hostsColumns(data,[],"context",{}).filter(c=>c.visible!==false).map(c=>c.key),["model","best","spread","hosts"]);
@@ -923,6 +987,13 @@ const drawer = drawerColumns(data,{upwin:"5m"}), item={endpoint:ep};
 assert.equal(drawer.find(c=>c.key==="uptime").value(item),0);
 assert.equal(drawer.find(c=>c.key==="status").value(item),2);
 assert.equal(compareRational(drawer.find(c=>c.key==="price:p").value(item),decimalRational("0.5")),0);
+const hidden = drawerColumns(data,{upwin:"5m"},[{...ep,prices:{}}]);
+assert.equal(hidden.find(c=>c.key==="price:p").visible,false);
+assert.deepEqual(normalizeSort(["d:price:p","a:price:absent"],hidden),["d:price:p"]);
+assert.deepEqual(displayedSort(["d:price:p"],hidden),[]);
+const shown = drawerColumns(data,{upwin:"5m"},[ep]);
+assert.equal(shown.find(c=>c.key==="price:p").label,"Input");
+assert.equal(displayedSort(["d:price:p"],shown).length,1);
 '''], capture_output=True, text=True, check=False)
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
@@ -1052,7 +1123,7 @@ def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> Non
         overlay,
         re.DOTALL,
     )
-    assert "}, [anchorRef, open]);" in overlay
+    assert "}, [anchorRef, open, className]);" in overlay
 
 
 def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
@@ -1695,3 +1766,45 @@ def test_csp_rejects_missing_or_widened_connect_sources() -> None:
     for mutated in mutations:
         with pytest.raises(AssertionError):
             _assert_csp_contract(mutated)
+
+
+def test_hosts_empty_precision_summary_precedes_shortcut_matching() -> None:
+    source = _read_asset('app.js')
+    helpers = source[source.index('  function sameList('):source.index('  function SparklinePopover(')]
+    helpers += source[source.index('  function conditionSummary('):source.index('  function ConditionChips(')]
+    probe = subprocess.run(['node', '-e', helpers + r'''
+const assert = require('node:assert/strict');
+const data = {vocab:{quantizations:['fp8']},endpoints:[{quantization:'fp8',precision_bits:8}]};
+assert.equal(conditionSummary('precision', data, {quant:[],quantset:'1'}), 'none');
+assert.equal(conditionSummary('precision', {vocab:{quantizations:[]},endpoints:[]}, {quant:[],quantset:'1'}), 'none');
+assert.equal(conditionSummary('precision', data, {quant:['fp8'],quantset:'1'}), '8-bit or better');
+'''], capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_hosts_scope_mode_controls_endpoint_evaluation_and_hash_roundtrip() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  const HOST_CONDITIONS ="):source.index("  function decode(")]
+    helpers += source[source.index("  function decode("):source.index("  function useHashState(")]
+    helpers += source[source.index("  function capacityMinimum("):source.index("  function ConditionText(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require('node:assert/strict');
+const data = {hosts:[{name:'Synthetic Alpha'},{name:'Synthetic Beta'}],vocab:{quantizations:[],parameters:[],native_tools:[],tiers:[]},price_columns:[]};
+const base = {xhosts:[],quant:[],params:[],ntools:[],tiers:[],hq:'',plimit:''};
+for (const mode of ['', 'only', 'invalid']) {
+  const clean = normalizeHostConditions(data, {...base,xmode:mode});
+  assert.equal(clean.xmode, mode === 'only' ? 'only' : '');
+  assert.equal(hostConditions(data, clean).length, 0, 'empty selection remains inactive');
+}
+for (const mode of ['', 'only']) {
+  const state = normalizeHostConditions(data, {...base,xmode:mode,xhosts:['Synthetic Alpha']});
+  const conditions = hostConditions(data,state);
+  assert.equal(evaluateEndpoint({host:'Synthetic Alpha'},conditions).pass, mode === 'only');
+  assert.equal(evaluateEndpoint({host:'Synthetic Beta'},conditions).pass, mode !== 'only');
+  global.location = {hash:''};
+  hashState.write(state);
+  assert.equal(hashState.read().xmode || '', mode);
+  assert.deepEqual(hashState.read().xhosts, ['Synthetic Alpha']);
+}
+'''], capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stdout + probe.stderr

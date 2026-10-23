@@ -500,9 +500,10 @@ browser, and `Ctrl-C` stops the server.
 - **Hosts** compares serving companies in an exact saved endpoint capture.
   Select no hosts for best-across-host comparisons, one for its summary and
   history, or several for side-by-side columns. Each compact row represents one
-  endpoint list, with a variants count for additional mapped models. Rank by
-  exact price, sampled uptime, context length, or max output; equal values share
-  a rank. Missing values remain visible without a best marker. The Best column
+  model from an endpoint list, with a variants count for additional mapped
+  models. Rank by exact price, sampled uptime, context length, or max output;
+  equal values share a rank. When present, output price is the default ranking.
+  Missing values remain visible without a best marker. The Best column
   identifies the winner and ties, while the spread strip shows every ranked
   host. Compared hosts use selection-order colors. Positive prices use a
   logarithmic spread; signed/zero prices and other dimensions use a linear
@@ -510,50 +511,85 @@ browser, and `Ctrl-C` stops the server.
   for uptime, percentage differences for other rankings. A nonzero difference
   below displayed precision retains its sign and a less-than label; tooltips
   give an approximate magnitude. Percentage gaps from zero remain undefined.
+  Gaps use a true minus sign and `pt` for uptime. Numeric columns align right;
+  one-host rows put the host value and rank before Best and Spread. Compact
+  precision shows the quantization, token capacities use K/M labels with full
+  integers in titles, and full endpoint details retain the published bit width.
+  Spread strips emphasize compared hosts and show text alone for a sole host
+  or equal values. The wrapping one-host summary includes models, endpoints,
+  tags, median uptime, non-normal endpoints and a precision mix.
 
-  Click any list name, including an unmapped list, to open its endpoint drawer.
-  The drawer shows every observed endpoint, passing rows before failing rows,
-  the first failing condition, all capture price columns, precision, capacities,
-  uptime, status and expandable endpoint facts. Its mapped-model buttons open
-  individual dossiers; aliases remain visible. Open dossier uses the first
+  Click any results row or its model name, including an unmapped model, to open
+  its endpoint drawer; activating the open row again closes it.
+  The nonmodal drawer leaves the background interactive and opens with focus
+  on its heading. Hosts menus and model suggestions appear above the drawer
+  and remain clickable where they overlap it. Escape closes a Hosts menu or
+  model suggestion list first;
+  with no such overlay open, it closes the drawer. The drawer shows every
+  observed endpoint in compact rows, passing rows before failing rows, the
+  first failing condition, price columns with values for that model, precision,
+  capacities, uptime and status. **Details** expands complete endpoint facts
+  across the table below its endpoint. Its mapped-model links open
+  individual dossiers; aliases remain visible. The "Also served as" line
+  shows only names other than the heading and is omitted when none remain.
+  Open dossier uses the first
   mapped model, and is disabled for unmapped lists. The drawer's `hlist` URL
   state supports copied URLs and Back/Forward; closing restores focus to its row
-  or the results heading. The results initially show 50 lists; **Show 50 more**
+  or the results heading. The results initially show 50 models; **Show 50 more**
   adds 50. Changes to comparison or filters reset this limit. The summary counts
-  qualifying/captured endpoints separately from admitted lists.
+  qualifying/captured endpoints separately from admitted models.
 
   Click a column heading to sort ascending, click again for descending, and
   click once more to remove it. Additional columns join the sort in priority
   order; arrows and numbers mark the active stack. The toolbar summary names
-  displayed keys and **Clear sort** removes the saved stack, even when no lists
+  displayed keys and **Clear sort** removes the saved stack, even when no models
   qualify. Missing values stay last in either direction, prices compare exactly,
   and ties retain the default order.
   Drawer sorting stays within the passing and failing groups. The `hsort` and
   `dsort` URL lists store `a:<key>` or `d:<key>` entries for results and drawer
   sorting. Hidden result columns retain their keys and resume sorting when
-  displayed again; changing ranking keeps sorting. Sort clicks and clearing
-  support reload and Back/Forward. Invalid keys and duplicate columns are
+  displayed again; empty drawer price columns likewise keep their saved keys
+  without active sorting until a model with values is opened. Price paths
+  absent from a capture are removed. Changing ranking keeps sorting. Sort
+  clicks and clearing support reload and Back/Forward. Invalid keys and duplicate columns are
   removed without adding history entries.
   Result keys are `model`, `best`, `spread`, `host:<name>`, `rank`, `precision`,
   `context`, `uptime`, `status`, and `hosts`. Drawer keys are `host`, `endpoint`,
   `price:<path>`, `precision`, `context`, `output`, `uptime`, and `status`.
   Host names and price paths must belong to the selected capture.
 
-  **Add host** opens a searchable checkbox list ordered by lists served; remove
+  The first displayed sort column is tinted. Adjacent comparator-equal values
+  form groups within the current page, separately for qualifying and failing
+  drawer endpoints. Groups averaging three or more rows use full-width headings
+  with their value and model/endpoint count; smaller groups use alternating
+  bands and rules. All-singleton groups show only the column tint. Missing
+  values group together. Status headings describe the absolute status code
+  shared by signed values. Failing drawer endpoints always start with a
+  **Not qualifying** heading. Group headings do not open drawers or count
+  toward the 50-model pagination limit.
+
+  **Add host** opens a searchable checkbox list ordered by models served; remove
   a compared host with its pill. Picker counts describe observed coverage, and
-  incomplete history captures break uptime trends. **Host capture** selects an
-  exact saved capture, newest first. Capture, host selection, ranking, and row
-  match survive reloads. Results scroll on both axes within their container,
-  with sticky column headings and model names; toolbar menus become bottom
-  sheets and the drawer fills the width on narrow screens.
+  incomplete history captures break uptime trends. **Snapshot** selects an
+  exact saved capture, newest first. **Provider** appears alongside ranking and
+  snapshot when multiple providers have captures; changing it clears the old
+  provider's snapshot. Capture, host selection, ranking, and row match survive
+  reloads. The compact Hosts strip retains view tabs and Appearance, with its
+  page heading available to assistive technology. The toolbar, results and
+  pagination share a panel. On desktop the page scrolls beneath the sticky
+  toolbar and table headings. Wide comparisons scroll horizontally with a
+  pinned model column and ordinary table headings. On narrow screens toolbar
+  and headings scroll with the page; menus become bottom sheets and the drawer
+  fills the width.
 
   The toolbar opens keyboard-accessible condition menus for host
-  exclusions, normal status (code 0), precision, minimum uptime, context and
+  scope, normal status (code 0), precision, minimum uptime, context and
   output capacity, supported parameters/native tools and implicit caching,
   service tiers and exact price limits. Opening a menu leaves conditions
   unchanged. Checkbox lists support local substring filtering with highlighted
   matches; their counts include endpoints passing all other conditions. The
-  inline model-list search suggests capture list names and mapped model IDs.
+  inline **Search models** field suggests capture names and mapped model IDs;
+  its clear button cancels pending typing and returns focus to the field.
   Conditions combine
   with AND; each removal count measures that condition alone across the capture.
   Precision's 16-bit and 8-bit shortcuts preserve unknown/unrecognized chips.
@@ -561,9 +597,18 @@ browser, and `Ctrl-C` stops the server.
   condition to restore unrestricted matching. Null service tiers display as
   `standard`, while string tiers retain JSON quotes, including `"standard"` and
   `"null"`. Price limits preserve decimal text and compare exact values.
+  **Hosts** switches between **Exclude these** and **Only these**; either mode
+  is inactive when its selection is empty. Supports uses one search across
+  Request parameters, Native tools and Caching. Menus keep their header,
+  search, shortcuts and effect footer visible while options scroll. Threshold
+  forms scroll between their fixed header and footer when space is limited.
+  Menus become bottom sheets on narrow screens. Clear appears only for a
+  configured condition. Add host opens **Compare hosts**, ordered by models served.
+  Uptime presets toggle off when pressed again. Token-price columns offer
+  exact maximum presets of $0.5, $1, $5 and $15 per million tokens.
 
-  **Any selected host** admits a list if one selected host qualifies; **All
-  selected hosts** requires each host. **Show excluded** uses endpoint presence
+  **Rows: any** admits a model if one selected host qualifies; **Rows: all**
+  requires each host. **Show excluded** uses endpoint presence
   for the same row rule and shows failing endpoints dimmed with their first
   failing condition, without awarding them ranks. With no selection, any host
   can admit a list. Missing uptime can be included explicitly, and the uptime
@@ -571,11 +616,18 @@ browser, and `Ctrl-C` stops the server.
   capture](#endpoint-capture) for the saved telemetry facts. A paused uptime
   condition keeps its chip and can be cleared, with its other controls disabled.
   **Clear all** removes conditions while keeping ranking, row rule, Show
-  excluded, provider, selected hosts, and capture. Configured chips remove
-  individual conditions. Conditions and empty chip selections survive
+  excluded, provider, selected hosts, and capture. Configured chips show
+  summaries and individual removal counts, and remove individual conditions.
+  Clear all appears only while a condition is configured. Paused uptime retains
+  its configured chip without an evaluated removal count.
+  Conditions and empty chip selections survive
   copied URLs/reloads. Numeric typing replaces the current history entry;
   deliberate selections retain Back/Forward navigation. Editors close with
-  `Esc` and return focus to their trigger. Tab stays within an open menu;
+  `Esc` and return focus to their trigger. Menus focus search or their custom
+  field (the checkbox for Status); paused Uptime focuses Clear, or its heading
+  without a configured threshold. Price focuses its heading when the capture
+  has no price columns. Menus have no Close button.
+  Tab stays within an open menu;
   clicking another trigger switches directly. Arrow keys navigate checkbox
   options, and Space or Enter selects them. Search suggestions keep focus in
   the input: use arrows then Enter, or select with a pointer. Host history owns
@@ -631,9 +683,9 @@ fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
 with Model Sentinel, so viewing history makes no network request.
 
 The URL hash contains the selected view and filters, making browser
-back/forward and copied local URLs reproducible. Press `/` to focus **Find
-model**, `1`, `2`, `3`, or `4` to switch among Activity, Models, Catalog, and
-Hosts, and
+back/forward and copied local URLs reproducible. Press `/` to focus **Search
+models** on Hosts or **Find model** on other views, `1`, `2`, `3`, or `4` to switch
+among Activity, Models, Catalog, and Hosts, and
 `Esc` to close search results, drawers, or popovers. The Appearance disclosure
 offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.

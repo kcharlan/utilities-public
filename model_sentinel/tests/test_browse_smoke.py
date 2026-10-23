@@ -181,9 +181,9 @@ def test_hosts_toolbar_menus_do_not_activate_on_open_and_switch_directly(hosts_p
     dialog = hosts_page.get_by_role("dialog", name="Precision", exact=True)
     expect(dialog.get_by_role("checkbox", name="fp8", exact=True)).to_be_checked()
     assert hosts_page.evaluate("location.hash") == before
-    hosts_page.get_by_role("button", name="Service tier condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Tier condition", exact=True).click()
     expect(dialog).to_have_count(0)
-    expect(hosts_page.get_by_role("dialog", name="Service tier", exact=True)).to_be_visible()
+    expect(hosts_page.get_by_role("dialog", name="Tier", exact=True)).to_be_visible()
     assert hosts_page.evaluate("location.hash") == before
 
 
@@ -192,7 +192,7 @@ def test_hosts_empty_results_keep_toolbar_sort_summary_and_clear(hosts_page, hos
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:model", quantset="1"))
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
     summary = hosts_page.locator(".hosts-toolbar .hosts-summary")
-    expect(summary.locator(".hosts-sort-summary")).to_contain_text("Model ascending")
+    expect(summary.locator(".hosts-sort-summary")).to_contain_text("Model ▲")
     assert summary.evaluate("""node => {
         const sort = node.querySelector('.hosts-sort-summary');
         const excluded = node.querySelector('label');
@@ -200,10 +200,10 @@ def test_hosts_empty_results_keep_toolbar_sort_summary_and_clear(hosts_page, hos
         return Boolean(sort.compareDocumentPosition(excluded) & Node.DOCUMENT_POSITION_FOLLOWING)
             && Boolean(excluded.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING);
     }""")
-    expect(summary).to_contain_text("0 of 135 endpoints · 0 lists")
+    expect(summary).to_contain_text("0 of 135 endpoints · 0 models")
     summary.get_by_role("button", name="Clear sort", exact=True).click()
     expect(hosts_page).not_to_have_url(re.compile("hsort="))
-    expect(summary).to_contain_text("Click a column")
+    expect(summary.locator(".hosts-sort-summary")).to_have_count(0)
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
     hosts_page.get_by_label("Show excluded", exact=True).check()
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
@@ -233,7 +233,7 @@ def test_hosts_history_drawer_close_restores_matching_list_after_other_origin(ho
 def test_hosts_search_empty_suggestions_omit_active_descendant(hosts_page, hosts_server, query):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill(query)
     for key in ("ArrowDown", "ArrowUp", "ArrowDown"):
         field.press(key)
@@ -258,7 +258,7 @@ def test_hosts_sort_headers_stack_history_and_ranking(hosts_page, hosts_server):
     names = table.locator("tbody tr th button").all_text_contents()
     assert names == sorted(names)
     table.get_by_role("button", name="Hosts", exact=True).click()
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Model ascending · Hosts ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Sorted by Model ▲ › Hosts ▲")
     expect(table.locator("thead [aria-sort]")).to_have_count(1)
     model.get_by_role("button").click()
     expect(model).to_have_attribute("aria-sort", "descending")
@@ -267,14 +267,14 @@ def test_hosts_sort_headers_stack_history_and_ranking(hosts_page, hosts_server):
     hosts_page.reload()
     expect(model).to_have_attribute("aria-sort", "descending")
     model.get_by_role("button").click()
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ▲")
     expect(model).not_to_have_attribute("aria-sort", "descending")
     hosts_page.go_back()
     expect(model).to_have_attribute("aria-sort", "descending")
     hosts_page.go_forward()
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ▲")
     model.get_by_role("button").click()
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending · Model ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Sorted by Hosts ▲ › Model ▲")
     counts = table.locator("tbody tr").evaluate_all("rows=>rows.map(row=>Number(row.lastElementChild.textContent))")
     assert counts == sorted(counts)
     names = table.locator("tbody tr th button").all_text_contents()
@@ -282,7 +282,7 @@ def test_hosts_sort_headers_stack_history_and_ranking(hosts_page, hosts_server):
         tied = [name for name, value in zip(names, counts) if value == count]
         assert tied == sorted(tied)
     hosts_page.get_by_label("Ranking", exact=True).select_option("context")
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending · Model ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Sorted by Hosts ▲ › Model ▲")
     hosts_page.locator(".hosts-sort-summary").get_by_role("button", name="Clear sort", exact=True).click()
     expect(table.locator("thead [aria-sort]")).to_have_count(0)
 
@@ -297,7 +297,7 @@ def test_hosts_hidden_sorts_canonicalization_and_drawer_history(hosts_page, host
     expect(hosts_page).not_to_have_url(re.compile("Bogus|bad|missing|d%3Acontext"))
     assert hosts_page.evaluate("history.length") == history_length + 1
     hosts_page.get_by_role("button", name="Remove compared Synthetic Alpha", exact=True).click()
-    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ascending")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_contain_text("Hosts ▲")
     expect(hosts_page.locator(".hosts-sort-summary")).not_to_contain_text("Context")
     hosts_page.go_back()
     expect(table.get_by_role("columnheader", name=re.compile("Context"))).to_have_attribute("aria-sort", "ascending")
@@ -309,7 +309,7 @@ def test_hosts_hidden_sorts_canonicalization_and_drawer_history(hosts_page, host
     host.get_by_role("button").click()
     expect(host).not_to_have_attribute("aria-sort", "descending")
     drawer.get_by_role("columnheader", name="Context", exact=True).get_by_role("button").click()
-    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Context ascending")
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Context ▲")
     drawer.get_by_role("button", name="Close endpoint drawer").click()
     expect(drawer).to_have_count(0)
     hosts_page.go_back()
@@ -321,7 +321,7 @@ def test_hosts_drawer_sort_secondary_groups_exact_missing_and_reopen(hosts_page,
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy="1", showx="1", hlist=facts.host_grouping_and_ties["path"], dsort="d:host,a:context"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
-    rows = drawer.locator("tbody tr")
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
     assert rows.locator("th").all_text_contents() == ["Synthetic Beta", "Synthetic Alpha", "Synthetic Alpha", "Synthetic Gamma"]
     tags = lambda: rows.locator("td:nth-child(2)").evaluate_all("cells=>cells.map(cell=>cell.firstChild.textContent)")
     assert tags() == ["beta", "alpha-cheap", "alpha-fast", "gamma"]
@@ -329,18 +329,18 @@ def test_hosts_drawer_sort_secondary_groups_exact_missing_and_reopen(hosts_page,
     expect(drawer.locator("thead [aria-sort]")).to_have_count(1)
     expect(drawer.get_by_role("columnheader", name="Context", exact=True)).not_to_have_attribute("aria-sort", "ascending")
     drawer.get_by_role("button", name="Context", exact=True).click()
-    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Host descending · Context descending")
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Sorted by Host ▼ › Context ▼")
     assert tags() == ["beta", "alpha-fast", "alpha-cheap", "gamma"]
     drawer.locator(".drawer-sort-summary").get_by_role("button", name="Clear sort", exact=True).click()
     expect(drawer.locator("thead [aria-sort]")).to_have_count(0)
-    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("ascending → descending → remove")
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Click again to reverse, a third time to remove it.")
     _switch_hash(hosts_page, _hosts_fragment(facts, hlist=facts.host_exact_prices["path"], dsort="d:price:pricing.prompt"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-exact", exact=True)
-    rows = drawer.locator("tbody tr")
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
     assert tags() == ["exact-high", "exact-low", "price-missing"]
     drawer.get_by_role("button", name="Close endpoint drawer").click()
     hosts_page.get_by_role("table", name="Host comparison").get_by_role("button", name="synthetic-response-exact", exact=True).click()
-    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("descending")
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("▼")
     hosts_page.reload()
     expect(drawer).to_be_visible()
     assert tags() == ["exact-high", "exact-low", "price-missing"]
@@ -358,7 +358,7 @@ def test_hosts_compared_host_sort_exact_values_missing_and_hidden_restore(hosts_
     assert names() == ["synthetic-response-exact", "synthetic-response-shared", facts.host_list_identity["missing_id_path"]]
     hosts_page.get_by_role("button", name="Remove compared Synthetic Alpha", exact=True).click()
     expect(table.locator("thead [aria-sort]")).to_have_count(0)
-    expect(hosts_page.locator(".hosts-sort-summary")).not_to_contain_text("Synthetic Alpha")
+    expect(hosts_page.locator(".hosts-sort-summary")).to_have_count(0)
     expect(hosts_page).to_have_url(re.compile("hsort=d%3Ahost%3ASynthetic%20Alpha"))
     hosts_page.go_back()
     expect(table.get_by_role("columnheader", name="Synthetic Alpha", exact=True)).to_have_attribute("aria-sort", "descending")
@@ -369,13 +369,13 @@ def test_hosts_compared_host_sort_exact_values_missing_and_hidden_restore(hosts_
 def test_hosts_search_suggestion_consumes_pending_draft(hosts_page, hosts_server, selection):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill("hosts-sha")
     if selection == "enter":
         hosts_page.keyboard.press("ArrowDown")
         hosts_page.keyboard.press("Enter")
     else:
-        expect(hosts_page.get_by_role("listbox", name="Model list suggestions", exact=True)).to_be_visible()
+        expect(hosts_page.get_by_role("listbox", name="Model suggestions", exact=True)).to_be_visible()
         hosts_page.get_by_role("option", name="fake-org/hosts-shared", exact=True).click()
     chosen = field.input_value()
     assert "hosts-shared" in chosen
@@ -388,7 +388,7 @@ def test_hosts_search_suggestion_consumes_pending_draft(hosts_page, hosts_server
 def test_hosts_search_escape_clears_active_option_and_keeps_input_focus(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill("hosts-sha")
     field.press("ArrowDown")
     expect(field).to_have_attribute("aria-activedescendant", "host-search-0")
@@ -396,13 +396,13 @@ def test_hosts_search_escape_clears_active_option_and_keeps_input_focus(hosts_pa
     expect(field).to_be_focused()
     expect(field).to_have_attribute("aria-expanded", "false")
     expect(field).not_to_have_attribute("aria-activedescendant")
-    expect(hosts_page.get_by_role("listbox", name="Model list suggestions", exact=True)).to_have_count(0)
+    expect(hosts_page.get_by_role("listbox", name="Model suggestions", exact=True)).to_have_count(0)
 
 
 def test_hosts_search_initial_arrow_up_selects_last_suggestion(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill("shared")
     field.press("ArrowUp")
     last = hosts_page.get_by_role("option", name="synthetic-response-shared", exact=True)
@@ -416,17 +416,17 @@ def test_hosts_search_initial_arrow_up_selects_last_suggestion(hosts_page, hosts
 def test_hosts_search_keyboard_blur_closes_suggestions_before_another_menu(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill("shared")
-    suggestions = hosts_page.get_by_role("listbox", name="Model list suggestions", exact=True)
+    suggestions = hosts_page.get_by_role("listbox", name="Model suggestions", exact=True)
     expect(suggestions).to_be_visible()
     field.press("Shift+Tab")
-    trigger = hosts_page.get_by_role("button", name="Price limit condition", exact=True)
+    trigger = hosts_page.get_by_role("button", name="Hosts condition", exact=True)
     expect(trigger).to_be_focused()
     expect(suggestions).to_have_count(0)
     expect(field).to_have_attribute("aria-expanded", "false")
     trigger.press("Enter")
-    expect(hosts_page.get_by_role("dialog", name="Price limit", exact=True)).to_be_visible()
+    expect(hosts_page.get_by_role("dialog", name="Hosts", exact=True)).to_be_visible()
     expect(suggestions).to_have_count(0)
     expect(hosts_page).to_have_url(re.compile("hq=shared"))
 
@@ -440,7 +440,7 @@ def test_hosts_option_filter_counts_highlights_and_owned_edits(hosts_page, hosts
     # + 3 exact endpoints are normal fp16; Gamma's non-normal one is omitted.
     fp16 = dialog.get_by_role("checkbox", name="fp16", exact=True).locator("..")
     expect(fp16.locator("small")).to_have_text("117")
-    dialog.get_by_label("Filter options", exact=True).fill("FP1")
+    dialog.get_by_label("Filter precision…", exact=True).fill("FP1")
     expect(dialog.get_by_role("checkbox")).to_have_count(1)
     expect(dialog.locator("mark")).to_have_text("fp1")
     dialog.get_by_role("checkbox", name="fp16", exact=True).uncheck()
@@ -449,12 +449,13 @@ def test_hosts_option_filter_counts_highlights_and_owned_edits(hosts_page, hosts
     dialog.get_by_role("button", name="Any", exact=True).click()
     expect(dialog).to_be_visible()
     expect(hosts_page).not_to_have_url(re.compile("quantset="))
-    dialog.get_by_label("Filter options", exact=True).focus()
+    dialog.get_by_label("Filter precision…", exact=True).focus()
     hosts_page.keyboard.press("ArrowDown")
     expect(dialog.get_by_role("checkbox", name="fp16", exact=True)).to_be_focused()
     hosts_page.keyboard.press("Enter")
     expect(dialog.get_by_role("checkbox", name="fp16", exact=True)).not_to_be_checked()
-    hosts_page.get_by_role("button", name="Remove Precision condition", exact=True).click()
+    hosts_page.keyboard.press("Escape")
+    hosts_page.get_by_role("button", name="Remove Precision filter", exact=True).click()
     expect(dialog).to_have_count(0)
     expect(hosts_page).not_to_have_url(re.compile("quantset="))
     expect(hosts_page).to_have_url(re.compile("healthy=1"))
@@ -463,10 +464,10 @@ def test_hosts_option_filter_counts_highlights_and_owned_edits(hosts_page, hosts
 def test_hosts_unrelated_navigation_cancels_pending_editor_and_outside_focus(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    hosts_page.get_by_role("button", name="Context length condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Context condition", exact=True).click()
     hosts_page.get_by_label("Minimum context length", exact=True).fill("128K")
     _switch_hash(hosts_page, _hosts_fragment(facts, rank="context"))
-    expect(hosts_page.get_by_role("dialog", name="Context length", exact=True)).to_have_count(0)
+    expect(hosts_page.get_by_role("dialog", name="Context", exact=True)).to_have_count(0)
     hosts_page.wait_for_timeout(350)
     expect(hosts_page).not_to_have_url(re.compile("ctxmin="))
     hosts_page.get_by_role("button", name="Status condition", exact=True).click()
@@ -496,15 +497,15 @@ def test_hosts_history_owns_date_range_and_clear_all_retains_comparison_settings
 def test_hosts_explicit_unavailable_capture_remains_selected(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hasof=facts.scrapes["uncaptured"]))
-    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value(str(facts.scrapes["uncaptured"]))
-    expect(hosts_page.get_by_label("Host capture", exact=True).locator("option:checked")).to_contain_text("2026-09-07")
+    expect(hosts_page.get_by_label("Snapshot", exact=True)).to_have_value(str(facts.scrapes["uncaptured"]))
+    expect(hosts_page.get_by_label("Snapshot", exact=True).locator("option:checked")).to_contain_text("2026-09-07")
     expect(hosts_page.get_by_text("No endpoint capture was saved for this snapshot.", exact=True)).to_be_visible()
 
 
 def test_hosts_clear_all_cancels_uncommitted_search_and_restores_visible_text(hosts_page, hosts_server):
     _, facts = hosts_server
-    goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy="1"))
+    field = hosts_page.get_by_role("combobox", name="Search models", exact=True)
     field.fill("hosts-sha")
     hosts_page.get_by_role("button", name="Clear all", exact=True).click()
     expect(field).to_have_value("")
@@ -515,7 +516,7 @@ def test_hosts_clear_all_cancels_uncommitted_search_and_restores_visible_text(ho
 def test_hosts_history_remains_available_when_one_host_has_no_qualifying_rows(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha", quantset="1"))
-    expect(hosts_page.get_by_text("No endpoint meets every condition.", exact=False)).to_be_visible()
+    expect(hosts_page.get_by_text("No endpoint meets every filter.", exact=False)).to_be_visible()
     expect(hosts_page.get_by_role("region", name="Host history", exact=True).get_by_label("From", exact=True)).to_be_visible()
 
 
@@ -523,9 +524,9 @@ def test_hosts_history_remains_available_when_one_host_has_no_qualifying_rows(ho
 def test_hosts_capture_options_follow_capture_time_instead_of_import_id(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    first = hosts_page.get_by_label("Host capture", exact=True).locator("option").first
+    first = hosts_page.get_by_label("Snapshot", exact=True).locator("option").first
     expect(first).to_have_attribute("value", str(facts.scrapes["first"]))
-    expect(first).to_have_text("2026-10-01 · 9 models")
+    expect(first).to_have_text("Snapshot 2026-10-01")
 
 
 @pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
@@ -535,24 +536,24 @@ def test_hosts_scrolling_matrix_keeps_header_corner_above_model_column(hosts_pag
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta,Synthetic Gamma"))
     scroll = hosts_page.locator(".hosts-table-scroll")
     scroll.scroll_into_view_if_needed()
-    scroll.evaluate("el => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - document.querySelector('.filter-bar').getBoundingClientRect().height)")
-    scroll.evaluate("el => { el.scrollTop = 100; el.scrollLeft = 100; }")
+    scroll.evaluate("el => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - document.querySelector('.hosts-toolbar').getBoundingClientRect().height)")
+    scroll.evaluate("el => { el.scrollLeft = 100; }")
     corner = hosts_page.get_by_role("columnheader", name="Model", exact=True)
     assert corner.evaluate("el => { const b = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)); }")
-    assert scroll.evaluate("el => el.scrollTop == 100 && el.scrollLeft == 100 && el.scrollHeight > el.clientHeight && el.scrollWidth > el.clientWidth")
+    assert scroll.evaluate("el => el.scrollTop === 0 && el.scrollLeft === 100 && el.scrollHeight === el.clientHeight && el.scrollWidth > el.clientWidth")
 
 
 def test_hosts_conditions_empty_chips_show_excluded_and_clear_all(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, quantset="1"))
-    expect(hosts_page.get_by_text("No endpoint meets every condition.", exact=False)).to_contain_text("Precision removes the most (135 endpoints).")
+    expect(hosts_page.get_by_text("No endpoint meets every filter.", exact=False)).to_contain_text("Precision removes the most (135 endpoints).")
     hosts_page.get_by_label("Show excluded").check()
     matrix = hosts_page.get_by_role("table", name="Host comparison")
     expect(matrix).to_be_visible()
     expect(matrix.locator("tr.is-excluded").first).to_contain_text("No qualifying endpoint")
     matrix.locator("tbody tr").first.get_by_role("button").click()
     expect(hosts_page.get_by_role("dialog").locator("tr.is-excluded").first).to_contain_text("Precision")
-    expect(hosts_page.get_by_role("dialog").get_by_role("button", name="Close endpoint drawer")).to_be_focused()
+    expect(hosts_page.get_by_role("dialog").get_by_role("heading", level=2)).to_be_focused()
     hosts_page.keyboard.press("Escape")
     expect(hosts_page.get_by_role("dialog")).to_have_count(0)
     expect(matrix.locator('[aria-label="best in row"]')).to_have_count(0)
@@ -596,27 +597,27 @@ def test_hosts_exact_price_limit_and_condition_reason_order(hosts_page, hosts_se
     row = hosts_page.locator('tr[data-list-path="' + facts.host_exact_prices["path"] + '"]')
     row.get_by_role("button").click()
     drawer = hosts_page.get_by_role("dialog")
-    expect(drawer.locator("tbody tr:not(.is-excluded)")).to_contain_text("exact-low")
-    expect(drawer.locator("tbody tr.is-excluded").filter(has_text="exact-high")).to_contain_text("Price limit")
+    expect(drawer.locator('tbody tr:not(.is-excluded):has(> th[scope="row"])')).to_contain_text("exact-low")
+    expect(drawer.locator("tbody tr.is-excluded").filter(has_text="exact-high")).to_contain_text("Price")
     hosts_page.keyboard.press("Escape")
     _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Gamma,Synthetic Alpha", healthy="1", quantset="1", showx="1"))
     shared = hosts_page.locator('tr[data-list-path="' + facts.host_row_admission["shared_path"] + '"]')
     shared.get_by_role("button").click()
     drawer = hosts_page.get_by_role("dialog")
-    expect(drawer.locator("tr.is-excluded").filter(has_text="Synthetic Gamma")).to_contain_text("Status")
+    expect(drawer.locator("tr.is-excluded").filter(has_text="Synthetic Gamma")).to_contain_text("Precision")
     expect(drawer.locator("tr.is-excluded").filter(has_text="Synthetic Alpha").first).to_contain_text("Precision")
 
 
 def test_hosts_tier_native_identity_and_numeric_typing_replace_history(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, tierset="1", tiers='"null"'))
-    hosts_page.get_by_role("button", name="Service tier condition", exact=True).click()
-    dialog = hosts_page.get_by_role("dialog", name="Service tier")
+    hosts_page.get_by_role("button", name="Tier condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Tier")
     expect(dialog.get_by_role("checkbox", name='"null"', exact=True)).to_be_checked()
     expect(dialog.get_by_role("checkbox", name="standard", exact=True)).not_to_be_checked()
     expect(dialog.get_by_role("checkbox", name='"standard"', exact=True)).not_to_be_checked()
     hosts_page.keyboard.press("Escape")
-    hosts_page.get_by_role("button", name="Context length condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Context condition", exact=True).click()
     before = hosts_page.evaluate("history.length")
     field = hosts_page.get_by_label("Minimum context length", exact=True)
     field.fill("128K")
@@ -634,24 +635,24 @@ def test_hosts_tier_native_identity_and_numeric_typing_replace_history(hosts_pag
     ({"quantset": "1", "quant": "fp32"}, "Precision", 134),
     ({"upmin": "99.5"}, "Uptime", 134),
     ({"upmin": "99.5", "upmiss": "1"}, "Uptime", 129),
-    ({"ctxmin": "200K"}, "Context length", 132),
+    ({"ctxmin": "200K"}, "Context", 132),
     ({"outmin": "32K"}, "Max output", 5),
     ({"params": "response_format"}, "Supports", 134),
     ({"ntools": "code"}, "Supports", 134),
     ({"caching": "1"}, "Supports", 5),
-    ({"tierset": "1", "tiers": '"null"'}, "Service tier", 131),
+    ({"tierset": "1", "tiers": '"null"'}, "Tier", 131),
     ({"hq": "HOSTS-SHARED"}, "Model search", 131),
-    ({"xhosts": "Synthetic Bulk"}, "Exclude hosts", 105),
-    ({"plimit": "pricing.prompt:-1"}, "Price limit", 134),
-    ({"plimit": "pricing.prompt:0"}, "Price limit", 133),
-    ({"plimit": "pricing.prompt:1e-9994"}, "Price limit", 132),
+    ({"xhosts": "Synthetic Bulk"}, "Hosts", 105),
+    ({"plimit": "pricing.prompt:-1"}, "Price", 134),
+    ({"plimit": "pricing.prompt:0"}, "Price", 133),
+    ({"plimit": "pricing.prompt:1e-9994"}, "Price", 132),
 ])
 def test_hosts_condition_only_removal_counts_ignore_other_conditions(hosts_page, hosts_server, settings, condition, removed):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, **settings))
-    expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"{condition}: removes {removed} endpoints")
+    expect(hosts_page.locator(".condition-chip").filter(has_text=condition + ":").locator("small")).to_have_text(f"−{removed}")
     _switch_hash(hosts_page, _hosts_fragment(facts, **{**settings, "hq": "synthetic-response-shared"}))
-    expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"{condition}: removes {removed} endpoints")
+    expect(hosts_page.locator(".condition-chip").filter(has_text=condition + ":").locator("small")).to_have_text(f"−{removed}")
 
 
 def test_hosts_all_excluded_any_all_presence_and_empty_copy_precedence(hosts_page, hosts_server):
@@ -686,13 +687,13 @@ def test_hosts_clear_all_preserves_comparison_and_normalizes_bad_conditions(host
 def test_hosts_nonempty_chip_hash_activates_and_empty_tier_survives_reload(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, quant="fp32"))
-    expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Precision: removes 134 endpoints")
+    expect(hosts_page.locator(".condition-chip").filter(has_text="Precision:").locator("small")).to_have_text("−134")
     _switch_hash(hosts_page, _hosts_fragment(facts, tierset="1"))
-    expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Service tier removes the most (135 endpoints).")
+    expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Tier removes the most (135 endpoints).")
     hosts_page.reload()
     expect(hosts_page.locator(".host-no-qualifying")).to_be_visible()
-    hosts_page.get_by_role("button", name="Service tier condition", exact=True).click()
-    hosts_page.get_by_role("dialog", name="Service tier").get_by_role("button", name="Clear").click()
+    hosts_page.get_by_role("button", name="Tier condition", exact=True).click()
+    hosts_page.get_by_role("dialog", name="Tier").get_by_role("button", name="Clear").click()
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
     expect(hosts_page).not_to_have_url(re.compile("tierset|tiers"))
 
@@ -700,7 +701,7 @@ def test_hosts_nonempty_chip_hash_activates_and_empty_tier_survives_reload(hosts
 def test_hosts_toolbar_describes_conditions_and_checkbox_menus_fit_bottom_sheet(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, ctxmin="200K"))
-    expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Context ≥ 200K")
+    expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Context: ≥ 200K")
     expect(hosts_page.get_by_role("button", name="Status condition", exact=True)).to_have_attribute("aria-pressed", "false")
     hosts_page.get_by_role("button", name="Precision condition", exact=True).click()
     dialog = hosts_page.get_by_role("dialog", name="Precision")
@@ -724,15 +725,16 @@ def test_hosts_missing_telemetry_suspends_uptime_condition(hosts_page, hosts_ser
     goto(hosts_page, hosts_server, _hosts_fragment(facts, upwin="1d", upmin="99.99", healthy="1"))
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
     expect(hosts_page.get_by_role("button", name="Uptime condition", exact=True)).to_contain_text("paused")
-    expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Status: removes 5 endpoints")
+    expect(hosts_page.get_by_role("button", name="Uptime condition", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(hosts_page.locator(".condition-chip").filter(has_text="Status:").locator("small")).to_have_text("−5")
     expect(hosts_page.locator(".host-condition-counts")).to_contain_text("paused")
-    expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Uptime: removes")
+    expect(hosts_page.locator(".condition-chip").filter(has_text="Uptime:").locator("small")).to_have_count(0)
     expect(hosts_page.get_by_text("Uptime isn't stored for this snapshot yet.", exact=False)).to_contain_text("The next saved scan can backfill it from its archive.")
     hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
     dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
     expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_be_disabled()
-    expect(dialog.get_by_label("Uptime window", exact=True)).to_be_disabled()
-    expect(dialog.get_by_role("checkbox", name="Include missing uptime", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("button", name="30 min", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("checkbox", name=re.compile(r"Keep endpoints without uptime"))).to_be_disabled()
     dialog.get_by_role("button", name="Clear", exact=True).click()
     expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("paused")
 
@@ -743,11 +745,11 @@ def test_hosts_equal_removal_counts_choose_first_condition_and_trap_focus(hosts_
     expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Precision removes the most (135 endpoints).")
     hosts_page.get_by_role("button", name="Precision condition", exact=True).click()
     dialog = hosts_page.get_by_role("dialog", name="Precision")
-    expect(dialog.get_by_role("button", name="Close", exact=True)).to_be_focused()
+    expect(dialog.get_by_role("searchbox", name="Filter precision…", exact=True)).to_be_focused()
     hosts_page.keyboard.press("Shift+Tab")
     expect(dialog.get_by_role("button", name="Clear", exact=True)).to_be_focused()
     hosts_page.keyboard.press("Tab")
-    expect(dialog.get_by_role("button", name="Close", exact=True)).to_be_focused()
+    expect(dialog.get_by_role("searchbox", name="Filter precision…", exact=True)).to_be_focused()
     hosts_page.keyboard.press("Escape")
     expect(hosts_page.get_by_role("button", name="Precision condition", exact=True)).to_be_focused()
 
@@ -755,7 +757,7 @@ def test_hosts_equal_removal_counts_choose_first_condition_and_trap_focus(hosts_
 def test_hosts_price_editor_keeps_exact_text_when_closed_before_debounce(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
     field = hosts_page.get_by_label("Maximum price", exact=True)
     before = hosts_page.evaluate("history.length")
     field.fill(facts.host_exact_prices["threshold"])
@@ -763,7 +765,7 @@ def test_hosts_price_editor_keeps_exact_text_when_closed_before_debounce(hosts_p
     expect(hosts_page).to_have_url(re.compile("plimit=pricing.prompt%3A1.000000000000000015"))
     assert hosts_page.evaluate("history.length") == before
     hosts_page.reload()
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
     expect(field).to_have_value("1.000000000000000015")
     field.fill("-")
     expect(field).to_have_attribute("aria-invalid", "true")
@@ -775,18 +777,18 @@ def test_hosts_price_editor_keeps_exact_text_when_closed_before_debounce(hosts_p
 def test_hosts_price_editor_missing_count_tracks_selected_column_before_limit(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
-    dialog = hosts_page.get_by_role("dialog", name="Price limit")
-    expect(dialog).to_contain_text("5 endpoints with missing values.")
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Price")
+    expect(dialog).to_contain_text("Endpoints with missing values: 5")
     hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
-    expect(dialog).to_contain_text("134 endpoints with missing values.")
+    expect(dialog).to_contain_text("Endpoints with missing values: 134")
 
 
 @pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
 def test_hosts_pending_price_draft_commits_to_current_column(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
     hosts_page.get_by_label("Maximum price", exact=True).fill("7")
     hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
     expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A7"))
@@ -802,17 +804,17 @@ def test_hosts_price_editor_target_and_results_follow_back_forward(hosts_page, h
     with _responsive_renderer_deadline():
         _, facts = hosts_server
         goto(hosts_page, hosts_server, _hosts_fragment(facts, plimit="pricing.prompt:7"))
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
-        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price")
         column = hosts_page.get_by_label("Price column", exact=True)
         field = hosts_page.get_by_label("Maximum price", exact=True)
 
         def assert_constraint(path, missing, removed, rows):
             expect(column).to_have_value(path)
             expect(field).to_have_value("7")
-            expect(dialog).to_contain_text(f"{missing} endpoints with missing values.")
+            expect(dialog).to_contain_text(f"Endpoints with missing values: {missing}")
             expect(hosts_page).to_have_url(re.compile("plimit=" + re.escape(quote(path + ":7", safe="")) + r"(?:&|$)"))
-            expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"Price limit: removes {removed} endpoints")
+            expect(hosts_page.locator(".condition-chip").filter(has_text="Price:").locator("small")).to_have_text(f"−{removed}")
             expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(rows)
 
         assert_constraint("pricing.prompt", 5, 5, 5)
@@ -834,8 +836,8 @@ def test_hosts_cleared_price_limit_keeps_column_for_exact_retyping(hosts_page, h
     with _responsive_renderer_deadline():
         _, facts = hosts_server
         goto(hosts_page, hosts_server, _hosts_fragment(facts, plimit="pricing.completion:7"))
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
-        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price")
         column = hosts_page.get_by_label("Price column", exact=True)
         field = hosts_page.get_by_label("Maximum price", exact=True)
         rows = hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")
@@ -851,21 +853,21 @@ def test_hosts_cleared_price_limit_keeps_column_for_exact_retyping(hosts_page, h
         hosts_page.wait_for_timeout(350)
         expect(column).to_have_value("pricing.completion")
         expect(field).to_have_value("")
-        expect(dialog).to_contain_text("134 endpoints with missing values.")
-        expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+        expect(dialog).to_contain_text("Endpoints with missing values: 134")
+        expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price")
         expect(rows).to_have_count(7)
 
         field.fill("8.000000000000000001")
         hosts_page.keyboard.press("Escape")
         expect(hosts_page).to_have_url(re.compile("plimit=pricing.completion%3A8.000000000000000001(?:&|$)"))
-        expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Price limit: removes 134 endpoints")
+        expect(hosts_page.locator(".condition-chip").filter(has_text="Price:").locator("small")).to_have_text("−134")
         expect(rows).to_have_count(1)
         expect(rows.first).to_have_attribute("data-list-path", facts.host_row_admission["shared_path"])
         assert hosts_page.evaluate("history.length") == before
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
         expect(column).to_have_value("pricing.completion")
         expect(field).to_have_value("8.000000000000000001")
-        expect(dialog).to_contain_text("134 endpoints with missing values.")
+        expect(dialog).to_contain_text("Endpoints with missing values: 134")
 
 
 @pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
@@ -873,8 +875,8 @@ def test_hosts_restored_active_price_target_overrides_inactive_column_draft(host
     with _responsive_renderer_deadline():
         _, facts = hosts_server
         goto(hosts_page, hosts_server, _hosts_fragment(facts))
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
-        dialog = hosts_page.get_by_role("dialog", name="Price limit")
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
+        dialog = hosts_page.get_by_role("dialog", name="Price")
         column = hosts_page.get_by_label("Price column", exact=True)
         column.select_option("pricing.completion")
         hosts_page.evaluate("value => { const hash = new URLSearchParams(location.hash.slice(1)); hash.set('plimit', value); location.hash = hash.toString(); }", "pricing.prompt:7")
@@ -883,9 +885,9 @@ def test_hosts_restored_active_price_target_overrides_inactive_column_draft(host
                 hosts_page.go_forward()
             expect(column).to_have_value("pricing.prompt")
             expect(hosts_page.get_by_label("Maximum price", exact=True)).to_have_value("7")
-            expect(dialog).to_contain_text("5 endpoints with missing values.")
+            expect(dialog).to_contain_text("Endpoints with missing values: 5")
             expect(hosts_page).to_have_url(re.compile("plimit=pricing.prompt%3A7(?:&|$)"))
-            expect(hosts_page.locator(".host-condition-counts")).to_contain_text("Price limit: removes 5 endpoints")
+            expect(hosts_page.locator(".condition-chip").filter(has_text="Price:").locator("small")).to_have_text("−5")
             expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(5)
             if navigation is None:
                 hosts_page.go_back()
@@ -893,7 +895,7 @@ def test_hosts_restored_active_price_target_overrides_inactive_column_draft(host
                 # Hash navigation precedes the corresponding render. Select
                 # an inactive draft only after the old ceiling has disappeared.
                 expect(hosts_page.get_by_label("Maximum price", exact=True)).to_have_value("")
-                expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+                expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price")
                 expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(7)
                 column.select_option("pricing.completion")
 
@@ -902,13 +904,13 @@ def test_hosts_restored_active_price_target_overrides_inactive_column_draft(host
 def test_hosts_unrelated_hash_change_dismisses_uncommitted_price_column(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
     column = hosts_page.get_by_label("Price column", exact=True)
     column.select_option("pricing.completion")
     expect(hosts_page).not_to_have_url(re.compile("plimit="))
     _switch_hash(hosts_page, _hosts_fragment(facts, rank="context"))
-    expect(hosts_page.get_by_role("dialog", name="Price limit")).to_have_count(0)
-    hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+    expect(hosts_page.get_by_role("dialog", name="Price")).to_have_count(0)
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
     column.select_option("pricing.completion")
     hosts_page.get_by_label("Maximum price", exact=True).fill("7.000000000000000001")
     hosts_page.keyboard.press("Escape")
@@ -922,7 +924,7 @@ def test_hosts_invalid_price_draft_switches_column_with_last_valid_exact_limit(h
         _, facts = hosts_server
         changes = {"plimit": "pricing.prompt:" + prior} if prior else {}
         goto(hosts_page, hosts_server, _hosts_fragment(facts, **changes))
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
         field = hosts_page.get_by_label("Maximum price", exact=True)
         field.fill("-")
         expect(field).to_have_attribute("aria-invalid", "true")
@@ -932,17 +934,21 @@ def test_hosts_invalid_price_draft_switches_column_with_last_valid_exact_limit(h
         hosts_page.wait_for_timeout(350)
         if prior:
             expect(hosts_page).to_have_url(re.compile("plimit=" + re.escape(quote("pricing.completion:" + prior, safe="")) + r"(?:&|$)"))
-            expect(hosts_page.locator(".host-condition-counts")).to_contain_text(f"Price limit: removes {removed} endpoints")
+            expect(hosts_page.locator(".condition-chip").filter(has_text="Price:").locator("small")).to_have_text(f"−{removed}")
             if removed == 134:
                 expect(hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr")).to_have_count(1)
             else:
-                expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Price limit removes the most (135 endpoints).")
+                expect(hosts_page.locator(".host-no-qualifying")).to_contain_text("Price removes the most (135 endpoints).")
         else:
             expect(hosts_page).not_to_have_url(re.compile("plimit="))
-            expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price limit")
+            expect(hosts_page.locator(".host-condition-counts")).not_to_contain_text("Price")
         # Cancellation must still win after invalid text and the target switch.
         field.fill("-")
-        hosts_page.get_by_role("dialog", name="Price limit").get_by_role("button", name="Clear", exact=True).click()
+        if prior:
+            hosts_page.get_by_role("dialog", name="Price").get_by_role("button", name="Clear", exact=True).click()
+        else:
+            expect(hosts_page.get_by_role("dialog", name="Price").get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+            hosts_page.keyboard.press("Escape")
         hosts_page.wait_for_timeout(350)
         assert "plimit" not in hosts_page.evaluate("location.hash")
         expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
@@ -953,17 +959,17 @@ def test_hosts_remove_after_price_column_switch_cancels_drafts_without_hanging(h
     with _responsive_renderer_deadline():
         _, facts = hosts_server
         goto(hosts_page, hosts_server, _hosts_fragment(facts))
-        hosts_page.get_by_role("button", name="Price limit condition", exact=True).click()
+        hosts_page.get_by_role("button", name="Price condition", exact=True).click()
         field = hosts_page.get_by_label("Maximum price", exact=True)
         field.fill("7")
         hosts_page.get_by_label("Price column", exact=True).select_option("pricing.completion")
         hosts_page.wait_for_timeout(350)
         field.fill("8")
-        hosts_page.get_by_role("dialog", name="Price limit").get_by_role("button", name="Clear", exact=True).click()
+        hosts_page.get_by_role("dialog", name="Price").get_by_role("button", name="Clear", exact=True).click()
         hosts_page.wait_for_timeout(350)
         assert "plimit" not in hosts_page.evaluate("location.hash")
-        expect(hosts_page.get_by_role("dialog", name="Price limit")).to_have_count(0)
-        hosts_page.get_by_role("button", name="Clear all", exact=True).click()
+        expect(hosts_page.get_by_role("dialog", name="Price")).to_have_count(0)
+        expect(hosts_page.get_by_role("button", name="Clear all", exact=True)).to_have_count(0)
         expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
 
 
@@ -989,11 +995,11 @@ def test_hosts_pending_uptime_then_deliberate_control_keeps_newest_hash_responsi
         hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
         hosts_page.get_by_label("Minimum uptime percent", exact=True).fill("99.9")
         if action == "missing":
-            hosts_page.get_by_label("Include missing uptime", exact=True).check()
+            hosts_page.get_by_role("checkbox", name=re.compile(r"Keep endpoints without uptime")).check()
         elif action == "window":
-            hosts_page.get_by_label("Uptime window", exact=True).select_option("30m")
+            hosts_page.get_by_role("dialog", name="Uptime").get_by_role("button", name="30 min", exact=True).click()
         else:
-            hosts_page.get_by_role("dialog", name="Uptime").get_by_role("button", name="99", exact=True).click()
+            hosts_page.get_by_role("dialog", name="Uptime").get_by_role("button", name="99%", exact=True).click()
         hosts_page.wait_for_timeout(350)
         fragment = hosts_page.evaluate("location.hash")
         if action == "missing":
@@ -1008,7 +1014,7 @@ def test_hosts_pending_uptime_then_deliberate_control_keeps_newest_hash_responsi
 
 
 @pytest.mark.parametrize(("condition", "field", "first", "second", "hash_key"), [
-    ("Context length", "Minimum context length", "128K", "200K", "ctxmin"),
+    ("Context", "Minimum context length", "128K", "200K", "ctxmin"),
     ("Max output", "Minimum max output", "32K", "128K", "outmin"),
     ("Uptime", "Minimum uptime percent", "99", "99.5", "upmin"),
 ])
@@ -1018,11 +1024,11 @@ def test_hosts_numeric_presets_preserve_back_forward_navigation(hosts_page, host
     hosts_page.get_by_role("button", name=condition + " condition", exact=True).click()
     dialog = hosts_page.get_by_role("dialog", name=condition)
     before = hosts_page.evaluate("history.length")
-    dialog.get_by_role("button", name=first, exact=True).click()
+    dialog.get_by_role("button", name=first + ("%" if condition == "Uptime" else ""), exact=True).click()
     expect(hosts_page.get_by_label(field, exact=True)).to_have_value(first)
     expect(hosts_page).to_have_url(re.compile(hash_key + "=" + re.escape(first)))
     assert hosts_page.evaluate("history.length") == before + 1
-    dialog.get_by_role("button", name=second, exact=True).click()
+    dialog.get_by_role("button", name=second + ("%" if condition == "Uptime" else ""), exact=True).click()
     expect(hosts_page.get_by_label(field, exact=True)).to_have_value(second)
     hosts_page.go_back()
     expect(hosts_page.get_by_label(field, exact=True)).to_have_value(first)
@@ -1052,7 +1058,7 @@ def test_hosts_grouping_ties_navigation_and_exact_prices(hosts_page, hosts_serve
     hosts_page.reload()
     expect(hosts_page.get_by_label("Ranking")).to_have_value("context")
     shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
-    hosts_page.get_by_role("dialog").get_by_role("button", name="fake-org/hosts-twin", exact=True).click()
+    hosts_page.get_by_role("dialog").get_by_role("link", name="fake-org/hosts-twin", exact=True).click()
     expect(hosts_page.locator(".model-breadcrumb")).to_contain_text("hosts-twin")
     hosts_page.go_back()
     hosts_page.keyboard.press("Escape")
@@ -1074,8 +1080,8 @@ def test_hosts_mapped_and_unmapped_primary_titles_open_drawer_and_dossier(hosts_
     shared = matrix.locator("tbody tr").filter(has_text="synthetic-response-shared")
     shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
-    expect(drawer.get_by_role("button", name="fake-org/hosts-shared", exact=True)).to_be_visible()
-    expect(drawer.get_by_role("button", name="fake-org/hosts-twin", exact=True)).to_be_visible()
+    expect(drawer.get_by_role("link", name="fake-org/hosts-shared", exact=True)).to_be_visible()
+    expect(drawer.get_by_role("link", name="fake-org/hosts-twin", exact=True)).to_be_visible()
     drawer.get_by_role("button", name="Open dossier", exact=True).click()
     expect(hosts_page.locator(".model-breadcrumb")).to_contain_text("hosts-shared")
     expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-shared")
@@ -1094,16 +1100,17 @@ def test_hosts_profile_precision_rank_difference_history_and_picker(hosts_page, 
     expect(profile).to_contain_text("Synthetic Gamma")
     table = hosts_page.get_by_role("table", name="Host comparison")
     expect(table).to_contain_text("+200%")
-    expect(table).to_contain_text("3 / 3")
+    expect(table).to_contain_text("3 of 3")
     expect(table).to_contain_text("fp16")
     table.locator("tbody tr").filter(has_text="synthetic-response-shared").get_by_role("button").click()
+    hosts_page.get_by_role("dialog").locator("tbody tr").filter(has_text="Synthetic Gamma").get_by_role("button", name="Details", exact=True).click()
     expect(hosts_page.get_by_role("dialog")).to_contain_text('"null"')
     hosts_page.keyboard.press("Escape")
     expect(hosts_page.get_by_role("region", name="Host history")).to_contain_text("Capture")
     hosts_page.get_by_role("button", name="Add host", exact=True).click()
-    hosts_page.get_by_label("Search hosts").fill("beta")
-    expect(hosts_page.get_by_role("dialog", name="Add host").get_by_role("checkbox")).to_have_count(1)
-    hosts_page.get_by_label("Search hosts").fill("")
+    hosts_page.get_by_label("Find a host…").fill("beta")
+    expect(hosts_page.get_by_role("dialog", name="Compare hosts").get_by_role("checkbox")).to_have_count(1)
+    hosts_page.get_by_label("Find a host…").fill("")
     hosts_page.get_by_role("checkbox", name="Synthetic Alpha", exact=True).check()
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
 
@@ -1162,7 +1169,7 @@ def test_hosts_exact_price_winner_difference_unranked_counts_and_order(hosts_pag
     hosts_page.get_by_label("Ranking").select_option("uptime:1d")
     shared = rows.filter(has_text="synthetic-response-shared")
     expect(shared.locator("td").first).to_contain_text("100%")
-    expect(shared.locator("td").nth(3)).to_contain_text("-3.00 pp")
+    expect(shared.locator("td").nth(3)).to_contain_text("−3.00pt")
 
 
 def test_hosts_single_capture_pending_uptime_and_requested_unavailable_capture(hosts_page, hosts_server):
@@ -1176,13 +1183,13 @@ def test_hosts_single_capture_pending_uptime_and_requested_unavailable_capture(h
     _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["uncaptured"]))
     expect(hosts_page.get_by_text("No endpoint capture was saved for this snapshot.", exact=True)).to_be_visible()
     _switch_hash(hosts_page, _hosts_fragment(facts, hasof=facts.scrapes["error"]))
-    expect(hosts_page.get_by_text("Endpoint capture failed for this snapshot, so no endpoint lists were saved.", exact=True)).to_be_visible()
+    expect(hosts_page.get_by_text("Endpoint capture failed for this snapshot, so no endpoint models were saved.", exact=True)).to_be_visible()
 
 
 def test_hosts_row_rules_pin_bound_and_normalization_do_not_trap_back(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Missing", match="all"))
-    expect(hosts_page.get_by_text("No qualifying list matches the selected hosts and row rule.", exact=True)).to_be_visible()
+    expect(hosts_page.get_by_text("No qualifying model matches the selected hosts and row rule.", exact=True)).to_be_visible()
     hosts_page.get_by_label("Row match").select_option("any")
     expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
     hosts_page.go_back()
@@ -1195,7 +1202,7 @@ def test_hosts_row_rules_pin_bound_and_normalization_do_not_trap_back(hosts_page
     # Selecting eight distinct observed hosts bounds the ninth selection.
     _switch_hash(hosts_page, _hosts_fragment(facts))
     hosts_page.get_by_role("button", name="Add host", exact=True).click()
-    buttons = hosts_page.get_by_role("dialog", name="Add host", exact=True).get_by_role("checkbox")
+    buttons = hosts_page.get_by_role("dialog", name="Compare hosts", exact=True).get_by_role("checkbox")
     expect(buttons).to_have_count(10)
     for index in range(8):
         buttons.nth(index).click()
@@ -1245,8 +1252,9 @@ def test_hosts_precision_distribution_and_history_truncation(hosts_page, hosts_s
     profile = hosts_page.get_by_role("region", name="Host summary")
     for precision in ["fp32", "bf16", "fp16", "fp8", "int8", "fp6", "fp4", "mxfp4", "nvfp4", "int4", "unknown", "synthetic-q"]:
         expect(profile.get_by_role("img", name=re.compile("Precision distribution"))).to_have_attribute("aria-label", re.compile(re.escape(precision)))
-    expect(profile).to_contain_text("unknown: 3")
+    expect(profile).to_contain_text("unknown 3")
     hosts_page.get_by_role("table", name="Host comparison").locator("tbody tr").filter(has_text="synthetic-response-shared").get_by_role("button").click()
+    hosts_page.get_by_role("dialog").locator("tbody tr").filter(has_text="Synthetic Beta").get_by_role("button", name="Details", exact=True).click()
     expect(hosts_page.get_by_role("dialog")).to_contain_text('"standard"')
     hosts_page.keyboard.press("Escape")
     _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Bulk"))
@@ -1265,12 +1273,12 @@ def test_hosts_snapshot_picker_and_unmapped_list_titles(hosts_page, hosts_server
     expect(hosts_page.get_by_role("dialog").get_by_role("table", name="Observed endpoints").locator("tbody tr")).to_have_count(2)
     hosts_page.keyboard.press("Escape")
     matrix.locator("tbody tr").filter(has_text="fake-org/hosts-bare").get_by_role("button").click()
-    expect(hosts_page.get_by_role("dialog")).to_contain_text("/api/v1/models/fake-org/hosts-bare/endpoints")
+    expect(hosts_page.get_by_role("dialog").get_by_role("heading", level=2)).to_have_attribute("title", "/api/v1/models/fake-org/hosts-bare/endpoints")
     hosts_page.keyboard.press("Escape")
-    hosts_page.get_by_label("Host capture", exact=True).select_option(str(facts.scrapes["second"]))
-    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value(str(facts.scrapes["second"]))
+    hosts_page.get_by_label("Snapshot", exact=True).select_option(str(facts.scrapes["second"]))
+    expect(hosts_page.get_by_label("Snapshot", exact=True)).to_have_value(str(facts.scrapes["second"]))
     hosts_page.go_back()
-    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value(str(facts.scrapes["first"]))
+    expect(hosts_page.get_by_label("Snapshot", exact=True)).to_have_value(str(facts.scrapes["first"]))
 
 
 def test_hosts_provider_change_normalizes_other_provider_capture_without_bad_request(hosts_page, hosts_server):
@@ -1280,7 +1288,7 @@ def test_hosts_provider_change_normalizes_other_provider_capture_without_bad_req
     # A shared global provider control leaves hasof untouched; Hosts must
     # canonicalize it before making an exact-scrape request for a new provider.
     _switch_hash(hosts_page, _hosts_fragment(facts, providers=facts.single_provider_id))
-    expect(hosts_page.get_by_label("Host capture", exact=True)).to_have_value(str(facts.scrapes["no_prices"]))
+    expect(hosts_page.get_by_label("Snapshot", exact=True)).to_have_value(str(facts.scrapes["no_prices"]))
     expect(hosts_page.get_by_role("alert")).to_have_count(0)
     expect(hosts_page).to_have_url(re.compile(rf"[&#]hasof={facts.scrapes['no_prices']}(?:&|$)"))
     _switch_hash(hosts_page, _hosts_fragment(facts, hasof="invalid"))
@@ -2381,6 +2389,424 @@ def test_endpoint_synthetic_dossier_acceptance(
             shutil.copy2(path, Path(target) / path.name)
 
 
+def test_hosts_results_row_activation_formats_and_numeric_alignment(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Gamma"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator("thead th")).to_have_text(["Model", "Synthetic Gamma", "Rank", "Best", "Spread", "Precision", "Context", "Uptime", "Status"])
+    shared = table.locator("tbody tr").filter(has_text="synthetic-response-shared")
+    expect(shared).to_contain_text("3 of 3")
+    expect(shared.locator("td").nth(4)).to_have_text("fp16")
+    expect(shared.locator("td").nth(7)).to_have_text("○ status 2")
+    expect(shared.locator("td").nth(5).locator("span")).to_have_text("128K")
+    expect(shared.locator("td").nth(5).locator("span")).to_have_attribute("title", "128000")
+    expect(shared.locator(".model-link")).to_have_attribute("title", "synthetic-response-shared")
+    shared.locator("td").nth(1).click()
+    expect(shared).to_have_attribute("aria-current", "true")
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page.get_by_role("dialog")).to_have_count(0)
+    shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
+    expect(hosts_page.get_by_role("dialog")).to_be_visible()
+    expect(shared).to_have_attribute("aria-current", "true")
+    hosts_page.get_by_role("button", name="Details", exact=True).first.click()
+    expect(hosts_page.locator(".endpoint-details-row")).to_contain_text("16-bit")
+    hosts_page.keyboard.press("Escape")
+    for rank, best in [("price:pricing.prompt", "$1.00"), ("uptime:1d", "100%"), ("context", "256,000"), ("output", "32,000")]:
+        _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta", rank=rank))
+        assert table.locator("thead th").evaluate_all("nodes => nodes.slice(1).every(n => getComputedStyle(n).textAlign === 'right')")
+        assert shared.locator("td").evaluate_all("nodes => nodes.every(n => getComputedStyle(n).textAlign === 'right')")
+        expect(shared.locator(".hosts-ranking")).to_have_text(best)
+        shared.locator("td").first.click()
+        expect(hosts_page.get_by_role("dialog")).to_be_visible()
+        hosts_page.keyboard.press("Escape")
+
+
+def test_hosts_summary_compact_facts_missing_uptime_and_narrow_wrapping(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Beta"))
+    profile = hosts_page.get_by_role("region", name="Host summary")
+    expect(profile).to_contain_text("models")
+    expect(profile).to_contain_text("tags")
+    expect(profile).to_contain_text("unknown 3")
+    for fact in ["3 models", "16 endpoints", "16 tags", "median uptime 99%", "0 not normal"]:
+        expect(profile).to_contain_text(fact)
+    assert profile.bounding_box()["height"] <= 60
+    expect(profile.locator('.host-precision-mix span[title="unknown: 3"]')).to_have_attribute("style", re.compile("border-strong"))
+    hosts_page.set_viewport_size({"width": 390, "height": 844})
+    long_name = "Synthetic" + "LongHostName" * 24
+    def long_host(route):
+        response = route.fetch()
+        payload = response.json()
+        for host in payload["hosts"]:
+            if host["name"] == "Synthetic Beta":
+                host["name"] = long_name
+        for endpoint in payload["endpoints"]:
+            if endpoint["host"] == "Synthetic Beta":
+                endpoint["host"] = long_name
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", long_host)
+    hosts_page.goto("about:blank")
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts=long_name))
+    expect(profile.locator("h2")).to_have_text(long_name)
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert profile.locator("h2").bounding_box()["width"] <= profile.bounding_box()["width"]
+    assert profile.bounding_box()["height"] > 60
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Missing"))
+    expect(profile).to_contain_text("median uptime —")
+
+
+@pytest.mark.parametrize("overlay", ["menu", "suggestions"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("narrow", [False, True])
+def test_hosts_overlays_receive_pointer_above_endpoint_drawer(hosts_page, hosts_server, overlay, theme, narrow):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.locator(".endpoint-drawer")
+    expect(drawer.get_by_role("heading", level=2)).to_be_focused()
+    if overlay == "menu":
+        hosts_page.get_by_role("button", name="Supports condition", exact=True).click()
+        popup = hosts_page.get_by_role("dialog", name="Supports", exact=True)
+        target = popup.get_by_role("searchbox")
+    else:
+        hosts_page.keyboard.press("/")
+        hosts_page.keyboard.type("synthetic")
+        popup = hosts_page.get_by_role("listbox", name="Model suggestions")
+        target = popup.get_by_role("option").first
+    expect(popup).to_be_visible()
+    if narrow:
+        hosts_page.set_viewport_size({"width": 390, "height": 844})
+    # Visibility alone misses a panel painted over the control. Require a
+    # genuine overlapping hit target, then let Playwright deliver the pointer.
+    expect(target).to_be_visible()
+    expect(drawer).to_be_visible()
+    hosts_page.wait_for_function("""() => {
+        const el = document.querySelector('.condition-overlay input[type="search"], .hosts-search-results [role="option"]');
+        if (!el) return false;
+        const b = el.getBoundingClientRect(), d = document.querySelector('.endpoint-drawer').getBoundingClientRect();
+        return b.right > d.left && b.left < d.right && el.contains(document.elementFromPoint(b.x+b.width/2, b.y+b.height/2));
+    }""", timeout=2000)
+    if overlay == "menu":
+        target.click(timeout=1000)
+        expect(target).to_be_focused()
+        option = popup.get_by_role("checkbox").first
+        option.click(timeout=1000)
+        expect(option).to_be_checked()
+    else:
+        selected = target.get_attribute("aria-label")
+        target.click(timeout=1000)
+        expect(hosts_page.get_by_role("combobox", name="Search models")).to_have_value(selected)
+        expect(popup).to_have_count(0)
+        # Reopen to verify that the first Escape belongs to suggestions.
+        hosts_page.keyboard.press("/")
+        hosts_page.get_by_role("combobox", name="Search models").fill("synthetic")
+        expect(popup).to_be_visible()
+    hosts_page.keyboard.press("Escape")
+    expect(popup).to_have_count(0)
+    expect(drawer).to_be_visible()
+    expect(hosts_page).to_have_url(re.compile("hlist="))
+    hosts_page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+    expect(hosts_page).not_to_have_url(re.compile("hlist="))
+
+
+@pytest.mark.parametrize("overlay", ["menu", "suggestions"])
+def test_hosts_drawer_escape_synchronous_overlay_cleanup_preserves_first_key(hosts_page, hosts_server, overlay):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1600, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hq="synthetic", hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.locator(".endpoint-drawer")
+    expect(drawer.get_by_role("heading", level=2)).to_be_focused()
+    if overlay == "menu":
+        hosts_page.get_by_role("button", name="Precision condition", exact=True).click()
+        popup = hosts_page.get_by_role("dialog", name="Precision", exact=True)
+    else:
+        hosts_page.get_by_role("combobox", name="Search models").focus()
+        popup = hosts_page.get_by_role("listbox", name="Model suggestions")
+    expect(popup).to_be_visible()
+    # Exercise immediate component rendering: descendant Escape cleanup may
+    # finish before the same event reaches a window bubble listener.
+    hosts_page.evaluate("() => { preact.options.debounceRendering = callback => callback(); }")
+    hosts_page.keyboard.press("Escape")
+    expect(popup).to_have_count(0)
+    hosts_page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    expect(drawer).to_be_visible()
+    expect(hosts_page).to_have_url(re.compile("hlist="))
+    hosts_page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+    expect(hosts_page).not_to_have_url(re.compile("hlist="))
+    expect(hosts_page.get_by_role("table", name="Host comparison").get_by_role("button", name="synthetic-response-shared", exact=True)).to_be_focused()
+
+
+def test_hosts_nonmodal_drawer_pointer_toggle_replacement_and_overlay_escape(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1600, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    shared = table.locator('tr[data-list-path="' + facts.host_grouping_and_ties["path"] + '"]')
+    exact = table.locator('tr[data-list-path="' + facts.host_exact_prices["path"] + '"]')
+    shared.locator("th").click(position={"x": 5, "y": 5})
+    drawer = hosts_page.locator(".endpoint-drawer")
+    expect(drawer).not_to_have_attribute("aria-modal", "true")
+    expect(drawer.get_by_role("heading", name="synthetic-response-shared", exact=True)).to_be_focused()
+    assert drawer.bounding_box()["width"] == pytest.approx(760, abs=0.01)
+    hosts_page.wait_for_function("() => document.querySelector('.endpoint-drawer').getBoundingClientRect().x === 840")
+    expect(hosts_page.locator(".drawer-layer")).to_have_count(0)
+    shared.locator("th").click(position={"x": 5, "y": 5})
+    expect(drawer).to_have_count(0)
+    shared.get_by_role("button").click()
+    expect(drawer).to_be_visible()
+    exact.locator("th").click(position={"x": 5, "y": 5})
+    expect(drawer.get_by_role("heading", name="synthetic-response-exact", exact=True)).to_be_focused()
+    exact.get_by_role("button").click()
+    expect(drawer).to_have_count(0)
+    shared.get_by_role("button").click()
+    hosts_page.locator(".hosts-toolbar").get_by_role("button", name="Precision condition", exact=True).click()
+    expect(hosts_page.get_by_role("dialog", name="Precision", exact=True)).to_be_visible()
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page.get_by_role("dialog", name="Precision", exact=True)).to_have_count(0)
+    expect(drawer).to_be_visible()
+    search = hosts_page.get_by_role("combobox", name="Search models")
+    search.fill("synthetic")
+    search.press("ArrowDown")
+    expect(hosts_page.get_by_role("listbox", name="Model suggestions")).to_be_visible()
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page.get_by_role("listbox", name="Model suggestions")).to_have_count(0)
+    hosts_page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    expect(drawer).to_be_visible()
+    hosts_page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+    expect(shared.get_by_role("button")).to_be_focused()
+
+
+@pytest.mark.parametrize("hosts_server", ["output_prices"], indirect=True)
+def test_hosts_drawer_hidden_price_sort_survives_lists_and_absent_capture(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1600, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, rank="price:pricing.prompt", hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.get_by_role("dialog")
+    output = drawer.get_by_role("columnheader", name="Output", exact=True)
+    expect(output).to_have_attribute("title", "/1M tokens")
+    output.get_by_role("button").click()
+    output.get_by_role("button").click()
+    expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Output ▼")
+    assert drawer.locator("tbody .endpoint-tag").all_text_contents() == ["alpha-fast", "alpha-cheap", "beta", "gamma"]
+    expect(drawer.locator(".hosts-price .hosts-missing")).to_have_count(3)
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    table.get_by_role("button", name="synthetic-response-exact", exact=True).click()
+    expect(drawer.get_by_role("columnheader", name="Output", exact=True)).to_have_count(0)
+    expect(drawer.get_by_role("columnheader", name="Input", exact=True)).to_have_count(1)
+    expect(drawer.locator(".drawer-sort-summary")).not_to_contain_text("Sorted by")
+    expect(drawer.locator(".sort-group-column")).to_have_count(0)
+    expect(drawer.locator(".sort-run-band")).to_have_count(0)
+    expect(hosts_page).to_have_url(re.compile("dsort=d%3Aprice%3Apricing.completion"))
+    table.get_by_role("button", name="synthetic-response-shared", exact=True).click()
+    expect(output).to_have_attribute("aria-sort", "descending")
+    expect(drawer.locator("tbody .sort-group-column")).to_have_count(4)
+    expect(drawer.locator(".sort-run-band")).to_have_count(3)
+    assert drawer.locator("tbody .endpoint-tag").all_text_contents() == ["alpha-fast", "alpha-cheap", "beta", "gamma"]
+    # A new provider's capture has no completion path: normalization drops it.
+    _switch_hash(hosts_page, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"], dsort="d:price:pricing.completion", hlist=facts.host_grouping_and_ties["path"]))
+    expect(hosts_page).not_to_have_url(re.compile("dsort="))
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_group_heading_hover_is_inert_but_data_rows_highlight(hosts_page, hosts_server, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    heading = table.locator('th[scope="rowgroup"]').first
+    cell = table.locator('tr[data-list-path] th[scope="row"]').first
+    hosts_page.mouse.move(0, 0)
+    heading_background = heading.evaluate("n => getComputedStyle(n).backgroundColor")
+    cell_background = cell.evaluate("n => getComputedStyle(n).backgroundColor")
+    heading.hover()
+    assert heading.evaluate("n => getComputedStyle(n).backgroundColor") == heading_background
+    assert heading.evaluate("n => getComputedStyle(n.parentElement).cursor") == "default"
+    cell.hover()
+    assert cell.evaluate("n => getComputedStyle(n).backgroundColor") != cell_background
+    assert cell.evaluate("n => getComputedStyle(n.parentElement).cursor") == "pointer"
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_open_row_keeps_selected_background_on_hover(hosts_page, hosts_server, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    row = table.locator("tr[data-list-path]").first
+    row.get_by_role("button").click()
+    expect(hosts_page.locator(".endpoint-drawer")).to_be_visible()
+    expect(row).to_have_attribute("aria-current", "true")
+    cell = row.locator('th[scope="row"]')
+    hosts_page.mouse.move(0, 0)
+    selected_background = cell.evaluate("n => getComputedStyle(n).backgroundColor")
+    ordinary_background = table.locator('tr[data-list-path]:not([aria-current="true"]) th[scope="row"]').first.evaluate("n => getComputedStyle(n).backgroundColor")
+    assert selected_background != ordinary_background
+    cell.hover()
+    assert cell.evaluate("n => getComputedStyle(n).backgroundColor") == selected_background
+    expect(row).to_have_attribute("aria-current", "true")
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+def test_hosts_sort_grouping_page_headings_bands_and_hidden_primary(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator("tr[data-list-path]")).to_have_count(50)
+    headings = table.locator('th[scope="rowgroup"]')
+    expect(headings.first).to_be_visible()
+    expect(headings.first).to_contain_text("Hosts")
+    assert sum(int(text.split()[-2]) for text in headings.all_text_contents()) == 50
+    assert headings.first.evaluate("n=>getComputedStyle(n).borderTopWidth") == "0px"
+    assert headings.nth(1).evaluate("n=>getComputedStyle(n).borderTopWidth") == "2px"
+    assert headings.evaluate_all("nodes => nodes.every(n => !n.hasAttribute('tabindex') && !n.querySelector('button,a'))")
+    headings.first.click()
+    expect(hosts_page.get_by_role("dialog")).to_have_count(0)
+    hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
+    expect(table.locator("tr[data-list-path]")).to_have_count(100)
+    assert sum(int(text.split()[-2]) for text in headings.all_text_contents()) == 100
+    _switch_hash(hosts_page, _hosts_fragment(facts, hsort="a:host:Synthetic Alpha,a:model"))
+    expect(table.locator('th[scope="rowgroup"]')).to_have_count(0)
+    expect(table).to_have_attribute("data-group-column", "1")
+    expect(table.locator(".sort-run-band")).to_have_count(0)
+    _switch_hash(hosts_page, _hosts_fragment(facts, hsort="a:hosts,d:model", hlist=facts.host_grouping_and_ties["path"], dsort="a:host,d:context", healthy="1", showx="1"))
+    drawer = hosts_page.get_by_role("dialog")
+    expect(drawer.locator(".sort-not-qualifying")).to_contain_text("Not qualifying")
+    assert drawer.locator(".sort-not-qualifying th").evaluate("n=>getComputedStyle(n).borderTopWidth") == "3px"
+    expect(drawer.locator(".sort-run-band").first).to_be_visible()
+    band = drawer.locator(".sort-run-band").first
+    assert band.locator("td").first.evaluate("n=>getComputedStyle(n).backgroundColor") != drawer.locator("tbody tr:not(.sort-run-band) td").first.evaluate("n=>getComputedStyle(n).backgroundColor")
+    assert drawer.locator(".sort-run-start").first.locator("th").evaluate("n=>getComputedStyle(n).borderTopWidth") == "2px"
+    expect(drawer.get_by_role("table")).to_have_attribute("data-group-column", "1")
+
+
+def test_hosts_sort_grouping_signed_status_truthful_heading_and_styles(hosts_page, hosts_server):
+    _, facts = hosts_server
+    def signed_members(route):
+        response = route.fetch()
+        payload = response.json()
+        index = next(index for index, item in enumerate(payload["lists"]) if item["path"] == facts.host_grouping_and_ties["path"])
+        members = [endpoint for endpoint in payload["endpoints"] if endpoint["list"] == index]
+        assert len(members) == 4
+        for endpoint, status in zip(members, [-2, 2, -2, 2]):
+            endpoint["status"] = status
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", signed_members)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"], dsort="a:status,d:host"))
+    drawer = hosts_page.get_by_role("dialog")
+    heading = drawer.locator('th[scope="rowgroup"]')
+    expect(heading).to_have_text("Status absolute status code 2 4 endpoints")
+    expect(drawer.locator(".endpoint-tag")).to_have_count(4)
+    expect(drawer.locator("tbody .sort-group-column")).to_have_count(4)
+    assert drawer.locator("tbody .sort-group-column").first.evaluate("n=>getComputedStyle(n).backgroundColor") != drawer.locator("tbody .endpoint-tag").first.evaluate("n=>getComputedStyle(n).backgroundColor")
+    expect(drawer.locator("tbody")).to_contain_text("○ status -2")
+    expect(drawer.locator("tbody")).to_contain_text("○ status 2")
+    heading.click()
+    expect(drawer.locator('button[aria-expanded="true"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("dimension,value", [("price:pricing.prompt", "$1.00"), ("context", "128,000"), ("uptime:1d", "99%")])
+def test_hosts_sort_grouping_best_and_compared_host_follow_ranking(hosts_page, hosts_server, dimension, value):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, rank=dimension, hsort="a:best,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator('th[scope="rowgroup"]').filter(has_text="Best " + value).first).to_be_visible()
+    assert table.locator('th[scope="rowgroup"] strong').first.evaluate("n=>getComputedStyle(n).fontFamily") == table.locator('tr[data-list-path] .hosts-ranking').first.evaluate("n=>getComputedStyle(n).fontFamily")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha", rank=dimension, hsort="a:host:Synthetic Alpha,d:model"))
+    expect(table.locator('th[scope="rowgroup"]').filter(has_text="Synthetic Alpha " + value).first).to_be_visible()
+
+
+@pytest.mark.parametrize("other_names", [False, True])
+def test_hosts_drawer_other_names_exclude_heading_identity(hosts_page, hosts_server, other_names):
+    _, facts = hosts_server
+    def heading_is_mapped_model(route):
+        response = route.fetch()
+        payload = response.json()
+        shared = next(item for item in payload["lists"] if item["path"] == facts.host_grouping_and_ties["path"])
+        shared["display_id"] = "fake-org/hosts-shared"
+        shared["models"] = ["fake-org/hosts-shared", "fake-org/hosts-twin"] if other_names else ["fake-org/hosts-shared"]
+        shared["aliases"] = ["fake-org/hosts-shared", "fake-org/hosts-alias"] if other_names else []
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", heading_is_mapped_model)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.get_by_role("dialog", name="fake-org/hosts-shared", exact=True)
+    expect(drawer.get_by_role("button", name="Open dossier", exact=True)).to_be_enabled()
+    names = drawer.locator(".endpoint-aliases")
+    if other_names:
+        expect(names).to_have_text("Also served as fake-org/hosts-twin, fake-org/hosts-alias")
+        expect(names.get_by_role("link")).to_have_count(1)
+        expect(names.get_by_role("link", name="fake-org/hosts-twin", exact=True)).to_have_attribute("href", re.compile("view=model&model="))
+        names.get_by_role("link", name="fake-org/hosts-twin", exact=True).click()
+        expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-twin")
+    else:
+        expect(names).to_have_count(0)
+        drawer.get_by_role("button", name="Open dossier", exact=True).click()
+        expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-shared")
+
+
+def test_hosts_drawer_links_units_and_reduced_motion_at_narrow_width(hosts_page, hosts_server):
+    _, facts = hosts_server
+    def synthetic_unit(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["price_columns"][0]["unit_label"] = "/synthetic request"
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", synthetic_unit)
+    hosts_page.set_viewport_size({"width": 390, "height": 844})
+    hosts_page.emulate_media(reduced_motion="reduce")
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.get_by_role("dialog")
+    expect(drawer).to_have_css("animation-name", "none")
+    assert drawer.bounding_box()["width"] == 390
+    assert drawer.bounding_box()["x"] == 0
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    price = drawer.get_by_role("columnheader", name="Input /synthetic request", exact=True)
+    expect(price).to_have_attribute("title", "/synthetic request")
+    expect(price.locator(".price-unit")).to_have_text("/synthetic request")
+    expect(drawer.locator(".endpoint-aliases a")).to_have_count(2)
+    drawer.get_by_role("link", name="fake-org/hosts-twin", exact=True).click()
+    expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-twin")
+    hosts_page.go_back()
+    expect(drawer).to_be_visible()
+    expect(drawer.get_by_role("heading", level=2)).to_be_focused()
+
+
+def test_hosts_drawer_compact_rows_details_and_failed_reason(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha", healthy="1", hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.get_by_role("dialog")
+    expect(drawer).to_contain_text("3 of 4 endpoints qualify")
+    expect(drawer.locator("h2")).to_have_attribute("title", facts.host_grouping_and_ties["path"])
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
+    expect(rows).to_have_count(4)
+    assert all(row.bounding_box()["height"] <= 36 for row in rows.all())
+    expect(drawer.locator(".host-series-dot")).to_have_count(2)
+    expect(drawer.locator(".endpoint-reason").filter(has_text="fails Status")).to_have_count(1)
+    expect(drawer.locator("tr:not(.is-excluded) .endpoint-reason")).to_have_text(["", "", ""])
+    failed = drawer.locator("tr.is-excluded")
+    assert failed.locator(".endpoint-reason").evaluate("el => getComputedStyle(el).opacity") == "1"
+    assert failed.locator("th").evaluate("el => getComputedStyle(el).opacity") == "0.5"
+    details = drawer.get_by_role("button", name="Details", exact=True).first
+    expect(details).to_have_attribute("aria-expanded", "false")
+    details.click()
+    expect(details).to_have_attribute("aria-expanded", "true")
+    expanded = drawer.locator(".endpoint-details-row")
+    expect(expanded).to_have_count(1)
+    expect(expanded.locator("td")).to_have_attribute("colspan", str(drawer.locator("thead th").count()))
+    for fact in ["Max prompt", "Native tools", "Implicit caching", "Service tier", "Uptime 30m", "(16-bit)"]:
+        expect(expanded).to_contain_text(fact)
+    assert expanded.locator(".host-endpoint-facts").evaluate("el => getComputedStyle(el).whiteSpace") == "normal"
+    details.click()
+    expect(expanded).to_have_count(0)
+
+
 def test_hosts_compact_results_drawer_roundtrip_and_copied_url_focus(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta"))
@@ -2388,20 +2814,20 @@ def test_hosts_compact_results_drawer_roundtrip_and_copied_url_focus(hosts_page,
     shared = table.locator('tr[data-list-path="' + facts.host_grouping_and_ties["path"] + '"]')
     expect(shared.get_by_role("button", name="synthetic-response-shared", exact=True)).to_be_visible()
     assert shared.evaluate("""node => { const sample = document.createElement('span'); sample.textContent = 'Body line'; document.body.append(sample); const line = sample.getBoundingClientRect().height; sample.remove(); return node.getBoundingClientRect().height <= 2 * line; }""")
-    expect(shared).to_contain_text("+1 variants")
+    expect(shared).to_contain_text("+1 variant")
     expect(shared.locator("details")).to_have_count(0)
     expect(shared.locator('[aria-label="best in row"]')).to_have_count(2)
     expect(shared.locator(".host-spread circle")).to_have_count(3)
     shared.get_by_role("button", name="synthetic-response-shared", exact=True).click()
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
     expect(drawer).to_be_visible()
-    expect(drawer).to_contain_text("4 qualifying / 4 observed endpoints")
-    expect(drawer).to_contain_text("Aliases: fake-org/hosts-alias")
-    expect(drawer.get_by_role("button", name="fake-org/hosts-twin", exact=True)).to_be_visible()
+    expect(drawer).to_contain_text("4 of 4 endpoints qualify")
+    expect(drawer).to_contain_text("Also served as fake-org/hosts-shared, fake-org/hosts-twin, fake-org/hosts-alias")
+    expect(drawer.get_by_role("link", name="fake-org/hosts-twin", exact=True)).to_be_visible()
     expect(drawer.get_by_role("table", name="Observed endpoints").locator("tbody tr")).to_have_count(4)
-    drawer.get_by_text("Endpoint details", exact=True).first.click()
+    drawer.get_by_role("button", name="Details", exact=True).first.click()
     for fact in ["Max prompt", "Native tools", "Implicit caching", "Service tier", "Uptime 30m"]:
-        expect(drawer.locator("details[open]")).to_contain_text(fact)
+        expect(drawer.locator(".endpoint-details-row")).to_contain_text(fact)
     copied = hosts_page.url
     hosts_page.keyboard.press("Escape")
     expect(drawer).to_have_count(0)
@@ -2442,8 +2868,8 @@ def test_hosts_pagination_counts_reset_and_pin_limit_geometry(hosts_page, hosts_
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
     table = hosts_page.get_by_role("table", name="Host comparison")
     expect(table.locator("tbody tr")).to_have_count(50)
-    expect(hosts_page.locator(".hosts-summary")).to_contain_text("975 of 975 endpoints · 112 lists")
-    expect(hosts_page.locator(".hosts-pagination")).to_contain_text("Showing 50 of 112 lists")
+    expect(hosts_page.locator(".hosts-summary")).to_contain_text("975 of 975 endpoints · 112 models")
+    expect(hosts_page.locator(".hosts-pagination")).to_contain_text("Showing 50 of 112 models")
     hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
     expect(table.locator("tbody tr")).to_have_count(100)
     hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
@@ -2470,13 +2896,13 @@ def test_hosts_pagination_counts_reset_and_pin_limit_geometry(hosts_page, hosts_
         hosts_page.set_viewport_size({"width": width, "height": 600})
         assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         scroll = hosts_page.locator(".hosts-table-scroll")
-        assert scroll.evaluate("node => node.scrollWidth > node.clientWidth && node.scrollHeight > node.clientHeight")
+        assert scroll.evaluate("node => node.scrollWidth > node.clientWidth && node.scrollHeight === node.clientHeight")
         scroll.scroll_into_view_if_needed()
-        scroll.evaluate("node => { node.scrollTop = 150; node.scrollLeft = 300; }")
+        scroll.evaluate("node => { node.scrollLeft = 300; }")
         header = table.get_by_role("columnheader", name="Model", exact=True)
         first = table.locator("tbody tr").nth(10).locator("th")
         assert abs(first.bounding_box()["x"] - header.bounding_box()["x"]) < 1
-        assert header.bounding_box()["y"] >= scroll.bounding_box()["y"]
+        assert header.evaluate("node => getComputedStyle(node).top") == "auto"
 
 
 def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, hosts_server):
@@ -2486,7 +2912,7 @@ def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, host
     shared = table.locator("tbody tr").filter(has_text="synthetic-response-shared")
     expect(shared).to_contain_text("Synthetic Alpha")
     expect(shared).not_to_have_class("is-excluded")
-    expect(shared.locator("td").nth(2)).to_have_text("—")
+    expect(shared.locator("td").nth(0)).to_have_text("—")
     _switch_hash(hosts_page, _hosts_fragment(facts))
     solo = table.locator("tbody tr").filter(has_text="synthetic-response-solo")
     bare = table.locator("tbody tr").filter(has_text="fake-org/hosts-bare")
@@ -2497,7 +2923,7 @@ def test_hosts_spread_states_row_precedence_and_exact_zero_best(hosts_page, host
     expect(unranked.locator("circle")).to_have_count(0)
     _switch_hash(hosts_page, _hosts_fragment(facts, plimit="pricing.prompt:0", showx="1", hosts="Synthetic Gamma"))
     expect(bare.locator('[aria-label="best in row"]')).to_have_count(1)
-    expect(bare.locator("td").nth(2)).to_contain_text("best")
+    expect(bare.locator("td").nth(0)).to_contain_text("best")
     expect(shared).to_have_class("is-excluded")
     expect(shared).to_contain_text("No qualifying endpoint")
     expect(shared.locator("circle")).to_have_count(0)
@@ -2507,10 +2933,36 @@ def test_hosts_drawer_close_after_filter_removes_row_focuses_results(hosts_page,
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"], quantset="1", dsort="d:host"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
-    expect(drawer.get_by_role("button", name="Close endpoint drawer")).to_be_focused()
+    expect(drawer.get_by_role("heading", level=2)).to_be_focused()
     drawer.get_by_role("button", name="Close endpoint drawer").click()
     expect(hosts_page.locator(".hosts-results-heading")).to_be_focused()
     expect(hosts_page).to_have_url(re.compile("dsort=d%3Ahost"))
+
+
+@pytest.mark.parametrize("hosts_server", ["spread_cases"], indirect=True)
+def test_hosts_spread_marks_and_missing_cells(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    close = table.locator("tbody tr").filter(has_text="synthetic-response-spread-close")
+    svg = close.locator("svg")
+    expect(svg).to_have_attribute("width", "150")
+    expect(svg).to_have_attribute("height", "18")
+    expect(svg.locator("rect")).to_have_attribute("width", "3")
+    expect(svg.locator("rect")).to_have_attribute("height", "16")
+    expect(svg.locator("circle")).to_have_count(1)
+    expect(svg.locator("circle")).to_have_attribute("r", "3")
+    expect(svg.locator("circle")).to_have_attribute("opacity", "0.65")
+    unranked = table.locator("tbody tr").filter(has_text="synthetic-response-unranked")
+    expect(unranked.locator("td").nth(1).locator(".hosts-missing")).to_have_text("—")
+    table.get_by_role("button", name="synthetic-response-exact", exact=True).click()
+    missing_price = hosts_page.get_by_role("dialog").locator("tbody tr").filter(has_text="price-missing")
+    expect(missing_price.locator(".hosts-price .hosts-missing")).to_have_text("—")
+    hosts_page.keyboard.press("Escape")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha"))
+    expect(close.locator("svg")).to_have_attribute("width", "120")
+    expect(close.locator('circle[r="5"]')).to_have_count(1)
+    expect(close.locator('circle[r="5"]')).to_have_attribute("stroke-width", "1.5")
 
 
 @pytest.mark.parametrize("hosts_server", ["spread_cases"], indirect=True)
@@ -2519,19 +2971,522 @@ def test_hosts_spread_exact_identity_survives_extreme_and_overlapping_drawings(h
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts="Synthetic Alpha,Synthetic Beta,Synthetic Gamma"))
     table = hosts_page.get_by_role("table", name="Host comparison")
     row = lambda name: table.locator("tbody tr").filter(has_text="synthetic-response-spread-" + name)
-    for name, count in [("tiny-huge", 3), ("signed", 3), ("zero", 3), ("close", 2), ("equal", 2), ("only", 1)]:
+    for name, count in [("tiny-huge", 3), ("signed", 3), ("zero", 3), ("close", 2), ("equal", 0), ("only", 0)]:
         dots = row(name).locator("circle")
         expect(dots).to_have_count(count)
-        assert dots.evaluate_all("nodes => nodes.every(n => Number.isFinite(Number(n.getAttribute('cx'))) && Number(n.getAttribute('cx')) >= 5 && Number(n.getAttribute('cx')) <= 115)")
-    expect(row("equal").get_by_role("img", name="all 2 hosts equal", exact=True)).to_be_visible()
-    expect(row("only").get_by_role("img", name="only host", exact=True)).to_be_visible()
+        assert dots.evaluate_all("nodes => nodes.every(n => Number.isFinite(Number(n.getAttribute('cx'))) && Number(n.getAttribute('cx')) >= 5 && Number(n.getAttribute('cx')) <= 145)")
+    expect(row("equal").get_by_text("all 2 hosts equal", exact=True)).to_be_visible()
+    expect(row("equal").locator("svg")).to_have_count(0)
+    expect(row("only").get_by_text("only host", exact=True)).to_be_visible()
+    expect(row("only").locator("svg")).to_have_count(0)
     expect(row("close").get_by_role("img", name="Host value spread", exact=True)).to_be_visible()
     expect(row("close").locator('[aria-label="best in row"]')).to_have_count(1)
     expect(row("close").locator("td").nth(3)).to_contain_text("+<1%")
     expect(row("zero").locator('[aria-label="best in row"]')).to_have_count(2)
     expect(row("zero").locator("td").nth(4).locator("small")).to_have_attribute("title", "A percentage gap from zero is undefined.")
-    assert row("signed").locator("circle").evaluate_all("nodes => nodes.map(n => Number(n.getAttribute('cx')))") == [5, 60, 115]
+    assert row("signed").locator("circle").evaluate_all("nodes => nodes.map(n => Number(n.getAttribute('cx')))") == [5, 75, 145]
     # Both entries remain separately titled and described when drawing precision overlaps.
     expect(row("close").locator("circle title")).to_have_count(2)
     expect(row("close").locator(".hosts-accessible")).to_contain_text("Synthetic Alpha")
     expect(row("close").locator(".hosts-accessible")).to_contain_text("Synthetic Beta")
+
+
+def test_hosts_chrome_search_clear_and_provider_control(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    expect(hosts_page.locator('body')).to_have_attribute('data-view', 'hosts')
+    expect(hosts_page.get_by_role('heading', level=1)).to_have_count(1)
+    expect(hosts_page.locator('.filter-bar .providers')).to_have_count(0)
+    expect(hosts_page.locator('.filter-bar .find-model')).to_have_count(0)
+    expect(hosts_page.get_by_label('Provider', exact=True)).to_be_visible()
+    expect(hosts_page.get_by_label('Snapshot', exact=True)).to_have_value(str(facts.scrapes['first']))
+    expect(hosts_page.get_by_role('button', name='Clear all', exact=True)).to_have_count(0)
+    hosts_page.keyboard.press('/')
+    search = hosts_page.get_by_role('combobox', name='Search models', exact=True)
+    expect(search).to_be_focused()
+    search.fill('shared')
+    expect(hosts_page).to_have_url(re.compile('hq=shared'))
+    expect(hosts_page.get_by_role('listbox', name='Model suggestions')).to_be_visible()
+    option = hosts_page.get_by_role('listbox', name='Model suggestions').get_by_role('option').first
+    assert option.bounding_box()['height'] <= option.evaluate('e => parseFloat(getComputedStyle(e).lineHeight) * 1.5')
+    before = hosts_page.evaluate('history.length')
+    hosts_page.get_by_role('button', name='Clear model search', exact=True).click()
+    expect(search).to_have_value('')
+    expect(search).to_be_focused()
+    hosts_page.wait_for_timeout(350)
+    assert 'hq=' not in hosts_page.evaluate('location.hash')
+    assert hosts_page.evaluate('history.length') == before + 1
+    search.fill('pending-draft')
+    hosts_page.get_by_role('button', name='Clear model search', exact=True).click()
+    hosts_page.wait_for_timeout(350)
+    expect(search).to_have_value('')
+    assert 'hq=' not in hosts_page.evaluate('location.hash')
+    hosts_page.get_by_text('Appearance', exact=True).click()
+    hosts_page.get_by_role('button', name='Dark', exact=True).click()
+    expect(hosts_page.locator('html')).to_have_attribute('data-theme', 'dark')
+    hosts_page.get_by_text('Appearance', exact=True).click()
+    hosts_page.get_by_label('Provider', exact=True).select_option(facts.single_provider_id)
+    assert hosts_page.evaluate("new URLSearchParams(location.hash.slice(1)).get('providers')") == facts.single_provider_id + ',' + facts.provider_id
+    expect(hosts_page.get_by_label('Snapshot', exact=True)).to_have_value(str(facts.scrapes['no_prices']))
+    hosts_page.go_back()
+    expect(hosts_page.get_by_label('Provider', exact=True)).to_have_value(facts.provider_id)
+    hosts_page.get_by_role('button', name='1 Activity', exact=True).click()
+    expect(hosts_page.locator('body')).to_have_attribute('data-view', 'activity')
+    expect(hosts_page.locator('.providers')).to_be_visible()
+
+
+@pytest.mark.parametrize('hosts_server', ['many_lists'], indirect=True)
+def test_hosts_page_scroll_keeps_toolbar_and_nonoverflow_header_visible(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({'width': 1440, 'height': 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    rows = hosts_page.locator('.hosts-table tbody tr')
+    expect(rows).to_have_count(50)
+    assert rows.first.bounding_box()['y'] <= 320
+    assert rows.evaluate_all('rows => rows.filter(r => { const b=r.getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight; }).length') >= 18
+    hosts_page.get_by_role('button', name='Show 50 more').click()
+    hosts_page.evaluate('scrollTo(0, 2000)')
+    toolbar = hosts_page.locator('.hosts-toolbar')
+    assert abs(toolbar.bounding_box()['y']) < 1
+    header = hosts_page.locator('.hosts-table thead th').first
+    assert abs(header.bounding_box()['y'] - toolbar.bounding_box()['height']) < 2
+    scroll = hosts_page.locator('.hosts-table-scroll')
+    assert scroll.evaluate('e => e.scrollHeight === e.clientHeight')
+    hosts_page.set_viewport_size({'width': 390, 'height': 844})
+    hosts_page.evaluate('scrollTo(0, 2000)')
+    assert toolbar.bounding_box()['y'] < 0
+    assert hosts_page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+
+
+@pytest.mark.parametrize('hosts_server', ['output_prices'], indirect=True)
+def test_hosts_default_output_ranking_and_configured_chip_summaries(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy='1', ctxmin='200K', upmin='99.5', upwin='30m', tierset='1'))
+    expect(hosts_page.get_by_label('Ranking', exact=True)).to_have_value('price:pricing.completion')
+    expect(hosts_page.get_by_label('Ranking', exact=True).locator('option:checked')).to_have_text('Rank by output price')
+    chips = hosts_page.locator('.host-condition-counts .condition-chip')
+    assert chips.evaluate_all('nodes => nodes.map(n => n.textContent.split(":")[0])') == ['Uptime', 'Status', 'Context', 'Tier']
+    expect(chips.nth(0)).to_contain_text('Uptime: ≥ 99.5% (30 min)')
+    expect(chips.nth(1)).to_contain_text('Status: normal only −5')
+    expect(chips.nth(2)).to_contain_text('Context: ≥ 200K −132')
+    expect(chips.nth(3)).to_contain_text('Tier: none −135')
+    for name in ['Uptime', 'Status', 'Context', 'Tier']:
+        expect(hosts_page.get_by_role('button', name=name + ' condition', exact=True)).to_have_attribute('aria-pressed', 'true')
+        expect(hosts_page.get_by_role('button', name='Remove ' + name + ' filter', exact=True)).to_be_visible()
+    hosts_page.get_by_role('button', name='Clear all', exact=True).click()
+    expect(chips).to_have_count(0)
+    expect(hosts_page.get_by_role('button', name='Clear all', exact=True)).to_have_count(0)
+    expect(hosts_page.get_by_label('Ranking', exact=True)).to_have_value('price:pricing.completion')
+
+
+def test_hosts_endpoint_drawer_accepts_escape_as_soon_as_visible(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.evaluate('''() => {
+        const observer = new MutationObserver(() => {
+            if (!document.querySelector('.endpoint-drawer')) return;
+            observer.disconnect();
+            window.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+        });
+        observer.observe(document.body, {childList: true, subtree: true});
+    }''')
+    hosts_page.get_by_role('button', name='synthetic-response-shared', exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile('hlist='))
+    expect(hosts_page.get_by_role('dialog')).to_have_count(0)
+
+
+def test_hosts_capture_and_history_translate_model_copy_without_changing_api(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hosts='Synthetic Alpha'))
+    expect(hosts_page.locator('.host-capture-status')).to_contain_text('8 models requested')
+    history = hosts_page.get_by_role('region', name='Host history', exact=True)
+    expect(history.get_by_role('columnheader', name='Models', exact=True)).to_be_visible()
+    expect(history.get_by_role('table').locator('tbody tr').first).to_contain_text('8 models requested')
+    expect(history.locator('svg title').first).to_contain_text('8 models requested')
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts='Synthetic Missing'))
+    expect(history.locator('.endpoint-truncation')).to_contain_text('these models')
+    payload = hosts_page.request.get(_origin(hosts_server) + '/api/hosts?provider=' + facts.provider_id + '&scrape_id=' + str(facts.scrapes['first'])).json()
+    assert '8 lists requested' in payload['capture']['status_line']
+
+
+def test_hosts_default_ranking_retains_prompt_fallback_with_other_price_columns(hosts_page, hosts_server):
+    _, facts = hosts_server
+
+    def alternate_first_column(route):
+        response = route.fetch()
+        payload = response.json()
+        payload['price_columns'].insert(0, {**payload['price_columns'][0], 'path': 'pricing.synthetic-first', 'label': 'Synthetic first'})
+        for endpoint in payload['endpoints']:
+            if 'pricing.prompt' in endpoint['prices']:
+                endpoint['prices']['pricing.synthetic-first'] = endpoint['prices']['pricing.prompt']
+        route.fulfill(response=response, json=payload)
+
+    hosts_page.route(re.compile(r'/api/hosts\?'), alternate_first_column)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    expect(hosts_page.get_by_label('Ranking', exact=True)).to_have_value('price:pricing.prompt')
+
+
+@pytest.mark.parametrize('width', [319, 390, 1440])
+def test_hosts_appearance_options_fit_visible_popup_without_scrolling(hosts_page, hosts_server, width):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({'width': width, 'height': 900})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_text('Appearance', exact=True).click()
+    popup = hosts_page.locator('.appearance > .segmented')
+    row = popup.locator(':scope > div')
+    assert row.evaluate('e => e.scrollWidth <= e.clientWidth')
+    for label, value in [('System', None), ('Light', 'light'), ('Dark', 'dark')]:
+        button = popup.get_by_role('button', name=label, exact=True)
+        assert button.evaluate('''button => {
+            const box = button.getBoundingClientRect();
+            const row = button.parentElement.getBoundingClientRect();
+            const panel = button.closest('fieldset').getBoundingClientRect();
+            const visible = box.left >= Math.max(0, row.left, panel.left)
+                && box.right <= Math.min(innerWidth, row.right, panel.right)
+                && box.top >= Math.max(0, row.top, panel.top)
+                && box.bottom <= Math.min(innerHeight, row.bottom, panel.bottom);
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return visible && (hit === button || button.contains(hit));
+        }''')
+        button.click()
+        if value is None:
+            expect(hosts_page.locator('html')).not_to_have_attribute('data-theme')
+        else:
+            expect(hosts_page.locator('html')).to_have_attribute('data-theme', value)
+        expect(button).to_have_attribute('aria-pressed', 'true')
+
+
+def test_hosts_menus_fixed_chrome_focus_and_grouped_supports(hosts_page, hosts_server):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name="Precision condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Precision", exact=True)
+    search = dialog.get_by_role("searchbox", name="Filter precision…", exact=True)
+    expect(search).to_be_focused()
+    expect(dialog.get_by_role("button", name="Close", exact=True)).to_have_count(0)
+    expect(dialog.locator("header")).to_contain_text("Allow ·")
+    expect(dialog.locator("footer")).to_have_text("No effect yet")
+    expect(dialog.locator(".condition-presets button")).to_have_text(["16-bit or better", "8-bit or better", "Any"])
+    assert dialog.locator("../..").bounding_box()["width"] == 320
+    assert dialog.locator("../..").bounding_box()["height"] <= 460
+    assert dialog.evaluate("el => el.scrollHeight === el.clientHeight")
+    options = dialog.locator(".option-list-options")
+    first = dialog.get_by_role("checkbox").first.bounding_box()
+    bounds = options.bounding_box()
+    assert bounds["y"] <= first["y"] < bounds["y"] + bounds["height"]
+    chrome = [dialog.locator("header"), search, dialog.locator(".condition-presets"), dialog.locator("footer")]
+    positions = [element.bounding_box() for element in chrome]
+    options.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    last = dialog.get_by_role("checkbox").last.bounding_box()
+    assert bounds["y"] <= last["y"] < bounds["y"] + bounds["height"]
+    assert [element.bounding_box() for element in chrome] == positions
+    expect(dialog.get_by_role("checkbox")).to_have_count(12)
+    search.fill("fp")
+    expect(dialog.locator("mark")).not_to_have_count(0)
+    search.press("ArrowDown")
+    expect(dialog.get_by_role("checkbox", name="fp32", exact=True)).to_be_focused()
+    expect(dialog.locator(".option-row:focus-within")).to_have_count(1)
+    hosts_page.keyboard.press("Escape")
+    hosts_page.get_by_role("button", name="Supports condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Supports", exact=True)
+    expect(dialog.get_by_role("searchbox")).to_have_count(1)
+    expect(dialog.locator("h4")).to_have_text(["Request parameters", "Native tools", "Caching"])
+    expect(dialog.get_by_role("searchbox", name="Filter supports…", exact=True)).to_be_focused()
+    expect(dialog.locator("header")).to_contain_text("Require ·")
+    dialog.get_by_role("searchbox").fill("caching")
+    expect(dialog.get_by_role("checkbox")).to_have_count(1)
+    dialog.get_by_role("checkbox", name="implicit caching", exact=True).check()
+    expect(hosts_page).to_have_url(re.compile("caching=1"))
+    expect(dialog.locator("footer")).to_contain_text("Removes")
+    expect(dialog.locator("footer")).to_contain_text("of 135 endpoints")
+    dialog.get_by_role("button", name="Clear", exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile("caching="))
+
+
+def test_hosts_scope_only_normalization_empty_selection_and_history(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, xmode="invalid"))
+    expect(hosts_page).not_to_have_url(re.compile("xmode="))
+    trigger = hosts_page.get_by_role("button", name="Hosts condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Hosts", exact=True)
+    dialog.get_by_role("button", name="Only these", exact=True).click()
+    expect(trigger).to_have_attribute("aria-pressed", "false")
+    expect(dialog.locator("footer")).to_have_text("No effect yet")
+    dialog.get_by_role("checkbox", name="Synthetic Alpha", exact=True).check()
+    expect(trigger).to_contain_text("only Synthetic Alpha")
+    expect(hosts_page).to_have_url(re.compile("xmode=only"))
+    only_count = hosts_page.locator(".hosts-count").inner_text()
+    dialog.get_by_role("button", name="Exclude these", exact=True).click()
+    expect(trigger).to_contain_text("excluding Synthetic Alpha")
+    expect(hosts_page.locator(".hosts-count")).not_to_have_text(only_count)
+    hosts_page.go_back()
+    expect(trigger).to_contain_text("only Synthetic Alpha")
+    expect(hosts_page.locator(".hosts-count")).to_have_text(only_count)
+    hosts_page.go_forward()
+    expect(trigger).to_contain_text("excluding Synthetic Alpha")
+    dialog.get_by_role("checkbox", name="Synthetic Alpha", exact=True).uncheck()
+    expect(trigger).to_have_attribute("aria-pressed", "false")
+    expect(dialog.locator("footer")).to_have_text("No effect yet")
+
+
+def test_hosts_picker_copy_and_uptime_toggle_price_presets(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name="Add host", exact=True).click()
+    picker = hosts_page.get_by_role("dialog", name="Compare hosts", exact=True)
+    expect(picker.get_by_role("searchbox", name="Find a host…")).to_be_focused()
+    expect(picker.locator("header")).to_contain_text("0 of")
+    expect(picker.locator(".option-row small").first).to_contain_text("models")
+    expect(picker.locator("footer")).to_have_text("Sorted by models served")
+    picker.get_by_role("checkbox", name="Synthetic Alpha", exact=True).check()
+    picker.get_by_role("button", name="Clear", exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile(r"[&#]hosts="))
+    hosts_page.keyboard.press("Escape")
+    hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
+    uptime = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    expect(uptime.get_by_label("Minimum uptime percent", exact=True)).to_be_focused()
+    expect(uptime.get_by_label("Minimum uptime percent", exact=True)).to_have_attribute("placeholder", "e.g. 99.95")
+    uptime.get_by_role("button", name="99.9%", exact=True).click()
+    expect(uptime.get_by_role("button", name="99.9%", exact=True)).to_have_attribute("aria-pressed", "true")
+    uptime.get_by_role("button", name="99.9%", exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile("upmin="))
+    uptime.get_by_role("button", name="30 min", exact=True).click()
+    expect(hosts_page).to_have_url(re.compile("upwin=30m"))
+    hosts_page.keyboard.press("Escape")
+    hosts_page.get_by_role("button", name="Price condition", exact=True).click()
+    price = hosts_page.get_by_role("dialog", name="Price", exact=True)
+    expect(price.get_by_label("Maximum price", exact=True)).to_be_focused()
+    price.get_by_label("Maximum price", exact=True).fill("7.000000000000000001")
+    price.get_by_role("button", name="≤ $0.5", exact=True).click()
+    hosts_page.wait_for_timeout(350)
+    expect(price.get_by_label("Maximum price", exact=True)).to_have_value("0.5")
+    expect(hosts_page).to_have_url(re.compile("plimit=pricing.prompt%3A0.5"))
+    price.get_by_role("button", name="Clear", exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile("plimit="))
+
+
+def test_hosts_overflowing_options_scroll_under_fixed_chrome_and_zero_counts(hosts_page, hosts_server):
+    _, facts = hosts_server
+
+    def add_synthetic_options(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["vocab"]["parameters"] += [f"synthetic-empty-parameter-{index:03}" for index in range(80)]
+        route.fulfill(response=response, json=payload)
+
+    hosts_page.route(re.compile(r"/api/hosts\?"), add_synthetic_options)
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_role("button", name="Supports condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Supports", exact=True)
+    options = dialog.locator(".option-list-options")
+    assert options.evaluate("el => el.scrollHeight > el.clientHeight")
+    header = dialog.locator("header").bounding_box()
+    footer = dialog.locator("footer").bounding_box()
+    search = dialog.get_by_role("searchbox").bounding_box()
+    options.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    assert options.evaluate("el => el.scrollTop > 0")
+    assert dialog.locator("header").bounding_box() == header
+    assert dialog.locator("footer").bounding_box() == footer
+    assert dialog.get_by_role("searchbox").bounding_box() == search
+    empty = dialog.get_by_role("checkbox", name="synthetic-empty-parameter-079", exact=True).locator("..")
+    expect(empty.locator("small")).to_have_text("0")
+    assert empty.evaluate("el => getComputedStyle(el).opacity") == "0.45"
+    empty.get_by_role("checkbox").check()
+    expect(hosts_page).to_have_url(re.compile("params=synthetic-empty-parameter-079"))
+    hosts_page.set_viewport_size({"width": 390, "height": 844})
+    expect(dialog).to_be_visible()
+    hosts_page.wait_for_function("() => document.querySelector('.condition-overlay').getBoundingClientRect().bottom === innerHeight")
+    rect = dialog.bounding_box()
+    assert rect["height"] <= 844 * .72
+    assert rect["x"] >= 0 and rect["x"] + rect["width"] <= 390
+
+
+@pytest.mark.parametrize("hosts_server", ["no_telemetry"], indirect=True)
+def test_hosts_paused_uptime_focus_and_footer_without_close(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, upmin="99.99"))
+    hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    expect(dialog.locator("footer")).to_have_text("PausedClear")
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_be_focused()
+    expect(dialog.get_by_role("button", name="Close", exact=True)).to_have_count(0)
+    hosts_page.keyboard.press("Tab")
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_be_focused()
+    dialog.get_by_role("button", name="Clear", exact=True).click()
+    hosts_page.get_by_role("button", name="Uptime condition", exact=True).click()
+    expect(dialog.get_by_role("heading", name="Uptime", exact=True)).to_be_focused()
+    expect(dialog.locator("footer")).to_have_text("Paused")
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+    hosts_page.keyboard.press("Escape")
+    expect(hosts_page.get_by_role("button", name="Uptime condition", exact=True)).to_be_focused()
+
+
+@pytest.mark.parametrize(("condition", "key", "committed", "field", "preset"), [
+    ("Price", "plimit", "pricing.prompt:1", "Maximum price", "≤ $1"),
+    ("Context", "ctxmin", "32K", "Minimum context length", "32K"),
+])
+def test_hosts_reselecting_preset_replaces_pending_draft(hosts_page, hosts_server, condition, key, committed, field, preset):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, **{key: committed}))
+    hosts_page.get_by_role("button", name=f"{condition} condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name=condition, exact=True)
+    dialog.get_by_label(field, exact=True).fill("7")
+    dialog.get_by_role("button", name=preset, exact=True).click()
+    expect(dialog.get_by_label(field, exact=True)).to_have_value(committed.split(":")[-1])
+    hosts_page.wait_for_timeout(350)
+    expect(hosts_page).to_have_url(re.compile(key + "=" + re.escape(quote(committed, safe=""))))
+
+
+@pytest.mark.parametrize(("condition", "role", "field"), [
+    ("Precision", "searchbox", "Filter precision…"),
+    ("Tier", "searchbox", "Filter tier…"),
+    ("Supports", "searchbox", "Filter supports…"),
+    ("Hosts", "searchbox", "Filter hosts…"),
+    ("Context", "textbox", "Minimum context length"),
+    ("Max output", "textbox", "Minimum max output"),
+    ("Price", "textbox", "Maximum price"),
+    ("Uptime", "textbox", "Minimum uptime percent"),
+    ("Status", "checkbox", "Normal status only"),
+])
+def test_hosts_each_menu_initial_focus_and_escape(hosts_page, hosts_server, condition, role, field):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    before = hosts_page.evaluate("location.hash")
+    trigger = hosts_page.get_by_role("button", name=f"{condition} condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name=condition, exact=True)
+    expect(dialog.get_by_role(role, name=field, exact=True)).to_be_focused()
+    expect(dialog.get_by_role("button", name="Close", exact=True)).to_have_count(0)
+    assert hosts_page.evaluate("location.hash") == before
+    hosts_page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(trigger).to_be_focused()
+
+
+def test_hosts_pending_uptime_recovers_after_snapshot_change(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"], upmin="99.9"))
+    trigger = hosts_page.get_by_role("button", name="Uptime condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_be_focused()
+    expect(dialog.locator("footer")).to_have_text("PausedClear")
+    expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_be_disabled()
+    hosts_page.keyboard.press("Escape")
+    _switch_hash(hosts_page, _hosts_fragment(facts, upmin="99.9"))
+    expect(trigger).not_to_contain_text("paused")
+    trigger.click()
+    expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_be_focused()
+    expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_have_value("99.9")
+    expect(dialog.locator("footer")).to_contain_text("Removes")
+
+
+@pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_no_price_menu_keeps_heading_focus(hosts_page, hosts_server, key, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"]))
+    trigger = hosts_page.get_by_role("button", name="Price condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Price", exact=True)
+    heading = dialog.get_by_role("heading", name="Price", exact=True)
+    expect(dialog).to_contain_text("No price columns in this capture.")
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press(key)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(trigger).to_be_focused()
+
+
+@pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])
+@pytest.mark.parametrize("hosts_server", ["no_telemetry"], indirect=True)
+def test_hosts_paused_unconfigured_uptime_keeps_heading_focus(hosts_page, hosts_server, key):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    trigger = hosts_page.get_by_role("button", name="Uptime condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    heading = dialog.get_by_role("heading", name="Uptime", exact=True)
+    expect(heading).to_be_focused()
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+    hosts_page.keyboard.press(key)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(trigger).to_be_focused()
+
+
+@pytest.mark.parametrize("condition", ["Uptime", "Context", "Max output", "Price"])
+def test_hosts_short_viewport_threshold_controls_are_reachable(hosts_page, hosts_server, condition):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 844, "height": 390})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, upmin="99.9", ctxmin="32K", outmin="8K", plimit="pricing.prompt:5"))
+    hosts_page.get_by_role("button", name=f"{condition} condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name=condition, exact=True)
+    expect(dialog.locator('input[type="text"]')).to_be_focused()
+    assert dialog.bounding_box()["width"] == 318
+    body = dialog.locator(".condition-form-body")
+    assert body.evaluate("el => el.scrollHeight > el.clientHeight")
+    assert body.evaluate("el => el.scrollWidth === el.clientWidth")
+    assert dialog.locator(".condition-segments").evaluate_all("elements => elements.every(el => el.scrollWidth <= el.clientWidth)")
+    measurements = dialog.evaluate("""el => {
+        const box = element => { const r = element.getBoundingClientRect(); return {top:r.top, bottom:r.bottom, height:r.height, width:r.width}; };
+        return {overlay:box(el.closest('.condition-overlay')),panel:box(el),children:[...el.children].map(child => ({tag:child.tagName, text:child.textContent, ...box(child)}))};
+    }""")
+    chrome = [dialog.locator("header"), dialog.locator("footer")]
+    positions = [element.bounding_box() for element in chrome]
+    overlay = measurements["overlay"]
+    for position in positions:
+        assert overlay["top"] <= position["y"]
+        assert position["y"] + position["height"] <= overlay["bottom"]
+    for control in dialog.locator("input, select, button").all():
+        control.scroll_into_view_if_needed()
+        assert control.evaluate("""el => {
+            const rect = el.getBoundingClientRect(), hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+            return rect.width > 0 && rect.height > 0 && (hit === el || el.contains(hit));
+        }"""), f"Unreachable control {control.get_attribute('aria-label') or control.inner_text()}: {measurements}"
+        assert [element.bounding_box() for element in chrome] == positions
+    body.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    assert body.evaluate("el => el.scrollTop > 0")
+    assert [element.bounding_box() for element in chrome] == positions
+    assert dialog.evaluate("el => el.scrollHeight === el.clientHeight")
+    assert dialog.locator("../..").evaluate("el => el.scrollTop === 0 && el.scrollHeight === el.clientHeight")
+
+
+@pytest.mark.parametrize("upmin", ["", "99.9"])
+@pytest.mark.parametrize("hosts_server", ["no_telemetry"], indirect=True)
+def test_hosts_short_paused_uptime_keeps_chrome_fixed(hosts_page, hosts_server, upmin):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 844, "height": 390})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, upmin=upmin))
+    trigger = hosts_page.get_by_role("button", name="Uptime condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    expected_focus = dialog.get_by_role("button", name="Clear", exact=True) if upmin else dialog.get_by_role("heading", name="Uptime", exact=True)
+    expect(expected_focus).to_be_focused()
+    body = dialog.locator(".condition-form-body")
+    expect(dialog.locator(".uptime-unavailable")).to_be_visible()
+    positions = [dialog.locator(tag).bounding_box() for tag in ("header", "footer")]
+    body.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    assert body.evaluate("el => el.scrollTop > 0")
+    assert [dialog.locator(tag).bounding_box() for tag in ("header", "footer")] == positions
+    expect(dialog.locator("footer")).to_contain_text("Paused")
+    assert dialog.locator("../..").evaluate("el => el.scrollTop === 0 && el.scrollHeight === el.clientHeight")
+    if upmin:
+        clear = dialog.get_by_role("button", name="Clear", exact=True)
+        assert clear.evaluate("el => { const r=el.getBoundingClientRect(); return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2) === el; }")
+        clear.click()
+        expect(hosts_page).not_to_have_url(re.compile("upmin="))
+    else:
+        hosts_page.keyboard.press("Tab")
+        expect(expected_focus).to_be_focused()
+        hosts_page.keyboard.press("Shift+Tab")
+        expect(expected_focus).to_be_focused()
+        hosts_page.keyboard.press("Escape")
+        expect(trigger).to_be_focused()
