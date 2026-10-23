@@ -321,7 +321,7 @@ def test_hosts_drawer_sort_secondary_groups_exact_missing_and_reopen(hosts_page,
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy="1", showx="1", hlist=facts.host_grouping_and_ties["path"], dsort="d:host,a:context"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)
-    rows = drawer.locator("tbody tr")
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
     assert rows.locator("th").all_text_contents() == ["Synthetic Beta", "Synthetic Alpha", "Synthetic Alpha", "Synthetic Gamma"]
     tags = lambda: rows.locator("td:nth-child(2)").evaluate_all("cells=>cells.map(cell=>cell.firstChild.textContent)")
     assert tags() == ["beta", "alpha-cheap", "alpha-fast", "gamma"]
@@ -336,7 +336,7 @@ def test_hosts_drawer_sort_secondary_groups_exact_missing_and_reopen(hosts_page,
     expect(drawer.locator(".drawer-sort-summary")).to_contain_text("Click again to reverse, a third time to remove it.")
     _switch_hash(hosts_page, _hosts_fragment(facts, hlist=facts.host_exact_prices["path"], dsort="d:price:pricing.prompt"))
     drawer = hosts_page.get_by_role("dialog", name="synthetic-response-exact", exact=True)
-    rows = drawer.locator("tbody tr")
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
     assert tags() == ["exact-high", "exact-low", "price-missing"]
     drawer.get_by_role("button", name="Close endpoint drawer").click()
     hosts_page.get_by_role("table", name="Host comparison").get_by_role("button", name="synthetic-response-exact", exact=True).click()
@@ -597,7 +597,7 @@ def test_hosts_exact_price_limit_and_condition_reason_order(hosts_page, hosts_se
     row = hosts_page.locator('tr[data-list-path="' + facts.host_exact_prices["path"] + '"]')
     row.get_by_role("button").click()
     drawer = hosts_page.get_by_role("dialog")
-    expect(drawer.locator("tbody tr:not(.is-excluded)")).to_contain_text("exact-low")
+    expect(drawer.locator('tbody tr:not(.is-excluded):has(> th[scope="row"])')).to_contain_text("exact-low")
     expect(drawer.locator("tbody tr.is-excluded").filter(has_text="exact-high")).to_contain_text("Price")
     hosts_page.keyboard.press("Escape")
     _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Gamma,Synthetic Alpha", healthy="1", quantset="1", showx="1"))
@@ -2543,13 +2543,87 @@ def test_hosts_drawer_hidden_price_sort_survives_lists_and_absent_capture(hosts_
     expect(drawer.get_by_role("columnheader", name="Output", exact=True)).to_have_count(0)
     expect(drawer.get_by_role("columnheader", name="Input", exact=True)).to_have_count(1)
     expect(drawer.locator(".drawer-sort-summary")).not_to_contain_text("Sorted by")
+    expect(drawer.locator(".sort-group-column")).to_have_count(0)
+    expect(drawer.locator(".sort-run-band")).to_have_count(0)
     expect(hosts_page).to_have_url(re.compile("dsort=d%3Aprice%3Apricing.completion"))
     table.get_by_role("button", name="synthetic-response-shared", exact=True).click()
     expect(output).to_have_attribute("aria-sort", "descending")
+    expect(drawer.locator("tbody .sort-group-column")).to_have_count(4)
+    expect(drawer.locator(".sort-run-band")).to_have_count(3)
     assert drawer.locator("tbody .endpoint-tag").all_text_contents() == ["alpha-fast", "alpha-cheap", "beta", "gamma"]
     # A new provider's capture has no completion path: normalization drops it.
     _switch_hash(hosts_page, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"], dsort="d:price:pricing.completion", hlist=facts.host_grouping_and_ties["path"]))
     expect(hosts_page).not_to_have_url(re.compile("dsort="))
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+def test_hosts_sort_grouping_page_headings_bands_and_hidden_primary(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator("tr[data-list-path]")).to_have_count(50)
+    headings = table.locator('th[scope="rowgroup"]')
+    expect(headings.first).to_be_visible()
+    expect(headings.first).to_contain_text("Hosts")
+    assert sum(int(text.split()[-2]) for text in headings.all_text_contents()) == 50
+    assert headings.first.evaluate("n=>getComputedStyle(n).borderTopWidth") == "0px"
+    assert headings.nth(1).evaluate("n=>getComputedStyle(n).borderTopWidth") == "2px"
+    assert headings.evaluate_all("nodes => nodes.every(n => !n.hasAttribute('tabindex') && !n.querySelector('button,a'))")
+    headings.first.click()
+    expect(hosts_page.get_by_role("dialog")).to_have_count(0)
+    hosts_page.get_by_role("button", name="Show 50 more", exact=True).click()
+    expect(table.locator("tr[data-list-path]")).to_have_count(100)
+    assert sum(int(text.split()[-2]) for text in headings.all_text_contents()) == 100
+    _switch_hash(hosts_page, _hosts_fragment(facts, hsort="a:host:Synthetic Alpha,a:model"))
+    expect(table.locator('th[scope="rowgroup"]')).to_have_count(0)
+    expect(table).to_have_attribute("data-group-column", "1")
+    expect(table.locator(".sort-run-band")).to_have_count(0)
+    _switch_hash(hosts_page, _hosts_fragment(facts, hsort="a:hosts,d:model", hlist=facts.host_grouping_and_ties["path"], dsort="a:host,d:context", healthy="1", showx="1"))
+    drawer = hosts_page.get_by_role("dialog")
+    expect(drawer.locator(".sort-not-qualifying")).to_contain_text("Not qualifying")
+    assert drawer.locator(".sort-not-qualifying th").evaluate("n=>getComputedStyle(n).borderTopWidth") == "3px"
+    expect(drawer.locator(".sort-run-band").first).to_be_visible()
+    band = drawer.locator(".sort-run-band").first
+    assert band.locator("td").first.evaluate("n=>getComputedStyle(n).backgroundColor") != drawer.locator("tbody tr:not(.sort-run-band) td").first.evaluate("n=>getComputedStyle(n).backgroundColor")
+    assert drawer.locator(".sort-run-start").first.locator("th").evaluate("n=>getComputedStyle(n).borderTopWidth") == "2px"
+    expect(drawer.get_by_role("table")).to_have_attribute("data-group-column", "1")
+
+
+def test_hosts_sort_grouping_signed_status_truthful_heading_and_styles(hosts_page, hosts_server):
+    _, facts = hosts_server
+    def signed_members(route):
+        response = route.fetch()
+        payload = response.json()
+        index = next(index for index, item in enumerate(payload["lists"]) if item["path"] == facts.host_grouping_and_ties["path"])
+        members = [endpoint for endpoint in payload["endpoints"] if endpoint["list"] == index]
+        assert len(members) == 4
+        for endpoint, status in zip(members, [-2, 2, -2, 2]):
+            endpoint["status"] = status
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", signed_members)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"], dsort="a:status,d:host"))
+    drawer = hosts_page.get_by_role("dialog")
+    heading = drawer.locator('th[scope="rowgroup"]')
+    expect(heading).to_have_text("Status absolute status code 2 4 endpoints")
+    expect(drawer.locator(".endpoint-tag")).to_have_count(4)
+    expect(drawer.locator("tbody .sort-group-column")).to_have_count(4)
+    assert drawer.locator("tbody .sort-group-column").first.evaluate("n=>getComputedStyle(n).backgroundColor") != drawer.locator("tbody .endpoint-tag").first.evaluate("n=>getComputedStyle(n).backgroundColor")
+    expect(drawer.locator("tbody")).to_contain_text("○ status -2")
+    expect(drawer.locator("tbody")).to_contain_text("○ status 2")
+    heading.click()
+    expect(drawer.locator('button[aria-expanded="true"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("dimension,value", [("price:pricing.prompt", "$1.00"), ("context", "128,000"), ("uptime:1d", "99%")])
+def test_hosts_sort_grouping_best_and_compared_host_follow_ranking(hosts_page, hosts_server, dimension, value):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, rank=dimension, hsort="a:best,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    expect(table.locator('th[scope="rowgroup"]').filter(has_text="Best " + value).first).to_be_visible()
+    assert table.locator('th[scope="rowgroup"] strong').first.evaluate("n=>getComputedStyle(n).fontFamily") == table.locator('tr[data-list-path] .hosts-ranking').first.evaluate("n=>getComputedStyle(n).fontFamily")
+    _switch_hash(hosts_page, _hosts_fragment(facts, hosts="Synthetic Alpha", rank=dimension, hsort="a:host:Synthetic Alpha,d:model"))
+    expect(table.locator('th[scope="rowgroup"]').filter(has_text="Synthetic Alpha " + value).first).to_be_visible()
 
 
 @pytest.mark.parametrize("other_names", [False, True])
@@ -2613,7 +2687,7 @@ def test_hosts_drawer_compact_rows_details_and_failed_reason(hosts_page, hosts_s
     drawer = hosts_page.get_by_role("dialog")
     expect(drawer).to_contain_text("3 of 4 endpoints qualify")
     expect(drawer.locator("h2")).to_have_attribute("title", facts.host_grouping_and_ties["path"])
-    rows = drawer.locator("tbody tr")
+    rows = drawer.locator('tbody tr:has(> th[scope="row"])')
     expect(rows).to_have_count(4)
     assert all(row.bounding_box()["height"] <= 36 for row in rows.all())
     expect(drawer.locator(".host-series-dot")).to_have_count(2)

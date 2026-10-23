@@ -1486,3 +1486,13 @@ body[data-view="hosts"] .segmented > div { border-radius: 6px; overflow: hidden;
 body[data-view="hosts"] .segmented button { min-height: 30px; padding: 4px 10px; font-size: 15px; line-height: 1.45; }
 body[data-view="hosts"] .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--ground); }
 .condition-popover footer > button { border: 0; background: transparent; color: var(--accent); padding: 2px 4px; }
+
+/* Sort groups share the comparator and remain within each visible partition. */
+.hosts-table .sort-group-heading, .hosts-table .sort-group-heading:hover { cursor: default; }
+.hosts-table .sort-group-heading > th, .endpoint-table-scroll .sort-group-heading > th { font-weight: 400; text-align: left; background: var(--panel); }
+.hosts-table-scroll .hosts-table tr.sort-group-heading > th:first-child { position: static; max-width: none; overflow: visible; }
+.sort-group-heading strong { color: var(--ink-strong); }
+.hosts-table .sort-run-band > *, .endpoint-table-scroll .sort-run-band > * { --sort-row-background: color-mix(in srgb, var(--ink) 5%, var(--panel)); background: var(--sort-row-background); }
+.hosts-table .sort-run-start > *, .endpoint-table-scroll .sort-run-start > * { border-top: 2px solid var(--border-strong); }
+.hosts-table .sort-not-qualifying > *, .endpoint-table-scroll .sort-not-qualifying > * { border-top: 3px solid var(--border-strong); text-align: left; }
+.hosts-table .sort-group-column, .endpoint-table-scroll .sort-group-column { background: color-mix(in srgb, var(--accent) 8%, var(--sort-row-background, var(--panel))); }

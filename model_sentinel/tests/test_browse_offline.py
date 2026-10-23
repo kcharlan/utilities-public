@@ -899,6 +899,46 @@ assert.equal(endpointUptime({uptime:{"1d":99.9999}},"1d"),"99.9999%");
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
+def test_hosts_sort_runs_share_comparator_missing_boundaries_and_heading_values() -> None:
+    source = _read_asset("app.js")
+    assert "  function sortRuns(" in source, "Shared sort grouping is not implemented"
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
+    helpers += source[source.index("  function endpointCapacity(") : source.index("  function EndpointCapacity(")]
+    helpers += source[source.index("  function clickSort(") : source.index("  function HostsTable(")]
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+const columns = [{key:"n",label:"Number",value:r=>r.n},{key:"hidden",visible:false,value:r=>r.id}];
+const rows = [{n:decimalRational("1"),id:1},{n:decimalRational("1.0"),id:2},{n:decimalRational("2"),id:3},{n:null,id:4},{id:5}];
+assert.deepEqual(sortRuns(rows,"n",columns).map(run=>run.rows.map(row=>row.id)),[[1,2],[3],[4,5]]);
+assert.deepEqual(sortRuns(rows,"hidden",columns).map(run=>run.rows.length),[5]);
+assert.deepEqual(sortRuns([],"n",columns),[]);
+assert.deepEqual(sortRuns(rows.slice(1,4),"n",columns).map(run=>run.rows.length),[1,1,1]);
+assert.equal(sortRunMode(sortRuns(rows,"n",columns)),"bands");
+assert.equal(sortRunMode(sortRuns(rows.slice(1,4),"n",columns)),"singletons");
+assert.equal(sortRunMode(sortRuns(Array(6).fill(rows[0]),"n",columns)),"headings");
+const ep = {status:-2,precision_bits:null,quantization:"unknown",context_length:128000,max_completion_tokens:32000,uptime:{"1d":99.9999},prices:{p:{display_own:"$0.50",exact:{numerator_hex:"1",denominator_hex:"2"}}}};
+const state = {upwin:"1d"}, data={price_columns:[]};
+const signed = [{endpoint:ep},{endpoint:{...ep,status:2}},{endpoint:{...ep,status:null}}];
+const dc=drawerColumns(data,state,signed.map(r=>r.endpoint));
+assert.deepEqual(sortRuns(signed,"status",dc).map(r=>r.rows.length),[2,1]);
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="status"),"context",[],state),"absolute status code 2");
+assert.equal(sortHeadingValue(signed[2],dc.find(c=>c.key==="status"),"context",[],state),"No value");
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="precision"),"context",[],state),"Width not published");
+assert.equal(sortHeadingValue(signed[0],dc.find(c=>c.key==="context"),"context",[],state),"128K");
+assert.equal(sortHeadingValue({n:decimalRational("1.25")},{key:"spread",value:r=>r.n},"price:p",[],state),"×1.3");
+assert.equal(sortHeadingValue({n:{n:10n**400n,d:1n}},{key:"spread",value:r=>r.n},"price:p",[],state),"×1"+"0".repeat(400)+".0");
+const group={endpoint:ep,value:decimalRational("0.5")};
+const row={best:{winner:group,groups:new Map([["Synthetic Alpha",group]])}};
+for (const key of ["best","host:Synthetic Alpha"]) {
+ const column={key,value:r=>r.best.winner.value};
+ assert.equal(sortHeadingValue(row,column,"price:p",["Synthetic Alpha"],state),"$0.50");
+ assert.equal(sortHeadingValue(row,column,"uptime:1d",["Synthetic Alpha"],state),"99.9999%");
+ assert.equal(sortHeadingValue(row,column,"context",["Synthetic Alpha"],state),"128,000");
+}
+'''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stderr
+
+
 def test_hosts_sort_stack_cycle_missing_stability_and_exact_values() -> None:
     source = _read_asset("app.js")
     helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]

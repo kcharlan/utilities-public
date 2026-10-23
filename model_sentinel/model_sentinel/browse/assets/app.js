@@ -1565,12 +1565,57 @@
   function displayedSort(list, columns) {
     return list.map(item => ({direction:item[0],column:columns.find(column => column.key === item.slice(2) && column.visible !== false)})).filter(item => item.column);
   }
+  function sortValueCompare(a, b) {
+    return a == null ? (b == null ? 0 : 1) : b == null ? -1 : sortCompare(a,b);
+  }
+  function sortRuns(rows, key, columns) {
+    const column = columns.find(column => column.key === key && column.visible !== false), runs = [];
+    for (const row of rows) {
+      const value = column?.value(row), previous = runs[runs.length-1];
+      if (previous && sortValueCompare(previous.value,value) === 0) previous.rows.push(row);
+      else runs.push({value,rows:[row]});
+    }
+    return runs;
+  }
+  function sortRunMode(runs) {
+    return runs.every(run => run.rows.length === 1) ? "singletons" : runs.reduce((sum,run) => sum+run.rows.length,0)/runs.length >= 3 ? "headings" : "bands";
+  }
+  function sortHeadingValue(row, column, dimension, selected, state) {
+    const value = column.value(row), key = column.key;
+    if (key === "precision" && value == null) return "Width not published";
+    if (value == null) return "No value";
+    if (key === "best" || key.startsWith("host:")) return rankingText(key === "best" ? row.best.winner?.endpoint : row.best.groups.get(key.slice(5))?.endpoint,dimension);
+    if (key === "spread") {
+      if (!dimension.startsWith("price:")) return rationalMagnitude(value);
+      const tenths = (value.n * 20n + value.d) / (2n * value.d);
+      return `×${tenths / 10n}.${tenths % 10n}`;
+    }
+    if (key === "hosts") return `${value} hosts`;
+    if (key === "rank") return `#${value}`;
+    if (key === "precision") return (row.endpoint || row.best.groups.get(selected[0])?.endpoint).quantization;
+    if (key === "context" || key === "output") return endpointCapacity(value);
+    if (key === "uptime") return `${value}%`;
+    if (key === "status") return value === 0 ? "normal" : `absolute status code ${value}`;
+    if (key.startsWith("price:")) return row.endpoint.prices[key.slice(6)].display_own;
+    return String(value);
+  }
+  function GroupedSortRows({rows, list, columns, dimension, selected, state, noun, colspan, renderRow}) {
+    const column = displayedSort(list,columns)[0]?.column, runs = sortRuns(rows,column?.key,columns), mode = column ? sortRunMode(runs) : "singletons";
+    return runs.map((run,index) => html`${mode === "headings" ? html`<tr class=${`sort-group-heading${index ? " sort-run-start" : ""}`}><th scope="rowgroup" colspan=${colspan}>${column.label} <strong class=${["best","spread"].includes(column.key) || column.key.startsWith("host:") || column.key.startsWith("price:") ? "hosts-ranking" : undefined}>${sortHeadingValue(run.rows[0],column,dimension,selected,state)}</strong> ${run.rows.length} ${run.rows.length === 1 ? noun : `${noun}s`}</th></tr>` : null}${run.rows.map((row,rowIndex) => renderRow(row,`${mode === "bands" && index % 2 ? "sort-run-band" : ""}${mode === "bands" && index && rowIndex === 0 ? " sort-run-start" : ""}`))}`);
+  }
+  function groupingCell(list, columns, key) {
+    return displayedSort(list,columns)[0]?.column.key === key ? " sort-group-column" : "";
+  }
+  function groupingColumn(list, columns) {
+    const key = displayedSort(list,columns)[0]?.column.key;
+    return key ? columns.filter(column => column.visible !== false).findIndex(column => column.key === key)+1 : undefined;
+  }
   function stackSort(items, list, columns, fallback = () => 0) {
     const active = displayedSort(list,columns);
     return items.map((item,index) => ({item,index})).sort((a,b) => {
       for (const {direction,column} of active) {
         const av = column.value(a.item), bv = column.value(b.item);
-        const order = av == null ? (bv == null ? 0 : 1) : bv == null ? -1 : sortCompare(av,bv) * (direction === "d" ? -1 : 1);
+        const order = sortValueCompare(av,bv) * (av != null && bv != null && direction === "d" ? -1 : 1);
         if (order) return order;
       }
       return fallback(a.item,b.item) || a.index-b.index;
@@ -1580,7 +1625,7 @@
     const active = displayedSort(list,columns), index = active.findIndex(item => item.column.key === column.key), direction = active[index]?.direction;
     const numeric = !["model","host","endpoint","precision","status"].includes(column.key);
     const arrow = direction ? html`<span class="sort-arrow" aria-hidden="true">${direction === "a" ? "▲" : "▼"}${active.length > 1 ? html`<sup>${index+1}</sup>` : null}</span>` : null;
-    return html`<th scope="col" title=${column.unit} class=${`${numeric ? "hosts-numeric" : ""}${column.key.startsWith("host:") ? " hosts-host-value" : ""}`} aria-sort=${index === 0 ? direction === "a" ? "ascending" : "descending" : undefined}><button type="button" class=${`sort-header${direction ? " is-sorted" : ""}`} onClick=${() => change(clickSort(list,column.key))}>${numeric ? arrow : null}${column.label}${column.unit && column.unit !== "/1M tokens" ? html` <small class="price-unit">${column.unit}</small>` : null}${numeric ? null : arrow}</button></th>`;
+    return html`<th scope="col" title=${column.unit} class=${`${numeric ? "hosts-numeric" : ""}${column.key.startsWith("host:") ? " hosts-host-value" : ""}${groupingCell(list,columns,column.key)}`} aria-sort=${index === 0 ? direction === "a" ? "ascending" : "descending" : undefined}><button type="button" class=${`sort-header${direction ? " is-sorted" : ""}`} onClick=${() => change(clickSort(list,column.key))}>${numeric ? arrow : null}${column.label}${column.unit && column.unit !== "/1M tokens" ? html` <small class="price-unit">${column.unit}</small>` : null}${numeric ? null : arrow}</button></th>`;
   }
   function SortSummary({list, columns, change, className = ""}) {
     const active = displayedSort(list,columns);
@@ -1634,15 +1679,15 @@
       return () => observer.disconnect();
     }, []);
     const columns = hostsColumns(data,selected,dimension,state), change = list => write({hsort:list});
-    const ordered = stackSort(rows,state.hsort,columns);
+    const ordered = stackSort(rows,state.hsort,columns), cellClass = key => groupingCell(state.hsort,columns,key);
     const limit = paging.key === resetKey ? paging.limit : 50, visible = ordered.slice(0,limit), single = selected.length === 1;
-    return html`<section aria-label="Hosts results"><div ref=${scrollRef} class=${`hosts-table-scroll${overflowing ? " is-overflowing" : ""}`}><table class=${`hosts-table${single ? " hosts-table-single" : ""}`} aria-label="Host comparison"><thead><tr>${columns.filter(column=>column.visible !== false).map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.hsort} columns=${columns} change=${change} />`)}</tr></thead><tbody>${visible.map(row => {
+    return html`<section aria-label="Hosts results"><div ref=${scrollRef} class=${`hosts-table-scroll${overflowing ? " is-overflowing" : ""}`}><table class=${`hosts-table${single ? " hosts-table-single" : ""}`} aria-label="Host comparison" data-group-column=${groupingColumn(state.hsort,columns)}><thead><tr>${columns.filter(column=>column.visible !== false).map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.hsort} columns=${columns} change=${change} />`)}</tr></thead><tbody><${GroupedSortRows} rows=${visible} list=${state.hsort} columns=${columns} dimension=${dimension} selected=${selected} state=${state} noun="model" colspan=${columns.filter(column=>column.visible !== false).length} renderRow=${(row,runClass) => {
       const winner = row.best.winner, group = row.best.groups.get(selected[0]), endpoint = group?.endpoint, ties = winner ? row.best.ranked.filter(item => compareRational(item.value,winner.value) === 0).length-1 : 0;
-      const hostCell = host => html`<td class="hosts-numeric hosts-host-value" key=${host}>${single && !row.observed.some(item => item.host === host) ? html`<span class="hosts-status">not served</span>` : html`<${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} />`}</td>`;
-      const bestCell = html`<td class="hosts-numeric">${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`<span class="hosts-ranking">${rankingText(winner.endpoint,dimension)}</span> <small class="hosts-winner">${winner.host}${ties ? ` +${ties}` : ""}</small>`}</td>`;
-      const spreadCell = html`<td class="hosts-numeric"><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>`;
-      return html`<tr key=${row.list.path} data-list-path=${row.list.path} aria-current=${state.hlist === row.list.path ? "true" : undefined} class=${!row.endpoints.length ? "is-excluded" : ""} onClick=${event => { if (!event.target.closest("button,a")) openList(row.list.path,event.currentTarget.querySelector("[data-host-list]")); }}><th scope="row"><button type="button" class="model-link" title=${row.list.display_id} data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} ${row.list.models.length === 2 ? "variant" : "variants"}</small>` : null}</th>${single ? html`${hostCell(selected[0])}<td class="hosts-numeric">${group?.value ? `${group.rank} of ${group.denominator}` : html`<span class="hosts-missing">—</span>`}</td>${bestCell}${spreadCell}<td><${EndpointPrecision} endpoint=${endpoint} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint?.context_length} /></td><td class="hosts-numeric"><span class=${endpoint?.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td><${EndpointStatus} endpoint=${endpoint} /></td>` : html`${bestCell}${spreadCell}${selected.map(hostCell)}<td class="hosts-numeric">${row.best.ranked.length}</td>`}</tr>`;
-    })}</tbody></table></div><div class="hosts-pagination">${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}<span>${visible.length === rows.length ? `Showing all ${rows.length.toLocaleString()}` : `Showing ${visible.length.toLocaleString()} of ${rows.length.toLocaleString()}`} models</span></div></section>`;
+      const hostCell = host => html`<td class=${`hosts-numeric hosts-host-value${cellClass(`host:${host}`)}`} key=${host}>${single && !row.observed.some(item => item.host === host) ? html`<span class="hosts-status">not served</span>` : html`<${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} />`}</td>`;
+      const bestCell = html`<td class=${`hosts-numeric${cellClass("best")}`}>${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`<span class="hosts-ranking">${rankingText(winner.endpoint,dimension)}</span> <small class="hosts-winner">${winner.host}${ties ? ` +${ties}` : ""}</small>`}</td>`;
+      const spreadCell = html`<td class=${`hosts-numeric${cellClass("spread")}`}><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>`;
+      return html`<tr key=${row.list.path} data-list-path=${row.list.path} aria-current=${state.hlist === row.list.path ? "true" : undefined} class=${`${runClass}${!row.endpoints.length ? " is-excluded" : ""}`.trim()} onClick=${event => { if (!event.target.closest("button,a")) openList(row.list.path,event.currentTarget.querySelector("[data-host-list]")); }}><th scope="row" class=${cellClass("model")}><button type="button" class="model-link" title=${row.list.display_id} data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} ${row.list.models.length === 2 ? "variant" : "variants"}</small>` : null}</th>${single ? html`${hostCell(selected[0])}<td class=${`hosts-numeric${cellClass("rank")}`}>${group?.value ? `${group.rank} of ${group.denominator}` : html`<span class="hosts-missing">—</span>`}</td>${bestCell}${spreadCell}<td class=${cellClass("precision")}><${EndpointPrecision} endpoint=${endpoint} /></td><td class=${`hosts-numeric${cellClass("context")}`}><${EndpointCapacity} value=${endpoint?.context_length} /></td><td class=${`hosts-numeric${cellClass("uptime")}`}><span class=${endpoint?.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td class=${cellClass("status")}><${EndpointStatus} endpoint=${endpoint} /></td>` : html`${bestCell}${spreadCell}${selected.map(hostCell)}<td class=${`hosts-numeric${cellClass("hosts")}`}>${row.best.ranked.length}</td>`}</tr>`;
+    }} /></tbody></table></div><div class="hosts-pagination">${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}<span>${visible.length === rows.length ? `Showing all ${rows.length.toLocaleString()}` : `Showing ${visible.length.toLocaleString()} of ${rows.length.toLocaleString()}`} models</span></div></section>`;
   }
   function HostSummary({host, data}) {
     const endpoints = data.endpoints.filter(endpoint => endpoint.host === host), summary = data.hosts.find(item => item.name === host), precision = new Map();
@@ -1669,17 +1714,18 @@
       const av = rankValue(a.endpoint,dimension), bv = rankValue(b.endpoint,dimension);
       return (av && bv ? rankCompare(av,bv,dimension) : av ? -1 : bv ? 1 : 0) || a.endpoint.host.localeCompare(b.endpoint.host) || a.endpoint.key.localeCompare(b.endpoint.key);
     };
-    const ordered = [true,false].flatMap(pass => stackSort(evaluated.filter(item=>item.result.pass === pass),state.dsort,columns,fallback));
+    const partitions = [true,false].map(pass => stackSort(evaluated.filter(item=>item.result.pass === pass),state.dsort,columns,fallback));
+    const ordered = partitions.flat(), cellClass = key => groupingCell(state.dsort,columns,key);
     const otherModels = list.models.filter(model => model !== list.display_id), otherAliases = list.aliases.filter(alias => alias !== list.display_id);
     return html`<section class="endpoint-drawer" role="dialog" aria-labelledby="endpoint-drawer-title">
       <header><div><h2 ref=${heading} tabindex="-1" id="endpoint-drawer-title" title=${list.path}>${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} of ${observed.length} endpoints qualify</p></div><div class="endpoint-drawer-actions"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button><button type="button" aria-label="Close endpoint drawer" onClick=${close}>Close</button></div></header>
       <div class="drawer-body">${!list.models.length ? html`<p>No mapped model is available.</p>` : null}
         ${otherModels.length || otherAliases.length ? html`<p class="endpoint-aliases">Also served as ${otherModels.map((model,index) => html`<span key=${model}>${index ? ", " : ""}<a class="model-link" href=${`#view=model&model=${encodeURIComponent(`${data.provider_id}/${model}`)}`} onClick=${event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openModel(data.provider_id,model); } }}>${model}</a></span>`)}${otherAliases.map((alias,index) => html`<span key=${alias}>${otherModels.length || index ? ", " : ""}${alias}</span>`)}</p>` : null}
         <${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" />
-        <div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${visibleColumns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th><th scope="col">Details</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => {
+        <div class="endpoint-table-scroll"><table aria-label="Observed endpoints" data-group-column=${groupingColumn(state.dsort,columns)}><thead><tr>${visibleColumns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th><th scope="col">Details</th></tr></thead><tbody>${partitions.map((rows,index) => html`${index && rows.length ? html`<tr class="sort-not-qualifying"><th scope="rowgroup" colspan=${visibleColumns.length+2}>Not qualifying ${rows.length} endpoints</th></tr>` : null}<${GroupedSortRows} rows=${rows} list=${state.dsort} columns=${columns} dimension=${dimension} selected=${selected} state=${state} noun="endpoint" colspan=${visibleColumns.length+2} renderRow=${({endpoint,result},runClass) => {
           const key = JSON.stringify([endpoint.host,endpoint.key]), open = expanded.has(key);
-          return html`<tr key=${key} class=${result.pass ? "" : "is-excluded"}><th scope="row">${selected.includes(endpoint.host) ? html`<i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>` : null}${endpoint.host}</th><td class="endpoint-tag">${endpoint.tag || endpoint.key}</td>${prices.map(column => html`<td class="hosts-price hosts-numeric" key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? html`<span class="hosts-missing">—</span>`}</td>`)}<td><${EndpointPrecision} endpoint=${endpoint} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.context_length} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.max_completion_tokens} /></td><td class="hosts-numeric"><span class=${endpoint.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td><${EndpointStatus} endpoint=${endpoint} /></td><td class="endpoint-reason">${result.pass ? "" : `fails ${result.reasons[0]}`}</td><td><button type="button" class="endpoint-details-toggle" aria-expanded=${String(open)} onClick=${() => toggle(key)}>Details</button></td></tr>${open ? html`<tr key=${key+"/details"} class="endpoint-details-row"><td colspan=${visibleColumns.length+2}><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></td></tr>` : null}`;
-        })}</tbody></table></div>
+          return html`<tr key=${key} class=${`${runClass}${result.pass ? "" : " is-excluded"}`.trim()}><th scope="row" class=${cellClass("host")}>${selected.includes(endpoint.host) ? html`<i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>` : null}${endpoint.host}</th><td class=${`endpoint-tag${cellClass("endpoint")}`}>${endpoint.tag || endpoint.key}</td>${prices.map(column => html`<td class=${`hosts-price hosts-numeric${cellClass(`price:${column.path}`)}`} key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? html`<span class="hosts-missing">—</span>`}</td>`)}<td class=${cellClass("precision")}><${EndpointPrecision} endpoint=${endpoint} /></td><td class=${`hosts-numeric${cellClass("context")}`}><${EndpointCapacity} value=${endpoint.context_length} /></td><td class=${`hosts-numeric${cellClass("output")}`}><${EndpointCapacity} value=${endpoint.max_completion_tokens} /></td><td class=${`hosts-numeric${cellClass("uptime")}`}><span class=${endpoint.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td class=${cellClass("status")}><${EndpointStatus} endpoint=${endpoint} /></td><td class="endpoint-reason">${result.pass ? "" : `fails ${result.reasons[0]}`}</td><td><button type="button" class="endpoint-details-toggle" aria-expanded=${String(open)} onClick=${() => toggle(key)}>Details</button></td></tr>${open ? html`<tr key=${key+"/details"} class="endpoint-details-row"><td colspan=${visibleColumns.length+2}><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></td></tr>` : null}`;
+        }} />`)}</tbody></table></div>
       </div></section>`;
   }
   function hostsCaptureStatus(capture) {

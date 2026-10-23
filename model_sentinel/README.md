@@ -556,6 +556,16 @@ browser, and `Ctrl-C` stops the server.
   `price:<path>`, `precision`, `context`, `output`, `uptime`, and `status`.
   Host names and price paths must belong to the selected capture.
 
+  The first displayed sort column is tinted. Adjacent comparator-equal values
+  form groups within the current page, separately for qualifying and failing
+  drawer endpoints. Groups averaging three or more rows use full-width headings
+  with their value and model/endpoint count; smaller groups use alternating
+  bands and rules. All-singleton groups show only the column tint. Missing
+  values group together. Status headings describe the absolute status code
+  shared by signed values. Failing drawer endpoints always start with a
+  **Not qualifying** heading. Group headings do not open drawers or count
+  toward the 50-model pagination limit.
+
   **Add host** opens a searchable checkbox list ordered by models served; remove
   a compared host with its pill. Picker counts describe observed coverage, and
   incomplete history captures break uptime trends. **Snapshot** selects an

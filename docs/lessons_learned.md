@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-10-23: Keep exact sort-group equality and ratio headings together
+
+Hosts grouping must use the same missing-value and exact rational comparator
+as sorting; display strings can round unequal values together or distinguish
+equal signed status magnitudes. Partition before grouping and group only the
+current page. Render shared status magnitudes explicitly rather than choosing
+one signed member's status. Round price-ratio headings with integer arithmetic:
+converting a finite exact ratio to Number can produce Infinity. Cover an
+extreme synthetic ratio alongside signed members, missing runs and pagination.
+
 ## 2026-10-23: Make endpoint inspection nonmodal without losing saved sorts
 
 Model Sentinel's modal endpoint layer intercepted the second pointer click
