@@ -812,7 +812,7 @@ Text and Markdown append two sections after the catalog report:
 - **Provider endpoints** leads with the capture's status and counts, how the
   selected baseline's capture was used (a genuine first capture is stated
   separately from a missing or unusable baseline capture), and summary
-  clauses counted over every list: lists with price changes, endpoint
+  clauses counted over every list: lists with price or capability changes, endpoint
   additions and removals, conditional pricing and status changes, persisting
   alias divergences, lists that failed to fetch, lists never requested
   because the endpoint fetch budget ran out, mapping failures, and
@@ -822,7 +822,7 @@ Text and Markdown append two sections after the catalog report:
   grouped by the comparison unit of their first moved price in profile order
   and ranked within a unit by their largest move, and lists with no comparable
   price move follow in path order. Default detail shows price, endpoint
-  presence, and conditional pricing changes for at most 25 lists and states
+  presence, conditional pricing, and provider-selected capability changes for at most 25 lists and states
   how many were omitted; `--detail all` shows every list with its metadata
   and status changes, the raw conditional-pricing JSON, comparison gaps, and
   failed lists. Endpoint fields are classified strictly: a monetary-looking
@@ -830,6 +830,16 @@ Text and Markdown append two sections after the catalog report:
   price. Endpoint field labels describe the endpoint, so an endpoint's own
   `context_length` reads `Context length`, without the catalog's `(model)`
   qualifier.
+
+Capability selection belongs to the provider profile: parameter membership,
+Parameters and Capabilities categories, supplied defaults, architecture, and
+implicit caching are included by default. Pricing, conditional selectors,
+status, and Context & Limits retain their existing routing. Supplied objects
+expand into named leaf transitions; parameter reorder/duplicate-only changes
+leave no empty list heading in either report. The capability summary counts
+each changed list once before the display cap, even when multiple endpoints,
+fields, or catalog models share that list. Raw JSON and saved evidence remain
+unchanged.
 
 The HTML report follows the same sections and policy (see HTML
 Auto-Reports): `new`, `changed`, and `resolved` alias events follow the Price
@@ -974,8 +984,9 @@ same uncapped clauses as the text report. Inside are the capture and baseline
 facts, persisting alias divergences, then each changed list: an
 endpoint-price table (endpoint, one column per resolved price with its unit in
 the header, and the change), with each cell's raw provider value in its
-tooltip and on the `Show raw values` sub-line, and in full detail a separate
-table of metadata and status changes in the model cards' column layout. Price
+tooltip and on the `Show raw values` sub-line, and a separate table of selected
+capability changes in the model cards' column layout. Full detail adds remaining
+metadata and status changes to that table. Price
 cells use the cost colors; an endpoint added or removed, or a price appearing,
 is coverage blue. The concise report shows at most 25 lists; when lists are
 omitted, or only the full report can show them, its note links to the

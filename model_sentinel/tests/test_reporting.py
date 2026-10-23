@@ -7910,6 +7910,96 @@ def _capped_result(extra: int = 2):
     return _ep_result(_ep_capture(baseline, current))
 
 
+def test_concise_endpoint_capability_changes_are_visible():
+    from tests.endpoint_report_fixtures import _capability_result
+    from model_sentinel.endpoint_report import endpoint_report
+    result = _capability_result()
+    for mode in ("default", "all"):
+        projection = endpoint_report(result, full_detail=mode == "all")
+        assert "synthetic/noop-only" not in [view.display_id for view in projection.lists]
+        row = projection.lists[0].metadata_rows
+        assert {item.rendered.field_path for item in row} == {"supported_parameters", "default_parameters.temperature"}
+        parent = next(item for item in row if item.rendered.field_path == "default_parameters.temperature")
+        assert parent.change.field_name == "default_parameters"
+        for format_name in ("text", "markdown", "html"):
+            output = _ep_report(result, format_name, mode)
+            section = _text(_element(output, 'id="provider-endpoints"')) if format_name == "html" else _ep_section(output, "Provider endpoints")
+            assert "synthetic-added" in section and "synthetic-removed" in section
+            assert "synthetic-kept" not in section
+            assert "synthetic/noop-only" not in section
+            assert "1 list with capability changes" in section
+    assert "Provider endpoints" not in _ep_report(result, "text", "squelched")
+
+
+def test_endpoint_capability_summary_cap_and_shared_mapping():
+    from tests.endpoint_report_fixtures import _capability_result
+    from model_sentinel.endpoint_report import endpoint_report
+    result = _capability_result(27)
+    concise = endpoint_report(result, full_detail=False)
+    full = endpoint_report(result, full_detail=True)
+    assert len(concise.lists) == 25 and concise.omitted_list_count == 2
+    assert concise.detail_only_list_count == 1
+    assert len(full.lists) == 28
+    assert concise.summary_clauses == full.summary_clauses == ("27 lists with capability changes",)
+    html = _ep_html(result, companion_link=("synthetic_full.html", "Full-detail report →"))
+    assert 'synthetic_full.html#provider-endpoints' in html
+    assert "2 more changed lists not shown" in _text(html)
+    assert "no endpoint changes" not in _text(html)
+
+
+@pytest.mark.parametrize("old,new", [(None, ["synthetic-a"]), (["synthetic-a"], None), (["synthetic-a"], [1]), ([], ["synthetic-a"])])
+def test_endpoint_capability_unknowns_are_not_removals(old, new):
+    from model_sentinel.endpoint_report import endpoint_report
+    before = (_ep_list("synthetic/unknown", _ep_obs("host", {**_ep_state("host"), "parameters": old})),)
+    after = (_ep_list("synthetic/unknown", _ep_obs("host", {**_ep_state("host"), "parameters": new})),)
+    capture = _ep_capture(before, after)
+    result = _ep_result(capture)
+    original = capture.changes[0]
+    row = endpoint_report(result, full_detail=False).lists[0].metadata_rows[0]
+    assert row.change is original
+    assert (row.change.old_value, row.change.new_value) == (old, new)
+    if old == []:
+        assert row.rendered.list_added == ("synthetic-a",)
+    else:
+        assert not row.rendered.list_added and not row.rendered.list_removed
+        assert row.rendered.semantic == "neutral"
+    # Failed captures and unpaired paths cannot imply support loss.
+    failed = _ep_list("synthetic/unknown", outcome="error")
+    gap = _ep_result(_ep_capture(before, (failed,)))
+    projection = endpoint_report(gap, full_detail=False)
+    assert projection.lists == ()
+    assert "1 comparison gap" in projection.summary_clauses
+    assert not any("capability" in clause for clause in projection.summary_clauses)
+
+
+def test_endpoint_capabilities_share_price_routing_and_keep_full_remainder():
+    from model_sentinel.endpoint_report import endpoint_report
+    before = (_ep_list("synthetic/mixed", _ep_obs("host", {
+        **_ep_state("host", prompt="0.000001"),
+        "architecture": {"modality": "synthetic-text"},
+        "supports_tools": False, "description": "before",
+    })),)
+    after = (_ep_list("synthetic/mixed", _ep_obs("host", {
+        **_ep_state("host", context_length=2000, prompt="0.000002"),
+        "supports_tools": True, "supports_implicit_caching": True,
+        "description": "after",
+    }, status=1)),)
+    result = _ep_result(_ep_capture(before, after))
+    concise = endpoint_report(result, full_detail=False)
+    full = endpoint_report(result, full_detail=True)
+    assert concise.summary_clauses == full.summary_clauses == (
+        "1 list with price changes", "1 list with capability changes", "1 status change",
+    )
+    listing = concise.lists[0]
+    assert len(listing.price_rows) == 1 and listing.status_rows == ()
+    assert {row.rendered.field_path for row in listing.metadata_rows} == {
+        "architecture.modality", "supports_tools", "supports_implicit_caching",
+    }
+    assert {row.rendered.field_path for row in full.lists[0].metadata_rows} == {
+        "architecture.modality", "supports_tools", "supports_implicit_caching", "context_length", "description",
+    }
+
+
 def test_endpoint_companion_cap_navigation_concise_links_to_full_companion() -> None:
     html = _ep_html(_capped_result(), companion_link=("scan 01_full.html", "Full-detail report →"))
     disclosure = _element(html, 'id="provider-endpoints"')

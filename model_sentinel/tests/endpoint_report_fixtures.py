@@ -48,6 +48,28 @@ _EP_TARGET = "fake-org/test-model-a"
 _EP_ALIAS = "fake-org/test-model-latest"
 
 
+def _capability_result(count: int = 1) -> ProviderScanResult:
+    """Invented membership and attribute changes, plus metadata and a set no-op."""
+    before, after = [], []
+    for index in range(count):
+        model = f"synthetic/capability-{index:02d}"
+        for destination, members, defaults in (
+            (before, ["synthetic-kept", "synthetic-removed"], None),
+            (after, ["synthetic-kept", "synthetic-added"], {"temperature": 0.25}),
+        ):
+            state = {**_ep_state("synthetic-host"), "supported_parameters": members}
+            if defaults is not None:
+                state["default_parameters"] = defaults
+            destination.append(_ep_list(model, _ep_obs("synthetic-host", state), model_ids=(model, model + "-mapped")))
+    for model, old, new in (
+        ("synthetic/metadata-only", {"description": "before"}, {"description": "after"}),
+        ("synthetic/noop-only", {"parameters": ["synthetic-a", "synthetic-b"]}, {"parameters": ["synthetic-b", "synthetic-a", "synthetic-a"]}),
+    ):
+        before.append(_ep_list(model, _ep_obs("synthetic-host", {**_ep_state("synthetic-host"), **old})))
+        after.append(_ep_list(model, _ep_obs("synthetic-host", {**_ep_state("synthetic-host"), **new})))
+    return _ep_result(_ep_capture(before, after))
+
+
 def _ep_path(model_id: str) -> str:
     return f"{_EP_PREFIX}{model_id}/endpoints"
 

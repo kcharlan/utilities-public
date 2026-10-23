@@ -64,16 +64,16 @@ These named rules are authoritative; tasks and regression cases refer to them in
 | `tests/test_browse_smoke.py::test_parameter_change_browser_surfaces_show_members` | Growing and equal-size changes in Activity, dossier/Hosts endpoint histories, and raw drawer. Assert Member presentation and actionable change identity. Exercise reorder-only, duplicate-only, mixed, all-no-op, and truncated pages through `EndpointChanges`; compare displayed and recorded counts under Audit integrity. |
 | `tests/test_report_html_browser.py::test_parameter_diff_price_placement_is_preserved` | Inspect disclosure ancestry for capability-only and mixed-price model cards; assert Placement and visible member text. |
 
-- [ ] Extend the existing synthetic fixtures and add the owning regressions.
-- [ ] Run their modules with the project venv. Record assertion failures demonstrating the representation/display defects; setup errors or missing imports do not prove the regression.
-- [ ] Implement the proposed changes.
-- [ ] Run the targeted modules and the complete suite under Validation before accepting this deliverable.
+- [x] Extend the existing synthetic fixtures and add the owning regressions.
+- [x] Run their modules with the project venv. Record assertion failures demonstrating the representation/display defects; setup errors or missing imports do not prove the regression.
+- [x] Implement the proposed changes.
+- [x] Run the targeted modules and the complete suite under Validation before accepting this deliverable.
 
 ## Task 2: Capability visibility in concise endpoint reports
 
 **Deliverable:** Provider-owned capability policy integrated into the existing endpoint report projection.
 
-**Files:** Modify `pkg/provider_profiles.py`, `pkg/endpoint_report.py`, and the shared consumers `pkg/reporting.py`/`pkg/endpoint_html.py` as needed. Extend the owning test modules below and `tests/endpoint_report_fixtures.py`. Update the README's Alias Check and Provider Endpoints and HTML Auto-Reports sections within this deliverable.
+**Files:** Modify `pkg/provider_profiles.py`, `pkg/endpoint_report.py`, and the shared consumers `pkg/reporting.py`/`pkg/endpoint_html.py` as needed. Set the maintained release version in `pkg/__init__.py`. Extend the owning test modules below and `tests/endpoint_report_fixtures.py`. Update the README's Alias Check and Provider Endpoints and HTML Auto-Reports sections within this deliverable.
 
 **Consumes:** The parameter policy, classifier, and presentation conversion/expansion established in Task Parameter differences. Reuse those interfaces.
 
@@ -85,6 +85,7 @@ These named rules are authoritative; tasks and regression cases refer to them in
 - **No-content pruning:** Exclude analyses with no displayable content in either mode from shown lists and detail-only counts; a recorded parameter no-op must not leave an empty full-detail list heading.
 - Add `_ListAnalysis.has_capability_change: bool`, derived before detail/cap selection from meaningful capability changes. Use it for Endpoint report envelope's new summary tally in `endpoint_report`. Compute omission/detail-only counts from the resulting eligibility.
 - Let `_endpoint_row_texts` and `endpoint_html._endpoint_list` consume the selected rows through the existing shared field formatters.
+- Release this additive report behavior as Model Sentinel `0.7.0`, following `0.6.0`. Keep maintained version declarations synchronized; historical implementation-plan version references are historical context. Check source CLI identity after the bump and package/deployed identity during the separately authorized deployment.
 
 **Regression cases to write first:**
 
@@ -97,10 +98,10 @@ These named rules are authoritative; tasks and regression cases refer to them in
 | `tests/test_report_html_browser.py::test_endpoint_capability_report_browser` | Use the companion pair and maintained viewport fixtures. Expand the endpoint section; inspect member and leaf text, long names, overflow containment and companion links under Capability selection, Colors, and Endpoint report envelope. Retain existing browser error/request guards. |
 | `tests/test_cli.py::test_endpoint_capability_only_scan_keeps_artifact_policy` | Stub a saved capture with unchanged catalog and changed endpoint capability; assert Placement's CLI policy on stdout, explicit output, managed artifacts and notifications. |
 
-- [ ] Add these cases using the maintained endpoint fixtures and stubbed CLI harness.
-- [ ] Observe visibility assertion failures against current behavior.
-- [ ] Implement the proposed changes.
-- [ ] Re-run the owning modules and the complete suite under Validation; inspect the synthetic rendered report before accepting this deliverable.
+- [x] Add these cases using the maintained endpoint fixtures and stubbed CLI harness.
+- [x] Observe visibility assertion failures against current behavior.
+- [x] Implement the proposed changes.
+- [x] Re-run the owning modules and the complete suite under Validation; inspect the synthetic rendered report before accepting this deliverable.
 
 ## Validation and evidence
 

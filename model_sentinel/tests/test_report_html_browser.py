@@ -55,6 +55,38 @@ NARROW = {"width": 375, "height": 812}
 DESKTOP = {"width": 1280, "height": 900}
 
 
+@pytest.mark.parametrize("viewport", [DESKTOP, NARROW])
+def test_endpoint_capability_report_browser(page, tmp_path, viewport):
+    from tests.endpoint_report_fixtures import _capability_result
+    from dataclasses import replace
+    result = _capability_result(27)
+    capture = result.endpoint_capture
+    long_member = "synthetic-long-parameter-" * 12
+    changes = tuple(replace(change, new_value=["synthetic-kept", "synthetic-added", long_member]) if change.field_name == "supported_parameters" else change for change in capture.changes)
+    result = replace(result, endpoint_capture=replace(capture, changes=changes))
+    concise, full = tmp_path / CONCISE_NAME, tmp_path / FULL_NAME
+    concise.write_text(_ep_html(result, companion_link=(FULL_NAME, "Full-detail report →")))
+    full.write_text(_ep_html(result, "all", companion_link=(CONCISE_NAME, "← Concise report")))
+    page.set_viewport_size(viewport)
+    _open(page, concise)
+    _open_disclosure(page)
+    disclosure = page.locator("#provider-endpoints")
+    expect(disclosure.locator(".endpoint-list")).to_have_count(25)
+    expect(disclosure).to_contain_text("27 lists with capability changes")
+    expect(disclosure).to_contain_text("synthetic-added")
+    expect(disclosure).to_contain_text("synthetic-removed")
+    expect(disclosure).not_to_contain_text("synthetic-kept")
+    expect(disclosure).to_contain_text("Temperature")
+    expect(disclosure).not_to_contain_text("synthetic/noop-only")
+    _no_page_overflow(page)
+    disclosure.locator(".endpoint-omitted a").first.click()
+    expect(page).to_have_url(re.compile(FULL_NAME + "#provider-endpoints$"))
+    _open_disclosure(page)
+    expect(page.locator(".endpoint-list")).to_have_count(28)
+    expect(page.locator("#provider-endpoints .endpoint-back a")).to_have_attribute("href", CONCISE_NAME + "#provider-endpoints")
+    _no_page_overflow(page)
+
+
 @pytest.fixture(scope="module")
 def report_pair(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """The concise and full-detail companions, linked to each other."""

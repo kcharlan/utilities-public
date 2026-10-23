@@ -28,6 +28,19 @@ from tests.conditional_pricing_fixtures import (
 )
 
 
+def test_endpoint_capability_policy_is_provider_owned():
+    profile = replace(OPENROUTER_PROFILE, parameter_membership_fields=("custom_parameters",))
+    for path in ("custom_parameters", "nested.custom_parameters", "supported_parameters", "supports_tools", "architecture.input_modalities", "supports_reasoning", "default_parameters.temperature", "supports_implicit_caching"):
+        assert profile.is_endpoint_capability_field(path), path
+    broad = replace(profile, endpoint_capability_fields=("*",))
+    for path in ("pricing.prompt", "pricing.overrides", "pricing.overrides[0].min_prompt_tokens", "status", "context_length", "max_completion_tokens"):
+        assert not broad.is_endpoint_capability_field(path), path
+    custom = replace(profile, endpoint_capability_fields=("synthetic_options.*",))
+    assert custom.is_endpoint_capability_field("synthetic_options.mode")
+    assert not custom.is_endpoint_capability_field("default_parameters.temperature")
+    assert not profile.is_endpoint_capability_field("description")
+
+
 @pytest.fixture
 def synthetic_provider() -> ProviderConfig:
     return ProviderConfig(

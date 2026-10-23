@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-23: Count endpoint capabilities before selecting report detail
+
+Concise endpoint reports previously selected only price, presence and
+conditional rows, hiding meaningful parameter and capability changes. Classify
+capability leaves using the provider profile before detail filtering and count
+changed lists before applying the cap. Preserve each original change record
+when expanding supplied objects, and track whether any full-detail content
+exists so parameter set no-ops do not create empty headings or inflate the
+detail-only remainder. Price, status and context routing still take priority
+over custom capability patterns.
+
 ## 2026-10-23: Normalize frozen JSON at the presentation boundary
 
 Model Sentinel freezes comparison-event arrays into tuples and mappings into

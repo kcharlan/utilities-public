@@ -91,6 +91,7 @@ from .models import (
     Ladder,
     LadderMarkInput,
     ProviderScanResult,
+    mutable_json_value,
 )
 from .provider_profiles import ProviderProfile
 
@@ -485,8 +486,8 @@ class EndpointListView:
 
     `from_list_path` is the baseline path of a moved list, else None.
     `model_ids` are the catalog models whose `listed` mapping is this path.
-    Default detail carries price, presence and conditional rows; full detail
-    adds metadata and status rows.
+    Default detail carries price, presence, conditional and capability rows;
+    full detail adds the remaining metadata and status rows.
     """
 
     list_path: str
@@ -547,6 +548,8 @@ class _ListAnalysis:
     # every two-sided resolved price movement in the list.
     movements: tuple[tuple[tuple[str, str | None], Any, Fraction], ...]
     has_price_change: bool
+    has_capability_change: bool
+    has_full_content: bool
 
 
 def _direct_price_path(field_name: str | None) -> bool:
@@ -627,9 +630,11 @@ def _analyse_list(
     presence: list[EndpointChangeRecord] = []
     conditional: list[EndpointFieldRow] = []
     metadata: list[EndpointFieldRow] = []
+    has_metadata = False
     status: list[EndpointFieldRow] = []
     movements: list[tuple[tuple[str, str | None], Any, Fraction]] = []
     row_order: list[tuple[str, str]] = []
+    has_capability_change = False
     for change in changes:
         key = change.endpoint_key
         rendered = endpoint_change_rendering(change, profile)
@@ -662,7 +667,30 @@ def _analyse_list(
                         )
                     )
             else:
-                metadata.append(EndpointFieldRow(key, rendered.display_label, change, rendered))
+                # Reuse the catalog presentation expansion with detached JSON,
+                # retaining the endpoint record as the audit source of each leaf.
+                renderings = (rendered,)
+                if profile.is_endpoint_capability_field(field_name):
+                    # Local import: reporting consumes this shared projection.
+                    from .reporting import _expand_structured_field_changes
+
+                    detached = FieldChange(
+                        field_name,
+                        mutable_json_value(change.old_value),
+                        mutable_json_value(change.new_value),
+                    )
+                    renderings = tuple(
+                        _strict_change(field.field_name, field.old_value, field.new_value, profile)
+                        for field in _expand_structured_field_changes((detached,), profile)
+                    )
+                for leaf in renderings:
+                    if leaf.kind == "noop":
+                        continue
+                    has_metadata = True
+                    capability = profile.is_endpoint_capability_field(leaf.field_path)
+                    has_capability_change |= capability
+                    if full_detail or capability:
+                        metadata.append(EndpointFieldRow(key, leaf.display_label, change, leaf))
 
     presence_states = {
         (change.change_kind, change.endpoint_key): (
@@ -756,14 +784,18 @@ def _analyse_list(
         price_columns=columns,
         price_rows=price_rows,
         conditional_rows=tuple(conditional),
-        metadata_rows=tuple(metadata) if full_detail else (),
+        metadata_rows=tuple(metadata),
         status_rows=tuple(status) if full_detail else (),
     )
-    return _ListAnalysis(view=view, movements=tuple(movements), has_price_change=bool(priced))
+    return _ListAnalysis(
+        view=view, movements=tuple(movements), has_price_change=bool(priced),
+        has_capability_change=has_capability_change,
+        has_full_content=bool(price_rows or conditional or has_metadata or status),
+    )
 
 
 def _has_default_content(view: EndpointListView) -> bool:
-    return bool(view.price_rows or view.conditional_rows)
+    return bool(view.price_rows or view.conditional_rows or view.metadata_rows)
 
 
 def _order_endpoint_lists(analyses: Sequence[_ListAnalysis]) -> tuple[_ListAnalysis, ...]:
@@ -1046,12 +1078,11 @@ def endpoint_report(
     for change in capture.changes if capture is not None else ():
         by_path.setdefault(change.list_path, []).append(change)
     listings = {listing.list_path: listing for listing in lists}
-    analyses = _order_endpoint_lists(
-        [
-            _analyse_list(changes, listings.get(path), profile, full_detail=full_detail)
-            for path, changes in by_path.items()
-        ]
+    all_analyses = (
+        _analyse_list(changes, listings.get(path), profile, full_detail=full_detail)
+        for path, changes in by_path.items()
     )
+    analyses = _order_endpoint_lists([analysis for analysis in all_analyses if analysis.has_full_content])
     if full_detail:
         shown = [analysis.view for analysis in analyses]
         omitted = detail_only = 0
@@ -1070,6 +1101,7 @@ def endpoint_report(
         failed_count, unsent = _failed_and_unsent(capture)
         counts = (
             (sum(1 for analysis in analyses if analysis.has_price_change), "list", " with price changes"),
+            (sum(1 for analysis in analyses if analysis.has_capability_change), "list", " with capability changes"),
             (sum(1 for c in all_changes if c.change_kind == ENDPOINT_ADDED), "endpoint", " added"),
             (sum(1 for c in all_changes if c.change_kind == ENDPOINT_REMOVED), "endpoint", " removed"),
             (

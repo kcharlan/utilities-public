@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Hashable, Literal
 
@@ -290,6 +291,10 @@ class ProviderProfile:
     # label of the same path (see `_OPENROUTER_ENDPOINT_FIELD_PATH_LABELS`).
     endpoint_field_path_labels: Mapping[str, str] = field(default_factory=dict)
     parameter_membership_fields: tuple[str, ...] = ("supported_parameters", "parameters")
+    endpoint_capability_fields: tuple[str, ...] = (
+        "default_parameters", "default_parameters.*", "architecture", "architecture.*",
+        "supports_implicit_caching",
+    )
 
     def __post_init__(self) -> None:
         for name in (
@@ -361,6 +366,22 @@ class ProviderProfile:
     def is_parameter_membership_field(self, field_path: str) -> bool:
         """Recognize configured exact paths or configured bare dotted leaves."""
         return field_path in self.parameter_membership_fields or field_path.rsplit(".", 1)[-1] in self.parameter_membership_fields
+
+    def is_endpoint_capability_field(self, field_path: str) -> bool:
+        """Select endpoint capabilities after the existing report routing boundaries."""
+        category = self.categorize(field_path)
+        if (
+            field_path == "pricing" or field_path.startswith("pricing.")
+            or self.is_pricing_override_selector_path(field_path)
+            or field_path == (self.endpoint_status_field or "status")
+            or category in ("Pricing", "Context & Limits")
+        ):
+            return False
+        return (
+            self.is_parameter_membership_field(field_path)
+            or category in ("Parameters", "Capabilities")
+            or any(fnmatchcase(field_path, pattern) for pattern in self.endpoint_capability_fields)
+        )
 
     @property
     def pricing_override_selector_names(self) -> tuple[str, ...]:
