@@ -1280,6 +1280,8 @@ legend,
 .endpoint-table tbody th span { color: var(--ink-strong); font-weight: 600; }
 .endpoint-table tbody th small { color: var(--ink-muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 0.6rem; font-weight: 400; }
 .endpoint-table td { color: var(--ink-strong); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.endpoint-table td.capability { color: var(--capability); }
+.endpoint-table td.capacity { color: var(--capacity); }
 .endpoint-table td.alias-tag { color: var(--ink); font-family: inherit; font-size: 0.64rem; }
 .endpoint-ladders { display: grid; gap: 0.7rem; }
 .endpoint-ladder { display: grid; gap: 0.45rem; margin: 0; padding: 0.7rem; border: 1px solid var(--border); background: var(--panel); }

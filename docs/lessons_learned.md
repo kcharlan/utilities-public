@@ -1209,3 +1209,13 @@ Validate canonical segments and compose package identities without aliases;
 fold case only, and admit official provenance only for canonical core/cask.
 Synthetic receipt fixtures must follow that writer format. Capture tapped
 membership once per snapshot/point read, rather than rescanning for each receipt.
+
+## 2026-10-22: Preserve stored uptime precision in dossier cells
+
+JavaScript's default `Number.toLocaleString()` rounds to three fractional
+digits: a synthetic stored uptime of 99.9999 became a misleading 100%.
+Render uptime with the same numeric string interpolation as Hosts details;
+reserve locale grouping for integer token capacities. Keep browser coverage
+for high precision alongside real zero and missing samples in both themes
+and at narrow widths. Validate these cases with isolated synthetic runtime
+data rather than reading real provider captures.

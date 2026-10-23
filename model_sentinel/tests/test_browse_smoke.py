@@ -83,6 +83,9 @@ def hosts_server(tmp_path_factory: pytest.TempPathFactory, request):
             elif variant == "no_telemetry":
                 connection.execute("DROP TABLE endpoint_telemetry")
                 connection.execute("DROP TABLE endpoint_telemetry_captures")
+            elif variant == "dossier_samples":
+                connection.execute("UPDATE endpoint_telemetry SET uptime_1d=0, uptime_30m=99.9999 WHERE capture_id=? AND list_path=? AND endpoint_key='alpha-fast#0'", (facts.captures["first"], facts.host_grouping_and_ties["path"]))
+                connection.execute("DELETE FROM endpoint_telemetry WHERE capture_id=? AND list_path=? AND endpoint_key='alpha-cheap#0'", (facts.captures["first"], facts.host_grouping_and_ties["path"]))
             else:
                 raise AssertionError(f"Unknown Hosts fixture variant: {variant}")
     before = hashlib.sha256(database_path.read_bytes()).hexdigest()
@@ -1306,6 +1309,59 @@ def _switch_hash(page: Page, fragment: str) -> None:
     page.evaluate("fragment => { location.hash = fragment; }", fragment)
 
 
+@pytest.mark.parametrize("hosts_server", ["dossier_samples"], indirect=True)
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_dossier_endpoint_capabilities_and_uptime(hosts_page, hosts_server, theme, width):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": width, "height": 900})
+    goto(hosts_page, hosts_server)
+    hosts_page.get_by_text("Appearance", exact=True).click()
+    hosts_page.get_by_role("button", name=theme, exact=True).click()
+    selected = [facts.scrapes["first"]]
+    def observed_snapshot(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["latest_scrape"] = {**payload["latest_scrape"], "scrape_id": selected[0]}
+        route.fulfill(response=response, json=payload)
+    # ModelView has no historical snapshot picker. As in the existing stale
+    # scrape regression, simulate a dossier refresh naming a saved observation.
+    hosts_page.route(re.compile(r"/api/model\?"), observed_snapshot)
+    goto(hosts_page, hosts_server, _dossier_fragment(facts.provider_id, "fake-org/hosts-shared"))
+    section = _endpoints_section(hosts_page)
+    table = section.locator("table.endpoint-table")
+    expect(table.locator("thead th")).to_have_text(["Endpoint", "Status", "Quantization", "Context length", "Uptime 1d", "Uptime 30m", "Uptime 5m", "Input/1M tokens"])
+    rows = table.locator("tbody tr")
+    expect(rows.nth(0).locator("td")).to_have_text(["normal", "fp16", "256,000", "0%", "99.9999%", "—", "$2.00"])
+    expect(rows.nth(1).locator("td")).to_have_text(["normal", "fp16", "128,000", "—", "—", "—", "$1.00"])
+    expect(rows.nth(3).locator("td").first).to_have_text("status 2")
+    expect(section.locator(".uptime-unavailable")).to_have_count(0)
+    assert hosts_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if width == 390:
+        assert table.evaluate("table => table.scrollWidth > table.parentElement.clientWidth")
+        table.evaluate("table => table.parentElement.scrollLeft = table.scrollWidth")
+        assert table.evaluate("table => table.parentElement.scrollLeft > 0")
+    for cell in (rows.nth(0).locator(".capability"), rows.nth(0).locator(".capacity")):
+        assert _contrast(hosts_page, cell) >= 4.5
+        assert cell.evaluate("cell => getComputedStyle(cell).color !== getComputedStyle(cell.parentElement.querySelector('td')).color")
+    # A snapshot switch must replace facts with the selected capture's samples.
+    selected[0] = facts.scrapes["second"]
+    hosts_page.get_by_role("group", name="Detail").get_by_role("button", name="All", exact=True).click()
+    expect(table.locator("tbody tr").nth(0).locator("td")).to_have_text(["normal", "fp16", "512,000", "98%", "—", "—", "$2.00"])
+    selected[0] = facts.scrapes["first"]
+    goto(hosts_page, hosts_server, _dossier_fragment(facts.provider_id, "fake-org/hosts-unranked"))
+    expect(section.locator("table.endpoint-table tbody tr").first.locator("td")).to_have_text(["—", "—", "—", "—", "—", "—"])
+
+
+@pytest.mark.parametrize("hosts_server", [None, "no_telemetry"], indirect=True)
+def test_dossier_missing_uptime_explains_backfill(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _dossier_fragment(facts.single_provider_id, "fake-org/hosts-unranked"))
+    section = _endpoints_section(hosts_page)
+    expect(section.locator(".uptime-unavailable")).to_have_text("Uptime isn't stored for this snapshot yet. The next saved scan can backfill it from its archive.")
+    expect(section.locator("table.endpoint-table tbody tr").first.locator("td")).to_have_text(["—", "—", "—", "—", "—", "—"])
+
+
 def _wait_for(page: Page, condition, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while not condition():
@@ -1337,10 +1393,10 @@ def test_endpoint_dossier_captured_list_table_changes_and_label_order(
     table = section.locator("table.endpoint-table")
     third_keys = dict(endpoint.listed_keys_by_capture)[endpoint.third_capture]
     expect(table.locator("tbody th small")).to_have_text(list(third_keys))
-    expect(table.locator("thead th")).to_have_text(["Endpoint", "Status", "Input/1M tokens", "Output/1M tokens"])
+    expect(table.locator("thead th")).to_have_text(["Endpoint", "Status", "Quantization", "Context length", "Uptime 1d", "Uptime 30m", "Uptime 5m", "Input/1M tokens", "Output/1M tokens"])
     first = table.locator("tbody tr").first
-    expect(first.locator("td")).to_have_text(["0", "$2.00", "$10.00"])
-    expect(first.locator("td").nth(1)).to_have_attribute("title", "raw 0.000002")
+    expect(first.locator("td")).to_have_text(["normal", "—", "32,000", "—", "99.5%", "—", "$2.00", "$10.00"])
+    expect(first.locator("td").nth(6)).to_have_attribute("title", "raw 0.000002")
 
     capture = section.locator(".endpoint-capture")
     expect(capture.locator(".endpoint-capture-line")).to_have_text(response["capture"]["status_line"])

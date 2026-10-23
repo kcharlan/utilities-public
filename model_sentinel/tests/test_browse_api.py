@@ -1453,6 +1453,7 @@ def test_endpoint_reason_states_captured_list(endpoint_context) -> None:
         "provider_id", "model_id", "scrape_id", "captured", "reason", "capture",
         "first_capture_date", "list_path", "list_model_id", "shared_with", "alias",
         "list_outcome", "list_error", "endpoints", "ladders", "changes", "limit", "truncated",
+        "telemetry", "backfill_eligible",
     }
     assert response["provider_id"] == facts.provider_id
     assert response["model_id"] == facts.listed_model
@@ -2099,6 +2100,85 @@ def _hosts_first(context, facts):
     return api.hosts(context, {"provider": facts.provider_id, "scrape_id": str(facts.scrapes["first"])})
 
 
+def test_dossier_endpoint_facts_match_exact_shared_list(hosts_context):
+    context, facts = hosts_context
+    params = {"provider": facts.provider_id, "scrape_id": str(facts.scrapes["first"])}
+    for model in ("shared", "twin", "alias"):
+        data = api.endpoints(context, {**params, "model": "fake-org/hosts-" + model})
+        assert data["telemetry"] == "available"
+        assert data["backfill_eligible"] is False
+        assert data["list_path"] == facts.host_grouping_and_ties["path"]
+        rows = data["endpoints"]["rows"]
+        assert [row["quantization"] for row in rows] == ["fp16"] * 4
+        assert [row["context_length"] for row in rows] == [256000, 128000, 64000, 128000]
+        assert [row["status"] for row in rows] == [0, 0, 0, 2]
+        assert [row["uptime"] for row in rows] == [
+            {"1d": value, "30m": None, "5m": None} for value in (98, 100, 97, 99)
+        ]
+    second = api.endpoints(context, {**params, "model": "fake-org/hosts-shared", "scrape_id": str(facts.scrapes["second"])})
+    assert second["endpoints"]["rows"][0]["context_length"] == 512000
+    assert second["endpoints"]["rows"][1]["status"] == 3
+    moved = api.endpoints(context, {**params, "model": "fake-org/hosts-solo", "scrape_id": str(facts.scrapes["second"])})
+    assert moved["list_path"] == facts.host_history_attribution["moved_path"]
+    assert moved["endpoints"]["rows"][0]["context_length"] == 1024000
+
+
+@pytest.mark.parametrize("variant,telemetry,eligible", [
+    ("available", "available", False), ("pending", "pending", True),
+    ("no_tables", "no_tables", True), ("no_archive", "pending", False),
+])
+def test_dossier_telemetry_marker_and_exact_sample_identity(tmp_path, variant, telemetry, eligible):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-dossier.db"
+    facts = build_hosts_fixture_db(path)
+    cid = facts.captures["first"]
+    shared = facts.host_grouping_and_ties["path"]
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE endpoint_telemetry SET uptime_1d=0, uptime_30m=88 WHERE capture_id=? AND list_path=? AND endpoint_key='alpha-fast#0'", (cid, shared))
+        connection.execute("DELETE FROM endpoint_telemetry WHERE capture_id=? AND list_path=? AND endpoint_key='alpha-cheap#0'", (cid, shared))
+        # Same key in a different list/capture must not fill the missing sample.
+        connection.execute("INSERT INTO endpoint_telemetry (capture_id,list_path,endpoint_key,uptime_1d,telemetry_json) VALUES (?,?,?,?,?)", (cid, facts.host_history_attribution["from_path"], "alpha-cheap#0", 12, "{}"))
+        if variant in ("pending", "no_archive"):
+            connection.execute("DELETE FROM endpoint_telemetry_captures WHERE capture_id=?", (cid,))
+        if variant == "no_archive":
+            connection.execute("DELETE FROM endpoint_capture_archives WHERE capture_id=?", (cid,))
+        if variant == "no_tables":
+            connection.execute("DROP TABLE endpoint_telemetry")
+            connection.execute("DROP TABLE endpoint_telemetry_captures")
+    db = open_readonly(path)
+    try:
+        result = api.endpoints(_context(db), {"provider": facts.provider_id, "model": "fake-org/hosts-shared", "scrape_id": str(facts.scrapes["first"])})
+        assert (result["telemetry"], result["backfill_eligible"]) == (telemetry, eligible)
+        rows = result["endpoints"]["rows"]
+        assert rows[0]["uptime"] == {"1d": 0 if variant == "available" else None, "30m": 88 if variant == "available" else None, "5m": None}
+        assert rows[1]["uptime"] == {"1d": None, "30m": None, "5m": None}
+    finally:
+        db.close_all()
+
+
+@pytest.mark.parametrize("quantization,context_length,want_quant,want_context", [
+    ("fp8", 32000, "fp8", 32000), (None, None, None, None),
+    ({"synthetic": "malformed"}, {"tokens": 42}, None, None),
+    (7, "128000", None, None), (False, True, None, None),
+    ([], -1, None, None), ("synthetic-q", 1.5, "synthetic-q", None),
+])
+def test_dossier_endpoint_facts_reject_malformed_metadata(tmp_path, quantization, context_length, want_quant, want_context):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-dossier.db"
+    facts = build_hosts_fixture_db(path)
+    with sqlite3.connect(path) as connection:
+        state_hash = connection.execute("SELECT state_hash FROM endpoint_observations WHERE capture_id=? AND list_path=? AND endpoint_key='alpha-fast#0'", (facts.captures["first"], facts.host_grouping_and_ties["path"])).fetchone()[0]
+        state = json.loads(connection.execute("SELECT state_json FROM endpoint_states WHERE state_hash=?", (state_hash,)).fetchone()[0])
+        state.update(quantization=quantization, context_length=context_length)
+        connection.execute("UPDATE endpoint_states SET state_json=? WHERE state_hash=?", (json.dumps(state), state_hash))
+    db = open_readonly(path)
+    try:
+        row = api.endpoints(_context(db), {"provider": facts.provider_id, "model": "fake-org/hosts-shared", "scrape_id": str(facts.scrapes["first"])})["endpoints"]["rows"][0]
+        assert (row["quantization"], row["context_length"]) == (want_quant, want_context)
+    finally:
+        db.close_all()
+
+
 def test_host_grouping_and_ties(hosts_context):
     context, facts = hosts_context
     result = _hosts_first(context, facts)
@@ -2289,6 +2369,14 @@ def test_dossier_shared_serializer_preserves_bytes(tmp_path):
         context = _context(db)
         for model, expected in ((facts.listed_model, "a33f9663408f117bb1775f0df39af4e16b9be5ea13012ed21a2c382fb86a3e93"), (facts.alias_model, "192632c504c0172bce0a088e0b2b02a4afaa9766d354735bc1523204b15236b3"), (facts.error_only_model, "79b1b77804fc8065c1becd01d38365270d86a31a31b62ddab0bcbfe417538ac5")):
             payload = api.endpoints(context, {"provider": facts.provider_id, "model": model})
+            # 0.4 adds only these dossier facts. Preserve the original complete
+            # pre-0.4 projection and hashes; test new fields separately below.
+            assert payload.pop("telemetry") == ("pending" if model == facts.error_only_model else "available")
+            assert isinstance(payload.pop("backfill_eligible"), bool)
+            for row in payload["endpoints"]["rows"]:
+                assert set(row) >= {"quantization", "context_length", "uptime"}
+                for field in ("quantization", "context_length", "uptime"):
+                    del row[field]
             assert hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest() == expected
     finally:
         db.close_all()

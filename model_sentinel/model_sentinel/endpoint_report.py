@@ -1147,7 +1147,8 @@ class EndpointTableRow:
     `tag`, `name` and `provider_name` are the endpoint's own strings (None
     when absent or not a string); `status` is its stored status code.
     `prices` align with the table's columns; None where the endpoint has no
-    resolved price for that column.
+    resolved price for that column. Quantization is a string or None; context
+    length is a nonnegative integer token count or None for malformed values.
     """
 
     endpoint_key: str
@@ -1156,6 +1157,8 @@ class EndpointTableRow:
     provider_name: str | None
     status: int | None
     prices: tuple[EndpointPriceValue | None, ...]
+    quantization: str | None
+    context_length: int | None
 
 
 @dataclass(frozen=True)
@@ -1211,6 +1214,12 @@ def endpoint_price_table(listing: EndpointListRecord, profile: ProviderProfile) 
             provider_name=_optional_string(observation.state, "provider_name"),
             status=observation.status_code,
             prices=tuple(row_cells),
+            quantization=_optional_string(observation.state, "quantization"),
+            context_length=(
+                observation.state["context_length"]
+                if type(observation.state.get("context_length")) is int
+                and observation.state["context_length"] >= 0 else None
+            ),
         )
         for observation, row_cells in zip(listing.observations, cells)
     )
