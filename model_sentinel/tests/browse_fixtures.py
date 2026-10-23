@@ -677,3 +677,146 @@ def decoded_change_rows(path: Path) -> tuple[dict[str, object], ...]:
         }
         for row in rows
     )
+
+
+@dataclass(frozen=True)
+class HostsFixtureFacts:
+    """Invented Hosts scenarios; identities and hand-derived expectations for UI/API tests."""
+
+    provider_id: str
+    single_provider_id: str
+    scrapes: dict[str, int]
+    captures: dict[str, int]
+    host_history_attribution: dict
+    host_history_truncation: dict
+    host_single_capture: dict
+    host_grouping_and_ties: dict
+    host_precision_conditions: dict
+    host_missing_ranking: dict
+    host_exact_prices: dict
+    host_partial_coverage: dict
+    host_empty_results: dict
+    host_tier_identity: dict
+    host_condition_counts: dict
+    host_row_admission: dict
+    host_list_identity: dict
+    host_legacy_and_reasons: dict
+
+
+def build_hosts_fixture_db(path: Path, *, provider_id: str = "hosts-synthetic", single_provider_id: str = "hosts-single-synthetic", with_output_prices: bool = False) -> HostsFixtureFacts:
+    """Build only synthetic Hosts evidence, independent of the existing browse fixture."""
+    from dataclasses import replace
+
+    provider = replace(ENDPOINT_PROVIDER, provider_id=provider_id, label="Synthetic Hosts")
+    single = replace(provider, provider_id=single_provider_id, label="Synthetic Single Host")
+    store = Store(path)
+    store.initialize()
+    store.upsert_provider_configs((provider, single), updated_at="2026-09-01T12:00:00+00:00")
+    profile = resolve_profile(provider.kind)
+    paths = {name: _ep_path("fake-org/hosts-" + name) for name in ("shared", "moved", "solo", "bare", "empty", "bulk", "unranked", "unmapped", "exact")}
+    alpha, beta, gamma = "Synthetic Alpha", "Synthetic Beta", "Synthetic Gamma"
+
+    def endpoint(tag, host=alpha, price="0.000001", **extra):
+        return {"tag": tag, "provider_name": host, "pricing": {"prompt": price},
+                "status": 0, "context_length": 128000, "max_completion_tokens": 32000,
+                "max_prompt_tokens": 96000, "quantization": "fp16", "uptime_last_1d": 99,
+                "supported_parameters": ["tools"], "native_tools": {"search": {}},
+                "supports_implicit_caching": True, **extra}
+
+    quants = ("fp32", "bf16", "fp16", "fp8", "int8", "fp6", "fp4", "mxfp4", "nvfp4", "int4", "unknown", "synthetic-q", None, 7)
+    shared = [
+        endpoint("alpha-fast", price="0.000002", context_length=256000, uptime_last_1d=98),
+        endpoint("alpha-cheap", price="0.000001", uptime_last_1d=100),
+        endpoint("beta", beta, "0.000001", context_length=64000, uptime_last_1d=97, service_tier="standard"),
+        endpoint("gamma", gamma, "0.000003", service_tier="null", supported_parameters=["response_format"], native_tools={"code": {}, "search": {}}, supports_implicit_caching="true", status=2),
+    ]
+    if with_output_prices:
+        shared[0]["pricing"]["completion"] = "0.000004"
+    bare = [endpoint(f"precision-{i}", beta, quantization=q, service_tier=[None, "standard", "null", "priority", 9][i % 5]) for i, q in enumerate(quants)]
+    bare += [endpoint("exact-low", price="0.00000100000000000000001"), endpoint("exact-high", beta, "0.00000100000000000000002"),
+             endpoint("tiny", gamma, "1e-10000"), endpoint("negative", gamma, "-0.000001"), endpoint("zero", gamma, "0")]
+    unranked = [{"tag": "missing", "name": "Synthetic Missing", "status": None, "quantization": None,
+                 "service_tier": {}, "native_tools": [], "supports_implicit_caching": 1},
+                {"tag": "fallback", "provider_name": 7, "name": "Synthetic Name Fallback", "supported_parameters": ["tools", 7]}]
+    initial = {"shared": shared, "solo": [endpoint("solo", "Synthetic Solo", "0.000004", context_length=512000), endpoint("moved-removed", "Synthetic Moved Removed")],
+               "bare": bare, "empty": [], "bulk": [endpoint(f"bulk-{i:03}", "Synthetic Bulk") for i in range(105)], "unranked": unranked}
+    initial["exact"] = [bare[14], dict(bare[15], context_length=None, max_completion_tokens=None, uptime_last_1d=None),
+                        endpoint("price-missing", gamma, None, context_length=512000)]
+    initial["bare"] = bare[:14] + bare[16:]
+    initial["unmapped"] = [{"tag": "tag-only"}, {}]
+    catalog = [_ep_listed("fake-org/hosts-" + name, path=paths[name]) for name in initial if name != "unmapped"]
+    catalog += [_ep_listed("fake-org/hosts-twin", path=paths["shared"]), _ep_alias("fake-org/hosts-alias", "fake-org/hosts-shared")]
+    scrapes, captures = {}, {}
+    previous_id, previous_models = None, []
+
+    def save(name, number, contents, raw_catalog, *, failed=(), baseline=None, pending=False, capture=True, error=False, source=provider):
+        nonlocal previous_id, previous_models
+        when = f"2026-09-{number:02d}T12:00:00+00:00"
+        primary = source.provider_id == provider.provider_id
+        sid, models = _save_scrape(store, source, completed_at=when, raw_models=raw_catalog,
+                                  previous_id=previous_id if primary else None,
+                                  previous_models=previous_models if primary else [])
+        scrapes[name] = sid
+        if primary:
+            previous_id, previous_models = sid, models
+        if not capture:
+            return
+        if error:
+            summary = store.save_endpoint_error_capture(build_endpoint_error_summary(provider_id=provider.provider_id,
+                      scrape_id=sid, started_at=when, completed_at=when, error_summary="Synthetic capture failure",
+                      baseline_scrape_id=baseline, baseline_capture=store.get_endpoint_capture_for_scrape(baseline) if baseline else None))
+        else:
+            mappings = build_endpoint_mappings({m.provider_model_id: m for m in models}, endpoint_origin(provider.models_url).path_prefix)
+            results, bodies = [], {}
+            for key, values in contents.items():
+                list_path = paths.get(key, key)
+                list_id = None if key == "bare" else "synthetic-response-" + key
+                if key in failed:
+                    results.append(EndpointPathResult(list_path, None, "error", (), "http_status", "Synthetic list unavailable", 503))
+                else:
+                    results.append(EndpointPathResult(list_path, list_id, "ok" if values else "empty", tuple(values), None, None, None))
+                    bodies[list_path] = {"data": {"id": list_id, "endpoints": values}}
+            fetched = EndpointFetchResult(source.provider_id, when, when, mappings, tuple(results), len(results), len(results), len(failed), 0, bodies)
+            candidate = build_endpoint_capture(fetched, profile=profile, scrape_id=sid, baseline_scrape_id=baseline,
+                        baseline_capture=store.get_endpoint_capture_for_scrape(baseline) if baseline else None)
+            summary = store.save_endpoint_capture(candidate)
+        assert summary.capture_id is not None
+        captures[name] = summary.capture_id
+        if pending:
+            with sqlite3.connect(path) as connection:
+                connection.execute("DELETE FROM endpoint_telemetry WHERE capture_id = ?", (summary.capture_id,))
+                connection.execute("DELETE FROM endpoint_telemetry_captures WHERE capture_id = ?", (summary.capture_id,))
+
+    save("first", 1, initial, catalog)
+    changed = dict(initial)
+    changed["shared"] = [dict(shared[0], context_length=512000), dict(shared[1], status=3),
+                         dict(shared[2], provider_name="Synthetic Renamed"), endpoint("added", alpha)]
+    changed["bulk"] = [dict(e, context_length=256000, max_completion_tokens=64000) for e in initial["bulk"]]
+    changed["moved"] = [dict(changed.pop("solo")[0], context_length=1024000)]
+    moved_catalog = [dict(m, links={"details": paths["moved"]}) if m["id"] == "fake-org/hosts-solo" else m for m in catalog]
+    save("second", 2, changed, moved_catalog, baseline=scrapes["first"])
+    save("partial", 3, changed, moved_catalog, failed=("moved",), baseline=scrapes["second"])
+    absent = {key: [e for e in values if e.get("provider_name") not in (gamma, "Synthetic Solo")] for key, values in changed.items()}
+    save("absent", 4, absent, moved_catalog, baseline=scrapes["partial"])
+    # Another capture-capable provider, a single archived capture without a marker.
+    save("no_prices", 5, {"unranked": unranked}, [_ep_listed("fake-org/hosts-unranked")], pending=True, source=single)
+    save("empty", 6, {"empty": []}, [_ep_listed("fake-org/hosts-empty")])
+    save("uncaptured", 7, {}, catalog, capture=False)
+    save("error", 8, {}, catalog, error=True)
+    return HostsFixtureFacts(
+        provider.provider_id, single.provider_id, scrapes, captures,
+        {"host": alpha, "kinds": ("endpoint_added", "field_changed", "status_changed"), "removed_host": gamma, "moved_path": paths["moved"], "from_path": paths["solo"], "moved_host": "Synthetic Solo", "moved_removed_host": "Synthetic Moved Removed", "target_display": "synthetic-response-moved", "renamed_host": "Synthetic Renamed", "renamed_from": beta},
+        {"host": "Synthetic Bulk", "count": 210},
+        {"scrape": scrapes["no_prices"], "telemetry": "pending"},
+        {"path": paths["shared"], "hosts": (alpha, beta, gamma), "alpha_endpoints": 2, "price_winners": (alpha, beta), "context_winner": alpha},
+        {"values": quants, "bits": (32, 16, 16, 8, 8, 6, 4, 4, 4, 4, None, None, None, None)},
+        {"path": paths["unranked"], "keys": ("missing#0", "fallback#0"), "zero_key": "zero#0", "no_prices_scrape": scrapes["no_prices"], "missing_window": "5m"},
+        {"path": paths["exact"], "low_key": "exact-low#0", "high_key": "exact-high#0", "low": "1.00000000000000001", "high": "1.00000000000000002", "threshold": "1.000000000000000015", "tiny_key": "tiny#0", "tiny_denominator_power": 9994, "negative_key": "negative#0"},
+        {"host": "Synthetic Solo", "scrapes": (scrapes["first"], scrapes["partial"], scrapes["absent"])},
+        {"empty_scrape": scrapes["empty"], "disjoint_hosts": (alpha, "Synthetic Missing")},
+        {"tiers": (None, "null", "priority", "standard")},
+        {"shared_statuses": (0, 0, 0, 2), "shared_uptimes": (98, 100, 97, 99), "shared_contexts": (256000, 128000, 64000, 128000)},
+        {"shared_path": paths["shared"], "solo_path": paths["solo"], "unranked_path": paths["unranked"]},
+        {"missing_id_path": paths["bare"], "shared_models": ("fake-org/hosts-shared", "fake-org/hosts-twin"), "alias": "fake-org/hosts-alias"},
+        {"uncaptured": scrapes["uncaptured"], "error": scrapes["error"]},
+    )

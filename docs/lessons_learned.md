@@ -1,5 +1,75 @@
 # Lessons learned
 
+## 2026-10-22: Give debounced condition editors an explicit commit lifecycle
+
+Model Sentinel's price editor captured an old column in its timer. Blurring
+a pending draft while removing the condition also queued replace and push
+updates whose normalization effects alternated forever. Read the latest commit
+target from a ref, cancel timers and blur commits before removal, and apply a
+column selection to the current draft as one action. Ignore normalization
+effects whose source state no longer matches the current hash/resource; the
+same race can happen when a pending value precedes a checkbox change. Keep
+typing as replace and deliberate presets as push; let their displayed value follow URL state
+so fast Back/Forward cannot leave an optimistic draft behind. Regress the
+whole edit/switch/remove sequence with a watchdog outside the browser renderer.
+When invalid intermediate text falls back to the last committed value, apply
+that same exact text to a newly selected target too; restoring only the field
+leaves its visible target and the active URL filter inconsistent.
+Resynchronize the editor's local price-column selection when the committed URL
+path changes, even if its numeric text does not. Preserve a column-only draft
+while no limit exists by following path changes rather than every rerender.
+Represent the absence of a committed target separately from the initial
+default: clearing a ceiling must retain the local column for retyping, while
+restoring an active URL ceiling must override that draft even when its target
+equals the initial default. Regress both transitions with exact text, missing
+counts, filter outcomes and Back/Forward navigation.
+
+## 2026-10-22: Reject synthetic runtime targets in both worktree and main checkout
+
+Model Sentinel's acceptance builder originally checked only the checkout
+containing its source. From a linked worktree that allowed synthetic runtime
+files inside the main public checkout. Resolve Git's common directory and
+check both checkout roots by filesystem identity before writing. Exercise the
+shared isolation helper through each runtime builder, including symlink/case
+aliases, and clean only the exact fresh test-created target in a failure path.
+Known checkout roots are not exhaustive. Check resolved target ancestry for
+Git checkout markers (directories or linked-worktree files) before creating
+directories, and regress unrelated checkouts using disposable synthetic Git
+repositories and the preflight alone so no runtime files are written there.
+
+## 2026-10-22: Exercise primary navigation targets, not only nearby links
+
+Model Sentinel's Hosts rows exposed individual mapped-model dossier buttons,
+but the primary list title remained plain text despite its action contract.
+Testing only the secondary links missed that gap. Exercise the primary title
+itself against a real synthetic dossier, retain each shared-list model link,
+and assert unmapped titles remain noninteractive. Similarly, test the visible
+view tab directly in addition to keyboard shortcuts.
+
+## 2026-10-22: Validate snapshot ownership before requesting a new provider
+
+Model Sentinel's shared Providers controls preserve view-specific hash keys.
+Hosts initially reused `hasof` after the selected provider changed, sending an
+exact scrape ID owned by the previous provider and receiving a 400. Validate
+the requested ID against the selected provider's saved successful scrapes
+before issuing the request. If it does not belong there, request the default
+capture and canonicalize the returned ID with `replaceState`. Keep explicit
+valid uncaptured and failed snapshots exact; do not substitute another capture
+for them. Regress provider changes, malformed IDs, and Back navigation with
+the isolated synthetic Hosts fixture and the browser's console-error guard.
+
+## 2026-10-22: Mark telemetry processing separately from sample presence
+
+A missing numeric sample cannot distinguish an unprocessed archive from a
+processed capture with empty lists or rejected values. Keep a capture-level
+completion marker and write it with its samples in one transaction. Backfill
+each archive independently, use the observation parser and duplicate-key
+authority unchanged, and count unmatched observations rather than inventing
+links. Preserve raw telemetry separately from validated numeric columns;
+Python booleans are integers but are not valid uptime percentages. Regress
+empty processing, duplicate identities, late write failures and retries with
+synthetic archives.
+
 ## 2026-10-22: Validate bundled tax rules separately from frozen parity inputs
 
 Tax2's engine correctly supported earned-only components, but its bundled PA

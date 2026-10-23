@@ -593,7 +593,8 @@ def _strict_leaf(path: str, raw: Any, profile: ProviderProfile) -> PriceLeaf | N
     return leaf if leaf.resolved else None
 
 
-def _state_leaves(state: Any, profile: ProviderProfile) -> dict[str, PriceLeaf]:
+def state_price_leaves(state: Any, profile: ProviderProfile) -> dict[str, PriceLeaf]:
+    """Resolved endpoint price leaves, with the provider's exact unit normalization."""
     if not isinstance(state, Mapping):
         return {}
     return {leaf.path: leaf for leaf in resolved_price_leaves(state, profile) if leaf.resolved}
@@ -673,7 +674,7 @@ def _analyse_list(
         rendered.field_path for entries in priced.values() for _, rendered in entries
     }
     for state in presence_states.values():
-        column_paths.update(_state_leaves(state, profile))
+        column_paths.update(state_price_leaves(state, profile))
     columns = tuple(
         EndpointPriceColumn(
             path=path,
@@ -694,7 +695,7 @@ def _analyse_list(
         if kind == FIELD_CHANGED:
             entries = priced[key]
             changed = {rendered.field_path: (change, rendered) for change, rendered in entries}
-            current = _state_leaves(current_states.get(key), profile)
+            current = state_price_leaves(current_states.get(key), profile)
             for column_index, column in enumerate(columns):
                 if column.path in changed:
                     change, rendered = changed[column.path]
@@ -718,7 +719,7 @@ def _analyse_list(
             direction = _row_direction([rendered for _, rendered in entries])
             sources = tuple(change for change, _ in entries)
         else:
-            leaves = _state_leaves(presence_states[(kind, key)], profile)
+            leaves = state_price_leaves(presence_states[(kind, key)], profile)
             side = "new" if kind == ENDPOINT_ADDED else "old"
             for column_index, column in enumerate(columns):
                 cells.append(None)
@@ -731,7 +732,7 @@ def _analyse_list(
         raw_rows.append((key, kind, cells, sources, direction))
 
     for path, entries in pending.items():
-        # `_state_leaves` keeps only resolved leaves, which always carry a price.
+        # `state_price_leaves` keeps only resolved leaves, which always carry a price.
         displays = format_price_values([leaf.price for _, _, leaf in entries], precision_basis=())
         for ((row_index, column_index), side, leaf), display in zip(entries, displays):
             raw_rows[row_index][2][column_index] = EndpointPriceCell(
@@ -1177,7 +1178,7 @@ def _optional_string(state: Mapping[str, Any], name: str) -> str | None:
 
 def endpoint_price_table(listing: EndpointListRecord, profile: ProviderProfile) -> EndpointPriceTable:
     """The endpoint-price table of one captured list (empty for a failed or empty list)."""
-    leaves = [_state_leaves(observation.state, profile) for observation in listing.observations]
+    leaves = [state_price_leaves(observation.state, profile) for observation in listing.observations]
     paths = sorted({path for row in leaves for path in row}, key=lambda path: pricing_field_sort_key(path, profile))
     columns = tuple(
         EndpointPriceColumn(
@@ -1192,7 +1193,7 @@ def endpoint_price_table(listing: EndpointListRecord, profile: ProviderProfile) 
     cells: list[list[EndpointPriceValue | None]] = [[None] * len(columns) for _ in leaves]
     for column_index, column in enumerate(columns):
         present = [(row_index, row[column.path]) for row_index, row in enumerate(leaves) if column.path in row]
-        # `_state_leaves` keeps only resolved leaves, which always carry a price.
+        # `state_price_leaves` keeps only resolved leaves, which always carry a price.
         displays = format_price_values([leaf.price for _, leaf in present], precision_basis=())
         for (row_index, leaf), display in zip(present, displays):
             cells[row_index][column_index] = EndpointPriceValue(
@@ -1322,7 +1323,7 @@ def change_price_evidence(change: EndpointChangeRecord, profile: ProviderProfile
         )
     elif change.change_kind in (ENDPOINT_ADDED, ENDPOINT_REMOVED):
         added = change.change_kind == ENDPOINT_ADDED
-        leaves = _state_leaves(change.new_value if added else change.old_value, profile)
+        leaves = state_price_leaves(change.new_value if added else change.old_value, profile)
         for path in sorted(leaves, key=lambda path: pricing_field_sort_key(path, profile)):
             leaf = leaves[path]
             entries.append(

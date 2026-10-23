@@ -810,7 +810,7 @@ def test_models_canonicalize_default_timeline_aspects_after_first_pin() -> None:
     assert "replaceState({aspects: defaultTimelineAspects(" in models
 
 
-def test_model_dossier_route_wires_changelog_and_sparklines_without_a_fourth_tab() -> None:
+def test_model_dossier_route_wires_changelog_and_sparklines_without_a_dossier_tab() -> None:
     source = _read_asset("app.js")
     model_view = source[
         source.index("function ModelView(") : source.index("function RawDrawer(")
@@ -823,7 +823,45 @@ def test_model_dossier_route_wires_changelog_and_sparklines_without_a_fourth_tab
     assert "<${ModelView}" in source
     assert "<${ChangeTable}" in model_view
     assert "<${SparklinePopover}" in model_view
-    assert 'const VIEWS = ["activity", "models", "catalog"]' in source
+    views = source[source.index("const VIEWS") : source.index("const ASPECT_LIMIT")]
+    assert '"model"' not in views
+    assert '"hosts"' in views
+
+
+def test_hosts_exact_rationals_preserve_tiny_negative_zero_ties_and_decimal_limits() -> None:
+    source = _read_asset("app.js")
+    helpers = source[source.index("  function exactRational(") : source.index("  function HostListTitle(")]
+    # Wrong direction, Number coercion, tag-based ranks, or zero division
+    # would each change these independently hand-derived results.
+    probe = subprocess.run(["node", "-e", helpers + r'''
+const assert = require("node:assert/strict");
+const endpoint = (host, key, price) => ({host, key, prices: price == null ? {} : {p: {exact: {numerator_hex: price[0], denominator_hex: price[1]}}}, uptime: {}, context_length: null});
+const low = endpoint("alpha", "a", ["16345785d8a0001", "16345785d8a0000"]);
+const high = endpoint("beta", "b", ["16345785d8a0002", "16345785d8a0000"]);
+const tied = endpoint("alpha", "extra-tag", ["16345785d8a0001", "16345785d8a0000"]);
+assert.equal(Number("1.00000000000000001"), Number("1.00000000000000002"));
+assert.equal(compareRational(rankValue(low, "price:p"), rankValue(high, "price:p")), -1);
+const exact = bestEndpoints([high, low, tied, endpoint("missing", "m", null)], "price:p");
+assert.equal(exact.winner.host, "alpha");
+assert.equal(exact.groups.get("beta").rank, 2);
+assert.equal(exact.groups.get("beta").denominator, 2);
+assert.equal(winnerDifference(exact.groups.get("beta")), "9.99999e-16% above the best");
+const threshold = decimalRational("1.000000000000000015");
+assert.equal(compareRational(rankValue(low, "price:p"), threshold), -1);
+assert.equal(compareRational(rankValue(high, "price:p"), threshold), 1);
+const tiny = decimalRational("1e-9994");
+assert.equal(compareRational(tiny, decimalRational("0")), 1);
+assert.equal(rationalMagnitude(tiny), "1e-9994");
+assert.equal(compareRational(exactRational({numerator_hex: "-1", denominator_hex: "1"}), tiny), -1);
+const zero = bestEndpoints([endpoint("zero", "z", ["0", "1"]), endpoint("one", "o", ["1", "1"])], "price:p");
+assert.equal(winnerDifference(zero.groups.get("one")), "—");
+const ties = bestEndpoints([endpoint("a", "a", ["1", "1"]), endpoint("b", "b", ["1", "1"]), endpoint("c", "c", ["2", "1"])], "price:p");
+assert.deepEqual(ties.ranked.map(group => group.rank), [1, 1, 3]);
+assert.equal(rankValue({...low, context_length: Infinity}, "context"), null);
+assert.equal(rankValue({...low, context_length: true}, "context"), null);
+assert.equal(decimalRational("."), null);
+'''], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
 def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:

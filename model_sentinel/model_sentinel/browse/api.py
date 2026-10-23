@@ -174,6 +174,7 @@ def meta(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
     span = queries.date_span(ctx.db.connection())
     return {
         "providers": provider_rows,
+        "host_providers": [provider_id for provider_id in provider_ids if queries.host_captures(ctx.db.connection(), provider_id=provider_id)],
         "date_span": None if span is None else {"first": span[0].isoformat(), "last": span[1].isoformat()},
         "scrapes": [_json_scrape(scrape) for scrape in queries.list_scrapes(ctx.db.connection())],
         "aspects": [aspect.to_json() for aspect in ctx.aspects],
@@ -936,7 +937,7 @@ def _catalog_aspects(ctx: ApiContext, provider_id: str, params: Mapping[str, str
     return tuple(lookup[aspect_id] for aspect_id in dict.fromkeys(ids))
 
 
-def _scrape_for_catalog(ctx: ApiContext, provider_id: str, raw: str | None, name: str) -> dict[str, Any]:
+def _saved_scrape(ctx: ApiContext, provider_id: str, raw: str | None, name: str) -> dict[str, Any]:
     if raw is None:
         raise BadRequest(f"{name} is required")
     try:
@@ -1060,10 +1061,10 @@ def catalog(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         raise BadRequest("provider is required")
     if provider_id not in ctx.profiles:
         raise BadRequest(f"unknown provider: {provider_id}")
-    as_of = _scrape_for_catalog(ctx, provider_id, params.get("as_of"), "as_of")
+    as_of = _saved_scrape(ctx, provider_id, params.get("as_of"), "as_of")
     compare = None
     if params.get("compare"):
-        compare = _scrape_for_catalog(ctx, provider_id, params.get("compare"), "compare")
+        compare = _saved_scrape(ctx, provider_id, params.get("compare"), "compare")
         if (compare["completed_at"], compare["scrape_id"]) >= (as_of["completed_at"], as_of["scrape_id"]):
             raise BadRequest("compare must be earlier than as_of")
     changed_only = params.get("changed_only")
@@ -1480,3 +1481,35 @@ def models(ctx: ApiContext, params: Mapping[str, str]) -> list[dict[str, Any]]:
     return queries.search_models(
         ctx.db.connection(), provider_ids=common.providers, query=params.get("q", ""), limit=limit
     )
+
+
+def _host_provider(ctx: ApiContext, params: Mapping[str, str]) -> str:
+    provider_id = params.get("provider")
+    if not provider_id:
+        raise BadRequest("provider is required")
+    if provider_id not in ctx.profiles:
+        raise BadRequest(f"unknown provider: {provider_id}")
+    return provider_id
+
+
+def hosts(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+    from .hosts_api import hosts_response
+    provider_id = _host_provider(ctx, params)
+    raw = params.get("scrape_id")
+    if raw is not None:
+        scrape = _saved_scrape(ctx, provider_id, raw, "scrape_id")
+    else:
+        captures = queries.host_captures(ctx.db.connection(), provider_id=provider_id)
+        scrape = captures[0] if captures else None
+    return hosts_response(ctx.db.connection(), provider_id=provider_id, scrape=scrape, profile=ctx.profiles[provider_id])
+
+
+def host_history(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
+    from .hosts_api import host_history_response
+    provider_id = _host_provider(ctx, params)
+    host = params.get("host")
+    if not host:
+        raise BadRequest("host is required")
+    common = parse_common(ctx, {**params, "providers": provider_id})
+    return host_history_response(ctx.db.connection(), provider_id=provider_id, host=host,
+                                 profile=ctx.profiles[provider_id], since=common.since, until=common.until)

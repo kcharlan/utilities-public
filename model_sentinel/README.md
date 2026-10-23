@@ -15,8 +15,8 @@ The CLI is implemented and includes:
 - SQLite-backed saved snapshots and change history
 - `history` queries for a provider/model pair
 - `changes` cross-provider/cross-model change log with date range filtering
-- `browse` read-only, fully offline history browser with Activity, Models, and
-  Catalog views
+- `browse` read-only, fully offline history browser with Activity, Models,
+  Catalog, and Hosts views
 - `providers` config inspection
 - `healthcheck` runtime/config validation
 - explicit `credentials refresh` acquisition into a private persistent cache
@@ -252,6 +252,27 @@ compared (a failed fetch on either side, a newly appearing or disappearing
 path, or a split, merge or partial move of models between paths) are recorded
 as comparison gaps rather than treated as empty lists.
 
+OpenRouter uptime is sampled from the response's rolling 5-minute, 30-minute
+and 1-day windows. These are provider-reported percentages at capture time,
+not measurements made by Model Sentinel. Finite numeric values from 0 through
+100 are stored in `endpoint_telemetry`; missing values, booleans, strings and
+out-of-range values become NULL. Present raw telemetry fields, including nulls
+and rejected uptime values, remain in canonical JSON. Telemetry does not
+participate in stable-state comparisons or endpoint change counts.
+
+Each processed capture has an `endpoint_telemetry_captures` marker, including
+captures with no telemetry rows. On saved scans, capture-capable providers
+first backfill older unprocessed gzip archives locally, even when new endpoint
+capture is switched off. Backfill uses the same response-order endpoint keys
+as new captures, saves only samples matching recorded observations, and counts
+unmatched archive endpoints. Each archive commits independently; a failure
+rolls back that archive and leaves it pending for a later saved scan. Minimal
+error captures with no archive are ineligible. Backfill needs no network
+request, and its failures are logged as redacted warnings without changing the
+catalog scan outcome. Progress logs give captures, rows and unmatched counts.
+`healthcheck` reports pending archived captures and the cumulative unmatched
+count as advisory detail without changing the capture status or exit code.
+
 Endpoint failures never change the catalog result, the notification decision,
 or the scan exit status. A capture that fails as a whole is saved as a minimal
 `error` capture with a sanitized message; the log records each capture's status
@@ -455,6 +476,7 @@ artifact.
 ./model-sentinel browse
 ./model-sentinel browse --provider openrouter
 ./model-sentinel browse --view catalog
+./model-sentinel browse --view hosts
 ./model-sentinel browse --model example-provider/fake-org/test-model-a
 ./model-sentinel browse --no-open --port 8110
 ```
@@ -475,6 +497,40 @@ browser, and `Ctrl-C` stops the server.
   sparklines, and links back to the timeline or feed. Compare mode initially
   shows changed models only; turn off **Changed only** to inspect the full
   snapshot.
+- **Hosts** compares serving companies in an exact saved endpoint capture.
+  Select no hosts for the best-across-hosts matrix, one for its profile and
+  history, or several for side-by-side columns. Shared model lists appear
+  once with their mapped model dossier links and aliases. Rank by exact price,
+  sampled uptime, context length, or max output; equal values share a rank.
+  Missing values remain visible without a best marker. Expand additional
+  endpoints to inspect precision, capabilities, tiers, and raw prices. Roster
+  counts describe observed coverage, and incomplete history captures break
+  uptime trends. On narrow screens the roster collapses above the scrolling
+  matrix. Snapshot, host selection, ranking, and row match survive reloads.
+
+  The question's phrases open keyboard-accessible condition editors for host
+  exclusions, normal status (code 0), precision, minimum uptime, context and
+  output capacity, supported parameters/native tools and implicit caching,
+  service tiers, exact price limits, and model-list search. Conditions combine
+  with AND; each removal count measures that condition alone across the capture.
+  Precision's 16-bit and 8-bit shortcuts preserve unknown/unrecognized chips.
+  An empty active precision or tier selection matches nothing; remove its
+  condition to restore unrestricted matching. Null service tiers display as
+  `standard`, while string tiers retain JSON quotes, including `"standard"` and
+  `"null"`. Price limits preserve decimal text and compare exact values.
+
+  **Any selected host** admits a list if one selected host qualifies; **All
+  selected hosts** requires each host. **Show excluded** uses endpoint presence
+  for the same row rule and shows failing endpoints dimmed with their first
+  failing condition, without awarding them ranks. With no selection, any host
+  can admit a list. Missing uptime can be included explicitly, and the uptime
+  condition pauses for snapshots without stored telemetry; see [Endpoint
+  capture](#endpoint-capture) for the saved telemetry facts. **Reset** removes
+  conditions and restores default ranking/row settings while keeping provider,
+  selected hosts, and capture. Conditions and empty chip selections survive
+  copied URLs/reloads. Numeric typing replaces the current history entry;
+  deliberate selections retain Back/Forward navigation. Editors close with
+  `Esc` and return focus to their phrase.
 
 Every model name opens a dossier containing identity and presence evidence,
 current facts, field-history sparklines, and the complete stored changelog.
@@ -502,6 +558,16 @@ capture failed. Failures show the saved error evidence;
 **Re-read saved capture** only asks the local browse server again and never
 contacts the provider.
 
+The read-only JSON API also exposes `GET /api/hosts?provider=<id>` and
+`GET /api/host_history?provider=<id>&host=<name>`. Hosts selects the newest
+usable saved endpoint capture unless `scrape_id` selects an exact saved
+successful catalog scrape. It returns list/model/alias identities, serving
+hosts, endpoint capabilities, normalized precision, exact hexadecimal rational
+prices, and sampled uptime. Host history accepts local-date `from`/`to` bounds
+and returns observed coverage and up to 200 changes, newest first. Missing
+telemetry remains null; absence from an incomplete capture is unknown rather
+than zero. These routes never backfill or fetch provider data.
+
 The browser is read-only: it opens SQLite in read-only/query-only mode and does
 not create or update database, config, log, report, or cache files. It is also
 fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
@@ -509,7 +575,8 @@ with Model Sentinel, so viewing history makes no network request.
 
 The URL hash contains the selected view and filters, making browser
 back/forward and copied local URLs reproducible. Press `/` to focus **Find
-model**, `1`, `2`, or `3` to switch among Activity, Models, and Catalog, and
+model**, `1`, `2`, `3`, or `4` to switch among Activity, Models, Catalog, and
+Hosts, and
 `Esc` to close search results, drawers, or popovers. The Appearance disclosure
 offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.
@@ -916,6 +983,15 @@ python3 -m venv .venv
 The Playwright browser smoke suite is part of the ordinary test run. It is not
 silently skipped when Chromium is unavailable; install the browser dependency
 before running the suite.
+
+For isolated Hosts visual acceptance, create a new or empty directory outside
+all repository checkouts, then run `.venv/bin/python -m
+tests.hosts_validation_fixture /private/tmp/synthetic-hosts-runtime`. The builder
+rejects occupied and repository-contained paths, including filesystem aliases,
+and prints the resolved runtime path. Use it as `MODEL_SENTINEL_HOME` for
+`browse --no-open --view hosts --port 0`. Its newest capture is intentionally
+empty; select the first capture (2026-09-01) to inspect the synthetic comparison
+cases. Stop the server before removing that exact temporary runtime directory.
 
 ## Documents
 

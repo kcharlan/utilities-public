@@ -1697,6 +1697,8 @@ LEGACY_SCHEMA = (
 )
 
 _ENDPOINT_TABLES = (
+    "endpoint_telemetry_captures",
+    "endpoint_telemetry",
     "endpoint_captures",
     "endpoint_lists",
     "endpoint_capture_models",
@@ -2873,3 +2875,111 @@ def test_endpoint_foreign_key_enforcement_and_saved_scrape_identity_requires_pra
     assert "foreign key" in message
     monkeypatch.undo()
     assert set(_table_counts(store).values()) == {0}
+
+
+def _forget_telemetry(store: Store) -> None:
+    """Turn synthetic captures into pre-telemetry archives."""
+    with store._connect() as db:
+        db.execute("DELETE FROM endpoint_telemetry")
+        db.execute("DELETE FROM endpoint_telemetry_captures")
+
+
+def test_telemetry_scan_rows_match_observations_and_preserve_raw_values(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    _, capture = _scan_with_capture(store, _fake_fetch(lists={path: [
+        _fake_endpoint("fake-duplicate", uptime=98, uptime_last_5m=100,
+                       uptime_last_1d=97.5, latency_last_30m=None),
+        _fake_endpoint("fake-duplicate", uptime=True, uptime_last_1d="99"),
+    ]}, listed={"fake-org/test-model-a": path}))
+    with store._connect() as db:
+        marker = db.execute("SELECT * FROM endpoint_telemetry_captures").fetchone()
+        rows = db.execute("SELECT * FROM endpoint_telemetry ORDER BY endpoint_key").fetchall()
+        assert [tuple(r)[:6] for r in rows] == [
+            (capture.capture_id, path, "fake-duplicate#0", 100, 98, 97.5),
+            (capture.capture_id, path, "fake-duplicate#1", None, None, None)]
+        assert json.loads(rows[1]["telemetry_json"]) == {"uptime_last_30m": True, "uptime_last_1d": "99"}
+        assert rows[0]["telemetry_json"] == '{"latency_last_30m":null,"uptime_last_1d":97.5,"uptime_last_30m":98,"uptime_last_5m":100}'
+        assert (marker["source"], marker["endpoint_count"], marker["unmatched_count"]) == ("scan", 2, 0)
+        assert datetime.fromisoformat(marker["recorded_at"]).tzinfo is not None
+        # This focused fixture omits providers; check the new observation link.
+        assert db.execute("PRAGMA foreign_key_check(endpoint_telemetry)").fetchall() == []
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (0, 0)
+
+
+def test_telemetry_backfill_is_idempotent_counts_unmatched_and_excludes_error_archiveless(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    _, capture = _scan_with_capture(store, _fake_fetch(lists={path: [
+        _fake_endpoint("fake-duplicate", uptime=98), _fake_endpoint("fake-duplicate", uptime=96),
+    ]}, listed={"fake-org/test-model-a": path}))
+    _forget_telemetry(store)
+    with store._connect() as db:
+        db.execute("DELETE FROM endpoint_observations WHERE endpoint_key = 'fake-duplicate#1'")
+        bodies = {path: {"data": {"endpoints": [
+            _fake_endpoint("fake-duplicate", uptime=98), _fake_endpoint("fake-duplicate", uptime=96)]}},
+            "/fake-invalid": {"data": {"endpoints": [None]}}}
+        db.execute("UPDATE endpoint_capture_archives SET body_gzip = ?", (storage._capture_archive_blob(bodies),))
+    error_scrape = _saved_scrape(store, minute=1)
+    store.save_endpoint_error_capture(build_endpoint_error_summary(
+        provider_id=_FAKE_PROVIDER, scrape_id=error_scrape, baseline_scrape_id=None,
+        started_at="2026-09-01T12:01:00+00:00", completed_at="2026-09-01T12:01:01+00:00",
+        error_summary="synthetic error", baseline_capture=None))
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (1, 0)
+    assert store.backfill_endpoint_telemetry(_OTHER_PROVIDER, OPENROUTER_PROFILE).captures == 0
+    result = store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE)
+    assert (result.captures, result.rows, result.unmatched) == (1, 1, 1)
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (0, 1)
+    with store._connect() as db:
+        assert tuple(db.execute("SELECT capture_id, source, endpoint_count, unmatched_count FROM endpoint_telemetry_captures").fetchone()) == (capture.capture_id, "archive", 1, 1)
+        assert tuple(db.execute("SELECT endpoint_key, uptime_30m FROM endpoint_telemetry").fetchone()) == ("fake-duplicate#0", 98)
+    again = store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE)
+    assert (again.captures, again.rows, again.unmatched) == (0, 0, 0)
+
+
+def test_telemetry_backfill_commits_oldest_first_and_rolls_back_failed_archive(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    fetch = _fake_fetch(lists={path: [_fake_endpoint("fake-host")]}, listed={"fake-org/test-model-a": path})
+    _, first = _scan_with_capture(store, fetch)
+    _, second = _scan_with_capture(store, replace(fetch, completed_at="2026-09-02T12:00:00+00:00"), minute=1)
+    _forget_telemetry(store)
+    # Fail after inserting telemetry, so the failed capture's rows must roll back too.
+    with store._connect() as db:
+        db.execute(f"CREATE TRIGGER synthetic_marker_failure BEFORE INSERT ON endpoint_telemetry_captures WHEN NEW.capture_id = {second.capture_id} BEGIN SELECT RAISE(ABORT, 'synthetic marker failure'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic marker failure"):
+        store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE)
+    with store._connect() as db:
+        assert [tuple(r) for r in db.execute("SELECT capture_id FROM endpoint_telemetry")] == [(first.capture_id,)]
+        assert [tuple(r) for r in db.execute("SELECT capture_id FROM endpoint_telemetry_captures")] == [(first.capture_id,)]
+        db.execute("DROP TRIGGER synthetic_marker_failure")
+        db.execute("UPDATE endpoint_capture_archives SET body_gzip = ? WHERE capture_id = ?", (b"synthetic-invalid-gzip", second.capture_id))
+    with pytest.raises(gzip.BadGzipFile):
+        store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE)
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (1, 0)
+    with store._connect() as db:
+        db.execute("UPDATE endpoint_capture_archives SET body_gzip = ? WHERE capture_id = ?", (storage._capture_archive_blob(fetch.bodies), second.capture_id))
+    assert store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE).captures == 1
+
+
+def test_telemetry_scan_failure_rolls_back_whole_capture(tmp_path: Path) -> None:
+    store = _endpoint_store(tmp_path)
+    path = _endpoint_path("fake-org/test-model-a")
+    with store._connect() as db:
+        db.execute("CREATE TRIGGER synthetic_marker_failure BEFORE INSERT ON endpoint_telemetry_captures BEGIN SELECT RAISE(ABORT, 'synthetic telemetry failure'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic telemetry failure"):
+        _scan_with_capture(store, _fake_fetch(lists={path: [_fake_endpoint("fake-host")]}, listed={"fake-org/test-model-a": path}))
+    assert set(_table_counts(store).values()) == {0}
+
+
+@pytest.mark.parametrize("lists", [{}, {"/api/v1/models/fake-org/test-model-a/endpoints": []}])
+def test_telemetry_marks_processed_captures_even_without_rows(tmp_path: Path, lists) -> None:
+    store = _endpoint_store(tmp_path)
+    _, capture = _scan_with_capture(store, _fake_fetch(lists=lists, listed={}))
+    with store._connect() as db:
+        assert tuple(db.execute("SELECT source, endpoint_count FROM endpoint_telemetry_captures").fetchone()) == ("scan", 0)
+    _forget_telemetry(store)
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (1, 0)
+    result = store.backfill_endpoint_telemetry(_FAKE_PROVIDER, OPENROUTER_PROFILE)
+    assert (result.captures, result.rows, result.unmatched) == (1, 0, 0)
+    assert store.endpoint_telemetry_status(_FAKE_PROVIDER) == (0, 0)

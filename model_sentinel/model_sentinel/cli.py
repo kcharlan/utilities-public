@@ -305,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     browse_parser.add_argument("--port", type=int, default=8110, help="preferred local server port")
     browse_parser.add_argument("--no-open", action="store_true", help="do not open a browser window")
     browse_parser.add_argument("--provider", help="initial configured provider ID")
-    browse_parser.add_argument("--view", choices=("activity", "models", "catalog"), default="activity", help="initial browser view")
+    browse_parser.add_argument("--view", choices=("activity", "models", "catalog", "hosts"), default="activity", help="initial browser view (activity, models, catalog, hosts)")
     browse_parser.add_argument("--model", type=_browse_model_pin, help="initial model dossier as PROVIDER/MODEL_ID")
 
     healthcheck_parser = subparsers.add_parser(
@@ -522,6 +522,21 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                     detected_at=completed.isoformat(),
                 )
             endpoint_capture = None
+            if args.save and profile.endpoint_capture:
+                # Archive processing is independent of new capture and cannot
+                # turn a successful catalog scan into an error.
+                try:
+                    backfill = store.backfill_endpoint_telemetry(provider.provider_id, profile)
+                    if backfill.captures:
+                        logger.info(
+                            "%s telemetry backfill: captures=%s rows=%s unmatched=%s",
+                            provider.provider_id, backfill.captures, backfill.rows, backfill.unmatched,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "%s telemetry backfill failed: %s", provider.provider_id,
+                        endpoint_failure_message(exc, snapshot.values),
+                    )
             if args.save and profile.endpoint_capture and loaded.settings.endpoint_capture:
                 # Never raises: endpoint failures stay out of the handler below.
                 endpoint_capture = _capture_provider_endpoints(
@@ -1230,21 +1245,27 @@ def _endpoint_capture_check(
     try:
         latest = store.get_latest_endpoint_capture(provider_id)
         if latest is None:
-            return {"check": "endpoint_capture", "status": "ok", "detail": prefix + "no capture yet"}
-        detail = (
-            f"{prefix}latest capture {to_local_human(latest.completed_at)} "
-            f"status={latest.status} {_endpoint_capture_counts(latest)}"
-        )
+            detail = prefix + "no capture yet"
+        else:
+            detail = (
+                f"{prefix}latest capture {to_local_human(latest.completed_at)} "
+                f"status={latest.status} {_endpoint_capture_counts(latest)}"
+            )
     except Exception as exc:
         return {
             "check": "endpoint_capture",
             "status": "warn",
             "detail": unreadable + endpoint_failure_message(exc, credential_values),
         }
-    if latest.error_summary:
+    if latest is not None and latest.error_summary:
         detail += f"; error: {latest.error_summary}"
     # A capture the user switched off is history, not a current problem.
-    status = "ok" if latest.status == CAPTURE_COMPLETE or not enabled else "warn"
+    status = "ok" if latest is None or latest.status == CAPTURE_COMPLETE or not enabled else "warn"
+    try:
+        pending, unmatched = store.endpoint_telemetry_status(provider_id)
+        detail += f"; telemetry pending={pending} unmatched={unmatched}"
+    except Exception as exc:
+        detail += "; telemetry counts could not be read: " + endpoint_failure_message(exc, credential_values)
     return {"check": "endpoint_capture", "status": status, "detail": detail}
 
 

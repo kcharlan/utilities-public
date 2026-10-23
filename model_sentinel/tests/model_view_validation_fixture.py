@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Sequence
 
@@ -9,6 +8,7 @@ from model_sentinel.config import ProviderConfig
 from model_sentinel.models import NormalizedModel
 from model_sentinel.storage import Store
 from tests.browse_fixtures import _save_scrape
+from tests.validation_runtime import _is_within_repository, _prepare_empty_runtime_home
 
 
 VALIDATION_PROVIDER = ProviderConfig(
@@ -23,7 +23,6 @@ VALIDATION_PROVIDER = ProviderConfig(
     enabled=True,
 )
 
-_GIT_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _SCRAPE_TIMESTAMPS = tuple(
     f"2040-02-{day:02d}T15:00:00+00:00" for day in range(1, 6)
 )
@@ -37,35 +36,6 @@ _CHANGING_INPUT_PRICES = (
     1.000004,
     1.000005,
 )
-
-
-def _prepare_empty_runtime_home(runtime_home: Path) -> Path:
-    resolved = runtime_home.expanduser().resolve()
-    if _is_within_repository(resolved, _GIT_REPOSITORY_ROOT):
-        raise ValueError(
-            f"Synthetic validation runtime must be outside the git repository: {resolved}"
-        )
-    if resolved.exists():
-        if not resolved.is_dir() or any(resolved.iterdir()):
-            raise ValueError(
-                f"Synthetic validation runtime must be a new or empty directory: {resolved}"
-            )
-    else:
-        resolved.mkdir(parents=True)
-        resolved = runtime_home.expanduser().resolve()
-        if _is_within_repository(resolved, _GIT_REPOSITORY_ROOT):
-            raise ValueError(
-                f"Synthetic validation runtime must be outside the git repository: {resolved}"
-            )
-    return resolved
-
-
-def _is_within_repository(candidate: Path, repository_root: Path) -> bool:
-    resolved = candidate.expanduser().resolve()
-    return any(
-        ancestor.exists() and os.path.samefile(ancestor, repository_root)
-        for ancestor in (resolved, *resolved.parents)
-    )
 
 
 def _write_config(runtime_home: Path) -> None:

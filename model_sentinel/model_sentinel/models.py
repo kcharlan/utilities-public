@@ -317,6 +317,18 @@ class EndpointCaptureSummary:
 
 
 @dataclass(frozen=True)
+class EndpointTelemetryRecord:
+    """Rolling-window samples and present raw telemetry for one keyed endpoint."""
+
+    list_path: str
+    endpoint_key: str
+    uptime_5m: int | float | None
+    uptime_30m: int | float | None
+    uptime_1d: int | float | None
+    telemetry: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class EndpointCaptureCandidate:
     """Everything `Store.save_endpoint_capture` writes for one capture.
 
@@ -327,6 +339,7 @@ class EndpointCaptureCandidate:
     summary: EndpointCaptureSummary
     mappings: tuple[EndpointMapping, ...]
     archive: Mapping[str, Any]
+    telemetry: tuple[EndpointTelemetryRecord, ...] = ()
 
 
 @dataclass(frozen=True)

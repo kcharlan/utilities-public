@@ -109,7 +109,7 @@ def test_meta_includes_configured_and_db_only_providers(tmp_path) -> None:
 
     providers = {item["id"]: item for item in result["providers"]}
     assert set(result) == {
-        "providers", "date_span", "scrapes", "aspects", "categories",
+        "providers", "host_providers", "date_span", "scrapes", "aspects", "categories",
         "detail_default", "pin_limit", "bulk_min_models", "display_invocation",
     }
     assert all(set(provider) == {"id", "label", "kind", "enabled", "configured"} for provider in providers.values())
@@ -2083,3 +2083,310 @@ def test_endpoint_evidence_sentences_for_ladders(endpoint_context) -> None:
         "endpoint fake-host-2#0; alias price",
     ]
     assert ladder["unplaced_text"] is None
+
+
+@pytest.fixture
+def hosts_context(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    db = open_readonly(path)
+    yield _context(db, ()), facts
+    db.close_all()
+
+
+def _hosts_first(context, facts):
+    return api.hosts(context, {"provider": facts.provider_id, "scrape_id": str(facts.scrapes["first"])})
+
+
+def test_host_grouping_and_ties(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    case = facts.host_grouping_and_ties
+    listing = next(i for i, row in enumerate(result["lists"]) if row["path"] == case["path"])
+    rows = [row for row in result["endpoints"] if row["list"] == listing]
+    assert [row["host"] for row in rows] == ["Synthetic Alpha", "Synthetic Alpha", "Synthetic Beta", "Synthetic Gamma"]
+    assert sum(row["host"] == "Synthetic Alpha" for row in rows) == case["alpha_endpoints"]
+    assert rows[1]["prices"]["pricing.prompt"]["exact"] == rows[2]["prices"]["pricing.prompt"]["exact"]
+    assert [row["context_length"] for row in rows] == [256000, 128000, 64000, 128000]
+    assert result["telemetry"] == "available"
+    assert result["capture"]["status_line"]
+    assert all(row["uptime"]["5m"] is None for row in result["endpoints"])
+
+
+def test_host_precision_conditions(hosts_context):
+    context, facts = hosts_context
+    rows = {row["tag"]: row for row in _hosts_first(context, facts)["endpoints"]}
+    assert tuple(rows[f"precision-{i}"]["precision_bits"] for i in range(14)) == facts.host_precision_conditions["bits"]
+    assert rows["precision-12"]["quantization"] == rows["precision-13"]["quantization"] == "unknown"
+    assert rows["precision-11"]["quantization"] == "synthetic-q"
+
+
+def test_host_exact_prices(hosts_context):
+    from fractions import Fraction
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    rows = {row["key"]: row for row in result["endpoints"]}
+    case = facts.host_exact_prices
+    def exact(key):
+        value = rows[key]["prices"]["pricing.prompt"]["exact"]
+        assert set(value) == {"numerator_hex", "denominator_hex"}
+        return Fraction(int(value["numerator_hex"], 16), int(value["denominator_hex"], 16))
+    low, high = exact(case["low_key"]), exact(case["high_key"])
+    assert low == Fraction(100000000000000001, 100000000000000000)
+    assert high == Fraction(50000000000000001, 50000000000000000)
+    assert float(low) == float(high) == 1.0
+    assert low < Fraction(case["threshold"]) < high
+    assert exact(case["tiny_key"]) == Fraction(1, 10 ** 9994)
+    assert exact(case["negative_key"]) == -1
+    assert rows[case["negative_key"]]["prices"]["pricing.prompt"]["exact"]["numerator_hex"] == "-1"
+    assert all(isinstance(row["prices"].get("pricing.prompt", {}).get("display", ""), str) for row in rows.values())
+    json.dumps(result, allow_nan=False)
+
+
+def test_host_missing_ranking(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    rows = {row["key"]: row for row in result["endpoints"]}
+    assert rows["zero#0"]["prices"]["pricing.prompt"]["exact"] == {"numerator_hex": "0", "denominator_hex": "1"}
+    assert rows["missing#0"]["prices"] == {}
+    assert rows["missing#0"]["context_length"] is None
+    single = api.hosts(context, {"provider": facts.single_provider_id})
+    assert single["price_columns"] == []
+    assert single["telemetry"] == "pending"
+    assert single["backfill_eligible"] is True
+    assert all(row["uptime"] == {"1d": None, "30m": None, "5m": None} for row in single["endpoints"])
+
+
+def test_host_single_capture(hosts_context):
+    context, facts = hosts_context
+    result = api.hosts(context, {"provider": facts.single_provider_id})
+    assert [row["scrape_id"] for row in result["captures"]] == [facts.host_single_capture["scrape"]]
+    history = api.host_history(context, {"provider": facts.single_provider_id, "host": "Synthetic Missing"})
+    assert history["telemetry"] == "pending"
+    assert len(history["series"]) == 1
+    assert history["series"][0]["endpoints"] == 1
+
+
+def test_host_tier_identity(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    assert tuple(result["vocab"]["tiers"]) == facts.host_tier_identity["tiers"]
+    rows = {row["tag"]: row for row in result["endpoints"]}
+    assert rows["precision-4"]["service_tier"] is None
+    assert rows["precision-0"]["service_tier"] is None
+    assert rows["beta"]["service_tier"] == "standard"
+    assert rows["gamma"]["service_tier"] == "null"
+
+
+def test_host_condition_counts(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    case = facts.host_grouping_and_ties
+    index = next(i for i, row in enumerate(result["lists"]) if row["path"] == case["path"])
+    rows = [row for row in result["endpoints"] if row["list"] == index]
+    assert tuple(row["status"] for row in rows) == facts.host_condition_counts["shared_statuses"]
+    assert tuple(row["uptime"]["1d"] for row in rows) == facts.host_condition_counts["shared_uptimes"]
+    assert [row["implicit_caching"] for row in rows] == [True, True, True, False]
+    assert [result["vocab"]["parameters"][i] for i in rows[-1]["parameters"]] == ["response_format"]
+    assert [result["vocab"]["native_tools"][i] for i in rows[-1]["native_tools"]] == ["code", "search"]
+    missing = next(row for row in result["endpoints"] if row["key"] == "missing#0")
+    assert missing["native_tools"] == [] and missing["implicit_caching"] is False
+    assert missing["status"] is None and missing["uptime"]["1d"] is None
+
+
+def test_host_row_admission(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    case = facts.host_row_admission
+    by_path = {item["path"]: {row["host"] for row in result["endpoints"] if result["lists"][row["list"]] is item} for item in result["lists"]}
+    assert {"Synthetic Alpha", "Synthetic Beta"} <= by_path[case["shared_path"]]
+    assert "Synthetic Alpha" not in by_path[case["solo_path"]]
+    assert by_path[case["unranked_path"]] == {"Synthetic Missing", "Synthetic Name Fallback"}
+
+
+def test_host_list_identity(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    case = facts.host_list_identity
+    bare = next(row for row in result["lists"] if row["path"] == case["missing_id_path"])
+    assert bare["display_id"] == case["missing_id_path"]
+    shared = next(row for row in result["lists"] if row["path"] == facts.host_grouping_and_ties["path"])
+    assert shared["models"] == list(case["shared_models"])
+    assert shared["aliases"] == [case["alias"]]
+
+
+def test_host_empty_results(hosts_context):
+    context, facts = hosts_context
+    result = api.hosts(context, {"provider": facts.provider_id})
+    assert result["scrape_id"] == facts.scrapes["empty"]
+    assert result["reason"] is None
+    assert result["hosts"] == result["endpoints"] == []
+    assert len(result["lists"]) == 1
+    assert [row["scrape_id"] for row in result["captures"]] == [facts.scrapes[k] for k in ("empty", "absent", "partial", "second", "first")]
+
+
+def test_host_history_attribution(hosts_context):
+    context, facts = hosts_context
+    case = facts.host_history_attribution
+    result = api.host_history(context, {"provider": facts.provider_id, "host": case["host"], "from": "2026-09-02", "to": "2026-09-02"})
+    assert {row["change_kind"] for row in result["changes"]} == set(case["kinds"])
+    assert len(result["series"]) == 1
+    removed = api.host_history(context, {"provider": facts.provider_id, "host": case["removed_host"], "to": "2026-09-02"})
+    assert any(row["change_kind"] == "endpoint_removed" and row["endpoint_key"] == "gamma#0" for row in removed["changes"])
+    assert all(row["display_id"] and row["list_path"] and row["to_scrape"]["date"] for row in result["changes"])
+
+
+def test_host_history_truncation(hosts_context):
+    context, facts = hosts_context
+    result = api.host_history(context, {"provider": facts.provider_id, "host": facts.host_history_truncation["host"]})
+    assert result["limit"] == DOSSIER_ENDPOINT_CHANGE_LIMIT
+    assert result["truncated"] is True
+    assert len(result["changes"]) == DOSSIER_ENDPOINT_CHANGE_LIMIT
+    assert [row["endpoint_change_id"] for row in result["changes"]] == sorted((row["endpoint_change_id"] for row in result["changes"]), reverse=True)
+
+
+def test_host_partial_coverage(hosts_context):
+    context, facts = hosts_context
+    result = api.host_history(context, {"provider": facts.provider_id, "host": facts.host_partial_coverage["host"]})
+    by_scrape = {row["scrape_id"]: row for row in result["series"]}
+    first, partial, absent = (by_scrape[sid] for sid in facts.host_partial_coverage["scrapes"])
+    assert (first["lists"], first["endpoints"], first["not_normal"]) == (1, 1, 0)
+    assert (partial["lists"], partial["endpoints"], partial["not_normal"]) == (None, None, None)
+    assert partial["capture"]["status"] == "partial" and partial["capture"]["status_line"]
+    assert (absent["lists"], absent["endpoints"], absent["not_normal"]) == (0, 0, 0)
+    assert partial["uptime_1d_median"] is absent["uptime_1d_median"] is None
+
+
+def test_host_legacy_and_reasons(hosts_context):
+    context, facts = hosts_context
+    for name, reason in (("uncaptured", "not_captured"), ("error", "capture_error")):
+        result = api.hosts(context, {"provider": facts.provider_id, "scrape_id": str(facts.scrapes[name])})
+        assert result["reason"] == reason
+        assert result["hosts"] == result["lists"] == result["endpoints"] == []
+    assert api.meta(context, {})["host_providers"] == [facts.single_provider_id, facts.provider_id]
+
+
+@pytest.mark.parametrize("params", [{}, {"provider": "unknown"}, {"provider": "hosts-synthetic", "scrape_id": "bad"}, {"provider": "hosts-synthetic", "scrape_id": "99999"}])
+def test_hosts_rejects_invalid_selection(hosts_context, params):
+    context, _ = hosts_context
+    with pytest.raises(api.BadRequest):
+        api.hosts(context, params)
+
+
+@pytest.mark.parametrize("params", [{"host": "Synthetic Alpha"}, {"provider": "hosts-synthetic"}, {"provider": "hosts-synthetic", "host": "Synthetic Alpha", "from": "invalid"}, {"provider": "hosts-synthetic", "host": "Synthetic Alpha", "from": "2026-09-04", "to": "2026-09-01"}])
+def test_host_history_rejects_invalid_selection(hosts_context, params):
+    context, _ = hosts_context
+    with pytest.raises(api.BadRequest):
+        api.host_history(context, params)
+
+
+def test_dossier_shared_serializer_preserves_bytes(tmp_path):
+    path = tmp_path / "synthetic.db"
+    facts = build_fixture_db(path, with_endpoints=True).endpoint
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        for model, expected in ((facts.listed_model, "a33f9663408f117bb1775f0df39af4e16b9be5ea13012ed21a2c382fb86a3e93"), (facts.alias_model, "192632c504c0172bce0a088e0b2b02a4afaa9766d354735bc1523204b15236b3"), (facts.error_only_model, "79b1b77804fc8065c1becd01d38365270d86a31a31b62ddab0bcbfe417538ac5")):
+            payload = api.endpoints(context, {"provider": facts.provider_id, "model": model})
+            assert hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest() == expected
+    finally:
+        db.close_all()
+
+
+def test_host_history_attribution_uses_target_list_metadata_after_move(hosts_context):
+    context, facts = hosts_context
+    case = facts.host_history_attribution
+    for host, kind, key in ((case["moved_host"], "field_changed", "solo#0"),
+                            (case["moved_removed_host"], "endpoint_removed", "moved-removed#0")):
+        result = api.host_history(context, {"provider": facts.provider_id, "host": host, "to": "2026-09-02"})
+        assert len(result["changes"]) == 1
+        row = result["changes"][0]
+        assert (row["change_kind"], row["endpoint_key"]) == (kind, key)
+        assert row["from_list_path"] == case["from_path"]
+        assert row["list_path"] == case["moved_path"]
+        assert row["display_id"] == case["target_display"]
+        assert row["to_scrape"]["scrape_id"] == facts.scrapes["second"]
+
+
+def test_host_list_identity_unmapped_and_host_fallbacks(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    rows = {row["key"]: row for row in result["endpoints"]}
+    assert rows["tag-only#0"]["host"] == "tag-only"
+    assert rows["#0"]["host"] == "#0"
+    assert rows["fallback#0"]["host"] == "Synthetic Name Fallback"
+    unmapped = result["lists"][rows["tag-only#0"]["list"]]
+    assert unmapped["models"] == unmapped["aliases"] == []
+
+
+def test_hosts_prices_share_capture_wide_display_scope(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    rows = {row["key"]: row for row in result["endpoints"]}
+    assert result["price_columns"] == [{"path": "pricing.prompt", "label": "Input", "unit_label": "/1M tokens", "comparison_group": "usd_per_million_tokens"}]
+    # Tiny prices in one list widen the display scope for the other lists too.
+    assert rows["tiny#0"]["prices"]["pricing.prompt"]["display"] == "<$0.0001"
+    assert rows["alpha-cheap#0"]["prices"]["pricing.prompt"]["display"] == "$1.0000"
+    assert rows["solo#0"]["prices"]["pricing.prompt"]["display"] == "$4.0000"
+
+
+def test_host_history_missing_target_list_is_integrity_error(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    case = facts.host_history_attribution
+    with sqlite3.connect(path) as connection:
+        connection.execute("DELETE FROM endpoint_lists WHERE capture_id = ? AND list_path = ?", (facts.captures["second"], case["moved_path"]))
+    db = open_readonly(path)
+    try:
+        with pytest.raises(endpoints_api.EndpointDataIntegrityError, match="no target list"):
+            api.host_history(_context(db, ()), {"provider": facts.provider_id, "host": case["moved_removed_host"]})
+    finally:
+        db.close_all()
+
+
+def test_hosts_rejects_other_provider_scrape_without_substitution(hosts_context):
+    context, facts = hosts_context
+    with pytest.raises(api.BadRequest, match="saved successful scrape"):
+        api.hosts(context, {"provider": facts.provider_id, "scrape_id": str(facts.scrapes["no_prices"])})
+
+
+def test_meta_host_provider_order_follows_configured_provider_order(tmp_path):
+    from tests.browse_fixtures import build_hosts_fixture_db, ENDPOINT_PROVIDER
+    from dataclasses import replace
+    path = tmp_path / "synthetic-hosts.db"
+    facts = build_hosts_fixture_db(path)
+    db = open_readonly(path)
+    try:
+        context = _context(db, (replace(ENDPOINT_PROVIDER, provider_id=facts.provider_id), replace(ENDPOINT_PROVIDER, provider_id=facts.single_provider_id)))
+        assert api.meta(context, {})["host_providers"] == [facts.provider_id, facts.single_provider_id]
+    finally:
+        db.close_all()
+
+
+def test_host_history_attributes_host_name_change_to_target_observation(hosts_context):
+    context, facts = hosts_context
+    case = facts.host_history_attribution
+    result = api.host_history(context, {"provider": facts.provider_id, "host": case["renamed_host"], "to": "2026-09-02"})
+    assert len(result["changes"]) == 1
+    row = result["changes"][0]
+    assert (row["field_name"], row["old_value"], row["new_value"]) == ("provider_name", "Synthetic Beta", "Synthetic Renamed")
+    previous = api.host_history(context, {"provider": facts.provider_id, "host": case["renamed_from"], "to": "2026-09-02"})
+    assert previous["changes"] == []
+
+
+def test_host_missing_values_are_independent_across_ranking_dimensions(hosts_context):
+    context, facts = hosts_context
+    result = _hosts_first(context, facts)
+    rows = {row["key"]: row for row in result["endpoints"]}
+    assert rows["price-missing#0"]["prices"] == {}
+    assert rows["price-missing#0"]["context_length"] == 512000
+    assert rows["exact-high#0"]["prices"]["pricing.prompt"]["exact"]
+    assert rows["exact-high#0"]["context_length"] is None
+    assert rows["exact-high#0"]["max_completion_tokens"] is None
+    assert rows["exact-high#0"]["uptime"]["1d"] is None
+    roster = {row["name"]: row for row in result["hosts"]}
+    assert roster["Synthetic Alpha"] == {"name": "Synthetic Alpha", "endpoint_count": 3, "list_count": 2, "uptime_1d_median": 99}
+    partial = api.host_history(context, {"provider": facts.provider_id, "host": "Synthetic Alpha", "from": "2026-09-03", "to": "2026-09-03"})["series"][0]
+    assert (partial["capture"]["status"], partial["endpoints"], partial["lists"], partial["not_normal"], partial["uptime_1d_median"]) == ("partial", 4, 2, 1, 99)
