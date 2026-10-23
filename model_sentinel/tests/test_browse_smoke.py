@@ -2457,6 +2457,62 @@ def test_hosts_summary_compact_facts_missing_uptime_and_narrow_wrapping(hosts_pa
 
 
 @pytest.mark.parametrize("overlay", ["menu", "suggestions"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("narrow", [False, True])
+def test_hosts_overlays_receive_pointer_above_endpoint_drawer(hosts_page, hosts_server, overlay, theme, narrow):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    hosts_page.set_viewport_size({"width": 1440, "height": 1000})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.locator(".endpoint-drawer")
+    expect(drawer.get_by_role("heading", level=2)).to_be_focused()
+    if overlay == "menu":
+        hosts_page.get_by_role("button", name="Supports condition", exact=True).click()
+        popup = hosts_page.get_by_role("dialog", name="Supports", exact=True)
+        target = popup.get_by_role("searchbox")
+    else:
+        hosts_page.keyboard.press("/")
+        hosts_page.keyboard.type("synthetic")
+        popup = hosts_page.get_by_role("listbox", name="Model suggestions")
+        target = popup.get_by_role("option").first
+    expect(popup).to_be_visible()
+    if narrow:
+        hosts_page.set_viewport_size({"width": 390, "height": 844})
+    # Visibility alone misses a panel painted over the control. Require a
+    # genuine overlapping hit target, then let Playwright deliver the pointer.
+    expect(target).to_be_visible()
+    expect(drawer).to_be_visible()
+    hosts_page.wait_for_function("""() => {
+        const el = document.querySelector('.condition-overlay input[type="search"], .hosts-search-results [role="option"]');
+        if (!el) return false;
+        const b = el.getBoundingClientRect(), d = document.querySelector('.endpoint-drawer').getBoundingClientRect();
+        return b.right > d.left && b.left < d.right && el.contains(document.elementFromPoint(b.x+b.width/2, b.y+b.height/2));
+    }""", timeout=2000)
+    if overlay == "menu":
+        target.click(timeout=1000)
+        expect(target).to_be_focused()
+        option = popup.get_by_role("checkbox").first
+        option.click(timeout=1000)
+        expect(option).to_be_checked()
+    else:
+        selected = target.get_attribute("aria-label")
+        target.click(timeout=1000)
+        expect(hosts_page.get_by_role("combobox", name="Search models")).to_have_value(selected)
+        expect(popup).to_have_count(0)
+        # Reopen to verify that the first Escape belongs to suggestions.
+        hosts_page.keyboard.press("/")
+        hosts_page.get_by_role("combobox", name="Search models").fill("synthetic")
+        expect(popup).to_be_visible()
+    hosts_page.keyboard.press("Escape")
+    expect(popup).to_have_count(0)
+    expect(drawer).to_be_visible()
+    expect(hosts_page).to_have_url(re.compile("hlist="))
+    hosts_page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+    expect(hosts_page).not_to_have_url(re.compile("hlist="))
+
+
+@pytest.mark.parametrize("overlay", ["menu", "suggestions"])
 def test_hosts_drawer_escape_synchronous_overlay_cleanup_preserves_first_key(hosts_page, hosts_server, overlay):
     _, facts = hosts_server
     hosts_page.set_viewport_size({"width": 1600, "height": 1000})
@@ -3326,6 +3382,26 @@ def test_hosts_pending_uptime_recovers_after_snapshot_change(hosts_page, hosts_s
     expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_be_focused()
     expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_have_value("99.9")
     expect(dialog.locator("footer")).to_contain_text("Removes")
+
+
+@pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_no_price_menu_keeps_heading_focus(hosts_page, hosts_server, key, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"]))
+    trigger = hosts_page.get_by_role("button", name="Price condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Price", exact=True)
+    heading = dialog.get_by_role("heading", name="Price", exact=True)
+    expect(dialog).to_contain_text("No price columns in this capture.")
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press(key)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(trigger).to_be_focused()
 
 
 @pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])

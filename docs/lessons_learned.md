@@ -1,5 +1,18 @@
 # Lessons learned
 
+## 2026-10-23: Check pointer layering and empty-menu focus with nonmodal panels
+
+A nonmodal drawer makes background triggers usable, so their portaled menus
+and suggestions must paint above it. Scope the higher layer to Hosts rather
+than changing the generic typeahead or raw evidence drawer. Assert actual
+overlap, elementFromPoint ownership and physical clicks in both themes and
+after narrow resizing; visibility assertions cannot detect occlusion. Retain
+first-Escape overlay dismissal and second-Escape drawer dismissal.
+An empty Price capture renders no custom editor and no unconfigured Clear
+button. Select the existing programmatically focusable heading instead of an
+absent text field, and exercise both Tab directions plus Escape trigger return.
+Keep the ordinary priced-capture custom-field focus regression alongside it.
+
 ## 2026-10-23: Scope table hover feedback to actionable data rows
 
 Adding inert group headings to a tbody also subjects them to broad row-hover

@@ -133,6 +133,7 @@
 .host-precision-mix { display: flex; align-self: center; flex: 0 1 160px; height: 8px; width: 160px; border-radius: 4px; overflow: hidden; }
 .host-precision-mix span { min-width: 1px; }
 .endpoint-drawer { position: fixed; z-index: 100; inset: 0 0 0 auto; width: min(760px, 100vw); overflow-y: auto; background: var(--panel-raised); color: var(--ink); border-left: 1px solid var(--border-strong); box-shadow: -18px 0 40px var(--shadow); animation: endpoint-drawer-in .18s ease-out; }
+body[data-view="hosts"] :is(.condition-overlay, .hosts-search-results) { z-index: 101; }
 @keyframes endpoint-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 .endpoint-drawer > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
 .endpoint-drawer > header > div { min-width: 0; }

@@ -522,7 +522,9 @@ browser, and `Ctrl-C` stops the server.
   Click any results row or its model name, including an unmapped model, to open
   its endpoint drawer; activating the open row again closes it.
   The nonmodal drawer leaves the background interactive and opens with focus
-  on its heading. Escape closes a Hosts menu or model suggestion list first;
+  on its heading. Hosts menus and model suggestions appear above the drawer
+  and remain clickable where they overlap it. Escape closes a Hosts menu or
+  model suggestion list first;
   with no such overlay open, it closes the drawer. The drawer shows every
   observed endpoint in compact rows, passing rows before failing rows, the
   first failing condition, price columns with values for that model, precision,
@@ -623,7 +625,8 @@ browser, and `Ctrl-C` stops the server.
   deliberate selections retain Back/Forward navigation. Editors close with
   `Esc` and return focus to their trigger. Menus focus search or their custom
   field (the checkbox for Status); paused Uptime focuses Clear, or its heading
-  without a configured threshold. Menus have no Close button.
+  without a configured threshold. Price focuses its heading when the capture
+  has no price columns. Menus have no Close button.
   Tab stays within an open menu;
   clicking another trigger switches directly. Arrow keys navigate checkbox
   options, and Space or Enter selects them. Search suggestions keep focus in

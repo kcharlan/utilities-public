@@ -1326,7 +1326,7 @@
     const conditions = hostConditions(data, state);
     const condition = HOST_CONDITIONS.find(condition => condition.id === id);
     const configured = conditionConfigured(condition, state, conditions);
-    const initialFocus = paused ? (configured ? "footer button" : "h3") : ["uptime", "context", "output", "price"].includes(id) ? 'input[type="text"]' : id === "status" ? 'input[type="checkbox"]' : 'input[type="search"]';
+    const initialFocus = id === "price" && !data.price_columns.length ? "h3" : paused ? (configured ? "footer button" : "h3") : ["uptime", "context", "output", "price"].includes(id) ? 'input[type="text"]' : id === "status" ? 'input[type="checkbox"]' : 'input[type="search"]';
     useFocusTrap(panel, true, finish, {inert: false, initialFocus});
     const other = conditions.filter(condition => condition.id !== id);
     const matchingCount = test => data.endpoints.filter(endpoint => evaluateEndpoint(endpoint, other).pass && test(endpoint)).length;
