@@ -13,6 +13,14 @@ the current price and capacity preset while a different exact draft is pending,
 then wait beyond debounce.
 Focus traps also need `:disabled` checks so descendants of a disabled fieldset
 cannot become their first or last focus target when telemetry is paused.
+When no enabled controls remain, prevent both Tab directions and retain the
+programmatically focused heading; returning early otherwise releases focus to
+the page while its menu remains open. Escape must still restore its trigger.
+Fixed popup chrome also needs a shrinkable body: nonshrinking threshold forms
+can exceed the space below a trigger on landscape screens. Keep the header and
+footer fixed, and let the form body alone scroll when constrained. Test every
+control with a real hit test after bringing it into view, check that the chrome
+does not move, and cover paused forms whose controls are all disabled.
 
 ## 2026-10-23: Separate page stickiness from horizontal comparison scrolling
 

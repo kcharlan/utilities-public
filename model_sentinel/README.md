@@ -572,9 +572,10 @@ browser, and `Ctrl-C` stops the server.
   **Hosts** switches between **Exclude these** and **Only these**; either mode
   is inactive when its selection is empty. Supports uses one search across
   Request parameters, Native tools and Caching. Menus keep their header,
-  search, shortcuts and effect footer visible while options scroll, and become
-  bottom sheets on narrow screens. Clear appears only for a configured
-  condition. Add host opens **Compare hosts**, ordered by models served.
+  search, shortcuts and effect footer visible while options scroll. Threshold
+  forms scroll between their fixed header and footer when space is limited.
+  Menus become bottom sheets on narrow screens. Clear appears only for a
+  configured condition. Add host opens **Compare hosts**, ordered by models served.
   Uptime presets toggle off when pressed again. Token-price columns offer
   exact maximum presets of $0.5, $1, $5 and $15 per million tokens.
 

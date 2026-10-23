@@ -2934,3 +2934,91 @@ def test_hosts_pending_uptime_recovers_after_snapshot_change(hosts_page, hosts_s
     expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_be_focused()
     expect(dialog.get_by_label("Minimum uptime percent", exact=True)).to_have_value("99.9")
     expect(dialog.locator("footer")).to_contain_text("Removes")
+
+
+@pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])
+@pytest.mark.parametrize("hosts_server", ["no_telemetry"], indirect=True)
+def test_hosts_paused_unconfigured_uptime_keeps_heading_focus(hosts_page, hosts_server, key):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    trigger = hosts_page.get_by_role("button", name="Uptime condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    heading = dialog.get_by_role("heading", name="Uptime", exact=True)
+    expect(heading).to_be_focused()
+    expect(dialog.get_by_role("button", name="Clear", exact=True)).to_have_count(0)
+    hosts_page.keyboard.press(key)
+    expect(heading).to_be_focused()
+    hosts_page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(trigger).to_be_focused()
+
+
+@pytest.mark.parametrize("condition", ["Uptime", "Context", "Max output", "Price"])
+def test_hosts_short_viewport_threshold_controls_are_reachable(hosts_page, hosts_server, condition):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 844, "height": 390})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, upmin="99.9", ctxmin="32K", outmin="8K", plimit="pricing.prompt:5"))
+    hosts_page.get_by_role("button", name=f"{condition} condition", exact=True).click()
+    dialog = hosts_page.get_by_role("dialog", name=condition, exact=True)
+    expect(dialog.locator('input[type="text"]')).to_be_focused()
+    assert dialog.bounding_box()["width"] == 318
+    body = dialog.locator(".condition-form-body")
+    assert body.evaluate("el => el.scrollHeight > el.clientHeight")
+    assert body.evaluate("el => el.scrollWidth === el.clientWidth")
+    assert dialog.locator(".condition-segments").evaluate_all("elements => elements.every(el => el.scrollWidth <= el.clientWidth)")
+    measurements = dialog.evaluate("""el => {
+        const box = element => { const r = element.getBoundingClientRect(); return {top:r.top, bottom:r.bottom, height:r.height, width:r.width}; };
+        return {overlay:box(el.closest('.condition-overlay')),panel:box(el),children:[...el.children].map(child => ({tag:child.tagName, text:child.textContent, ...box(child)}))};
+    }""")
+    chrome = [dialog.locator("header"), dialog.locator("footer")]
+    positions = [element.bounding_box() for element in chrome]
+    overlay = measurements["overlay"]
+    for position in positions:
+        assert overlay["top"] <= position["y"]
+        assert position["y"] + position["height"] <= overlay["bottom"]
+    for control in dialog.locator("input, select, button").all():
+        control.scroll_into_view_if_needed()
+        assert control.evaluate("""el => {
+            const rect = el.getBoundingClientRect(), hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+            return rect.width > 0 && rect.height > 0 && (hit === el || el.contains(hit));
+        }"""), f"Unreachable control {control.get_attribute('aria-label') or control.inner_text()}: {measurements}"
+        assert [element.bounding_box() for element in chrome] == positions
+    body.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    assert body.evaluate("el => el.scrollTop > 0")
+    assert [element.bounding_box() for element in chrome] == positions
+    assert dialog.evaluate("el => el.scrollHeight === el.clientHeight")
+    assert dialog.locator("../..").evaluate("el => el.scrollTop === 0 && el.scrollHeight === el.clientHeight")
+
+
+@pytest.mark.parametrize("upmin", ["", "99.9"])
+@pytest.mark.parametrize("hosts_server", ["no_telemetry"], indirect=True)
+def test_hosts_short_paused_uptime_keeps_chrome_fixed(hosts_page, hosts_server, upmin):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({"width": 844, "height": 390})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, upmin=upmin))
+    trigger = hosts_page.get_by_role("button", name="Uptime condition", exact=True)
+    trigger.click()
+    dialog = hosts_page.get_by_role("dialog", name="Uptime", exact=True)
+    expected_focus = dialog.get_by_role("button", name="Clear", exact=True) if upmin else dialog.get_by_role("heading", name="Uptime", exact=True)
+    expect(expected_focus).to_be_focused()
+    body = dialog.locator(".condition-form-body")
+    expect(dialog.locator(".uptime-unavailable")).to_be_visible()
+    positions = [dialog.locator(tag).bounding_box() for tag in ("header", "footer")]
+    body.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    assert body.evaluate("el => el.scrollTop > 0")
+    assert [dialog.locator(tag).bounding_box() for tag in ("header", "footer")] == positions
+    expect(dialog.locator("footer")).to_contain_text("Paused")
+    assert dialog.locator("../..").evaluate("el => el.scrollTop === 0 && el.scrollHeight === el.clientHeight")
+    if upmin:
+        clear = dialog.get_by_role("button", name="Clear", exact=True)
+        assert clear.evaluate("el => { const r=el.getBoundingClientRect(); return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2) === el; }")
+        clear.click()
+        expect(hosts_page).not_to_have_url(re.compile("upmin="))
+    else:
+        hosts_page.keyboard.press("Tab")
+        expect(expected_focus).to_be_focused()
+        hosts_page.keyboard.press("Shift+Tab")
+        expect(expected_focus).to_be_focused()
+        hosts_page.keyboard.press("Escape")
+        expect(trigger).to_be_focused()

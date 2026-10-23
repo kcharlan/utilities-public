@@ -279,8 +279,11 @@ sort". With no sort set, the main view shows nothing.
 - **Placement:**
   - 320px wide, 6px below its button;
   - max-height `min(460px, 100vh − 140px)`;
-  - header, search, shortcuts and footer stay fixed; only the option list
-    scrolls.
+  - header and footer stay fixed;
+  - in list menus, search and shortcuts also stay fixed; only the option
+    list scrolls;
+  - threshold menus allow their form body to scroll when its controls exceed
+    the available height.
 - **Chrome:** `--panel-raised` background, `--border-strong` border, 8px
   radius, shadow `0 18px 40px var(--shadow)`.
 - **Header:** the menu `name` (14px, `--ink-strong`) and a muted note at the
