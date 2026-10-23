@@ -500,9 +500,10 @@ browser, and `Ctrl-C` stops the server.
 - **Hosts** compares serving companies in an exact saved endpoint capture.
   Select no hosts for best-across-host comparisons, one for its summary and
   history, or several for side-by-side columns. Each compact row represents one
-  endpoint list, with a variants count for additional mapped models. Rank by
-  exact price, sampled uptime, context length, or max output; equal values share
-  a rank. Missing values remain visible without a best marker. The Best column
+  model from an endpoint list, with a variants count for additional mapped
+  models. Rank by exact price, sampled uptime, context length, or max output;
+  equal values share a rank. When present, output price is the default ranking.
+  Missing values remain visible without a best marker. The Best column
   identifies the winner and ties, while the spread strip shows every ranked
   host. Compared hosts use selection-order colors. Positive prices use a
   logarithmic spread; signed/zero prices and other dimensions use a linear
@@ -518,14 +519,14 @@ browser, and `Ctrl-C` stops the server.
   individual dossiers; aliases remain visible. Open dossier uses the first
   mapped model, and is disabled for unmapped lists. The drawer's `hlist` URL
   state supports copied URLs and Back/Forward; closing restores focus to its row
-  or the results heading. The results initially show 50 lists; **Show 50 more**
+  or the results heading. The results initially show 50 models; **Show 50 more**
   adds 50. Changes to comparison or filters reset this limit. The summary counts
-  qualifying/captured endpoints separately from admitted lists.
+  qualifying/captured endpoints separately from admitted models.
 
   Click a column heading to sort ascending, click again for descending, and
   click once more to remove it. Additional columns join the sort in priority
   order; arrows and numbers mark the active stack. The toolbar summary names
-  displayed keys and **Clear sort** removes the saved stack, even when no lists
+  displayed keys and **Clear sort** removes the saved stack, even when no models
   qualify. Missing values stay last in either direction, prices compare exactly,
   and ties retain the default order.
   Drawer sorting stays within the passing and failing groups. The `hsort` and
@@ -539,13 +540,19 @@ browser, and `Ctrl-C` stops the server.
   `price:<path>`, `precision`, `context`, `output`, `uptime`, and `status`.
   Host names and price paths must belong to the selected capture.
 
-  **Add host** opens a searchable checkbox list ordered by lists served; remove
+  **Add host** opens a searchable checkbox list ordered by models served; remove
   a compared host with its pill. Picker counts describe observed coverage, and
-  incomplete history captures break uptime trends. **Host capture** selects an
-  exact saved capture, newest first. Capture, host selection, ranking, and row
-  match survive reloads. Results scroll on both axes within their container,
-  with sticky column headings and model names; toolbar menus become bottom
-  sheets and the drawer fills the width on narrow screens.
+  incomplete history captures break uptime trends. **Snapshot** selects an
+  exact saved capture, newest first. **Provider** appears alongside ranking and
+  snapshot when multiple providers have captures; changing it clears the old
+  provider's snapshot. Capture, host selection, ranking, and row match survive
+  reloads. The compact Hosts strip retains view tabs and Appearance, with its
+  page heading available to assistive technology. The toolbar, results and
+  pagination share a panel. On desktop the page scrolls beneath the sticky
+  toolbar and table headings. Wide comparisons scroll horizontally with a
+  pinned model column and ordinary table headings. On narrow screens toolbar
+  and headings scroll with the page; menus become bottom sheets and the drawer
+  fills the width.
 
   The toolbar opens keyboard-accessible condition menus for host
   exclusions, normal status (code 0), precision, minimum uptime, context and
@@ -553,7 +560,8 @@ browser, and `Ctrl-C` stops the server.
   service tiers and exact price limits. Opening a menu leaves conditions
   unchanged. Checkbox lists support local substring filtering with highlighted
   matches; their counts include endpoints passing all other conditions. The
-  inline model-list search suggests capture list names and mapped model IDs.
+  inline **Search models** field suggests capture names and mapped model IDs;
+  its clear button cancels pending typing and returns focus to the field.
   Conditions combine
   with AND; each removal count measures that condition alone across the capture.
   Precision's 16-bit and 8-bit shortcuts preserve unknown/unrecognized chips.
@@ -562,8 +570,8 @@ browser, and `Ctrl-C` stops the server.
   `standard`, while string tiers retain JSON quotes, including `"standard"` and
   `"null"`. Price limits preserve decimal text and compare exact values.
 
-  **Any selected host** admits a list if one selected host qualifies; **All
-  selected hosts** requires each host. **Show excluded** uses endpoint presence
+  **Rows: any** admits a model if one selected host qualifies; **Rows: all**
+  requires each host. **Show excluded** uses endpoint presence
   for the same row rule and shows failing endpoints dimmed with their first
   failing condition, without awarding them ranks. With no selection, any host
   can admit a list. Missing uptime can be included explicitly, and the uptime
@@ -571,8 +579,11 @@ browser, and `Ctrl-C` stops the server.
   capture](#endpoint-capture) for the saved telemetry facts. A paused uptime
   condition keeps its chip and can be cleared, with its other controls disabled.
   **Clear all** removes conditions while keeping ranking, row rule, Show
-  excluded, provider, selected hosts, and capture. Configured chips remove
-  individual conditions. Conditions and empty chip selections survive
+  excluded, provider, selected hosts, and capture. Configured chips show
+  summaries and individual removal counts, and remove individual conditions.
+  Clear all appears only while a condition is configured. Paused uptime retains
+  its configured chip without an evaluated removal count.
+  Conditions and empty chip selections survive
   copied URLs/reloads. Numeric typing replaces the current history entry;
   deliberate selections retain Back/Forward navigation. Editors close with
   `Esc` and return focus to their trigger. Tab stays within an open menu;
@@ -631,9 +642,9 @@ fully offline; Preact, htm, uPlot, CSS, and every other page asset are packaged
 with Model Sentinel, so viewing history makes no network request.
 
 The URL hash contains the selected view and filters, making browser
-back/forward and copied local URLs reproducible. Press `/` to focus **Find
-model**, `1`, `2`, `3`, or `4` to switch among Activity, Models, Catalog, and
-Hosts, and
+back/forward and copied local URLs reproducible. Press `/` to focus **Search
+models** on Hosts or **Find model** on other views, `1`, `2`, `3`, or `4` to switch
+among Activity, Models, Catalog, and Hosts, and
 `Esc` to close search results, drawers, or popovers. The Appearance disclosure
 offers System, Light, and Dark themes; the choice is stored only in browser
 `localStorage`, not in Model Sentinel's runtime home.

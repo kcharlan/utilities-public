@@ -1,14 +1,26 @@
 (() => {
   "use strict";
   const {h, render} = preact;
-  const {useState, useEffect, useMemo, useRef, useCallback} = preactHooks;
+  const {useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback} = preactHooks;
   const html = htm.bind(h);
   const THEME_KEY = "model_sentinel.browse.theme";
   const THEMES = ["system", "light", "dark"];
   const VIEWS = ["activity", "models", "catalog", "hosts"];
   const ASPECT_LIMIT = 12;
   const CATALOG_PAGE_SIZE = 50;
-  const HOST_CONDITION_KEYS = ["hq", "xhosts", "quant", "quantset", "upwin", "upmin", "upmiss", "healthy", "ctxmin", "outmin", "params", "ntools", "caching", "tiers", "tierset", "plimit"];
+  const HOST_CONDITIONS = [
+    {id: "precision", name: "Precision", keys: ["quant", "quantset"]},
+    {id: "uptime", name: "Uptime", keys: ["upwin", "upmin", "upmiss"]},
+    {id: "status", name: "Status", keys: ["healthy"]},
+    {id: "context", name: "Context", keys: ["ctxmin"]},
+    {id: "output", name: "Max output", keys: ["outmin"]},
+    {id: "supports", name: "Supports", keys: ["params", "ntools", "caching"]},
+    {id: "tier", name: "Tier", keys: ["tiers", "tierset"]},
+    {id: "price", name: "Price", keys: ["plimit"]},
+    {id: "hosts", name: "Hosts", keys: ["xhosts", "xmode"]},
+    {id: "search", name: "Model search", keys: ["hq"]}
+  ];
+  const HOST_CONDITION_KEYS = HOST_CONDITIONS.flatMap(condition => condition.keys);
   const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers", "hsort", "dsort"]);
   const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir", "hosts", "hasof", "rank", "match", "showx", "hlist", "hsort", "dsort", ...HOST_CONDITION_KEYS];
 
@@ -256,13 +268,13 @@
     return html`
       <section class="filter-bar" aria-label="Browser controls">
         <nav class="view-tabs" aria-label="Views">${VIEWS.map((view, index) => html`<button type="button" key=${view} class=${state.view === view ? "is-active" : ""} aria-current=${state.view === view ? "page" : undefined} onClick=${() => write({view})}><span>${index + 1}</span>${view[0].toUpperCase() + view.slice(1)}</button>`)}</nav>
-        <${FindModel} meta=${meta} openModel=${openModel} inputRef=${inputRef} />
-        <div class="filter-row">
+        ${state.view !== "hosts" ? html`<${FindModel} meta=${meta} openModel=${openModel} inputRef=${inputRef} />` : null}
+        ${state.view !== "hosts" ? html`<div class="filter-row">
           <fieldset class="providers"><legend>Providers</legend><div>${meta.providers.map(provider => html`<button type="button" key=${provider.id} class=${providers.includes(provider.id) ? "chip is-active" : "chip"} aria-pressed=${providers.includes(provider.id)} onClick=${() => toggle(provider.id)}><i></i>${provider.label}</button>`)}</div></fieldset>
           ${state.view !== "hosts" ? html`<${DateRangeFields} span=${meta.date_span} state=${state} write=${write} />
           <${RangePresets} span=${meta.date_span} from=${state.from} to=${state.to} write=${write} />
           <${Segmented} label="Detail" value=${state.detail} options=${["default", "all", "squelched"].map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${detail => write({detail})} />` : null}
-        </div>
+        </div>` : null}
         <details class="appearance"><summary>Appearance</summary><${Segmented} label="Theme" value=${theme} options=${THEMES.map(value => ({value, label: value[0].toUpperCase() + value.slice(1)}))} onChange=${setTheme} /></details>
       </section>`;
   }
@@ -1215,8 +1227,6 @@
     const value = match ? Number(match[1]) * (match[2]?.toUpperCase() === "M" ? 1000000 : match[2] ? 1000 : 1) : NaN;
     return Number.isFinite(value) && value >= 0 ? value : null;
   }
-  const CONDITION_NAMES = ["Exclude hosts", "Status", "Precision", "Uptime", "Context length", "Max output", "Supports", "Service tier", "Price limit", "Model search"];
-  const CONDITION_KEYS = [["xhosts"], ["healthy"], ["quant", "quantset"], ["upwin", "upmin", "upmiss"], ["ctxmin"], ["outmin"], ["params", "ntools", "caching"], ["tiers", "tierset"], ["plimit"], ["hq"]];
   function normalizeHostConditions(data, state) {
     const clean = {};
     const list = (key, allowed) => clean[key] = [...new Set(state[key] || [])].filter(value => allowed.includes(value));
@@ -1239,20 +1249,21 @@
   function hostConditions(data, state) {
     const query = state.hq.toLowerCase(), split = state.plimit.lastIndexOf(":");
     const pricePath = state.plimit.slice(0, split), limit = split > 0 ? decimalRational(state.plimit.slice(split + 1)) : null;
-    const tests = [
-      state.xhosts.length && (endpoint => !state.xhosts.includes(endpoint.host)),
-      state.healthy === "1" && (endpoint => endpoint.status === 0),
-      state.quantset === "1" && (endpoint => state.quant.includes(endpoint.quantization)),
-      state.upmin !== "" && data.telemetry === "available" && (endpoint => endpoint.uptime[state.upwin] == null ? state.upmiss === "1" : endpoint.uptime[state.upwin] >= Number(state.upmin)),
-      state.ctxmin !== "" && (endpoint => endpoint.context_length != null && endpoint.context_length >= capacityMinimum(state.ctxmin)),
-      state.outmin !== "" && (endpoint => endpoint.max_completion_tokens != null && endpoint.max_completion_tokens >= capacityMinimum(state.outmin)),
-      (state.params.length || state.ntools.length || state.caching === "1") && (endpoint => state.params.every(value => endpoint.parameters.includes(data.vocab.parameters.indexOf(value))) && state.ntools.every(value => endpoint.native_tools.includes(data.vocab.native_tools.indexOf(value))) && (state.caching !== "1" || endpoint.implicit_caching)),
-      state.tierset === "1" && (endpoint => state.tiers.includes(JSON.stringify(endpoint.service_tier))),
-      limit && (endpoint => { const value = exactRational(endpoint.prices[pricePath]?.exact); return value !== null && compareRational(value, limit) <= 0; }),
-      query && (endpoint => { const list = data.lists[endpoint.list]; return [list.display_id, ...list.models].some(value => value.toLowerCase().includes(query)); })
-    ];
-    return tests.flatMap((test, index) => test ? [{name: CONDITION_NAMES[index], test}] : []);
+    const tests = {
+      hosts: state.xhosts.length && (endpoint => !state.xhosts.includes(endpoint.host)),
+      status: state.healthy === "1" && (endpoint => endpoint.status === 0),
+      precision: state.quantset === "1" && (endpoint => state.quant.includes(endpoint.quantization)),
+      uptime: state.upmin !== "" && data.telemetry === "available" && (endpoint => endpoint.uptime[state.upwin] == null ? state.upmiss === "1" : endpoint.uptime[state.upwin] >= Number(state.upmin)),
+      context: state.ctxmin !== "" && (endpoint => endpoint.context_length != null && endpoint.context_length >= capacityMinimum(state.ctxmin)),
+      output: state.outmin !== "" && (endpoint => endpoint.max_completion_tokens != null && endpoint.max_completion_tokens >= capacityMinimum(state.outmin)),
+      supports: (state.params.length || state.ntools.length || state.caching === "1") && (endpoint => state.params.every(value => endpoint.parameters.includes(data.vocab.parameters.indexOf(value))) && state.ntools.every(value => endpoint.native_tools.includes(data.vocab.native_tools.indexOf(value))) && (state.caching !== "1" || endpoint.implicit_caching)),
+      tier: state.tierset === "1" && (endpoint => state.tiers.includes(JSON.stringify(endpoint.service_tier))),
+      price: limit && (endpoint => { const value = exactRational(endpoint.prices[pricePath]?.exact); return value !== null && compareRational(value, limit) <= 0; }),
+      search: query && (endpoint => { const list = data.lists[endpoint.list]; return [list.display_id, ...list.models].some(value => value.toLowerCase().includes(query)); })
+    };
+    return HOST_CONDITIONS.flatMap(condition => tests[condition.id] ? [{...condition, test: tests[condition.id]}] : []);
   }
+
   function evaluateEndpoint(endpoint, conditions) {
     const reasons = conditions.filter(condition => !condition.test(endpoint)).map(condition => condition.name);
     return {pass: reasons.length === 0, reasons};
@@ -1291,45 +1302,45 @@
     useEffect(() => cancel, []);
     return html`<label>${label}<input type="text" ...${inputProps} aria-label=${label} value=${draft} onInput=${event => { cancelled.current = false; deferBlur.current = false; setDraft(event.currentTarget.value); onDraft?.(event.currentTarget.value); }} aria-invalid=${draft !== "" && !valid(draft) ? "true" : undefined} onKeyDown=${event => { if (onKeyDown?.(event) === true || event.defaultPrevented) return; if (event.key === "Escape" || event.key === "Enter") flush(); }} onBlur=${() => { if (deferBlur.current) deferBlur.current = false; else flush(); }} />${presets.length ? html`<span class="condition-presets">${presets.map(preset => html`<button type="button" key=${preset} onPointerDown=${() => { deferBlur.current = true; }} onClick=${() => { cancel(); onPreset(preset); }}>${preset}</button>`)}</span>` : null}</label>`;
   }
-  function ThresholdMenu({name, data, state, write, replaceState, close, editorRef, removal}) {
+  function ThresholdMenu({id, name, data, state, write, replaceState, close, editorRef, removal}) {
     const panel = useRef(null), ownEditor = useRef(null);
     const textEditor = editorRef || ownEditor;
     const finish = () => { textEditor.current?.flush(); close(); };
     useFocusTrap(panel, true, finish, {inert: false});
-    const index = CONDITION_NAMES.indexOf(name);
+    const condition = HOST_CONDITIONS.find(condition => condition.id === id);
     const chips = (key, values, label = value => value) => {
       const active = key === "quant" ? state.quantset === "1" : key === "tiers" ? state.tierset === "1" : true;
-      const other = hostConditions(data, state).filter(condition => condition.name !== name);
+      const other = hostConditions(data, state).filter(condition => condition.id !== id);
       const matches = (endpoint, value) => key === "xhosts" ? endpoint.host === value : key === "quant" ? endpoint.quantization === value : key === "tiers" ? JSON.stringify(endpoint.service_tier) === value : endpoint[key === "params" ? "parameters" : "native_tools"].includes(data.vocab[key === "params" ? "parameters" : "native_tools"].indexOf(value));
       const options = values.map(value => ({value, label: label(value), count: data.endpoints.filter(endpoint => evaluateEndpoint(endpoint, other).pass && matches(endpoint, value)).length,
         group: key === "quant" ? ((data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits ?? null) === null ? "Width not published" : data.endpoints.find(endpoint => endpoint.quantization === value).precision_bits + "-bit") : null}));
       if (key === "quant") options.sort((a,b) => (data.endpoints.find(endpoint => endpoint.quantization === b.value)?.precision_bits ?? -1) - (data.endpoints.find(endpoint => endpoint.quantization === a.value)?.precision_bits ?? -1) || a.label.localeCompare(b.label));
       return html`<${OptionList} options=${options} selected=${active ? state[key] : values} onToggle=${value => { const selected = active ? state[key] : values; write({[key]: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value], ...(key === "quant" ? {quantset: "1"} : key === "tiers" ? {tierset: "1"} : {})}); }} />`;
     };
-    const remove = () => { textEditor.current?.cancel(); write(Object.fromEntries(CONDITION_KEYS[index].map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
+    const remove = () => { textEditor.current?.cancel(); write(Object.fromEntries(condition.keys.map(key => [key, LIST_KEYS.has(key) ? [] : ""]))); close(); };
     const priceSplit = state.plimit.lastIndexOf(":"), pricePath = priceSplit > 0 ? state.plimit.slice(0, priceSplit) : null;
     const [column, setColumn] = useState(pricePath || data.price_columns[0]?.path);
     // Active URL targets own the selection, including Back/Forward restores.
     // With no ceiling the column stays a local draft, even after clearing one.
     useEffect(() => { if (pricePath) setColumn(pricePath); }, [pricePath]);
-    const applyPreset = value => write({[name === "Uptime" ? "upmin" : name === "Context length" ? "ctxmin" : "outmin"]: value});
+    const applyPreset = value => write({[id === "uptime" ? "upmin" : id === "context" ? "ctxmin" : "outmin"]: value});
     const choosePriceColumn = event => {
       const next = event.currentTarget.value;
       setColumn(next);
       textEditor.current?.flush(value => write({plimit: value ? `${next}:${value}` : ""}));
     };
     const missingFields = {
-      Status: endpoint => endpoint.status == null,
-      Precision: endpoint => endpoint.precision_bits == null,
-      Uptime: endpoint => endpoint.uptime[state.upwin] == null,
-      "Context length": endpoint => endpoint.context_length == null,
-      "Max output": endpoint => endpoint.max_completion_tokens == null,
-      "Price limit": endpoint => !endpoint.prices[column],
-      "Service tier": endpoint => endpoint.service_tier == null,
-      Supports: endpoint => !endpoint.parameters.length && !endpoint.native_tools.length
+      status: endpoint => endpoint.status == null,
+      precision: endpoint => endpoint.precision_bits == null,
+      uptime: endpoint => endpoint.uptime[state.upwin] == null,
+      context: endpoint => endpoint.context_length == null,
+      output: endpoint => endpoint.max_completion_tokens == null,
+      price: endpoint => !endpoint.prices[column],
+      tier: endpoint => endpoint.service_tier == null,
+      supports: endpoint => !endpoint.parameters.length && !endpoint.native_tools.length
     };
-    const missing = data.endpoints.filter(missingFields[name] || (() => false)).length;
-    return html`<section class="condition-popover" role="dialog" aria-label=${name} ref=${panel}><header><h3>${name}</h3><button type="button" onClick=${finish}>Close</button></header>${removal != null ? html`<p>${name}: removes ${removal} endpoints</p>` : null}<p>${missing} endpoints with missing values${name === "Precision" ? " or unrecognized precision" : ""}.</p>${name === "Exclude hosts" ? html`<p>Checked hosts are left out of comparisons.</p>${chips("xhosts", data.hosts.map(host => host.name))}` : name === "Status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal only (code 0)</label>` : name === "Precision" ? html`<div class="condition-presets">${["Any", "16-bit or better", "8-bit or better"].map((label, index) => html`<button type="button" key=${label} onClick=${() => !index ? write({quant: [], quantset: ""}) : write({quant: data.vocab.quantizations.filter(quant => !index || data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits == null ? !index || state.quantset !== "1" || state.quant.includes(quant) : data.endpoints.find(endpoint => endpoint.quantization === quant).precision_bits >= (index === 1 ? 16 : 8)), quantset: "1"})}>${label}</button>`)}</div>${chips("quant", data.vocab.quantizations)}` : name === "Uptime" ? html`<${UptimeUnavailable} data=${data} /><fieldset disabled=${data.telemetry !== "available"}><label>Uptime window<select aria-label="Uptime window" value=${state.upwin} onChange=${event => write({upwin: event.currentTarget.value})}>${["1d", "30m", "5m"].map(value => html`<option value=${value}>${value}</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Minimum uptime percent" value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin: value})} presets=${["99", "99.5", "99.9", "99.99"]} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Include missing uptime</label></fieldset>` : name === "Context length" || name === "Max output" ? html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label=${name === "Context length" ? "Minimum context length" : "Minimum max output"} value=${state[name === "Context length" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[name === "Context length" ? "ctxmin" : "outmin"]: value})} presets=${name === "Max output" ? ["8K", "32K", "64K", "128K"] : ["32K", "128K", "200K", "1M"]} />` : name === "Supports" ? html`<h4>Request parameters</h4>${chips("params", data.vocab.parameters)}<h4>Native tools</h4>${chips("ntools", data.vocab.native_tools)}<label><input type="checkbox" checked=${state.caching === "1"} onChange=${event => write({caching: event.currentTarget.checked ? "1" : ""})} />Implicit caching</label>` : name === "Service tier" ? chips("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : name === "Price limit" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onPointerDown=${() => textEditor.current?.deferBlur()} onChange=${choosePriceColumn}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Maximum price" value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit: value ? `${column}:${value}` : ""})} />` : html`<p>No price columns in this capture.</p>` : html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Search model lists" value=${state.hq} valid=${() => true} commit=${value => replaceState({hq: value})} />`}<footer><button type="button" onPointerDown=${() => textEditor.current?.cancel()} onClick=${remove}>Clear</button></footer></section>`;
+    const missing = data.endpoints.filter(missingFields[id] || (() => false)).length;
+    return html`<section class="condition-popover" role="dialog" aria-label=${name} ref=${panel}><header><h3>${name}</h3><button type="button" onClick=${finish}>Close</button></header>${removal != null ? html`<p>${name}: removes ${removal} endpoints</p>` : null}<p>${missing} endpoints with missing values${id === "precision" ? " or unrecognized precision" : ""}.</p>${id === "hosts" ? html`<p>Checked hosts are left out of comparisons.</p>${chips("xhosts", data.hosts.map(host => host.name))}` : id === "status" ? html`<label><input type="checkbox" checked=${state.healthy === "1"} onChange=${event => write({healthy: event.currentTarget.checked ? "1" : ""})} />Normal only (code 0)</label>` : id === "precision" ? html`<div class="condition-presets">${["Any", "16-bit or better", "8-bit or better"].map((label, index) => html`<button type="button" key=${label} onClick=${() => !index ? write({quant: [], quantset: ""}) : write({quant: data.vocab.quantizations.filter(quant => !index || data.endpoints.find(endpoint => endpoint.quantization === quant)?.precision_bits == null ? !index || state.quantset !== "1" || state.quant.includes(quant) : data.endpoints.find(endpoint => endpoint.quantization === quant).precision_bits >= (index === 1 ? 16 : 8)), quantset: "1"})}>${label}</button>`)}</div>${chips("quant", data.vocab.quantizations)}` : id === "uptime" ? html`<${UptimeUnavailable} data=${data} /><fieldset disabled=${data.telemetry !== "available"}><label>Uptime window<select aria-label="Uptime window" value=${state.upwin} onChange=${event => write({upwin: event.currentTarget.value})}>${["1d", "30m", "5m"].map(value => html`<option value=${value}>${value}</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Minimum uptime percent" value=${state.upmin} valid=${value => decimalRational(value) !== null && Number(value) >= 0 && Number(value) <= 100} commit=${value => replaceState({upmin: value})} presets=${["99", "99.5", "99.9", "99.99"]} /><label><input type="checkbox" checked=${state.upmiss === "1"} onChange=${event => write({upmiss: event.currentTarget.checked ? "1" : ""})} />Include missing uptime</label></fieldset>` : id === "context" || id === "output" ? html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label=${id === "context" ? "Minimum context length" : "Minimum max output"} value=${state[id === "context" ? "ctxmin" : "outmin"]} valid=${value => capacityMinimum(value) !== null} commit=${value => replaceState({[id === "context" ? "ctxmin" : "outmin"]: value})} presets=${id === "output" ? ["8K", "32K", "64K", "128K"] : ["32K", "128K", "200K", "1M"]} />` : id === "supports" ? html`<h4>Request parameters</h4>${chips("params", data.vocab.parameters)}<h4>Native tools</h4>${chips("ntools", data.vocab.native_tools)}<label><input type="checkbox" checked=${state.caching === "1"} onChange=${event => write({caching: event.currentTarget.checked ? "1" : ""})} />Implicit caching</label>` : id === "tier" ? chips("tiers", data.vocab.tiers.map(value => JSON.stringify(value)), value => value === "null" ? "standard" : value) : id === "price" ? data.price_columns.length ? html`<label>Price column<select aria-label="Price column" value=${column} onPointerDown=${() => textEditor.current?.deferBlur()} onChange=${choosePriceColumn}>${data.price_columns.map(item => html`<option value=${item.path}>${item.label} (${item.unit_label})</option>`)}</select></label><${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Maximum price" value=${priceSplit > 0 ? state.plimit.slice(priceSplit + 1) : ""} valid=${value => decimalRational(value) !== null} commit=${value => replaceState({plimit: value ? `${column}:${value}` : ""})} />` : html`<p>No price columns in this capture.</p>` : html`<${ConditionText} editorRef=${textEditor} onPreset=${applyPreset} label="Search models" value=${state.hq} valid=${() => true} commit=${value => replaceState({hq: value})} />`}<footer><button type="button" onPointerDown=${() => textEditor.current?.cancel()} onClick=${remove}>Clear</button></footer></section>`;
   }
   function HighlightMatch({text, query}) {
     const index = text.toLowerCase().indexOf(query.toLowerCase());
@@ -1354,9 +1365,9 @@
     const panel = useRef(null);
     useFocusTrap(panel, true, close, {inert: false});
     const options = [...data.hosts].sort((a,b) => b.list_count - a.list_count || a.name.localeCompare(b.name)).map(host => ({value: host.name, label: host.name, count: host.list_count, disabled: !selected.includes(host.name) && selected.length >= limit}));
-    return html`<section ref=${panel} class="condition-popover" role="dialog" aria-label="Add host"><header><h3>Add host</h3><button type="button" onClick=${close}>Close</button></header><p>${selected.length} / ${limit} compared hosts · counts are lists served</p><${OptionList} label="Search hosts" options=${options} selected=${selected} onToggle=${name => write({hosts: selected.includes(name) ? selected.filter(host => host !== name) : [...selected, name]})} /><footer><button type="button" onClick=${() => write({hosts: []})}>Clear</button></footer></section>`;
+    return html`<section ref=${panel} class="condition-popover" role="dialog" aria-label="Add host"><header><h3>Add host</h3><button type="button" onClick=${close}>Close</button></header><p>${selected.length} / ${limit} compared hosts · counts are models served</p><${OptionList} label="Search hosts" options=${options} selected=${selected} onToggle=${name => write({hosts: selected.includes(name) ? selected.filter(host => host !== name) : [...selected, name]})} /><footer><button type="button" onClick=${() => write({hosts: []})}>Clear</button></footer></section>`;
   }
-  function SearchField({data, state, write, replaceState, editorRef}) {
+  function SearchField({data, state, write, replaceState, editorRef, inputRef}) {
     const [query, setQuery] = useState(state.hq), [open, setOpen] = useState(false), [active, setActive] = useState(-1);
     const anchor = useRef(null), list = useRef(null);
     const suggestions = [...new Set(data.lists.flatMap(list => [list.display_id, ...list.models]))].filter(text => query && text.toLowerCase().includes(query.toLowerCase())).sort((a,b) => a.localeCompare(b)).slice(0,20);
@@ -1367,40 +1378,43 @@
       return () => document.removeEventListener("pointerdown", outside);
     }, []);
     const choose = text => { editorRef.current?.replaceDraft(text); setQuery(text); setOpen(false); setActive(-1); write({hq: text}); };
-    return html`<div class="hosts-search" ref=${anchor} onFocusOut=${event => { if (!anchor.current?.contains(event.relatedTarget) && !list.current?.contains(event.relatedTarget)) setOpen(false); }}><${ConditionText} label="Search model lists" value=${state.hq} valid=${() => true} editorRef=${editorRef} commit=${value => replaceState({hq: value})} inputProps=${{role: "combobox", "aria-autocomplete": "list", "aria-expanded": open && suggestions.length > 0, "aria-controls": "host-search-results", "aria-activedescendant": open && active >= 0 && active < suggestions.length ? `host-search-${active}` : undefined, onFocus: () => setOpen(true), onInput: undefined}} onKeyDown=${event => {
+    return html`<div class="hosts-search" ref=${anchor} onFocusOut=${event => { if (!anchor.current?.contains(event.relatedTarget) && !list.current?.contains(event.relatedTarget)) setOpen(false); }}><span class="hosts-search-icon" aria-hidden="true">⌕</span><${ConditionText} label="Search models" value=${state.hq} valid=${() => true} editorRef=${editorRef} commit=${value => replaceState({hq: value})} inputProps=${{ref: inputRef, type: "search", placeholder: "Filter models…", role: "combobox", "aria-autocomplete": "list", "aria-expanded": open && suggestions.length > 0, "aria-controls": "host-search-results", "aria-activedescendant": open && active >= 0 && active < suggestions.length ? `host-search-${active}` : undefined, onFocus: () => setOpen(true), onInput: undefined}} onKeyDown=${event => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { if (!suggestions.length) return; event.preventDefault(); setOpen(true); setActive(index => index < 0 ? (event.key === "ArrowDown" ? 0 : suggestions.length - 1) : (index + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length); return true; }
       if (event.key === "Escape") { event.preventDefault(); setOpen(false); return true; }
       if (event.key === "Enter" && open && active >= 0 && suggestions[active]) { event.preventDefault(); choose(suggestions[active]); return true; }
-    }} onDraft=${value => { setQuery(value); setOpen(true); setActive(-1); }} /><${TypeaheadOverlay} anchorRef=${anchor} open=${open && suggestions.length > 0} className="typeahead hosts-search-results"><div id="host-search-results" ref=${list} role="listbox" aria-label="Model list suggestions">${suggestions.map((text,index) => html`<button type="button" role="option" aria-label=${text} tabIndex="-1" id=${`host-search-${index}`} aria-selected=${index === active} key=${text} onPointerDown=${event => { event.preventDefault(); choose(text); }}><${HighlightMatch} text=${text} query=${query} /></button>`)}</div></${TypeaheadOverlay}></div>`;
+    }} onDraft=${value => { setQuery(value); setOpen(true); setActive(-1); }} />${query ? html`<button class="hosts-search-clear" type="button" aria-label="Clear model search" onPointerDown=${() => editorRef.current?.cancel()} onClick=${() => { editorRef.current?.replaceDraft(""); setQuery(""); setOpen(false); setActive(-1); write({hq: ""}); inputRef.current?.focus(); }}>×</button>` : null}<${TypeaheadOverlay} anchorRef=${anchor} open=${open && suggestions.length > 0} className="typeahead hosts-search-results"><div id="host-search-results" ref=${list} role="listbox" aria-label="Model suggestions">${suggestions.map((text,index) => html`<button type="button" role="option" aria-label=${text} tabIndex="-1" id=${`host-search-${index}`} aria-selected=${index === active} key=${text} onPointerDown=${event => { event.preventDefault(); choose(text); }}><${HighlightMatch} text=${text} query=${query} /></button>`)}</div></${TypeaheadOverlay}></div>`;
+  }
+  function conditionConfigured(condition, state, conditions) {
+    return condition.id === "uptime" ? state.upmin !== "" : conditions.some(item => item.id === condition.id);
+  }
+  function conditionSummary(id, data, state) {
+    const values = list => list.slice(0,2).join(", ") + (list.length > 2 ? ` +${list.length-2}` : list.length ? "" : "none");
+    if (id === "precision") {
+      for (const bits of [16,8]) {
+        const expected = data.vocab.quantizations.filter(value => { const width = data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits; return width == null ? state.quant.includes(value) : width >= bits; });
+        if (sameList([...state.quant].sort(), expected.sort())) return `${bits}-bit or better`;
+      }
+      return values(state.quant);
+    }
+    if (id === "tier") return values(state.tiers.map(value => value === "null" ? "standard" : value));
+    if (id === "uptime") return `≥ ${state.upmin}% (${{"1d":"1 day","30m":"30 min","5m":"5 min"}[state.upwin]})${data.telemetry !== "available" ? " · paused" : ""}`;
+    if (id === "context") return `≥ ${state.ctxmin}`;
+    if (id === "output") return `≥ ${state.outmin}`;
+    if (id === "price") { const split = state.plimit.lastIndexOf(":"); return `${data.price_columns.find(column => column.path === state.plimit.slice(0,split))?.label.toLowerCase()} ≤ ${state.plimit.slice(split+1)}`; }
+    if (id === "hosts") return `${state.xmode === "only" ? "only" : "excluding"} ${values(state.xhosts)}`;
+    if (id === "search") return `"${state.hq}"`;
+    if (id === "supports") return values([...state.params,...state.ntools,...(state.caching === "1" ? ["implicit caching"] : [])]);
+    return "normal only";
   }
   function ConditionChips({data, state, conditions, removal, remove, clear}) {
-    const names = CONDITION_NAMES.filter((name,index) => name === "Uptime" ? state.upmin !== "" : conditions.some(condition => condition.name === name));
-    const values = (name, list) => `${name}: ${list.slice(0,2).join(", ")}${list.length > 2 ? ` +${list.length - 2}` : list.length ? "" : "none"}`;
-    const summary = name => {
-      if (name === "Precision") {
-        for (const bits of [16,8]) {
-          const expected = data.vocab.quantizations.filter(value => { const width = data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits; return width == null ? state.quant.includes(value) : width >= bits; });
-          if (sameList([...state.quant].sort(), expected.sort())) return `${bits}-bit or better`;
-        }
-        return values(name,state.quant);
-      }
-      if (name === "Service tier") return values(name,state.tiers.map(value => value === "null" ? "standard" : value));
-      if (name === "Uptime") return `Uptime ≥ ${state.upmin}% (${state.upwin})${data.telemetry !== "available" ? " · paused" : ""}`;
-      if (name === "Context length") return `Context ≥ ${state.ctxmin}`;
-      if (name === "Max output") return `Output ≥ ${state.outmin}`;
-      if (name === "Price limit") return `Price ≤ ${state.plimit.slice(state.plimit.lastIndexOf(":") + 1)}`;
-      if (name === "Exclude hosts") return values("Exclude",state.xhosts);
-      if (name === "Model search") return `Model search: ${state.hq}`;
-      if (name === "Supports") return values("Supports",[...state.params,...state.ntools,...(state.caching === "1" ? ["caching"] : [])]);
-      return "Normal status only";
-    };
-    return html`<div class="host-condition-counts">${names.length ? names.map(name => html`<span class="condition-chip" key=${name}>${summary(name)}${removal.has(name) ? html`<small>${name}: removes ${removal.get(name)} endpoints</small>` : null}<button type="button" aria-label=${`Remove ${name} condition`} onPointerDown=${() => remove(name, true)} onClick=${() => remove(name)}>×</button></span>`) : html`<span>${data.endpoints.length ? "No filters. Every endpoint counts." : ""}</span>`}<button type="button" onPointerDown=${() => clear(true)} onClick=${() => clear()}>Clear all</button></div>`;
+    const configured = HOST_CONDITIONS.filter(condition => conditionConfigured(condition,state,conditions));
+    return html`<div class="host-condition-counts">${configured.map(({id,name}) => html`<span class="condition-chip" key=${id}>${name}: ${conditionSummary(id,data,state)}${removal.has(name) ? html`<small> −${removal.get(name).toLocaleString()}</small>` : null}<button type="button" aria-label=${`Remove ${name} filter`} onPointerDown=${() => remove(id, true)} onClick=${() => remove(id)}>×</button></span>`)}${configured.length ? html`<button class="hosts-link-button" type="button" onPointerDown=${() => clear(true)} onClick=${() => clear()}>Clear all</button>` : html`<span>No filters. Every endpoint counts.</span>`}</div>`;
   }
-  function HostsToolbar({rowCount, data, captures = data.captures, state, rawState, selected, limit, dimension, dimensions, conditions, removal, qualifying, write, replaceState}) {
-    const [menu,setMenu] = useState(null), anchor = useRef(null), panel = useRef(null), editor = useRef(null), searchEditor = useRef(null), opening = useRef(null);
+  function HostsToolbar({meta, inputRef, rowCount, data, captures = data.captures, state, rawState, selected, limit, dimension, dimensions, conditions, removal, qualifying, write, replaceState}) {
+    const [menu,setMenu] = useState(null), anchor = useRef(null), panel = useRef(null), editor = useRef(null), searchEditor = useRef(null), opening = useRef(null), toolbar = useRef(null);
     const close = (cancel = false) => { if (cancel) editor.current?.cancel(); else editor.current?.flush(); setMenu(null); };
     const open = (name,event) => { editor.current?.flush(); editor.current = null; anchor.current = event.currentTarget; opening.current = {...rawState}; setMenu(name); };
-    const owned = menu === "Add host" ? ["hosts"] : CONDITION_KEYS[CONDITION_NAMES.indexOf(menu)] || [];
+    const owned = menu === "Add host" ? ["hosts"] : HOST_CONDITIONS.find(condition => condition.id === menu)?.keys || [];
     useEffect(() => {
       if (!menu) return;
       if (HASH_KEYS.some(key => !owned.includes(key) && (LIST_KEYS.has(key) ? !sameList(opening.current[key] || [], rawState[key] || []) : (opening.current[key] || "") !== (rawState[key] || "")))) close(true);
@@ -1412,15 +1426,20 @@
       return () => document.removeEventListener("pointerdown", outside);
     }, [menu]);
     useEffect(() => {
-      const bar = document.querySelector(".filter-bar"), media = matchMedia("(min-width: 48.001rem)");
-      const measure = () => document.documentElement.style.setProperty("--hosts-scroll-offset", `${media.matches ? bar?.getBoundingClientRect().height || 0 : 0}px`);
-      const observer = new ResizeObserver(measure); if (bar) observer.observe(bar); media.addEventListener("change",measure); measure();
-      return () => { observer.disconnect(); media.removeEventListener("change",measure); document.documentElement.style.removeProperty("--hosts-scroll-offset"); };
+      const measure = () => document.documentElement.style.setProperty("--hosts-toolbar-h", `${toolbar.current?.getBoundingClientRect().height || 0}px`);
+      const observer = new ResizeObserver(measure); observer.observe(toolbar.current); measure();
+      return () => { observer.disconnect(); document.documentElement.style.removeProperty("--hosts-toolbar-h"); };
     }, []);
-    const remove = (name,cancelOnly=false) => { editor.current?.cancel(); if (name === "Model search") searchEditor.current?.cancel(); if (cancelOnly) return; write(Object.fromEntries(CONDITION_KEYS[CONDITION_NAMES.indexOf(name)].map(key => [key,LIST_KEYS.has(key) ? [] : ""]))); setMenu(null); };
+    const remove = (id,cancelOnly=false) => { editor.current?.cancel(); if (id === "search") searchEditor.current?.cancel(); if (cancelOnly) return; write(Object.fromEntries(HOST_CONDITIONS.find(condition => condition.id === id).keys.map(key => [key,LIST_KEYS.has(key) ? [] : ""]))); setMenu(null); };
     const clear = (cancelOnly=false) => { editor.current?.cancel(); searchEditor.current?.cancel(); if (cancelOnly) return; searchEditor.current?.replaceDraft(""); write(Object.fromEntries(HOST_CONDITION_KEYS.map(key => [key,LIST_KEYS.has(key) ? [] : ""]))); setMenu(null); };
-    return html`<section class="hosts-toolbar" aria-label="Hosts controls"><div class="hosts-toolbar-row hosts-compare">${selected.map(host => html`<span class="condition-chip" key=${host}>${host}<button type="button" aria-label=${`Remove compared ${host}`} onClick=${() => write({hosts: selected.filter(name => name !== host)})}>×</button></span>`)}<button type="button" aria-expanded=${menu === "Add host"} onClick=${event => menu === "Add host" ? close() : open("Add host",event)}>Add host</button>${selected.length >= 2 ? html`<label>Row match<select value=${state.match} onChange=${event => write({match: event.currentTarget.value})}><option value="any">Any selected host</option><option value="all">All selected hosts</option></select></label>` : null}<label>Ranking<select aria-label="Ranking" value=${dimension} onChange=${event => write({rank:event.currentTarget.value})}>${dimensions.map(item => html`<option key=${item.value} value=${item.value} disabled=${item.disabled}>${item.label}</option>`)}</select></label><label>Host capture<select aria-label="Host capture" value=${String(data.scrape_id)} onChange=${event => write({hasof:event.currentTarget.value})}>${[...captures].sort((a,b) => b.completed_at.localeCompare(a.completed_at) || b.scrape_id-a.scrape_id).map(capture => html`<option value=${String(capture.scrape_id)} key=${capture.scrape_id}>${capture.date} · ${capture.model_count ?? 0} models</option>`)}</select></label></div><div class="hosts-toolbar-row hosts-filters">${CONDITION_NAMES.slice(0,-1).map(name => html`<button type="button" key=${name} aria-label=${`${name} condition`} aria-expanded=${menu === name} aria-pressed=${conditions.some(condition => condition.name === name)} onClick=${event => menu === name ? close() : open(name,event)}>${name}${name === "Uptime" && state.upmin && data.telemetry !== "available" ? " · paused" : ""}</button>`)}<${SearchField} data=${data} state=${state} write=${write} replaceState=${replaceState} editorRef=${searchEditor} /></div><${ConditionChips} data=${data} state=${state} conditions=${conditions} removal=${removal} remove=${remove} clear=${clear} /><div class="hosts-toolbar-row hosts-summary"><${SortSummary} list=${state.hsort} columns=${hostsColumns(data,selected,dimension,state)} change=${list => write({hsort:list})} className="hosts-sort-summary" /><label><input type="checkbox" checked=${state.showx === "1"} onChange=${event => write({showx:event.currentTarget.checked ? "1":""})} />Show excluded</label><span>${qualifying} of ${data.endpoints.length} endpoints · ${rowCount} lists</span></div>${menu ? html`<${TypeaheadOverlay} anchorRef=${anchor} open=${true} className="condition-overlay"><div ref=${panel}>${menu === "Add host" ? html`<${HostPicker} data=${data} selected=${selected} write=${write} limit=${limit} close=${() => close()} />` : html`<${ListMenu} key=${menu} name=${menu} data=${data} state=${state} write=${write} replaceState=${replaceState} close=${() => setMenu(null)} editorRef=${editor} removal=${removal.get(menu)} />`}</div></${TypeaheadOverlay}>` : null}</section>`;
+    const current = HOST_CONDITIONS.find(condition => condition.id === menu);
+    return html`<section ref=${toolbar} class="hosts-toolbar" aria-label="Hosts controls">
+      <div class="hosts-toolbar-row hosts-compare"><span class="hosts-row-label">Compare</span>${selected.map((host,index) => html`<span class="compared-host" key=${host}><i style=${{background:`var(--series-${index+1})`}}></i>${host}<button type="button" aria-label=${`Remove compared ${host}`} onClick=${() => write({hosts: selected.filter(name => name !== host)})}>×</button></span>`)}<button type="button" aria-expanded=${menu === "Add host"} onClick=${event => menu === "Add host" ? close() : open("Add host",event)}>Add host<span class="hosts-caret" aria-hidden="true">▾</span></button>${selected.length >= 2 ? html`<select aria-label="Row match" value=${state.match} onChange=${event => write({match:event.currentTarget.value})}><option value="any">Rows: any</option><option value="all">Rows: all</option></select>` : null}<span class="hosts-compare-spacer"></span>${meta.host_providers.length > 1 ? html`<select aria-label="Provider" value=${data.provider_id} onChange=${event => write({providers:[event.currentTarget.value,...state.providers.filter(id => id !== event.currentTarget.value)],hasof:""})}>${meta.host_providers.map(id => html`<option value=${id}>${meta.providers.find(provider => provider.id === id)?.label || id}</option>`)}</select>` : null}<select aria-label="Ranking" value=${dimension} onChange=${event => write({rank:event.currentTarget.value})}>${dimensions.map(item => html`<option key=${item.value} value=${item.value} disabled=${item.disabled}>${item.label}</option>`)}</select><select aria-label="Snapshot" value=${String(data.scrape_id)} onChange=${event => write({hasof:event.currentTarget.value})}>${[...captures].sort((a,b) => b.completed_at.localeCompare(a.completed_at) || b.scrape_id-a.scrape_id).map(capture => html`<option value=${String(capture.scrape_id)} key=${capture.scrape_id}>Snapshot ${capture.date}</option>`)}</select></div>
+      <div class="hosts-toolbar-row hosts-filters"><span class="hosts-row-label">Filter</span>${HOST_CONDITIONS.filter(condition => condition.id !== "search").map(condition => html`<button type="button" key=${condition.id} aria-label=${`${condition.name} condition`} aria-expanded=${menu === condition.id} aria-pressed=${conditionConfigured(condition,state,conditions)} onClick=${event => menu === condition.id ? close() : open(condition.id,event)}>${condition.name}${conditionConfigured(condition,state,conditions) ? html`<span class="condition-summary"> ${conditionSummary(condition.id,data,state)}</span>` : null}<span class="hosts-caret" aria-hidden="true">▾</span></button>`)}<${SearchField} data=${data} state=${state} write=${write} replaceState=${replaceState} editorRef=${searchEditor} inputRef=${inputRef} /></div>
+      <div class="hosts-toolbar-row hosts-summary"><${ConditionChips} data=${data} state=${state} conditions=${conditions} removal=${removal} remove=${remove} clear=${clear} /><${SortSummary} list=${state.hsort} columns=${hostsColumns(data,selected,dimension,state)} change=${list => write({hsort:list})} className="hosts-sort-summary" /><label><input type="checkbox" checked=${state.showx === "1"} onChange=${event => write({showx:event.currentTarget.checked ? "1":""})} />Show excluded</label><span class="hosts-count"><strong>${qualifying.toLocaleString()}</strong> of ${data.endpoints.length.toLocaleString()} endpoints · <strong>${rowCount.toLocaleString()}</strong> models</span></div>
+      ${menu ? html`<${TypeaheadOverlay} anchorRef=${anchor} open=${true} className="condition-overlay"><div ref=${panel}>${menu === "Add host" ? html`<${HostPicker} data=${data} selected=${selected} write=${write} limit=${limit} close=${() => close()} />` : html`<${ListMenu} key=${menu} id=${current.id} name=${current.name} data=${data} state=${state} write=${write} replaceState=${replaceState} close=${() => setMenu(null)} editorRef=${editor} removal=${removal.get(current.name)} />`}</div></${TypeaheadOverlay}>` : null}</section>`;
   }
+
   function hostRows(data, selected, dimension, state, qualifying = data.endpoints, conditions = []) {
     return data.lists.map((list, index) => {
       const endpoints = qualifying.filter(endpoint => endpoint.list === index);
@@ -1502,7 +1521,8 @@
   }
   function SortSummary({list, columns, change, className = ""}) {
     const active = displayedSort(list,columns);
-    return html`<div class=${`sort-summary ${className}`}>${active.length ? html`<span>${active.map(({direction,column}) => `${column.label} ${direction === "a" ? "ascending" : "descending"}`).join(" · ")}</span><button type="button" onClick=${() => change([])}>Clear sort</button>` : html`<span>Click a column: ascending → descending → remove. Add columns in priority order.</span>`}</div>`;
+    if (!active.length && className === "hosts-sort-summary") return null;
+    return html`<div class=${`sort-summary ${className}`}>${active.length ? html`<span>Sorted by ${active.map(({direction,column}) => `${column.label} ${direction === "a" ? "▲" : "▼"}`).join(" › ")}</span><button type="button" onClick=${() => change([])}>Clear sort</button>` : html`<span>Click a column: ascending → descending → remove. Add columns in priority order.</span>`}</div>`;
   }
   function precisionSortValue(endpoint) { return endpoint?.precision_bits == null ? null : [endpoint.precision_bits,endpoint.quantization]; }
   function spreadSortValue(best, dimension) {
@@ -1542,19 +1562,25 @@
     const resetKey = JSON.stringify([HOST_CONDITION_KEYS.map(key => state[key]),selected,state.match,state.showx,dimension,state.hsort,data.provider_id,data.scrape_id]);
     const [paging,setPaging] = useState({key:resetKey,limit:50});
     useEffect(() => setPaging(current => current.key === resetKey ? current : {key:resetKey,limit:50}),[resetKey]);
+    const scrollRef = useRef(null), [overflowing,setOverflowing] = useState(false);
+    useEffect(() => {
+      const node = scrollRef.current, measure = () => setOverflowing(node.scrollWidth > node.clientWidth);
+      const observer = new ResizeObserver(measure); observer.observe(node); observer.observe(node.querySelector("table")); measure();
+      return () => observer.disconnect();
+    }, []);
     const columns = hostsColumns(data,selected,dimension,state), change = list => write({hsort:list});
     const ordered = stackSort(rows,state.hsort,columns);
     const limit = paging.key === resetKey ? paging.limit : 50, visible = ordered.slice(0,limit), single = selected.length === 1;
-    return html`<section aria-label="Hosts results"><div class="hosts-table-scroll"><table class="hosts-table" aria-label="Host comparison"><thead><tr>${columns.filter(column=>column.visible !== false).map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.hsort} columns=${columns} change=${change} />`)}</tr></thead><tbody>${visible.map(row => {
+    return html`<section aria-label="Hosts results"><div ref=${scrollRef} class=${`hosts-table-scroll${overflowing ? " is-overflowing" : ""}`}><table class="hosts-table" aria-label="Host comparison"><thead><tr>${columns.filter(column=>column.visible !== false).map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.hsort} columns=${columns} change=${change} />`)}</tr></thead><tbody>${visible.map(row => {
       const winner = row.best.winner, group = row.best.groups.get(selected[0]), endpoint = group?.endpoint, ties = winner ? row.best.ranked.filter(item => compareRational(item.value,winner.value) === 0).length-1 : 0;
-      return html`<tr key=${row.list.path} data-list-path=${row.list.path} class=${!row.endpoints.length ? "is-excluded" : ""}><th scope="row"><button type="button" class="model-link" data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} variants</small>` : null}</th><td>${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`${rankingText(winner.endpoint,dimension)} · ${winner.host}${ties ? ` +${ties} tied` : ""}`}</td><td><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>${selected.map(host => html`<td key=${host}><${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} /></td>`)}${single ? html`<td>${group?.value ? `${group.rank} / ${group.denominator}` : "—"}</td><td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint?.context_length)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td>` : html`<td>${row.best.ranked.length}</td>`}</tr>`;
-    })}</tbody></table></div><div class="hosts-pagination"><span>Showing ${visible.length} of ${rows.length} lists</span>${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}</div></section>`;
+      return html`<tr key=${row.list.path} data-list-path=${row.list.path} class=${!row.endpoints.length ? "is-excluded" : ""}><th scope="row"><button type="button" class="model-link" data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} variants</small>` : null}</th><td>${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`<span class="hosts-ranking">${rankingText(winner.endpoint,dimension)}</span> · ${winner.host}${ties ? ` +${ties} tied` : ""}`}</td><td><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>${selected.map(host => html`<td key=${host}><${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} /></td>`)}${single ? html`<td>${group?.value ? `${group.rank} / ${group.denominator}` : "—"}</td><td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint?.context_length)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td>` : html`<td>${row.best.ranked.length}</td>`}</tr>`;
+    })}</tbody></table></div><div class="hosts-pagination"><span>${visible.length === rows.length ? `Showing all ${rows.length.toLocaleString()}` : `Showing ${visible.length.toLocaleString()} of ${rows.length.toLocaleString()}`} models</span>${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}</div></section>`;
   }
   function HostSummary({host, data}) {
     const endpoints = data.endpoints.filter(endpoint => endpoint.host === host), summary = data.hosts.find(item => item.name === host), precision = new Map();
     endpoints.forEach(endpoint => precision.set(endpoint.quantization,(precision.get(endpoint.quantization)||0)+1));
     const mix = [...precision].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
-    return html`<section class="host-summary-panel instrument" aria-label="Host summary"><h2>${host}</h2><dl class="host-summary"><div><dt>Served lists</dt><dd>${summary.list_count}</dd></div><div><dt>Endpoints</dt><dd>${endpoints.length}</dd></div><div><dt>Tags</dt><dd>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size}</dd></div><div><dt>Median 1-day uptime</dt><dd>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</dd></div><div><dt>Outside normal Status condition</dt><dd>${endpoints.filter(endpoint => endpoint.status !== 0).length}</dd></div></dl><div class="host-precision-mix" role="img" aria-label=${`Precision distribution: ${mix.map(([name,count]) => `${name}: ${count}`).join(", ")}`}>${mix.map(([name,count],index) => html`<span key=${name} style=${{flex:count,background:`var(--series-${index%8+1}, var(--accent))`}} title=${`${name}: ${count}`}></span>`)}</div><p>Precision distribution: ${mix.slice(0,3).map(([name,count]) => `${name}: ${count}`).join(", ")}</p></section>`;
+    return html`<section class="host-summary-panel instrument" aria-label="Host summary"><h2>${host}</h2><dl class="host-summary"><div><dt>Served models</dt><dd>${summary.list_count}</dd></div><div><dt>Endpoints</dt><dd>${endpoints.length}</dd></div><div><dt>Tags</dt><dd>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size}</dd></div><div><dt>Median 1-day uptime</dt><dd>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</dd></div><div><dt>Outside normal Status condition</dt><dd>${endpoints.filter(endpoint => endpoint.status !== 0).length}</dd></div></dl><div class="host-precision-mix" role="img" aria-label=${`Precision distribution: ${mix.map(([name,count]) => `${name}: ${count}`).join(", ")}`}>${mix.map(([name,count],index) => html`<span key=${name} style=${{flex:count,background:`var(--series-${index%8+1}, var(--accent))`}} title=${`${name}: ${count}`}></span>`)}</div><p>Precision distribution: ${mix.slice(0,3).map(([name,count]) => `${name}: ${count}`).join(", ")}</p></section>`;
   }
   function EndpointDrawer({list, data, selected, dimension, conditions, state, close, openModel, write}) {
     const panel = useRef(null);
@@ -1567,7 +1593,10 @@
       return (av && bv ? rankCompare(av,bv,dimension) : av ? -1 : bv ? 1 : 0) || a.endpoint.host.localeCompare(b.endpoint.host) || a.endpoint.key.localeCompare(b.endpoint.key);
     };
     const ordered = [true,false].flatMap(pass => stackSort(evaluated.filter(item=>item.result.pass === pass),state.dsort,columns,fallback));
-    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available for this list." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available for this list.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p>Passing endpoints first · ranking, host, endpoint fallback</p><${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" /><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${columns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? "—"}</td>`)}<td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint.context_length)}</td><td class="capacity">${endpointCapacity(endpoint.max_completion_tokens)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
+    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p>Passing endpoints first · ranking, host, endpoint fallback</p><${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" /><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${columns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td class="hosts-price" key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? "—"}</td>`)}<td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint.context_length)}</td><td class="capacity">${endpointCapacity(endpoint.max_completion_tokens)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
+  }
+  function hostsCaptureStatus(capture) {
+    return (capture?.status_line || "").replace(/\blist(s?)\b/g, "model$1");
   }
   function HostHistory({provider, host, state, write, span}) {
     const request = useApi("/api/host_history", {provider, host, from: state.from, to: state.to});
@@ -1583,9 +1612,9 @@
       });
       if (segment.length) segments.push(segment);
     }
-    return html`<section class="host-history instrument" aria-label="Host history"><header><h3>Host history</h3><${DateRangeFields} span=${span} state=${state} write=${write} /><${RangePresets} span=${span} from=${state.from} to=${state.to} write=${write} /></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${!data && !request.error ? html`<p role="status">Loading host history…</p>` : data ? html`${data.series.length === 1 ? html`<p>History starts ${data.series[0].date}. Later usable captures add points.</p>` : null}<svg viewBox="0 0 600 120" role="img" aria-label="Median 1-day uptime history">${segments.map((points, index) => html`<polyline key=${index} points=${points.join(" ")} fill="none" stroke="var(--series-1)" stroke-width="2" />`)}${data.series.map((point, index) => html`<circle key=${point.scrape_id} data-complete=${String(point.capture.status === "complete")} cx=${10 + index * 580 / Math.max(1, data.series.length - 1)} cy=${point.uptime_1d_median == null ? 115 : 110 - point.uptime_1d_median} r="3" fill="var(--series-1)"><title>${point.date}: ${point.uptime_1d_median == null ? "No uptime sample" : `${point.uptime_1d_median}% uptime`}; ${point.lists ?? "unknown"} lists, ${point.endpoints ?? "unknown"} endpoints. ${point.capture.status_line}</title></circle>`)}</svg><div class="table-wrap"><table aria-label="Host history captures"><thead><tr><th>Date</th><th>Lists</th><th>Endpoints</th><th>Median / min 1d uptime</th><th>Not normal</th><th>Capture</th></tr></thead><tbody>${data.series.map(point => html`<tr key=${point.scrape_id}><th scope="row">${point.date}</th><td>${point.lists ?? "—"}</td><td>${point.endpoints ?? "—"}</td><td>${point.uptime_1d_median ?? "—"} / ${point.uptime_1d_min ?? "—"}</td><td>${point.not_normal ?? "—"}</td><td>${point.capture.status !== "complete" ? html`<strong>Incomplete coverage. </strong>` : null}${point.capture.status_line}</td></tr>`)}</tbody></table></div><${EndpointChanges} data=${data} includeList=${true} />` : null}</section>`;
+    return html`<section class="host-history instrument" aria-label="Host history"><header><h3>Host history</h3><${DateRangeFields} span=${span} state=${state} write=${write} /><${RangePresets} span=${span} from=${state.from} to=${state.to} write=${write} /></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${!data && !request.error ? html`<p role="status">Loading host history…</p>` : data ? html`${data.series.length === 1 ? html`<p>History starts ${data.series[0].date}. Later usable captures add points.</p>` : null}<svg viewBox="0 0 600 120" role="img" aria-label="Median 1-day uptime history">${segments.map((points, index) => html`<polyline key=${index} points=${points.join(" ")} fill="none" stroke="var(--series-1)" stroke-width="2" />`)}${data.series.map((point, index) => html`<circle key=${point.scrape_id} data-complete=${String(point.capture.status === "complete")} cx=${10 + index * 580 / Math.max(1, data.series.length - 1)} cy=${point.uptime_1d_median == null ? 115 : 110 - point.uptime_1d_median} r="3" fill="var(--series-1)"><title>${point.date}: ${point.uptime_1d_median == null ? "No uptime sample" : `${point.uptime_1d_median}% uptime`}; ${point.lists ?? "unknown"} models, ${point.endpoints ?? "unknown"} endpoints. ${hostsCaptureStatus(point.capture)}</title></circle>`)}</svg><div class="table-wrap"><table aria-label="Host history captures"><thead><tr><th>Date</th><th>Models</th><th>Endpoints</th><th>Median / min 1d uptime</th><th>Not normal</th><th>Capture</th></tr></thead><tbody>${data.series.map(point => html`<tr key=${point.scrape_id}><th scope="row">${point.date}</th><td>${point.lists ?? "—"}</td><td>${point.endpoints ?? "—"}</td><td>${point.uptime_1d_median ?? "—"} / ${point.uptime_1d_min ?? "—"}</td><td>${point.not_normal ?? "—"}</td><td>${point.capture.status !== "complete" ? html`<strong>Incomplete coverage. </strong>` : null}${hostsCaptureStatus(point.capture)}</td></tr>`)}</tbody></table></div><${EndpointChanges} data=${data} includeList=${true} />` : null}</section>`;
   }
-  function Hosts({meta, state, write, replaceState, openModel, themeKey}) {
+  function Hosts({meta, state, write, replaceState, openModel, themeKey, inputRef}) {
     const origin = useRef(null), previousList = useRef(null);
     useEffect(() => {
       const prior = previousList.current; previousList.current = state.hlist;
@@ -1603,8 +1632,8 @@
     const requestedCapture = catalogScrapes(meta, provider).find(scrape => String(scrape.scrape_id) === state.hasof);
     const request = useApi("/api/hosts", {provider, scrape_id: requestedCapture?.scrape_id || null}, Boolean(provider));
     const data = request.fresh ? request.data : null;
-    const dimensions = data ? [...data.price_columns.map(column => ({value: `price:${column.path}`, label: `${column.label} (${column.unit_label})`})), ...["1d", "30m", "5m"].map(window => ({value: `uptime:${window}`, label: `Uptime ${window}`, disabled: data.telemetry !== "available" || !data.endpoints.some(endpoint => typeof endpoint.uptime[window] === "number" && Number.isFinite(endpoint.uptime[window]))})), {value: "context", label: "Context length"}, {value: "output", label: "Max output"}] : [];
-    const defaultRank = data?.price_columns.some(column => column.path === "pricing.prompt") ? "price:pricing.prompt" : data?.price_columns[0] ? `price:${data.price_columns[0].path}` : "context";
+    const dimensions = data ? [...data.price_columns.map(column => ({value: `price:${column.path}`, label: `Rank by ${column.label.toLowerCase()} price`})), ...["1d", "30m", "5m"].map(window => ({value: `uptime:${window}`, label: `Rank by uptime (${{"1d":"1 day","30m":"30 min","5m":"5 min"}[window]})`, disabled: data.telemetry !== "available" || !data.endpoints.some(endpoint => typeof endpoint.uptime[window] === "number" && Number.isFinite(endpoint.uptime[window]))})), {value: "context", label: "Rank by context length"}, {value: "output", label: "Rank by max output"}] : [];
+    const defaultRank = data?.price_columns.some(column => column.path === "pricing.completion") ? "price:pricing.completion" : data?.price_columns.some(column => column.path === "pricing.prompt") ? "price:pricing.prompt" : data?.price_columns[0] ? `price:${data.price_columns[0].path}` : "context";
     const dimension = dimensions.some(item => item.value === state.rank && !item.disabled) ? state.rank : defaultRank;
     const selected = data ? [...new Set(state.hosts)].filter(host => data.hosts.some(item => item.name === host)).slice(0, meta.pin_limit) : [];
     const excluded = data ? [...new Set(state.xhosts)].filter(host => data.hosts.some(item => item.name === host)) : [];
@@ -1643,17 +1672,16 @@
     const rows = data ? hostRows(data, selected, dimension, {...state, ...clean}, qualifying, conditions) : [];
     const label = meta.providers.find(item => item.id === provider)?.label || provider;
     return html`<div class="hosts-view" data-theme-key=${themeKey}>
-      <main class="hosts-workbench">
-        ${data ? html`<${HostsToolbar} data=${data} captures=${requestedCapture && !data.captures.some(capture => capture.scrape_id === requestedCapture.scrape_id) ? [...data.captures, requestedCapture] : data.captures} state=${{...state, ...clean}} rawState=${state} write=${write} replaceState=${replaceState} selected=${selected} limit=${meta.pin_limit} dimension=${dimension} dimensions=${dimensions} conditions=${conditions} removal=${removal} qualifying=${qualifying.length} rowCount=${rows.length} />` : null}
+      <main class="hosts-workbench"><div class="hosts-panel">
+        ${data ? html`<${HostsToolbar} meta=${meta} inputRef=${inputRef} data=${data} captures=${requestedCapture && !data.captures.some(capture => capture.scrape_id === requestedCapture.scrape_id) ? [...data.captures, requestedCapture] : data.captures} state=${{...state, ...clean}} rawState=${state} write=${write} replaceState=${replaceState} selected=${selected} limit=${meta.pin_limit} dimension=${dimension} dimensions=${dimensions} conditions=${conditions} removal=${removal} qualifying=${qualifying.length} rowCount=${rows.length} />` : null}
         <${ErrorBanner} error=${request.error} reload=${request.reload} />
         ${!data && !request.error ? html`<p class="loading" role="status">Loading saved hosts…</p>` : data ? html`
-          <${UptimeUnavailable} data=${data} />
-          ${data.reason ? html`<div class="empty"><p>${data.reason === "capture_error" ? "Endpoint capture failed for this snapshot, so no endpoint lists were saved." : !eligible.includes(provider) ? `${label} has no saved endpoint capture yet. Saved scans record hosts while endpoint capture is on.` : data.reason === "no_tables" ? "This database has no endpoint tables." : "No endpoint capture was saved for this snapshot."}</p></div>`
+          ${data.reason ? html`<div class="empty"><p>${data.reason === "capture_error" ? "Endpoint capture failed for this snapshot, so no endpoint models were saved." : !eligible.includes(provider) ? `${label} has no saved endpoint capture yet. Saved scans record hosts while endpoint capture is on.` : data.reason === "no_tables" ? "This database has no endpoint tables." : "No endpoint capture was saved for this snapshot."}</p></div>`
           : !data.endpoints.length ? html`<div class="empty"><p>No endpoints were recorded in this capture.</p></div>`
-          : html`<h2 class="hosts-results-heading" tabindex="-1">Results</h2>${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every condition. ${largest.name} removes the most (${removal.get(largest.name)} endpoints). <button type="button" onClick=${() => write(Object.fromEntries(CONDITION_KEYS[CONDITION_NAMES.indexOf(largest.name)].map(key => [key,LIST_KEYS.has(key) ? [] : ""])))}>Clear ${largest.name}</button></p>` : null}
-            ${selected.length === 1 ? html`<${HostSummary} host=${selected[0]} data=${data} />` : null}${!rows.length ? !largest || qualifying.length ? html`<div class="empty"><p>No qualifying list matches the selected hosts and row rule.</p></div>` : null
+          : html`<h2 class="hosts-results-heading" tabindex="-1">Results</h2>${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every filter. ${largest.name} removes the most (${removal.get(largest.name)} endpoints). <button type="button" onClick=${() => write(Object.fromEntries(largest.keys.map(key => [key,LIST_KEYS.has(key) ? [] : ""])))}>Clear ${largest.name}</button></p>` : null}
+            ${selected.length === 1 ? html`<${HostSummary} host=${selected[0]} data=${data} />` : null}${!rows.length ? !largest || qualifying.length ? html`<div class="empty"><p>No qualifying model matches the selected hosts and row rule.</p></div>` : null
             : html`<${HostsTable} rows=${rows} selected=${selected} dimension=${dimension} data=${data} state=${{...state,...clean}} openList=${openList} write=${write} />`}`}` : null}
-        ${data ? html`<p class="host-capture-status">${data.capture?.status_line || ""}</p>${selected.length === 1 ? html`<${HostHistory} provider=${provider} host=${selected[0]} state=${state} write=${write} span=${meta.date_span} />` : null}` : null}
+        </div>${data ? html`<p class="host-capture-status">${hostsCaptureStatus(data.capture)}</p><${UptimeUnavailable} data=${data} />${selected.length === 1 ? html`<${HostHistory} provider=${provider} host=${selected[0]} state=${state} write=${write} span=${meta.date_span} />` : null}` : null}
         ${data && state.hlist && data.lists.find(list => list.path === state.hlist) ? html`<${EndpointDrawer} key=${`${data.provider_id}/${data.scrape_id}/${state.hlist}`} list=${data.lists.find(list => list.path === state.hlist)} data=${data} selected=${selected} dimension=${dimension} conditions=${conditions} state=${{...state,...clean}} close=${() => write({hlist:""})} openModel=${openModel} write=${write} />` : null}
       </main></div>`;
   }
@@ -1814,7 +1842,7 @@
   function EndpointChanges({data, includeList = false}) {
     const footer = data.truncated
       ? `Showing the ${data.limit} most recent endpoint changes; older changes are not shown.`
-      : data.changes.length ? `${plural(data.changes.length, "endpoint change")} recorded through this snapshot.` : "No endpoint changes are recorded for this list through this snapshot.";
+      : data.changes.length ? `${plural(data.changes.length, "endpoint change")} recorded through this snapshot.` : `No endpoint changes are recorded for ${includeList ? "these models" : "this list"} through this snapshot.`;
     return html`<section class="endpoint-history"><h3>Endpoint changes</h3>${data.changes.length ? html`<div class="table-wrap"><table class="changes endpoint-changes"><thead><tr><th>Endpoint · field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th><th>Snapshots</th></tr></thead><tbody>${data.changes.map(change => {
       const cells = endpointChangeCells(change);
       return html`<tr key=${change.endpoint_change_id} data-endpoint-change-id=${change.endpoint_change_id}><th scope="row">${includeList ? html`<small>${change.display_id}</small>` : null}<span>${cells.label}</span><small>${change.endpoint_key}</small></th><td class=${`transition ${cells.tone}`} title=${change.rendered ? `raw ${change.rendered.old_raw} → ${change.rendered.new_raw}` : undefined}>${cells.transition}</td><td>${cells.delta}</td><td>${cells.pct}</td><td class="unit">${cells.unit}</td><td class="unit">${change.from_scrape ? change.from_scrape.date : "—"} → ${change.to_scrape ? change.to_scrape.date : "—"}</td></tr>`;
@@ -1894,7 +1922,7 @@
   function useFocusTrap(panelRef, active, onClose, {inert = true} = {}) {
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
-    useEffect(() => {
+    useLayoutEffect(() => {
       if (!active || !panelRef.current) return;
       const panel = panelRef.current;
       const previous = document.activeElement;
@@ -1942,6 +1970,7 @@
     const [theme, setTheme] = useState(() => { try { const value = localStorage.getItem(THEME_KEY); return THEMES.includes(value) ? value : "system"; } catch (error) { return "system"; } });
     const [themeRevision, repaint] = useState(0), [drawer, setDrawer] = useState(null), [toast, setToast] = useState(""), [viewError, setViewError] = useState({});
     const inputRef = useRef(null);
+    useEffect(() => { document.body.dataset.view = state.view || "activity"; return () => { delete document.body.dataset.view; }; }, [state.view]);
     useEffect(() => {
       if (theme === "system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = theme;
       try { localStorage.setItem(THEME_KEY, theme); } catch (error) { /* Storage may be unavailable. */ }
@@ -1977,7 +2006,7 @@
     const resolved = resolveState(meta, state);
     const openModel = (provider, model, name, date) => write({view: "model", model: `${provider}/${model}`, at: date || null});
     return html`<div class="app-shell" data-view=${resolved.view}><div class="sr-live" role="status" aria-live="polite">${metaRequest.loading ? "Refreshing browser metadata" : ""}</div><${FilterBar} meta=${meta} state=${resolved} write=${write} theme=${theme} setTheme=${value => setTheme(THEMES.includes(value) ? value : "system")} openModel=${openModel} inputRef=${inputRef} /><${ErrorBanner} error=${metaRequest.error || viewError.error} reload=${metaRequest.error ? metaRequest.reload : viewError.reload} />
-      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "model" ? html`<${ModelView} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} inputRef=${inputRef} themeKey=${`${theme}:${themeRevision}`} />` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : resolved.view === "hosts" ? html`<${Hosts} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openModel=${openModel} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openModel=${openModel} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />`}
+      ${!meta.date_span ? html`<div class="empty"><b>∅</b><div><h2>No saved history</h2><p>Run <code>${invocation} scan --save</code> to create the first snapshot.</p></div></div>` : resolved.view === "model" ? html`<${ModelView} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} inputRef=${inputRef} themeKey=${`${theme}:${themeRevision}`} />` : resolved.view === "activity" ? html`<${Activity} meta=${meta} state=${resolved} write=${write} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} />` : resolved.view === "models" ? html`<${Models} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openRaw=${setDrawer} openModel=${openModel} reportError=${(error,reload) => setViewError(current => current.error === error ? current : {error,reload})} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />` : resolved.view === "hosts" ? html`<${Hosts} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openModel=${openModel} inputRef=${inputRef} themeKey=${`${theme}:${themeRevision}`} />` : html`<${Catalog} meta=${meta} state=${resolved} write=${write} replaceState=${replaceState} openModel=${openModel} toast=${setToast} themeKey=${`${theme}:${themeRevision}`} />`}
       <div class="toast-region" aria-live="polite">${toast && html`<div class="toast">${toast}</div>`}</div><${RawDrawer} id=${drawer} close=${() => setDrawer(null)} /></div>`;
   }
   render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));

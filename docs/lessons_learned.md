@@ -1,5 +1,25 @@
 # Lessons learned
 
+## 2026-10-23: Separate page stickiness from horizontal comparison scrolling
+
+When a table uses page scrolling, an overflowing horizontal wrapper becomes
+the sticky header's scrolling ancestor. Measure overflow and disable vertical
+header stickiness in that mode, including clearing the first column's inherited
+`top` offset while retaining its horizontal stickiness. Use `overflow: clip`
+before the resize observer settles to prevent a transient document-width leak
+without creating another scrolling ancestor. Check the real header and model
+column after horizontal scrolling, and check document width immediately after
+desktop-to-mobile resizing. Portaled suggestion options also inherit shared
+typeahead layout: explicitly use a single text line so marked matches do not
+become separate grid rows.
+
+Compact rendering also exposed a baseline overlay readiness race: a drawer
+could be visible before `useEffect` registered its Escape listener. Register
+focus-trap listeners with `useLayoutEffect`, retaining the existing deferred
+focus movement and cleanup. A DOM mutation observer that sends Escape as soon
+as the drawer exists reproduces the missing-listener interval deterministically;
+ordinary content visibility assertions can finish before deferred effects.
+
 ## 2026-10-22: Treat unselected combobox navigation and focus departure explicitly
 
 A suggestion index of -1 means no active option; it is not an existing index
