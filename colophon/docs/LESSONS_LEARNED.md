@@ -1,5 +1,10 @@
 # Lessons learned
 
+Native details toggle events are queued and may arrive after a footer rerender.
+Snapshot connected panels' live open properties before replacement, ignore
+detached toggle events, and restore open as a property rather than a false
+boolean attribute. Keep collapse focus/scroll separate from ordinary restoration.
+
 - Hidden follow-ups and subagent answers need the reader's existing refit
   path when revealed. Select the long-text state toggle explicitly once a
   separate top action exists; choosing the first button changes which control

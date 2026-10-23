@@ -566,11 +566,38 @@
     if (value && typeof value === "object") return Object.entries(value).map(([key, entry]) => key + ": " + diagnosticText(entry)).join(" · ");
     return String(value);
   }
+  const openFooterPanels = new Set();
+  function footerPanel(key, props, ...children) {
+    const summary = children[0];
+    const row = el("details", props, ...children);
+    row.open = openFooterPanels.has(key);
+    let wasOpen = row.open;
+    row.addEventListener("toggle", () => {
+      if (!row.isConnected) return;
+      if (row.open) openFooterPanels.add(key);
+      else openFooterPanels.delete(key);
+      if (wasOpen && !row.open) returnTo(row, summary);
+      wasOpen = row.open;
+    });
+    row.append(el("button", {type: "button", class: "followup-toggle", "data-details-close": "", text: "hide", onclick: () => {
+      openFooterPanels.delete(key);
+      row.open = false;
+      wasOpen = false;
+      returnTo(row, summary);
+    }}));
+    return row;
+  }
   function renderFooter() {
+    const footer = document.getElementById("colophon-footer");
+    for (const row of footer.querySelectorAll("details")) {
+      const key = row.dataset.diagnostic || "opencode_databases";
+      if (row.open) openFooterPanels.add(key);
+      else openFooterPanels.delete(key);
+    }
     const diagnostic = data.diagnostics;
     const rows = Object.entries(diagnostic).filter(([key, value]) => key !== "page_size_bytes" && diagnosticCount(key, value) > 0).map(([key, value]) => {
       const items = diagnosticItems(key, value);
-      const row = el("details", {"data-diagnostic": key},
+      const row = el("div", {},
         el("summary", {text: key.replace(/_/g, " ") + " · " + diagnosticCount(key, value)}),
         el("ul", {}, ...items.map(item => el("li", {text: diagnosticText(item)}))));
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
@@ -588,14 +615,14 @@
       if (explanations[key]) row.append(el("p", {text: explanations[key]}));
       if (key === "untimed_usage") row.append(el("p", {text: "priced at current rates: usage has no timestamp"}));
       if (key === "page_size_over_limit") row.append(el("p", {text: "page size: " + diagnostic.page_size_bytes + " bytes"}));
-      return row;
+      return footerPanel(key, {"data-diagnostic": key}, ...row.childNodes);
     });
     const databases = data.meta.sources?.opencode?.databases || [];
     const overflow = costAggregateFailures();
-    document.getElementById("colophon-footer").replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
+    footer.replaceChildren(el("p", {"data-version": "", text: "colophon " + data.meta.version}), el("p", {text: "API-equivalent estimate (not billed) · OpenCode catalog estimates (not invoices)"}),
       ...(currentState.src === "all" ? PROVIDERS.filter(provider => sourceMissing(provider)).map(provider => el("p", {text: sourceAbsence(provider)})) : []),
       ...tokenBoundaryNote(),
-      ...(databases.length ? [el("details", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
+      ...(databases.length ? [footerPanel("opencode_databases", {"data-opencode-databases": ""}, el("summary", {text: "OpenCode database details · " + databases.length}), el("ul", {}, ...databases.map(db => el("li", {text: diagnosticText(db)}))))] : []),
       ...(overflow.length ? [el("p", {"data-cost-aggregate": "", text: "cost aggregate unavailable: " + overflow.join("; ") + ". Finite costs exceed the supported sum; valid individual costs are preserved."})] : []),
       ...(rows.length ? [el("h2", {class: "section-label", text: "// diagnostics"}), ...rows] : []));
   }

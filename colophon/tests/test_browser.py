@@ -27,10 +27,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.4.1"
+    assert payload["meta"]["version"] == "0.4.2"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.1")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.2")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -323,6 +323,75 @@ def open_disclosure_reader(page, native):
 
 def synthetic_lines(count):
     return "\n".join("Synthetic disclosure line " + str(index) for index in range(count))
+
+
+def footer_disclosure_payload(payload):
+    payload["diagnostics"]["unknown_record_types"] = {"synthetic_type_" + str(i): 1 for i in range(100)}
+    payload["meta"]["sources"]["opencode"]["databases"] = [
+        {"path": "/synthetic/database-" + str(i) + ".db", "status": "ok"} for i in range(100)]
+
+
+@pytest.mark.parametrize("kind", ["diagnostic", "database"])
+@pytest.mark.parametrize("collapse", ["end", "summary"])
+def test_footer_panels_close_from_bottom_and_survive_render(page, native, kind, collapse):
+    source_page(native, footer_disclosure_payload)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.set_viewport_size({"width": 1100, "height": 600})
+        page.evaluate("document.body.append(Object.assign(document.createElement('div'), {style:'height: 2000px'}))")
+        diagnostic = page.locator('[data-diagnostic="unknown_record_types"]')
+        database_panel = page.locator('[data-opencode-databases]')
+        panel, other = (diagnostic, database_panel) if kind == "diagnostic" else (database_panel, diagnostic)
+        summary = panel.locator("summary")
+        end = panel.locator("[data-details-close]")
+        # Rerender synchronously before queued native toggle events can run.
+        panel.evaluate("e => { window.syntheticOldPanel=e; e.open=true; document.querySelector('[data-source=claude]').click(); }")
+        expect(panel).to_have_attribute("open", "")
+        assert end.get_attribute("aria-expanded") is None
+        assert end.evaluate("e => e === e.parentElement.lastElementChild")
+        assert not other.evaluate("e => e.open")
+        # A detached event must not overwrite the replacement's live state.
+        page.evaluate("syntheticOldPanel.open=false; syntheticOldPanel.dispatchEvent(new Event('toggle'))")
+        page.get_by_role("button", name="All", exact=True).click()
+        expect(panel).to_have_attribute("open", "")
+        expect(page.get_by_role("button", name="All", exact=True)).to_be_focused()
+        other.locator("summary").click()
+        page.locator(".brand").click()
+        page.get_by_role("button", name="Calendar tokens", exact=True).click()
+        assert panel.evaluate("e => e.open") and other.evaluate("e => e.open")
+        scroll_disclosure_end(page, panel, end)
+        if collapse == "end":
+            end.click()
+        else:
+            summary.evaluate("e => e.click()")
+        expect(panel).not_to_have_attribute("open", "")
+        assert_disclosure_return(page, panel, summary)
+        assert other.evaluate("e => e.open")
+        # The close transition can also be replaced before its toggle arrives.
+        panel.evaluate("e => { e.open=true; document.querySelector('[data-source=all]').click(); }")
+        assert panel.evaluate("e => e.open")
+        panel.evaluate("e => { e.open=false; document.querySelector('[data-source=claude]').click(); }")
+        assert not panel.evaluate("e => e.open") and other.evaluate("e => e.open")
+        page.get_by_role("button", name="Claude", exact=True).click()
+        assert not panel.evaluate("e => e.open") and other.evaluate("e => e.open")
+        # Native summary and end action are also keyboard operable; in-view
+        # closure keeps scroll fixed and restores the surviving summary focus.
+        summary.focus()
+        summary.press("Enter")
+        panel.evaluate("e => e.scrollIntoView({block:'start'})")
+        page.evaluate("scrollBy(0, -10)")
+        before = page.evaluate("scrollY")
+        summary.focus()
+        summary.press("Space")
+        expect(panel).not_to_have_attribute("open", "")
+        assert_disclosure_return(page, panel, summary)
+        assert page.evaluate("scrollY") == before
+        summary.press("Enter")
+        end.focus()
+        end.press("Enter")
+        assert_disclosure_return(page, panel, summary)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert requests == []
 
 
 def assert_text_state(wrap, expanded, tall=False):

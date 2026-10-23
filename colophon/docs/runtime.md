@@ -23,7 +23,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.4.1`).
+displays the embedded payload's release version (`colophon 0.4.2`).
 
 Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -61,6 +61,12 @@ toggle. Additional requests start behind `+ N follow-ups sent while it worked`;
 when open, `hide N follow-ups` appears at both ends. Collapsing text or
 follow-ups restores focus to its surviving toggle and returns an offscreen
 block start to view, while an in-view start keeps its scroll position.
+
+Footer diagnostic and database panels retain independent open states across
+source and metric changes. Each native summary has a matching `hide` action
+at the panel's end. Closing from either end restores focus to its summary and
+returns an offscreen panel start to view; ordinary rerenders do not move focus
+into the footer.
 
 OpenCode's unsupported/unreadable views name database reasons. An expandable database
 footer preserves successful, failed and skipped-preview entries even when a
@@ -104,7 +110,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.4.1`.
+runtime state. Version is currently `colophon 0.4.2`.
 
 | Flag | Behavior |
 | --- | --- |
