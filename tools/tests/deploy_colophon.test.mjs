@@ -24,7 +24,7 @@ function fixture(t, root = 'colophon') {
   }
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], {stdio: 'pipe'});
   function release(label, failInstalled = false) {
-    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("colophon 0.5.0"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
+    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("colophon 0.5.1"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
     git('add', '.');
   }
   write('Makefile', 'all: colophon\ncolophon: src/main.c\n\tclang -o colophon src/main.c\n');

@@ -47,6 +47,10 @@ workspaces, subagents, token accounting and API-equivalent catalog estimates.
 All-provider and provider-only views retain independent cost availability and
 unpriced usage. Source, payload, page footer and installer share this version.
 
+Version 0.5.1 reads OpenCode 2.1 messages, which keep their id and type only in
+database columns. Earlier releases rejected every such message as malformed and
+fell back to unattributed session totals dated at each session's start.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

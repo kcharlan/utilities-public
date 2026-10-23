@@ -406,7 +406,10 @@ static Err parse_message(Arena *a,OpencodeSession *s,sqlite3_stmt *st) {
     Str id={0};
     if(!e.code)e=sql_text(st,0,&id);
     if(e.code){json_read_free(&read);return e;}
-    if(!yyjson_is_obj(v)||!id.n||!str_equal(js(get(v,"type")),type)||!js(get(v,"id")).n||sqlite3_column_type(st,3)!=SQLITE_INTEGER||sqlite3_column_int64(st,3)<0)malformed=true;
+    /* OpenCode 2.1 stores id and type only in their columns; older rows also
+     * embed them, and an embedded copy must still be a usable string. */
+    yyjson_val *embedded_type=get(v,"type"),*embedded_id=get(v,"id");
+    if(!yyjson_is_obj(v)||!id.n||(embedded_type&&!str_equal(js(embedded_type),type))||(embedded_id&&!js(embedded_id).n)||sqlite3_column_type(st,3)!=SQLITE_INTEGER||sqlite3_column_int64(st,3)<0)malformed=true;
     if(!e.code&&!malformed){
         e=str_copy(a,id,&m.id);if(!e.code)e=str_copy(a,type,&m.type);m.seq=sqlite3_column_int64(st,3);
         m.row_created_ms=sql_clock(st,4,&s->invalid_numbers);
