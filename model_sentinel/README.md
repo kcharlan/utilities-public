@@ -498,18 +498,37 @@ browser, and `Ctrl-C` stops the server.
   shows changed models only; turn off **Changed only** to inspect the full
   snapshot.
 - **Hosts** compares serving companies in an exact saved endpoint capture.
-  Select no hosts for the best-across-hosts matrix, one for its profile and
-  history, or several for side-by-side columns. Shared model lists appear
-  once with their mapped model dossier links and aliases. Rank by exact price,
-  sampled uptime, context length, or max output; equal values share a rank.
-  Missing values remain visible without a best marker. Expand additional
-  endpoints to inspect precision, capabilities, tiers, and raw prices. **Add
-  host** opens a searchable checkbox list ordered by lists served; remove a
-  compared host with its pill. Picker counts describe observed coverage, and
+  Select no hosts for best-across-host comparisons, one for its summary and
+  history, or several for side-by-side columns. Each compact row represents one
+  endpoint list, with a variants count for additional mapped models. Rank by
+  exact price, sampled uptime, context length, or max output; equal values share
+  a rank. Missing values remain visible without a best marker. The Best column
+  identifies the winner and ties, while the spread strip shows every ranked
+  host. Compared hosts use selection-order colors. Positive prices use a
+  logarithmic spread; signed/zero prices and other dimensions use a linear
+  spread. Host cells show exact best markers and signed gaps: percentage points
+  for uptime, percentage differences for other rankings. A nonzero difference
+  below displayed precision retains its sign and a less-than label; tooltips
+  give an approximate magnitude. Percentage gaps from zero remain undefined.
+
+  Click any list name, including an unmapped list, to open its endpoint drawer.
+  The drawer shows every observed endpoint, passing rows before failing rows,
+  the first failing condition, all capture price columns, precision, capacities,
+  uptime, status and expandable endpoint facts. Its mapped-model buttons open
+  individual dossiers; aliases remain visible. Open dossier uses the first
+  mapped model, and is disabled for unmapped lists. The drawer's `hlist` URL
+  state supports copied URLs and Back/Forward; closing restores focus to its row
+  or the results heading. The results initially show 50 lists; **Show 50 more**
+  adds 50. Changes to comparison or filters reset this limit. The summary counts
+  qualifying/captured endpoints separately from admitted lists.
+
+  **Add host** opens a searchable checkbox list ordered by lists served; remove
+  a compared host with its pill. Picker counts describe observed coverage, and
   incomplete history captures break uptime trends. **Host capture** selects an
   exact saved capture, newest first. Capture, host selection, ranking, and row
-  match survive reloads. The matrix scrolls within its container; toolbar menus
-  become bottom sheets on narrow screens.
+  match survive reloads. Results scroll on both axes within their container,
+  with sticky column headings and model names; toolbar menus become bottom
+  sheets and the drawer fills the width on narrow screens.
 
   The toolbar opens keyboard-accessible condition menus for host
   exclusions, normal status (code 0), precision, minimum uptime, context and
@@ -583,7 +602,8 @@ The read-only JSON API also exposes `GET /api/hosts?provider=<id>` and
 usable saved endpoint capture unless `scrape_id` selects an exact saved
 successful catalog scrape. It returns list/model/alias identities, serving
 hosts, endpoint capabilities, normalized precision, exact hexadecimal rational
-prices, and sampled uptime. Host history accepts local-date `from`/`to` bounds
+prices, both capture-wide `display` and independently formatted `display_own`
+price text, and sampled uptime. Host history accepts local-date `from`/`to` bounds
 and returns observed coverage and up to 200 changes, newest first. Missing
 telemetry remains null; absence from an incomplete capture is unknown rather
 than zero. These routes never backfill or fetch provider data.

@@ -10,7 +10,7 @@
   const CATALOG_PAGE_SIZE = 50;
   const HOST_CONDITION_KEYS = ["hq", "xhosts", "quant", "quantset", "upwin", "upmin", "upmiss", "healthy", "ctxmin", "outmin", "params", "ntools", "caching", "tiers", "tierset", "plimit"];
   const LIST_KEYS = new Set(["providers", "models", "categories", "kinds", "pins", "aspects", "cols", "hosts", "xhosts", "quant", "params", "ntools", "tiers"]);
-  const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir", "hosts", "hasof", "rank", "match", "showx", ...HOST_CONDITION_KEYS];
+  const HASH_KEYS = ["view", "model", "at", "providers", "from", "to", "detail", "models", "categories", "kinds", "pins", "aspects", "asof", "compare", "changed", "page", "cols", "q", "sort", "dir", "hosts", "hasof", "rank", "match", "showx", "hlist", "dsort", ...HOST_CONDITION_KEYS];
 
   function decode(value) {
     try { return decodeURIComponent(value); } catch (error) { return value; }
@@ -1167,17 +1167,48 @@
     });
     return {groups, ranked, winner: ranked[0] || null};
   }
-  function winnerDifference(group) {
-    if (!group?.value || !group.winner.n) return "—";
-    const difference = group.value.n * group.winner.d - group.winner.n * group.value.d;
-    const percent = {n: difference * 100n, d: group.value.d * (group.winner.n < 0n ? -group.winner.n : group.winner.n)};
-    return difference === 0n ? "Equal to the best" : `${rationalMagnitude(percent)}% ${difference > 0n ? "above" : "below"} the best`;
+  function gapText(value, winner, dimension) {
+    if (!value || !winner) return {text: "", title: ""};
+    const difference = value.n * winner.d - winner.n * value.d;
+    if (!difference) return {text: "best", title: "Equal to the best"};
+    const uptime = dimension.startsWith("uptime:");
+    if (!uptime && !winner.n) return {text: "", title: "A percentage gap from zero is undefined."};
+    const gap = uptime ? {n: difference, d: value.d * winner.d}
+      : {n: difference * 100n, d: value.d * (winner.n < 0n ? -winner.n : winner.n)};
+    const sign = difference > 0n ? "+" : "-", unit = uptime ? " pp" : "%";
+    const magnitude = gap.n < 0n ? -gap.n : gap.n, scale = uptime ? 100n : 1n;
+    const rounded = (magnitude * scale * 2n + gap.d) / (2n * gap.d);
+    const text = !rounded ? `${sign}<${uptime ? "0.01" : "1"}${unit}`
+      : `${sign}${uptime ? `${rounded / 100n}.${String(rounded % 100n).padStart(2,"0")}` : rounded}${unit}`;
+    return {text, title: `Approximate magnitude: ${sign}${rationalMagnitude(gap)}${unit}`};
   }
-  function hostRankText(endpoint, dimension) {
+  function spreadPositions(values, dimension) {
+    if (!values.length) return [];
+    const sorted = [...values].sort(compareRational), low = sorted[0], high = sorted[sorted.length - 1];
+    if (!compareRational(low,high)) return values.map(() => 0.5);
+    const logarithm = value => {
+      const n = value.n.toString(), d = value.d.toString();
+      return Math.log10(Number(n.slice(0,15))) - Math.log10(Number(d.slice(0,15))) + Math.max(0,n.length-15) - Math.max(0,d.length-15);
+    };
+    if (dimension.startsWith("price:") && low.n > 0n) {
+      const logs = values.map(logarithm), left = logarithm(low), width = logarithm(high) - left;
+      // Close exact prices can collapse to identical bounded logarithms.
+      // Keep distinct marks; their exact identities remain in titles and text.
+      return logs.map(value => width ? Math.max(0,Math.min(1,(value-left)/width)) : 0.5);
+    }
+    const range = high.n * low.d - low.n * high.d;
+    return values.map(value => {
+      const numerator = (value.n * low.d - low.n * value.d) * high.d;
+      const denominator = value.d * range;
+      const projection = Number(numerator * 1000000n / denominator) / 1000000;
+      return dimension.startsWith("price:") ? projection : 1-projection;
+    });
+  }
+  function rankingText(endpoint, dimension) {
     if (!endpoint || !rankValue(endpoint, dimension)) return "—";
-    if (dimension.startsWith("price:")) return endpoint.prices[dimension.slice(6)].display;
+    if (dimension.startsWith("price:")) return endpoint.prices[dimension.slice(6)].display_own;
     const value = dimension.startsWith("uptime:") ? endpoint.uptime[dimension.slice(7)] : dimension === "output" ? endpoint.max_completion_tokens : endpoint.context_length;
-    return `${value.toLocaleString()}${dimension.startsWith("uptime:") ? "%" : ""}`;
+    return `${Number.isInteger(value) && !dimension.startsWith("uptime:") ? value.toLocaleString() : value}${dimension.startsWith("uptime:") ? "%" : ""}`;
   }
   function capacityMinimum(text) {
     const match = /^(\d+(?:\.\d+)?)([KM])?$/i.exec(text || "");
@@ -1363,9 +1394,9 @@
       if (name === "Supports") return values("Supports",[...state.params,...state.ntools,...(state.caching === "1" ? ["caching"] : [])]);
       return "Normal status only";
     };
-    return html`<div class="host-condition-counts">${names.length ? names.map(name => html`<span class="condition-chip" key=${name}>${summary(name)}${removal.has(name) ? html`<small>${name}: removes ${removal.get(name)} endpoints</small>` : null}<button type="button" aria-label=${`Remove ${name} condition`} onPointerDown=${() => remove(name, true)} onClick=${() => remove(name)}>×</button></span>`) : html`<span>No conditions applied.</span>`}<button type="button" onPointerDown=${() => clear(true)} onClick=${() => clear()}>Clear all</button></div>`;
+    return html`<div class="host-condition-counts">${names.length ? names.map(name => html`<span class="condition-chip" key=${name}>${summary(name)}${removal.has(name) ? html`<small>${name}: removes ${removal.get(name)} endpoints</small>` : null}<button type="button" aria-label=${`Remove ${name} condition`} onPointerDown=${() => remove(name, true)} onClick=${() => remove(name)}>×</button></span>`) : html`<span>${data.endpoints.length ? "No filters. Every endpoint counts." : ""}</span>`}<button type="button" onPointerDown=${() => clear(true)} onClick=${() => clear()}>Clear all</button></div>`;
   }
-  function HostsToolbar({data, captures = data.captures, state, rawState, selected, limit, dimension, dimensions, conditions, removal, qualifying, write, replaceState}) {
+  function HostsToolbar({rowCount, data, captures = data.captures, state, rawState, selected, limit, dimension, dimensions, conditions, removal, qualifying, write, replaceState}) {
     const [menu,setMenu] = useState(null), anchor = useRef(null), panel = useRef(null), editor = useRef(null), searchEditor = useRef(null), opening = useRef(null);
     const close = (cancel = false) => { if (cancel) editor.current?.cancel(); else editor.current?.flush(); setMenu(null); };
     const open = (name,event) => { editor.current?.flush(); editor.current = null; anchor.current = event.currentTarget; opening.current = {...rawState}; setMenu(name); };
@@ -1388,7 +1419,7 @@
     }, []);
     const remove = (name,cancelOnly=false) => { editor.current?.cancel(); if (name === "Model search") searchEditor.current?.cancel(); if (cancelOnly) return; write(Object.fromEntries(CONDITION_KEYS[CONDITION_NAMES.indexOf(name)].map(key => [key,LIST_KEYS.has(key) ? [] : ""]))); setMenu(null); };
     const clear = (cancelOnly=false) => { editor.current?.cancel(); searchEditor.current?.cancel(); if (cancelOnly) return; searchEditor.current?.replaceDraft(""); write(Object.fromEntries(HOST_CONDITION_KEYS.map(key => [key,LIST_KEYS.has(key) ? [] : ""]))); setMenu(null); };
-    return html`<section class="hosts-toolbar" aria-label="Hosts controls"><div class="hosts-toolbar-row hosts-compare">${selected.map(host => html`<span class="condition-chip" key=${host}>${host}<button type="button" aria-label=${`Remove compared ${host}`} onClick=${() => write({hosts: selected.filter(name => name !== host)})}>×</button></span>`)}<button type="button" aria-expanded=${menu === "Add host"} onClick=${event => menu === "Add host" ? close() : open("Add host",event)}>Add host</button>${selected.length >= 2 ? html`<label>Row match<select value=${state.match} onChange=${event => write({match: event.currentTarget.value})}><option value="any">Any selected host</option><option value="all">All selected hosts</option></select></label>` : null}<label>Ranking<select aria-label="Ranking" value=${dimension} onChange=${event => write({rank:event.currentTarget.value})}>${dimensions.map(item => html`<option key=${item.value} value=${item.value} disabled=${item.disabled}>${item.label}</option>`)}</select></label><label>Host capture<select aria-label="Host capture" value=${String(data.scrape_id)} onChange=${event => write({hasof:event.currentTarget.value})}>${[...captures].sort((a,b) => b.completed_at.localeCompare(a.completed_at) || b.scrape_id-a.scrape_id).map(capture => html`<option value=${String(capture.scrape_id)} key=${capture.scrape_id}>${capture.date} · ${capture.model_count ?? 0} models</option>`)}</select></label></div><div class="hosts-toolbar-row hosts-filters">${CONDITION_NAMES.slice(0,-1).map(name => html`<button type="button" key=${name} aria-label=${`${name} condition`} aria-expanded=${menu === name} aria-pressed=${conditions.some(condition => condition.name === name)} onClick=${event => menu === name ? close() : open(name,event)}>${name}${name === "Uptime" && state.upmin && data.telemetry !== "available" ? " · paused" : ""}</button>`)}<${SearchField} data=${data} state=${state} write=${write} replaceState=${replaceState} editorRef=${searchEditor} /></div><${ConditionChips} data=${data} state=${state} conditions=${conditions} removal=${removal} remove=${remove} clear=${clear} /><div class="hosts-toolbar-row hosts-summary"><label><input type="checkbox" checked=${state.showx === "1"} onChange=${event => write({showx:event.currentTarget.checked ? "1":""})} />Show excluded</label><span>${qualifying} / ${data.endpoints.length} qualifying endpoints</span></div>${menu ? html`<${TypeaheadOverlay} anchorRef=${anchor} open=${true} className="condition-overlay"><div ref=${panel}>${menu === "Add host" ? html`<${HostPicker} data=${data} selected=${selected} write=${write} limit=${limit} close=${() => close()} />` : html`<${ListMenu} key=${menu} name=${menu} data=${data} state=${state} write=${write} replaceState=${replaceState} close=${() => setMenu(null)} editorRef=${editor} removal=${removal.get(menu)} />`}</div></${TypeaheadOverlay}>` : null}</section>`;
+    return html`<section class="hosts-toolbar" aria-label="Hosts controls"><div class="hosts-toolbar-row hosts-compare">${selected.map(host => html`<span class="condition-chip" key=${host}>${host}<button type="button" aria-label=${`Remove compared ${host}`} onClick=${() => write({hosts: selected.filter(name => name !== host)})}>×</button></span>`)}<button type="button" aria-expanded=${menu === "Add host"} onClick=${event => menu === "Add host" ? close() : open("Add host",event)}>Add host</button>${selected.length >= 2 ? html`<label>Row match<select value=${state.match} onChange=${event => write({match: event.currentTarget.value})}><option value="any">Any selected host</option><option value="all">All selected hosts</option></select></label>` : null}<label>Ranking<select aria-label="Ranking" value=${dimension} onChange=${event => write({rank:event.currentTarget.value})}>${dimensions.map(item => html`<option key=${item.value} value=${item.value} disabled=${item.disabled}>${item.label}</option>`)}</select></label><label>Host capture<select aria-label="Host capture" value=${String(data.scrape_id)} onChange=${event => write({hasof:event.currentTarget.value})}>${[...captures].sort((a,b) => b.completed_at.localeCompare(a.completed_at) || b.scrape_id-a.scrape_id).map(capture => html`<option value=${String(capture.scrape_id)} key=${capture.scrape_id}>${capture.date} · ${capture.model_count ?? 0} models</option>`)}</select></label></div><div class="hosts-toolbar-row hosts-filters">${CONDITION_NAMES.slice(0,-1).map(name => html`<button type="button" key=${name} aria-label=${`${name} condition`} aria-expanded=${menu === name} aria-pressed=${conditions.some(condition => condition.name === name)} onClick=${event => menu === name ? close() : open(name,event)}>${name}${name === "Uptime" && state.upmin && data.telemetry !== "available" ? " · paused" : ""}</button>`)}<${SearchField} data=${data} state=${state} write=${write} replaceState=${replaceState} editorRef=${searchEditor} /></div><${ConditionChips} data=${data} state=${state} conditions=${conditions} removal=${removal} remove=${remove} clear=${clear} /><div class="hosts-toolbar-row hosts-summary"><label><input type="checkbox" checked=${state.showx === "1"} onChange=${event => write({showx:event.currentTarget.checked ? "1":""})} />Show excluded</label><span>${qualifying} of ${data.endpoints.length} endpoints · ${rowCount} lists</span></div>${menu ? html`<${TypeaheadOverlay} anchorRef=${anchor} open=${true} className="condition-overlay"><div ref=${panel}>${menu === "Add host" ? html`<${HostPicker} data=${data} selected=${selected} write=${write} limit=${limit} close=${() => close()} />` : html`<${ListMenu} key=${menu} name=${menu} data=${data} state=${state} write=${write} replaceState=${replaceState} close=${() => setMenu(null)} editorRef=${editor} removal=${removal.get(menu)} />`}</div></${TypeaheadOverlay}>` : null}</section>`;
   }
   function hostRows(data, selected, dimension, state, qualifying = data.endpoints, conditions = []) {
     return data.lists.map((list, index) => {
@@ -1404,22 +1435,59 @@
       .sort((a, b) => a.best.winner && b.best.winner ? rankCompare(a.best.winner.value, b.best.winner.value, dimension) || a.list.display_id.localeCompare(b.list.display_id) || a.list.path.localeCompare(b.list.path)
         : a.best.winner ? -1 : b.best.winner ? 1 : a.list.display_id.localeCompare(b.list.display_id) || a.list.path.localeCompare(b.list.path));
   }
-  function HostListTitle({list, provider, openModel}) {
-    return html`<div class="host-list-title">${list.models.length ? html`<button type="button" class="model-link host-title-link" onClick=${() => openModel(provider, list.models[0])}><strong>${list.display_id}</strong></button>` : html`<strong>${list.display_id}</strong>`}${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(provider, model)}>${model}</button>`)}${list.aliases.length ? html`<small>Aliases: ${list.aliases.join(", ")}</small>` : null}</div>`;
-  }
   function HostEndpointFacts({endpoint, data}) {
-    return html`<dl class="host-endpoint-facts"><div><dt>Endpoint</dt><dd>${endpoint.tag || endpoint.key}</dd></div><div><dt>Precision</dt><dd class="capability">${endpoint.quantization}${endpoint.precision_bits == null ? "" : ` (${endpoint.precision_bits}-bit)`}</dd></div><div><dt>Status</dt><dd>${endpoint.status === 0 ? "normal" : endpoint.status == null ? "—" : `status ${endpoint.status}`}</dd></div><div><dt>Context length</dt><dd class="capacity">${endpoint.context_length ?? "—"}</dd></div><div><dt>Max output</dt><dd class="capacity">${endpoint.max_completion_tokens ?? "—"}</dd></div><div><dt>Max prompt</dt><dd class="capacity">${endpoint.max_prompt_tokens ?? "—"}</dd></div><div><dt>Service tier</dt><dd>${endpoint.service_tier === null ? "standard" : JSON.stringify(endpoint.service_tier)}</dd></div><div><dt>Supports</dt><dd class="capability">${endpoint.parameters.map(index => data.vocab.parameters[index]).join(", ") || "—"}</dd></div><div><dt>Native tools</dt><dd class="capability">${endpoint.native_tools.map(index => data.vocab.native_tools[index]).join(", ") || "—"}</dd></div><div><dt>Implicit caching</dt><dd>${endpoint.implicit_caching ? "yes" : "no"}</dd></div>${Object.entries(endpoint.uptime).map(([window, value]) => html`<div key=${window}><dt>Uptime ${window}</dt><dd>${value == null ? "—" : `${value}%`}</dd></div>`)}${data.price_columns.map(column => html`<div key=${column.path}><dt>${column.label}</dt><dd title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display ?? "—"} ${column.unit_label}</dd></div>`)}</dl>`;
+    return html`<dl class="host-endpoint-facts"><div><dt>Endpoint</dt><dd>${endpoint.tag || endpoint.key}</dd></div><div><dt>Precision</dt><dd class="capability">${endpointPrecision(endpoint)}</dd></div><div><dt>Status</dt><dd>${endpointStatus(endpoint)}</dd></div><div><dt>Context length</dt><dd class="capacity">${endpoint.context_length ?? "—"}</dd></div><div><dt>Max output</dt><dd class="capacity">${endpoint.max_completion_tokens ?? "—"}</dd></div><div><dt>Max prompt</dt><dd class="capacity">${endpoint.max_prompt_tokens ?? "—"}</dd></div><div><dt>Service tier</dt><dd>${endpoint.service_tier === null ? "standard" : JSON.stringify(endpoint.service_tier)}</dd></div><div><dt>Supports</dt><dd class="capability">${endpoint.parameters.map(index => data.vocab.parameters[index]).join(", ") || "—"}</dd></div><div><dt>Native tools</dt><dd class="capability">${endpoint.native_tools.map(index => data.vocab.native_tools[index]).join(", ") || "—"}</dd></div><div><dt>Implicit caching</dt><dd>${endpoint.implicit_caching ? "yes" : "no"}</dd></div>${Object.entries(endpoint.uptime).map(([window, value]) => html`<div key=${window}><dt>Uptime ${window}</dt><dd>${value == null ? "—" : `${value}%`}</dd></div>`)}${data.price_columns.map(column => html`<div key=${column.path}><dt>${column.label}</dt><dd title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display ?? "—"} ${column.unit_label}</dd></div>`)}</dl>`;
   }
-  function ExcludedEndpoints({endpoints, conditions, data}) {
-    return endpoints.map(endpoint => html`<div class="host-excluded" key=${endpoint.key}><span>${endpoint.host}: ${endpoint.tag || endpoint.key} · ${evaluateEndpoint(endpoint, conditions).reasons[0]}</span><details><summary>Excluded endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></div>`);
+  function SpreadStrip({best, selected, dimension}) {
+    if (!best.winner) return null;
+    const groups = best.ranked, values = groups.map(group => group.value), points = spreadPositions(values,dimension);
+    const equal = values.every(value => compareRational(value,values[0]) === 0);
+    const label = groups.length === 1 ? "only host" : equal ? `all ${groups.length} hosts equal` : "Host value spread";
+    return html`<div class="host-spread"><svg viewBox="0 0 120 16" role="img" aria-label=${label}><line x1="5" x2="115" y1="8" y2="8" stroke="var(--border-strong)" /><line x1=${5+points[0]*110} x2=${5+points[0]*110} y1="1" y2="15" stroke="var(--ink-strong)" />${groups.map((group,index) => html`<circle key=${group.host} cx=${5+points[index]*110} cy="8" r="3" fill=${hostColor(group.host,selected)}><title>${group.host}: ${rankingText(group.endpoint,dimension)}</title></circle>`)}</svg>${groups.length === 1 || equal ? html`<small>${label}</small>` : null}<span class="hosts-accessible">${groups.map(group => `${group.host}: ${rankingText(group.endpoint,dimension)}`).join("; ")}</span></div>`;
   }
-  function HostCell({group, dimension, data, across = false, hostCount = 0, excluded = [], conditions = []}) {
-    const endpoint = group?.endpoint;
-    const others = group?.endpoints.filter(item => item !== endpoint) || [];
-    return html`<td class=${group?.rank === 1 ? "host-best" : ""}><div aria-label=${group?.rank === 1 ? "best in row" : undefined}><strong class=${["context", "output"].includes(dimension) ? "host-capacity" : ""} title=${dimension.startsWith("price:") && endpoint ? String(endpoint.prices[dimension.slice(6)]?.raw ?? "") : undefined}>${hostRankText(endpoint, dimension)}</strong>${endpoint ? html`<small>${endpoint.tag || endpoint.key}</small><small class="host-precision">${across ? `${endpoint.host} · ` : ""}${endpoint.quantization}</small><small>${group.rank} / ${group.denominator} · ${winnerDifference(group)}</small>` : null}</div>${across ? html`<small>${plural(hostCount, "qualifying host")}</small>` : null}${group?.endpoints.length ? html`<details><summary>${others.length ? `${others.length} additional qualifying ${others.length === 1 ? "endpoint" : "endpoints"}` : "Endpoint details"}</summary>${group.endpoints.map(item => html`<${HostEndpointFacts} key=${item.key} endpoint=${item} data=${data} />`)}</details>` : null}<${ExcludedEndpoints} endpoints=${excluded} conditions=${conditions} data=${data} /></td>`;
+  function hostColor(host, selected) {
+    const index = selected.indexOf(host);
+    return index < 0 ? "var(--ink-muted)" : `var(--series-${index+1}, var(--accent))`;
   }
-  function HostMatrix({rows, selected, dimension, data, openModel, conditions}) {
-    return html`<div class="host-matrix-scroll"><table class="host-matrix" aria-label="Host comparison"><thead><tr><th scope="col">Model list</th>${selected.map(host => html`<th scope="col" key=${host}>${host}</th>`)}<th scope="col">Best across hosts</th></tr></thead><tbody>${rows.map(row => html`<tr key=${row.list.path} data-list-path=${row.list.path}><th scope="row"><${HostListTitle} list=${row.list} provider=${data.provider_id} openModel=${openModel} />${!row.best.winner ? html`<small>No values for this ranking</small>` : null}</th>${selected.map(host => html`<${HostCell} key=${host} group=${row.best.groups.get(host)} dimension=${dimension} data=${data} excluded=${row.excluded.filter(endpoint => endpoint.host === host)} conditions=${conditions} />`)}<${HostCell} group=${row.best.winner || {endpoints: row.endpoints}} dimension=${dimension} data=${data} across=${true} hostCount=${row.best.groups.size} excluded=${row.excluded} conditions=${conditions} /></tr>`)}</tbody></table></div>`;
+  function endpointPrecision(endpoint) {
+    return endpoint ? `${endpoint.quantization}${endpoint.precision_bits == null ? "" : ` (${endpoint.precision_bits}-bit)`}` : "—";
+  }
+  function endpointStatus(endpoint) {
+    return endpoint?.status === 0 ? "normal" : endpoint?.status == null ? "—" : `status ${endpoint.status}`;
+  }
+  function endpointCapacity(value) { return value == null ? "—" : Number.isInteger(value) ? value.toLocaleString() : String(value); }
+  function endpointUptime(endpoint, window) { const value = endpoint?.uptime[window]; return value == null ? "—" : `${value}%`; }
+  function HostValue({group, winner, dimension}) {
+    if (!group?.value || !winner) return html`<span>—</span>`;
+    const gap = gapText(group.value,winner.value,dimension), best = compareRational(group.value,winner.value) === 0;
+    return html`<span class=${best ? "host-value host-best" : "host-value"}><span aria-label=${best ? "best in row" : undefined} title=${dimension.startsWith("price:") ? String(group.endpoint.prices[dimension.slice(6)]?.raw ?? "") : undefined}>${best ? "◆ " : ""}${rankingText(group.endpoint,dimension)}</span> <small title=${gap.title}>${gap.text}</small></span>`;
+  }
+  function HostsTable({rows, selected, dimension, data, state, openList}) {
+    const resetKey = JSON.stringify([HOST_CONDITION_KEYS.map(key => state[key]),selected,state.match,state.showx,dimension,state.hsort,data.provider_id,data.scrape_id]);
+    const [paging,setPaging] = useState({key:resetKey,limit:50});
+    useEffect(() => setPaging(current => current.key === resetKey ? current : {key:resetKey,limit:50}),[resetKey]);
+    const limit = paging.key === resetKey ? paging.limit : 50, visible = rows.slice(0,limit), single = selected.length === 1;
+    return html`<section aria-label="Hosts results"><div class="hosts-table-scroll"><table class="hosts-table" aria-label="Host comparison"><thead><tr><th scope="col">Model</th><th scope="col">Best</th><th scope="col">Spread</th>${selected.map(host => html`<th scope="col" key=${host}>${host}</th>`)}${single ? html`<th scope="col">Rank</th><th scope="col">Precision</th><th scope="col">Context</th><th scope="col">Uptime</th><th scope="col">Status</th>` : html`<th scope="col">Hosts</th>`}</tr></thead><tbody>${visible.map(row => {
+      const winner = row.best.winner, group = row.best.groups.get(selected[0]), endpoint = group?.endpoint, ties = winner ? row.best.ranked.filter(item => compareRational(item.value,winner.value) === 0).length-1 : 0;
+      return html`<tr key=${row.list.path} data-list-path=${row.list.path} class=${!row.endpoints.length ? "is-excluded" : ""}><th scope="row"><button type="button" class="model-link" data-host-list=${row.list.path} onClick=${event => openList(row.list.path,event.currentTarget)}>${row.list.display_id}</button>${row.list.models.length > 1 ? html` <small>+${row.list.models.length-1} variants</small>` : null}</th><td>${!row.endpoints.length ? "No qualifying endpoint" : !winner ? "No values for this ranking" : html`${rankingText(winner.endpoint,dimension)} · ${winner.host}${ties ? ` +${ties} tied` : ""}`}</td><td><${SpreadStrip} best=${row.best} selected=${selected} dimension=${dimension} /></td>${selected.map(host => html`<td key=${host}><${HostValue} group=${row.best.groups.get(host)} winner=${winner} dimension=${dimension} /></td>`)}${single ? html`<td>${group?.value ? `${group.rank} / ${group.denominator}` : "—"}</td><td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint?.context_length)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td>` : html`<td>${row.best.ranked.length}</td>`}</tr>`;
+    })}</tbody></table></div><div class="hosts-pagination"><span>Showing ${visible.length} of ${rows.length} lists</span>${visible.length < rows.length ? html`<button type="button" onClick=${() => setPaging({key:resetKey,limit:limit+50})}>Show 50 more</button>` : null}</div></section>`;
+  }
+  function HostSummary({host, data}) {
+    const endpoints = data.endpoints.filter(endpoint => endpoint.host === host), summary = data.hosts.find(item => item.name === host), precision = new Map();
+    endpoints.forEach(endpoint => precision.set(endpoint.quantization,(precision.get(endpoint.quantization)||0)+1));
+    const mix = [...precision].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
+    return html`<section class="host-summary-panel instrument" aria-label="Host summary"><h2>${host}</h2><dl class="host-summary"><div><dt>Served lists</dt><dd>${summary.list_count}</dd></div><div><dt>Endpoints</dt><dd>${endpoints.length}</dd></div><div><dt>Tags</dt><dd>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size}</dd></div><div><dt>Median 1-day uptime</dt><dd>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</dd></div><div><dt>Outside normal Status condition</dt><dd>${endpoints.filter(endpoint => endpoint.status !== 0).length}</dd></div></dl><div class="host-precision-mix" role="img" aria-label=${`Precision distribution: ${mix.map(([name,count]) => `${name}: ${count}`).join(", ")}`}>${mix.map(([name,count],index) => html`<span key=${name} style=${{flex:count,background:`var(--series-${index%8+1}, var(--accent))`}} title=${`${name}: ${count}`}></span>`)}</div><p>Precision distribution: ${mix.slice(0,3).map(([name,count]) => `${name}: ${count}`).join(", ")}</p></section>`;
+  }
+  function EndpointDrawer({list, data, selected, dimension, conditions, state, close, openModel}) {
+    const panel = useRef(null);
+    useFocusTrap(panel,true,close);
+    const observed = data.endpoints.filter(endpoint => data.lists[endpoint.list].path === list.path);
+    const ordered = observed.map(endpoint => ({endpoint,result:evaluateEndpoint(endpoint,conditions)})).sort((a,b) => {
+      if (a.result.pass !== b.result.pass) return a.result.pass ? -1 : 1;
+      const av = rankValue(a.endpoint,dimension), bv = rankValue(b.endpoint,dimension);
+      return (av && bv ? rankCompare(av,bv,dimension) : av ? -1 : bv ? 1 : 0) || a.endpoint.host.localeCompare(b.endpoint.host) || a.endpoint.key.localeCompare(b.endpoint.key);
+    });
+    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available for this list." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available for this list.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p class="drawer-sort-summary">Passing endpoints first · ranking, host, endpoint</p><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr><th>Host</th><th>Endpoint</th>${data.price_columns.map(column => html`<th key=${column.path}>${column.label} (${column.unit_label})</th>`)}<th>Precision</th><th>Context</th><th>Max output</th><th>Uptime</th><th>Status</th><th>Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? "—"}</td>`)}<td class="capability">${endpointPrecision(endpoint)}</td><td class="capacity">${endpointCapacity(endpoint.context_length)}</td><td class="capacity">${endpointCapacity(endpoint.max_completion_tokens)}</td><td>${endpointUptime(endpoint,state.upwin)}</td><td>${endpointStatus(endpoint)}</td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
   }
   function HostHistory({provider, host, state, write, span}) {
     const request = useApi("/api/host_history", {provider, host, from: state.from, to: state.to});
@@ -1437,16 +1505,19 @@
     }
     return html`<section class="host-history instrument" aria-label="Host history"><header><h3>Host history</h3><${DateRangeFields} span=${span} state=${state} write=${write} /><${RangePresets} span=${span} from=${state.from} to=${state.to} write=${write} /></header><${ErrorBanner} error=${request.error} reload=${request.reload} />${!data && !request.error ? html`<p role="status">Loading host history…</p>` : data ? html`${data.series.length === 1 ? html`<p>History starts ${data.series[0].date}. Later usable captures add points.</p>` : null}<svg viewBox="0 0 600 120" role="img" aria-label="Median 1-day uptime history">${segments.map((points, index) => html`<polyline key=${index} points=${points.join(" ")} fill="none" stroke="var(--series-1)" stroke-width="2" />`)}${data.series.map((point, index) => html`<circle key=${point.scrape_id} data-complete=${String(point.capture.status === "complete")} cx=${10 + index * 580 / Math.max(1, data.series.length - 1)} cy=${point.uptime_1d_median == null ? 115 : 110 - point.uptime_1d_median} r="3" fill="var(--series-1)"><title>${point.date}: ${point.uptime_1d_median == null ? "No uptime sample" : `${point.uptime_1d_median}% uptime`}; ${point.lists ?? "unknown"} lists, ${point.endpoints ?? "unknown"} endpoints. ${point.capture.status_line}</title></circle>`)}</svg><div class="table-wrap"><table aria-label="Host history captures"><thead><tr><th>Date</th><th>Lists</th><th>Endpoints</th><th>Median / min 1d uptime</th><th>Not normal</th><th>Capture</th></tr></thead><tbody>${data.series.map(point => html`<tr key=${point.scrape_id}><th scope="row">${point.date}</th><td>${point.lists ?? "—"}</td><td>${point.endpoints ?? "—"}</td><td>${point.uptime_1d_median ?? "—"} / ${point.uptime_1d_min ?? "—"}</td><td>${point.not_normal ?? "—"}</td><td>${point.capture.status !== "complete" ? html`<strong>Incomplete coverage. </strong>` : null}${point.capture.status_line}</td></tr>`)}</tbody></table></div><${EndpointChanges} data=${data} includeList=${true} />` : null}</section>`;
   }
-  function HostProfile({host, rows, data, dimension, state, openModel, conditions}) {
-    const endpoints = data.endpoints.filter(endpoint => endpoint.host === host), summary = data.hosts.find(item => item.name === host);
-    const precision = new Map();
-    endpoints.forEach(endpoint => precision.set(endpoint.quantization, (precision.get(endpoint.quantization) || 0) + 1));
-    return html`<section class="host-profile" aria-label="Host profile"><header class="instrument"><h2>${host}</h2><dl class="host-summary"><div><dt>Served lists</dt><dd>${summary.list_count}</dd></div><div><dt>Endpoints</dt><dd>${endpoints.length}</dd></div><div><dt>Tags</dt><dd>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size}</dd></div><div><dt>Median 1-day uptime</dt><dd>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</dd></div><div><dt>Outside normal Status condition</dt><dd>${endpoints.filter(endpoint => endpoint.status !== 0).length}</dd></div></dl><p>Precision distribution: ${[...precision].map(([name, count]) => `${name}: ${count}`).join(", ")}</p></header>${rows.map(row => {
-      const group = row.best.groups.get(host);
-      return html`<section class="host-profile-list instrument" key=${row.list.path}><${HostListTitle} list=${row.list} provider=${data.provider_id} openModel=${openModel} /><p class=${group?.rank === 1 ? "host-best" : ""} aria-label=${group?.rank === 1 ? "best in row" : undefined}>${group?.value ? `${group.rank} / ${group.denominator} · ${winnerDifference(group)}` : "No values for this ranking"}</p>${row.endpoints.filter(endpoint => endpoint.host === host).map(endpoint => html`<${HostEndpointFacts} key=${endpoint.key} endpoint=${endpoint} data=${data} />`)}<${ExcludedEndpoints} endpoints=${row.excluded.filter(endpoint => endpoint.host === host)} conditions=${conditions} data=${data} /></section>`;
-    })}</section>`;
-  }
   function Hosts({meta, state, write, replaceState, openModel, themeKey}) {
+    const origin = useRef(null), previousList = useRef(null);
+    useEffect(() => {
+      const prior = previousList.current; previousList.current = state.hlist;
+      if (!prior || state.hlist) return;
+      const timer = setTimeout(() => {
+        if (hashState.read().view !== "hosts") return;
+        const matching = [...document.querySelectorAll("[data-host-list]")].find(button => button.dataset.hostList === prior);
+        (origin.current?.isConnected ? origin.current : matching || document.querySelector(".hosts-results-heading"))?.focus();
+      },0);
+      return () => clearTimeout(timer);
+    },[state.hlist]);
+    const openList = (path,button) => { origin.current = button; write({hlist:path}); };
     const eligible = meta.host_providers || [];
     const provider = state.providers.find(id => eligible.includes(id)) || eligible[0] || state.providers[0] || meta.providers[0]?.id;
     const requestedCapture = catalogScrapes(meta, provider).find(scrape => String(scrape.scrape_id) === state.hasof);
@@ -1472,6 +1543,7 @@
       if (data) {
         if (data.scrape_id != null && state.hasof !== String(data.scrape_id)) patch.hasof = String(data.scrape_id);
         if (state.rank !== dimension) patch.rank = dimension;
+        if (state.hlist && !data.lists.some(list => list.path === state.hlist)) patch.hlist = "";
         if (!sameList(state.hosts, selected)) patch.hosts = selected;
         if (!sameList(state.xhosts, excluded)) patch.xhosts = excluded;
         if (!["any", "all"].includes(currentHash.match)) patch.match = "any";
@@ -1490,17 +1562,17 @@
     const label = meta.providers.find(item => item.id === provider)?.label || provider;
     return html`<div class="hosts-view" data-theme-key=${themeKey}>
       <main class="hosts-workbench">
-        ${data ? html`<${HostsToolbar} data=${data} captures=${requestedCapture && !data.captures.some(capture => capture.scrape_id === requestedCapture.scrape_id) ? [...data.captures, requestedCapture] : data.captures} state=${{...state, ...clean}} rawState=${state} write=${write} replaceState=${replaceState} selected=${selected} limit=${meta.pin_limit} dimension=${dimension} dimensions=${dimensions} conditions=${conditions} removal=${removal} qualifying=${qualifying.length} />` : null}
+        ${data ? html`<${HostsToolbar} data=${data} captures=${requestedCapture && !data.captures.some(capture => capture.scrape_id === requestedCapture.scrape_id) ? [...data.captures, requestedCapture] : data.captures} state=${{...state, ...clean}} rawState=${state} write=${write} replaceState=${replaceState} selected=${selected} limit=${meta.pin_limit} dimension=${dimension} dimensions=${dimensions} conditions=${conditions} removal=${removal} qualifying=${qualifying.length} rowCount=${rows.length} />` : null}
         <${ErrorBanner} error=${request.error} reload=${request.reload} />
         ${!data && !request.error ? html`<p class="loading" role="status">Loading saved hosts…</p>` : data ? html`
           <${UptimeUnavailable} data=${data} />
           ${data.reason ? html`<div class="empty"><p>${data.reason === "capture_error" ? "Endpoint capture failed for this snapshot, so no endpoint lists were saved." : !eligible.includes(provider) ? `${label} has no saved endpoint capture yet. Saved scans record hosts while endpoint capture is on.` : data.reason === "no_tables" ? "This database has no endpoint tables." : "No endpoint capture was saved for this snapshot."}</p></div>`
           : !data.endpoints.length ? html`<div class="empty"><p>No endpoints were recorded in this capture.</p></div>`
-          : html`${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every condition. <button type="button" onClick=${() => document.querySelector(`[aria-label="${largest.name} condition"]`)?.focus()}>${largest.name}</button> removes the most (${removal.get(largest.name)} endpoints).</p>` : null}
-            ${!rows.length ? qualifying.length ? html`<div class="empty"><p>No qualifying list matches the selected hosts and row rule.</p></div>` : null
-            : selected.length === 1 ? html`<${HostProfile} host=${selected[0]} rows=${rows} data=${data} dimension=${dimension} state=${state} openModel=${openModel} conditions=${conditions} />`
-            : html`<${HostMatrix} rows=${rows} selected=${selected} dimension=${dimension} data=${data} openModel=${openModel} conditions=${conditions} />`}`}` : null}
+          : html`<h2 class="hosts-results-heading" tabindex="-1">Results</h2>${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every condition. ${largest.name} removes the most (${removal.get(largest.name)} endpoints). <button type="button" onClick=${() => write(Object.fromEntries(CONDITION_KEYS[CONDITION_NAMES.indexOf(largest.name)].map(key => [key,LIST_KEYS.has(key) ? [] : ""])))}>Clear ${largest.name}</button></p>` : null}
+            ${selected.length === 1 ? html`<${HostSummary} host=${selected[0]} data=${data} />` : null}${!rows.length ? !largest || qualifying.length ? html`<div class="empty"><p>No qualifying list matches the selected hosts and row rule.</p></div>` : null
+            : html`<${HostsTable} rows=${rows} selected=${selected} dimension=${dimension} data=${data} state=${{...state,...clean}} openList=${openList} />`}`}` : null}
         ${data ? html`<p class="host-capture-status">${data.capture?.status_line || ""}</p>${selected.length === 1 ? html`<${HostHistory} provider=${provider} host=${selected[0]} state=${state} write=${write} span=${meta.date_span} />` : null}` : null}
+        ${data && state.hlist && data.lists.find(list => list.path === state.hlist) ? html`<${EndpointDrawer} key=${`${data.provider_id}/${data.scrape_id}/${state.hlist}`} list=${data.lists.find(list => list.path === state.hlist)} data=${data} selected=${selected} dimension=${dimension} conditions=${conditions} state=${{...state,...clean}} close=${() => write({hlist:""})} openModel=${openModel} />` : null}
       </main></div>`;
   }
 

@@ -2417,6 +2417,9 @@ def test_hosts_prices_share_capture_wide_display_scope(hosts_context):
     assert rows["tiny#0"]["prices"]["pricing.prompt"]["display"] == "<$0.0001"
     assert rows["alpha-cheap#0"]["prices"]["pricing.prompt"]["display"] == "$1.0000"
     assert rows["solo#0"]["prices"]["pricing.prompt"]["display"] == "$4.0000"
+    assert rows["solo#0"]["prices"]["pricing.prompt"]["display_own"] == "$4.00"
+    assert rows["alpha-cheap#0"]["prices"]["pricing.prompt"]["display_own"] == "$1.00"
+    assert rows["tiny#0"]["prices"]["pricing.prompt"]["display_own"] == "<$0.0001"
 
 
 def test_host_history_missing_target_list_is_integrity_error(tmp_path):

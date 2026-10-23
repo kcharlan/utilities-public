@@ -703,7 +703,7 @@ class HostsFixtureFacts:
     host_legacy_and_reasons: dict
 
 
-def build_hosts_fixture_db(path: Path, *, provider_id: str = "hosts-synthetic", single_provider_id: str = "hosts-single-synthetic", with_output_prices: bool = False) -> HostsFixtureFacts:
+def build_hosts_fixture_db(path: Path, *, provider_id: str = "hosts-synthetic", single_provider_id: str = "hosts-single-synthetic", with_output_prices: bool = False, with_many_lists: bool = False, with_spread_cases: bool = False) -> HostsFixtureFacts:
     """Build only synthetic Hosts evidence, independent of the existing browse fixture."""
     from dataclasses import replace
 
@@ -744,6 +744,25 @@ def build_hosts_fixture_db(path: Path, *, provider_id: str = "hosts-synthetic", 
                         endpoint("price-missing", gamma, None, context_length=512000)]
     initial["bare"] = bare[:14] + bare[16:]
     initial["unmapped"] = [{"tag": "tag-only"}, {}]
+    if with_spread_cases:
+        cases = {
+            "spread-tiny-huge": ["1e-10000", "1e300", "1"],
+            "spread-signed": ["-0.000001", "0", "0.000001"],
+            "spread-zero": ["0", "0", "0.000001"],
+            "spread-close": ["0.00000100000000000000001", "0.00000100000000000000002"],
+            "spread-equal": ["0.000001", "0.000001"],
+            "spread-only": ["0.000001"],
+        }
+        for name, prices in cases.items():
+            paths[name] = _ep_path("fake-org/hosts-" + name)
+            initial[name] = [endpoint(f"synthetic-{name}-{index}", host, price) for index, (host, price) in enumerate(zip([alpha, beta, gamma], prices))]
+    if with_many_lists:
+        # An isolated geometry/pagination variant preserves hand-counted base fixtures.
+        hosts = [alpha, beta, gamma, "Synthetic Bulk", "Synthetic Solo", "Synthetic Moved Removed", "Synthetic Missing", "Synthetic Name Fallback"]
+        for index in range(105):
+            name = f"pagination-{index:03}"
+            paths[name] = _ep_path("fake-org/hosts-" + name)
+            initial[name] = [endpoint(f"synthetic-page-{index:03}-{host_index}", host) for host_index, host in enumerate(hosts)]
     catalog = [_ep_listed("fake-org/hosts-" + name, path=paths[name]) for name in initial if name != "unmapped"]
     catalog += [_ep_listed("fake-org/hosts-twin", path=paths["shared"]), _ep_alias("fake-org/hosts-alias", "fake-org/hosts-shared")]
     scrapes, captures = {}, {}

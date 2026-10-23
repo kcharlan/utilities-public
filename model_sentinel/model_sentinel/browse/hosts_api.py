@@ -114,7 +114,7 @@ def hosts_response(connection: sqlite3.Connection, *, provider_id: str,
         displays = format_price_values([leaf.price for _, leaf in present], precision_basis=())
         for (index, leaf), display in zip(present, displays):
             exact = leaf.normalized_exact_value
-            endpoints[index]["prices"][path] = {"exact": {"numerator_hex": format(exact.numerator, "x"), "denominator_hex": format(exact.denominator, "x")}, "display": display, "raw": leaf.raw_value}
+            endpoints[index]["prices"][path] = {"exact": {"numerator_hex": format(exact.numerator, "x"), "denominator_hex": format(exact.denominator, "x")}, "display": display, "display_own": format_price_values([leaf.price], precision_basis=())[0], "raw": leaf.raw_value}
     grouped = defaultdict(list)
     for row in endpoints:
         grouped[row["host"]].append(row)

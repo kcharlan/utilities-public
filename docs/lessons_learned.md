@@ -1244,3 +1244,20 @@ reserve locale grouping for integer token capacities. Keep browser coverage
 for high precision alongside real zero and missing samples in both themes
 and at narrow widths. Validate these cases with isolated synthetic runtime
 data rather than reading real provider captures.
+
+## 2026-10-22: Keep compact comparison descriptions inside their scroll container
+
+Model Sentinel's absolutely positioned accessible spread descriptions escaped
+an unpositioned table scroller and enlarged the document on narrow screens.
+Anchor them to the spread component even when they are visually clipped, and
+exercise document width with both no compared hosts and the full selection.
+Compact rows also need a larger isolated fixture to exercise real vertical
+scrolling and pagination; endpoint count alone does not create additional list
+rows. Retain a focusable results heading when filters remove every row so a
+copied endpoint drawer can still close to a useful focus target.
+
+A derived pagination fallback is not a state reset: showing 50 rows when the
+comparison key differs still leaves the previous key's expanded limit stored.
+Returning with Back can revive all 112 rows. Replace the retained paging key
+and limit when comparison inputs change, and regress expand, change ranking,
+then Back to the original ranking; both transitions must show only 50 rows.

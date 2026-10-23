@@ -830,7 +830,7 @@ def test_model_dossier_route_wires_changelog_and_sparklines_without_a_dossier_ta
 
 def test_hosts_exact_rationals_preserve_tiny_negative_zero_ties_and_decimal_limits() -> None:
     source = _read_asset("app.js")
-    helpers = source[source.index("  function exactRational(") : source.index("  function HostListTitle(")]
+    helpers = source[source.index("  function exactRational(") : source.index("  function capacityMinimum(")]
     # Wrong direction, Number coercion, tag-based ranks, or zero division
     # would each change these independently hand-derived results.
     probe = subprocess.run(["node", "-e", helpers + r'''
@@ -845,7 +845,7 @@ const exact = bestEndpoints([high, low, tied, endpoint("missing", "m", null)], "
 assert.equal(exact.winner.host, "alpha");
 assert.equal(exact.groups.get("beta").rank, 2);
 assert.equal(exact.groups.get("beta").denominator, 2);
-assert.equal(winnerDifference(exact.groups.get("beta")), "9.99999e-16% above the best");
+assert.deepEqual(gapText(exact.groups.get("beta").value, exact.winner.value, "price:p"), {text:"+<1%", title:"Approximate magnitude: +9.99999e-16%"});
 const threshold = decimalRational("1.000000000000000015");
 assert.equal(compareRational(rankValue(low, "price:p"), threshold), -1);
 assert.equal(compareRational(rankValue(high, "price:p"), threshold), 1);
@@ -854,7 +854,18 @@ assert.equal(compareRational(tiny, decimalRational("0")), 1);
 assert.equal(rationalMagnitude(tiny), "1e-9994");
 assert.equal(compareRational(exactRational({numerator_hex: "-1", denominator_hex: "1"}), tiny), -1);
 const zero = bestEndpoints([endpoint("zero", "z", ["0", "1"]), endpoint("one", "o", ["1", "1"])], "price:p");
-assert.equal(winnerDifference(zero.groups.get("one")), "—");
+assert.equal(gapText(zero.groups.get("one").value, zero.winner.value, "price:p").text, "");
+assert.equal(gapText(zero.winner.value, zero.winner.value, "price:p").text, "best");
+assert.deepEqual(gapText(decimalRational("97"),decimalRational("100"),"uptime:1d"), {text:"-3.00 pp", title:"Approximate magnitude: -3 pp"});
+for (const [a,b,dim,want] of [["1.005","1","price:p","+1%"],["0.995","1","price:p","-1%"],["-1","-2","price:p","+50%"],["99.999","100","uptime:1d","-<0.01 pp"],["99.995","100","uptime:1d","-0.01 pp"],["0","1","context","-100%"]]) assert.equal(gapText(decimalRational(a),decimalRational(b),dim).text,want);
+for (const values of [["-1","0","1"],["1e-9994","2e-9994","1e9994"],["1.00000000000000001","1.00000000000000002"],["0","0"],["-1e9994","0","1e9994"]]) {
+  const rational = values.map(decimalRational);
+  const points = spreadPositions(rational,"price:p");
+  assert.equal(points.length,values.length);
+  assert.ok(points.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+}
+assert.deepEqual(spreadPositions(["-1","0","1"].map(decimalRational),"price:p"),[0,0.5,1]);
+assert.deepEqual(spreadPositions(["100","50","0"].map(decimalRational),"context"),[0,0.5,1]);
 const ties = bestEndpoints([endpoint("a", "a", ["1", "1"]), endpoint("b", "b", ["1", "1"]), endpoint("c", "c", ["2", "1"])], "price:p");
 assert.deepEqual(ties.ranked.map(group => group.rank), [1, 1, 3]);
 assert.equal(rankValue({...low, context_length: Infinity}, "context"), null);
