@@ -528,7 +528,9 @@ browser, and `Ctrl-C` stops the server.
   first failing condition, price columns with values for that model, precision,
   capacities, uptime and status. **Details** expands complete endpoint facts
   across the table below its endpoint. Its mapped-model links open
-  individual dossiers; aliases remain visible. Open dossier uses the first
+  individual dossiers; aliases remain visible. The "Also served as" line
+  shows only names other than the heading and is omitted when none remain.
+  Open dossier uses the first
   mapped model, and is disabled for unmapped lists. The drawer's `hlist` URL
   state supports copied URLs and Back/Forward; closing restores focus to its row
   or the results heading. The results initially show 50 models; **Show 50 more**

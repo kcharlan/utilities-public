@@ -15,6 +15,9 @@ Keep all capture-valid price descriptors when hiding all-empty columns for
 one model: normalization validates capture identity while displayed sort
 controls active ordering. Regress physical row toggling, replacement, nested
 model buttons, overlay Escape, and saved price sorts across models/captures.
+Filter the heading identity from mapped names and aliases before deciding
+whether to render an "Also served as" line; a single-model fixture whose
+display ID equals its mapped model catches otherwise redundant copy.
 
 ## 2026-10-23: Deliberate presets must replace uncommitted editor text
 

@@ -2552,6 +2552,34 @@ def test_hosts_drawer_hidden_price_sort_survives_lists_and_absent_capture(hosts_
     expect(hosts_page).not_to_have_url(re.compile("dsort="))
 
 
+@pytest.mark.parametrize("other_names", [False, True])
+def test_hosts_drawer_other_names_exclude_heading_identity(hosts_page, hosts_server, other_names):
+    _, facts = hosts_server
+    def heading_is_mapped_model(route):
+        response = route.fetch()
+        payload = response.json()
+        shared = next(item for item in payload["lists"] if item["path"] == facts.host_grouping_and_ties["path"])
+        shared["display_id"] = "fake-org/hosts-shared"
+        shared["models"] = ["fake-org/hosts-shared", "fake-org/hosts-twin"] if other_names else ["fake-org/hosts-shared"]
+        shared["aliases"] = ["fake-org/hosts-shared", "fake-org/hosts-alias"] if other_names else []
+        route.fulfill(response=response, json=payload)
+    hosts_page.route("**/api/hosts?*", heading_is_mapped_model)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hlist=facts.host_grouping_and_ties["path"]))
+    drawer = hosts_page.get_by_role("dialog", name="fake-org/hosts-shared", exact=True)
+    expect(drawer.get_by_role("button", name="Open dossier", exact=True)).to_be_enabled()
+    names = drawer.locator(".endpoint-aliases")
+    if other_names:
+        expect(names).to_have_text("Also served as fake-org/hosts-twin, fake-org/hosts-alias")
+        expect(names.get_by_role("link")).to_have_count(1)
+        expect(names.get_by_role("link", name="fake-org/hosts-twin", exact=True)).to_have_attribute("href", re.compile("view=model&model="))
+        names.get_by_role("link", name="fake-org/hosts-twin", exact=True).click()
+        expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-twin")
+    else:
+        expect(names).to_have_count(0)
+        drawer.get_by_role("button", name="Open dossier", exact=True).click()
+        expect(hosts_page.locator(".dossier-identity code")).to_have_text("fake-org/hosts-shared")
+
+
 def test_hosts_drawer_links_units_and_reduced_motion_at_narrow_width(hosts_page, hosts_server):
     _, facts = hosts_server
     def synthetic_unit(route):
