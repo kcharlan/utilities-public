@@ -1270,3 +1270,14 @@ Model Sentinel's invalid uptime value `101` matched port `51019` even after
 the hash was correctly normalized. Anchor invalid-state patterns after `#`
 so they still catch every malformed saved value without depending on the
 ephemeral origin.
+
+## 2026-10-22: Keep saved interaction state valid across empty results and history
+
+Model Sentinel's active sort survived filtering while its summary and Clear sort
+disappeared with the results table. Keep controls for retained state in the
+persistent toolbar. A connected drawer origin can still belong to another list
+after Back navigation; verify its list identity before restoring focus, then
+fall back to the closing list's row or the results heading. Search option
+navigation must ignore an empty suggestion list, and its active descendant
+must name an existing option. Regress these transitions in the real browser,
+including recovery from empty suggestions to a selectable result.

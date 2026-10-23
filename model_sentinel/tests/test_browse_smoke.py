@@ -187,6 +187,67 @@ def test_hosts_toolbar_menus_do_not_activate_on_open_and_switch_directly(hosts_p
     assert hosts_page.evaluate("location.hash") == before
 
 
+def test_hosts_empty_results_keep_toolbar_sort_summary_and_clear(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:model", quantset="1"))
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
+    summary = hosts_page.locator(".hosts-toolbar .hosts-summary")
+    expect(summary.locator(".hosts-sort-summary")).to_contain_text("Model ascending")
+    assert summary.evaluate("""node => {
+        const sort = node.querySelector('.hosts-sort-summary');
+        const excluded = node.querySelector('label');
+        const count = node.lastElementChild;
+        return Boolean(sort.compareDocumentPosition(excluded) & Node.DOCUMENT_POSITION_FOLLOWING)
+            && Boolean(excluded.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }""")
+    expect(summary).to_contain_text("0 of 135 endpoints · 0 lists")
+    summary.get_by_role("button", name="Clear sort", exact=True).click()
+    expect(hosts_page).not_to_have_url(re.compile("hsort="))
+    expect(summary).to_contain_text("Click a column")
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_have_count(0)
+    hosts_page.get_by_label("Show excluded", exact=True).check()
+    expect(hosts_page.get_by_role("table", name="Host comparison")).to_be_visible()
+
+
+def test_hosts_history_drawer_close_restores_matching_list_after_other_origin(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    shared = table.get_by_role("button", name="synthetic-response-shared", exact=True)
+    exact = table.get_by_role("button", name="synthetic-response-exact", exact=True)
+    for button in (shared, exact):
+        button.click()
+        hosts_page.get_by_role("button", name="Close endpoint drawer").click()
+        expect(button).to_be_focused()
+    hosts_page.go_back()
+    expect(hosts_page.get_by_role("dialog", name="synthetic-response-exact", exact=True)).to_be_visible()
+    hosts_page.go_back()
+    expect(hosts_page.get_by_role("dialog")).to_have_count(0)
+    hosts_page.go_back()
+    expect(hosts_page.get_by_role("dialog", name="synthetic-response-shared", exact=True)).to_be_visible()
+    hosts_page.get_by_role("button", name="Close endpoint drawer").click()
+    expect(shared).to_be_focused()
+
+
+@pytest.mark.parametrize("query", ["", "synthetic-no-matching-model"])
+def test_hosts_search_empty_suggestions_omit_active_descendant(hosts_page, hosts_server, query):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field.fill(query)
+    for key in ("ArrowDown", "ArrowUp", "ArrowDown"):
+        field.press(key)
+        expect(field).to_have_attribute("aria-expanded", "false")
+        expect(hosts_page.locator(".hosts-search-results [role=option]")).to_have_count(0)
+        expect(field).not_to_have_attribute("aria-activedescendant")
+    field.fill("hosts-sha")
+    field.press("ArrowDown")
+    expect(field).to_have_attribute("aria-activedescendant", "host-search-0")
+    expect(hosts_page.locator("#host-search-0")).to_have_attribute("aria-selected", "true")
+    field.press("Enter")
+    expect(field).to_have_value("fake-org/hosts-shared")
+
+
 def test_hosts_sort_headers_stack_history_and_ranking(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))

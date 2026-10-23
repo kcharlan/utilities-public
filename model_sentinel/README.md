@@ -524,9 +524,10 @@ browser, and `Ctrl-C` stops the server.
 
   Click a column heading to sort ascending, click again for descending, and
   click once more to remove it. Additional columns join the sort in priority
-  order; arrows and numbers mark the active stack. The summary names displayed
-  keys and **Clear sort** removes the saved stack. Missing values stay last in
-  either direction, prices compare exactly, and ties retain the default order.
+  order; arrows and numbers mark the active stack. The toolbar summary names
+  displayed keys and **Clear sort** removes the saved stack, even when no lists
+  qualify. Missing values stay last in either direction, prices compare exactly,
+  and ties retain the default order.
   Drawer sorting stays within the passing and failing groups. The `hsort` and
   `dsort` URL lists store `a:<key>` or `d:<key>` entries for results and drawer
   sorting. Hidden result columns retain their keys and resume sorting when
