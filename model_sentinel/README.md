@@ -521,9 +521,13 @@ browser, and `Ctrl-C` stops the server.
 
   Click any results row or its model name, including an unmapped model, to open
   its endpoint drawer; activating the open row again closes it.
-  The drawer shows every observed endpoint, passing rows before failing rows,
-  the first failing condition, all capture price columns, precision, capacities,
-  uptime, status and expandable endpoint facts. Its mapped-model buttons open
+  The nonmodal drawer leaves the background interactive and opens with focus
+  on its heading. Escape closes a Hosts menu or model suggestion list first;
+  with no such overlay open, it closes the drawer. The drawer shows every
+  observed endpoint in compact rows, passing rows before failing rows, the
+  first failing condition, price columns with values for that model, precision,
+  capacities, uptime and status. **Details** expands complete endpoint facts
+  across the table below its endpoint. Its mapped-model links open
   individual dossiers; aliases remain visible. Open dossier uses the first
   mapped model, and is disabled for unmapped lists. The drawer's `hlist` URL
   state supports copied URLs and Back/Forward; closing restores focus to its row
@@ -540,8 +544,10 @@ browser, and `Ctrl-C` stops the server.
   Drawer sorting stays within the passing and failing groups. The `hsort` and
   `dsort` URL lists store `a:<key>` or `d:<key>` entries for results and drawer
   sorting. Hidden result columns retain their keys and resume sorting when
-  displayed again; changing ranking keeps sorting. Sort clicks and clearing
-  support reload and Back/Forward. Invalid keys and duplicate columns are
+  displayed again; empty drawer price columns likewise keep their saved keys
+  without active sorting until a model with values is opened. Price paths
+  absent from a capture are removed. Changing ranking keeps sorting. Sort
+  clicks and clearing support reload and Back/Forward. Invalid keys and duplicate columns are
   removed without adding history entries.
   Result keys are `model`, `best`, `spread`, `host:<name>`, `rank`, `precision`,
   `context`, `uptime`, `status`, and `hosts`. Drawer keys are `host`, `endpoint`,

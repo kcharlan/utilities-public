@@ -947,6 +947,13 @@ const drawer = drawerColumns(data,{upwin:"5m"}), item={endpoint:ep};
 assert.equal(drawer.find(c=>c.key==="uptime").value(item),0);
 assert.equal(drawer.find(c=>c.key==="status").value(item),2);
 assert.equal(compareRational(drawer.find(c=>c.key==="price:p").value(item),decimalRational("0.5")),0);
+const hidden = drawerColumns(data,{upwin:"5m"},[{...ep,prices:{}}]);
+assert.equal(hidden.find(c=>c.key==="price:p").visible,false);
+assert.deepEqual(normalizeSort(["d:price:p","a:price:absent"],hidden),["d:price:p"]);
+assert.deepEqual(displayedSort(["d:price:p"],hidden),[]);
+const shown = drawerColumns(data,{upwin:"5m"},[ep]);
+assert.equal(shown.find(c=>c.key==="price:p").label,"Input");
+assert.equal(displayedSort(["d:price:p"],shown).length,1);
 '''], capture_output=True, text=True, check=False)
     assert probe.returncode == 0, probe.stdout + probe.stderr
 

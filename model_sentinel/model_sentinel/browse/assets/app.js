@@ -1580,12 +1580,12 @@
     const active = displayedSort(list,columns), index = active.findIndex(item => item.column.key === column.key), direction = active[index]?.direction;
     const numeric = !["model","host","endpoint","precision","status"].includes(column.key);
     const arrow = direction ? html`<span class="sort-arrow" aria-hidden="true">${direction === "a" ? "▲" : "▼"}${active.length > 1 ? html`<sup>${index+1}</sup>` : null}</span>` : null;
-    return html`<th scope="col" class=${`${numeric ? "hosts-numeric" : ""}${column.key.startsWith("host:") ? " hosts-host-value" : ""}`} aria-sort=${index === 0 ? direction === "a" ? "ascending" : "descending" : undefined}><button type="button" class=${`sort-header${direction ? " is-sorted" : ""}`} onClick=${() => change(clickSort(list,column.key))}>${numeric ? arrow : null}${column.label}${numeric ? null : arrow}</button></th>`;
+    return html`<th scope="col" title=${column.unit} class=${`${numeric ? "hosts-numeric" : ""}${column.key.startsWith("host:") ? " hosts-host-value" : ""}`} aria-sort=${index === 0 ? direction === "a" ? "ascending" : "descending" : undefined}><button type="button" class=${`sort-header${direction ? " is-sorted" : ""}`} onClick=${() => change(clickSort(list,column.key))}>${numeric ? arrow : null}${column.label}${column.unit && column.unit !== "/1M tokens" ? html` <small class="price-unit">${column.unit}</small>` : null}${numeric ? null : arrow}</button></th>`;
   }
   function SortSummary({list, columns, change, className = ""}) {
     const active = displayedSort(list,columns);
     if (!active.length && className === "hosts-sort-summary") return null;
-    return html`<div class=${`sort-summary ${className}`}>${active.length ? html`<span>Sorted by ${active.map(({direction,column}) => `${column.label} ${direction === "a" ? "▲" : "▼"}`).join(" › ")}</span><button type="button" onClick=${() => change([])}>Clear sort</button>` : html`<span>Click a column: ascending → descending → remove. Add columns in priority order.</span>`}</div>`;
+    return html`<div class=${`sort-summary ${className}`}>${active.length ? html`<span>Sorted by ${active.map(({direction,column}) => `${column.label} ${direction === "a" ? "▲" : "▼"}`).join(" › ")}</span><button type="button" onClick=${() => change([])}>Clear sort</button>` : html`<span>Click a column to sort. Click again to reverse, a third time to remove it. Your first column sorts first; each column you add orders rows that tie on the ones before it.</span>`}</div>`;
   }
   function precisionSortValue(endpoint) { return endpoint?.precision_bits == null ? null : [endpoint.precision_bits,endpoint.quantization]; }
   function spreadSortValue(best, dimension) {
@@ -1611,11 +1611,11 @@
     const order = ["model", `host:${selected[0]}`, "rank", "best", "spread", "precision", "context", "uptime", "status"];
     return single ? columns.sort((a,b) => order.indexOf(a.key)-order.indexOf(b.key)) : columns;
   }
-  function drawerColumns(data, state) {
+  function drawerColumns(data, state, observed = data.endpoints || []) {
     return [
       {key:"host",label:"Host",value:item=>item.endpoint.host},
       {key:"endpoint",label:"Endpoint",value:item=>item.endpoint.tag || item.endpoint.key},
-      ...data.price_columns.map(column=>({key:`price:${column.path}`,label:`${column.label} (${column.unit_label})`,value:item=>rankValue(item.endpoint,`price:${column.path}`)})),
+      ...data.price_columns.map(column=>({key:`price:${column.path}`,label:column.label,unit:column.unit_label,visible:observed.some(endpoint=>endpoint.prices[column.path] != null),value:item=>rankValue(item.endpoint,`price:${column.path}`)})),
       {key:"precision",label:"Precision",value:item=>precisionSortValue(item.endpoint)},
       {key:"context",label:"Context",value:item=>item.endpoint.context_length},
       {key:"output",label:"Max output",value:item=>item.endpoint.max_completion_tokens},
@@ -1652,17 +1652,34 @@
     return html`<section class="host-summary-panel" aria-label="Host summary"><h2>${host}</h2><span><strong>${summary.list_count.toLocaleString()}</strong> models</span><span><strong>${endpoints.length.toLocaleString()}</strong> endpoints</span><span><strong>${new Set(endpoints.map(endpoint => endpoint.tag).filter(tag => tag !== null)).size.toLocaleString()}</strong> tags</span><span>median uptime <strong class=${summary.uptime_1d_median == null ? "hosts-missing" : ""}>${summary.uptime_1d_median == null ? "—" : `${summary.uptime_1d_median}%`}</strong></span><span><strong>${endpoints.filter(endpoint => endpoint.status !== 0).length.toLocaleString()}</strong> not normal</span><span>precision</span><div class="host-precision-mix" role="img" aria-label=${`Precision distribution: ${mix.map(([name,count]) => `${name}: ${count}`).join(", ")}`}>${mix.map(([name,count],index) => html`<span key=${name} style=${{flex:count,background:name === "unknown" || index >= colors.length ? "var(--border-strong)" : `var(--series-${colors[index]})`}} title=${`${name}: ${count}`}></span>`)}</div><span class="host-precision-label">${mix.slice(0,3).map(([name,count]) => `${name} ${count}`).join(", ")}</span></section>`;
   }
   function EndpointDrawer({list, data, selected, dimension, conditions, state, close, openModel, write}) {
-    const panel = useRef(null);
-    useFocusTrap(panel,true,close);
+    const heading = useRef(null), [expanded,setExpanded] = useState(new Set());
+    useLayoutEffect(() => {
+      heading.current?.focus();
+      const escape = event => { if (event.key === "Escape" && hostsOpenOverlayCount === 0) { event.preventDefault(); close(); } };
+      // Read overlay ownership before a descendant synchronously dismisses
+      // its overlay during this same keydown event.
+      window.addEventListener("keydown",escape,true);
+      return () => window.removeEventListener("keydown",escape,true);
+    },[list.path]);
     const observed = data.endpoints.filter(endpoint => data.lists[endpoint.list].path === list.path);
-    const columns = drawerColumns(data,state), change = list => write({dsort:list});
+    const columns = drawerColumns(data,state,observed), visibleColumns = columns.filter(column=>column.visible !== false), prices = data.price_columns.filter(column=>columns.find(item=>item.key === `price:${column.path}`).visible), change = list => write({dsort:list});
+    const toggle = key => setExpanded(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
     const evaluated = observed.map(endpoint => ({endpoint,result:evaluateEndpoint(endpoint,conditions)}));
     const fallback = (a,b) => {
       const av = rankValue(a.endpoint,dimension), bv = rankValue(b.endpoint,dimension);
       return (av && bv ? rankCompare(av,bv,dimension) : av ? -1 : bv ? 1 : 0) || a.endpoint.host.localeCompare(b.endpoint.host) || a.endpoint.key.localeCompare(b.endpoint.key);
     };
     const ordered = [true,false].flatMap(pass => stackSort(evaluated.filter(item=>item.result.pass === pass),state.dsort,columns,fallback));
-    return html`<div class="drawer-layer endpoint-drawer-layer" onMouseDown=${event => event.target === event.currentTarget && close()}><section ref=${panel} class="drawer endpoint-drawer" role="dialog" aria-modal="true" aria-labelledby="endpoint-drawer-title"><header><div><h2 id="endpoint-drawer-title">${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} qualifying / ${observed.length} observed endpoints</p></div><button type="button" aria-label="Close endpoint drawer" onClick=${close}>×</button></header><div class="drawer-body"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button>${!list.models.length ? html`<p>No mapped model is available.</p>` : null}<section aria-label="Mapped models"><h3>Mapped models</h3>${list.models.map(model => html`<button type="button" class="model-link" key=${model} onClick=${() => openModel(data.provider_id,model)}>${model}</button>`)}${list.aliases.length ? html`<p>Aliases: ${list.aliases.join(", ")}</p>` : null}<p>${list.path}</p></section><p>Passing endpoints first · ranking, host, endpoint fallback</p><${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" /><div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${columns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => html`<tr key=${`${endpoint.host}/${endpoint.key}`} class=${result.pass ? "" : "is-excluded"}><th scope="row"><i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>${endpoint.host}</th><td>${endpoint.tag || endpoint.key}<details><summary>Endpoint details</summary><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></details></td>${data.price_columns.map(column => html`<td class="hosts-price hosts-numeric" key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? html`<span class="hosts-missing">—</span>`}</td>`)}<td><${EndpointPrecision} endpoint=${endpoint} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.context_length} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.max_completion_tokens} /></td><td class="hosts-numeric"><span class=${endpoint.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td><${EndpointStatus} endpoint=${endpoint} /></td><td>${result.reasons[0] || "—"}</td></tr>`)}</tbody></table></div></div></section></div>`;
+    return html`<section class="endpoint-drawer" role="dialog" aria-labelledby="endpoint-drawer-title">
+      <header><div><h2 ref=${heading} tabindex="-1" id="endpoint-drawer-title" title=${list.path}>${list.display_id}</h2><p>${ordered.filter(item => item.result.pass).length} of ${observed.length} endpoints qualify</p></div><div class="endpoint-drawer-actions"><button type="button" disabled=${!list.models.length} title=${!list.models.length ? "No mapped model is available." : undefined} onClick=${() => openModel(data.provider_id,list.models[0])}>Open dossier</button><button type="button" aria-label="Close endpoint drawer" onClick=${close}>Close</button></div></header>
+      <div class="drawer-body">${!list.models.length ? html`<p>No mapped model is available.</p>` : null}
+        ${list.models.length || list.aliases.length ? html`<p class="endpoint-aliases">Also served as ${list.models.map((model,index) => html`<span key=${model}>${index ? ", " : ""}<a class="model-link" href=${`#view=model&model=${encodeURIComponent(`${data.provider_id}/${model}`)}`} onClick=${event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openModel(data.provider_id,model); } }}>${model}</a></span>`)}${list.aliases.map((alias,index) => html`<span key=${alias}>${list.models.length || index ? ", " : ""}${alias}</span>`)}</p>` : null}
+        <${SortSummary} list=${state.dsort} columns=${columns} change=${change} className="drawer-sort-summary" />
+        <div class="endpoint-table-scroll"><table aria-label="Observed endpoints"><thead><tr>${visibleColumns.map(column=>html`<${SortHeader} key=${column.key} column=${column} list=${state.dsort} columns=${columns} change=${change} />`)}<th scope="col">Reason</th><th scope="col">Details</th></tr></thead><tbody>${ordered.map(({endpoint,result}) => {
+          const key = JSON.stringify([endpoint.host,endpoint.key]), open = expanded.has(key);
+          return html`<tr key=${key} class=${result.pass ? "" : "is-excluded"}><th scope="row">${selected.includes(endpoint.host) ? html`<i class="host-series-dot" style=${{background:hostColor(endpoint.host,selected)}}></i>` : null}${endpoint.host}</th><td class="endpoint-tag">${endpoint.tag || endpoint.key}</td>${prices.map(column => html`<td class="hosts-price hosts-numeric" key=${column.path} title=${String(endpoint.prices[column.path]?.raw ?? "")}>${endpoint.prices[column.path]?.display_own ?? html`<span class="hosts-missing">—</span>`}</td>`)}<td><${EndpointPrecision} endpoint=${endpoint} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.context_length} /></td><td class="hosts-numeric"><${EndpointCapacity} value=${endpoint.max_completion_tokens} /></td><td class="hosts-numeric"><span class=${endpoint.uptime[state.upwin] == null ? "hosts-missing" : ""}>${endpointUptime(endpoint,state.upwin)}</span></td><td><${EndpointStatus} endpoint=${endpoint} /></td><td class="endpoint-reason">${result.pass ? "" : `fails ${result.reasons[0]}`}</td><td><button type="button" class="endpoint-details-toggle" aria-expanded=${String(open)} onClick=${() => toggle(key)}>Details</button></td></tr>${open ? html`<tr key=${key+"/details"} class="endpoint-details-row"><td colspan=${visibleColumns.length+2}><${HostEndpointFacts} endpoint=${endpoint} data=${data} /></td></tr>` : null}`;
+        })}</tbody></table></div>
+      </div></section>`;
   }
   function hostsCaptureStatus(capture) {
     return (capture?.status_line || "").replace(/\blist(s?)\b/g, "model$1");

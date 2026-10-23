@@ -1,5 +1,21 @@
 # Lessons learned
 
+## 2026-10-23: Make endpoint inspection nonmodal without losing saved sorts
+
+Model Sentinel's modal endpoint layer intercepted the second pointer click
+needed to toggle an open results row and prevented replacing it from another
+row. Use independent panel positioning and heading focus, preserving the raw
+evidence drawer's modal lifecycle. Gate panel Escape on the shared Hosts
+overlay count during capture, before descendant handlers can synchronously
+dismiss their overlay and lower the count during that same event. A bubble
+listener can otherwise close both suggestions and panel with one key. Force
+immediate rendering in a focused browser regression and check the settled
+first key preserves hlist, then the second closes and restores focus.
+Keep all capture-valid price descriptors when hiding all-empty columns for
+one model: normalization validates capture identity while displayed sort
+controls active ordering. Regress physical row toggling, replacement, nested
+model buttons, overlay Escape, and saved price sorts across models/captures.
+
 ## 2026-10-23: Deliberate presets must replace uncommitted editor text
 
 When a numeric preset equals the already committed value, cancelling a pending
