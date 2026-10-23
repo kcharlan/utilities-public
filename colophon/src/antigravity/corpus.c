@@ -29,7 +29,7 @@ Err antigravity_message_merge(Arena *a,Str input,uint32_t n,Str *out) {
     while(ag_wire_next(&cur,&f)==AG_FOUND)if(f.number==n){memcpy(p+at,f.bytes.p,f.bytes.n);at+=f.bytes.n;}
     *out=(Str){p,(uint32_t)bytes};return ERR_SUCCESS;
 }
-static Err ag_clock(Arena *a,Str input,uint32_t n,MaybeMs *out) {
+Err antigravity_clock(Arena *a,Str input,uint32_t n,MaybeMs *out) {
     Str nested={0};TRY(antigravity_message_merge(a,input,n,&nested));if(!nested.p)return ERR_SUCCESS;
     AgField seconds={0},nanos={0};ag_wire_last(nested,1,&seconds);ag_wire_last(nested,2,&nanos);
     int64_t sec=(int64_t)seconds.integer;uint64_t ns=nanos.integer;
@@ -149,14 +149,14 @@ static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t
         .archive_reason=r->archive_reason,.title_full=r->title,
         .title_source=r->title.n?STR_LIT("antigravity_title"):STR_LIT("session_id")};
     s->meta.id=r->id;
-    for(size_t i=0;i<r->metadata_count;i++){TRY(ag_clock(&c->arena,r->metadata[i].data,2,&s->start_ms));TRY(workspace(store,r,c,s,r->metadata[i].data));}
+    for(size_t i=0;i<r->metadata_count;i++){TRY(antigravity_clock(&c->arena,r->metadata[i].data,2,&s->start_ms));TRY(workspace(store,r,c,s,r->metadata[i].data));}
     bool subagent=false;for(size_t i=0;i<r->meta_count;i++)if(r->meta[i].source_state==AG_SQL_INTEGER&&r->meta[i].source==16)subagent=true;
     s->is_subagent=subagent||s->parent_id.n;s->has_link=s->parent_id.n;s->has_depth=!s->is_subagent;s->meta.is_subagent=s->is_subagent;
     s->meta.parent_thread_id=(JScalar){.kind=s->parent_id.n?JS_STRING:JS_ABSENT,.value.s=s->parent_id};
     size_t count=0;MaybeMs completion={0},creation={0};
     for(size_t i=0;i<r->step_count;i++) {
         AntigravityStep *step=&r->steps[i];step->turn=(Str){0};MaybeMs start={0},end={0};
-        TRY(ag_clock(&c->arena,step->metadata,1,&start));TRY(ag_clock(&c->arena,step->metadata,8,&end));
+        TRY(antigravity_clock(&c->arena,step->metadata,1,&start));TRY(antigravity_clock(&c->arena,step->metadata,8,&end));
         if(!s->start_ms.present)s->start_ms=start;latest(&creation,start);latest(&completion,end);
         int64_t type=0;if(antigravity_step_enum(step,false,&type)&&type==14)count++;
         for(size_t which=0;which<2;which++) {
@@ -182,12 +182,12 @@ static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t
             current=&facts[turn];pointers[turn]=current;error=canceled=running=false;
             char key[64];int n=snprintf(key,sizeof key,"antigravity-turn-%lld",(long long)step->idx);
             TRY(str_copy(&c->arena,(Str){key,(uint32_t)n},&current->key));current->turn_id=current->key;
-            TRY(ag_clock(&c->arena,step->metadata,1,&current->start_ms));current->has_start_rec=true;current->start_rec=i;
+            TRY(antigravity_clock(&c->arena,step->metadata,1,&current->start_ms));current->has_start_rec=true;current->start_rec=i;
             s->requests[turn].at_ms=current->start_ms;TRY(prompt(&c->arena,step->payload,&s->requests[turn]));turn++;
         }
         if(!current)continue;
         step->turn=current->key;MaybeMs created={0},completed={0};
-        TRY(ag_clock(&c->arena,step->metadata,1,&created));TRY(ag_clock(&c->arena,step->metadata,8,&completed));
+        TRY(antigravity_clock(&c->arena,step->metadata,1,&created));TRY(antigravity_clock(&c->arena,step->metadata,8,&completed));
         latest(&current->last_ms,created);latest(&current->last_ms,completed);latest(&current->end_ms,completed);
         int64_t status=0;if(antigravity_step_enum(step,true,&status)){error|=status==7;canceled|=status==6||status==12;running|=active(status);}
         Str planner={0};TRY(antigravity_message_merge(&c->arena,step->payload,20,&planner));Str answer=scalar(planner,1);if(!answer.n)answer=scalar(planner,8);

@@ -34,6 +34,20 @@ capabilities and copy, source remedies, independent database footer state,
 Set COLOPHON_SCREENSHOT_DIR to fresh private external scratch to retain the
 synthetic app overview/list/reader images during that browser case.
 
+`test_antigravity_ccusage_usage_oracle` and the output/model C cases retain
+self-contained, invented expectations captured from native ccusage 20.0.42;
+normal suites neither locate nor require a private oracle executable. The
+public enum/oracle fixture records both descriptor and oracle provenance.
+Coverage includes all four direct/retry locations, alias namespaces/transitive
+bridges, global first ownership, component maxima, strict number rejection,
+output reasoning presence, model fallbacks, step clocks/TTFT and repeat compose.
+`test_antigravity_cached_pricing` seeds only invented `pricing-cache.json` rates
+before an offline build, verifying alias resolution, context tiers and unknown
+unpriced identities without a catalog socket. Chromium covers known/unpriced
+Antigravity-only and All totals, mixed availability word layout, phone overflow
+and native reader output. Its screenshot option retains priced overview/reader
+and partial-availability states at desktop/phone widths in external scratch.
+
 History acceptance covers exact canonical/unique-alias resolution, ambiguous
 owners and collision-skipped aliases across deletion/rebuild, Codex filename
 fallback collisions, malformed fields, chronological grouping and the actual

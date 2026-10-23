@@ -96,6 +96,10 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         diagnostic("antigravity_duplicate_sessions",s->duplicate_sessions,&first);diagnostic("antigravity_archive_disagreements",s->archive_disagreements,&first);
         diagnostic("antigravity_malformed_blobs",s->malformed_blobs,&first);diagnostic("antigravity_annotation_errors",s->annotation_errors,&first);
         diagnostic("antigravity_malformed_rows",s->malformed_rows,&first);
+        diagnostic("antigravity_cross_session_duplicates",s->cross_session_duplicates,&first);
+        diagnostic("antigravity_requests_without_usage",s->requests_without_usage,&first);
+        diagnostic("antigravity_invalid_numbers",s->invalid_numbers,&first);
+        diagnostic("antigravity_unknown_clocks",s->unknown_clocks,&first);
         diagnostic("antigravity_orphaned_subagents",s->orphaned_subagents.count,&first);diagnostic("antigravity_session_id_collisions",s->corpus_collisions.count,&first);
         diagnostic("antigravity_legacy_encrypted",s->legacy_encrypted,&first);diagnostic("antigravity_source_diagnostics",s->diagnostic_count,&first);
     }

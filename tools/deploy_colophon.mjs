@@ -37,7 +37,7 @@ function readReceipt(file) {
 }
 function diagnostic(binary) {
   const version = execFileSync(binary, ['--version'], {encoding: 'utf8', timeout: 10000}).trim();
-  if (version !== 'colophon 0.4.2') throw new Error('Native version activation check failed');
+  if (version !== 'colophon 0.5.0') throw new Error('Native version activation check failed');
   execFileSync(binary, ['--help'], {stdio: 'pipe', timeout: 10000});
 }
 function backup(scripts, home, repo) {

@@ -36,19 +36,20 @@ static Err catalog_rates(const ClaudeLookup *lookup,PriceEntry *out) {
     *out=rates;return ERR_SUCCESS;
 }
 typedef struct {Str identity;PriceEntry rates;double fast;bool found;} ClaudeResolution;
-static Err resolved(ModelsDevIndex *index,PricingReport *report,const UsageUnit *u,ClaudeResolution **out) {
+static Err resolved(ModelsDevIndex *index,PricingReport *report,const UsageUnit *u,Str identity_prefix,bool key_by_model,ClaudeResolution **out) {
     yyjson_val *root=yyjson_doc_get_root(report->claude_seed),*models=get(root,"claude"),*historical=get(root,"historical");
-    JsonWriter query={0};jsonw_raw(&query,"[");jsonw_string(&query,u->model_raw);jsonw_raw(&query,",");jsonw_i64(&query,!u->timestamp_ms.present?0:u->timestamp_ms.value<(int64_t)leaf_number(get(root,"cutoff_ms"))?1:2);jsonw_raw(&query,"]");
+    Str lookup_model=key_by_model?u->model:u->model_raw;
+    JsonWriter query={0};jsonw_raw(&query,"[");jsonw_string(&query,identity_prefix);jsonw_raw(&query,",");jsonw_i64(&query,key_by_model);jsonw_raw(&query,",");jsonw_string(&query,lookup_model);jsonw_raw(&query,",");jsonw_i64(&query,!u->timestamp_ms.present?0:u->timestamp_ms.value<(int64_t)leaf_number(get(root,"cutoff_ms"))?1:2);jsonw_raw(&query,"]");
     Err e=query.error;if(e.code){jsonw_free(&query);return e;}
     Str query_key={query.data,(uint32_t)query.length};ClaudeResolution *result=omap_get(&report->claude_resolutions,query_key);
     if(result){jsonw_free(&query);*out=result;return ERR_SUCCESS;}
     e=arena_alloc(&report->arena,sizeof *result,_Alignof(ClaudeResolution),(void **)&result);if(e.code){jsonw_free(&query);return e;}*result=(ClaudeResolution){0};
-    Str normalized;e=normalize_claude_model(&report->arena,u->model_raw,&normalized);if(e.code){jsonw_free(&query);return e;}
+    Str normalized;e=normalize_claude_model(&report->arena,lookup_model,&normalized);if(e.code){jsonw_free(&query);return e;}
         yyjson_val *row=obj_get_last(models,normalized),*old=obj_get_last(historical,normalized);PriceEntry rates={0};ClaudeLookup lookup={0};
         bool temporal=old&&row&&u->timestamp_ms.present;
         if(temporal)rates=bundled(u->timestamp_ms.value<(int64_t)leaf_number(get(root,"cutoff_ms"))?old:row);
-        else {e=claude_models_dev_lookup(&report->arena,index,u->model_raw,&lookup);if(!e.code&&lookup.catalog.model)e=catalog_rates(&lookup,&rates);else if(!e.code&&row)rates=bundled(row);if(e.code){jsonw_free(&query);return e;}}
-        JsonWriter key={0};jsonw_raw(&key,"claude:");
+        else {e=claude_models_dev_lookup(&report->arena,index,lookup_model,&lookup);if(!e.code&&lookup.catalog.model)e=catalog_rates(&lookup,&rates);else if(!e.code&&row)rates=bundled(row);if(e.code){jsonw_free(&query);return e;}}
+        JsonWriter key={0};jsonw_bytes(&key,identity_prefix.p,identity_prefix.n);
         if(lookup.catalog.model){jsonw_bytes(&key,lookup.provider.p,lookup.provider.n);jsonw_raw(&key,"/");jsonw_bytes(&key,lookup.catalog.model->model_id.p,lookup.catalog.model->model_id.n);}else {jsonw_raw(&key,"bundled/");jsonw_bytes(&key,normalized.p,normalized.n);}
     e=key.error;if(!e.code)e=str_copy(&report->arena,(Str){key.data,(uint32_t)key.length},&result->identity);jsonw_free(&key);
     if(!e.code)e=claude_fast_multiplier(lookup.catalog.model?lookup.catalog.model->model_id:normalized,&result->fast);
@@ -56,13 +57,13 @@ static Err resolved(ModelsDevIndex *index,PricingReport *report,const UsageUnit 
     if(!e.code)e=omap_put(&report->claude_resolutions,query_key,result);
     jsonw_free(&query);if(!e.code)*out=result;return e;
 }
-Err claude_price_usage_units(UsageUnit *units,size_t count,ModelsDevIndex *index,PricingReport *report) {
+Err catalog_price_usage_units(UsageUnit *units,size_t count,ModelsDevIndex *index,PricingReport *report,Str identity_prefix,bool key_by_model) {
     if(!report->claude_seed){JsonRead seed=json_read((Str){(const char *)cp_asset_curated_bundled_claude,(uint32_t)cp_asset_curated_bundled_claude_len},STR,JSON_CONSTANTS_REJECT,"claude.bundled");
         if(seed.status!=JSON_OK){json_read_free(&seed);return err_make(ERR_INVALID,"invalid Claude bundled prices");}report->claude_seed=seed.doc;}
     Err e=ERR_SUCCESS;
     for(size_t i=0;i<count;i++){
         UsageUnit *u=&units[i];u->has_cost=false;u->cost_usd=0;u->period=u->fast_period=(PricePeriod){0};
-        ClaudeResolution *resolution;e=resolved(index,report,u,&resolution);if(e.code)break;
+        ClaudeResolution *resolution;e=resolved(index,report,u,identity_prefix,key_by_model,&resolution);if(e.code)break;
         Str identity=resolution->identity;
         if(!resolution->found){
             if(u->claude_price_snapshot&&u->claude_cost_priced){u->has_cost=true;u->cost_usd=(double)u->claude_cost_nanos/1e9;continue;}
@@ -77,6 +78,9 @@ Err claude_price_usage_units(UsageUnit *units,size_t count,ModelsDevIndex *index
         if(u->claude_cost_priced&&u->claude_cost_nanos==0)u->cost_usd=0;
     }
     return e;
+}
+Err claude_price_usage_units(UsageUnit *units,size_t count,ModelsDevIndex *index,PricingReport *report) {
+    return catalog_price_usage_units(units,count,index,report,STR_LIT("claude:"),false);
 }
 Err claude_price_units(Corpus *corpus,ModelsDevIndex *index,PricingReport *report) {
     for(OmapEntry *p=corpus->sessions.first;p;p=p->next){SessionModel *s=p->value;if(s->provider==PROVIDER_CLAUDE)TRY(claude_price_usage_units(s->units,s->unit_count,index,report));}pricing_report_note_sums(report);return ERR_SUCCESS;

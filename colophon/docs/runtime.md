@@ -89,13 +89,20 @@ source-marked subagents lacking a parent remain visible as orphans.
 The page offers an Antigravity source filter, APP/CLI/IDE tags and Copy session
 ID only. Source status, legacy exclusions, ignored environment remedies and each
 database's surface/status/reason appear in the footer. Each database disclosure
-retains its own open state. Usage/pricing remain unavailable; empty session/turn
-summaries are rebuilt after every shared composition so page refresh is safe.
+retains its own open state. Usage includes generator and step records plus all
+retries, including cleared/checkpoint steps. Identity copies merge globally by
+component maximum; the first discovered session/turn owns the merged unit.
+Unmatched/pre-prompt usage remains outside displayed turns. Every composition
+rebuilds session/turn/bucket summaries, including empty sessions.
 
 The reader emits source counts/status/reasons, ignored environment names and
-diagnostics alongside corpus sessions and capability-gated UI actions. Token
-usage and pricing remain a separate deliverable.
-Antigravity costs therefore have independent unavailable status. Raw system
+diagnostics alongside corpus sessions and capability-gated UI actions. Model
+attribution uses response slug, meaningful usage enum, step chat_model_name then
+model_name, most recent attributed conversation model, or an unattributed marker.
+Pricing uses independently available bundled/catalog estimates with Antigravity
+identities, normalized effort/routing suffixes and unknown-model unpriced notes.
+The moving gemini-pro-default alias assumes gemini-3.1-pro-preview; Vertex-only
+models remain unsupported/unpriced. Raw system
 prompts and planner thinking never enter page/runtime output. No Antigravity
 cache is written. Absent/disabled input alone does not initialize the runtime;
 a reportable database error can initialize a diagnostic-only page.
@@ -123,7 +130,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.4.2`).
+displays the embedded payload's release version (`colophon 0.5.0`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -210,7 +217,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.4.2`.
+runtime state. Version is currently `colophon 0.5.0`.
 
 | Flag | Behavior |
 | --- | --- |

@@ -17,7 +17,10 @@ plus their own annotation/summary archive metadata. Source counts and diagnostic
 appear in the payload and CLI summary. Sessions, prompts, answers, tools,
 workspaces and subagent relationships appear alongside the other providers;
 APP, CLI and IDE tags retain source surfaces independently of trajectory source.
-Only Copy session ID is available. Token usage and pricing are not projected yet.
+Only Copy session ID is available. Usage from generators, steps and retries is
+deduplicated globally and priced per request through independent bundled/catalog
+estimates; unknown models remain unpriced. The moving default Gemini alias
+assumes gemini-3.1-pro-preview; Vertex-only models remain unsupported.
 It creates no Antigravity parse cache and reads no Gemini credentials/settings.
 
 Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
@@ -38,6 +41,11 @@ Version 0.4.2 adds scope controls for Workspaces, collapse actions above long
 expanded text, and end actions for follow-ups and footer panels. Collapsing
 returns focus and brings an offscreen section start into view. Footer panels
 retain their independent open states when sources or metrics change.
+
+Version 0.5.0 adds Antigravity app/CLI/IDE sessions, archive metadata, tools,
+workspaces, subagents, token accounting and API-equivalent catalog estimates.
+All-provider and provider-only views retain independent cost availability and
+unpriced usage. Source, payload, page footer and installer share this version.
 
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.

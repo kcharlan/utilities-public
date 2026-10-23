@@ -9,4 +9,5 @@ bool antigravity_step_enum(const AntigravityStep *step,bool status,int64_t *out)
 /* Input is a retained validated wire message. Single occurrences borrow the
  * input; multiple singular-message occurrences merge in the supplied arena. */
 Err antigravity_message_merge(Arena *arena,Str input,uint32_t number,Str *out);
+Err antigravity_clock(Arena *arena,Str input,uint32_t number,MaybeMs *out);
 #endif

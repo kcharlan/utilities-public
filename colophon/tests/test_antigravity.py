@@ -1,5 +1,6 @@
 """Invented Antigravity databases: never use an installed session store."""
 import sqlite3
+import json
 import ctypes
 import os
 import stat
@@ -22,6 +23,47 @@ def database(native, surface="antigravity", identity=ID):
         db.executescript(SCHEMA)
         db.execute("INSERT INTO trajectory_meta VALUES (?,?,1,1)", (identity, identity))
     return path
+
+def cached_pricing(native, unknown=True):
+    """Invented cached rates through the real offline catalog/DB path."""
+    path = database(native)
+    catalog = {"openai": {"models": {}}, "google": {"models": {"gemini-3.1-pro-preview": {
+        "id": "gemini-3.1-pro-preview", "cost": {"input": 11, "output": 17,
+        "context_over_200k": {"input":23},
+        "tiers": [{"tier": {"type": "context", "size": 41}, "input": 23}]}}}}}
+    native.runtime.mkdir(exist_ok=True)
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({
+        "schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "etag": "synthetic-cached",
+        "fetched_at_ms": 1, "catalog": catalog}))
+    prompt = proto_field(19, proto_field(2, b"Synthetic priced Antigravity request"))
+    metadata = proto_field(1, proto_field(1, 1767355200)) + proto_field(8, proto_field(1, 1767355202))
+    usage = b"".join(proto_field(k, v) for k,v in [(2,42),(5,3),(4,5),(3,7),(9,2),(10,5)])
+    chat = proto_field(4, usage) + proto_field(19, "gemini-pro-default-high")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO steps VALUES(0,14,3,?,?,0)", (metadata,prompt))
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1,chat)+proto_field(2,0),))
+        if unknown:
+            chat = proto_field(4,proto_field(2,2)+proto_field(3,3))+proto_field(19,"synthetic-unpriced-high")
+            db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1,chat)+proto_field(2,0),))
+    return path
+
+def test_antigravity_cached_pricing(native):
+    cached_pricing(native)
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert row["own_usage"]["input"] == 52
+    assert row["own_usage"]["output"] == 10
+    assert row["own_usage"]["cached_input"] == 3
+    assert row["own_usage"]["cache_write"] == 5
+    assert row["own_usage"]["reasoning"] == 2
+    assert row["own_usage"]["unpriced_tokens"] == 5
+    assert row["own_usage"]["cost_usd"] is None
+    priced = next(b for b in row["buckets"] if b[1] == "gemini-3.1-pro-preview")
+    assert priced[8] == pytest.approx(.001173)
+    assert payload["meta"]["sources"]["antigravity"]["costs"] == {"available":True,"reason":None}
+    assert "antigravity:bundled/synthetic-unpriced" in json.dumps(payload["diagnostics"])
 
 def test_antigravity_corpus_acceptance(native):
     native.codex.rmdir()

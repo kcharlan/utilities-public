@@ -38,6 +38,7 @@ typedef struct {
     AntigravityDiagnostic *diagnostics;size_t diagnostic_count,diagnostic_capacity;
     Str *ignored_environment;size_t ignored_environment_count,ignored_environment_capacity;
     uint64_t legacy_encrypted,duplicate_sessions,archive_disagreements,malformed_blobs,malformed_rows,annotation_errors;
+    uint64_t cross_session_duplicates,requests_without_usage,invalid_numbers,unknown_clocks;
     CorpusStrings corpus_collisions,orphaned_subagents;
 } AntigravityStore;
 Err antigravity_store_read(AntigravityStore *store,volatile sig_atomic_t *interrupted);

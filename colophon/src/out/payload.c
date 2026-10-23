@@ -23,7 +23,7 @@ static void antigravity_source(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,"],\"sessions\":");jsonw_i128(w,sessions);jsonw_raw(w,",\"subagents\":");jsonw_i128(w,subagents);jsonw_raw(w,",\"archived\":");jsonw_i128(w,archived);
     jsonw_raw(w,",\"legacy_encrypted\":");jsonw_i128(w,s?s->legacy_encrypted:0);jsonw_raw(w,",\"ignored_environment\":[");
     if(s)for(size_t i=0;i<s->ignored_environment_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,s->ignored_environment[i]);}
-    jsonw_raw(w,"],\"logs\":0,\"cached\":0,\"costs\":{\"available\":false,\"reason\":\"Antigravity usage projection is unavailable\"}}");
+    jsonw_raw(w,"],\"logs\":0,\"cached\":0,\"costs\":{\"available\":true,\"reason\":null}}");
 }
 static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
     const char *keys[]={"antigravity_schema_errors","antigravity_unreadable_databases"};
@@ -38,6 +38,10 @@ static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
     jsonw_raw(w,",\"antigravity_malformed_blobs\":");jsonw_i128(w,s?s->malformed_blobs:0);
     jsonw_raw(w,",\"antigravity_malformed_rows\":");jsonw_i128(w,s?s->malformed_rows:0);
     jsonw_raw(w,",\"antigravity_annotation_errors\":");jsonw_i128(w,s?s->annotation_errors:0);
+    jsonw_raw(w,",\"antigravity_cross_session_duplicates\":");jsonw_i128(w,s?s->cross_session_duplicates:0);
+    jsonw_raw(w,",\"antigravity_requests_without_usage\":");jsonw_i128(w,s?s->requests_without_usage:0);
+    jsonw_raw(w,",\"antigravity_invalid_numbers\":");jsonw_i128(w,s?s->invalid_numbers:0);
+    jsonw_raw(w,",\"antigravity_unknown_clocks\":");jsonw_i128(w,s?s->unknown_clocks:0);
     jsonw_raw(w,",\"antigravity_orphaned_subagents\":");payload_corpus_strings(w,s?&s->orphaned_subagents:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_session_id_collisions\":");payload_corpus_strings(w,s?&s->corpus_collisions:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_source_diagnostics\":[");
@@ -143,7 +147,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.4.2\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.5.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);

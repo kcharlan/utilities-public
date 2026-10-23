@@ -279,3 +279,19 @@ by allocating every cumulative prefix retains quadratic bytes. Validate and sum
 fragment lengths with overflow checks, allocate the final text once and copy
 each fragment once. Regress both exact output and arena capacity through the
 real database reader; content equality alone cannot detect this retention bug.
+
+## Antigravity usage copies
+
+The same request can appear in generator usage, generator retries, step usage
+and step retries, including later conversations. Deduplicate namespaced identity
+aliases transitively before aggregation and merge component maxima; summing
+locations overcounts requests. Equal token tuples without IDs are independent.
+Retain first session/turn ownership even when a later step improves the clock.
+Reuse projection's step-to-turn mapping and rebuild summaries after each shared
+usage reset, including empty sessions. Synthetic native oracle expectations
+establish output/identity behavior; public enum descriptors alone cannot supply
+behavioral model slugs, and placeholder enum labels must not defeat fallbacks.
+Reconcile visible output within each observation before merging component maxima:
+different reasoning counts can reveal different visible totals. Raw maxima first
+would silently discard that evidence; a native-oracle partial-record probe
+caught this despite ordinary duplicate and single-event output tests passing.

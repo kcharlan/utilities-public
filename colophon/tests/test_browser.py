@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from test_opencode import database, CLOCK, SESSION as OPENCODE_SESSION
 import sqlite3
 import os
-from test_antigravity import database as ag_database, ID as AG_ID
+from test_antigravity import database as ag_database, ID as AG_ID, cached_pricing as ag_cached_pricing
 
 
 def antigravity_page(native, mutate=None, surface="antigravity", archived=False):
@@ -93,10 +93,78 @@ def test_antigravity_snapshot_plural_databases(page, native):
         expect(page.locator('#snapshot-meta')).to_contain_text('2 Antigravity databases ·')
         assert requests == []
 
+@pytest.mark.parametrize('unknown', [False, True])
+@pytest.mark.parametrize('width', [1280, 375])
+def test_antigravity_cached_tokens_cost_and_mixed_layout(page, native, unknown, width):
+    ag_cached_pricing(native, unknown)
+    native.session()
+    result = native.build('--no-claude', '--no-opencode')
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.set_viewport_size({'width':width,'height':812})
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=antigravity')
+        expect(page.locator('[data-kpi="tokens"] .kpi-value')).to_have_attribute('data-value', '62' if unknown else '57')
+        cost = page.locator('[data-kpi="cost"] .kpi-value')
+        expect(cost).to_have_attribute('data-value', '0.001173')
+        expect(cost).to_have_text('$0.00 + unpriced' if unknown else '$0.00')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-only-{width}-{unknown}.png'),full_page=True)
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=all')
+        expect(page.locator('[data-kpi="tokens"] .kpi-value')).to_have_attribute('data-value', '212' if unknown else '207')
+        expect(page.locator('[data-kpi="tokens"] [data-provider="antigravity"]')).to_have_attribute('data-share','62' if unknown else '57')
+        # Codex: (100 fresh*1.25 + 20 cached*.125 + 30 output*10)/1e6
+        # plus independently priced Antigravity .001173.
+        assert float(page.locator('[data-kpi="cost"] .kpi-value').get_attribute('data-value')) == pytest.approx(.0016005)
+        expect(page.locator('[data-kpi="cost"] .kpi-value')).to_have_text('$0.00 + unpriced' if unknown else '$0.00')
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-cost-{width}-{unknown}.png'),full_page=True)
+        page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&s=' + AG_ID)
+        reader = page.locator('[data-reader-stat="tokens"] .reader-stat-value')
+        expect(reader).to_contain_text('62' if unknown else '57')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-priced-reader-{width}-{unknown}.png'),full_page=True)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert requests == []
+
+@pytest.mark.parametrize('width', [1280, 375])
+def test_antigravity_mixed_availability_words_fit(page, native, width):
+    ag_cached_pricing(native)
+    def unavailable(payload):
+        for provider in ('codex','claude'):
+            payload['meta']['sources'][provider]['costs']['available'] = False
+    source_page(native,unavailable)
+    with guard_browser_errors(page):
+        requests = open_native(page,native.page)
+        page.set_viewport_size({'width':width,'height':812})
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=all')
+        cost=page.locator('[data-kpi="cost"] .kpi-value')
+        expect(cost).to_contain_text('unpriced')
+        expect(cost).to_contain_text('codex costs unavailable')
+        expect(cost).to_contain_text('claude costs unavailable')
+        broken=cost.evaluate("""element => {
+          const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT),broken=[];
+          while(walker.nextNode()) for(const match of walker.currentNode.textContent.matchAll(/[A-Za-z]+/g)) {
+            const range=document.createRange();range.setStart(walker.currentNode,match.index);range.setEnd(walker.currentNode,match.index+match[0].length);
+            if(range.getClientRects().length!==1)broken.push(match[0]);
+          } return broken;
+        }""")
+        assert broken == []
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-partial-availability-{width}.png'),full_page=True)
+        assert requests == []
+
 
 @pytest.mark.parametrize('width', [1280, 375])
 def test_antigravity_unavailable_cost_words_remain_unbroken(page, native, width):
-    antigravity_page(native)
+    # Explicit unavailable-source fixture: ordinary Antigravity accounting now
+    # has independent catalog availability, with unknown models shown unpriced.
+    antigravity_page(native, lambda payload: payload['meta']['sources']['antigravity']['costs'].update(available=False,reason='synthetic unavailable catalog'))
     def words_fit(locator):
         expect(locator).to_have_text('costs unavailable')
         words = locator.evaluate("""element => {
@@ -170,10 +238,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.4.2"
+    assert payload["meta"]["version"] == "0.5.0"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.2")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.0")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
