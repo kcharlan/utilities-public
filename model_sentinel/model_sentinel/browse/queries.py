@@ -795,16 +795,20 @@ def host_captures(connection: sqlite3.Connection, *, provider_id: str) -> list[d
 
 
 @_translate_busy
-def capture_endpoint_rows(connection: sqlite3.Connection, *, capture_id: int) -> list[dict[str, Any]]:
+def capture_endpoint_rows(connection: sqlite3.Connection, *, capture_id: int,
+                          list_path: str | None = None) -> list[dict[str, Any]]:
+    """Exact capture samples, optionally bounded to a dossier's resolved list."""
     telemetry = endpoint_telemetry_present(connection)
     columns = "t.uptime_1d, t.uptime_30m, t.uptime_5m" if telemetry else "NULL AS uptime_1d, NULL AS uptime_30m, NULL AS uptime_5m"
     join = """LEFT JOIN endpoint_telemetry t ON t.capture_id = o.capture_id
               AND t.list_path = o.list_path AND t.endpoint_key = o.endpoint_key
               AND EXISTS (SELECT 1 FROM endpoint_telemetry_captures m WHERE m.capture_id = o.capture_id)""" if telemetry else ""
+    restriction = " AND o.list_path = ?" if list_path is not None else ""
+    parameters = (capture_id, list_path) if list_path is not None else (capture_id,)
     rows = connection.execute(
         f"""SELECT o.list_path, o.endpoint_key, o.status_code, s.state_json, {columns}
             FROM endpoint_observations o JOIN endpoint_states s ON s.state_hash = o.state_hash
-            {join} WHERE o.capture_id = ? ORDER BY o.list_path, o.rowid""", (capture_id,)
+            {join} WHERE o.capture_id = ?{restriction} ORDER BY o.list_path, o.rowid""", parameters
     ).fetchall()
     return [{**dict(row), "state": load_json_value(row["state_json"])} for row in rows]
 

@@ -541,8 +541,14 @@ provider regardless of the current provider filter.
 A dossier's **Serving endpoints** section shows the endpoint list saved with
 the exact snapshot the dossier displays (see Endpoint capture), never a newer
 capture or another snapshot's. For a captured list it shows each endpoint's
-prices (hover a cell for the raw value), the list's changes in saved order up
-to that snapshot (at most 200, newest first, with a note when older changes
+prices (hover a cell for the raw value), quantization, context length, status
+(`normal` for code 0, `status <code>` otherwise), and Uptime 1d/30m/5m samples.
+Missing or malformed facts and absent samples show dashes; real zero uptime
+stays visible. When uptime isn't stored, the section explains its absence and
+mentions archive backfill only when eligible. These facts use only that exact
+capture and list, with no live requests or archive decoding. New columns scroll
+inside the table on narrow screens. The section also shows the list's changes
+in saved order up to that snapshot (at most 200, newest first, with a note when older changes
 are left out), and the capture's status and baseline comparison. When several
 catalog models share one list, a note names the list and its other models and
 warns that the catalog row's own price can differ. For an alias, it shows each

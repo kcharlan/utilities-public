@@ -1435,7 +1435,7 @@
           <button type="button" onClick=${() => write({...Object.fromEntries(HOST_CONDITION_KEYS.map(key => [key, LIST_KEYS.has(key) ? [] : ""])), rank: defaultRank, match: "any", showx: ""})}>Reset</button>` : null}</div>
         <${ErrorBanner} error=${request.error} reload=${request.reload} />
         ${!data && !request.error ? html`<p class="loading" role="status">Loading saved hosts…</p>` : data ? html`
-          ${data.telemetry !== "available" ? html`<p>Uptime isn't stored for this snapshot yet.${data.backfill_eligible ? " The next saved scan can backfill it from its archive." : ""}</p>` : null}
+          <${UptimeUnavailable} data=${data} />
           ${data.reason ? html`<div class="empty"><p>${data.reason === "capture_error" ? "Endpoint capture failed for this snapshot, so no endpoint lists were saved." : !eligible.includes(provider) ? `${label} has no saved endpoint capture yet. Saved scans record hosts while endpoint capture is on.` : data.reason === "no_tables" ? "This database has no endpoint tables." : "No endpoint capture was saved for this snapshot."}</p></div>`
           : !data.endpoints.length ? html`<div class="empty"><p>No endpoints were recorded in this capture.</p></div>`
           : html`${!qualifying.length && largest ? html`<p class="host-no-qualifying">No endpoint meets every condition. <button type="button" onClick=${() => document.querySelector(`[aria-label="${largest.name} condition"]`)?.focus()}>${largest.name}</button> removes the most (${removal.get(largest.name)} endpoints).</p>` : null}
@@ -1557,7 +1557,23 @@
   }
 
   function EndpointTable({table, match}) {
-    return html`<div class="table-wrap"><table class="endpoint-table"><thead><tr><th scope="col">Endpoint</th><th scope="col">Status</th>${table.columns.map(column => html`<th scope="col" key=${column.path}>${column.label}<small>${column.unit_label}</small></th>`)}${match ? html`<th scope="col">Alias prices</th>` : null}</tr></thead><tbody>${table.rows.map(row => html`<tr key=${row.endpoint_key}><th scope="row"><span>${row.provider_name || row.name || row.tag || row.endpoint_key}</span><small>${row.endpoint_key}</small></th><td>${row.status == null ? "—" : String(row.status)}</td>${row.prices.map((price, index) => html`<td key=${table.columns[index].path} title=${price ? `raw ${price.raw_value}` : "no price"}>${price ? price.display : "—"}</td>`)}${match ? html`<td class="alias-tag">${aliasTag(match, row.endpoint_key)}</td>` : null}</tr>`)}</tbody></table></div>`;
+    return html`<div class="table-wrap"><table class="endpoint-table"><thead><tr>
+      <th scope="col">Endpoint</th><th scope="col">Status</th><th scope="col">Quantization</th><th scope="col">Context length</th>
+      ${["1d", "30m", "5m"].map(window => html`<th scope="col" key=${window}>Uptime ${window}</th>`)}
+      ${table.columns.map(column => html`<th scope="col" key=${column.path}>${column.label}<small>${column.unit_label}</small></th>`)}
+      ${match ? html`<th scope="col">Alias prices</th>` : null}
+    </tr></thead><tbody>${table.rows.map(row => html`<tr key=${row.endpoint_key}>
+      <th scope="row"><span>${row.provider_name || row.name || row.tag || row.endpoint_key}</span><small>${row.endpoint_key}</small></th>
+      <td>${row.status === 0 ? "normal" : row.status == null ? "—" : `status ${row.status}`}</td>
+      <td class="capability">${row.quantization || "—"}</td><td class="capacity">${row.context_length == null ? "—" : row.context_length.toLocaleString()}</td>
+      ${["1d", "30m", "5m"].map(window => html`<td key=${window}>${row.uptime[window] == null ? "—" : `${row.uptime[window]}%`}</td>`)}
+      ${row.prices.map((price, index) => html`<td key=${table.columns[index].path} title=${price ? `raw ${price.raw_value}` : "no price"}>${price ? price.display : "—"}</td>`)}
+      ${match ? html`<td class="alias-tag">${aliasTag(match, row.endpoint_key)}</td>` : null}
+    </tr>`)}</tbody></table></div>`;
+  }
+
+  function UptimeUnavailable({data}) {
+    return data.telemetry !== "available" ? html`<p class="endpoint-note uptime-unavailable">Uptime isn't stored for this snapshot yet.${data.backfill_eligible ? " The next saved scan can backfill it from its archive." : ""}</p>` : null;
   }
 
   function PriceLadder({ladder}) {
@@ -1614,6 +1630,7 @@
       ${state ? html`<${EndpointState} data=${data} reload=${reload} loading=${loading} />` : null}
       ${data.captured ? html`<${SharedListNote} data=${data} />` : null}
       ${data.alias ? html`<${AliasEvidence} alias=${data.alias} />` : null}
+      ${data.captured ? html`<${UptimeUnavailable} data=${data} />` : null}
       ${data.endpoints.rows.length ? html`<${EndpointTable} table=${data.endpoints} match=${tableMatch} />` : null}
       ${data.ladders.length ? html`<div class="endpoint-ladders">${data.ladders.map(ladder => html`<${PriceLadder} key=${ladder.leaf} ladder=${ladder} />`)}</div>` : null}
       ${data.capture ? html`<${ListGaps} gaps=${data.capture.list_gaps} />` : null}

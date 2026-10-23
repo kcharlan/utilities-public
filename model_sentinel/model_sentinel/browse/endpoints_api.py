@@ -129,12 +129,18 @@ def _endpoint_projection(
     if capture is not None and capture["provider_id"] != provider_id:
         raise EndpointDataIntegrityError("endpoint capture belongs to another provider")
     first_date = queries.first_usable_endpoint_capture_date(connection, provider_id=provider_id) if tables else None
+    telemetry_tables = queries.endpoint_telemetry_present(connection)
+    telemetry_status = queries.capture_telemetry_status(
+        connection, capture_id=capture["capture_id"]
+    ) if capture is not None else {"available": False, "archive": False}
     response: dict[str, Any] = {
         "provider_id": provider_id,
         "model_id": model_id,
         "scrape_id": scrape_id,
         "captured": False,
         "reason": None,
+        "telemetry": "available" if telemetry_status["available"] else "pending" if telemetry_tables else "no_tables",
+        "backfill_eligible": telemetry_status["archive"] and not telemetry_status["available"],
         "capture": None,
         "first_capture_date": first_date.isoformat() if first_date is not None else None,
         "list_path": None,
@@ -205,6 +211,16 @@ def _endpoint_projection(
         if entry["model_id"] != model_id
     ]
     response["endpoints"] = _plain_asdict(endpoint_price_table(listing, label_profile))
+    samples = {
+        row["endpoint_key"]: row
+        for row in queries.capture_endpoint_rows(connection, capture_id=capture_id, list_path=list_path)
+    }
+    for row in response["endpoints"]["rows"]:
+        sample = samples.get(row["endpoint_key"], {})
+        row["uptime"] = {
+            window: sample.get(f"uptime_{window}") if telemetry_status["available"] else None
+            for window in ("1d", "30m", "5m")
+        }
     if evaluation is not None and evaluation.divergence is not None:
         target_path = evaluation.endpoint_match.list_path
         target_list = next((item for item in lists if item.list_path == target_path), None)
