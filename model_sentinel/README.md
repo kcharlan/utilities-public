@@ -503,15 +503,22 @@ browser, and `Ctrl-C` stops the server.
   once with their mapped model dossier links and aliases. Rank by exact price,
   sampled uptime, context length, or max output; equal values share a rank.
   Missing values remain visible without a best marker. Expand additional
-  endpoints to inspect precision, capabilities, tiers, and raw prices. Roster
-  counts describe observed coverage, and incomplete history captures break
-  uptime trends. On narrow screens the roster collapses above the scrolling
-  matrix. Snapshot, host selection, ranking, and row match survive reloads.
+  endpoints to inspect precision, capabilities, tiers, and raw prices. **Add
+  host** opens a searchable checkbox list ordered by lists served; remove a
+  compared host with its pill. Picker counts describe observed coverage, and
+  incomplete history captures break uptime trends. **Host capture** selects an
+  exact saved capture, newest first. Capture, host selection, ranking, and row
+  match survive reloads. The matrix scrolls within its container; toolbar menus
+  become bottom sheets on narrow screens.
 
-  The question's phrases open keyboard-accessible condition editors for host
+  The toolbar opens keyboard-accessible condition menus for host
   exclusions, normal status (code 0), precision, minimum uptime, context and
   output capacity, supported parameters/native tools and implicit caching,
-  service tiers, exact price limits, and model-list search. Conditions combine
+  service tiers and exact price limits. Opening a menu leaves conditions
+  unchanged. Checkbox lists support local substring filtering with highlighted
+  matches; their counts include endpoints passing all other conditions. The
+  inline model-list search suggests capture list names and mapped model IDs.
+  Conditions combine
   with AND; each removal count measures that condition alone across the capture.
   Precision's 16-bit and 8-bit shortcuts preserve unknown/unrecognized chips.
   An empty active precision or tier selection matches nothing; remove its
@@ -525,12 +532,19 @@ browser, and `Ctrl-C` stops the server.
   failing condition, without awarding them ranks. With no selection, any host
   can admit a list. Missing uptime can be included explicitly, and the uptime
   condition pauses for snapshots without stored telemetry; see [Endpoint
-  capture](#endpoint-capture) for the saved telemetry facts. **Reset** removes
-  conditions and restores default ranking/row settings while keeping provider,
-  selected hosts, and capture. Conditions and empty chip selections survive
+  capture](#endpoint-capture) for the saved telemetry facts. A paused uptime
+  condition keeps its chip and can be cleared, with its other controls disabled.
+  **Clear all** removes conditions while keeping ranking, row rule, Show
+  excluded, provider, selected hosts, and capture. Configured chips remove
+  individual conditions. Conditions and empty chip selections survive
   copied URLs/reloads. Numeric typing replaces the current history entry;
   deliberate selections retain Back/Forward navigation. Editors close with
-  `Esc` and return focus to their phrase.
+  `Esc` and return focus to their trigger. Tab stays within an open menu;
+  clicking another trigger switches directly. Arrow keys navigate checkbox
+  options, and Space or Enter selects them. Search suggestions keep focus in
+  the input: use arrows then Enter, or select with a pointer. Host history owns
+  the date range and range presets; these controls and Detail are omitted from
+  the global bar on Hosts.
 
 Every model name opens a dossier containing identity and presence evidence,
 current facts, field-history sparklines, and the complete stored changelog.

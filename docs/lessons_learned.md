@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-22: Keep independent history visible when result filters exclude every row
+
+Model Sentinel's one-host history was nested inside its qualifying profile
+results, so an empty condition result also hid the host's history and its date
+controls. Render an independently keyed history resource from the selected host,
+outside the filtered-results branch. Regress both its ordinary view and the
+same host with no qualifying rows; result admission must not control access to
+unfiltered history.
+
+When a capture selector adds an explicit unavailable capture to an API's ordered
+options, retain the timestamp ordering and use IDs only to break ties. Import
+identity need not follow observation time; test with those orders deliberately
+different.
+
 ## 2026-10-22: Give debounced condition editors an explicit commit lifecycle
 
 Model Sentinel's price editor captured an old column in its timer. Blurring
