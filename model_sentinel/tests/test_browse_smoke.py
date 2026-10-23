@@ -2557,6 +2557,26 @@ def test_hosts_drawer_hidden_price_sort_survives_lists_and_absent_capture(hosts_
 
 
 @pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_hosts_group_heading_hover_is_inert_but_data_rows_highlight(hosts_page, hosts_server, theme):
+    _, facts = hosts_server
+    hosts_page.emulate_media(color_scheme=theme)
+    goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))
+    table = hosts_page.get_by_role("table", name="Host comparison")
+    heading = table.locator('th[scope="rowgroup"]').first
+    cell = table.locator('tr[data-list-path] th[scope="row"]').first
+    hosts_page.mouse.move(0, 0)
+    heading_background = heading.evaluate("n => getComputedStyle(n).backgroundColor")
+    cell_background = cell.evaluate("n => getComputedStyle(n).backgroundColor")
+    heading.hover()
+    assert heading.evaluate("n => getComputedStyle(n).backgroundColor") == heading_background
+    assert heading.evaluate("n => getComputedStyle(n.parentElement).cursor") == "default"
+    cell.hover()
+    assert cell.evaluate("n => getComputedStyle(n).backgroundColor") != cell_background
+    assert cell.evaluate("n => getComputedStyle(n.parentElement).cursor") == "pointer"
+
+
+@pytest.mark.parametrize("hosts_server", ["many_lists"], indirect=True)
 def test_hosts_sort_grouping_page_headings_bands_and_hidden_primary(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hsort="a:hosts,d:model"))

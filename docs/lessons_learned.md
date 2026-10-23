@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-10-23: Scope table hover feedback to actionable data rows
+
+Adding inert group headings to a tbody also subjects them to broad row-hover
+rules. A later heading background rule can still lose on specificity. Restrict
+interactive hover selectors to the existing model-row identity attribute,
+and regress both heading background stability and preserved data-row feedback
+with real pointer hover in light and dark themes.
+
 ## 2026-10-23: Keep exact sort-group equality and ratio headings together
 
 Hosts grouping must use the same missing-value and exact rational comparator
