@@ -18,7 +18,7 @@ from model_sentinel.endpoints import (
     endpoint_origin,
     planned_endpoint_paths,
 )
-from model_sentinel.models import EndpointFetchResult, EndpointPathResult, NormalizedModel
+from model_sentinel.models import EndpointFetchResult, EndpointPathResult, NormalizedModel, FieldChange, ModelDelta
 from model_sentinel.normalize import normalize_models
 from model_sentinel.provider_profiles import profiles_for, resolve_profile
 from model_sentinel.reporting import (
@@ -175,6 +175,36 @@ def browse_settings() -> SimpleNamespace:
         report_squelch_fields=DEFAULT_REPORT_SQUELCH_FIELDS,
         report_unclassified_limit=20,
     )
+
+
+def add_parameter_change_records(path: Path, facts: FixtureFacts) -> dict[str, dict]:
+    """Add deliberately synthetic recorded evidence, including human no-ops."""
+    endpoint = facts.endpoint
+    assert endpoint is not None
+    cases = {
+        "growing": (["synthetic-unchanged"], ["synthetic-unchanged", "synthetic-added"]),
+        "replacement": (["synthetic-removed"], ["synthetic-added"]),
+        "reordered": (["synthetic-first", "synthetic-second"], ["synthetic-second", "synthetic-first"]),
+        "duplicates": (["synthetic-first"], ["synthetic-first", "synthetic-first"]),
+    }
+    store = Store(path)
+    store.record_field_changes(provider_id=endpoint.provider_id,
+        from_scrape_id=endpoint.first_scrape, to_scrape_id=endpoint.third_scrape,
+        deltas=(ModelDelta("changed", endpoint.listed_model, "Synthetic parameter evidence", tuple(
+            FieldChange("supported_parameters", old, new) for old, new in cases.values()
+        )),), detected_at="2026-09-03T12:31:00+00:00")
+    with sqlite3.connect(path) as connection:
+        catalog_ids = connection.execute("SELECT change_id FROM field_changes WHERE provider_id=? AND field_name='supported_parameters' ORDER BY change_id", (endpoint.provider_id,)).fetchall()
+        result = {}
+        for (name, (old, new)), (catalog_id,) in zip(cases.items(), catalog_ids, strict=True):
+            cursor = connection.execute("""INSERT INTO endpoint_changes
+                (provider_id, from_capture_id, to_capture_id, from_list_path, list_path,
+                 endpoint_key, change_kind, field_name, old_value_json, new_value_json, detected_at)
+                VALUES (?, ?, ?, ?, ?, 'fake-host-1#0', 'field_changed', 'supported_parameters', ?, ?, ?)""",
+                (endpoint.provider_id, endpoint.first_capture, endpoint.third_capture, endpoint.listed_path, endpoint.listed_path,
+                 json.dumps(old), json.dumps(new), "2026-09-03T12:31:00+00:00"))
+            result[name] = {"old": old, "new": new, "change_id": catalog_id, "endpoint_change_id": cursor.lastrowid}
+    return result
 
 
 def browse_context(db) -> api.ApiContext:

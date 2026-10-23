@@ -289,6 +289,7 @@ class ProviderProfile:
     # Exact endpoint-state paths whose label must differ from the catalog
     # label of the same path (see `_OPENROUTER_ENDPOINT_FIELD_PATH_LABELS`).
     endpoint_field_path_labels: Mapping[str, str] = field(default_factory=dict)
+    parameter_membership_fields: tuple[str, ...] = ("supported_parameters", "parameters")
 
     def __post_init__(self) -> None:
         for name in (
@@ -356,6 +357,10 @@ class ProviderProfile:
         for window, name in self.endpoint_uptime_fields.items():
             if window not in ("5m", "30m", "1d") or not isinstance(name, str) or name not in self.endpoint_telemetry_fields:
                 raise ValueError("endpoint uptime fields must map 5m, 30m or 1d to telemetry fields")
+
+    def is_parameter_membership_field(self, field_path: str) -> bool:
+        """Recognize configured exact paths or configured bare dotted leaves."""
+        return field_path in self.parameter_membership_fields or field_path.rsplit(".", 1)[-1] in self.parameter_membership_fields
 
     @property
     def pricing_override_selector_names(self) -> tuple[str, ...]:

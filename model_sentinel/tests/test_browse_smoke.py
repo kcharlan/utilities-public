@@ -31,6 +31,7 @@ from tests.browse_fixtures import (
     build_fixture_db,
     build_hosts_fixture_db,
     mark_failed_list_unsent,
+    add_parameter_change_records,
 )
 
 
@@ -47,6 +48,82 @@ def _serve(database_path: Path, facts: FixtureFacts):
         server.server_close()
         thread.join(timeout=5)
         db.close_all()
+
+
+@pytest.fixture(scope="module")
+def parameter_server(tmp_path_factory):
+    from model_sentinel.models import FieldChange, ModelDelta
+    from model_sentinel.storage import Store
+    path = tmp_path_factory.mktemp("parameter-browser") / "fixture.db"
+    facts = build_fixture_db(path, with_endpoints=True)
+    evidence = add_parameter_change_records(path, facts)
+    endpoint = facts.endpoint
+    Store(path).record_field_changes(provider_id=endpoint.provider_id, from_scrape_id=endpoint.first_scrape, to_scrape_id=endpoint.third_scrape,
+        deltas=(ModelDelta("changed", endpoint.listed_model, "Synthetic parameter evidence", (
+            FieldChange("architecture.tier_profiles", ["synthetic-first", "synthetic-second"], ["synthetic-second", "synthetic-first"]),
+        )),), detected_at="2026-09-03T12:31:00+00:00")
+    with _serve(path, facts) as served:
+        yield served, evidence
+
+
+def test_parameter_change_browser_surfaces_show_members(browser, parameter_server):
+    served, evidence = parameter_server
+    _, facts = served
+    endpoint = facts.endpoint
+    origin = f"http://127.0.0.1:{served[0].server_port}"
+    with browser.new_context(viewport={"width": 1280, "height": 900}) as context:
+        with _guarded_page(context, origin) as page:
+            goto(page, served, f"#view=activity&providers={endpoint.provider_id}&from=2026-09-03&to=2026-09-03&detail=all")
+            rows = page.locator(".feed-entry table.changes tbody tr").filter(has_text="Supported parameters")
+            expect(rows).to_have_count(2)
+            expect(rows.first.locator("td.transition")).to_contain_text("Added: synthetic-added")
+            expect(rows.first.locator("td.transition")).not_to_contain_text("synthetic-unchanged")
+            generic = page.locator(".feed-entry table.changes tbody tr").filter(has_text="Tier profiles")
+            expect(generic.locator("td.transition")).to_contain_text("contents changed")
+            replacement = rows.filter(has_text="Removed: synthetic-removed")
+            expect(replacement).to_have_count(1)
+            replacement.click()
+            drawer = page.get_by_role("dialog", name="Raw change evidence")
+            expect(drawer.locator(".drawer-transition")).to_contain_text("Added: synthetic-added")
+            expect(drawer.locator(".drawer-transition")).to_contain_text("Removed: synthetic-removed")
+            expect(drawer.locator("header p")).to_have_text(f"source record / {evidence['replacement']['change_id']}")
+            page.keyboard.press("Escape")
+            section = open_endpoint_dossier(page, served, endpoint.listed_model)
+            history = section.locator(".endpoint-history")
+            expect(history.locator("tbody tr")).to_have_count(5)
+            expect(history).to_contain_text("Added: synthetic-added")
+            expect(history).to_contain_text("Removed: synthetic-removed")
+            expect(history.locator(".endpoint-note")).to_contain_text("5 displayed")
+            expect(history.locator(".endpoint-note")).to_contain_text("7 loaded recorded")
+            for name in ("reordered", "duplicates"):
+                expect(history.locator(f"[data-endpoint-change-id='{evidence[name]['endpoint_change_id']}']")).to_have_count(0)
+            goto(page, served, f"#view=hosts&providers={endpoint.provider_id}&hasof={endpoint.third_scrape}&hosts={quote('Synthetic Host fake-host-1')}")
+            host_history = page.get_by_role("region", name="Host history")
+            expect(host_history).to_contain_text("Added: synthetic-added")
+            expect(host_history).to_contain_text("Removed: synthetic-removed")
+            for surface in ("dossier", "hosts"):
+                route_pattern = "**/api/endpoints?*" if surface == "dossier" else "**/api/host_history?*"
+                api_path = f"/api/endpoints?provider={endpoint.provider_id}&model={quote(endpoint.listed_model)}" if surface == "dossier" else f"/api/host_history?provider={endpoint.provider_id}&host={quote('Synthetic Host fake-host-1')}"
+                payload = page.request.get(origin + api_path).json()
+                by_id = {row["endpoint_change_id"]: row for row in payload["changes"]}
+                for names, truncated in ((["reordered"], False), (["duplicates"], False), (["growing", "duplicates"], False), (["reordered", "duplicates"], False), (["reordered", "duplicates"], True)):
+                    controlled = {**payload, "changes": [by_id[evidence[name]["endpoint_change_id"]] for name in names], "truncated": truncated, "limit": len(names)}
+                    page.route(route_pattern, lambda route: route.fulfill(json=controlled))
+                    if surface == "dossier":
+                        section = open_endpoint_dossier(page, served, endpoint.listed_model)
+                        page.reload()
+                        history = section.locator(".endpoint-history")
+                    else:
+                        goto(page, served, f"#view=hosts&providers={endpoint.provider_id}&hasof={endpoint.third_scrape}&hosts={quote('Synthetic Host fake-host-1')}")
+                        page.reload()
+                        history = page.get_by_role("region", name="Host history").locator(".endpoint-history")
+                    shown = int("growing" in names)
+                    expect(history.locator("tbody tr")).to_have_count(shown)
+                    expect(history).to_contain_text(f"{shown} displayed endpoint changes from {len(names)} loaded recorded rows")
+                    expect(history).not_to_contain_text("No endpoint changes are recorded")
+                    if truncated:
+                        expect(history).to_contain_text("older changes are not shown")
+                    page.unroute(route_pattern)
 
 
 @pytest.fixture(scope="module")
@@ -1398,8 +1475,9 @@ def test_activity_explains_equal_length_list_changes(page: Page, smoke_server) -
     )
 
     entry = page.locator("article").filter(has_text=model_id)
-    expect(entry.get_by_text("contents changed", exact=True)).to_be_visible()
-    expect(entry.get_by_text("1 → 1", exact=True)).to_have_count(0)
+    expect(entry.locator("td.transition")).to_contain_text("Added: response_format")
+    expect(entry.locator("td.transition")).to_contain_text("Removed: tools")
+    expect(entry.locator("td.transition")).to_contain_text("(1 → 1)")
 
     bulk_day = facts.scrape_dates[-1].isoformat()
     goto(

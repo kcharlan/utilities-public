@@ -18,6 +18,37 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 
 from tests.endpoint_report_fixtures import _ep_html, _rich_html_result
 
+
+def test_parameter_diff_price_placement_is_preserved(page, tmp_path):
+    from model_sentinel import reporting
+    from model_sentinel.models import FieldChange, ModelDelta
+    from tests.test_reporting import _scan_result
+    from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
+    parameter = FieldChange("supported_parameters", ["synthetic-unchanged", "synthetic-removed"], ["synthetic-unchanged", "synthetic-added"])
+    deltas = (
+        ModelDelta("changed", "synthetic/capability-only", "Synthetic Capability", (parameter,)),
+        ModelDelta("changed", "synthetic/mixed-price", "Synthetic Mixed", (parameter, FieldChange("pricing.prompt", "0.000001", "0.000002"))),
+    )
+    result = _scan_result(deltas)
+    cores = {}
+    for delta in deltas:
+        event = PricingComparisonEvent(LiveComparisonIdentity("openrouter", delta.provider_model_id, 1, 2), "openrouter", delta.provider_model_id, delta.display_name, "2030-01-02T00:00:00+00:00", None, None, delta.field_changes, None, None)
+        cores[event.identity] = reporting.build_model_event_semantic_core(event, result.profile)
+    for mode in ("default", "all"):
+        path = tmp_path / f"parameter-{mode}.html"
+        path.write_text(reporting.render_scan_report(generated_at="2030-01-02T00:00:00+00:00", command="scan", format_name="html", provider_results=[result], semantic_cores=cores, detail_policy=reporting.make_report_detail_policy(mode=mode)), encoding="utf-8")
+        _open(page, path)
+        mixed = page.locator(".model-card").filter(has=page.locator(".model-card-header code", has_text="synthetic/mixed-price"))
+        capability = page.locator(".model-card").filter(has=page.locator(".model-card-header code", has_text="synthetic/capability-only"))
+        assert not mixed.evaluate("element => !!element.closest('details')")
+        assert capability.evaluate("element => !!element.closest('details')")
+        expect(mixed).to_contain_text(re.compile(r"\+\s*synthetic-added"))
+        expect(mixed).to_contain_text(re.compile(r"−\s*synthetic-removed"))
+        expect(mixed).not_to_contain_text("synthetic-unchanged")
+        capability.evaluate("element => element.closest('details').open = true")
+        expect(capability).to_be_visible()
+        expect(capability).to_contain_text(re.compile(r"\+\s*synthetic-added"))
+
 CONCISE_NAME = "scan_20300102_030406.html"
 FULL_NAME = "scan_20300102_030406_full.html"
 NARROW = {"width": 375, "height": 812}

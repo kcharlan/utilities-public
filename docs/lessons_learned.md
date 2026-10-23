@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-23: Normalize frozen JSON at the presentation boundary
+
+Model Sentinel freezes comparison-event arrays into tuples and mappings into
+read-only proxies. A renderer recognizing only mutable lists or dictionaries
+therefore loses member deltas and structured leaf expansion after semantic
+projection. Detach mappings and list/tuple containers recursively before
+presentation, preserving the immutable event and raw source records. Test the
+normalize/diff-to-event, stored-event and direct compatibility paths separately.
+Provider-recognized parameter-name collections use validated unique string
+membership; malformed or unknown operands stay neutral and cannot bulk-group
+as capabilities. Every browser transition consumer must show the same member
+evidence. Filtering human no-ops must retain recorded counts, identities and
+truncation evidence rather than implying complete history from a loaded page.
+
 ## 2026-10-23: Check pointer layering and empty-menu focus with nonmodal panels
 
 A nonmodal drawer makes background triggers usable, so their portaled menus

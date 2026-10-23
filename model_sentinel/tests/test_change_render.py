@@ -21,6 +21,7 @@ import math
 import re
 from fractions import Fraction
 from unittest.mock import patch
+from types import MappingProxyType
 
 import pytest
 
@@ -2219,6 +2220,57 @@ def test_list_members_are_json_encoded_not_python_repr():
     assert result.list_removed == ('{"name": "alpha", "weight": 1}',)
 
 
+@pytest.mark.parametrize("old,new,kind,added,removed,counts", [
+    (["tools"], ["tools", "seed"], "list", ("seed",), (), ("1", "2")),
+    (("tools", "tools"), ["seed", "tools", "alpha"], "list", ("alpha", "seed"), (), ("1", "3")),
+    (["tools", "seed"], ("tools",), "list", (), ("seed",), ("2", "1")),
+    (("tools",), ("seed",), "list", ("seed",), ("tools",), ("1", "1")),
+    ([], ("seed",), "list", ("seed",), (), ("0", "1")),
+    (("seed",), [], "list", (), ("seed",), ("1", "0")),
+    (["tools", "seed"], ("seed", "tools"), "noop", (), (), None),
+    (("tools", "tools"), ["tools"], "noop", (), (), None),
+    (None, ["tools"], "scalar", (), (), None),
+    (["tools"], None, "scalar", (), (), None),
+    (["tools", 7], ["seed"], "scalar", (), (), None),
+    ([{"name": "tools"}], ["seed"], "scalar", (), (), None),
+    ("tools", ["seed"], "scalar", (), (), None),
+    (False, True, "scalar", (), (), None),
+])
+def test_parameter_membership_shapes_and_noops(old, new, kind, added, removed, counts):
+    change = FieldChange("endpoint.supported_parameters", old, new)
+    rendered = classify_change_with_profile(change, profile=OPENROUTER_PROFILE)
+    assert rendered.kind == kind
+    assert (rendered.list_added, rendered.list_removed) == (added, removed)
+    if counts:
+        assert (rendered.old_display, rendered.new_display) == counts
+    if kind == "scalar":
+        assert rendered.semantic == "neutral"
+        assert rendered.direction == "none"
+    assert change.old_value is old and change.new_value is new
+    if kind == "list":
+        assert rendered.old_raw == str(list(old))
+        assert rendered.new_raw == str(list(new))
+
+
+def test_frozen_nested_unknown_parameter_evidence_uses_json():
+    old = (MappingProxyType({"name": "tools", "options": ("x",)}),)
+    result = classify_change_with_profile(FieldChange("parameters", old, ["seed"]), profile=GENERIC_PROFILE)
+    assert result.kind == "scalar"
+    assert result.old_display == '[{"name": "tools", "options": ["x"]}]'
+    assert result.list_added == result.list_removed == ()
+
+
+def test_parameter_policy_recognizes_only_configured_paths_and_leaves():
+    profile = dataclasses.replace(GENERIC_PROFILE, parameter_membership_fields=("supported_parameters", "parameters", "custom.names"))
+    for path in ("parameters", "endpoint.parameters", "supported_parameters", "endpoint.supported_parameters", "custom.names"):
+        result = classify_change_with_profile(FieldChange(path, ["b", "a"], ["a", "b", "a"]), profile=profile)
+        assert result.kind == "noop", path
+    for path in ("unrelated.names", "outer.custom.names", "parameters_extra", "architecture.tier_profiles"):
+        result = classify_change_with_profile(FieldChange(path, ["b", "a"], ["a", "b", "a"]), profile=profile)
+        assert result.kind == "list", path
+        assert (result.old_display, result.new_display) == ("2", "3")
+
+
 def test_list_member_stringification_matches_the_bulk_grouping_key():
     """The exact defect this unification removed: the bulk grouping key and the
     per-model list branch must spell a structured member identically."""
@@ -2248,11 +2300,11 @@ def test_grouping_key_does_not_route_through_the_noop_branch():
     only when `old_value != new_value` -- but the grouping guarantee is
     unconditional, not conditional on that argument.)
     """
-    field_change = FieldChange("supported_parameters", [1], [True])
+    field_change = FieldChange("architecture.tier_profiles", [1], [True])
     assert field_change.old_value == field_change.new_value
 
     assert classify_change(field_change).kind == "noop"
-    assert _list_change_signature(field_change) == ("supported_parameters", ("True",), ("1",))
+    assert _list_change_signature(field_change) == ("architecture.tier_profiles", ("True",), ("1",))
 
 
 def test_list_diff_members_is_the_one_shared_set_difference():
@@ -2262,11 +2314,11 @@ def test_list_diff_members_is_the_one_shared_set_difference():
         (["a", "a", "b"], ["a", "b", "b"]),
         ([], []),
     ):
-        rendered = classify_change(FieldChange("supported_parameters", old, new))
+        rendered = classify_change(FieldChange("architecture.tier_profiles", old, new))
         expected = _list_diff_members(old, new)
         if rendered.kind == "list":
             assert (rendered.list_added, rendered.list_removed) == expected, (old, new)
-        assert _list_change_signature(FieldChange("supported_parameters", old, new))[1:] == expected
+        assert _list_change_signature(FieldChange("architecture.tier_profiles", old, new))[1:] == expected
 
 
 def test_string_list_members_render_bare():
@@ -2278,7 +2330,7 @@ def test_string_list_members_render_bare():
 
 
 def test_non_string_scalar_list_members_use_str():
-    result = classify_change(FieldChange("supported_parameters", [1, None], [1, True]))
+    result = classify_change(FieldChange("architecture.tier_profiles", [1, None], [1, True]))
     assert result.list_added == ("True",)
     assert result.list_removed == ("None",)
 

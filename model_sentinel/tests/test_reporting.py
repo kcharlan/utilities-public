@@ -51,6 +51,134 @@ from model_sentinel.storage import (
 from model_sentinel.conditional_pricing import StoredComparisonIdentity
 
 
+@pytest.mark.parametrize("old,new", [
+    (["tools", 7], ["seed"]), ([{"name": "tools"}], ["seed"]),
+    (None, [{"name": "tools"}]), ([{"name": "tools"}], None),
+    ("tools", ["seed"]), (["tools"], False),
+])
+def test_invalid_parameter_shapes_cannot_expand_or_bulk_group(old, new):
+    from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
+    change = FieldChange("supported_parameters", old, new)
+    event = PricingComparisonEvent(LiveComparisonIdentity("synthetic", "synthetic/model", 1, 2), "synthetic", "synthetic/model", "Synthetic Model", "2030-01-02T00:00:00+00:00", None, None, (change,), None, None)
+    before = repr(event.field_changes)
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    plans = [reporting._field_display_plan((change,), make_report_detail_policy(mode="all"), OPENROUTER_PROFILE), reporting.project_model_event_semantics(core, make_report_detail_policy(mode="all"), OPENROUTER_PROFILE).display]
+    for plan in plans:
+        assert [item.field_name for item in plan.visible] == ["supported_parameters"]
+        rendered = classify_change_with_profile(plan.visible[0], profile=OPENROUTER_PROFILE)
+        assert rendered.kind == "scalar" and rendered.semantic == "neutral"
+        assert rendered.list_added == rendered.list_removed == ()
+        assert reporting._bulk_change_signature(plan) is None
+        assert "mappingproxy" not in rendered.old_display + rendered.new_display
+    assert repr(event.field_changes) == before
+    assert change.old_value is old and change.new_value is new
+
+
+def test_parameter_bulk_grouping_after_semantic_projection():
+    from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
+    deltas, cores = [], {}
+    for index, old in enumerate((["tools"], ["tools", "alpha"], ["tools", "alpha", "beta"])):
+        model = f"synthetic/member-{index}"
+        change = FieldChange("supported_parameters", old, [*old, "seed"])
+        event = PricingComparisonEvent(LiveComparisonIdentity("openrouter", model, 1, 2), "openrouter", model, "Synthetic Member", "2030-01-02T00:00:00+00:00", None, None, (change,), None, None)
+        core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+        cores[core.identity] = core
+        deltas.append(ModelDelta("changed", model, "Synthetic Member", (change,)))
+    mixed_change = (FieldChange("pricing.prompt", "0.000001", "0.000002"), FieldChange("supported_parameters", ["tools"], ["seed"]))
+    deltas.append(ModelDelta("changed", "synthetic/mixed", "Synthetic Mixed", mixed_change))
+    deltas.append(ModelDelta("changed", "synthetic/noop", "Synthetic Noop", (FieldChange("parameters", ["seed", "tools"], ["tools", "seed", "tools"]),)))
+    reports = _render_all_human_formats(tuple(deltas), semantic_cores=cores)
+    for report in reports.values():
+        assert "seed" in report
+        assert "3 models" in report
+    assert "(1 → 2)" not in reports["text"]
+    tier1, tier2 = _scan_tiers(reports["html"])
+    assert "synthetic/mixed" in tier1 and "synthetic/member-0" in tier2
+    assert "synthetic/noop" not in "".join(_card_rows(reports["html"]))
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_parameter_diff_live_stored_and_format_parity(tmp_path, custom):
+    from model_sentinel.provider_profiles import GENERIC_PROFILE
+    from model_sentinel.normalize import normalize_models
+    from model_sentinel.diffing import compare_models
+    from model_sentinel.storage import Store
+    from tests.browse_fixtures import _save_scrape
+    provider = replace(EXAMPLE_PROVIDER, kind="generic" if custom else "openrouter")
+    profile = replace(GENERIC_PROFILE, parameter_membership_fields=("custom.names",)) if custom else OPENROUTER_PROFILE
+    field = "custom.names" if custom else "supported_parameters"
+    old = {"id": "synthetic/same-name", "name": "Synthetic Shared Name"}
+    new = dict(old)
+    if custom:
+        old["custom"] = {"names": ["synthetic-kept", "synthetic-old"]}
+        new["custom"] = {"names": ["synthetic-kept", "synthetic-new"]}
+    else:
+        old[field] = ["synthetic-kept", "synthetic-old"]
+        new[field] = ["synthetic-kept", "synthetic-new"]
+    old_models = {item.provider_model_id: item for item in normalize_models(provider, [old], profile)}
+    new_models = {item.provider_model_id: item for item in normalize_models(provider, [new], profile)}
+    _, _, deltas = compare_models(baseline_models=old_models, current_models=new_models)
+    live = reporting.build_live_comparison_events(provider_id=provider.provider_id, baseline_scrape_id=1, attempt_scrape_id=2,
+        detected_at="2030-01-02T00:00:00+00:00", source_timestamp=None, target_timestamp=None,
+        changed=deltas, baseline_models=old_models, current_models=new_models)
+    cores = {event.identity: reporting.build_model_event_semantic_core(event, profile) for event in live}
+    store = Store(tmp_path / "parameter-parity.db")
+    store.initialize()
+    store.upsert_provider_configs((provider,), updated_at="2030-01-01T00:00:00+00:00")
+    first, previous = _save_scrape(store, provider, completed_at="2030-01-01T00:00:00+00:00", raw_models=[old], previous_id=None, previous_models=[])
+    second, _ = _save_scrape(store, provider, completed_at="2030-01-02T00:00:00+00:00", raw_models=[new], previous_id=first, previous_models=previous)
+    stored = store.history_comparison_events(provider_id=provider.provider_id, model_id="synthetic/same-name", since=None, until=None)
+    stored = tuple(event for event in stored if event.identity.from_scrape_id is not None)
+    stored_cores = {event.identity: reporting.build_model_event_semantic_core(reporting.pricing_event_from_stored(event), profile) for event in stored}
+    history = (HistoryEvent("2030-01-02T00:00:00+00:00", "field_changed", field, ["synthetic-kept", "synthetic-old"], ["synthetic-kept", "synthetic-new"]),)
+    result = replace(_scan_result(deltas), provider_id=provider.provider_id, profile=profile)
+    other = replace(result, provider_id="synthetic-other-provider", provider_label="Synthetic Other Provider", changed=(
+        ModelDelta("changed", "synthetic/same-name", "Synthetic Shared Name", (FieldChange(field, ["synthetic-other-old"], ["synthetic-other-new"]),)),
+    ))
+    for format_name in ("text", "markdown", "html"):
+        for mode in ("default", "all"):
+            for semantic_cores in (cores, stored_cores):
+                report = render_scan_report(generated_at="2030-01-02T00:00:00+00:00", command="scan", format_name=format_name,
+                    provider_results=[result, other], semantic_cores=semantic_cores, detail_policy=make_report_detail_policy(mode=mode))
+                assert "+synthetic-new" in report and "-synthetic-old" in report
+                assert "+synthetic-other-new" in report and "-synthetic-other-old" in report
+                assert "synthetic-kept" not in report
+                if format_name == "html":
+                    sections = _scan_html_provider_sections(report)
+                    primary = next(section for section in sections if provider.provider_id in section)
+                    secondary = next(section for section in sections if "synthetic-other-provider" in section)
+                    assert "synthetic-new" in primary and "synthetic-other-new" not in primary
+                    assert "synthetic-other-new" in secondary and "synthetic-new" not in secondary
+    for format_name in ("text", "markdown"):
+        for rich in (False, True):
+            report = render_history_report_with_profile(provider_id=provider.provider_id, model_id="synthetic/same-name", format_name=format_name, first_seen=None, last_seen=None,
+                events=history, profile=profile, stored_events=stored if rich else (), semantic_cores=stored_cores if rich else None)
+            assert "+synthetic-new" in report and "-synthetic-old" in report
+            assert "synthetic-kept" not in report
+    rows = ({"change_id": 1, "provider_id": provider.provider_id, "provider_label": provider.label,
+        "provider_model_id": "synthetic/same-name", "display_name": "Synthetic Shared Name", "change_kind": "field_changed", "field_name": field,
+        "old_value": history[0].old_value, "new_value": history[0].new_value, "detected_at": history[0].detected_at,
+        "from_scrape_id": first, "to_scrape_id": second},)
+    for format_name in ("text", "html"):
+        report = render_changes_report_with_profiles(format_name=format_name, provider_id=None, since=None, until=None, changes=rows, provider_profiles={provider.provider_id: profile}, stored_events=stored, semantic_cores=stored_cores)
+        assert "+synthetic-new" in report and "-synthetic-old" in report
+    payload = json.loads(render_history_report_with_profile(provider_id=provider.provider_id, model_id="synthetic/same-name", format_name="json", first_seen=None, last_seen=None, events=history, profile=profile))
+    assert payload["events"][0]["old_value"] == ["synthetic-kept", "synthetic-old"]
+
+
+@pytest.mark.parametrize("format_name", ["text", "markdown"])
+def test_parameter_noop_only_history_retains_recorded_evidence_in_empty_state(format_name):
+    events = (HistoryEvent("2030-01-02T00:00:00+00:00", "field_changed", "supported_parameters", ["synthetic-name"], ["synthetic-name", "synthetic-name"]),)
+    report = render_history_report_with_profile(provider_id="synthetic", model_id="synthetic/model", format_name=format_name,
+        first_seen=None, last_seen=None, events=events, profile=OPENROUTER_PROFILE)
+    assert "No saved change events matched" not in report
+    assert "recorded source events remain available in JSON" in report
+    assert "synthetic-name" not in report
+    payload = json.loads(render_history_report_with_profile(provider_id="synthetic", model_id="synthetic/model", format_name="json",
+        first_seen=None, last_seen=None, events=events, profile=OPENROUTER_PROFILE))
+    assert payload["events"][0]["new_value"] == ["synthetic-name", "synthetic-name"]
+
+
 @pytest.mark.parametrize("format_name", ["json", "text", "markdown"])
 @pytest.mark.parametrize("status,present,error", [
     ("present", True, None),
@@ -4945,12 +5073,12 @@ def test_noop_suppression_cannot_desync_a_bulk_card_from_its_grouping_key() -> N
     """
     equal_but_differently_spelled = tuple(
         ModelDelta("changed", f"synth/model-eq-{suffix}", f"Synth Eq {suffix.upper()}",
-                   (FieldChange("supported_parameters", [1], [True]),))
+                   (FieldChange("architecture.tier_profiles", [1], [True]),))
         for suffix in ("a", "b", "c")
     )
     assert classify_change(equal_but_differently_spelled[0].field_changes[0]).kind == "noop"
     assert _list_change_signature(equal_but_differently_spelled[0].field_changes[0]) == (
-        "supported_parameters",
+        "architecture.tier_profiles",
         ("True",),
         ("1",),
     )

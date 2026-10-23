@@ -26,6 +26,40 @@ from model_sentinel.provider_profiles import (
     ProviderProfile,
 )
 from model_sentinel.storage import StoredChangeRecord, StoredComparisonEvent
+from model_sentinel.change_render import classify_change
+
+
+def test_parameter_diff_survives_frozen_comparison_event() -> None:
+    source = FieldChange("supported_parameters", ["tools"], ["tools", "seed"])
+    event = replace(_event(), field_changes=(source,))
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    projection = reporting.project_model_event_semantics(core, reporting.make_report_detail_policy(), OPENROUTER_PROFILE)
+    frozen = event.field_changes[0]
+    rendered = classify_change(projection.display.visible[0], profile=OPENROUTER_PROFILE)
+    assert rendered == classify_change(source, profile=OPENROUTER_PROFILE)
+    assert rendered.kind == "list"
+    assert rendered.list_added == ("seed",) and rendered.list_removed == ()
+    assert (rendered.old_display, rendered.new_display) == ("1", "2")
+    assert frozen.old_value == ("tools",) and frozen.new_value == ("tools", "seed")
+    assert source.old_value == ["tools"] and source.new_value == ["tools", "seed"]
+    projection.display.visible[0].new_value.append("synthetic-local-only")
+    assert event.field_changes[0].new_value == ("tools", "seed")
+    assert core.event is event and projection.core is core
+
+
+def test_nested_frozen_metadata_expands_without_python_repr() -> None:
+    source = FieldChange("default_parameters", None, {"temperature": 0.7, "supplied": {"range": {"min": 0, "max": 2}, "names": ["synthetic-alpha"]}})
+    event = replace(_event(), field_changes=(source,))
+    core = reporting.build_model_event_semantic_core(event, OPENROUTER_PROFILE)
+    projection = reporting.project_model_event_semantics(core, reporting.make_report_detail_policy(mode="all"), OPENROUTER_PROFILE)
+    assert {change.field_name for change in projection.display.visible} == {
+        "default_parameters.temperature", "default_parameters.supplied.range.min",
+        "default_parameters.supplied.range.max", "default_parameters.supplied.names",
+    }
+    rows = [classify_change(change, profile=OPENROUTER_PROFILE) for change in projection.display.visible]
+    assert next(row for row in rows if row.field_path.endswith("names")).new_display == '["synthetic-alpha"]'
+    assert not any("mappingproxy" in row.new_display for row in rows)
+    assert event.field_changes[0].new_value["supplied"]["names"] == ("synthetic-alpha",)
 
 
 def _event(*, metadata: bool = True) -> PricingComparisonEvent:
@@ -460,6 +494,33 @@ def _stored_event_with_sibling_fields(
         source_rows=(*event.source_rows, *rows),
         field_changes=(*event.field_changes, *siblings),
     )
+
+
+@pytest.mark.parametrize("format_name", ["text", "markdown"])
+@pytest.mark.parametrize("custom", [False, True])
+def test_parameter_history_uses_members_in_semantic_edges(format_name, custom):
+    field = "custom.names" if custom else "supported_parameters"
+    profile = replace(OPENROUTER_PROFILE, parameter_membership_fields=(field,))
+    event = _stored_event_with_sibling_fields(
+        _stored_schedule_event(from_scrape=1, to_scrape=2, old_rules=[], new_rules=[{"utc_start": 100, "utc_end": 200, "prompt": "0.000003"}], detected_at="2026-08-28T12:00:00+00:00"),
+        FieldChange(field, ["synthetic-unchanged", "synthetic-removed"], ["synthetic-unchanged", "synthetic-added"]),
+        FieldChange(field, ["synthetic-noop"], ["synthetic-noop", "synthetic-noop"]),
+        FieldChange(field, None, ["synthetic-unknown"]),
+        FieldChange(field, [7], ["synthetic-malformed"]),
+    )
+    core = reporting.build_model_event_semantic_core(reporting.pricing_event_from_stored(event), profile)
+    assert core.interpretation is not None
+    before = repr(event)
+    history = tuple(HistoryEvent(row.detected_at, row.change_kind, row.field_name, row.old_value, row.new_value) for row in event.source_rows)
+    for stored in (False, True):
+        report = reporting.render_history_report(provider_id="openrouter", model_id="synthetic/model", format_name=format_name,
+            first_seen=None, last_seen=None, events=history, profile=profile,
+            stored_events=(event,) if stored else (), semantic_cores={core.identity: core} if stored else None)
+        assert "+synthetic-added" in report and "-synthetic-removed" in report
+        assert "synthetic-unchanged" not in report and "synthetic-noop" not in report
+        assert '["synthetic-unknown"]' in report and '["synthetic-malformed"]' in report
+        assert "+synthetic-unknown" not in report and "+synthetic-malformed" not in report
+    assert repr(event) == before
 
 
 def _legacy_history_row(event: HistoryEvent, format_name: str, mode: str) -> str:

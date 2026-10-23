@@ -775,13 +775,18 @@ Scan reports use smart, field-type-aware formatting:
   - **In HTML only,** the normalized figure *leads*: it is the value in the cell, the unit moves to its own column, and the raw provider value is available on demand — in the cell's tooltip, and inline via the page's "Show raw values" toggle (see below), which is on by default in the full-detail companion. The HTML Change Summary follows the same order.
   - **Text and markdown still lead with the raw value**, in the form `2e-06 → 3.5e-06 ($2.00 → $3.50 / 1M, ↑ 75.0%)`, and have no toggle. They are the audit formats; the literal value a provider published is what they exist to record.
 - **New structured fields** expand nested objects and object lists into readable leaf-level changes in human reports
-- **List fields** (e.g., supported parameters) show added/removed items instead of dumping full arrays
+- **Parameter-name lists** recognized by the provider profile show sorted added/removed names and unique size transitions in scan reports, history, changes, Activity, endpoint histories, and raw-evidence summaries. Ordering and duplicate-only differences produce no primary human row; stored records and JSON retain the original evidence. Missing, null, and malformed operands remain neutral, while a valid empty list is a known set. Name lists establish membership only; supplied parameter-attribute objects retain their named leaf changes.
+- **Other list fields** retain their existing member comparison; parameter-set semantics do not apply to arbitrary arrays or ordered pricing policies.
 - **Context and limit fields** use human-readable number formatting
 - **All field changes** are grouped by category: Pricing, Context & Limits, Parameters, Capabilities, Other
 - **A column too narrow for a real value prints a bounded sentinel, never a false zero.** A movement smaller than the price column can show reads `<$0.0001` or `+<$0.0001`, and a percentage below the row's precision reads `↑ <0.1%`. The consequence is deliberate: a displayed row need not visibly add up (`$2.00 → $2.00 +<$0.0001`), because each cell states something true even where the arithmetic is not legible at the printed width. The alternative — rounding to `$0.0000` and `0.0%` — states something false.
 - **Repetitive list changes** affecting at least three models are consolidated into one bulk-change entry in default reports. List-size differences are ignored when the actual additions/removals match.
 - **Scalar and mixed changes remain model-specific**, so pricing, limits, cutoffs, and models with any additional visible change retain individual entries.
 - Bulk entries aggregate their squelched changes and expose expandable model lists in HTML. The HTML Change Summary uses the same bulk entries plus one provider-level squelched rollup.
+
+Endpoint histories distinguish displayed changes from loaded recorded rows when
+parameter no-ops are hidden. A truncated page still states that older records
+are not shown, including when every loaded record is a human no-op.
 
 ### Alias Check and Provider Endpoints
 
