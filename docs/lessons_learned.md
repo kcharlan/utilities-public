@@ -1,5 +1,41 @@
 # Lessons learned
 
+## 2026-10-23: Apply provider policy throughout structured expansion
+
+Checking parameter membership only at the original changed path lets an
+introduced parent bypass malformed-operand validation. Pass the active profile
+through recursive flattening and stop at every recognized membership path,
+including exact custom nested paths. Endpoint capability admission must also
+consider expanded descendants when the original parent is not admitted; an
+absent parent and an empty parent must give the same capability selection and
+summary. Preserve unrelated full-detail parent metadata and original source
+records while selecting eligible leaves.
+
+## 2026-10-23: Count endpoint capabilities before selecting report detail
+
+Concise endpoint reports previously selected only price, presence and
+conditional rows, hiding meaningful parameter and capability changes. Classify
+capability leaves using the provider profile before detail filtering and count
+changed lists before applying the cap. Preserve each original change record
+when expanding supplied objects, and track whether any full-detail content
+exists so parameter set no-ops do not create empty headings or inflate the
+detail-only remainder. Price, status and context routing still take priority
+over custom capability patterns.
+
+## 2026-10-23: Normalize frozen JSON at the presentation boundary
+
+Model Sentinel freezes comparison-event arrays into tuples and mappings into
+read-only proxies. A renderer recognizing only mutable lists or dictionaries
+therefore loses member deltas and structured leaf expansion after semantic
+projection. Detach mappings and list/tuple containers recursively before
+presentation, preserving the immutable event and raw source records. Test the
+normalize/diff-to-event, stored-event and direct compatibility paths separately.
+Provider-recognized parameter-name collections use validated unique string
+membership; malformed or unknown operands stay neutral and cannot bulk-group
+as capabilities. Every browser transition consumer must show the same member
+evidence. Filtering human no-ops must retain recorded counts, identities and
+truncation evidence rather than implying complete history from a loaded page.
+
 ## 2026-10-23: Check pointer layering and empty-menu focus with nonmodal panels
 
 A nonmodal drawer makes background triggers usable, so their portaled menus

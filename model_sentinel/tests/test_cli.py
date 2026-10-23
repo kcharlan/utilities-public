@@ -3027,6 +3027,31 @@ def test_endpoint_output_and_artifact_policy_endpoint_only_change_reaches_stdout
     assert any(line.startswith("    fake-host#0: Input: 0.000001 → 0.000002") for line in section)
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_endpoint_capability_only_scan_keeps_artifact_policy(tmp_path, monkeypatch, capsys, explicit):
+    home = _endpoint_home(tmp_path / "synthetic-capability", monkeypatch)
+
+    def response(members):
+        def respond(request, timeout):
+            path = urlsplit(request.full_url).path
+            model = path[len(ENDPOINT_PREFIX):-len("/endpoints")]
+            return io.BytesIO(json.dumps({"data": {"id": model, "endpoints": [{"tag": "synthetic-host", "supported_parameters": members}]}}).encode())
+        return respond
+
+    _install_endpoint_transport(monkeypatch, response(["synthetic-old"]))
+    assert _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG).exit_code == 0
+    files = _report_files(home)
+    _install_endpoint_transport(monkeypatch, response(["synthetic-new"]))
+    output = tmp_path / "synthetic-explicit.md"
+    argv = ("scan", "--save", "--format", "markdown", "--output", str(output)) if explicit else ("scan", "--save")
+    run = _run_endpoint_scan(monkeypatch, capsys, FIRST_ENDPOINT_CATALOG, argv=argv)
+    assert run.exit_code == 0 and run.results[0].change_count == 0
+    assert run.notifications == [] and _report_files(home) == files
+    text = output.read_text() if explicit else run.stdout
+    assert "1 list with capability changes" in text
+    assert "synthetic-new" in text and "synthetic-old" in text
+
+
 def test_endpoint_output_and_artifact_policy_explicit_output_contains_endpoint_only_changes(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

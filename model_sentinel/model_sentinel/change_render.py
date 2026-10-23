@@ -53,7 +53,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any, Literal
 
-from .models import FieldChange
+from .models import FieldChange, mutable_json_value
 from .provider_profiles import ProviderProfile, ResolvedPriceRule
 
 
@@ -992,6 +992,13 @@ def _list_diff_members(old_value: Any, new_value: Any) -> tuple[tuple[str, ...],
     return tuple(sorted(new_set - old_set)), tuple(sorted(old_set - new_set))
 
 
+def _parameter_members(value: Any) -> tuple[str, ...] | None:
+    """Return unique parameter names, preserving unknown or malformed operands."""
+    if not isinstance(value, (list, tuple)) or any(not isinstance(item, str) for item in value):
+        return None
+    return tuple(sorted(set(value)))
+
+
 def _is_integer_like(value: Any) -> bool:
     """True if value is a non-bool 0/1 int or float (bool is handled separately)."""
     if isinstance(value, bool):
@@ -1415,10 +1422,16 @@ def classify_change(
     """
     field_path = field_change.field_name
     label, qualifier = resolve_field_label(field_path, profile)
-    old_value, new_value = field_change.old_value, field_change.new_value
-
+    old_value = mutable_json_value(field_change.old_value)
+    new_value = mutable_json_value(field_change.new_value)
+    field_change = FieldChange(field_path, old_value, new_value)
+    parameter_field = profile.is_parameter_membership_field(field_path)
+    old_members = _parameter_members(old_value) if parameter_field else None
+    new_members = _parameter_members(new_value) if parameter_field else None
     # 1. noop
-    if (old_value is None and new_value is None) or old_value == new_value:
+    if old_value == new_value or (
+        parameter_field and old_members is not None and old_members == new_members
+    ):
         return RenderedChange(
             kind="noop",
             field_path=field_path,
@@ -1441,7 +1454,9 @@ def classify_change(
         )
 
     # 2. list
-    if isinstance(old_value, list) and isinstance(new_value, list):
+    if isinstance(old_value, list) and isinstance(new_value, list) and (
+        not parameter_field or (old_members is not None and new_members is not None)
+    ):
         # `_list_diff_members` (JSON member text), NOT a local set difference
         # over `str(x)`: the same helper that produces the bulk grouping key,
         # so per-model and bulk renderings of a structured list member are
@@ -1455,8 +1470,8 @@ def classify_change(
             # Raw int, NOT _fmt_int: production's _render_list_diff_text
             # interpolates len(...) directly (no thousands separator), so
             # _fmt_int here would silently diverge at >=1000 items (Finding 5).
-            old_display=str(len(old_value)),
-            new_display=str(len(new_value)),
+            old_display=str(len(old_members) if parameter_field else len(old_value)),
+            new_display=str(len(new_members) if parameter_field else len(new_value)),
             old_raw=_raw_value(old_value),
             new_raw=_raw_value(new_value),
             # `None`, not "items". Every renderer that prints `unit` prints it
@@ -1482,7 +1497,7 @@ def classify_change(
     # subclass, so every guard below accepts a real bool pair and would
     # classify a flag as a magnitude; that is the defect this ordering fixes.
     # See the module docstring.
-    if _is_boolean_change(field_change, profile):
+    if not parameter_field and _is_boolean_change(field_change, profile):
         return _classify_boolean(field_change, profile)
 
     old_numeric = _numeric_value(old_value)
@@ -1492,7 +1507,7 @@ def classify_change(
     # _render_smart_change_text (permits one-sided None, rejects non-numeric
     # strings).
     is_price_amount_field = (
-        profile.is_price_amount_field(field_path)
+        not parameter_field and profile.is_price_amount_field(field_path)
         and not profile.is_pricing_override_selector_path(field_path)
     )
     if is_price_amount_field:
@@ -1547,7 +1562,7 @@ def classify_change(
     # test_change_render.py, which pins the delta/pct fields a renderer needs
     # to reproduce numeric's exact output from a `count` RenderedChange.
     if (
-        not is_price_amount_field
+        not parameter_field and not is_price_amount_field
         and profile.is_count_field(field_path)
         and (old_numeric is not None or new_numeric is not None)
         and (old_value is None or old_numeric is not None)
@@ -1558,7 +1573,7 @@ def classify_change(
     # 6. numeric -- both numeric, no category match. Real bool pairs and
     # known-boolean integer-coded pairs no longer reach here: step 3 claims
     # them first.
-    if not is_price_amount_field and _both_numeric(old_value, new_value):
+    if not parameter_field and not is_price_amount_field and _both_numeric(old_value, new_value):
         return _classify_numeric(field_change, profile)
 
     # 7. scalar fallback

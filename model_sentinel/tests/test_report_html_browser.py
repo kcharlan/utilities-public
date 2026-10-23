@@ -18,10 +18,73 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 
 from tests.endpoint_report_fixtures import _ep_html, _rich_html_result
 
+
+def test_parameter_diff_price_placement_is_preserved(page, tmp_path):
+    from model_sentinel import reporting
+    from model_sentinel.models import FieldChange, ModelDelta
+    from tests.test_reporting import _scan_result
+    from model_sentinel.conditional_pricing import LiveComparisonIdentity, PricingComparisonEvent
+    parameter = FieldChange("supported_parameters", ["synthetic-unchanged", "synthetic-removed"], ["synthetic-unchanged", "synthetic-added"])
+    deltas = (
+        ModelDelta("changed", "synthetic/capability-only", "Synthetic Capability", (parameter,)),
+        ModelDelta("changed", "synthetic/mixed-price", "Synthetic Mixed", (parameter, FieldChange("pricing.prompt", "0.000001", "0.000002"))),
+    )
+    result = _scan_result(deltas)
+    cores = {}
+    for delta in deltas:
+        event = PricingComparisonEvent(LiveComparisonIdentity("openrouter", delta.provider_model_id, 1, 2), "openrouter", delta.provider_model_id, delta.display_name, "2030-01-02T00:00:00+00:00", None, None, delta.field_changes, None, None)
+        cores[event.identity] = reporting.build_model_event_semantic_core(event, result.profile)
+    for mode in ("default", "all"):
+        path = tmp_path / f"parameter-{mode}.html"
+        path.write_text(reporting.render_scan_report(generated_at="2030-01-02T00:00:00+00:00", command="scan", format_name="html", provider_results=[result], semantic_cores=cores, detail_policy=reporting.make_report_detail_policy(mode=mode)), encoding="utf-8")
+        _open(page, path)
+        mixed = page.locator(".model-card").filter(has=page.locator(".model-card-header code", has_text="synthetic/mixed-price"))
+        capability = page.locator(".model-card").filter(has=page.locator(".model-card-header code", has_text="synthetic/capability-only"))
+        assert not mixed.evaluate("element => !!element.closest('details')")
+        assert capability.evaluate("element => !!element.closest('details')")
+        expect(mixed).to_contain_text(re.compile(r"\+\s*synthetic-added"))
+        expect(mixed).to_contain_text(re.compile(r"−\s*synthetic-removed"))
+        expect(mixed).not_to_contain_text("synthetic-unchanged")
+        capability.evaluate("element => element.closest('details').open = true")
+        expect(capability).to_be_visible()
+        expect(capability).to_contain_text(re.compile(r"\+\s*synthetic-added"))
+
 CONCISE_NAME = "scan_20300102_030406.html"
 FULL_NAME = "scan_20300102_030406_full.html"
 NARROW = {"width": 375, "height": 812}
 DESKTOP = {"width": 1280, "height": 900}
+
+
+@pytest.mark.parametrize("viewport", [DESKTOP, NARROW])
+def test_endpoint_capability_report_browser(page, tmp_path, viewport):
+    from tests.endpoint_report_fixtures import _capability_result
+    from dataclasses import replace
+    result = _capability_result(27)
+    capture = result.endpoint_capture
+    long_member = "synthetic-long-parameter-" * 12
+    changes = tuple(replace(change, new_value=["synthetic-kept", "synthetic-added", long_member]) if change.field_name == "supported_parameters" else change for change in capture.changes)
+    result = replace(result, endpoint_capture=replace(capture, changes=changes))
+    concise, full = tmp_path / CONCISE_NAME, tmp_path / FULL_NAME
+    concise.write_text(_ep_html(result, companion_link=(FULL_NAME, "Full-detail report →")))
+    full.write_text(_ep_html(result, "all", companion_link=(CONCISE_NAME, "← Concise report")))
+    page.set_viewport_size(viewport)
+    _open(page, concise)
+    _open_disclosure(page)
+    disclosure = page.locator("#provider-endpoints")
+    expect(disclosure.locator(".endpoint-list")).to_have_count(25)
+    expect(disclosure).to_contain_text("27 lists with capability changes")
+    expect(disclosure).to_contain_text("synthetic-added")
+    expect(disclosure).to_contain_text("synthetic-removed")
+    expect(disclosure).not_to_contain_text("synthetic-kept")
+    expect(disclosure).to_contain_text("Temperature")
+    expect(disclosure).not_to_contain_text("synthetic/noop-only")
+    _no_page_overflow(page)
+    disclosure.locator(".endpoint-omitted a").first.click()
+    expect(page).to_have_url(re.compile(FULL_NAME + "#provider-endpoints$"))
+    _open_disclosure(page)
+    expect(page.locator(".endpoint-list")).to_have_count(28)
+    expect(page.locator("#provider-endpoints .endpoint-back a")).to_have_attribute("href", CONCISE_NAME + "#provider-endpoints")
+    _no_page_overflow(page)
 
 
 @pytest.fixture(scope="module")

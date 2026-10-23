@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from html.parser import HTMLParser
 from importlib import resources
 from pathlib import PurePosixPath
@@ -668,14 +669,41 @@ def test_activity_wires_summary_and_folded_models_into_the_feed() -> None:
 
 
 def test_change_table_explains_equal_length_list_content_changes() -> None:
+    """Run the shared formatter instead of pinning its old source location."""
     source = _read_asset("app.js")
-    table = source[
-        source.index("function ChangeTable(") : source.index("function Entry(")
+    transition = source[
+        source.index("function changeTransition(") : source.index("function ChangeTable(")
     ]
-
-    assert 'change.kind === "list"' in table
-    assert "change.old_display === change.new_display" in table
-    assert "contents changed" in table
+    program = (
+        'const assert = require("node:assert/strict");\n'
+        f'const preact = require({json.dumps(str(ASSETS.joinpath("vendor/preact.umd.js")))});\n'
+        f'const htm = require({json.dumps(str(ASSETS.joinpath("vendor/htm.umd.js")))});\n'
+        'const html = htm.bind(preact.h);\n'
+        + transition
+        + r'''
+function text(value) {
+  if (value == null || value === false) return "";
+  if (Array.isArray(value)) return value.map(text).join("");
+  if (typeof value === "object") return text(value.props.children);
+  return String(value);
+}
+const replacement = {kind: "list", old_display: "1", new_display: "1", list_added: ["synthetic-added"], list_removed: ["synthetic-removed"]};
+const equalSize = text(changeTransition(replacement));
+assert.match(equalSize, /Added: synthetic-added/);
+assert.match(equalSize, /Removed: synthetic-removed/);
+assert.match(equalSize, /1\s*→\s*1/);
+const growing = text(changeTransition({...replacement, new_display: "2", list_removed: []}));
+assert.match(growing, /Added: synthetic-added/);
+assert.match(growing, /1\s*→\s*2/);
+assert.match(text(changeTransition({...replacement, list_added: [], list_removed: []})), /contents changed/);
+const bulk = text(changeTransition(replacement, false));
+assert.match(bulk, /Added: synthetic-added/);
+assert.match(bulk, /Removed: synthetic-removed/);
+assert.doesNotMatch(bulk, /→/);
+'''
+    )
+    probe = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
 def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:

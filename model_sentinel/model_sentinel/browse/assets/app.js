@@ -344,6 +344,16 @@
     if (change.semantic === "capability") return "capability";
     return "dim";
   }
+  function changeTransition(change, showSize = true) {
+    if (change.kind === "list") {
+      const hasMembers = change.list_added?.length || change.list_removed?.length;
+      return html`${!hasMembers ? html`<span class="content-change" title="Nested values changed; open the raw record.">contents changed</span>` : null}
+        ${change.list_added?.length ? html`<span class="capability">Added: ${change.list_added.join(", ")}</span>` : null}
+        ${change.list_removed?.length ? html`<span class="dim">Removed: ${change.list_removed.join(", ")}</span>` : null}
+        ${showSize ? html`<span>(${change.old_display} <b>→</b> ${change.new_display})</span>` : null}`;
+    }
+    return html`${change.old_display}<b>→</b>${change.new_display}`;
+  }
   function ChangeTable({entry, openRaw}) {
     if (!entry.changes.length) return null;
     const activate = (event, index) => {
@@ -352,20 +362,10 @@
       const associated = entry.change_ids_by_change[index] || [];
       if (associated.length) openRaw(associated[0]);
     };
-    const transition = change => {
-      if (change.kind === "list" && change.old_display === change.new_display) {
-        const details = [];
-        if (change.list_added && change.list_added.length) details.push(`Added: ${change.list_added.join(", ")}`);
-        if (change.list_removed && change.list_removed.length) details.push(`Removed: ${change.list_removed.join(", ")}`);
-        const title = details.join(" · ") || "Nested values changed; open the raw record.";
-        return html`<span>${change.old_display}</span><span class="content-change" title=${title}>contents changed</span>`;
-      }
-      return html`${change.old_display}<b>→</b>${change.new_display}`;
-    };
     return html`<div class="table-wrap"><table class="changes"><thead><tr><th>Field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th></tr></thead><tbody>${entry.changes.map((change, index) => html`
       <tr key=${`${change.field_path}-${index}`} tabindex=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? 0 : undefined} class=${entry.change_ids_by_change[index] && entry.change_ids_by_change[index].length ? "actionable" : ""} onClick=${event => activate(event, index)} onKeyDown=${event => activate(event, index)}>
         <th scope="row"><span>${change.label}</span>${change.qualifier && html`<small>${change.qualifier}</small>`}</th>
-        <td class=${`transition ${semantic(change)}`}>${transition(change)}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
+        <td class=${`transition ${semantic(change)}`}>${changeTransition(change, entry.kind !== "bulk")}</td><td>${change.delta_display || "—"}</td><td>${change.pct_display || (change.pct_basis_zero ? "from zero" : "—")}</td><td class="unit">${change.unit || "—"}</td>
       </tr>`)}</tbody></table></div>`;
   }
 
@@ -1967,16 +1967,19 @@
     const rendered = change.rendered;
     if (!rendered) return {label: change.label || change.field_name, tone: "dim", transition: "raw policy changed", delta: "—", pct: "—", unit: "—"};
     return {
-      label: change.label || rendered.label, tone: semantic(rendered), transition: html`${rendered.old_display}<b>→</b>${rendered.new_display}`,
+      label: change.label || rendered.label, tone: semantic(rendered), transition: changeTransition(rendered),
       delta: rendered.delta_display || "—", pct: rendered.pct_display || (rendered.pct_basis_zero ? "from zero" : "—"), unit: rendered.unit || "—"
     };
   }
 
   function EndpointChanges({data, includeList = false}) {
+    const displayed = data.changes.filter(change => change.rendered?.kind !== "noop");
+    const filteredNote = displayed.length !== data.changes.length
+      ? `${displayed.length} displayed endpoint changes from ${data.changes.length} loaded recorded rows. ` : "";
     const footer = data.truncated
-      ? `Showing the ${data.limit} most recent endpoint changes; older changes are not shown.`
-      : data.changes.length ? `${plural(data.changes.length, "endpoint change")} recorded through this snapshot.` : `No endpoint changes are recorded for ${includeList ? "these models" : "this list"} through this snapshot.`;
-    return html`<section class="endpoint-history"><h3>Endpoint changes</h3>${data.changes.length ? html`<div class="table-wrap"><table class="changes endpoint-changes"><thead><tr><th>Endpoint · field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th><th>Snapshots</th></tr></thead><tbody>${data.changes.map(change => {
+      ? `${filteredNote}Showing the ${data.limit} most recent endpoint changes; older changes are not shown.`
+      : filteredNote || (displayed.length ? `${plural(displayed.length, "endpoint change")} recorded through this snapshot.` : `No endpoint changes are recorded for ${includeList ? "these models" : "this list"} through this snapshot.`);
+    return html`<section class="endpoint-history"><h3>Endpoint changes</h3>${displayed.length ? html`<div class="table-wrap"><table class="changes endpoint-changes"><thead><tr><th>Endpoint · field</th><th>Transition</th><th>Δ</th><th>%</th><th>Unit</th><th>Snapshots</th></tr></thead><tbody>${displayed.map(change => {
       const cells = endpointChangeCells(change);
       return html`<tr key=${change.endpoint_change_id} data-endpoint-change-id=${change.endpoint_change_id}><th scope="row">${includeList ? html`<small>${change.display_id}</small>` : null}<span>${cells.label}</span><small>${change.endpoint_key}</small></th><td class=${`transition ${cells.tone}`} title=${change.rendered ? `raw ${change.rendered.old_raw} → ${change.rendered.new_raw}` : undefined}>${cells.transition}</td><td>${cells.delta}</td><td>${cells.pct}</td><td class="unit">${cells.unit}</td><td class="unit">${change.from_scrape ? change.from_scrape.date : "—"} → ${change.to_scrape ? change.to_scrape.date : "—"}</td></tr>`;
     })}</tbody></table></div>` : null}<p class="endpoint-note endpoint-truncation">${footer}</p></section>`;
@@ -2098,7 +2101,7 @@
       <header><div><p>source record / ${id}</p><h2 id="drawer-title">Raw change evidence</h2></div><button type="button" aria-label="Close raw change drawer" onClick=${close}>×</button></header>
       <${ErrorBanner} error=${request.error} reload=${request.reload} />
       ${request.loading && !value && html`<div class="loading"><i></i><p>Reading change record…</p></div>`}
-      ${value && html`<div class="drawer-body"><dl><div><dt>Provider</dt><dd>${value.provider_id}</dd></div><div><dt>Model</dt><dd>${value.model_id}</dd></div><div><dt>Field</dt><dd>${value.rendered.label}${value.rendered.qualifier ? ` · ${value.rendered.qualifier}` : ""}</dd></div><div><dt>Observed</dt><dd>${value.detected_at}</dd></div></dl><p class=${`drawer-transition ${semantic(value.rendered)}`}>${value.rendered.old_display} <b>→</b> ${value.rendered.new_display}</p><div class="scrapes"><section><h3>From scrape</h3><p>${value.from_scrape ? `${value.from_scrape.date} · #${value.from_scrape.scrape_id} · ${value.from_scrape.status}` : "Initial observation"}</p></section><section><h3>To scrape</h3><p>${value.to_scrape ? `${value.to_scrape.date} · #${value.to_scrape.scrape_id} · ${value.to_scrape.status}` : "Unavailable"}</p></section></div><details open><summary>Raw JSON record</summary><pre>${JSON.stringify(value, null, 2)}</pre></details></div>`}
+      ${value && html`<div class="drawer-body"><dl><div><dt>Provider</dt><dd>${value.provider_id}</dd></div><div><dt>Model</dt><dd>${value.model_id}</dd></div><div><dt>Field</dt><dd>${value.rendered.label}${value.rendered.qualifier ? ` · ${value.rendered.qualifier}` : ""}</dd></div><div><dt>Observed</dt><dd>${value.detected_at}</dd></div></dl><p class=${`drawer-transition ${semantic(value.rendered)}`}>${changeTransition(value.rendered)}</p><div class="scrapes"><section><h3>From scrape</h3><p>${value.from_scrape ? `${value.from_scrape.date} · #${value.from_scrape.scrape_id} · ${value.from_scrape.status}` : "Initial observation"}</p></section><section><h3>To scrape</h3><p>${value.to_scrape ? `${value.to_scrape.date} · #${value.to_scrape.scrape_id} · ${value.to_scrape.status}` : "Unavailable"}</p></section></div><details open><summary>Raw JSON record</summary><pre>${JSON.stringify(value, null, 2)}</pre></details></div>`}
     </section></div>`;
   }
 

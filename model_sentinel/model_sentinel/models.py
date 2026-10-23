@@ -12,6 +12,15 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def mutable_json_value(value: Any) -> Any:
+    """Detach JSON operands from mutable or frozen source containers."""
+    if isinstance(value, Mapping):
+        return {key: mutable_json_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [mutable_json_value(child) for child in value]
+    return value
+
+
 @dataclass(frozen=True)
 class NormalizedModel:
     provider_id: str

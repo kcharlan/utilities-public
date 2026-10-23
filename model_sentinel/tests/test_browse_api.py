@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import date
@@ -16,7 +17,7 @@ from model_sentinel.browse.aspects import Aspect, build_aspect_catalog
 from model_sentinel.browse.readonly import DatabaseBusyError, open_readonly
 from model_sentinel.endpoints import DOSSIER_ENDPOINT_CHANGE_LIMIT
 from model_sentinel.models import FieldChange, ModelDelta
-from model_sentinel.provider_profiles import profiles_for, resolve_profile
+from model_sentinel.provider_profiles import GENERIC_PROFILE, profiles_for, resolve_profile
 from model_sentinel.reporting import DEFAULT_REPORT_SHOW_FIELDS, DEFAULT_REPORT_SQUELCH_FIELDS
 from model_sentinel.storage import Store, recent_change_rows
 from model_sentinel.time_utils import local_date_for
@@ -27,6 +28,7 @@ from tests.browse_fixtures import (
     _save_scrape,
     build_fixture_db,
     mark_failed_list_unsent,
+    add_parameter_change_records,
 )
 
 
@@ -55,6 +57,61 @@ RENDERED_KEYS = {
     "old_raw", "new_raw", "unit", "price_rule", "delta_display", "delta_abs",
     "pct_display", "pct_basis_zero", "direction", "semantic", "list_added", "list_removed",
 }
+
+
+def test_parameter_member_evidence_and_noop_records(tmp_path):
+    path = tmp_path / "parameter-evidence.db"
+    facts = build_fixture_db(path, with_endpoints=True)
+    evidence = add_parameter_change_records(path, facts)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        endpoint = facts.endpoint
+        rows = _endpoints(context, endpoint, endpoint.listed_model)["changes"]
+        by_id = {row["endpoint_change_id"]: row for row in rows}
+        activity = api.activity(context, {"providers": endpoint.provider_id, "from": "2026-09-03", "to": "2026-09-03", "detail": "all"})
+        entries = [entry for entry in activity["entries"] if entry["model_id"] == endpoint.listed_model]
+        for name, source in evidence.items():
+            row = by_id[source["endpoint_change_id"]]
+            assert row["old_value"] == source["old"] and row["new_value"] == source["new"]
+            raw = api.change(context, {"change_id": str(source["change_id"])})
+            assert raw["old_value"] == source["old"] and raw["new_value"] == source["new"]
+            assert set(raw["rendered"]) == RENDERED_KEYS
+            if name in ("reordered", "duplicates"):
+                assert row["rendered"]["kind"] == raw["rendered"]["kind"] == "noop"
+                assert not any(source["change_id"] in ids for entry in entries for ids in entry["change_ids_by_change"])
+            else:
+                rendered = row["rendered"]
+                assert rendered["list_added"] == ["synthetic-added"]
+                assert rendered["list_removed"] == (["synthetic-removed"] if name == "replacement" else [])
+                assert any(source["change_id"] in ids for entry in entries for ids in entry["change_ids_by_change"])
+    finally:
+        db.close_all()
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_activity_bulk_grouping_respects_custom_membership_policy(tmp_path):
+    path = tmp_path / "custom-parameter-policy.db"
+    facts = build_fixture_db(path)
+    changes = tuple(ModelDelta("changed", f"synthetic/{kind}-{index}", f"Synthetic {kind} {index}", (
+        FieldChange("custom.names" if kind == "parameter" else "architecture.tier_profiles", [{"synthetic": "old"}], [{"synthetic": "new"}]),
+    )) for kind in ("parameter", "array") for index in range(3))
+    Store(path).record_field_changes(provider_id=EXAMPLE_PROVIDER.provider_id, from_scrape_id=facts.scrape_ids[-2], to_scrape_id=facts.scrape_ids[-1], deltas=changes, detected_at="2026-08-15T12:32:00+00:00")
+    db = open_readonly(path)
+    try:
+        context = _context(db)
+        context.profiles[EXAMPLE_PROVIDER.provider_id] = replace(GENERIC_PROFILE, parameter_membership_fields=("custom.names",))
+        result = api.activity(context, {"providers": EXAMPLE_PROVIDER.provider_id, "from": "2026-08-15", "to": "2026-08-15", "detail": "default"})
+        parameter = [entry for entry in result["entries"] if entry["model_id"].startswith("synthetic/parameter-")]
+        assert len(parameter) == 3
+        assert all(entry["kind"] == "changed" and entry["changes"][0]["kind"] == "scalar" for entry in parameter)
+        arbitrary = [entry for entry in result["entries"] if entry["model_id"].startswith("synthetic/array-")]
+        assert len(arbitrary) == 1 and arbitrary[0]["kind"] == "bulk"
+        assert len(arbitrary[0]["bulk_models"]) == 3
+        assert arbitrary[0]["changes"][0]["list_added"] == ('{"synthetic": "new"}',)
+    finally:
+        db.close_all()
 
 
 @pytest.fixture

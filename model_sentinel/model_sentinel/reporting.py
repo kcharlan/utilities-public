@@ -53,6 +53,7 @@ from .change_render import (
     RenderedChange,
     ResolvedPriceValue,
     _list_diff_members,
+    _parameter_members,
     _numeric_value,
     _scalar_display,
     absent_side_display,
@@ -110,6 +111,7 @@ from .models import (
     NormalizedModel,
     ProviderScanResult,
     canonical_json,
+    mutable_json_value as _mutable_json,
 )
 from .provider_profiles import (
     GENERIC_PROFILE,
@@ -555,14 +557,6 @@ def _event_source_references(
     return tuple(references)
 
 
-def _mutable_json(value: Any) -> Any:
-    if isinstance(value, dict) or hasattr(value, "items"):
-        return {key: _mutable_json(child) for key, child in value.items()}
-    if isinstance(value, tuple):
-        return [_mutable_json(child) for child in value]
-    return value
-
-
 def _remaining_event_source_changes(
     event: PricingComparisonEvent,
     interpretation: ConditionalPricingInterpretation | None,
@@ -951,7 +945,11 @@ def _field_display_plan(
     # policy. The filter sits above the `mode == "all"` early return on
     # purpose: E1 is a correctness fix, not a verbosity setting, so the
     # full-detail audit view drops them too.
-    expanded = _expand_structured_field_changes(field_changes, profile)
+    detached = tuple(
+        FieldChange(change.field_name, _mutable_json(change.old_value), _mutable_json(change.new_value))
+        for change in field_changes
+    )
+    expanded = _expand_structured_field_changes(detached, profile)
     # Conditional selectors are policy evidence, never independent facts. A
     # compatibility caller may not have a semantic core to consume them, so
     # enforce the same provider-owned boundary here after structured parents
@@ -1024,6 +1022,9 @@ def _expand_structured_field_change(
     old_value = field_change.old_value
     new_value = field_change.new_value
 
+    if profile.is_parameter_membership_field(field_change.field_name):
+        return (field_change,)
+
     if (
         field_change.field_name == "pricing.overrides"
         and _is_structured_list(old_value)
@@ -1039,14 +1040,14 @@ def _expand_structured_field_change(
             return expanded
 
     if old_value is None and isinstance(new_value, dict):
-        return _flatten_one_sided_structure(field_change.field_name, new_value, added=True)
+        return _flatten_one_sided_structure(field_change.field_name, new_value, profile, added=True)
     if new_value is None and isinstance(old_value, dict):
-        return _flatten_one_sided_structure(field_change.field_name, old_value, added=False)
+        return _flatten_one_sided_structure(field_change.field_name, old_value, profile, added=False)
 
     if old_value is None and _is_structured_list(new_value):
-        return _flatten_one_sided_structure(field_change.field_name, new_value, added=True)
+        return _flatten_one_sided_structure(field_change.field_name, new_value, profile, added=True)
     if new_value is None and _is_structured_list(old_value):
-        return _flatten_one_sided_structure(field_change.field_name, old_value, added=False)
+        return _flatten_one_sided_structure(field_change.field_name, old_value, profile, added=False)
 
     return (field_change,)
 
@@ -1083,11 +1084,11 @@ def _expand_pricing_override_changes(
         old_item = old_by_identity.get(identity)
         new_item = new_by_identity.get(identity)
         if old_item is None:
-            changes.extend(_flatten_one_sided_structure(path, new_item, added=True))
+            changes.extend(_flatten_one_sided_structure(path, new_item, profile, added=True))
         elif new_item is None:
-            changes.extend(_flatten_one_sided_structure(path, old_item, added=False))
+            changes.extend(_flatten_one_sided_structure(path, old_item, profile, added=False))
         else:
-            changes.extend(_diff_structured_values(path, old_item, new_item))
+            changes.extend(_diff_structured_values(path, old_item, new_item, profile))
     return tuple(changes)
 
 
@@ -1118,17 +1119,19 @@ def _pricing_override_path(
     return f"{field_name}[{condition}]"
 
 
-def _diff_structured_values(path: str, old_value: Any, new_value: Any) -> tuple[FieldChange, ...]:
-    if isinstance(old_value, dict) and isinstance(new_value, dict):
+def _diff_structured_values(
+    path: str, old_value: Any, new_value: Any, profile: ProviderProfile,
+) -> tuple[FieldChange, ...]:
+    if not profile.is_parameter_membership_field(path) and isinstance(old_value, dict) and isinstance(new_value, dict):
         changes: list[FieldChange] = []
         for key in sorted(set(old_value) | set(new_value)):
             child_path = f"{path}.{key}"
             if key not in old_value:
-                changes.extend(_flatten_one_sided_structure(child_path, new_value[key], added=True))
+                changes.extend(_flatten_one_sided_structure(child_path, new_value[key], profile, added=True))
             elif key not in new_value:
-                changes.extend(_flatten_one_sided_structure(child_path, old_value[key], added=False))
+                changes.extend(_flatten_one_sided_structure(child_path, old_value[key], profile, added=False))
             else:
-                changes.extend(_diff_structured_values(child_path, old_value[key], new_value[key]))
+                changes.extend(_diff_structured_values(child_path, old_value[key], new_value[key], profile))
         return tuple(changes)
     if old_value != new_value:
         return (FieldChange(path, old_value, new_value),)
@@ -1138,17 +1141,19 @@ def _diff_structured_values(path: str, old_value: Any, new_value: Any) -> tuple[
 def _flatten_one_sided_structure(
     field_name: str,
     value: Any,
+    profile: ProviderProfile,
     *,
     added: bool,
 ) -> tuple[FieldChange, ...]:
     leaves: list[FieldChange] = []
 
     def visit(path: str, current: Any) -> None:
-        if isinstance(current, dict) and current:
+        parameter_field = profile.is_parameter_membership_field(path)
+        if not parameter_field and isinstance(current, dict) and current:
             for key in sorted(current):
                 visit(f"{path}.{key}", current[key])
             return
-        if isinstance(current, list) and current and _is_structured_list(current):
+        if not parameter_field and isinstance(current, list) and current and _is_structured_list(current):
             for index, item in enumerate(current):
                 visit(f"{path}[{index}]", item)
             return
@@ -1159,7 +1164,11 @@ def _flatten_one_sided_structure(
     return tuple(leaves)
 
 
-def _list_change_signature(field_change: FieldChange) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+def _list_change_signature(
+    field_change: FieldChange,
+    *,
+    profile: ProviderProfile = GENERIC_PROFILE,
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     """Bulk grouping key for one list field change.
 
     Derived from `change_render._list_diff_members` -- the exact helper
@@ -1173,16 +1182,24 @@ def _list_change_signature(field_change: FieldChange) -> tuple[str, tuple[str, .
     Calls `_list_diff_members` and not `classify_change`, deliberately: the
     cascade's `noop` branch would shadow the list branch for lists that compare
     equal but spell differently (`[1] == [True]`), which would change the key.
-    See that helper's docstring. Grouping is byte-identical to its
-    pre-unification behavior for every input.
+    See that helper's docstring. Provider-recognized parameter fields first
+    require validated unique string membership; other arrays retain their
+    established member-text comparison.
     """
-    added, removed = _list_diff_members(field_change.old_value, field_change.new_value)
+    old, new = _mutable_json(field_change.old_value), _mutable_json(field_change.new_value)
+    if profile.is_parameter_membership_field(field_change.field_name):
+        old, new = _parameter_members(old), _parameter_members(new)
+        if old is None or new is None:
+            raise ValueError("parameter membership signatures require valid name collections")
+    added, removed = _list_diff_members(old, new)
     return (field_change.field_name, added, removed)
 
 
 def _bulk_change_signature(
     plan: _FieldDisplayPlan,
     semantic_core: ModelEventSemanticCore | None = None,
+    *,
+    profile: ProviderProfile = GENERIC_PROFILE,
 ) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None:
     """Return a safe bulk-grouping signature for repetitive list changes.
 
@@ -1195,9 +1212,9 @@ def _bulk_change_signature(
         return None
     if not plan.visible or plan.hidden_unclassified or plan.hidden_non_squelched:
         return None
-    if not all(isinstance(fc.old_value, list) and isinstance(fc.new_value, list) for fc in plan.visible):
+    if not all(classify_change(fc, profile=profile).kind == "list" for fc in plan.visible):
         return None
-    return tuple(sorted(_list_change_signature(fc) for fc in plan.visible))
+    return tuple(sorted(_list_change_signature(fc, profile=profile) for fc in plan.visible))
 
 
 def _plan_provider_changes(
@@ -1258,7 +1275,7 @@ def _plan_provider_changes(
     ] = defaultdict(list)
     signatures: dict[str, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = {}
     for item in planned:
-        signature = _bulk_change_signature(item.display, item.semantic_core)
+        signature = _bulk_change_signature(item.display, item.semantic_core, profile=profile)
         if signature is None:
             continue
         by_signature[signature].append(item)
@@ -1596,6 +1613,8 @@ class BulkGrouping:
 
 def group_planned_entries_by_bulk(
     entries: tuple[_PlannedChangeEntry, ...],
+    *,
+    profile: ProviderProfile = GENERIC_PROFILE,
 ) -> tuple[BulkGrouping, ...]:
     signatures: dict[int, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = {}
     by_signature: dict[
@@ -1605,7 +1624,7 @@ def group_planned_entries_by_bulk(
     for entry in entries:
         if entry.kind != "changed" or entry.display is None:
             continue
-        signature = _bulk_change_signature(entry.display, entry.semantic_core)
+        signature = _bulk_change_signature(entry.display, entry.semantic_core, profile=profile)
         if signature is not None:
             signatures[id(entry)] = signature
             by_signature[signature].append(entry)
@@ -1915,15 +1934,25 @@ def _legacy_human_history_events(
     events: tuple[HistoryEvent, ...],
     profile: ProviderProfile,
 ) -> tuple[HistoryEvent, ...]:
-    """Remove policy-selector leaves from the legacy human projection only."""
-    return tuple(
-        event
-        for event in events
-        if not (
-            event.field_name
-            and profile.is_pricing_override_selector_path(event.field_name)
-        )
-    )
+    """Apply provider-owned presentation without changing source history."""
+    projected: list[HistoryEvent] = []
+    for event in events:
+        if event.field_name and profile.is_pricing_override_selector_path(event.field_name):
+            continue
+        if event.field_name and profile.is_parameter_membership_field(event.field_name):
+            rendered = classify_change(
+                FieldChange(event.field_name, event.old_value, event.new_value),
+                profile=profile,
+            )
+            if rendered.kind == "noop":
+                continue
+            if rendered.kind == "list":
+                event = HistoryEvent(
+                    event.detected_at, event.change_kind, event.field_name,
+                    rendered.old_display, _list_diff_body(rendered),
+                )
+        projected.append(event)
+    return tuple(projected)
 
 
 def _history_hidden_counts(
@@ -2024,9 +2053,12 @@ def _semantic_history_ordinary_occurrences(
     return tuple(
         (
             reference.source_index,
-            _history_event_from_stored_row(field_rows[reference.source_index]),
+            event,
         )
         for _change, reference in remaining
+        for event in _legacy_human_history_events(
+            (_history_event_from_stored_row(field_rows[reference.source_index]),), profile
+        )
     )
 
 
@@ -2749,6 +2781,15 @@ def render_history_report(
             sort_keys=True,
         )
     legacy_human_events = _legacy_human_history_events(events, profile)
+    empty_message = (
+        "No human-visible change events matched the requested range; "
+        "recorded source events remain available in JSON."
+        if any(
+            event.field_name and profile.is_parameter_membership_field(event.field_name)
+            for event in events
+        )
+        else "No saved change events matched the requested range."
+    )
     stored_projections: dict[
         ComparisonIdentity, ModelEventPresentationPlan
     ] = {}
@@ -2780,8 +2821,11 @@ def render_history_report(
             _semantic_history_ordinary_occurrences(plan, profile)
             if _history_plan_uses_semantic_projection(plan, profile)
             else tuple(
-                (source_index, _history_event_from_stored_row(row))
+                (source_index, event)
                 for source_index, row in enumerate(plan.stored_event.source_rows)
+                for event in _legacy_human_history_events(
+                    (_history_event_from_stored_row(row),), profile
+                )
             )
         )
         for plan in stored_plans
@@ -2816,7 +2860,7 @@ def render_history_report(
                 lines.append(f"- Latest cache pricing: {cache_summary}")
         lines.append("")
         if not legacy_human_events and not stored_plans:
-            lines.append("No saved change events matched the requested range.")
+            lines.append(empty_message)
             return "\n".join(lines)
         if stored_plans:
             table_open = False
@@ -2939,7 +2983,7 @@ def render_history_report(
             lines.append(f"Latest cache pricing: {cache_summary}")
     lines.append("")
     if not legacy_human_events and not stored_plans:
-        lines.append("No saved change events matched the requested range.")
+        lines.append(empty_message)
         return "\n".join(lines)
     if stored_plans:
         for plan in stored_plans:

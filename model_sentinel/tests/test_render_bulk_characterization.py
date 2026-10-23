@@ -217,7 +217,9 @@ OTHER_MODELS = (
 # that also demonstrates that consolidation is driven by signature *value*,
 # not by sharing one object (see the note on BULK_PARAMS_CHANGE above).
 def _multiplicity_change() -> FieldChange:
-    return FieldChange("supported_parameters", ["tools", "tools", "seed"], ["tools", "seed", "seed"])
+    # Parameter-name collections now deliberately suppress this set-equivalent
+    # change; keep testing generic-array fallback on an unrestricted field.
+    return FieldChange("architecture.tier_profiles", ["tools", "tools", "seed"], ["tools", "seed", "seed"])
 
 
 MULTIPLICITY_TRIO = tuple(
@@ -544,10 +546,10 @@ def test_bulk_group_with_unchanged_member_set_renders_membership_changed():
 
     text = render("text", changed=MULTIPLICITY_TRIO)
     assert "* Bulk change — 3 models" in text
-    assert "Supported parameters: membership changed" in text
+    assert "Tier profiles: membership changed" in text
 
     markdown = render("markdown", changed=MULTIPLICITY_TRIO)
-    assert "`Supported parameters: membership changed`" in markdown
+    assert "`Tier profiles: membership changed`" in markdown
 
     html = render("html", changed=MULTIPLICITY_TRIO)
     assert '<div class="list-count">membership changed</div>' in html

@@ -626,7 +626,7 @@ def activity(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         plans.append((plan, profile))
         plans_by_date[day].append((plan, profile))
         presence_offsets: Counter[tuple[str, str]] = Counter()
-        for grouping in group_planned_entries_by_bulk(plan.entries):
+        for grouping in group_planned_entries_by_bulk(plan.entries, profile=profile):
             entries = list(grouping.entries)
             if model_filter:
                 entries = [entry for entry in entries if entry.model_id in model_filter]
@@ -1298,7 +1298,7 @@ def model(ctx: ApiContext, params: Mapping[str, str]) -> dict[str, Any]:
         )
         items = [
             item
-            for grouping in group_planned_entries_by_bulk(plan.entries)
+            for grouping in group_planned_entries_by_bulk(plan.entries, profile=profile)
             if (
                 item := _serialize_entry_group(
                     list(grouping.entries),
