@@ -1,5 +1,16 @@
 # Lessons learned
 
+Antigravity descriptor names collide across protobuf packages. Resolve each
+fully qualified type through its owning FileDescriptorProto and typed fields:
+the Jetski annotation archive field and Cortex retry layout differ from the
+first unqualified descriptor match. Pin behavior through actual database/summary
+decoding, retain independent filename/trajectory/cascade identity, and stage
+acceptance until the conversation transaction commits. Text protobuf escape
+decoding must reject a NUL after backslash before using C string lookup helpers.
+Check summary indexes are regular files before asking SQLite to open them: a
+FIFO with a database filename can block a read-only source scan. Enforce binary
+collation for exact identity joins rather than inheriting source-table collation.
+
 Native details toggle events are queued and may arrive after a footer rerender.
 Snapshot connected panels' live open properties before replacement, ignore
 detached toggle events, and restore open as a property rather than a false

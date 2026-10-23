@@ -1,0 +1,319 @@
+"""Invented Antigravity databases: never use an installed session store."""
+import sqlite3
+import ctypes
+import os
+import stat
+import subprocess
+from pathlib import Path
+import pytest
+from helpers import proto_field
+
+ID = "00000000-0000-4000-8000-000000000001"
+SCHEMA = """CREATE TABLE trajectory_meta(trajectory_id TEXT,cascade_id TEXT,trajectory_type INTEGER,source INTEGER);
+CREATE TABLE trajectory_metadata_blob(id INTEGER,data BLOB);
+CREATE TABLE steps(idx INTEGER,step_type INTEGER,status INTEGER,metadata BLOB,step_payload BLOB,step_format INTEGER);
+CREATE TABLE gen_metadata(idx INTEGER,data BLOB);
+"""
+
+def database(native, surface="antigravity", identity=ID):
+    path = native.home / ".gemini" / surface / "conversations" / (identity + ".db")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as db:
+        db.executescript(SCHEMA)
+        db.execute("INSERT INTO trajectory_meta VALUES (?,?,1,1)", (identity, identity))
+    return path
+
+def test_antigravity_discovery_acceptance(native):
+    native.codex.rmdir()
+    path = database(native)
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    source = native.payload()["meta"]["sources"]["antigravity"]
+    assert source["status"] == "ok"
+    assert source["databases"][0]["path"] == str(path)
+    assert source["databases"][0]["accepted_sessions"] == 1
+    assert source["databases"][0]["surface"] == "app"
+    assert native.payload()["sessions"] == []
+    assert "antigravity: 1 sessions" in result.stdout
+    assert "1 databases (1 parsed" in result.stdout
+    assert native.runtime.stat().st_mode & 0o777 == 0o700
+
+def source(native):
+    return native.payload()["meta"]["sources"]["antigravity"]
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_antigravity_absent_disabled_never_initializes_runtime(native, disabled):
+    native.codex.rmdir()
+    args = ["--no-claude", "--no-opencode"]
+    if disabled:
+        database(native)
+        args += ["--no-antigravity", "--antigravity-home", "~synthetic-invalid-user/no-source"]
+    result = native.build(*args)
+    assert result.returncode == 1
+    assert "no readable sources" in result.stderr
+    assert "Antigravity" in result.stderr
+    assert not native.runtime.exists()
+
+def test_antigravity_mixed_disabled_and_environment_names_only(native):
+    native.session()
+    database(native)
+    for name in ("ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"):
+        native.env[name] = "SYNTHETIC-PRIVATE-ENVIRONMENT-CANARY"
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert source(native)["sessions"] == 1
+    assert len(payload["sessions"]) == 1
+    assert source(native)["ignored_environment"] == ["ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"]
+    assert "use --antigravity-home PATH" in result.stderr
+    assert "SYNTHETIC-PRIVATE-ENVIRONMENT-CANARY" not in native.page.read_text() + result.stdout + result.stderr
+    assert native.build("--no-antigravity").returncode == 0
+    assert source(native)["status"] == "disabled"
+    assert source(native)["databases"] == []
+    assert native.payload()["sessions"] == payload["sessions"]
+
+@pytest.mark.parametrize("args,reason", [
+    (["--antigravity-home"], "expected one argument"),
+    (["--no-antigravity=true"], "ignored explicit argument"),
+    (["--no"], "--no-open, --no-claude, --no-opencode, --no-antigravity"),
+    (["--no-op"], "--no-open, --no-opencode"),
+    (["--o"], "--offline, --output, --opencode-db"),
+])
+def test_antigravity_options_preserve_unique_prefix_parser(native, args, reason):
+    result = native.invoke(*args)
+    assert result.returncode == 2
+    assert reason in result.stderr
+    assert not native.runtime.exists()
+
+def test_antigravity_help_and_expanded_relative_home(native):
+    result = native.invoke("--help")
+    assert result.returncode == 0
+    for value in ("--antigravity-home", "--no-antigravity", "ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"):
+        assert value in result.stdout
+    database(native)
+    for root in ("~/.gemini/./", os.path.relpath(native.home / ".gemini", Path.cwd())):
+        result = native.build("--antigravity-home", root)
+        assert result.returncode == 0, result.stderr
+        assert source(native)["sessions"] == 1
+
+def test_antigravity_surface_precedence_legacy_distinct_ids_and_failed_sibling(native):
+    app = database(native)
+    cli = database(native, "antigravity-cli")
+    other = database(native, "antigravity-ide", ID[:-1] + "2")
+    for path in (app, cli, other):
+        (path.parent / (ID[:-1] + "3.pb")).write_bytes(b"SYNTHETIC-ENCRYPTED-NEVER-DECODE")
+        (path.parent / (ID + ".pb")).write_bytes(b"SYNTHETIC-SIBLING-NEVER-DECODE")
+    bad = app.parent / (ID[:-1] + "4.db")
+    bad.write_bytes(b"SYNTHETIC-BROKEN-SQLITE")
+    (app.parent / "synthetic-not-a-uuid.db").write_bytes(b"NEVER-OPEN")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    data = source(native)
+    assert data["sessions"] == 2
+    assert data["legacy_encrypted"] == 1
+    assert [d["surface"] for d in data["databases"]] == ["app", "app", "cli", "ide"]
+    assert [d["accepted_sessions"] for d in data["databases"]] == [1, 0, 0, 1]
+    assert native.payload()["diagnostics"]["antigravity_duplicate_sessions"] == 1
+    assert len(native.payload()["diagnostics"]["antigravity_unreadable_databases"]) == 1
+
+@pytest.mark.parametrize("fault,status", [("schema", "unsupported"), ("bytes", "unreadable")])
+def test_antigravity_error_only_source_initializes_diagnostics(native, fault, status):
+    native.codex.rmdir()
+    path = database(native)
+    if fault == "schema":
+        with sqlite3.connect(path) as db:
+            db.execute("DROP TABLE gen_metadata")
+    else:
+        path.write_bytes(b"SYNTHETIC-NOT-A-DATABASE")
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    assert source(native)["status"] == status
+    assert source(native)["sessions"] == 0
+    assert status in result.stdout
+
+def test_antigravity_same_surface_archive_default_and_malformed_fallback(native):
+    path = database(native)
+    annotation = path.parent.parent / "annotations" / (ID + ".pbtxt")
+    annotation.parent.mkdir()
+    summary = path.parent.parent / "conversation_summaries.db"
+    with sqlite3.connect(summary) as db:
+        db.execute("CREATE TABLE conversation_summaries(conversation_id,title,raw_summary)")
+        db.execute("INSERT INTO conversation_summaries VALUES (?,?,?)", (ID, "Synthetic summary", proto_field(15, proto_field(4, 1))))
+    annotation.write_text('title: "Synthetic title"')
+    assert native.build().returncode == 0
+    assert source(native)["archived"] == 0
+    assert native.payload()["diagnostics"]["antigravity_archive_disagreements"] == 1
+    annotation.write_text('unknown { text: "quoted }"')
+    assert native.build().returncode == 0
+    assert source(native)["archived"] == 1
+    assert native.payload()["diagnostics"]["antigravity_annotation_errors"] == 1
+
+@pytest.mark.parametrize("wal", [False, True])
+def test_antigravity_source_database_wal_and_annotation_unchanged(native, wal):
+    path = database(native)
+    writer = sqlite3.connect(path)
+    if wal:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("INSERT INTO steps VALUES(1,1,1,?,?,0)", (b"", b""))
+        writer.commit()
+    annotation = path.parent.parent / "annotations" / (ID + ".pbtxt")
+    annotation.parent.mkdir()
+    annotation.write_text('archived: true')
+    paths = [path, annotation] + ([Path(str(path) + "-wal")] if wal else [])
+    before = {p: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in paths}
+    try:
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        assert source(native)["databases"][0]["accepted_steps"] == int(wal)
+        assert {p: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in paths} == before
+    finally:
+        writer.close()
+
+def test_antigravity_privacy_contract_never_serializes_unrelated_or_hidden_text(native):
+    path = database(native)
+    canary = "SYNTHETIC-PRIVATE-CONTENT-NEVER-RENDER"
+    for name in ("settings.json", "credentials.json", "oauth_creds.json"):
+        (native.home / ".gemini" / name).write_text(canary)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE synthetic_credentials(secret)")
+        db.execute("INSERT INTO synthetic_credentials VALUES (?)", (canary,))
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(1, canary)),))
+        db.execute("INSERT INTO steps VALUES(1,1,1,?,?,0)", (b"", proto_field(20, proto_field(3, canary) + proto_field(16, canary))))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert canary not in result.stdout + result.stderr
+    for artifact in native.runtime.rglob("*"):
+        if artifact.is_file():
+            assert canary.encode() not in artifact.read_bytes()
+
+def test_antigravity_no_database_size_cap_and_no_summary_only_sessions(native):
+    path = database(native)
+    with sqlite3.connect(path) as db:
+        # Large unrelated table must never become a reader cap or selected data.
+        db.execute("CREATE TABLE synthetic_unrelated(data)")
+        db.execute("INSERT INTO synthetic_unrelated VALUES(zeroblob(70000000))")
+    assert native.build().returncode == 0
+    assert source(native)["sessions"] == 1
+    path.unlink()
+    with sqlite3.connect(path.parent.parent / "conversation_summaries.db") as db:
+        db.execute("CREATE TABLE conversation_summaries(conversation_id,title)")
+        db.execute("INSERT INTO conversation_summaries VALUES(?,?)", (ID, "Synthetic index only"))
+    assert native.build().returncode == 0
+    assert source(native)["status"] == "absent"
+    assert source(native)["sessions"] == 0
+
+def test_antigravity_symlink_database_annotation_and_sidecar_excluded(native):
+    path = database(native)
+    outside = native.root / "synthetic-outside.db"
+    path.rename(outside)
+    path.symlink_to(outside)
+    assert native.build().returncode == 0
+    assert source(native)["sessions"] == 0
+    assert "symlink" in source(native)["databases"][0]["reason"]
+    path.unlink()
+    outside.rename(path)
+    sidecar = Path(str(path) + "-wal")
+    target = native.root / "synthetic-sidecar"
+    target.write_bytes(b"SYNTHETIC-DO-NOT-OPEN")
+    sidecar.symlink_to(target)
+    assert native.build().returncode == 0
+    assert source(native)["sessions"] == 0
+    assert "sidecar symlink" in source(native)["databases"][0]["reason"]
+
+def test_sandbox_antigravity_paths_denied():
+    check = ctypes.CDLL(None).sandbox_check
+    check.restype = ctypes.c_int
+    check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    home = Path(os.environ["COLOPHON_TEST_REAL_HOME"])
+    for operation in (b"file-read-data", b"file-write-create"):
+        for path in (home / ".gemini", home / ".gemini/synthetic-nonexistent-child"):
+            result = check(os.getpid(), operation, 1, os.fsencode(path))
+            assert result >= 0, "sandbox policy evaluation failed"
+            assert result != 0, "Antigravity source protection missing"
+
+def test_antigravity_annotation_nul_escape_is_malformed_and_falls_back(native):
+    path = database(native)
+    annotation = path.parent.parent / "annotations" / (ID + ".pbtxt")
+    annotation.parent.mkdir()
+    annotation.write_bytes(b'title: "Synthetic\\\x00" archived: true')
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert source(native)["archived"] == 0
+    assert native.payload()["diagnostics"]["antigravity_annotation_errors"] == 1
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_antigravity_only_leaves_unopened_codex_cache_unchanged(native, rebuild):
+    database(native)
+    native.codex.rmdir()
+    cache = native.runtime / "cache-native"
+    cache.mkdir(parents=True)
+    canary = cache / "SYNTHETIC-CACHE-CANARY"
+    canary.write_text("Synthetic unopened cache")
+    canary.chmod(0o640)
+    before = canary.read_bytes(), stat.S_IMODE(canary.stat().st_mode)
+    result = native.build("--no-claude", "--no-opencode", *(["--rebuild"] if rebuild else []))
+    assert result.returncode == 0, result.stderr
+    assert (canary.read_bytes(), stat.S_IMODE(canary.stat().st_mode)) == before
+    assert [p.name for p in cache.iterdir()] == [canary.name]
+
+def test_antigravity_locked_database_preserves_good_sibling(native):
+    first = database(native)
+    other = database(native, identity=ID[:-1] + "2")
+    writer = sqlite3.connect(other)
+    writer.execute("BEGIN EXCLUSIVE")
+    try:
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        data = source(native)
+        assert data["sessions"] == 1
+        assert data["databases"][0]["path"] == str(first)
+        assert data["databases"][1]["status"] == "unreadable"
+    finally:
+        writer.rollback()
+        writer.close()
+
+def test_antigravity_annotation_and_root_symlink_excluded(native):
+    path = database(native)
+    target = native.root / "synthetic-annotation.pbtxt"
+    target.write_text("archived: true")
+    annotation = path.parent.parent / "annotations" / (ID + ".pbtxt")
+    annotation.parent.mkdir()
+    annotation.symlink_to(target)
+    assert native.build().returncode == 0
+    assert source(native)["archived"] == 0
+    assert native.payload()["diagnostics"]["antigravity_annotation_errors"] == 1
+    root = native.home / ".gemini"
+    moved = native.root / "synthetic-outside-root"
+    root.rename(moved)
+    root.symlink_to(moved)
+    assert native.build().returncode == 0
+    assert source(native)["sessions"] == 0
+    assert source(native)["status"] == "unreadable"
+
+def test_antigravity_filename_identity_and_summary_joins_use_exact_case(native):
+    lower = "00000000-0000-4000-8000-000000000abc"
+    upper = lower.upper()
+    app = database(native, identity=lower)
+    cli = database(native, "antigravity-cli", identity=upper)
+    for path in (app, cli):
+        with sqlite3.connect(path.parent.parent / "conversation_summaries.db") as db:
+            db.execute("CREATE TABLE conversation_summaries(conversation_id COLLATE NOCASE,title,raw_summary)")
+            db.execute("INSERT INTO conversation_summaries VALUES(?,?,?)", (lower, "Synthetic exact-case summary", proto_field(15, proto_field(4, 1))))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert source(native)["sessions"] == 2
+    assert source(native)["archived"] == 1
+    assert native.payload()["diagnostics"]["antigravity_duplicate_sessions"] == 0
+
+def test_antigravity_summary_fifo_is_diagnosed_without_opening(native):
+    path = database(native)
+    summary = path.parent.parent / "conversation_summaries.db"
+    os.mkfifo(summary)
+    result = subprocess.run([str(native.binary), "--codex-home", str(native.codex),
+                             "--offline", "--no-open"], env=native.env,
+                            text=True, capture_output=True, timeout=2)
+    assert result.returncode == 0, result.stderr
+    assert source(native)["sessions"] == 1
+    diagnostic, = native.payload()["diagnostics"]["antigravity_source_diagnostics"]
+    assert diagnostic["context"] == "conversation_summaries"
+    assert "regular file" in diagnostic["reason"]

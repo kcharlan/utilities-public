@@ -9,6 +9,24 @@ from pathlib import Path
 SESSION = "synthetic-session-standalone"
 REQUEST = "Invent a synthetic violet kite"
 
+def proto_varint(value):
+    """Stdlib-only synthetic protobuf encoder, independent of the C decoder."""
+    if not 0 <= value < 2**64:
+        raise ValueError("synthetic varint outside uint64")
+    result = bytearray()
+    while value > 127:
+        result.append((value & 127) | 128)
+        value >>= 7
+    result.append(value)
+    return bytes(result)
+
+def proto_field(number, value):
+    if isinstance(value, str):
+        value = value.encode()
+    if isinstance(value, bytes):
+        return proto_varint(number * 8 + 2) + proto_varint(len(value)) + value
+    return proto_varint(number * 8) + proto_varint(value)
+
 def row(kind, payload, second, fraction=""):
     return {"type": kind, "timestamp": f"2026-01-02T12:00:{second:02d}{fraction}Z", "payload": payload}
 
@@ -58,6 +76,8 @@ class NativeRun:
         self.env.pop("CLAUDE_CONFIG_DIR", None)
         self.env.pop("OPENCODE_DB", None)
         self.env.pop("XDG_DATA_HOME", None)
+        for name in ("ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR", "JETSKI_APP_DATA_DIR"):
+            self.env.pop(name, None)
         self.env.update(HOME=str(self.home), COLOPHON_HOME=str(self.runtime),
                         TMPDIR=str(root), COLOPHON_PRICING_URL="http://127.0.0.1:9/catalog.json")
         self.binary = Path(os.environ["COLOPHON_BIN"])

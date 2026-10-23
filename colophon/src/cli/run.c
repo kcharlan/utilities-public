@@ -8,6 +8,7 @@
 #include "claude/metadata.h"
 #include "claude/compose.h"
 #include "opencode/scan.h"
+#include "antigravity/scan.h"
 #include "opencode/corpus.h"
 #include "opencode/compose.h"
 #include "out/payload.h"
@@ -59,7 +60,7 @@ int cli_run(const Args *args){
     const char *conflict=args_conflict(args);if(conflict){fprintf(stderr,"colophon: %s\n",conflict);return 2;}
     char *codex=NULL,*home=NULL,*output=NULL,*display=NULL,*host=NULL,*ledger_path=NULL;JsonWriter payload={0},page={0};
     Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};ClaudeScan claude={0};ClaudeStore claude_store={0};bool codex_present=false,cache_opened=false;
-    CodexMetadata metadata={0};Corpus corpus={0};OpencodeStore opencode={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
+    CodexMetadata metadata={0};Corpus corpus={0};OpencodeStore opencode={0};AntigravityStore antigravity={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
     CatalogResult catalog={0};CatalogFetch *fetch=NULL;ModelsDevIndex index={0};RuntimeLedger ledger={0};PriceHistory history={0};PricingReport pricing={0};LedgerAppend appended={0};yyjson_doc *recording=NULL,*new_entries=NULL;
     bool home_exists=false,page_failure=false,committed=false,clock_started=false;int result=1;Err failure=ERR_SUCCESS;
     const char *failure_type="OSError";struct sigaction previous,action={0};bool handler=false;
@@ -75,7 +76,9 @@ int cli_run(const Args *args){
     failure=claude_scan_aliases(&claude);if(failure.code)goto fail;
     failure=opencode_discover(args,&opencode);if(failure.code)goto fail;
     failure=opencode_store_read(&opencode,&interrupted);if(failure.code)goto fail;
-    if(!codex_present&&!claude.present&&!opencode.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s; OpenCode:",claude.history_path.p,claude.disabled?" (--no-claude)":"");if(opencode.data_dir.p){fputc(' ',stderr);error_line(opencode.data_dir.p);}for(size_t i=0;i<opencode.database_count;i++){fputc(' ',stderr);error_line(opencode.databases[i].path.p);}fprintf(stderr,"%s\n",opencode.disabled?" (--no-opencode)":"");goto done;}
+    failure=antigravity_discover(args,&antigravity);if(failure.code)goto fail;
+    failure=antigravity_store_read(&antigravity,&interrupted);if(failure.code)goto fail;
+    if(!codex_present&&!claude.present&&!opencode.present&&!antigravity.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s; OpenCode:",claude.history_path.p,claude.disabled?" (--no-claude)":"");if(opencode.data_dir.p){fputc(' ',stderr);error_line(opencode.data_dir.p);}for(size_t i=0;i<opencode.database_count;i++){fputc(' ',stderr);error_line(opencode.databases[i].path.p);}fprintf(stderr,"%s; Antigravity:",opencode.disabled?" (--no-opencode)":"");if(antigravity.home.p){fputc(' ',stderr);error_line(antigravity.home.p);}fprintf(stderr,"%s\n",antigravity.disabled?" (--no-antigravity)":"");goto done;}
     int64_t snapshot=cp_now_ms();scan_display.tty=progress_tty();
     failure=ensure_runtime_home(home);home_exists=!stat(home,&st)&&S_ISDIR(st.st_mode);if(failure.code!=ERR_OK)goto fail;
     failure=templates(home);if(failure.code!=ERR_OK)goto fail;
@@ -137,7 +140,7 @@ int cli_run(const Args *args){
     host=cli_source_host(url);
     tzset();time_t now=time(NULL);struct tm local;char zone[128]="";if(localtime_r(&now,&local))strftime(zone,sizeof zone,"%Z",&local);
     PayloadInputs in={.snapshot_ms=snapshot,.codex_home=display,.source_host=host,.timezone=zone,
-        .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude,.opencode=&opencode};
+        .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude,.opencode=&opencode,.antigravity=&antigravity};
     CP_PHASE_MARK(4);
     size_t max=0,limit=cp_page_warn_bytes();bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
@@ -173,5 +176,5 @@ done:
     corpus_destroy(&corpus);pricing_report_destroy(&pricing);history_destroy(&history);runtime_ledger_destroy(&ledger);models_dev_destroy(&index);catalog_result_destroy(&catalog);ledger_append_destroy(&appended);yyjson_doc_free(recording);yyjson_doc_free(new_entries);priority_destroy(&priority);workspace_aliases_destroy(&aliases);free(assembly_records);metadata_destroy(&metadata);cache_destroy(&cache);scan_destroy(&scan);
     if(clock_started)(void)cp_monotonic_finish();if(home_exists)event_flush(home);
     if(handler)sigaction(SIGINT,&previous,NULL);
-    opencode_store_destroy(&opencode);claude_store_destroy(&claude_store);claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
+    antigravity_store_destroy(&antigravity);opencode_store_destroy(&opencode);claude_store_destroy(&claude_store);claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
 }

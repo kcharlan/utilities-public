@@ -8,7 +8,7 @@ trap 'test_status=$?; rm -r -- "$test_scratch"; exit "$test_status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$test_scratch/home" "$test_scratch/runtime"
-unset CLAUDE_CONFIG_DIR OPENCODE_DB XDG_DATA_HOME
+unset CLAUDE_CONFIG_DIR OPENCODE_DB XDG_DATA_HOME ANTIGRAVITY_GEMINI_DIR ANTIGRAVITY_APP_DATA_DIR JETSKI_APP_DATA_DIR
 run_profile() {
     profile=$1
     source_dir=$2
@@ -88,4 +88,23 @@ for target in '.local/share/opencode' '.local/state/opencode' '.config/opencode'
     echo "OpenCode protection mutation rejected as expected: $target"
 done
 unset COLOPHON_TEST_POLICY_HOME COLOPHON_TEST_POLICY_TARGET
+export COLOPHON_TEST_POLICY_HOME="$test_scratch/synthetic-antigravity-policy-home"
+mkdir -p "$COLOPHON_TEST_POLICY_HOME/.gemini"
+COLOPHON_TEST_POLICY_HOME=$(CDPATH= cd -- "$COLOPHON_TEST_POLICY_HOME" && pwd -P)
+run_profile "$project_dir/tests/sandbox.sb" "$project_dir" \
+    tests/test_antigravity.py -k sandbox_antigravity_paths_denied -p no:cacheprovider
+awk 'index($0, "\"/.gemini\"") == 0' "$project_dir/tests/sandbox.sb" \
+    > "$test_scratch/synthetic-unprotected-antigravity.sb"
+if run_profile "$test_scratch/synthetic-unprotected-antigravity.sb" "$project_dir" \
+    tests/test_antigravity.py -k sandbox_antigravity_paths_denied -p no:cacheprovider \
+    > "$test_scratch/antigravity-mutation.log" 2>&1; then
+    echo 'Antigravity protection mutation unexpectedly passed' >&2
+    exit 1
+fi
+if ! rg -q 'AssertionError: Antigravity source protection missing' "$test_scratch/antigravity-mutation.log"; then
+    cat "$test_scratch/antigravity-mutation.log" >&2
+    exit 1
+fi
+echo 'Antigravity protection mutation rejected as expected: .gemini'
+unset COLOPHON_TEST_POLICY_HOME
 run_profile "$project_dir/tests/sandbox.sb" "$project_dir" "$@"

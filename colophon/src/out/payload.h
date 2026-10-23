@@ -6,6 +6,7 @@
 #include "price/pricing.h"
 #include "claude/scan.h"
 #include "opencode/db.h"
+#include "antigravity/db.h"
 /* Borrowed typed product owners; each remains live through rendering. */
 typedef struct {
     int64_t snapshot_ms;
@@ -24,6 +25,7 @@ typedef struct {
     bool codex_present;
     const ClaudeScan *claude;
     const OpencodeStore *opencode;
+    const AntigravityStore *antigravity;
 } PayloadInputs;
 void payload_empty(JsonWriter *w,const PayloadInputs *inputs);
 #endif

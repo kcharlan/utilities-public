@@ -31,3 +31,5 @@
 (deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.config/opencode")))
 (deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.cache/opencode")))
 (deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/Library/Application Support/ai.opencode.desktop")))
+; Gemini credentials and Antigravity sources are never real test inputs.
+(deny file-read* file-write* (subpath (string-append (param "REAL_HOME") "/.gemini")))

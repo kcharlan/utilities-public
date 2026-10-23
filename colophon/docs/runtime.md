@@ -1,5 +1,62 @@
 # Runtime behavior
 
+## Antigravity source discovery
+
+`--antigravity-home PATH` selects a Gemini root, defaulting to `~/.gemini`,
+with explicit-path tilde expansion and lexical relative-path resolution.
+`--no-antigravity` returns before expansion or inspection. Nonempty
+`ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR` and `JETSKI_APP_DATA_DIR`
+are ignored and reported by name only; use the explicit flag instead.
+
+Surface precedence is `antigravity` (app), `antigravity-cli` (cli), then
+`antigravity-ide` (ide), with database filenames sorted within each surface.
+Only `conversations/<uuid>.db`, same-surface `annotations/<uuid>.pbtxt`,
+`conversation_summaries.db`, and their ordinary SQLite coordination sidecars
+are admitted. Symlink escapes are excluded. Legacy `<uuid>.pb` names are
+enumerated without reading contents: distinct IDs lacking a database across
+all surfaces count as `legacy_encrypted`. Summary indexes never locate or
+create conversation sessions. Credentials/settings and other Gemini subtrees
+are outside the admission list.
+
+Exact filename UUID strings own conversation identity, without case folding or
+case-insensitive aliases; annotation paths retain that spelling and summary
+joins use the same exact string. Case-only copies can remain distinct.
+Trajectory and cascade IDs remain
+independent raw facts and mismatches are diagnosed. The first successful
+database for an ID wins. A schema-valid database with empty required tables
+is an accepted empty raw session, as is a zero-step database with metadata.
+Missing required tables/columns are unsupported; extra tables are ignored.
+Each database uses one coordinated read-only transaction and no database-size
+cap. Database/WAL/annotation bytes and modes remain unchanged; SQLite may
+create or update shared-memory coordination files, as for OpenCode. A failed
+snapshot never consumes its ID or removes successful siblings.
+
+The bounded wire decoder validates the pinned public schema projection,
+retains unknown fields and raw blobs only in memory, and distinguishes absent,
+found and malformed fields. Malformed blobs lose their staged record, with
+contextual diagnostics; SQL/read failures lose the staged database. Archive
+annotations accept text protobuf whitespace, escaped strings and balanced
+unknown nested messages. A valid annotation wins over its own surface's summary,
+including absent `archived` meaning false. Unusable annotations diagnose and
+fall back to summary; valid disagreement is counted. With neither source,
+archive defaults false. Resolved true records use archive reason `session`.
+Titles independently use a nonempty valid annotation title, then the own-surface
+summary title. Explicit empty annotation titles preserve their raw presence but
+allow that fallback; later corpus projection supplies request/ID fallbacks.
+
+SQL enum/index columns accept INTEGER values losslessly. NULL enum values
+retain absence; noninteger values diagnose and discard their source record.
+Steps/generators need an INTEGER index for row identity; trajectory metadata
+blob IDs can remain explicitly absent. These rules do not coerce textual enum
+names or floating-point numbers into integer facts.
+
+This reader deliverable emits source counts/status/reasons, ignored environment
+names and diagnostics, without corpus sessions, usage/pricing or UI actions.
+Antigravity costs therefore have independent unavailable status. Raw system
+prompts and planner thinking never enter page/runtime output. No Antigravity
+cache is written. Absent/disabled input alone does not initialize the runtime;
+a reportable database error can initialize a diagnostic-only page.
+
 The offline page opens on month to date (MTD). The period buttons are MTD, QTD
 (quarter to date), YTD (year to date), rolling 7D/30D/90D, ALL and Custom; the
 choice persists as `p` in the URL hash. "Now" is the snapshot time shown as

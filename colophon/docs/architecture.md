@@ -17,6 +17,7 @@ catalog/priority/pricing → payload/page:
 | `src/opencode/corpus.{c,h}` | Project accepted OpenCode sessions into shared display models. Keep row-clock fork exclusions and source TurnFacts in the store, map messages to display-turn keys for usage, and link an OpenCode-only acyclic parent graph. |
 | `src/opencode/scan.{c,h}` | Resolve default/environment/explicit paths, order/deduplicate database candidates, skip migration previews, and establish read-only source presence before runtime creation. |
 | `src/opencode/compose.{c,h}` | Author recorded usage/cost units and raw-component residuals, retaining contextual shortfalls and invalid-number facts. |
+| `src/antigravity/{scan,db,wire}.{c,h}` | Discover admitted Gemini surface databases before runtime creation; stage read transactions and retain owned validated protobuf blobs, row indexes, independent trajectory/cascade IDs and archive/title provenance. The dependency-free bounded wire reader follows fully qualified public schema references. This deliverable contributes source metadata/diagnostics only. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
@@ -42,6 +43,15 @@ and precedes shared cost refresh. The store owns source arenas, duplicate and
 usage diagnostics and borrowed display provenance; it is destroyed after corpus
 teardown on every path. The payload exposes authoritative typed diagnostic
 shapes and accepted provider counters without changing legacy provider counts.
+Antigravity discovery/read follows OpenCode before the same source gate; its
+store is destroyed on every exit after corpus teardown. `PROVIDER_ANTIGRAVITY`
+and its stable ID are introduced for source summaries; no Antigravity corpus
+insertion or usage composer is called in this deliverable. Raw per-database
+arenas survive successful commits through rendering and are discarded on failed
+snapshots. `schema.inc` and the public fixture projection pin fully qualified
+message references and the language-server binary digest, avoiding unqualified
+descriptor-name collisions. Later projection/composition borrows these owned
+blobs and source-row indexes rather than reparsing or persisting private data.
 `corpus/provider.h` names Codex, Claude and OpenCode consistently in session
 rows and usage buckets. Its shared adoption/status/idle helpers preserve
 Claude's wide tool counts and independent map ownership; tool adoption uses

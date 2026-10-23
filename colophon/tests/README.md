@@ -1,5 +1,21 @@
 # Standalone validation
 
+Antigravity reader units and `test_antigravity.py` create only invented UUID
+databases/annotations in external private scratch. `fixtures/antigravity/`
+contains only the public qualified protobuf schema projection with its producing
+binary SHA-256, an exception analogous to OpenCode's public DDL fixture.
+The reader tests cover wire bounds/types/unknown fields and repeated integers,
+empty/zero-step databases, malformed-record isolation, transaction rollback,
+independent metadata identities, archive defaults/precedence/fallback, surface
+duplicates, title-only summaries, lock failures, large unrelated database data,
+source database/WAL/annotation byte/mode preservation and unopened Codex caches.
+The discovery acceptance case asserts source counts and runtime initialization
+while every other provider is disabled/absent, without creating corpus sessions.
+Privacy canaries exercise unrelated tables/settings and excluded prompt/thinking
+text. Wrappers strip all three ignored Antigravity environment names and deny
+real Gemini root reads/writes. A separate mutation invocation proves removing
+that explicit deny fails the policy regression under existing canonical scratch.
+
 History acceptance covers exact canonical/unique-alias resolution, ambiguous
 owners and collision-skipped aliases across deletion/rebuild, Codex filename
 fallback collisions, malformed fields, chronological grouping and the actual

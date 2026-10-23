@@ -7,6 +7,7 @@
 #include "util/sort.h"
 #include "out/session_payload.h"
 #include "opencode/scan.h"
+#include "antigravity/scan.h"
 #include "opencode/compose.h"
 #include <string.h>
 static void decimal(FILE *stream,__int128 value,bool grouped) {
@@ -46,11 +47,13 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
     case PROVIDER_CODEX: logs=in->logs;parsed=in->parsed;cached=in->cached;break;
     case PROVIDER_CLAUDE: if(in->claude){logs=in->claude->logs;parsed=in->claude->parsed;cached=in->claude->cached;}break;
     case PROVIDER_OPENCODE: if(in->opencode){logs=in->opencode->database_count;for(size_t i=0;i<logs;i++)if(in->opencode->databases[i].status==OC_DB_OK)parsed++;}break;
+    case PROVIDER_ANTIGRAVITY: if(in->antigravity){sessions=in->antigravity->session_count;logs=in->antigravity->database_count;for(size_t i=0;i<logs;i++)if(in->antigravity->databases[i].status==AG_DB_OK)parsed++;}break;
     }
     Str id=provider_id(provider);
-    printf("colophon: %.*s: %zu sessions · %zu subagents · %zu %s (%zu parsed, %zu cached) · ",(int)id.n,id.p,sessions,agents,logs,provider==PROVIDER_OPENCODE?"databases":"logs",parsed,cached);decimal(stdout,tokens,true);
+    printf("colophon: %.*s: %zu sessions · %zu subagents · %zu %s (%zu parsed, %zu cached) · ",(int)id.n,id.p,sessions,agents,logs,provider==PROVIDER_OPENCODE||provider==PROVIDER_ANTIGRAVITY?"databases":"logs",parsed,cached);decimal(stdout,tokens,true);
     fputs(" tokens · ",stdout);if(!units)fputs("no priced usage",stdout);else if(available)printf("$%.2f est.",sum+correction);else fputs("costs unavailable",stdout);
     if(provider==PROVIDER_OPENCODE&&strcmp(opencode_status(in->opencode),"ok"))printf(" · %s",opencode_status(in->opencode));
+    if(provider==PROVIDER_ANTIGRAVITY&&strcmp(antigravity_status(in->antigravity),"ok"))printf(" · %s",antigravity_status(in->antigravity));
     fputc('\n',stdout);
 }
 static __int128 oc_map_count(const Omap *map){__int128 n=0;for(OmapEntry *q=map->first;q;q=q->next)n+=*(uint64_t *)q->value;return n;}
@@ -73,6 +76,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
     provider_summary(PROVIDER_CODEX,in);
     if(in->claude&&!in->claude->disabled)provider_summary(PROVIDER_CLAUDE,in);
     if(in->opencode&&!in->opencode->disabled)provider_summary(PROVIDER_OPENCODE,in);
+    if(in->antigravity&&!in->antigravity->disabled)provider_summary(PROVIDER_ANTIGRAVITY,in);
     printf("colophon: page %.2f MB → %s\n",(double)size/(1024*1024),output);
     bool first=true;__int128 unknown=0;for(OmapEntry *e=corpus->unknown_types.first;e;e=e->next)unknown+=*(__int128 *)e->value;
     size_t metadata=0,ledger=0,catalog=0;for(MetadataError *e=in->metadata->errors;e;e=e->next)metadata++;
@@ -86,12 +90,24 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
     diagnostic("claude_history_alias_conflicts",in->claude?in->claude->history_conflicts.size:0,&first);
     diagnostic("claude_duplicate_responses",in->claude?in->claude->duplicate_rows:0,&first);diagnostic("claude_incomplete_requests",in->claude?in->claude->incomplete_requests:0,&first);
     oc_diagnostics(in->opencode,&first);
+    if(in->antigravity){const AntigravityStore *s=in->antigravity;size_t schema=0,unreadable=0;
+        for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==AG_DB_UNSUPPORTED;unreadable+=s->databases[i].status==AG_DB_UNREADABLE;}
+        diagnostic("antigravity_schema_errors",schema,&first);diagnostic("antigravity_unreadable_databases",unreadable,&first);
+        diagnostic("antigravity_duplicate_sessions",s->duplicate_sessions,&first);diagnostic("antigravity_archive_disagreements",s->archive_disagreements,&first);
+        diagnostic("antigravity_malformed_blobs",s->malformed_blobs,&first);diagnostic("antigravity_annotation_errors",s->annotation_errors,&first);
+        diagnostic("antigravity_malformed_rows",s->malformed_rows,&first);
+        diagnostic("antigravity_legacy_encrypted",s->legacy_encrypted,&first);diagnostic("antigravity_source_diagnostics",s->diagnostic_count,&first);
+    }
     diagnostic("unknown_record_types",unknown,&first);diagnostic("db_threads_without_logs",corpus->db_threads_without_logs,&first);diagnostic("metadata_errors",metadata,&first);
     diagnostic("orphaned_subagents",corpus->orphaned_subagents.count,&first);diagnostic("inferred_links",corpus->inferred_links.count,&first);
     diagnostic("unresolved_history_boundaries",payload_unresolved_history(NULL,corpus,NULL),&first);
     diagnostic("fork_baseline_unavailable",corpus->fork_baselines.count,&first);diagnostic("duplicate_session_ids",corpus->duplicate_ids.size,&first);
     diagnostic("unpriced_models",in->pricing->unpriced.size,&first);diagnostic("history_begins",in->pricing->history_begins.size,&first);diagnostic("priority_without_multiplier",in->pricing->priority_without_multiplier.size,&first);diagnostic("unrecorded_catalog_rates",in->pricing->unrecorded.size,&first);diagnostic("ledger",ledger,&first);diagnostic("untimed_usage",in->pricing->untimed.size,&first);diagnostic("workspaces_file",in->workspace_errors->count,&first);diagnostic("catalog",catalog,&first);diagnostic("trace_db",corpus->trace_messages.count,&first);diagnostic("page_size_over_limit",in->over_limit,&first);
     if(!first)fputs("; see the page footer\n",stderr);
+    if(in->antigravity&&!in->antigravity->disabled){const AntigravityStore *s=in->antigravity;
+        for(size_t i=0;i<s->database_count;i++){const AntigravityDatabase *d=&s->databases[i];if(!d->reason.n)continue;fputs("colophon: antigravity database ",stderr);oc_line(d->path);fprintf(stderr," (%s): ",antigravity_database_status(d->status));oc_line(d->reason);fputc('\n',stderr);}
+        for(size_t i=0;i<s->ignored_environment_count;i++){fputs("colophon: ignored environment ",stderr);oc_line(s->ignored_environment[i]);fputs("; use --antigravity-home PATH\n",stderr);}
+    }
     if(in->opencode&&!in->opencode->disabled)for(size_t i=0;i<in->opencode->database_count;i++){
         const OpencodeDatabase *d=&in->opencode->databases[i];if(!d->reason.n)continue;
         fputs("colophon: opencode database ",stderr);oc_line(d->path);fprintf(stderr," (%s): ",opencode_database_status(d->status));oc_line(d->reason);fputc('\n',stderr);

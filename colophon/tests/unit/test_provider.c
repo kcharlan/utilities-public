@@ -9,6 +9,7 @@ TEST(provider_ids_cover_every_provider) {
   ASSERT_TRUE(str_equal(provider_id(PROVIDER_CODEX), STR_LIT("codex")));
   ASSERT_TRUE(str_equal(provider_id(PROVIDER_CLAUDE), STR_LIT("claude")));
   ASSERT_TRUE(str_equal(provider_id(PROVIDER_OPENCODE), STR_LIT("opencode")));
+  ASSERT_TRUE(str_equal(provider_id(PROVIDER_ANTIGRAVITY), STR_LIT("antigravity")));
 }
 
 TEST(compose_skips_opencode_and_prices_authored_units) {

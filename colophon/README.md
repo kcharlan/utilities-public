@@ -10,6 +10,14 @@ request; unavailable Codex rates do not hide Claude estimates. The canonical sou
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 
+Antigravity discovery is enabled by default. `--antigravity-home PATH` selects
+the Gemini root (default `~/.gemini`); `--no-antigravity` suppresses all inspection.
+The reader admits conversation UUID databases from the app, CLI and IDE surfaces,
+plus their own annotation/summary archive metadata. Source counts and diagnostics
+appear in the payload and CLI summary. This first reader deliverable retains raw
+facts in memory; Antigravity sessions, usage and UI controls are not projected yet.
+It creates no Antigravity parse cache and reads no Gemini credentials/settings.
+
 Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
 subagents, archive state and recorded catalog estimates to the native pipeline,
 payload, offline page and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
