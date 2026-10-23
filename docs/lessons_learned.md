@@ -20,6 +20,12 @@ focus movement and cleanup. A DOM mutation observer that sends Escape as soon
 as the drawer exists reproduces the missing-listener interval deterministically;
 ordinary content visibility assertions can finish before deferred effects.
 
+An absolutely positioned disclosure panel must size to its own contents,
+bounded by the viewport, rather than inheriting a percentage limit from its
+small trigger. Check each option against its clipping ancestors and hit-test
+its visible center before clicking: browser automation can otherwise scroll
+a clipped row internally and make an inaccessible option look usable.
+
 ## 2026-10-22: Treat unselected combobox navigation and focus departure explicitly
 
 A suggestion index of -1 means no active option; it is not an existing index

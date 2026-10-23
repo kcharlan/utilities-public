@@ -51,7 +51,7 @@
 .hosts-search-results button { display: block; width: 100%; text-align: left; }
 .hosts-search-results [aria-selected="true"] { background: var(--panel-raised); }
 .condition-overlay { position: fixed; z-index: 90; overflow-y: auto; border: 1px solid var(--border-strong); background: var(--panel); box-shadow: 0 0.8rem 2rem var(--shadow); }
-.condition-popover { padding: 16px; font-size: 14px; color: var(--ink); background: var(--panel); }
+.condition-popover { padding: 16px; font-size: 15px; line-height: 1.45; color: var(--ink); background: var(--panel); }
 .condition-popover header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .condition-popover h3 { margin: 0; }
 .condition-popover label { display: block; margin: 12px 0; }
@@ -63,11 +63,9 @@
 .option-row span { flex: 1; overflow-wrap: anywhere; }
 .option-row small { color: var(--ink-muted); }
 .host-capture-status { color: var(--ink-muted); }
-.hosts-table-scroll { overflow: auto; max-height: calc(100dvh - var(--hosts-scroll-offset, 0px)); max-width: 100%; border: 1px solid var(--border); }
 .hosts-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; line-height: 20px; }
 .hosts-table th, .hosts-table td { white-space: nowrap; padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--border); background: var(--panel); }
-.hosts-table thead th { position: sticky; top: 0; z-index: 2; background: var(--ground); }
-.hosts-table tr > th:first-child { position: sticky; left: 0; z-index: 1; min-width: 190px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.hosts-table tr > th:first-child { min-width: 190px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .hosts-table thead tr > th:first-child { z-index: 3; }
 .hosts-table button { font: inherit; }
 .sort-header { border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; padding: 2px 0; cursor: pointer; white-space: nowrap; }
@@ -1365,14 +1363,14 @@ body[data-view="hosts"] .filter-bar { position: static; z-index: 30; display: fl
 body[data-view="hosts"] .view-tabs { flex: 1; border: 0; }
 body[data-view="hosts"] .appearance { border: 0; position: relative; }
 body[data-view="hosts"] .appearance > summary { font-size: 13px; text-transform: none; letter-spacing: normal; }
-body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%; right: 0; z-index: 30; padding: 8px; background: var(--panel-raised); border: 1px solid var(--border); }
+body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%; right: 0; z-index: 30; width: max-content; max-width: calc(100vw - 1rem); box-sizing: border-box; padding: 8px; background: var(--panel-raised); border: 1px solid var(--border); }
 .hosts-panel { background: var(--panel); border: 1px solid var(--border); min-width: 0; }
 .hosts-toolbar { position: sticky; top: 0; z-index: 25; background: var(--panel); padding: 12px 16px 10px; gap: 10px; margin: 0; border-bottom: 1px solid var(--border); font-size: 15px; line-height: 1.45; }
 .hosts-row-label { flex: 0 0 64px; color: var(--ink-muted); font-size: 13px; }
 .hosts-compare-spacer { flex: 1; }
 .hosts-toolbar button, .hosts-toolbar select { min-height: 32px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-raised); color: var(--ink); font: inherit; cursor: pointer; }
 .hosts-toolbar button:hover, .hosts-toolbar select:hover { border-color: var(--border-strong); }
-.hosts-toolbar select { appearance: none; padding-right: 26px; background-repeat: no-repeat; background-position: right 9px center; }
+.hosts-toolbar select { appearance: none; padding-right: 26px; background-repeat: no-repeat; background-image: linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%), linear-gradient(135deg, var(--ink-muted) 50%, transparent 50%); background-size: 5px 5px; background-position: right 14px center, right 9px center; }
 .hosts-caret { margin-left: 7px; font-size: 10px; color: var(--ink-muted); }
 .hosts-toolbar button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, var(--panel-raised)); border-color: var(--accent); }
 .condition-summary { color: var(--accent); }
@@ -1383,7 +1381,7 @@ body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%
 .condition-chip { gap: 5px; border-radius: 14px; padding: 2px 4px 2px 10px; background: color-mix(in srgb, var(--accent) 14%, var(--panel-raised)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); font-size: 13px; }
 .hosts-toolbar .condition-chip button { min-height: 22px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; }
 .hosts-toolbar .condition-chip button:hover, .compared-host button:hover { background: var(--border); }
-.compared-host { display: inline-flex; align-items: center; gap: 6px; border-radius: 16px; border: 1px solid var(--border); background: var(--panel-raised); padding: 2px 4px 2px 10px; }
+.compared-host { min-width: 0; max-width: 100%; overflow-wrap: anywhere; display: inline-flex; align-items: center; gap: 6px; border-radius: 16px; border: 1px solid var(--border); background: var(--panel-raised); padding: 2px 4px 2px 10px; }
 .compared-host i { width: 9px; height: 9px; border-radius: 50%; }
 .hosts-toolbar .compared-host button { width: 24px; min-height: 24px; height: 24px; border: 0; border-radius: 50%; padding: 0; }
 .hosts-toolbar .hosts-link-button, .sort-summary button, .host-no-qualifying button { min-height: 0; border: 0; background: transparent; padding: 2px 4px; color: var(--accent); cursor: pointer; }
@@ -1394,13 +1392,12 @@ body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%
 .hosts-search input::-webkit-search-cancel-button { appearance: none; }
 .hosts-search-icon { position: absolute; left: 10px; top: 4px; pointer-events: none; }
 .hosts-toolbar .hosts-search-clear { position: absolute; right: 3px; top: 3px; height: 26px; min-height: 26px; width: 26px; padding: 0; border: 0; background: transparent; }
-.hosts-search-results button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; font-size: 15px; line-height: 22px; }
+.typeahead.hosts-search-results button { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; font-size: 15px; line-height: 22px; }
 .hosts-search-results mark, .option-list mark { font-weight: bold; color: var(--accent); background: transparent; }
-.hosts-table-scroll { overflow: visible; max-height: none; max-width: 100%; border: 0; }
+.hosts-table-scroll { overflow: clip; max-height: none; max-width: 100%; border: 0; }
 .hosts-table-scroll.is-overflowing { overflow-x: auto; }
-.hosts-table thead th { top: var(--hosts-toolbar-h, 0px); background: var(--panel); }
-.hosts-table tr > th:first-child { position: static; }
-.hosts-table-scroll.is-overflowing .hosts-table thead th { position: static; }
+.hosts-table thead th { position: sticky; top: var(--hosts-toolbar-h, 0px); z-index: 2; background: var(--panel); }
+.hosts-table-scroll.is-overflowing .hosts-table thead th { position: static; top: auto; }
 .hosts-table-scroll.is-overflowing .hosts-table tr > th:first-child { position: sticky; left: 0; z-index: 2; }
 .hosts-pagination { margin: 0; padding: 12px 16px; font-size: 13px; }
 .hosts-pagination button { order: -1; min-height: 32px; padding: 4px 10px; border-radius: 6px; background: var(--panel-raised); color: var(--ink); border: 1px solid var(--border); font: inherit; cursor: pointer; }
@@ -1408,7 +1405,8 @@ body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%
 .hosts-table td, .host-value, .endpoint-drawer td { font-variant-numeric: tabular-nums; }
 @media (max-width: 48rem) {
   .hosts-toolbar { position: static; padding: 12px 10px 10px; }
-  .hosts-table thead th { position: static; }
+  .hosts-table thead th { position: static; top: auto; }
+  .hosts-compare select { flex: 1 1 100%; width: 100%; }
   .hosts-row-label { flex-basis: 100%; }
   .hosts-compare-spacer { display: none; }
   .hosts-search { flex-basis: 100%; width: 100%; }
@@ -1417,18 +1415,8 @@ body[data-view="hosts"] .appearance > .segmented { position: absolute; top: 100%
   body[data-view="hosts"] .view-tabs button { gap: 4px; font-size: 12px; padding-inline: 4px; }
   body[data-view="hosts"] .appearance > summary { padding-inline: 6px; }
 }
-.hosts-table thead tr > th:first-child { position: sticky; }
-.typeahead.hosts-search-results button { display: block; }
-@media (max-width: 48rem) { .hosts-table thead tr > th:first-child { position: static; } }
 .hosts-ranking, .host-value, .hosts-price { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
-.hosts-table-scroll.is-overflowing .hosts-table thead th { top: auto; }
-@media (max-width: 48rem) { .hosts-table thead th { top: auto; } }
-.hosts-table-scroll { overflow: clip; }
-.hosts-toolbar select { background-image: linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%), linear-gradient(135deg, var(--ink-muted) 50%, transparent 50%); background-size: 5px 5px; background-position: right 14px center, right 9px center; }
-.condition-popover { font-size: 15px; line-height: 1.45; }
-.compared-host { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .hosts-filters > button { max-width: 100%; overflow-wrap: anywhere; }
-@media (max-width: 48rem) { .hosts-compare select { flex: 1 1 100%; width: 100%; } }
 body[data-view="hosts"] .segmented > div { border-radius: 6px; overflow: hidden; }
 body[data-view="hosts"] .segmented button { min-height: 30px; padding: 4px 10px; font-size: 15px; line-height: 1.45; }
 body[data-view="hosts"] .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--ground); }

@@ -2672,3 +2672,33 @@ def test_hosts_default_ranking_retains_prompt_fallback_with_other_price_columns(
     hosts_page.route(re.compile(r'/api/hosts\?'), alternate_first_column)
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
     expect(hosts_page.get_by_label('Ranking', exact=True)).to_have_value('price:pricing.prompt')
+
+
+@pytest.mark.parametrize('width', [319, 390, 1440])
+def test_hosts_appearance_options_fit_visible_popup_without_scrolling(hosts_page, hosts_server, width):
+    _, facts = hosts_server
+    hosts_page.set_viewport_size({'width': width, 'height': 900})
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    hosts_page.get_by_text('Appearance', exact=True).click()
+    popup = hosts_page.locator('.appearance > .segmented')
+    row = popup.locator(':scope > div')
+    assert row.evaluate('e => e.scrollWidth <= e.clientWidth')
+    for label, value in [('System', None), ('Light', 'light'), ('Dark', 'dark')]:
+        button = popup.get_by_role('button', name=label, exact=True)
+        assert button.evaluate('''button => {
+            const box = button.getBoundingClientRect();
+            const row = button.parentElement.getBoundingClientRect();
+            const panel = button.closest('fieldset').getBoundingClientRect();
+            const visible = box.left >= Math.max(0, row.left, panel.left)
+                && box.right <= Math.min(innerWidth, row.right, panel.right)
+                && box.top >= Math.max(0, row.top, panel.top)
+                && box.bottom <= Math.min(innerHeight, row.bottom, panel.bottom);
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return visible && (hit === button || button.contains(hit));
+        }''')
+        button.click()
+        if value is None:
+            expect(hosts_page.locator('html')).not_to_have_attribute('data-theme')
+        else:
+            expect(hosts_page.locator('html')).to_have_attribute('data-theme', value)
+        expect(button).to_have_attribute('aria-pressed', 'true')

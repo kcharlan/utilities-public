@@ -1695,3 +1695,17 @@ def test_csp_rejects_missing_or_widened_connect_sources() -> None:
     for mutated in mutations:
         with pytest.raises(AssertionError):
             _assert_csp_contract(mutated)
+
+
+def test_hosts_empty_precision_summary_precedes_shortcut_matching() -> None:
+    source = _read_asset('app.js')
+    helpers = source[source.index('  function sameList('):source.index('  function SparklinePopover(')]
+    helpers += source[source.index('  function conditionSummary('):source.index('  function ConditionChips(')]
+    probe = subprocess.run(['node', '-e', helpers + r'''
+const assert = require('node:assert/strict');
+const data = {vocab:{quantizations:['fp8']},endpoints:[{quantization:'fp8',precision_bits:8}]};
+assert.equal(conditionSummary('precision', data, {quant:[],quantset:'1'}), 'none');
+assert.equal(conditionSummary('precision', {vocab:{quantizations:[]},endpoints:[]}, {quant:[],quantset:'1'}), 'none');
+assert.equal(conditionSummary('precision', data, {quant:['fp8'],quantset:'1'}), '8-bit or better');
+'''], capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stdout + probe.stderr

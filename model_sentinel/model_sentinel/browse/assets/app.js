@@ -1390,6 +1390,7 @@
   function conditionSummary(id, data, state) {
     const values = list => list.slice(0,2).join(", ") + (list.length > 2 ? ` +${list.length-2}` : list.length ? "" : "none");
     if (id === "precision") {
+      if (!state.quant.length) return "none";
       for (const bits of [16,8]) {
         const expected = data.vocab.quantizations.filter(value => { const width = data.endpoints.find(endpoint => endpoint.quantization === value)?.precision_bits; return width == null ? state.quant.includes(value) : width >= bits; });
         if (sameList([...state.quant].sort(), expected.sort())) return `${bits}-bit or better`;
