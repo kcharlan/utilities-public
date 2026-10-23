@@ -47,6 +47,11 @@ unpriced identities without a catalog socket. Chromium covers known/unpriced
 Antigravity-only and All totals, mixed availability word layout, phone overflow
 and native reader output. Its screenshot option retains priced overview/reader
 and partial-availability states at desktop/phone widths in external scratch.
+Opaque trajectory metadata TEXT keys are retained independently of INTEGER/NULL
+compatibility and required numeric step/generator indexes. DB and native CLI
+regressions pin blob validation plus workspace/creation and a resolvable
+provider-local parent. Cached-price and unit regressions cover high/low effort
+aliases followed by each pinned routing suffix, not only individual suffixes.
 
 History acceptance covers exact canonical/unique-alias resolution, ambiguous
 owners and collision-skipped aliases across deletion/rebuild, Codex filename

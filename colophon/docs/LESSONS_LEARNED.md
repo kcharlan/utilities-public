@@ -295,3 +295,12 @@ Reconcile visible output within each observation before merging component maxima
 different reasoning counts can reveal different visible totals. Raw maxima first
 would silently discard that evidence; a native-oracle partial-record probe
 caught this despite ordinary duplicate and single-event output tests passing.
+
+Opaque SQLite metadata keys are not step indexes. Preserve trajectory metadata
+TEXT keys independently of INTEGER/NULL compatibility, and validate their blobs
+without routing them through the required numeric step/generator index gate.
+Regress workspace, creation and a resolvable provider-local parent through the
+real database-to-payload path; raw-row count tests alone miss projection loss.
+When adapting pinned aliases, retain exact-alias lookup both before and after
+one routing suffix is stripped. Individual effort and suffix tests miss their
+composition; cached-price acceptance must exercise the composed spelling too.

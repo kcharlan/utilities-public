@@ -90,7 +90,11 @@ The page offers an Antigravity source filter, APP/CLI/IDE tags and Copy session
 ID only. Source status, legacy exclusions, ignored environment remedies and each
 database's surface/status/reason appear in the footer. Each database disclosure
 retains its own open state. Usage includes generator and step records plus all
-retries, including cleared/checkpoint steps. Identity copies merge globally by
+retries, including cleared/checkpoint steps. Trajectory metadata keys may be
+opaque TEXT, INTEGER or NULL; TEXT remains source provenance, while numeric
+step/generator indexes retain their strict integer contract. Valid metadata
+supplies creation, workspace and provider-local parent facts regardless of key
+type. Identity copies merge globally by
 component maximum; the first discovered session/turn owns the merged unit.
 Unmatched/pre-prompt usage remains outside displayed turns. Every composition
 rebuilds session/turn/bucket summaries, including empty sessions.

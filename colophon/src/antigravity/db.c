@@ -131,9 +131,12 @@ static Err read_rows(AntigravityStore *s,AntigravityDatabase *d,sqlite3 *db,Anti
         e=prepare(db,queries[k],&st);
         while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
             if(interrupted&&*interrupted){e=err_make(ERR_IO,"Antigravity read interrupted");break;}
-            int64_t idx=0;bool has_idx=false,valid=false;
-            if(!integer(st,0,&idx,&has_idx)||(!has_idx&&k)){e=malformed_row(s,d,k==0?"trajectory_metadata_blob":k==1?"gen_metadata":"steps",0,"noninteger index or absent required row index");continue;}
-            if(k<2){AntigravityBlob b={.idx=idx,.has_idx=has_idx};e=blob(s,d,st,1,k?AG_GENERATOR:AG_TRAJECTORY,idx,&b.data,&valid);
+            int64_t idx=0;bool has_idx=false,valid=false;Str text_key={0};
+            if(k==0&&sqlite3_column_type(st,0)==SQLITE_TEXT){
+                Err key=cell(&d->arena,st,0,false,&text_key);
+                if(key.code){if(key.code!=ERR_INVALID){e=key;break;}e=malformed_row(s,d,"trajectory_metadata_blob",0,key.message);continue;}
+            }else if(!integer(st,0,&idx,&has_idx)||(!has_idx&&k)){e=malformed_row(s,d,k==0?"trajectory_metadata_blob":k==1?"gen_metadata":"steps",0,"noninteger index or absent required row index");continue;}
+            if(k<2){AntigravityBlob b={.idx=idx,.has_idx=has_idx,.text_key=text_key};e=blob(s,d,st,1,k?AG_GENERATOR:AG_TRAJECTORY,idx,&b.data,&valid);
                 if(!e.code&&valid){if(k)e=APPEND(&d->arena,r->generators,r->generator_count,r->generator_capacity,b);else e=APPEND(&d->arena,r->metadata,r->metadata_count,r->metadata_capacity,b);}
             }else{
                 AntigravityStep step={.idx=idx};bool payload_valid=false;

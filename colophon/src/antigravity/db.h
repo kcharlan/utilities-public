@@ -9,7 +9,9 @@ typedef enum { AG_DB_OK,AG_DB_ABSENT,AG_DB_UNREADABLE,AG_DB_UNSUPPORTED } Antigr
  * independent record facts, and must never masquerade as absent/default. */
 typedef enum { AG_SQL_ABSENT,AG_SQL_INTEGER,AG_SQL_INVALID } AntigravityIntegerState;
 typedef struct { int64_t idx,step_type,status,step_format;AntigravityIntegerState step_type_state,status_state,step_format_state;Str metadata,payload;Str turn; } AntigravityStep;
-typedef struct { int64_t idx;bool has_idx;Str data; } AntigravityBlob;
+/* Generator indexes are required INTEGERs. Trajectory metadata keys are opaque:
+ * TEXT is retained independently; INTEGER/NULL compatibility uses idx/has_idx. */
+typedef struct { int64_t idx;bool has_idx;Str data,text_key; } AntigravityBlob;
 typedef struct { Str trajectory_id,cascade_id;int64_t trajectory_type,source;AntigravityIntegerState trajectory_type_state,source_state; } AntigravityMeta;
 typedef struct {
     Str id,database,surface,title,archive_reason;

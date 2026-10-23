@@ -9,6 +9,26 @@ TEST(antigravity_db_empty_schema_and_independent_identity){
     ASSERT_EQ(1,s.session_count);ASSERT_TRUE(str_equal(s.sessions[0]->id,STR_LIT(AG_SYNTHETIC_ID)));ASSERT_EQ(1,s.diagnostic_count);
     ASSERT_TRUE(str_equal(s.sessions[0]->meta[0].cascade_id,STR_LIT("synthetic-independent-cascade")));antigravity_store_destroy(&s);antigravity_fixture_close(&f);
 }
+TEST(antigravity_db_opaque_text_metadata_keys_preserve_blobs_and_numeric_indexes){
+    AntigravityFixture f;antigravity_fixture_open(&f);
+    antigravity_fixture_sql(&f,
+        "INSERT INTO trajectory_metadata_blob VALUES('synthetic-opaque-key',x'12020801');"
+        "INSERT INTO trajectory_metadata_blob VALUES(7,x'12020802');"
+        "INSERT INTO trajectory_metadata_blob VALUES(NULL,x'12020803');"
+        "INSERT INTO trajectory_metadata_blob VALUES('synthetic-malformed-blob',x'80');"
+        "INSERT INTO gen_metadata VALUES('synthetic-not-an-index',x'');"
+        "INSERT INTO gen_metadata VALUES(9,x'');"
+        "INSERT INTO steps VALUES('synthetic-not-an-index',1,1,x'',x'',0)");
+    AntigravityStore s={0};antigravity_fixture_read(&f,&s);AntigravitySession *r=s.sessions[0];
+    ASSERT_EQ(3,r->metadata_count);ASSERT_EQ(1,s.malformed_blobs);ASSERT_EQ(2,s.malformed_rows);
+    ASSERT_EQ(1,r->generator_count);ASSERT_EQ(9,r->generators[0].idx);ASSERT_EQ(0,r->step_count);
+    /* ORDER BY id: NULL, INTEGER, TEXT. Valid content is independent of an
+     * opaque metadata key; required step/gen indexes remain strict integers. */
+    ASSERT_FALSE(r->metadata[0].has_idx);ASSERT_EQ(7,r->metadata[1].idx);ASSERT_TRUE(r->metadata[1].has_idx);
+    ASSERT_FALSE(r->metadata[0].text_key.p);ASSERT_FALSE(r->metadata[1].text_key.p);
+    ASSERT_FALSE(r->metadata[2].has_idx);ASSERT_TRUE(str_equal(STR_LIT("synthetic-opaque-key"),r->metadata[2].text_key));
+    antigravity_store_destroy(&s);antigravity_fixture_close(&f);
+}
 TEST(antigravity_db_rejects_missing_columns_but_allows_extra_tables){
     AntigravityFixture f;antigravity_fixture_open(&f);AntigravityStore s={0};
     antigravity_fixture_sql(&f,"CREATE TABLE synthetic_credentials(secret); INSERT INTO synthetic_credentials VALUES ('SYNTHETIC-NEVER-READ')");antigravity_fixture_read(&f,&s);ASSERT_EQ(1,s.session_count);antigravity_store_destroy(&s);

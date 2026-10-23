@@ -225,3 +225,13 @@ TEST(antigravity_usage_partial_output_reconciles_before_component_merge) {
         destroy(&s,&c,&p);arena_destroy(&a);
     }
 }
+TEST(antigravity_pinned_effort_aliases_after_routing_suffix) {
+    const char *models[]={"gemini-3.1-pro-high-thinking","gemini-3.1-pro-low-thinking",
+      "gemini-3.1-pro-high-tiered","gemini-3.1-pro-low-tiered",
+      "gemini-3.1-pro-high-low","gemini-3.1-pro-low-low"};
+    Arena a={0};for(size_t i=0;i<sizeof models/sizeof *models;i++){
+        Str out={0};ASSERT_EQ(ERR_OK,antigravity_normalize_model(&a,(Str){models[i],(uint32_t)strlen(models[i])},&out).code);
+        ASSERT_TRUE(str_equal(STR_LIT("gemini-3.1-pro-preview"),out));
+    }
+    arena_destroy(&a);
+}

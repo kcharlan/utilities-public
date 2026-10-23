@@ -24,7 +24,7 @@ def database(native, surface="antigravity", identity=ID):
         db.execute("INSERT INTO trajectory_meta VALUES (?,?,1,1)", (identity, identity))
     return path
 
-def cached_pricing(native, unknown=True):
+def cached_pricing(native, unknown=True, model="gemini-pro-default-high"):
     """Invented cached rates through the real offline catalog/DB path."""
     path = database(native)
     catalog = {"openai": {"models": {}}, "google": {"models": {"gemini-3.1-pro-preview": {
@@ -38,7 +38,7 @@ def cached_pricing(native, unknown=True):
     prompt = proto_field(19, proto_field(2, b"Synthetic priced Antigravity request"))
     metadata = proto_field(1, proto_field(1, 1767355200)) + proto_field(8, proto_field(1, 1767355202))
     usage = b"".join(proto_field(k, v) for k,v in [(2,42),(5,3),(4,5),(3,7),(9,2),(10,5)])
-    chat = proto_field(4, usage) + proto_field(19, "gemini-pro-default-high")
+    chat = proto_field(4, usage) + proto_field(19, model)
     with sqlite3.connect(path) as db:
         db.execute("INSERT INTO steps VALUES(0,14,3,?,?,0)", (metadata,prompt))
         db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1,chat)+proto_field(2,0),))
@@ -64,6 +64,44 @@ def test_antigravity_cached_pricing(native):
     assert priced[8] == pytest.approx(.001173)
     assert payload["meta"]["sources"]["antigravity"]["costs"] == {"available":True,"reason":None}
     assert "antigravity:bundled/synthetic-unpriced" in json.dumps(payload["diagnostics"])
+
+@pytest.mark.parametrize("model", ["gemini-3.1-pro-high-thinking", "gemini-3.1-pro-low-thinking",
+    "gemini-3.1-pro-high-tiered", "gemini-3.1-pro-low-tiered",
+    "gemini-3.1-pro-high-low", "gemini-3.1-pro-low-low"])
+def test_antigravity_cached_pricing_effort_alias_after_routing(native, model):
+    cached_pricing(native, unknown=False, model=model)
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["own_usage"]["unpriced_tokens"] == 0
+    assert row["own_usage"]["cost_usd"] == pytest.approx(.001173)
+    assert row["buckets"][0][1] == "gemini-3.1-pro-preview"
+
+@pytest.mark.parametrize("key", ["synthetic-opaque-key", 7, None])
+def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent(native, key):
+    child_id = "00000000-0000-4000-8000-000000000002"
+    parent_path = database(native)
+    child_path = database(native, identity=child_id)
+    workspace = proto_field(1,"file:///SYNTHETIC-NONEXISTENT-KEY-WORKSPACE") + proto_field(2,"file:///SYNTHETIC-NONEXISTENT-KEY-GIT-ROOT")
+    trajectory = proto_field(1,workspace) + proto_field(2,proto_field(1,1767355200)) + proto_field(5,ID)
+    with sqlite3.connect(child_path) as db:
+        # The column is deliberately affinity-free: preserve actual SQLite
+        # TEXT/INTEGER/NULL states rather than having SQLite coerce the fixture.
+        db.executescript("DROP TABLE trajectory_metadata_blob; CREATE TABLE trajectory_metadata_blob(id,data BLOB)")
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES (?,?)", (key,trajectory))
+    assert parent_path.exists()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    parent, = payload["sessions"]
+    child = payload["subagents"][child_id]
+    assert parent["id"] == ID
+    assert parent["children"] == [child_id]
+    assert child["parent_id"] == ID
+    assert child["cwd"] == "/SYNTHETIC-NONEXISTENT-KEY-WORKSPACE"
+    assert child["git_root"] == "/SYNTHETIC-NONEXISTENT-KEY-GIT-ROOT"
+    assert child["start_ms"] == 1767355200000
+    assert payload["diagnostics"]["antigravity_malformed_rows"] == 0
 
 def test_antigravity_corpus_acceptance(native):
     native.codex.rmdir()

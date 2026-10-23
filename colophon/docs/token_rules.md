@@ -54,7 +54,9 @@ earlier hash after the app updated.
 Normalization adapts CodexBar commit
 `e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift
 pricingBaseModelID/routingVariantSuffixes/pricingModelAliases, adding -medium,
--high and -trial. The moving gemini-pro-default/gemini-pro-agent aliases assume
+-high and -trial. Exact aliases are checked before removing one suffix and again
+afterward, including gemini-3.1-pro-high/-low followed by a routing suffix.
+The moving gemini-pro-default/gemini-pro-agent aliases assume
 gemini-3.1-pro-preview. The explicit Vertex entry is excluded and unsupported;
 there is no google-vertex routing lane. Shared catalog pricing preserves Claude
 behavior, context tiers and provenance while memoizing provider-prefixed

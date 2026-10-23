@@ -13,12 +13,18 @@ Str antigravity_model_enum(int64_t value) {
     const char *s=models[lo].slug;return (Str){s,(uint32_t)strlen(s)};
 }
 static Str text(Str input,uint32_t n) {AgField f={0};return ag_wire_last(input,n,&f)==AG_FOUND?token_model_trim(f.bytes):(Str){0};}
+static Str pricing_alias(Str lower) {
+    const char *aliases[][2]={{"gemini-pro-default","gemini-3.1-pro-preview"},{"gemini-pro-agent","gemini-3.1-pro-preview"},{"gemini-3.1-pro","gemini-3.1-pro-preview"},{"gemini-3.1-pro-high","gemini-3.1-pro-preview"},{"gemini-3.1-pro-low","gemini-3.1-pro-preview"},{"gemini-3.7-flash-safety-le","gemini-3.7-flash"}};
+    for(size_t i=0;i<sizeof aliases/sizeof *aliases;i++)if(str_equal(lower,(Str){aliases[i][0],(uint32_t)strlen(aliases[i][0])}))return (Str){aliases[i][1],(uint32_t)strlen(aliases[i][1])};
+    return (Str){0};
+}
 Err antigravity_normalize_model(Arena *arena,Str raw,Str *out) {
     Str s=token_model_trim(raw),lower;TRY(str_lower(arena,s,&lower));
+    /* Pinned order: exact alias, one routing suffix, then alias again. */
+    Str alias=pricing_alias(lower);if(alias.n)return str_copy(arena,alias,out);
     const char *suffixes[]={"-tiered","-low","-thinking","-medium","-high","-trial"};
     for(size_t i=0;i<sizeof suffixes/sizeof *suffixes;i++){size_t n=strlen(suffixes[i]);if(s.n>n&&!memcmp(lower.p+lower.n-n,suffixes[i],n)){s.n-=(uint32_t)n;lower.n-=(uint32_t)n;break;}}
-    const char *aliases[][2]={{"gemini-pro-default","gemini-3.1-pro-preview"},{"gemini-pro-agent","gemini-3.1-pro-preview"},{"gemini-3.1-pro","gemini-3.1-pro-preview"},{"gemini-3.7-flash-safety-le","gemini-3.7-flash"}};
-    for(size_t i=0;i<sizeof aliases/sizeof *aliases;i++)if(str_equal(lower,(Str){aliases[i][0],(uint32_t)strlen(aliases[i][0])})){s=(Str){aliases[i][1],(uint32_t)strlen(aliases[i][1])};break;}
+    alias=pricing_alias(lower);if(alias.n)s=alias;
     return str_copy(arena,s,out);
 }
 Err antigravity_model(Arena *arena,Str response,Str usage,Str metadata,Str previous,Str *raw,Str *normalized) {
