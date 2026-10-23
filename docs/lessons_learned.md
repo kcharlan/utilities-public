@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-22: Treat unselected combobox navigation and focus departure explicitly
+
+A suggestion index of -1 means no active option; it is not an existing index
+to wrap. Handle the first ArrowUp as selecting the last option and the first
+ArrowDown as selecting the first, then wrap ordinary navigation. Close a
+suggestion list when keyboard focus leaves the search control as well as on
+Escape and outside pointer interaction. Keep pointer selection from causing a
+premature blur, and retain the editor's pending-draft cancellation when a
+suggestion is chosen. Test initial upward navigation, keyboard departure into
+another menu, and both Enter and pointer selection before debounce.
+
 ## 2026-10-22: Keep independent history visible when result filters exclude every row
 
 Model Sentinel's one-host history was nested inside its qualifying profile

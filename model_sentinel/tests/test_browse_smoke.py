@@ -221,6 +221,38 @@ def test_hosts_search_escape_clears_active_option_and_keeps_input_focus(hosts_pa
     expect(hosts_page.get_by_role("listbox", name="Model list suggestions", exact=True)).to_have_count(0)
 
 
+def test_hosts_search_initial_arrow_up_selects_last_suggestion(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field.fill("shared")
+    field.press("ArrowUp")
+    last = hosts_page.get_by_role("option", name="synthetic-response-shared", exact=True)
+    expect(last).to_have_attribute("aria-selected", "true")
+    field.press("Enter")
+    expect(field).to_have_value("synthetic-response-shared")
+    hosts_page.wait_for_timeout(350)
+    expect(hosts_page).to_have_url(re.compile("hq=synthetic-response-shared"))
+
+
+def test_hosts_search_keyboard_blur_closes_suggestions_before_another_menu(hosts_page, hosts_server):
+    _, facts = hosts_server
+    goto(hosts_page, hosts_server, _hosts_fragment(facts))
+    field = hosts_page.get_by_role("combobox", name="Search model lists", exact=True)
+    field.fill("shared")
+    suggestions = hosts_page.get_by_role("listbox", name="Model list suggestions", exact=True)
+    expect(suggestions).to_be_visible()
+    field.press("Shift+Tab")
+    trigger = hosts_page.get_by_role("button", name="Price limit condition", exact=True)
+    expect(trigger).to_be_focused()
+    expect(suggestions).to_have_count(0)
+    expect(field).to_have_attribute("aria-expanded", "false")
+    trigger.press("Enter")
+    expect(hosts_page.get_by_role("dialog", name="Price limit", exact=True)).to_be_visible()
+    expect(suggestions).to_have_count(0)
+    expect(hosts_page).to_have_url(re.compile("hq=shared"))
+
+
 def test_hosts_option_filter_counts_highlights_and_owned_edits(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, healthy="1"))
