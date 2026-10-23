@@ -221,7 +221,8 @@ the canonical [Colophon C17 project](../colophon/README.md) at `colophon/`.
 The Python application is retired; Git history retains its source. The fleet
 audit checks the generated executable and its receipt rather than comparing
 a launcher to the installed command. Runtime defaults read Codex (`~/.codex`),
-Claude Code (`~/.claude`) and OpenCode (`~/.local/share/opencode`) data and keep
+Claude Code (`~/.claude`), OpenCode (`~/.local/share/opencode`) and Antigravity
+(`~/.gemini` app/CLI/IDE conversation databases) data and keep
 state in `~/.colophon`; deployment does not read or migrate session data or
 editable runtime state.
 

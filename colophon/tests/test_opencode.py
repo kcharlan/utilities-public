@@ -465,7 +465,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.4.2"
+    assert payload["meta"]["version"] == "0.5.0"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):

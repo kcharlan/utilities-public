@@ -10,6 +10,19 @@ request; unavailable Codex rates do not hide Claude estimates. The canonical sou
 project at `colophon/` embeds its page assets, fonts, public rate seeds and
 vendored zstd 1.5.7 decoder in the executable.
 
+Antigravity discovery is enabled by default. `--antigravity-home PATH` selects
+the Gemini root (default `~/.gemini`); `--no-antigravity` suppresses all inspection.
+The reader admits conversation UUID databases from the app, CLI and IDE surfaces,
+plus their own annotation/summary archive metadata. Source counts and diagnostics
+appear in the payload and CLI summary. Sessions, prompts, answers, tools,
+workspaces and subagent relationships appear alongside the other providers;
+APP, CLI and IDE tags retain source surfaces independently of trajectory source.
+Only Copy session ID is available. Usage from generators, steps and retries is
+deduplicated globally and priced per request through independent bundled/catalog
+estimates; unknown models remain unpriced. The moving default Gemini alias
+assumes gemini-3.1-pro-preview; Vertex-only models remain unsupported.
+It creates no Antigravity parse cache and reads no Gemini credentials/settings.
+
 Version 0.4.0 adds OpenCode v2 database discovery, sessions, turns, tools,
 subagents, archive state and recorded catalog estimates to the native pipeline,
 payload, offline page and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
@@ -29,7 +42,12 @@ expanded text, and end actions for follow-ups and footer panels. Collapsing
 returns focus and brings an offscreen section start into view. Footer panels
 retain their independent open states when sources or metrics change.
 
-The page's All/Codex/Claude/OpenCode switch preserves filters and uses green/blue/violet
+Version 0.5.0 adds Antigravity app/CLI/IDE sessions, archive metadata, tools,
+workspaces, subagents, token accounting and API-equivalent catalog estimates.
+All-provider and provider-only views retain independent cost availability and
+unpriced usage. Source, payload, page footer and installer share this version.
+
+The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI
 origins with known cwd/config root; copying never runs the CLI. See
@@ -77,9 +95,10 @@ COLOPHON_HOME=/path/to/private/native-runtime ./colophon --offline --no-open --o
 
 Without overrides, sources include `~/.codex`, Claude's config projects,
 Desktop embedded project stores, macOS cswap sessions and OpenCode v2
-databases under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`).
+databases under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`), and
+Antigravity UUID databases in the admitted `~/.gemini` surfaces above.
 `--no-claude` disables Claude inspection. Readable Codex/Claude input or a reportable
-OpenCode database is sufficient; usable
+OpenCode or Antigravity database is sufficient; usable
 Claude history supplies history-only sessions when transcript roots are absent
 or an entry has no matching transcript identity. They show remembered prompts
 without active time, tokens or cost, with a separate shown-by-default toggle.

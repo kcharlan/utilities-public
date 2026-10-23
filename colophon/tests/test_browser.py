@@ -1,7 +1,7 @@
 import pytest
 from playwright.sync_api import sync_playwright, expect
 from browser_errors import guard_browser_errors
-from helpers import SESSION, REQUEST
+from helpers import SESSION, REQUEST, proto_field
 import json
 import copy
 import re
@@ -10,6 +10,217 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from test_opencode import database, CLOCK, SESSION as OPENCODE_SESSION
 import sqlite3
+import os
+from test_antigravity import database as ag_database, ID as AG_ID, cached_pricing as ag_cached_pricing
+
+
+def antigravity_page(native, mutate=None, surface="antigravity", archived=False):
+    path = ag_database(native, surface)
+    # Literal protocol facts: USER_INPUT=14, DONE=3; user_response field 2.
+    prompt = proto_field(19, proto_field(2, b"Synthetic Antigravity request"))
+    metadata = proto_field(1, proto_field(1, 1767355200)) + proto_field(8, proto_field(1, 1767355202))
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO steps VALUES(0,14,3,?,?,0)", (metadata, prompt))
+    if archived:
+        annotations = path.parent.parent / 'annotations'
+        annotations.mkdir()
+        (annotations / (AG_ID + '.pbtxt')).write_text('archived: true')
+    return source_page(native, mutate)
+
+
+@pytest.mark.parametrize('surface,tag', [('antigravity','APP'), ('antigravity-cli','CLI'), ('antigravity-ide','IDE')])
+def test_antigravity_source_filter_actions_tags_and_phone(page, native, surface, tag):
+    antigravity_page(native, surface=surface)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.locator('#snapshot-meta')).to_contain_text('1 Antigravity database ·')
+        page.get_by_role("button", name="Antigravity", exact=True).click()
+        expect(page.locator('[data-list-row]')).to_have_count(1)
+        expect(page.locator('[data-list-row]')).to_contain_text("Synthetic Antigravity request")
+        page.locator('.brand').click()
+        expect(page.locator('[data-kpi="sessions"]')).to_contain_text("1")
+        expect(page.locator('.heat-cell[data-provider="antigravity"][data-value="1"]')).to_have_count(1)
+        expect(page.locator('[data-workspace]')).to_have_count(1)
+        colors = page.evaluate("() => { const s=getComputedStyle(document.documentElement); return [s.getPropertyValue('--a').trim(),s.getPropertyValue('--bg').trim()]; }")
+        def luminance(color):
+            values = [int(color[index:index+2], 16) / 255 for index in (1,3,5)]
+            linear = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4 for value in values]
+            return sum(value * weight for value, weight in zip(linear, (.2126,.7152,.0722)))
+        assert (luminance(colors[0]) + .05) / (luminance(colors[1]) + .05) >= 4.5
+        evidence = os.environ.get("COLOPHON_SCREENSHOT_DIR") if tag == 'APP' else None
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / "antigravity-overview.png"), full_page=True)
+        page.goto(native.page.as_uri() + "#v=list&p=all&src=antigravity")
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / "antigravity-list.png"), full_page=True)
+        page.goto(native.page.as_uri() + "#v=session&p=all&src=antigravity&s=" + AG_ID)
+        reader = page.locator('[data-reader]')
+        expect(reader).to_have_attribute("data-provider", "antigravity")
+        expect(reader.locator('.tag', has_text=tag)).to_be_visible()
+        expect(reader.get_by_role('button', name='Copy session ID', exact=True)).to_be_visible()
+        for label in ('Copy log path', 'Copy Continue in CLI'):
+            expect(reader.get_by_role('button', name=label)).to_have_count(0)
+        expect(reader.get_by_role('link', name='Open in Codex')).to_have_count(0)
+        page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.syntheticCopied = text}, configurable: true})")
+        reader.get_by_role('button', name='Copy session ID', exact=True).click()
+        assert page.evaluate('window.syntheticCopied') == AG_ID
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / "antigravity-reader.png"), full_page=True)
+        page.set_viewport_size({"width": 375, "height": 812})
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert requests == []
+
+
+def test_antigravity_archive_inclusion(page, native):
+    antigravity_page(native, archived=True)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#v=list&p=all&src=antigravity&a=0')
+        expect(page.locator('[data-list-row]')).to_have_count(0)
+        page.goto(native.page.as_uri() + '#v=list&p=all&src=antigravity&a=1')
+        expect(page.locator('[data-list-row]')).to_have_count(1)
+        expect(page.locator('[data-list-row]')).to_contain_text('ARCHIVED')
+        page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&a=1&s=' + AG_ID)
+        expect(page.locator('[data-reader]')).to_contain_text('ARCHIVED')
+        assert requests == []
+
+
+def test_antigravity_snapshot_plural_databases(page, native):
+    ag_database(native, identity='00000000-0000-4000-8000-000000000002')
+    antigravity_page(native)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.locator('#snapshot-meta')).to_contain_text('2 Antigravity databases ·')
+        assert requests == []
+
+@pytest.mark.parametrize('unknown', [False, True])
+@pytest.mark.parametrize('width', [1280, 375])
+def test_antigravity_cached_tokens_cost_and_mixed_layout(page, native, unknown, width):
+    ag_cached_pricing(native, unknown)
+    native.session()
+    result = native.build('--no-claude', '--no-opencode')
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.set_viewport_size({'width':width,'height':812})
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=antigravity')
+        expect(page.locator('[data-kpi="tokens"] .kpi-value')).to_have_attribute('data-value', '62' if unknown else '57')
+        cost = page.locator('[data-kpi="cost"] .kpi-value')
+        expect(cost).to_have_attribute('data-value', '0.001173')
+        expect(cost).to_have_text('$0.00 + unpriced' if unknown else '$0.00')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-only-{width}-{unknown}.png'),full_page=True)
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=all')
+        expect(page.locator('[data-kpi="tokens"] .kpi-value')).to_have_attribute('data-value', '212' if unknown else '207')
+        expect(page.locator('[data-kpi="tokens"] [data-provider="antigravity"]')).to_have_attribute('data-share','62' if unknown else '57')
+        # Codex: (100 fresh*1.25 + 20 cached*.125 + 30 output*10)/1e6
+        # plus independently priced Antigravity .001173.
+        assert float(page.locator('[data-kpi="cost"] .kpi-value').get_attribute('data-value')) == pytest.approx(.0016005)
+        expect(page.locator('[data-kpi="cost"] .kpi-value')).to_have_text('$0.00 + unpriced' if unknown else '$0.00')
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-cost-{width}-{unknown}.png'),full_page=True)
+        page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&s=' + AG_ID)
+        reader = page.locator('[data-reader-stat="tokens"] .reader-stat-value')
+        expect(reader).to_contain_text('62' if unknown else '57')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-priced-reader-{width}-{unknown}.png'),full_page=True)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert requests == []
+
+@pytest.mark.parametrize('width', [1280, 375])
+def test_antigravity_mixed_availability_words_fit(page, native, width):
+    ag_cached_pricing(native)
+    def unavailable(payload):
+        for provider in ('codex','claude'):
+            payload['meta']['sources'][provider]['costs']['available'] = False
+    source_page(native,unavailable)
+    with guard_browser_errors(page):
+        requests = open_native(page,native.page)
+        page.set_viewport_size({'width':width,'height':812})
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=all')
+        cost=page.locator('[data-kpi="cost"] .kpi-value')
+        expect(cost).to_contain_text('unpriced')
+        expect(cost).to_contain_text('codex costs unavailable')
+        expect(cost).to_contain_text('claude costs unavailable')
+        broken=cost.evaluate("""element => {
+          const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT),broken=[];
+          while(walker.nextNode()) for(const match of walker.currentNode.textContent.matchAll(/[A-Za-z]+/g)) {
+            const range=document.createRange();range.setStart(walker.currentNode,match.index);range.setEnd(walker.currentNode,match.index+match[0].length);
+            if(range.getClientRects().length!==1)broken.push(match[0]);
+          } return broken;
+        }""")
+        assert broken == []
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+        if evidence:
+            page.screenshot(path=str(Path(evidence) / f'antigravity-partial-availability-{width}.png'),full_page=True)
+        assert requests == []
+
+
+@pytest.mark.parametrize('width', [1280, 375])
+def test_antigravity_unavailable_cost_words_remain_unbroken(page, native, width):
+    # Explicit unavailable-source fixture: ordinary Antigravity accounting now
+    # has independent catalog availability, with unknown models shown unpriced.
+    antigravity_page(native, lambda payload: payload['meta']['sources']['antigravity']['costs'].update(available=False,reason='synthetic unavailable catalog'))
+    def words_fit(locator):
+        expect(locator).to_have_text('costs unavailable')
+        words = locator.evaluate("""element => {
+          const walker=document.createTreeWalker(element, NodeFilter.SHOW_TEXT), words=[];
+          while(walker.nextNode()) {
+            const node=walker.currentNode;
+            for(const match of node.textContent.matchAll(/\\S+/g)) {
+              const range=document.createRange(); range.setStart(node,match.index); range.setEnd(node,match.index+match[0].length);
+              words.push({word:match[0], lines:range.getClientRects().length});
+            }
+          }
+          return words;
+        }""")
+        assert words == [{'word':'costs','lines':1}, {'word':'unavailable','lines':1}]
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.set_viewport_size({'width':width, 'height':812})
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=antigravity')
+        words_fit(page.locator('[data-kpi="cost"] .kpi-value'))
+        page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&s=' + AG_ID)
+        words_fit(page.locator('[data-reader-stat="cost"] .reader-stat-value'))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert requests == []
+
+
+@pytest.mark.parametrize('status', ['absent', 'unreadable', 'disabled'])
+def test_antigravity_source_copy(page, native, status):
+    def mutate(payload):
+        payload['meta']['sources']['antigravity'].update(status=status, home='/synthetic/gemini-home',
+            databases=[] if status != 'unreadable' else [{'path':'/synthetic/locked.db','surface':'cli','status':'unreadable','reason':'Synthetic locked database'}],
+            legacy_encrypted=2, ignored_environment=['ANTIGRAVITY_GEMINI_DIR'])
+        payload['meta']['sources']['opencode']['databases'] = [{'path':'/synthetic/opencode.db','status':'ok'}]
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        footer = page.locator('#colophon-footer')
+        expect(footer).to_contain_text('Antigravity catalog estimates (not invoices)')
+        expect(footer).to_contain_text('Antigravity excluded legacy encrypted conversations · 2')
+        expect(footer).to_contain_text('Ignored ANTIGRAVITY_GEMINI_DIR; use --antigravity-home PATH')
+        wanted = {'absent':'No Antigravity data found. Checked /synthetic/gemini-home/antigravity/conversations, /synthetic/gemini-home/antigravity-cli/conversations, /synthetic/gemini-home/antigravity-ide/conversations; use --antigravity-home PATH',
+                  'unreadable':'Antigravity unreadable: /synthetic/locked.db: Synthetic locked database',
+                  'disabled':'Antigravity disabled by --no-antigravity'}[status]
+        expect(footer).to_contain_text(wanted)
+        if status == 'unreadable':
+            ag = page.locator('[data-antigravity-databases]')
+            oc = page.locator('[data-opencode-databases]')
+            ag.locator('summary').click()
+            page.get_by_role('button', name='Claude', exact=True).click()
+            expect(ag).to_have_attribute('open', '')
+            expect(oc).not_to_have_attribute('open', '')
+            oc.locator('summary').click()
+            ag.locator('summary').click()
+            page.get_by_role('button', name='Codex', exact=True).click()
+            expect(ag).not_to_have_attribute('open', '')
+            expect(oc).to_have_attribute('open', '')
+        assert requests == []
 
 
 def opencode_page(native, mutate=None):
@@ -27,10 +238,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.4.2"
+    assert payload["meta"]["version"] == "0.5.0"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.4.2")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.0")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -155,7 +366,9 @@ def test_opencode_zero_provider_shares_and_reader_overflow(page, native):
         requests = open_native(page, native.page)
         page.goto(native.page.as_uri() + '#p=all')
         for selector in ['[data-kpi="tokens"] .provider-shares span', '.bar-fill']:
-            assert page.locator(selector).evaluate_all("nodes => nodes.length === 3 && nodes.every(e => e.style.width === '0%')")
+            # All four registered providers retain a finite zero-width share.
+            assert page.locator(selector).evaluate_all("nodes => nodes.map(e => e.dataset.provider).sort()") == ['antigravity', 'claude', 'codex', 'opencode']
+            assert page.locator(selector).evaluate_all("nodes => nodes.every(e => e.style.width === '0%')")
         page.goto(native.page.as_uri() + '#v=session&p=all&src=opencode&s=' + OPENCODE_SESSION)
         expect(page.locator('[data-reader-stat="cost"] .reader-stat-value')).to_have_text('costs unavailable')
         expect(page.locator('[data-cost-aggregate]')).to_contain_text('reader ' + OPENCODE_SESSION)

@@ -1,5 +1,69 @@
 # Token and pricing rules
 
+## Antigravity accounting and oracle provenance (0.5.0)
+
+Collect ChatModelMetadata.usage and retry_infos[].usage plus
+CortexStepMetadata.model_usage and retry_infos[].usage, regardless of cleared
+or checkpoint step status. Merge repeated singular embedded messages before
+reading scalar fields. Skip token-empty events; reject components above int64
+(including negative varint encodings) or int64 token-sum overflow while retaining
+valid sibling events. Generator rows lacking eligible usage increment
+antigravity_requests_without_usage; this cannot detect individual missing fields
+or changed meanings.
+
+The native ccusage 20.0.42 binary, SHA-256
+`b0529e16d914b42d5f7cfb1b30cd318f520b776f93798a3219741b8589a648b3`,
+was independently executed on invented external SQLite fixtures. These probes
+establish namespaced response_id/provider_assigned_message_id/message_id aliases:
+any shared alias merges, bridges join transitively, and absent/empty IDs do not
+merge equal-token requests. Copies merge by component maximum; first discovery
+owns the record/model. Global later-session copies count as
+antigravity_cross_session_duplicates. This is behavioral evidence, not a claim
+that upstream Rust source algorithms were independently located or verified.
+
+Each observation first derives visible output as max(response_output_tokens,
+max(0, output_tokens-thinking_output_tokens)). Copies then merge the visible and
+thinking components by maximum; reconciled output is their sum. Reconciling only
+after raw maxima can erase visible evidence from a copy with fewer reasoning
+tokens. Explicit zero reasoning remains present; absent reasoning remains absent. Unit input includes
+fresh input plus cache read plus cache write. Oracle comparisons project fresh
+input as input-cached-cache_write, visible output as output-reasoning (absent
+reasoning uses zero), compare cache components directly and total as input+output;
+the providers' raw output columns have different meanings.
+
+Colophon additionally preserves first session/display-turn ownership, including
+outside-turn units, while preferring a later step-derived clock. Generator events
+match execution_id first, otherwise first step_indices entry. Dating prefers
+step completed_at, finished_generating_at, created_at, chat-start created_at,
+then session start with antigravity_unknown_clocks. These fallback/turn policies
+are explicit Colophon adaptations. TTFT uses the turn's first generator row.
+
+Attribution prefers generator response_model, meaningful mapped usage enum,
+step ModelInfo.chat_model_name then model_name, latest attributed conversation
+model, then antigravity/unattributed. Display/Vertex/URL strings are excluded.
+Public fully qualified Model descriptors from Antigravity 2.26.0 binary SHA-256
+`6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d`
+match all 1,691 earlier candidates from the pinned public binary SHA-256
+`060ebf79719024f1b3acb52a21c7a182cb6466b2ac4ac25e93391169b1c1bb46`.
+`models.inc` retains those values and native-oracle slugs; the self-contained
+model-oracle fixture retains public names and observed expectations. Generic
+oracle labels deliberately yield empty attribution so meaningful fallbacks win.
+Schema provenance remains tied to its producing binary, not reassigned to the
+earlier hash after the app updated.
+
+Normalization adapts CodexBar commit
+`e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift
+pricingBaseModelID/routingVariantSuffixes/pricingModelAliases, adding -medium,
+-high and -trial. Exact aliases are checked before removing one suffix and again
+afterward, including gemini-3.1-pro-high/-low followed by a routing suffix.
+The moving gemini-pro-default/gemini-pro-agent aliases assume
+gemini-3.1-pro-preview. The explicit Vertex entry is excluded and unsupported;
+there is no google-vertex routing lane. Shared catalog pricing preserves Claude
+behavior, context tiers and provenance while memoizing provider-prefixed
+identities. Antigravity looks up normalized model; Claude looks up model_raw.
+Unknown models remain unpriced. Each composition rebuilds summaries after the
+shared usage arena reset, including zero-unit sessions.
+
 This ledger preserves the still-applicable decisions inherited from Python
 Colophon at repository baseline `38d6998eb223f690fc9dc0bde0ba528fcf784449`.
 The complete historical Python ledger and design specification remain in Git

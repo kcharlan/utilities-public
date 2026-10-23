@@ -1,5 +1,58 @@
 # Standalone validation
 
+Antigravity reader units and `test_antigravity.py` create only invented UUID
+databases/annotations in external private scratch. `fixtures/antigravity/`
+contains only the public qualified protobuf schema projection with its producing
+binary SHA-256, an exception analogous to OpenCode's public DDL fixture.
+The reader tests cover wire bounds/types/unknown fields and repeated integers,
+empty/zero-step databases, malformed-record isolation, transaction rollback,
+independent metadata identities, archive defaults/precedence/fallback, surface
+duplicates, title-only summaries, lock failures, large unrelated database data,
+source database/WAL/annotation byte/mode preservation and unopened Codex caches.
+The corpus acceptance case asserts source counts, runtime initialization and
+zero-turn sessions while every other provider is disabled/absent.
+Regressions bound FIFO/directory sidecar checks for both database kinds, merge
+repeated singular summary annotations, and preserve usage/payload blobs under
+malformed optional SQL enums while rejecting invalid row indexes. Raw enum
+states distinguish valid integers, absent NULLs and invalid dynamic types.
+Privacy canaries exercise unrelated tables/settings and excluded prompt/thinking
+text. Wrappers strip all three ignored Antigravity environment names and deny
+real Gemini root reads/writes. A separate mutation invocation proves removing
+that explicit deny fails the policy regression under existing canonical scratch.
+
+Antigravity corpus units pin every descriptor status, mixed error/cancellation
+precedence, earlier/final turns, missing completion and quiet thresholds; SQL
+enum authority, explicit payload fallback and conflicts; pre-prompt steps,
+zero-step sessions, singular nested-message merges, prompt/image/answer rules,
+MCP/tool mapping and malformed arguments, workspace URI decoding and retained
+git roots, parentless subagents and cross-provider collisions. Native cases cover
+archived/unarchived sessions on all surfaces, summary-only archive, annotation
+default false, mixed/disabled providers and repeated empty composition/refresh.
+Chromium cases cover source filters/KPIs/calendar/workspaces, APP/CLI/IDE tags,
+capabilities and copy, source remedies, independent database footer state,
+4.5:1 provider contrast and 375px overflow, with browser-error/request guards.
+Set COLOPHON_SCREENSHOT_DIR to fresh private external scratch to retain the
+synthetic app overview/list/reader images during that browser case.
+
+`test_antigravity_ccusage_usage_oracle` and the output/model C cases retain
+self-contained, invented expectations captured from native ccusage 20.0.42;
+normal suites neither locate nor require a private oracle executable. The
+public enum/oracle fixture records both descriptor and oracle provenance.
+Coverage includes all four direct/retry locations, alias namespaces/transitive
+bridges, global first ownership, component maxima, strict number rejection,
+output reasoning presence, model fallbacks, step clocks/TTFT and repeat compose.
+`test_antigravity_cached_pricing` seeds only invented `pricing-cache.json` rates
+before an offline build, verifying alias resolution, context tiers and unknown
+unpriced identities without a catalog socket. Chromium covers known/unpriced
+Antigravity-only and All totals, mixed availability word layout, phone overflow
+and native reader output. Its screenshot option retains priced overview/reader
+and partial-availability states at desktop/phone widths in external scratch.
+Opaque trajectory metadata TEXT keys are retained independently of INTEGER/NULL
+compatibility and required numeric step/generator indexes. DB and native CLI
+regressions pin blob validation plus workspace/creation and a resolvable
+provider-local parent. Cached-price and unit regressions cover high/low effort
+aliases followed by each pinned routing suffix, not only individual suffixes.
+
 History acceptance covers exact canonical/unique-alias resolution, ambiguous
 owners and collision-skipped aliases across deletion/rebuild, Codex filename
 fallback collisions, malformed fields, chronological grouping and the actual

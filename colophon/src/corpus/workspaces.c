@@ -653,7 +653,12 @@ Err corpus_resolve_workspaces(Corpus *c, const WorkspaceAliases *aliases) {
       if (e.code)
         goto done;
     }
-    if (cwd.p) {
+    if (s->provider == PROVIDER_ANTIGRAVITY) {
+      e = workspace_path(&c->arena, s->antigravity_git_root, &root);
+      if (e.code)
+        goto done;
+    }
+    if (cwd.p && !root.p) {
       Str *saved = omap_get(&memo, cwd);
       if (saved)
         root = *saved;

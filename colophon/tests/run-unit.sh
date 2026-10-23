@@ -8,7 +8,7 @@ trap 'unit_status=$?; rm -r -- "$unit_scratch"; exit "$unit_status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p /private/tmp/colophon-native-canary "$unit_scratch/home" "$unit_scratch/runtime"
-unset CLAUDE_CONFIG_DIR OPENCODE_DB XDG_DATA_HOME
+unset CLAUDE_CONFIG_DIR OPENCODE_DB XDG_DATA_HOME ANTIGRAVITY_GEMINI_DIR ANTIGRAVITY_APP_DATA_DIR JETSKI_APP_DATA_DIR
 /usr/bin/sandbox-exec -D "REAL_HOME=$real_home" -D "PROJECT_DIR=$project_dir" \
     -f "$project_dir/tests/sandbox.sb" \
     env HOME="$unit_scratch/home" COLOPHON_HOME="$unit_scratch/runtime" TMPDIR="$unit_scratch" \

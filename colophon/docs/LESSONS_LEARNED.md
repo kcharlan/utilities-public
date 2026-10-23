@@ -1,5 +1,39 @@
 # Lessons learned
 
+Index failed Antigravity execution IDs once per session before counting planner
+calls, then route each step to its turn through an index. Merging split tool-call
+metadata inside each planner call retains a fresh arena copy every time and can
+turn small inputs into quadratic retained memory. Keep those merges in temporary
+session scratch, copy index keys and destroy scratch/maps on every exit. Assert
+both failed-tool behavior and an arena-capacity budget on split synthetic inputs;
+wall-clock timing alone cannot reliably catch this retained-allocation defect.
+
+Antigravity nested singular protobuf messages merge before scalar lookup;
+choosing the last raw message loses earlier response text or timestamp seconds.
+Keep raw optional SQL enum states separate from effective projection: an explicit
+integer wins, otherwise only an explicit payload scalar can supply the fact.
+Unknown completion clocks stay unknown when a later prompt closes a turn.
+Open-turn quiet detection uses the latest completion as well as creation, and
+provider aggregation must be rebuilt after every shared compose/destroy cycle,
+including empty usage. Database disclosures need explicit independent state keys;
+a shared fallback key couples otherwise separate provider panels.
+
+Antigravity descriptor names collide across protobuf packages. Resolve each
+fully qualified type through its owning FileDescriptorProto and typed fields:
+the Jetski annotation archive field and Cortex retry layout differ from the
+first unqualified descriptor match. Pin behavior through actual database/summary
+decoding, retain independent filename/trajectory/cascade identity, and stage
+acceptance until the conversation transaction commits. Text protobuf escape
+decoding must reject a NUL after backslash before using C string lookup helpers.
+Check summary indexes are regular files before asking SQLite to open them: a
+FIFO with a database filename can block a read-only source scan. Enforce binary
+collation for exact identity joins rather than inheriting source-table collation.
+The same regular-file admission applies to all SQLite sidecars, including a
+rollback journal: busy timeouts do not bound an OS FIFO open. Singular protobuf
+submessages merge across occurrences; apply last-wins only to present scalar
+fields within the merged message. Treat malformed optional SQL enums as distinct
+raw states so they cannot erase independently valid indexed protobuf facts.
+
 Native details toggle events are queued and may arrive after a footer rerender.
 Snapshot connected panels' live open properties before replacement, ignore
 detached toggle events, and restore open as a property rather than a false
@@ -245,3 +279,35 @@ by allocating every cumulative prefix retains quadratic bytes. Validate and sum
 fragment lengths with overflow checks, allocate the final text once and copy
 each fragment once. Regress both exact output and arena capacity through the
 real database reader; content equality alone cannot detect this retention bug.
+
+## Antigravity usage copies
+
+The same request can appear in generator usage, generator retries, step usage
+and step retries, including later conversations. Deduplicate namespaced identity
+aliases transitively before aggregation and merge component maxima; summing
+locations overcounts requests. Equal token tuples without IDs are independent.
+Retain first session/turn ownership even when a later step improves the clock.
+Reuse projection's step-to-turn mapping and rebuild summaries after each shared
+usage reset, including empty sessions. Synthetic native oracle expectations
+establish output/identity behavior; public enum descriptors alone cannot supply
+behavioral model slugs, and placeholder enum labels must not defeat fallbacks.
+Reconcile visible output within each observation before merging component maxima:
+different reasoning counts can reveal different visible totals. Raw maxima first
+would silently discard that evidence; a native-oracle partial-record probe
+caught this despite ordinary duplicate and single-event output tests passing.
+
+Opaque SQLite metadata keys are not step indexes. Preserve trajectory metadata
+TEXT keys independently of INTEGER/NULL compatibility, and validate their blobs
+without routing them through the required numeric step/generator index gate.
+Regress workspace, creation and a resolvable provider-local parent through the
+real database-to-payload path; raw-row count tests alone miss projection loss.
+When adapting pinned aliases, retain exact-alias lookup both before and after
+one routing suffix is stripped. Individual effort and suffix tests miss their
+composition; cached-price acceptance must exercise the composed spelling too.
+
+Every consumed nested clock needs its qualified schema at admission, including
+ChatStartMetadata.created_at. Structural validation of an opaque parent cannot
+validate a nested Timestamp. Clock decoding must also reject malformed framing
+and wrong wire types before applying protobuf's absent-scalar zero defaults.
+Retain empty/default epoch timestamps and singular-message merges, and test
+malformed generator isolation with an independent valid sibling through SQLite.

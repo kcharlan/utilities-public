@@ -1,0 +1,620 @@
+{
+  "source": "Antigravity 2.26.0 public language_server descriptors",
+  "binary_sha256": "6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d",
+  "enums": {
+    ".exa.cortex_pb.CortexTrajectorySource": [
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_UNSPECIFIED",
+        "number": 0
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+        "number": 1
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_EXPLAIN_PROBLEM",
+        "number": 2
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_REFACTOR_FUNCTION",
+        "number": 3
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_EVAL",
+        "number": 4
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_EVAL_TASK",
+        "number": 5
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_ASYNC_PRR",
+        "number": 6
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_ASYNC_CF",
+        "number": 7
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_ASYNC_SL",
+        "number": 8
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_ASYNC_PRD",
+        "number": 9
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_ASYNC_CM",
+        "number": 10
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_INTERACTIVE_CASCADE",
+        "number": 12
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_REPLAY",
+        "number": 13
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_SDK",
+        "number": 15
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_CLI",
+        "number": 17
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_JETBOX",
+        "number": 18
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_AGENT_API",
+        "number": 19
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_CIDER",
+        "number": 20
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_GEMINI_APP",
+        "number": 21
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_VSCODE",
+        "number": 22
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_VISUAL_STUDIO",
+        "number": 23
+      },
+      {
+        "name": "CORTEX_TRAJECTORY_SOURCE_SUBAGENT",
+        "number": 16
+      }
+    ],
+    ".exa.cortex_pb.CortexStepStatus": [
+      {
+        "name": "CORTEX_STEP_STATUS_UNSPECIFIED",
+        "number": 0
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_GENERATING",
+        "number": 8
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_QUEUED",
+        "number": 11
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_PENDING",
+        "number": 1
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_RUNNING",
+        "number": 2
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_WAITING",
+        "number": 9
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_DONE",
+        "number": 3
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_INVALID",
+        "number": 4
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_CLEARED",
+        "number": 5
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_CANCELED",
+        "number": 6
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_ERROR",
+        "number": 7
+      },
+      {
+        "name": "CORTEX_STEP_STATUS_INTERRUPTED",
+        "number": 12
+      }
+    ],
+    ".exa.cortex_pb.CortexStepType": [
+      {
+        "name": "CORTEX_STEP_TYPE_UNSPECIFIED",
+        "number": 0
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_DUMMY",
+        "number": 1
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_FINISH",
+        "number": 2
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MQUERY",
+        "number": 4
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CODE_ACTION",
+        "number": 5
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_GIT_COMMIT",
+        "number": 6
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_GREP_SEARCH",
+        "number": 7
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_VIEW_CODE_ITEM",
+        "number": 13
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_ERROR_MESSAGE",
+        "number": 17
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RUN_COMMAND",
+        "number": 21
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_FIND",
+        "number": 25
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SUGGESTED_RESPONSES",
+        "number": 27
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_COMMAND_STATUS",
+        "number": 28
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_READ_URL_CONTENT",
+        "number": 31
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_VIEW_CONTENT_CHUNK",
+        "number": 32
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SEARCH_WEB",
+        "number": 33
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MCP_TOOL",
+        "number": 38
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CLIPBOARD",
+        "number": 45
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_VIEW_FILE_OUTLINE",
+        "number": 47
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_LIST_RESOURCES",
+        "number": 51
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_READ_RESOURCE",
+        "number": 52
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_LINT_DIFF",
+        "number": 53
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RUN_EXTENSION_CODE",
+        "number": 57
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TRAJECTORY_SEARCH",
+        "number": 60
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_READ_TERMINAL",
+        "number": 65
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CODE_SEARCH",
+        "number": 73
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_NOTIFY_USER",
+        "number": 82
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CODE_ACKNOWLEDGEMENT",
+        "number": 83
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_INTERNAL_SEARCH",
+        "number": 84
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_GENERATE_IMAGE",
+        "number": 91
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CONVERSATION_HISTORY",
+        "number": 98
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_KNOWLEDGE_ARTIFACTS",
+        "number": 99
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SEND_COMMAND_INPUT",
+        "number": 100
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SYSTEM_MESSAGE",
+        "number": 101
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_WAIT",
+        "number": 102
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_KI_INSERTION",
+        "number": 116
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_INVOKE_SUBAGENT",
+        "number": 127
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_GENERIC",
+        "number": 132
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RPC_ACTION",
+        "number": 136
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_ASK_QUESTION",
+        "number": 138
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_DIRECTORY_RULES",
+        "number": 139
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TOOL_SEARCH",
+        "number": 140
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_USER_INPUT",
+        "number": 14
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_PLANNER_RESPONSE",
+        "number": 15
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_VIEW_FILE",
+        "number": 8
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_LIST_DIRECTORY",
+        "number": 9
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CHECKPOINT",
+        "number": 23
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_FILE_CHANGE",
+        "number": 86
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_DELETE_DIRECTORY",
+        "number": 92
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MOVE",
+        "number": 87
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_EPHEMERAL_MESSAGE",
+        "number": 90
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_COMPILE_APPLET",
+        "number": 93
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_INSTALL_APPLET_DEPENDENCIES",
+        "number": 94
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_INSTALL_APPLET_PACKAGE",
+        "number": 95
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RESTART_DEV_SERVER",
+        "number": 110
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SHELL_EXEC",
+        "number": 112
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_LINT_APPLET",
+        "number": 114
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_WRITE_BLOB",
+        "number": 128
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SET_UP_FIREBASE",
+        "number": 108
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_DEPLOY_FIREBASE",
+        "number": 111
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_SET_UP_CLOUD_SQL",
+        "number": 133
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CLOUD_SQL_UPDATE_SCHEMA",
+        "number": 135
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CLOUD_SQL_EXECUTE_SQL",
+        "number": 137
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_AGENCY_TOOL_CALL",
+        "number": 103
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CIDER_AGENT_DUMMY",
+        "number": 104
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BUILD_CLEANER",
+        "number": 105
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_EDIT_NOTEBOOK",
+        "number": 126
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_READ_NOTEBOOK",
+        "number": 129
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_EXECUTE_NOTEBOOK",
+        "number": 134
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_PROPOSE_AI_COMMENTS",
+        "number": 130
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_START_CODE_REVIEW",
+        "number": 131
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BLAZE_BUILD_TARGETS",
+        "number": 106
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BLAZE_TEST_TARGETS",
+        "number": 107
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MOMA",
+        "number": 109
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RETRIEVE_CONTENT",
+        "number": 117
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CRITIQUE",
+        "number": 118
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_FINDINGS",
+        "number": 119
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_PLAN_INPUT",
+        "number": 3
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_COMPILE",
+        "number": 10
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_PROPOSE_CODE",
+        "number": 24
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MEMORY",
+        "number": 29
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_RETRIEVE_MEMORY",
+        "number": 34
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_MANAGER_FEEDBACK",
+        "number": 39
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TOOL_CALL_PROPOSAL",
+        "number": 40
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TOOL_CALL_CHOICE",
+        "number": 41
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TRAJECTORY_CHOICE",
+        "number": 42
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_POST_PR_REVIEW",
+        "number": 49
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_FIND_ALL_REFERENCES",
+        "number": 54
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BRAIN_UPDATE",
+        "number": 55
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_OPEN_BROWSER_URL",
+        "number": 56
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_PROPOSAL_FEEDBACK",
+        "number": 59
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_EXECUTE_BROWSER_JAVASCRIPT",
+        "number": 61
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_LIST_BROWSER_PAGES",
+        "number": 62
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CAPTURE_BROWSER_SCREENSHOT",
+        "number": 63
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CLICK_BROWSER_PIXEL",
+        "number": 64
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_CAPTURE_BROWSER_CONSOLE_LOGS",
+        "number": 66
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_READ_BROWSER_PAGE",
+        "number": 67
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_GET_DOM",
+        "number": 68
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_INPUT",
+        "number": 74
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_MOVE_MOUSE",
+        "number": 75
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_SELECT_OPTION",
+        "number": 76
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_SCROLL_UP",
+        "number": 77
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_SCROLL_DOWN",
+        "number": 78
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_CLICK_ELEMENT",
+        "number": 79
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_PRESS_KEY",
+        "number": 80
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_TASK_BOUNDARY",
+        "number": 81
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_SUBAGENT",
+        "number": 85
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_SCROLL",
+        "number": 88
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_KNOWLEDGE_GENERATION",
+        "number": 89
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_RESIZE_WINDOW",
+        "number": 96
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_DRAG_PIXEL_TO_PIXEL",
+        "number": 97
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_MOUSE_WHEEL",
+        "number": 113
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_MOUSE_UP",
+        "number": 120
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_MOUSE_DOWN",
+        "number": 121
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_WORKSPACE_API",
+        "number": 122
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_LIST_NETWORK_REQUESTS",
+        "number": 123
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_GET_NETWORK_REQUEST",
+        "number": 124
+      },
+      {
+        "name": "CORTEX_STEP_TYPE_BROWSER_REFRESH_PAGE",
+        "number": 125
+      }
+    ]
+  }
+}

@@ -52,7 +52,7 @@ $(BUILD)/release/vendor/zstd/%.o $(BUILD)/unit/vendor/zstd/%.o: override CPPFLAG
 test-unit: $(BUILD)/unit-tests
 	@tests/run-unit.sh "$(REAL_HOME)" "$(CURDIR)/$(BUILD)/unit-tests"
 test-cli: all
-	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_cli.py tests/test_claude_store.py tests/test_opencode.py $(PYTEST_ARGS)
+	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_cli.py tests/test_claude_store.py tests/test_opencode.py tests/test_antigravity.py $(PYTEST_ARGS)
 test-browser: all
 	@tests/run-pytest.sh "$(REAL_HOME)" tests/test_browser.py $(PYTEST_ARGS)
 test: check-sort check-assets test-unit test-cli test-browser

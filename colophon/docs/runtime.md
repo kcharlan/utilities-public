@@ -1,5 +1,116 @@
 # Runtime behavior
 
+## Antigravity source discovery
+
+`--antigravity-home PATH` selects a Gemini root, defaulting to `~/.gemini`,
+with explicit-path tilde expansion and lexical relative-path resolution.
+`--no-antigravity` returns before expansion or inspection. Nonempty
+`ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR` and `JETSKI_APP_DATA_DIR`
+are ignored and reported by name only; use the explicit flag instead.
+
+Surface precedence is `antigravity` (app), `antigravity-cli` (cli), then
+`antigravity-ide` (ide), with database filenames sorted within each surface.
+Only `conversations/<uuid>.db`, same-surface `annotations/<uuid>.pbtxt`,
+`conversation_summaries.db`, and their ordinary SQLite coordination sidecars
+are admitted. Symlink escapes are excluded. Legacy `<uuid>.pb` names are
+enumerated without reading contents: distinct IDs lacking a database across
+all surfaces count as `legacy_encrypted`. Summary indexes never locate or
+create conversation sessions. Credentials/settings and other Gemini subtrees
+are outside the admission list.
+
+Exact filename UUID strings own conversation identity, without case folding or
+case-insensitive aliases; annotation paths retain that spelling and summary
+joins use the same exact string. Case-only copies can remain distinct.
+Trajectory and cascade IDs remain
+independent raw facts and mismatches are diagnosed. The first successful
+database for an ID wins. A schema-valid database with empty required tables
+is an accepted empty raw session, as is a zero-step database with metadata.
+Missing required tables/columns are unsupported; extra tables are ignored.
+Each database uses one coordinated read-only transaction and no database-size
+cap. Database/WAL/annotation bytes and modes remain unchanged; SQLite may
+create or update shared-memory coordination files, as for OpenCode. A failed
+snapshot never consumes its ID or removes successful siblings.
+Every existing SQLite sidecar must be a regular file before SQLite opens either
+a conversation or summary database; FIFOs, directories and symlinks are rejected
+with a source diagnostic so they cannot block later readable siblings.
+
+The bounded wire decoder validates the pinned public schema projection,
+retains unknown fields and raw blobs only in memory, and distinguishes absent,
+found and malformed fields. Malformed blobs lose their staged record, with
+contextual diagnostics; SQL/read failures lose the staged database. Archive
+annotations accept text protobuf whitespace, escaped strings and balanced
+unknown nested messages. A valid annotation wins over its own surface's summary,
+including absent `archived` meaning false. Unusable annotations diagnose and
+fall back to summary; valid disagreement is counted. With neither source,
+archive defaults false. Resolved true records use archive reason `session`.
+Repeated occurrences of the singular summary annotations message merge: the
+last explicitly present archived scalar wins across them. Empty or title-only
+occurrences preserve an earlier archived scalar.
+Titles independently use a nonempty valid annotation title, then the own-surface
+summary title. Explicit empty annotation titles preserve their raw presence but
+allow that fallback; corpus projection then supplies the first meaningful request
+or canonical filename ID.
+
+SQL enum/index columns accept INTEGER values losslessly. Optional enums retain
+three distinct states: integer, NULL/absent and malformed. A malformed enum is
+diagnosed while independently valid identities and indexed protobuf facts remain
+available. Steps/generators need an INTEGER index for row identity; malformed or
+missing required indexes reject that unidentifiable row. Trajectory metadata
+blob IDs can remain explicitly absent. These rules do not coerce textual enum
+names or floating-point numbers into integer facts.
+
+Antigravity sessions, including zero-step databases, enter the shared corpus.
+Session creation uses trajectory creation or first step creation; session end
+uses latest completion or latest creation. Explicit user-input steps start turns;
+pre-prompt steps have no display turn. A turn's end is its latest member completion,
+remaining unknown when no completion exists, even when the next prompt closes it.
+Errors take precedence over cancellation/interruption. Active statuses keep only
+the final turn open; earlier active turns are completed. Open turns use the shared
+two-hour quiet rule with the latest step creation/completion timestamp. Cleared,
+invalid, unspecified and unknown statuses default to completed.
+
+An explicit SQL type/status integer wins. If SQL is absent or invalid, a present
+payload type/status scalar supplies that fact; absent payload scalars never become
+an invented proto3 default. Conflicting explicit SQL/payload enums diagnose, and
+the SQL fact wins. User-input submessage presence alone does not create a turn.
+Nested singular messages merge before their scalar and repeated fields are read.
+Prompts prefer user_response, otherwise joined text items; images include image
+media. Answers use the last nonempty planner response, with modified-response
+fallback. Planner thinking and generator/system prompts never enter the page.
+
+Planner tools map shell/edit names to the shared counters. MCP calls use their
+ServerName/ToolName JSON arguments, and execution tool IDs determine failed
+counts. Malformed arguments diagnose while retaining the session and other tools.
+Workspace file URIs are percent-decoded; invalid schemes/escapes diagnose.
+Recorded git root and branch are retained and participate in shared workspace
+resolution. Parent links stay within Antigravity, without invented spawn links;
+source-marked subagents lacking a parent remain visible as orphans.
+
+The page offers an Antigravity source filter, APP/CLI/IDE tags and Copy session
+ID only. Source status, legacy exclusions, ignored environment remedies and each
+database's surface/status/reason appear in the footer. Each database disclosure
+retains its own open state. Usage includes generator and step records plus all
+retries, including cleared/checkpoint steps. Trajectory metadata keys may be
+opaque TEXT, INTEGER or NULL; TEXT remains source provenance, while numeric
+step/generator indexes retain their strict integer contract. Valid metadata
+supplies creation, workspace and provider-local parent facts regardless of key
+type. Identity copies merge globally by
+component maximum; the first discovered session/turn owns the merged unit.
+Unmatched/pre-prompt usage remains outside displayed turns. Every composition
+rebuilds session/turn/bucket summaries, including empty sessions.
+
+The reader emits source counts/status/reasons, ignored environment names and
+diagnostics alongside corpus sessions and capability-gated UI actions. Model
+attribution uses response slug, meaningful usage enum, step chat_model_name then
+model_name, most recent attributed conversation model, or an unattributed marker.
+Pricing uses independently available bundled/catalog estimates with Antigravity
+identities, normalized effort/routing suffixes and unknown-model unpriced notes.
+The moving gemini-pro-default alias assumes gemini-3.1-pro-preview; Vertex-only
+models remain unsupported/unpriced. Raw system
+prompts and planner thinking never enter page/runtime output. No Antigravity
+cache is written. Absent/disabled input alone does not initialize the runtime;
+a reportable database error can initialize a diagnostic-only page.
+
 The offline page opens on month to date (MTD). The period buttons are MTD, QTD
 (quarter to date), YTD (year to date), rolling 7D/30D/90D, ALL and Custom; the
 choice persists as `p` in the URL hash. "Now" is the snapshot time shown as
@@ -16,18 +127,18 @@ window starts at or before the earliest session. The forward arrow stops at the
 current period, or for Custom once the range reaches the snapshot day. `[` and
 `]` step back and forward unless focus is in a text field.
 
-The page defaults to all sources. Its All/Codex/Claude/OpenCode segmented
-switch persists as `src=all|codex|claude|opencode` in the URL hash and retains the
+The page defaults to all sources. Its All/Codex/Claude/OpenCode/Antigravity segmented
+switch persists as `src=all|codex|claude|opencode|antigravity` in the URL hash and retains the
 other filters. Switching away from a selected reader's provider closes that
 reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
-switch; accepted OpenCode database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.4.2`).
+switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
+displays the embedded payload's release version (`colophon 0.5.0`).
 
-Codex uses green, Claude blue and OpenCode violet. In All, KPI share rules and workspace
+Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
-selected metric (ties follow Codex, Claude, OpenCode order). Model, recent and list rows carry provider
+selected metric (ties follow Codex, Claude, OpenCode, Antigravity order). Model, recent and list rows carry provider
 marks. Costs retain each provider's independent availability; a known subtotal
 also names unavailable providers. Absent/disabled sources remain selectable
 with a no-data label and explain the checked paths or disabling flag.
@@ -110,7 +221,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.4.2`.
+runtime state. Version is currently `colophon 0.5.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -124,6 +235,8 @@ runtime state. Version is currently `colophon 0.4.2`.
 | `--no-claude` | Disable Claude inputs and reconciliation. |
 | `--opencode-db PATH` | Select only this OpenCode database; expand tilde and resolve relative paths against cwd. Reject `:memory:`. |
 | `--no-opencode` | Disable OpenCode discovery and reads before inspecting source paths. |
+| `--antigravity-home PATH` | Select the Gemini root; expand tilde and resolve relative paths against cwd. |
+| `--no-antigravity` | Disable Antigravity discovery and reads before inspecting source paths. |
 
 OpenCode discovery defaults to `~/.local/share/opencode`; nonempty
 `XDG_DATA_HOME` replaces `~/.local/share` (relative values resolve against cwd,
@@ -236,16 +349,16 @@ Legacy `meta.counts` remains Codex-only. Claude log/parse counters are additive
 under `meta.sources.claude`, independently of the legacy counts.
 
 Long flags accept unique prefixes. `--no` is now ambiguous between
-`--no-open`, `--no-claude` and `--no-opencode`; `--no-op` matches both
+`--no-open`, `--no-claude`, `--no-opencode` and `--no-antigravity`; `--no-op` matches both
 `--no-open` and `--no-opencode`. `--o` matches `--offline`, `--output` and
 `--opencode-db`; `--claude` is ambiguous between the two Claude
 path flags. `--c` is also ambiguous between Codex and Claude path flags.
 Use the full flag names when scripting.
 
 Presence is decided before creating the runtime home. A readable source
-directory, a usable Claude history entry or a reportable OpenCode candidate
+directory, a usable Claude history entry or a reportable OpenCode/Antigravity candidate
 is sufficient. With no source,
-exit 1 names the Codex home, Claude roots/history and OpenCode paths checked, and
+exit 1 names the Codex home, Claude roots/history, OpenCode paths and Antigravity home checked, and
 creates no runtime home. An absent Codex home skips all native parse-cache
 opening, recovery and replacement, including with `--rebuild`. Eligible Claude
 history entries render history-only sessions. Decodable retained records and eligible

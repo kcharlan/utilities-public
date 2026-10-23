@@ -6,6 +6,7 @@ Str provider_id(Provider provider) {
   case PROVIDER_CODEX: return STR_LIT("codex");
   case PROVIDER_CLAUDE: return STR_LIT("claude");
   case PROVIDER_OPENCODE: return STR_LIT("opencode");
+  case PROVIDER_ANTIGRAVITY: return STR_LIT("antigravity");
   }
   return (Str){0};
 }

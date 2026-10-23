@@ -1,0 +1,2809 @@
+{
+  "source": "Public embedded FileDescriptorProto schema projection; no runtime data",
+  "binary_sha256": "060ebf79719024f1b3acb52a21c7a182cb6466b2ac4ac25e93391169b1c1bb46",
+  "messages": {
+    ".exa.cortex_pb.CortexTrajectoryMetadata": [
+      {
+        "name": "workspaces",
+        "number": 1,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexWorkspaceMetadata"
+      },
+      {
+        "name": "created_at",
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "initialization_state_id",
+        "number": 3,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "parent_conversation_id",
+        "number": 5,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "root_conversation_id",
+        "number": 6,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "workspace_uris",
+        "number": 7,
+        "label": 3,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "subagent_spec",
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.SubagentSpec"
+      },
+      {
+        "name": "static_config",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CustomAgentSpec"
+      },
+      {
+        "name": "executable_spec",
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ExecutableScriptSpec"
+      },
+      {
+        "name": "source_metadata",
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.SourceMetadata"
+      },
+      {
+        "name": "mendel_experiment_ids",
+        "number": 15,
+        "label": 3,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "agent_script",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.AgentScriptItem"
+      },
+      {
+        "name": "is_battle_mode_fork",
+        "number": 16,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "project_id",
+        "number": 18,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "environment_id",
+        "number": 19,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "nesting_depth",
+        "number": 17,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "tags",
+        "number": 20,
+        "label": 3,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "replacements",
+        "number": 21,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.StringReplacement"
+      },
+      {
+        "name": "battle_mode_metadata",
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.BattleModeMetadata"
+      },
+      {
+        "name": "remote_control_details",
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.RemoteControlDetails"
+      }
+    ],
+    ".exa.cortex_pb.CortexWorkspaceMetadata": [
+      {
+        "name": "workspace_folder_absolute_uri",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "git_root_absolute_uri",
+        "number": 2,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "repository",
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.Repository"
+      },
+      {
+        "name": "branch_name",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      }
+    ],
+    ".exa.cortex_pb.CortexStepMetadata": [
+      {
+        "name": "sensitivity_level",
+        "number": 39,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.SensitivityLevel"
+      },
+      {
+        "name": "step_generation_version",
+        "number": 21,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "created_at",
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "viewable_at",
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "finished_generating_at",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "last_completed_chunk_at",
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "started_at",
+        "number": 32,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "completed_at",
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "source",
+        "number": 3,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexStepSource"
+      },
+      {
+        "name": "tool_call",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ChatToolCall"
+      },
+      {
+        "name": "modified_tool_call",
+        "number": 29,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ChatToolCall"
+      },
+      {
+        "name": "arguments_order",
+        "number": 5,
+        "label": 3,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "model_usage",
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelUsageStats"
+      },
+      {
+        "name": "retry_infos",
+        "number": 28,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.RetryInfo"
+      },
+      {
+        "name": "model_cost",
+        "number": 10,
+        "label": 1,
+        "type": 2,
+        "type_name": ""
+      },
+      {
+        "name": "generator_model",
+        "number": 11,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.Model"
+      },
+      {
+        "name": "requested_model",
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelOrAlias"
+      },
+      {
+        "name": "model_info",
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelInfo"
+      },
+      {
+        "name": "execution_id",
+        "number": 12,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "flow_credits_used",
+        "number": 14,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "prompt_credits_used",
+        "number": 15,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "non_standard_credit_reasons",
+        "number": 18,
+        "label": 3,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexStepCreditReason"
+      },
+      {
+        "name": "tool_call_choices",
+        "number": 16,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ChatToolCall"
+      },
+      {
+        "name": "tool_call_choice_reason",
+        "number": 17,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "cortex_request_source",
+        "number": 19,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexRequestSource"
+      },
+      {
+        "name": "tool_call_output_tokens",
+        "number": 23,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "source_trajectory_step_info",
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.SourceTrajectoryStepInfo"
+      },
+      {
+        "name": "snapshot_metadata",
+        "number": 25,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.SnapshotMetadata"
+      },
+      {
+        "name": "internal_metadata",
+        "number": 26,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepInternalMetadata"
+      },
+      {
+        "name": "wait_for_previous_tools",
+        "number": 27,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "tool_summary",
+        "number": 30,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "tool_action",
+        "number": 31,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "is_interrupting_step",
+        "number": 33,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "pre_tool_hook_results",
+        "number": 34,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.hooks_pb.PreToolHookResult"
+      },
+      {
+        "name": "model_api_content_id",
+        "number": 35,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "data_access",
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.DataAccessMetadata"
+      },
+      {
+        "name": "remote_control_details",
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.RemoteControlDetails"
+      },
+      {
+        "name": "tool_source",
+        "number": 38,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexComponentSource"
+      }
+    ],
+    ".gemini_coder.Step": [
+      {
+        "name": "type",
+        "number": 1,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexStepType"
+      },
+      {
+        "name": "status",
+        "number": 4,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexStepStatus"
+      },
+      {
+        "name": "metadata",
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepMetadata"
+      },
+      {
+        "name": "error",
+        "number": 31,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexErrorDetails"
+      },
+      {
+        "name": "permissions",
+        "number": 133,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.TrajectoryPermissions"
+      },
+      {
+        "name": "task_details",
+        "number": 148,
+        "label": 1,
+        "type": 11,
+        "type_name": ".gemini_coder.TaskDetails"
+      },
+      {
+        "name": "custom_extensions",
+        "number": 158,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CustomExtensions"
+      },
+      {
+        "name": "requested_interaction",
+        "number": 56,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.RequestedInteraction"
+      },
+      {
+        "name": "completed_interactions",
+        "number": 147,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CompletedInteraction"
+      },
+      {
+        "name": "generic",
+        "number": 140,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepGeneric"
+      },
+      {
+        "name": "finish",
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepFinish"
+      },
+      {
+        "name": "code_action",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCodeAction"
+      },
+      {
+        "name": "git_commit",
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepGitCommit"
+      },
+      {
+        "name": "grep_search",
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepGrepSearch"
+      },
+      {
+        "name": "error_message",
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepErrorMessage"
+      },
+      {
+        "name": "run_command",
+        "number": 28,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepRunCommand"
+      },
+      {
+        "name": "find",
+        "number": 34,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepFind"
+      },
+      {
+        "name": "suggested_responses",
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSuggestedResponses"
+      },
+      {
+        "name": "command_status",
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCommandStatus"
+      },
+      {
+        "name": "read_url_content",
+        "number": 40,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepReadUrlContent"
+      },
+      {
+        "name": "search_web",
+        "number": 42,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSearchWeb"
+      },
+      {
+        "name": "mcp_tool",
+        "number": 47,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepMcpTool"
+      },
+      {
+        "name": "clipboard",
+        "number": 55,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepClipboard"
+      },
+      {
+        "name": "list_resources",
+        "number": 62,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepListResources"
+      },
+      {
+        "name": "read_resource",
+        "number": 63,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepReadResource"
+      },
+      {
+        "name": "lint_diff",
+        "number": 64,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepLintDiff"
+      },
+      {
+        "name": "code_search",
+        "number": 85,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCodeSearch"
+      },
+      {
+        "name": "code_acknowledgement",
+        "number": 95,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCodeAcknowledgement"
+      },
+      {
+        "name": "internal_search",
+        "number": 96,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepInternalSearch"
+      },
+      {
+        "name": "generate_image",
+        "number": 104,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepGenerateImage"
+      },
+      {
+        "name": "conversation_history",
+        "number": 111,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepConversationHistory"
+      },
+      {
+        "name": "knowledge_artifacts",
+        "number": 112,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepKnowledgeArtifacts"
+      },
+      {
+        "name": "send_command_input",
+        "number": 113,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSendCommandInput"
+      },
+      {
+        "name": "system_message",
+        "number": 114,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSystemMessage"
+      },
+      {
+        "name": "wait",
+        "number": 115,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepWait"
+      },
+      {
+        "name": "ki_insertion",
+        "number": 129,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepKIInsertion"
+      },
+      {
+        "name": "invoke_subagent",
+        "number": 143,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepInvokeSubagent"
+      },
+      {
+        "name": "rpc_action",
+        "number": 152,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepRPCAction"
+      },
+      {
+        "name": "ask_question",
+        "number": 154,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepAskQuestion"
+      },
+      {
+        "name": "directory_rules",
+        "number": 156,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepDirectoryRules"
+      },
+      {
+        "name": "tool_search",
+        "number": 157,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepToolSearch"
+      },
+      {
+        "name": "execute_notebook",
+        "number": 150,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepExecuteNotebook"
+      },
+      {
+        "name": "read_notebook",
+        "number": 144,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepReadNotebook"
+      },
+      {
+        "name": "edit_notebook",
+        "number": 141,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepEditNotebook"
+      },
+      {
+        "name": "compile_applet",
+        "number": 106,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCompileApplet"
+      },
+      {
+        "name": "install_applet_dependencies",
+        "number": 107,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepInstallAppletDependencies"
+      },
+      {
+        "name": "install_applet_package",
+        "number": 108,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepInstallAppletPackage"
+      },
+      {
+        "name": "restart_dev_server",
+        "number": 123,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepRestartDevServer"
+      },
+      {
+        "name": "lint_applet",
+        "number": 126,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepLintApplet"
+      },
+      {
+        "name": "shell_exec",
+        "number": 127,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepShellExec"
+      },
+      {
+        "name": "write_blob",
+        "number": 142,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepWriteBlob"
+      },
+      {
+        "name": "set_up_firebase",
+        "number": 121,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSetUpFirebase"
+      },
+      {
+        "name": "deploy_firebase",
+        "number": 124,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepDeployFirebase"
+      },
+      {
+        "name": "set_up_cloudsql",
+        "number": 149,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSetUpCloudSql"
+      },
+      {
+        "name": "cloudsql_update_schema",
+        "number": 151,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCloudSQLSchemaUpdate"
+      },
+      {
+        "name": "cloudsql_execute_sql",
+        "number": 153,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCloudSQLExecuteSQL"
+      },
+      {
+        "name": "agency_tool_call",
+        "number": 116,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepAgencyToolCall"
+      },
+      {
+        "name": "cider_agent_dummy",
+        "number": 117,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.DummyStep"
+      },
+      {
+        "name": "propose_ai_comments",
+        "number": 145,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.ProposeAICommentsStep"
+      },
+      {
+        "name": "start_code_review",
+        "number": 146,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.StartCodeReviewStep"
+      },
+      {
+        "name": "build_cleaner",
+        "number": 118,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.BuildCleanerStep"
+      },
+      {
+        "name": "blaze_build_targets",
+        "number": 119,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.BuildTargetsStep"
+      },
+      {
+        "name": "blaze_test_targets",
+        "number": 120,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.TestTargetsStep"
+      },
+      {
+        "name": "moma",
+        "number": 122,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.MomaStep"
+      },
+      {
+        "name": "retrieve_content",
+        "number": 130,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.RetrieveContentStep"
+      },
+      {
+        "name": "critique",
+        "number": 131,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.CritiqueStep"
+      },
+      {
+        "name": "findings",
+        "number": 132,
+        "label": 1,
+        "type": 11,
+        "type_name": ".devtools.cider.agent.trajectory_steps.FindingsStep"
+      },
+      {
+        "name": "user_input",
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepUserInput"
+      },
+      {
+        "name": "planner_response",
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepPlannerResponse"
+      },
+      {
+        "name": "view_file",
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepViewFile"
+      },
+      {
+        "name": "list_directory",
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepListDirectory"
+      },
+      {
+        "name": "delete_directory",
+        "number": 105,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepDeleteDirectory"
+      },
+      {
+        "name": "checkpoint",
+        "number": 30,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCheckpoint"
+      },
+      {
+        "name": "file_change",
+        "number": 98,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepFileChange"
+      },
+      {
+        "name": "move",
+        "number": 100,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepMove"
+      },
+      {
+        "name": "ephemeral_message",
+        "number": 103,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepEphemeralMessage"
+      },
+      {
+        "name": "dummy",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepDummy"
+      },
+      {
+        "name": "mquery",
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepMquery"
+      },
+      {
+        "name": "compile",
+        "number": 16,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCompile"
+      },
+      {
+        "name": "view_code_item",
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepViewCodeItem"
+      },
+      {
+        "name": "view_content_chunk",
+        "number": 41,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepViewContentChunk"
+      },
+      {
+        "name": "view_file_outline",
+        "number": 58,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepViewFileOutline"
+      },
+      {
+        "name": "trajectory_search",
+        "number": 72,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepTrajectorySearch"
+      },
+      {
+        "name": "task_boundary",
+        "number": 93,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepTaskBoundary"
+      },
+      {
+        "name": "notify_user",
+        "number": 94,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepNotifyUser"
+      },
+      {
+        "name": "workspace_api",
+        "number": 136,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepWorkspaceAPI"
+      },
+      {
+        "name": "plan_input",
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepPlanInput"
+      },
+      {
+        "name": "file_breakdown",
+        "number": 21,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepFileBreakdown"
+      },
+      {
+        "name": "write_to_file",
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepWriteToFile"
+      },
+      {
+        "name": "propose_code",
+        "number": 32,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepProposeCode"
+      },
+      {
+        "name": "search_knowledge_base",
+        "number": 35,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepSearchKnowledgeBase"
+      },
+      {
+        "name": "lookup_knowledge_base",
+        "number": 39,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepLookupKnowledgeBase"
+      },
+      {
+        "name": "manager_feedback",
+        "number": 48,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepManagerFeedback"
+      },
+      {
+        "name": "tool_call_proposal",
+        "number": 49,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepToolCallProposal"
+      },
+      {
+        "name": "tool_call_choice",
+        "number": 50,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepToolCallChoice"
+      },
+      {
+        "name": "trajectory_choice",
+        "number": 52,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepTrajectoryChoice"
+      },
+      {
+        "name": "check_deploy_status",
+        "number": 59,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCheckDeployStatus"
+      },
+      {
+        "name": "post_pr_review",
+        "number": 60,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepPostPrReview"
+      },
+      {
+        "name": "find_all_references",
+        "number": 65,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepFindAllReferences"
+      },
+      {
+        "name": "brain_update",
+        "number": 66,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrainUpdate"
+      },
+      {
+        "name": "read_terminal",
+        "number": 77,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepReadTerminal"
+      },
+      {
+        "name": "run_extension_code",
+        "number": 68,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepRunExtensionCode"
+      },
+      {
+        "name": "proposal_feedback",
+        "number": 71,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepProposalFeedback"
+      },
+      {
+        "name": "retrieve_memory",
+        "number": 43,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepRetrieveMemory"
+      },
+      {
+        "name": "memory",
+        "number": 38,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepMemory"
+      },
+      {
+        "name": "open_browser_url",
+        "number": 67,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepOpenBrowserUrl"
+      },
+      {
+        "name": "execute_browser_javascript",
+        "number": 73,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepExecuteBrowserJavaScript"
+      },
+      {
+        "name": "list_browser_pages",
+        "number": 74,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepListBrowserPages"
+      },
+      {
+        "name": "capture_browser_screenshot",
+        "number": 75,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCaptureBrowserScreenshot"
+      },
+      {
+        "name": "click_browser_pixel",
+        "number": 76,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepClickBrowserPixel"
+      },
+      {
+        "name": "capture_browser_console_logs",
+        "number": 78,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepCaptureBrowserConsoleLogs"
+      },
+      {
+        "name": "read_browser_page",
+        "number": 79,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepReadBrowserPage"
+      },
+      {
+        "name": "browser_get_dom",
+        "number": 80,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserGetDom"
+      },
+      {
+        "name": "browser_input",
+        "number": 86,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserInput"
+      },
+      {
+        "name": "browser_move_mouse",
+        "number": 87,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserMoveMouse"
+      },
+      {
+        "name": "browser_select_option",
+        "number": 88,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserSelectOption"
+      },
+      {
+        "name": "browser_scroll_up",
+        "number": 89,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserScrollUp"
+      },
+      {
+        "name": "browser_scroll_down",
+        "number": 90,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserScrollDown"
+      },
+      {
+        "name": "browser_click_element",
+        "number": 91,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserClickElement"
+      },
+      {
+        "name": "browser_list_network_requests",
+        "number": 137,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserListNetworkRequests"
+      },
+      {
+        "name": "browser_get_network_request",
+        "number": 138,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserGetNetworkRequest"
+      },
+      {
+        "name": "browser_press_key",
+        "number": 92,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserPressKey"
+      },
+      {
+        "name": "browser_subagent",
+        "number": 97,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserSubagent"
+      },
+      {
+        "name": "knowledge_generation",
+        "number": 102,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepKnowledgeGeneration"
+      },
+      {
+        "name": "browser_scroll",
+        "number": 101,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserScroll"
+      },
+      {
+        "name": "browser_resize_window",
+        "number": 109,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserResizeWindow"
+      },
+      {
+        "name": "browser_drag_pixel_to_pixel",
+        "number": 110,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserDragPixelToPixel"
+      },
+      {
+        "name": "browser_mouse_wheel",
+        "number": 125,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserMouseWheel"
+      },
+      {
+        "name": "browser_mouse_up",
+        "number": 134,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserMouseUp"
+      },
+      {
+        "name": "browser_mouse_down",
+        "number": 135,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserMouseDown"
+      },
+      {
+        "name": "browser_refresh_page",
+        "number": 139,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexStepBrowserRefreshPage"
+      },
+      {
+        "name": "attachments",
+        "number": 155,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.protobuf.Any"
+      },
+      {
+        "name": "user_annotations",
+        "number": 69,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.UserStepAnnotations"
+      },
+      {
+        "name": "subtrajectory",
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".gemini_coder.Trajectory"
+      },
+      {
+        "name": "generic_step",
+        "number": 159,
+        "label": 1,
+        "type": 11,
+        "type_name": ".gemini_coder.Step"
+      }
+    ],
+    ".exa.cortex_pb.CortexStepGeneratorMetadata": [
+      {
+        "name": "step_indices",
+        "number": 2,
+        "label": 3,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "chat_model",
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ChatModelMetadata"
+      },
+      {
+        "name": "injected",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.InjectedResponseMetadata"
+      },
+      {
+        "name": "planner_config",
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CascadePlannerConfig"
+      },
+      {
+        "name": "execution_id",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "error",
+        "number": 5,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "mendel_experiment_ids",
+        "number": 8,
+        "label": 3,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "prompt_debug_str",
+        "number": 9,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "has_ever_used_non_google_model",
+        "number": 10,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "sensitivity_level",
+        "number": 11,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.SensitivityLevel"
+      }
+    ],
+    ".exa.cortex_pb.ChatModelMetadata": [
+      {
+        "name": "system_prompt",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "message_prompts",
+        "number": 2,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.chat_pb.ChatMessagePrompt"
+      },
+      {
+        "name": "message_metadata",
+        "number": 10,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.MessagePromptMetadata"
+      },
+      {
+        "name": "model",
+        "number": 3,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.Model"
+      },
+      {
+        "name": "usage",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelUsageStats"
+      },
+      {
+        "name": "model_cost",
+        "number": 5,
+        "label": 1,
+        "type": 2,
+        "type_name": ""
+      },
+      {
+        "name": "tool_choice",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.chat_pb.ChatToolChoice"
+      },
+      {
+        "name": "tools",
+        "number": 8,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.chat_pb.ChatToolDefinition"
+      },
+      {
+        "name": "chat_start_metadata",
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ChatStartMetadata"
+      },
+      {
+        "name": "time_to_first_token",
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      },
+      {
+        "name": "streaming_duration",
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      },
+      {
+        "name": "credit_cost",
+        "number": 13,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "retries",
+        "number": 14,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "completion_config",
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.CompletionConfiguration"
+      },
+      {
+        "name": "prompt_sections",
+        "number": 16,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.PromptSection"
+      },
+      {
+        "name": "retry_infos",
+        "number": 17,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.RetryInfo"
+      },
+      {
+        "name": "consumed_credits",
+        "number": 18,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.internal.cloud.code.v1internal.Credits"
+      },
+      {
+        "name": "response_model",
+        "number": 19,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "response_model_full",
+        "number": 22,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "custom_metadata",
+        "number": 20,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ChatModelMetadata.CustomMetadataEntry"
+      },
+      {
+        "name": "model_display_name",
+        "number": 21,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "last_cache_index",
+        "number": 6,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      }
+    ],
+    ".exa.cortex_pb.ChatStartMetadata": [
+      {
+        "name": "created_at",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "start_step_index",
+        "number": 1,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "checkpoint_index",
+        "number": 2,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "steps_covered_by_checkpoint",
+        "number": 3,
+        "label": 3,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "time_since_last_invocation",
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      },
+      {
+        "name": "context_window_metadata",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.ContextWindowMetadata"
+      },
+      {
+        "name": "latest_stable_message_index",
+        "number": 5,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "cache_breakpoints",
+        "number": 6,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheBreakpointMetadata"
+      },
+      {
+        "name": "system_prompt_cache",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheBreakpointMetadata"
+      },
+      {
+        "name": "cache_request",
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CacheRequestOptions"
+      }
+    ],
+    ".exa.cortex_pb.RetryInfo": [
+      {
+        "name": "sherlog_link",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "usage",
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelUsageStats"
+      },
+      {
+        "name": "error",
+        "number": 3,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "trace_id",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "retry_reason",
+        "number": 5,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.RetryReason"
+      },
+      {
+        "name": "consumed_credits",
+        "number": 6,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.internal.cloud.code.v1internal.Credits"
+      },
+      {
+        "name": "wait_time",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      }
+    ],
+    ".exa.codeium_common_pb.ModelUsageStats": [
+      {
+        "name": "model",
+        "number": 1,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.Model"
+      },
+      {
+        "name": "input_tokens",
+        "number": 2,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      },
+      {
+        "name": "output_tokens",
+        "number": 3,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      },
+      {
+        "name": "thinking_output_tokens",
+        "number": 9,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      },
+      {
+        "name": "response_output_tokens",
+        "number": 10,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      },
+      {
+        "name": "cache_read_tokens",
+        "number": 5,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      },
+      {
+        "name": "api_provider",
+        "number": 6,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.APIProvider"
+      },
+      {
+        "name": "message_id",
+        "number": 7,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "response_header",
+        "number": 8,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelUsageStats.ResponseHeaderEntry"
+      },
+      {
+        "name": "response_id",
+        "number": 11,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "provider_assigned_message_id",
+        "number": 12,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "service_tier",
+        "number": 13,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "prompt_tokens_details",
+        "number": 14,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModalityTokenCount"
+      },
+      {
+        "name": "cache_tokens_details",
+        "number": 15,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModalityTokenCount"
+      },
+      {
+        "name": "candidates_tokens_details",
+        "number": 16,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModalityTokenCount"
+      },
+      {
+        "name": "tool_use_prompt_tokens_details",
+        "number": 17,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModalityTokenCount"
+      },
+      {
+        "name": "cache_write_tokens",
+        "number": 4,
+        "label": 1,
+        "type": 4,
+        "type_name": ""
+      }
+    ],
+    ".exa.codeium_common_pb.ModelInfo": [
+      {
+        "name": "model_id",
+        "number": 1,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.Model"
+      },
+      {
+        "name": "is_internal",
+        "number": 2,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "model_type",
+        "number": 3,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.ModelType"
+      },
+      {
+        "name": "max_tokens",
+        "number": 4,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "tokenizer_type",
+        "number": 5,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "model_features",
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ModelFeatures"
+      },
+      {
+        "name": "api_provider",
+        "number": 7,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.APIProvider"
+      },
+      {
+        "name": "model_name",
+        "number": 8,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "supports_context",
+        "number": 9,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "embed_dim",
+        "number": 10,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "base_url",
+        "number": 11,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "chat_model_name",
+        "number": 12,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "max_output_tokens",
+        "number": 13,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "prompt_templater_type",
+        "number": 14,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.PromptTemplaterType"
+      },
+      {
+        "name": "tool_formatter_type",
+        "number": 15,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.ToolFormatterType"
+      },
+      {
+        "name": "thinking_budget",
+        "number": 16,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "min_thinking_budget",
+        "number": 17,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "use_ccpa_for_eval",
+        "number": 18,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "thinking_level",
+        "number": 19,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "display_name",
+        "number": 20,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "tool_response_key",
+        "number": 21,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "tokens_per_image",
+        "number": 22,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "vertex_model_id",
+        "number": 23,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "model_provider",
+        "number": 24,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.ModelProvider"
+      },
+      {
+        "name": "model_url",
+        "number": 25,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      }
+    ],
+    ".exa.codeium_common_pb.ChatToolCall": [
+      {
+        "name": "id",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "name",
+        "number": 2,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "arguments_json",
+        "number": 3,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "invalid_json_str",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "invalid_json_err",
+        "number": 5,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "thought_signature",
+        "number": 6,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "thinking_signature",
+        "number": 7,
+        "label": 1,
+        "type": 12,
+        "type_name": ""
+      },
+      {
+        "name": "original_arguments_json",
+        "number": 8,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "original_name",
+        "number": 9,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "function_call_parts",
+        "number": 10,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.Media"
+      }
+    ],
+    ".exa.cortex_pb.CortexStepUserInput": [
+      {
+        "name": "items",
+        "number": 3,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.TextOrScopeItem"
+      },
+      {
+        "name": "user_response",
+        "number": 2,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "active_user_state",
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.context_module_pb.ContextModuleResult"
+      },
+      {
+        "name": "artifact_comments",
+        "number": 7,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ArtifactComment"
+      },
+      {
+        "name": "file_diff_comments",
+        "number": 10,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.FileDiffComment"
+      },
+      {
+        "name": "file_comments",
+        "number": 11,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.FileComment"
+      },
+      {
+        "name": "client_type",
+        "number": 8,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.chat_client_server_pb.ChatClientRequestStreamClientType"
+      },
+      {
+        "name": "user_config",
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CascadeConfig"
+      },
+      {
+        "name": "last_user_config",
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CascadeConfig"
+      },
+      {
+        "name": "side_channels",
+        "number": 15,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.protobuf.Any"
+      },
+      {
+        "name": "tags",
+        "number": 16,
+        "label": 3,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "user_identity",
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.UserIdentity"
+      },
+      {
+        "name": "user_agent_spec",
+        "number": 18,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CustomAgentSpec"
+      },
+      {
+        "name": "media",
+        "number": 9,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.Media"
+      },
+      {
+        "name": "is_queued_message",
+        "number": 6,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "query",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "images",
+        "number": 5,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ImageData"
+      }
+    ],
+    ".exa.cortex_pb.CortexStepPlannerResponse": [
+      {
+        "name": "response",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "modified_response",
+        "number": 8,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "thinking",
+        "number": 3,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "raw_thinking",
+        "number": 16,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "signature",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "thinking_signature",
+        "number": 14,
+        "label": 1,
+        "type": 12,
+        "type_name": ""
+      },
+      {
+        "name": "thinking_redacted",
+        "number": 5,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "message_id",
+        "number": 6,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "provider_assigned_message_id",
+        "number": 15,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "tool_calls",
+        "number": 7,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ChatToolCall"
+      },
+      {
+        "name": "knowledge_base_items",
+        "number": 2,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.KnowledgeBaseItemWithMetadata"
+      },
+      {
+        "name": "thinking_duration",
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Duration"
+      },
+      {
+        "name": "stop_reason",
+        "number": 12,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.StopReason"
+      },
+      {
+        "name": "recitation_metadata",
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.RecitationMetadata"
+      },
+      {
+        "name": "grounding_metadata",
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.GroundingMetadata"
+      },
+      {
+        "name": "side_channels",
+        "number": 17,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.protobuf.Any"
+      },
+      {
+        "name": "passback_context",
+        "number": 18,
+        "label": 3,
+        "type": 11,
+        "type_name": ".google.protobuf.Any"
+      }
+    ],
+    ".exa.codeium_common_pb.TextOrScopeItem": [
+      {
+        "name": "text",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "item",
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.ContextScopeItem"
+      }
+    ],
+    ".exa.codeium_common_pb.Media": [
+      {
+        "name": "mime_type",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "description",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "inline_data",
+        "number": 2,
+        "label": 1,
+        "type": 12,
+        "type_name": ""
+      },
+      {
+        "name": "blobref",
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.codeium_common_pb.Blobref"
+      },
+      {
+        "name": "uri",
+        "number": 5,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "thumbnail",
+        "number": 6,
+        "label": 1,
+        "type": 12,
+        "type_name": ""
+      },
+      {
+        "name": "duration_seconds",
+        "number": 7,
+        "label": 1,
+        "type": 2,
+        "type_name": ""
+      },
+      {
+        "name": "media_id",
+        "number": 8,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "display_name",
+        "number": 9,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "ingestion_options",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Any"
+      },
+      {
+        "name": "start_page",
+        "number": 11,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "end_page",
+        "number": 12,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "start_time_ms",
+        "number": 13,
+        "label": 1,
+        "type": 3,
+        "type_name": ""
+      },
+      {
+        "name": "end_time_ms",
+        "number": 14,
+        "label": 1,
+        "type": 3,
+        "type_name": ""
+      },
+      {
+        "name": "fps",
+        "number": 15,
+        "label": 1,
+        "type": 1,
+        "type_name": ""
+      },
+      {
+        "name": "media_resolution",
+        "number": 16,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.MediaResolution"
+      },
+      {
+        "name": "content_layers",
+        "number": 17,
+        "label": 3,
+        "type": 14,
+        "type_name": ".exa.codeium_common_pb.VideoContentLayer"
+      }
+    ],
+    ".google.protobuf.Timestamp": [
+      {
+        "name": "seconds",
+        "number": 1,
+        "label": 1,
+        "type": 3,
+        "type_name": ""
+      },
+      {
+        "name": "nanos",
+        "number": 2,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      }
+    ],
+    ".google.protobuf.Duration": [
+      {
+        "name": "seconds",
+        "number": 1,
+        "label": 1,
+        "type": 3,
+        "type_name": ""
+      },
+      {
+        "name": "nanos",
+        "number": 2,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      }
+    ],
+    ".exa.jetski_cortex_pb.ConversationAnnotations": [
+      {
+        "name": "title",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "tags",
+        "number": 3,
+        "label": 3,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "archived",
+        "number": 4,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "archival_status_timestamp",
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "starred",
+        "number": 6,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "last_user_view_time",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "marked_as_unread",
+        "number": 8,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "group_id",
+        "number": 9,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "group_index",
+        "number": 10,
+        "label": 1,
+        "type": 5,
+        "type_name": ""
+      },
+      {
+        "name": "group_description",
+        "number": 11,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "pinned",
+        "number": 12,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "cls",
+        "number": 13,
+        "label": 3,
+        "type": 3,
+        "type_name": ""
+      },
+      {
+        "name": "active_profile",
+        "number": 14,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "conversation_group_id",
+        "number": 15,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "sensitivity_level",
+        "number": 16,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.SensitivityLevel"
+      }
+    ],
+    ".exa.jetski_cortex_pb.CascadeTrajectorySummary": [
+      {
+        "name": "summary",
+        "number": 1,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "step_count",
+        "number": 2,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "last_modified_time",
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "trajectory_id",
+        "number": 4,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "status",
+        "number": 5,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CascadeRunStatus"
+      },
+      {
+        "name": "created_time",
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "waiting_steps",
+        "number": 8,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.jetski_cortex_pb.CortexTrajectoryStepWithIndex"
+      },
+      {
+        "name": "workspaces",
+        "number": 9,
+        "label": 3,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexWorkspaceMetadata"
+      },
+      {
+        "name": "last_user_input_time",
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".google.protobuf.Timestamp"
+      },
+      {
+        "name": "last_user_input_step_index",
+        "number": 16,
+        "label": 1,
+        "type": 13,
+        "type_name": ""
+      },
+      {
+        "name": "latest_notify_user_step",
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.jetski_cortex_pb.CortexTrajectoryStepWithIndex"
+      },
+      {
+        "name": "latest_task_boundary_step",
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.jetski_cortex_pb.CortexTrajectoryStepWithIndex"
+      },
+      {
+        "name": "annotations",
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.jetski_cortex_pb.ConversationAnnotations"
+      },
+      {
+        "name": "trajectory_metadata",
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.CortexTrajectoryMetadata"
+      },
+      {
+        "name": "has_active_children",
+        "number": 18,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "battle_mode_info",
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".exa.cortex_pb.BattleModeInfo"
+      },
+      {
+        "name": "source",
+        "number": 20,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexTrajectorySource"
+      },
+      {
+        "name": "not_fully_idle",
+        "number": 21,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "trajectory_type",
+        "number": 22,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.CortexTrajectoryType"
+      },
+      {
+        "name": "killed",
+        "number": 23,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "fork_parent_conversation_id",
+        "number": 24,
+        "label": 1,
+        "type": 9,
+        "type_name": ""
+      },
+      {
+        "name": "interrupted",
+        "number": 25,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "has_activity",
+        "number": 26,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "cloud",
+        "number": 27,
+        "label": 1,
+        "type": 8,
+        "type_name": ""
+      },
+      {
+        "name": "latest_executor_termination_reason",
+        "number": 28,
+        "label": 1,
+        "type": 14,
+        "type_name": ".exa.cortex_pb.ExecutorTerminationReason"
+      }
+    ]
+  }
+}

@@ -2,10 +2,54 @@
 #include "session_payload.h"
 #include "price/compose.h"
 #include "opencode/scan.h"
+#include "antigravity/scan.h"
 #include "opencode/compose.h"
 #include <stdlib.h>
 #include <string.h>
 static void text(JsonWriter *w,const char *s){jsonw_string(w,(Str){s,(uint32_t)strlen(s)});}
+static void antigravity_source(JsonWriter *w,const PayloadInputs *in){
+    const AntigravityStore *s=in->antigravity;
+    jsonw_raw(w,",\"antigravity\":{\"status\":");text(w,antigravity_status(s));
+    jsonw_raw(w,",\"home\":");if(s&&s->home.p)jsonw_string(w,s->home);else jsonw_raw(w,"null");
+    jsonw_raw(w,",\"databases\":[");
+    if(s)for(size_t i=0;i<s->database_count;i++){
+        const AntigravityDatabase *d=&s->databases[i];if(i)jsonw_raw(w,",");
+        jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"surface\":");jsonw_string(w,d->surface);
+        jsonw_raw(w,",\"status\":");text(w,antigravity_database_status(d->status));jsonw_raw(w,",\"reason\":");if(d->reason.n)jsonw_string(w,d->reason);else jsonw_raw(w,"null");
+        jsonw_raw(w,",\"accepted_sessions\":");jsonw_i128(w,d->accepted_sessions);jsonw_raw(w,",\"accepted_steps\":");jsonw_i128(w,d->accepted_steps);jsonw_raw(w,"}");
+    }
+    size_t sessions=0,subagents=0,archived=0;
+    if(in->corpus)for(OmapEntry *q=in->corpus->sessions.first;q;q=q->next){const SessionModel *row=q->value;if(row->provider!=PROVIDER_ANTIGRAVITY)continue;if(row->is_subagent)subagents++;else sessions++;archived+=row->archived;}
+    jsonw_raw(w,"],\"sessions\":");jsonw_i128(w,sessions);jsonw_raw(w,",\"subagents\":");jsonw_i128(w,subagents);jsonw_raw(w,",\"archived\":");jsonw_i128(w,archived);
+    jsonw_raw(w,",\"legacy_encrypted\":");jsonw_i128(w,s?s->legacy_encrypted:0);jsonw_raw(w,",\"ignored_environment\":[");
+    if(s)for(size_t i=0;i<s->ignored_environment_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,s->ignored_environment[i]);}
+    jsonw_raw(w,"],\"logs\":0,\"cached\":0,\"costs\":{\"available\":true,\"reason\":null}}");
+}
+static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
+    const char *keys[]={"antigravity_schema_errors","antigravity_unreadable_databases"};
+    for(size_t k=0;k<2;k++){
+        jsonw_raw(w,",");text(w,keys[k]);jsonw_raw(w,":[");bool first=true;
+        if(s)for(size_t i=0;i<s->database_count;i++){const AntigravityDatabase *d=&s->databases[i];if(d->status!=(k?AG_DB_UNREADABLE:AG_DB_UNSUPPORTED))continue;
+            if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"surface\":");jsonw_string(w,d->surface);jsonw_raw(w,",\"reason\":");jsonw_string(w,d->reason);jsonw_raw(w,"}");}
+        jsonw_raw(w,"]");
+    }
+    jsonw_raw(w,",\"antigravity_duplicate_sessions\":");jsonw_i128(w,s?s->duplicate_sessions:0);
+    jsonw_raw(w,",\"antigravity_archive_disagreements\":");jsonw_i128(w,s?s->archive_disagreements:0);
+    jsonw_raw(w,",\"antigravity_malformed_blobs\":");jsonw_i128(w,s?s->malformed_blobs:0);
+    jsonw_raw(w,",\"antigravity_malformed_rows\":");jsonw_i128(w,s?s->malformed_rows:0);
+    jsonw_raw(w,",\"antigravity_annotation_errors\":");jsonw_i128(w,s?s->annotation_errors:0);
+    jsonw_raw(w,",\"antigravity_cross_session_duplicates\":");jsonw_i128(w,s?s->cross_session_duplicates:0);
+    jsonw_raw(w,",\"antigravity_requests_without_usage\":");jsonw_i128(w,s?s->requests_without_usage:0);
+    jsonw_raw(w,",\"antigravity_invalid_numbers\":");jsonw_i128(w,s?s->invalid_numbers:0);
+    jsonw_raw(w,",\"antigravity_unknown_clocks\":");jsonw_i128(w,s?s->unknown_clocks:0);
+    jsonw_raw(w,",\"antigravity_orphaned_subagents\":");payload_corpus_strings(w,s?&s->orphaned_subagents:&(CorpusStrings){0});
+    jsonw_raw(w,",\"antigravity_session_id_collisions\":");payload_corpus_strings(w,s?&s->corpus_collisions:&(CorpusStrings){0});
+    jsonw_raw(w,",\"antigravity_source_diagnostics\":[");
+    if(s)for(size_t i=0;i<s->diagnostic_count;i++){const AntigravityDiagnostic *d=&s->diagnostics[i];if(i)jsonw_raw(w,",");
+        jsonw_raw(w,"{\"database\":");jsonw_string(w,d->database);jsonw_raw(w,",\"session\":");jsonw_string(w,d->session);jsonw_raw(w,",\"surface\":");jsonw_string(w,d->surface);jsonw_raw(w,",\"context\":");jsonw_string(w,d->context);jsonw_raw(w,",\"idx\":");jsonw_i64(w,d->idx);jsonw_raw(w,",\"reason\":");jsonw_string(w,d->reason);jsonw_raw(w,"}");
+    }
+    jsonw_raw(w,"]");
+}
 static void opencode_source(JsonWriter *w,const PayloadInputs *in){
     const OpencodeStore *s=in->opencode;const OpencodeUsageReport *u=s?s->usage:NULL;
     jsonw_raw(w,",\"opencode\":{\"status\":");text(w,opencode_status(s));
@@ -33,7 +77,7 @@ static void opencode_source(JsonWriter *w,const PayloadInputs *in){
 static void sources(JsonWriter *w,const PayloadInputs *in){
     const ClaudeScan *c=in->claude;jsonw_raw(w,",\"sources\":{\"codex\":{\"status\":");text(w,in->codex_present?"ok":"absent");jsonw_raw(w,",\"home\":");text(w,in->source_codex_home?in->source_codex_home:in->codex_home);
     jsonw_raw(w,",\"logs\":");jsonw_i64(w,in->scan?(int64_t)(in->scan->count+in->scan->unreadable_count):0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,in->scan?(int64_t)in->scan->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i64(w,in->scan?(int64_t)in->scan->cached:0);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"}},\"claude\":{\"status\":");text(w,c&&c->disabled?"disabled":c&&c->present?"ok":"absent");jsonw_raw(w,",\"roots\":[");
-    if(c)for(size_t i=0;i<c->root_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,c->roots[i].path);}jsonw_raw(w,"],\"history_path\":");if(c)jsonw_string(w,c->history_path);else jsonw_raw(w,"null");jsonw_raw(w,",\"logs\":");jsonw_i64(w,c?(int64_t)c->logs:0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,c?(int64_t)c->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i128(w,c?c->cached:0);jsonw_raw(w,",\"retained\":");jsonw_i128(w,c?c->retained:0);jsonw_raw(w,",\"history_only\":");jsonw_i128(w,c?c->history_only:0);jsonw_raw(w,",\"token_data_from_ms\":");if(c&&c->token_data_from_ms.present)jsonw_i64(w,c->token_data_from_ms.value);else jsonw_raw(w,"null");jsonw_raw(w,",\"costs\":{\"available\":true,\"reason\":null}}");opencode_source(w,in);jsonw_raw(w,"}");
+    if(c)for(size_t i=0;i<c->root_count;i++){if(i)jsonw_raw(w,",");jsonw_string(w,c->roots[i].path);}jsonw_raw(w,"],\"history_path\":");if(c)jsonw_string(w,c->history_path);else jsonw_raw(w,"null");jsonw_raw(w,",\"logs\":");jsonw_i64(w,c?(int64_t)c->logs:0);jsonw_raw(w,",\"parsed\":");jsonw_i64(w,c?(int64_t)c->parsed:0);jsonw_raw(w,",\"cached\":");jsonw_i128(w,c?c->cached:0);jsonw_raw(w,",\"retained\":");jsonw_i128(w,c?c->retained:0);jsonw_raw(w,",\"history_only\":");jsonw_i128(w,c?c->history_only:0);jsonw_raw(w,",\"token_data_from_ms\":");if(c&&c->token_data_from_ms.present)jsonw_i64(w,c->token_data_from_ms.value);else jsonw_raw(w,"null");jsonw_raw(w,",\"costs\":{\"available\":true,\"reason\":null}}");opencode_source(w,in);antigravity_source(w,in);jsonw_raw(w,"}");
 }
 static uint64_t lines(const ClaudeRecord *r,int kind){return kind==0?r->reader.malformed:kind==1?r->reader.partial_final_line:r->reader.recovered;}
 static void oc_map(JsonWriter *w,const Omap *map){
@@ -103,7 +147,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.4.2\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.5.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
@@ -131,7 +175,7 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,",\"recovered_lines\":");line_diagnostic(w,in->corpus?&in->corpus->recovered:NULL,in->claude,2);
     jsonw_raw(w,",\"unknown_record_types\":");payload_unknown_types(w,in->corpus);
     claude_diagnostics(w,in->claude);
-    opencode_diagnostics(w,in->opencode);
+    opencode_diagnostics(w,in->opencode);antigravity_diagnostics(w,in->antigravity);
     jsonw_raw(w,",\"claude_desktop_sessions_without_transcripts\":");jsonw_i128(w,in->claude?in->claude->desktop_without_transcripts:0);
     jsonw_raw(w,",\"claude_orphaned_subagents\":");CorpusStrings claude_empty={0};payload_corpus_strings(w,in->corpus?&in->corpus->claude_orphaned_subagents:&claude_empty);
     jsonw_raw(w,",\"db_threads_without_logs\":");jsonw_i64(w,in->corpus?(int64_t)in->corpus->db_threads_without_logs:0);
