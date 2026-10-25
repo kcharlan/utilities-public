@@ -1,0 +1,149 @@
+{
+  "checked": "2026-10-25",
+  "latestRelease": "2026-10-23",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_22.json",
+  "preservedHistoricalRows": 504,
+  "additions": [
+    {
+      "model": "Kimi K3.1 Pro",
+      "lab": "Moonshot",
+      "date": "2026-10-23",
+      "tier": "flagship",
+      "note": "3T-class multimodal reasoning model with 1M context, post-trained from Kimi K3 for coding, 3D creation, research, and agents. Available in Kimi apps, Work, Code, and the API as kimi-k3.1-pro. Full weights are promised by November 4, 2026, and are not yet public. Uses the October 23 official launch announcement; the research index is dated October 24.",
+      "source": "https://forum.moonshot.ai/t/kimi-k3-1-pro-has-launched-start-exploring-now/629"
+    },
+    {
+      "model": "Kimi K3.1 Pro Highspeed",
+      "lab": "Moonshot",
+      "date": "2026-10-23",
+      "tier": "flagship",
+      "note": "Faster hosted K3.1 Pro variant released alongside the standard model, available as kimi-k3.1-pro-highspeed in the API and across Kimi products. Moonshot reports 2-3 times the speed; this is a publisher claim. Full model weights are promised by November 4, 2026, rather than available at launch.",
+      "source": "https://www.kimi.com/en/blog/kimi-k3-1-pro"
+    },
+    {
+      "model": "Nemotron 3.5 Bolt E4B 4GB",
+      "lab": "NVIDIA",
+      "date": "2026-10-23",
+      "tier": "open-weights",
+      "note": "Open small language model built on Gemma 4 E4B for local conversational agents, multi-turn tool use, and configurable reasoning with 64K context. Released checkpoint targets an approximately 4GB footprint on supported NVIDIA hardware. Distinct from October 15's Bolt 74B-A9B-24GB; the previously scheduled E4B release is now available.",
+      "source": "https://research.nvidia.com/labs/nemotron/Nemotron-3.5-Bolt-E4B-4GB/"
+    },
+    {
+      "model": "Hy-Nomas",
+      "lab": "Tencent",
+      "date": "2026-10-23",
+      "tier": "specialty",
+      "note": "Apache-2.0 interactive video world-generation model with public weights and code. Extends video segment by segment using text instructions, camera control, and a persistent KV cache. Includes distilled and quantized inference configurations. Uses the official repository's October 23 initial release, not its October 24 metadata update.",
+      "source": "https://huggingface.co/tencent/Hy-Nomas"
+    },
+    {
+      "model": "Canva Craft",
+      "lab": "Canva",
+      "date": "2026-10-22",
+      "tier": "specialty",
+      "note": "Canva Research's first image-generation foundation model, available in Dream Lab and through a public API. Separates composition planning from image rendering, with output up to 2K and support for editable design workflows. Faster Craft-fast and Craft-ultrafast variants are announced as upcoming, not released here.",
+      "source": "https://www.canva.com/newsroom/news/canva-craft/"
+    },
+    {
+      "model": "OlmoEarth v1.3",
+      "lab": "Ai2",
+      "date": "2026-10-22",
+      "tier": "specialty",
+      "note": "Open satellite-embedding foundation model released with weights, training data, code, global annual embeddings, and a browser explorer. Produces 128-dimensional representations of 10-meter land pixels, with a reusable 64-dimensional subset. Governed by the OlmoEarth Artifact License; geospatial evaluation claims are separate from language-model rankings.",
+      "source": "https://allenai.org/blog/olmoearth-v1-3"
+    },
+    {
+      "model": "Flint",
+      "lab": "Recursive",
+      "date": "2026-10-21",
+      "tier": "open-weights",
+      "note": "Apache-2.0 coding and agent model with 39.8B total parameters, approximately 2.5B active, and 262,144-token context. Public BF16 weights and SGLang serving kit support reasoning and multi-turn tool use. Uses the official checkpoint's October 21 initial release; benchmark results are publisher evaluations.",
+      "source": "https://huggingface.co/RecursiveSI/flint"
+    },
+    {
+      "model": "mammoth-1 / elephant-1",
+      "lab": "Base Labs (Baseten)",
+      "date": "2026-10-21",
+      "tier": "specialty",
+      "note": "27B and 9B open decision models from Baseten's research lab, returning probabilities for choices, yes/no questions, and scores instead of free-form text. Released weights and hosted Baseten Model APIs support routing, classification, and verification. Leaderboard positions in the announcement are dated publisher claims.",
+      "source": "https://www.baseten.co/blog/the-best-decision-models-in-the-world-mammoth-1-and-elephant-1/"
+    },
+    {
+      "model": "Phonon 31m / 40m family (open weights)",
+      "lab": "Gradium",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "On-device text-to-speech weights in 31M and 40M sizes, including language-specific and multilingual variants. English 31m is Apache-2.0; 40m variants use CC BY-NC terms. Uses the October 20 open-weight announcement, preceding the October 21 press release; distinct from April's private-beta announcement.",
+      "source": "https://gradium.ai/blog/release-phonon-open-weight"
+    }
+  ],
+  "corrections": [],
+  "sourceSweep": [
+    {
+      "lab": "Moonshot",
+      "sourceURLs": [
+        "https://forum.moonshot.ai/t/kimi-k3-1-pro-has-launched-start-exploring-now/629",
+        "https://www.kimi.com/en/blog/",
+        "https://www.kimi.com/en/blog/kimi-k3-1-pro",
+        "https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart"
+      ],
+      "result": "Official forum dates both variants October 23. Research index dates the technical post October 24; use the earlier public launch. Apps and API are available, but full weights are promised by November 4. Do not classify as already released open weights. Highspeed is a separate served model ID."
+    },
+    {
+      "lab": "NVIDIA / Tencent",
+      "sourceURLs": [
+        "https://research.nvidia.com/labs/nemotron/Nemotron-3.5-Bolt-E4B-4GB/",
+        "https://huggingface.co/tencent/Hy-Nomas",
+        "https://huggingface.co/tencent/Hy-Nomas/commits/main"
+      ],
+      "result": "Both October 23 releases verified. Bolt E4B moves from the previous sweep's future exclusion to an available checkpoint. Hy-Nomas initial commit is October 23; October 24 is a metadata update."
+    },
+    {
+      "lab": "Canva / Ai2",
+      "sourceURLs": [
+        "https://www.canva.com/newsroom/news/",
+        "https://www.canva.com/newsroom/news/canva-craft/",
+        "https://allenai.org/blog/olmoearth-v1-3"
+      ],
+      "result": "Dated primary announcements establish October 22 releases. Craft faster variants remain upcoming. OlmoEarth is an embedding-model release with weights, not just a new explorer for unchanged data."
+    },
+    {
+      "lab": "Recursive / Base Labs / Gradium",
+      "sourceURLs": [
+        "https://huggingface.co/RecursiveSI/flint",
+        "https://huggingface.co/RecursiveSI/flint/commits/main",
+        "https://www.baseten.co/blog/the-best-decision-models-in-the-world-mammoth-1-and-elephant-1/",
+        "https://gradium.ai/blog/release-phonon-open-weight",
+        "https://gradium.ai/blog/gradium-releases-phonon"
+      ],
+      "result": "Backfilled missed October 20-21 launches. Flint initial release and Baseten announcement are October 21. Phonon's technical release is October 20, earlier than its October 21 press release; use the technical page's variant-specific licenses."
+    },
+    {
+      "lab": "OpenAI / Anthropic / Google / Qwen",
+      "sourceURLs": [
+        "https://developers.openai.com/api/docs/changelog",
+        "https://www.anthropic.com/news",
+        "https://ai.google.dev/gemini-api/docs/changelog",
+        "https://docs.qwencloud.com/changelog/models"
+      ],
+      "result": "Checked official indexes for later underlying model launches. No additional first-party launch established in this sweep. QwenCloud's October 22 PixVerse V6 entry is third-party distribution; its original release date was not established. Coverage is curated, not an exhaustive registry."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Kimi K3.1 Pro open-weight milestone",
+      "reason": "Full weights are promised by November 4, after this check; record hosted availability only.",
+      "sources": ["https://www.kimi.com/en/blog/kimi-k3-1-pro"]
+    },
+    {
+      "candidate": "FLUX 3 Max",
+      "reason": "Official model page confirms the model and hosted partner access, but no dated primary release was established; secondary calendars suggest October 19. Do not invent a date.",
+      "sources": ["https://bfl.ai/models/flux-3-video", "https://bfl.ai/blog"]
+    },
+    {
+      "candidate": "Seedance 2.5 4K",
+      "reason": "Secondary October 23 reports conflict with coverage distinguishing native 1080p from upscaling. No separate dated primary 4K model release was established; preserve the existing Seedance 2.5 record.",
+      "sources": ["https://seed.bytedance.com/en/blog/one-take-creation-flexible-referencing-introducing-seedance-2-5"]
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Model Release Timeline — Jan 2024 to Oct 21, 2026</title>
+<title>AI Model Release Timeline — Jan 2024 to Oct 23, 2026</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
   :root{
@@ -134,7 +134,7 @@
 <body>
 <header>
   <h1>AI Model Release Timeline</h1>
-  <div class="sub"><span data-release-count>504</span> notable model releases from <span data-lab-count>89</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>October 21, 2026</span> · checked October 22, 2026 · press ? for controls and shortcuts</div>
+  <div class="sub"><span data-release-count>513</span> notable model releases from <span data-lab-count>93</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>October 23, 2026</span> · checked October 25, 2026 · press ? for controls and shortcuts</div>
 </header>
 <div class="chrome">
   <div class="toolbar">
@@ -204,14 +204,14 @@
 <p class="scope-note" hidden>The findings below describe the full dataset (<span data-earliest-month></span> – <span data-latest-date></span>), not the current range or filters.</p>
 <section class="findings">
   <h2>What the data says: release-timing patterns</h2>
-  <p>Descriptive analysis of all <span data-release-count>504</span> dated release events through October 21, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
+  <p>Descriptive analysis of all <span data-release-count>513</span> dated release events through October 23, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
   <h3>1. Does Moonshot follow Anthropic by 6–8 weeks?</h3>
-  <div class="verdict"><b>No consistent 6–8 week pattern.</b> For Moonshot's 9 major releases with a prior Anthropic major, the lags are 14, 90, 50, 31, 38, 64, 4, 16, 10 days. Only 1 of 9 falls in the 42–56 day window. The median is 31 days. These dates alone do not establish whether either lab responds to the other.</div>
+  <div class="verdict"><b>No consistent 6–8 week pattern.</b> For Moonshot's 11 major releases with a prior Anthropic major, the lags are 14, 90, 50, 31, 38, 64, 4, 16, 10, 25, 25 days. Only 1 of 11 falls in the 42–56 day window. The median is 25 days. These dates alone do not establish whether either lab responds to the other.</div>
   <h3>2. Google's timing relative to OpenAI</h3>
   <p>Across 15 Google major releases with a prior OpenAI major, the median lag is <b>7 days</b> (mean 23.7). Gemini 1.5 Pro and Sora were announced on the same day, February 15, 2024; Gemini 2.5 Pro and GPT-4o image generation were also same-day events, March 25, 2025. Astra arrived after Gemini 3.8 Flash, so it does not change that earlier release's follower lag.</p>
   <h3>3. Cross-lab release clusters</h3>
-  <p>There are <b>431 same-day cross-lab release pairs</b> and 1776 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
-  <p>Recent releases include Rerank 5 Pro / Fast (October 21), Nemotron 3.5 Embed 1B / 8B (October 20), Nemotron 3.5 Rerank 8B (October 20), Voxtral Transcribe 3 family (public preview) (October 20), Voxtral TTS 3 (public preview) (October 20), Clairic (preview) (October 19), GoTo-AI-Gemma-3-27B-IT (October 19), Maxwell (controlled early access) (October 19), Mercury 3 (October 19), MiniMax-M3.1-Flash (general availability) (October 19).</p>
+  <p>There are <b>444 same-day cross-lab release pairs</b> and 1851 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
+  <p>Recent releases include Hy-Nomas (October 23), Kimi K3.1 Pro (October 23), Kimi K3.1 Pro Highspeed (October 23), Nemotron 3.5 Bolt E4B 4GB (October 23), Canva Craft (October 22), OlmoEarth v1.3 (October 22), Flint (October 21), mammoth-1 / elephant-1 (October 21), Rerank 5 Pro / Fast (October 21).</p>
   <h3>4. Release cadence</h3>
   <table><tr><th>Lab</th><th>All releases (median gap)</th><th>Major releases (median gap)</th></tr>
     <tr><td>Google</td><td>7 days</td><td>52 days</td></tr>
@@ -220,20 +220,20 @@
     <tr><td>DeepSeek</td><td>39.5 days</td><td>64 days</td></tr>
     <tr><td>Z.ai (Zhipu)</td><td>51 days</td><td>66 days</td></tr>
     <tr><td>Anthropic</td><td>39.5 days</td><td>55 days</td></tr>
-    <tr><td>Moonshot</td><td>55.5 days</td><td>82.5 days</td></tr>
+    <tr><td>Moonshot</td><td>54 days</td><td>72 days</td></tr>
     <tr><td>MiniMax</td><td>58 days</td><td>70 days</td></tr>
     <tr><td>xAI</td><td>26 days</td><td>81 days</td></tr>
     <tr><td>Mistral</td><td>35 days</td><td>137 days</td></tr>
   </table>
   <p>Gaps include same-day events. Open-weight releases are a separate tier and are excluded from “major” even when they are a lab's flagship; compare these cadence figures with that classification in mind.</p>
   <h3>5. Weekday distribution</h3>
-  <p>Sunday: 14 · Monday: 85 · Tuesday: 103 · Wednesday: 101 · Thursday: 131 · Friday: 58 · Saturday: 12. These describe the selected release events, not all industry launches.</p>
+  <p>Sunday: 14 · Monday: 85 · Tuesday: 104 · Wednesday: 103 · Thursday: 133 · Friday: 62 · Saturday: 12. These describe the selected release events, not all industry launches.</p>
   <h3>6. Release volume</h3>
-  <p>Releases per year: 88 (2024) → 134 (2025) → 282 (2026). The final year is partial, through October 21, 2026.</p>
-  <p>Largest monthly totals: 2026-09: 93 · 2026-10: 75 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15 · 2024-12: 14.</p>
+  <p>Releases per year: 88 (2024) → 134 (2025) → 291 (2026). The final year is partial, through October 23, 2026.</p>
+  <p>Largest monthly totals: 2026-09: 93 · 2026-10: 84 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15 · 2024-12: 14.</p>
   <h3>7. Interpretation and limits</h3>
   <p>Release timing alone does not demonstrate competitive response or causation. These descriptive counts do not test statistical significance. Shared launch calendars, selection of notable releases, and multiple related models announced together can all produce apparent timing patterns.</p>
-  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked October 22, 2026.</p>
+  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked October 25, 2026.</p>
 </section>
 
 <script id="timeline-core">
@@ -476,6 +476,15 @@
 </script>
 <script>
 const DATA = [
+{"model":"Kimi K3.1 Pro","lab":"Moonshot","date":"2026-10-23","tier":"flagship","note":"3T-class multimodal reasoning model with 1M context, post-trained from Kimi K3 for coding, 3D creation, research, and agents. Available in Kimi apps, Work, Code, and the API as kimi-k3.1-pro. Full weights are promised by November 4, 2026, and are not yet public. Uses the October 23 official launch announcement; the research index is dated October 24.","source":"https://forum.moonshot.ai/t/kimi-k3-1-pro-has-launched-start-exploring-now/629"},
+{"model":"Kimi K3.1 Pro Highspeed","lab":"Moonshot","date":"2026-10-23","tier":"flagship","note":"Faster hosted K3.1 Pro variant released alongside the standard model, available as kimi-k3.1-pro-highspeed in the API and across Kimi products. Moonshot reports 2-3 times the speed; this is a publisher claim. Full model weights are promised by November 4, 2026, rather than available at launch.","source":"https://www.kimi.com/en/blog/kimi-k3-1-pro"},
+{"model":"Nemotron 3.5 Bolt E4B 4GB","lab":"NVIDIA","date":"2026-10-23","tier":"open-weights","note":"Open small language model built on Gemma 4 E4B for local conversational agents, multi-turn tool use, and configurable reasoning with 64K context. Released checkpoint targets an approximately 4GB footprint on supported NVIDIA hardware. Distinct from October 15's Bolt 74B-A9B-24GB; the previously scheduled E4B release is now available.","source":"https://research.nvidia.com/labs/nemotron/Nemotron-3.5-Bolt-E4B-4GB/"},
+{"model":"Hy-Nomas","lab":"Tencent","date":"2026-10-23","tier":"specialty","note":"Apache-2.0 interactive video world-generation model with public weights and code. Extends video segment by segment using text instructions, camera control, and a persistent KV cache. Includes distilled and quantized inference configurations. Uses the official repository's October 23 initial release, not its October 24 metadata update.","source":"https://huggingface.co/tencent/Hy-Nomas"},
+{"model":"Canva Craft","lab":"Canva","date":"2026-10-22","tier":"specialty","note":"Canva Research's first image-generation foundation model, available in Dream Lab and through a public API. Separates composition planning from image rendering, with output up to 2K and support for editable design workflows. Faster Craft-fast and Craft-ultrafast variants are announced as upcoming, not released here.","source":"https://www.canva.com/newsroom/news/canva-craft/"},
+{"model":"OlmoEarth v1.3","lab":"Ai2","date":"2026-10-22","tier":"specialty","note":"Open satellite-embedding foundation model released with weights, training data, code, global annual embeddings, and a browser explorer. Produces 128-dimensional representations of 10-meter land pixels, with a reusable 64-dimensional subset. Governed by the OlmoEarth Artifact License; geospatial evaluation claims are separate from language-model rankings.","source":"https://allenai.org/blog/olmoearth-v1-3"},
+{"model":"Flint","lab":"Recursive","date":"2026-10-21","tier":"open-weights","note":"Apache-2.0 coding and agent model with 39.8B total parameters, approximately 2.5B active, and 262,144-token context. Public BF16 weights and SGLang serving kit support reasoning and multi-turn tool use. Uses the official checkpoint's October 21 initial release; benchmark results are publisher evaluations.","source":"https://huggingface.co/RecursiveSI/flint"},
+{"model":"mammoth-1 / elephant-1","lab":"Base Labs (Baseten)","date":"2026-10-21","tier":"specialty","note":"27B and 9B open decision models from Baseten's research lab, returning probabilities for choices, yes/no questions, and scores instead of free-form text. Released weights and hosted Baseten Model APIs support routing, classification, and verification. Leaderboard positions in the announcement are dated publisher claims.","source":"https://www.baseten.co/blog/the-best-decision-models-in-the-world-mammoth-1-and-elephant-1/"},
+{"model":"Phonon 31m / 40m family (open weights)","lab":"Gradium","date":"2026-10-20","tier":"specialty","note":"On-device text-to-speech weights in 31M and 40M sizes, including language-specific and multilingual variants. English 31m is Apache-2.0; 40m variants use CC BY-NC terms. Uses the October 20 open-weight announcement, preceding the October 21 press release; distinct from April's private-beta announcement.","source":"https://gradium.ai/blog/release-phonon-open-weight"},
   {
     "model": "Rerank 5 Pro / Fast",
     "lab": "Cohere",

@@ -19,4 +19,5 @@
 
 ## AI model timeline
 
+- **Resolve release dates and weight availability separately.** Kimi K3.1 Pro's official forum launch is October 23 while its research index says October 24; its hosted API is live but weights are promised by November 4. Phonon's October 20 technical release precedes its October 21 press release and distinguishes Apache-2.0 31m weights from CC BY-NC 40m variants. Use the earliest verified milestone and record date/access disagreements in the update manifest. Retain historical manifests, including exclusions that were accurate when checked, and admit later releases in a new manifest.
 - **Date updates can expose SVG hit-testing bugs.** Extending the latest date changes D3's tick positions. The October 13 update aligned a desktop grid line with the October 12 Meta dots; the axis is painted after the dots and intercepted real clicks. Keep the decorative axis transparent to pointer events, and retain browser hit-testing and natural-click coverage rather than forcing clicks through overlays.
