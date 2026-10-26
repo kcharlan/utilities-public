@@ -1,0 +1,104 @@
+{
+  "checked": "2026-10-26",
+  "latestRelease": "2026-10-26",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_25.json",
+  "preservedHistoricalRows": 513,
+  "additions": [
+    {
+      "model": "GPT-6.1 Terra",
+      "lab": "OpenAI",
+      "date": "2026-10-26",
+      "tier": "mid",
+      "note": "Efficient model for visual reasoning, computer use, coding, and writing. Available in Codex and ChatGPT Work for eligible plans and through the API as gpt-6.1-terra.",
+      "source": "https://openai.com/index/introducing-gpt-6-1-terra/"
+    },
+    {
+      "model": "Nanbeige4.3-33B",
+      "lab": "Nanbeige",
+      "date": "2026-10-24",
+      "tier": "open-weights",
+      "note": "Apache-2.0 33B dense agent model for coding and professional tasks, released with a base checkpoint. The team describes it as a teacher for future smaller models; October 24 is the initial public weight upload.",
+      "source": "https://huggingface.co/Nanbeige/Nanbeige4.3-33B"
+    },
+    {
+      "model": "Dessa (research preview)",
+      "lab": "Block",
+      "date": "2026-10-23",
+      "tier": "specialty",
+      "note": "Full-duplex speech-to-speech research model trained from human speech. Block demonstrated local inference and invited safety researchers for early access; public weights and an API were not established.",
+      "source": "https://block.xyz/dessa"
+    },
+    {
+      "model": "WeVisOne-VL 2B / 4B",
+      "lab": "Tencent",
+      "date": "2026-10-23",
+      "tier": "open-weights",
+      "note": "Apache-2.0 vision-language family combining object-level detection, counting and OCR with pixel-level segmentation and matting. The research report appeared October 22; the 2B weights and model card were published October 23.",
+      "source": "https://huggingface.co/tencent/WeVisOne-VL-2B"
+    },
+    {
+      "model": "RynnUnify-Base",
+      "lab": "Alibaba (DAMO Academy)",
+      "date": "2026-10-22",
+      "tier": "open-weights",
+      "note": "Apache-2.0 embodied model combining a language reasoner and video generator for interleaved visual planning. The initial public base weights were uploaded October 22; the research announcement followed October 23.",
+      "source": "https://huggingface.co/Alibaba-DAMO-Academy/RynnUnify-Base"
+    },
+    {
+      "model": "Ling-3.0-flash-Sante (open weights)",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-10-19",
+      "tier": "open-weights",
+      "note": "MIT-licensed weights for the medicine-focused Ling-3.0-flash-Sante, previously available as a hosted model. Initial weight upload was October 19 UTC; the model card was updated October 22. Research model, not a medical device.",
+      "source": "https://huggingface.co/inclusionAI/Ling-3.0-flash-Sante"
+    }
+  ],
+  "corrections": [],
+  "sourceSweep": [
+    {
+      "lab": "OpenAI",
+      "sourceURLs": [
+        "https://openai.com/index/introducing-gpt-6-1-terra/",
+        "https://developers.openai.com/api/docs/changelog"
+      ],
+      "result": "GPT-6.1 Terra launched October 26 in eligible Codex and ChatGPT Work plans and the API."
+    },
+    {
+      "lab": "Nanbeige / Tencent / Alibaba / inclusionAI",
+      "sourceURLs": [
+        "https://huggingface.co/Nanbeige/Nanbeige4.3-33B/commits/main",
+        "https://huggingface.co/tencent/WeVisOne-VL-2B/commits/main",
+        "https://huggingface.co/Alibaba-DAMO-Academy/RynnUnify-Base/commits/main",
+        "https://huggingface.co/inclusionAI/Ling-3.0-flash-Sante/commits/main",
+        "https://arxiv.org/abs/2610.31329"
+      ],
+      "result": "Used weight-upload dates, not empty repository creation or later metadata edits: Nanbeige October 24, WeVisOne October 23, RynnUnify October 22 and Sante October 19 UTC. Sante is a later open-weight milestone for an existing hosted row."
+    },
+    {
+      "lab": "Block",
+      "sourceURLs": [
+        "https://block.xyz/dessa",
+        "https://techcrunch.com/2026/10/24/blocks-new-voice-model-sounds-eerily-human/"
+      ],
+      "result": "Dessa was demonstrated October 23; early access is limited and public weights were not established."
+    },
+    {
+      "lab": "Other labs",
+      "sourceURLs": [
+        "https://www.anthropic.com/news",
+        "https://ai.google.dev/gemini-api/docs/changelog",
+        "https://www.nocode.mba/ai-release-tracker/2026/10"
+      ],
+      "result": "Checked recent announcements and independent release indexes for additional candidates; this is a curated sweep, not an exhaustive registry."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Doubao-Seedance-1.0-pro-fast",
+      "reason": "An October 24 report identifies an official announcement, but its date and distinct model availability were not independently verified in the accessible primary source.",
+      "sources": [
+        "https://www.nocode.mba/ai-release-tracker/2026/10"
+      ]
+    }
+  ]
+}

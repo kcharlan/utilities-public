@@ -47,7 +47,7 @@ test('October 23 Kimi launch appears in the latest monthly report with weights s
   const core = loadCore();
   const bounds = {earliest:'2024-01-10', latest:data.reduce((max, row) => row.date > max ? row.date : max, '')};
   const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
-  assert.equal(range.end, '2026-10-23');
+  assert.equal(range.end, '2026-10-26');
   const report = core.formatReportText(core.groupByMonth(kimi, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
   assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro · flagship/);
@@ -57,7 +57,7 @@ test('October 23 Kimi launch appears in the latest monthly report with weights s
 test('Meta Wonder models remain in the current month and appear in the dated report', () => {
   const core = loadCore();
   const bounds = {earliest:'2024-01-10', latest:data.reduce((max, row) => row.date > max ? row.date : max, '')};
-  assert.equal(bounds.latest, '2026-10-23');
+  assert.equal(bounds.latest, '2026-10-26');
   const meta = data.filter(row => row.lab === 'Meta' && row.date === '2026-10-12');
   assert.deepEqual(meta.map(row => row.model).sort(), ['Muse Wonder', 'Muse Wonder Full']);
   for (const row of meta) {
@@ -65,7 +65,7 @@ test('Meta Wonder models remain in the current month and appear in the dated rep
     assert.equal(row.tier, 'flagship');
   }
   const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
-  assert.equal(range.end, '2026-10-23');
+  assert.equal(range.end, '2026-10-26');
   const report = core.formatReportText(core.groupByMonth(meta, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['meta']});
   assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder Full · flagship/);
@@ -277,12 +277,12 @@ test('has valid, unique release records and secure source URLs', () => {
 test('static header metadata and initial chart domain cover the dataset', () => {
   const latest = data.reduce((max, row) => row.date > max ? row.date : max, '');
   const labs = new Set(data.map(row => row.lab));
-  assert.equal(latest, '2026-10-23');
+  assert.equal(latest, '2026-10-26');
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
-  assert.match(html, /<span data-latest-date>October 23, 2026<\/span>/);
-  assert.equal((html.match(/· checked October 25, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked October 25, 2026/g) || []).length, 1);
+  assert.match(html, /<span data-latest-date>October 26, 2026<\/span>/);
+  assert.equal((html.match(/· checked October 26, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked October 26, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -418,13 +418,13 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 513);
-  assert.equal(new Set(data.map(row => row.lab)).size, 93);
-  assert.equal(stats.sameDay, 444);
-  assert.equal(stats.withinTwo, 1851);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 291});
-  assert.deepEqual(stats.weekdays, {'0':14, '1':85, '2':104, '3':103, '4':133, '5':62, '6':12});
-  assert.equal(stats.cadence.OpenAI.major, 55);
+  assert.equal(stats.total, 519);
+  assert.equal(new Set(data.map(row => row.lab)).size, 96);
+  assert.equal(stats.sameDay, 459);
+  assert.equal(stats.withinTwo, 1910);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 297});
+  assert.deepEqual(stats.weekdays, {'0':14, '1':87, '2':104, '3':103, '4':134, '5':64, '6':13});
+  assert.equal(stats.cadence.OpenAI.major, 52);
   assert.equal(stats.cadence.Google.major, 52);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
@@ -449,11 +449,9 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Rerank 5 Pro \/ Fast \(October 21\)/);
-  assert.match(summary, /Kimi K3\.1 Pro \(October 23\)/);
-  assert.match(summary, /Kimi K3\.1 Pro Highspeed \(October 23\)/);
-  assert.match(summary, /Nemotron 3\.5 Bolt E4B 4GB \(October 23\)/);
-  assert.match(summary, /Canva Craft \(October 22\)/);
+  assert.match(summary, /GPT-6\.1 Terra \(October 26\)/);
+  assert.match(summary, /Nanbeige4\.3-33B \(October 24\)/);
+  assert.doesNotMatch(summary, /Kimi K3\.1 Pro \(October 23\)/);
   assert.doesNotMatch(summary, /Voxtral Transcribe 3 family \(public preview\) \(October 20\)/);
   assert.doesNotMatch(summary, /Muse Wonder \(October 12\)/);
   assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
@@ -554,7 +552,8 @@ test('October 22 manifest accounts for its historical snapshot and preserves eve
 test('October 25 manifest accounts for every new row while preserving the October 22 snapshot', () => {
   const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_25.json');
   const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const addedKeys = new Set(manifest.additions.map(key));
+  const next = require('../docs/ai_model_timeline_update_sources_2026_10_26.json');
+  const addedKeys = new Set([...manifest.additions, ...next.additions].map(key));
   const baseline = data.filter(row => !addedKeys.has(key(row)));
   assert.equal(manifest.checked, '2026-10-25');
   assert.equal(manifest.latestRelease, '2026-10-23');
@@ -563,12 +562,12 @@ test('October 25 manifest accounts for every new row while preserving the Octobe
   assert.equal(baseline.length, manifest.preservedHistoricalRows);
   assert.equal(manifest.additions.length, 9);
   assert.deepEqual(manifest.corrections, []);
-  assert.equal(data.length, baseline.length + manifest.additions.length);
+  assert.equal(data.length, baseline.length + manifest.additions.length + next.additions.length);
   for (const row of manifest.additions) {
     assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row);
     assert.ok(row.date <= manifest.checked, `${row.model} is not a future release`);
   }
-  assert.equal(data.reduce((latest, row) => row.date > latest ? row.date : latest, ''), manifest.latestRelease);
+  assert.equal([...baseline, ...manifest.additions].reduce((latest, row) => row.date > latest ? row.date : latest, ''), manifest.latestRelease);
 });
 
 test('latest additions retain preview, weight-release, and announcement date distinctions', () => {
@@ -595,7 +594,14 @@ test('latest additions retain preview, weight-release, and announcement date dis
   assert.equal(get('Hy-Nomas')?.date, '2026-10-23');
   assert.equal(get('Phonon 31m / 40m family (open weights)')?.date, '2026-10-20');
   assert.match(get('Phonon 31m / 40m family (open weights)')?.note || '', /40m variants use CC BY-NC/);
-  assert.ok(!data.some(row => /GPT-6\.1 Terra|Gemini 4 Carbon|Fable 5\.2/.test(row.model)));
+  assert.ok(!data.some(row => /Gemini 4 Carbon|Fable 5\.2/.test(row.model)));
+});
+
+test('GPT-6.1 Terra appears on its launch date with its official source', () => {
+  const terra = data.find(row => row.model === 'GPT-6.1 Terra');
+  assert.equal(terra?.date, '2026-10-26');
+  assert.equal(terra?.lab, 'OpenAI');
+  assert.equal(terra?.source, 'https://openai.com/index/introducing-gpt-6-1-terra/');
 });
 
 test('same-day labels stay beside their dots and clear the date axis', () => {
@@ -689,4 +695,18 @@ test('SVG placement integration coalesces redraws and restores labels when zoom 
     }
   }
   assert.ok(extractInlineScript().includes('scheduleLabelPlacement();\n}'),'redraw invokes placement for zoom, filter and resize updates');
+});
+
+test('October 26 manifest preserves the previous snapshot and accounts for new releases', () => {
+  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_26.json');
+  const key = row => [row.model, row.lab, row.date].join('\u0000');
+  const additions = new Set(manifest.additions.map(key));
+  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_25.json');
+  assert.equal(data.filter(row => !additions.has(key(row))).length, manifest.preservedHistoricalRows);
+  assert.equal(manifest.latestRelease, '2026-10-26');
+  assert.deepEqual(manifest.corrections, []);
+  for (const row of manifest.additions) {
+    assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row);
+    assert.ok(row.date <= manifest.checked);
+  }
 });
