@@ -294,6 +294,16 @@ test('static header metadata and initial chart domain cover the dataset', () => 
 const fixtureBounds = {earliest:'2024-01-10', latest:'2026-09-24'};
 const allTiers = ['flagship', 'mid', 'small', 'open-weights', 'specialty'];
 
+test('wheel zoom is limited to the responsive plotted width', () => {
+  const core = loadCore();
+  for (const [left, width] of [[150, 1000], [96, 375]]) {
+    assert.equal(core.wheelInsidePlot(left - 1, left, width - 20), false);
+    assert.equal(core.wheelInsidePlot(left, left, width - 20), true);
+    assert.equal(core.wheelInsidePlot(width - 20, left, width - 20), true);
+    assert.equal(core.wheelInsidePlot(width - 19, left, width - 20), false);
+  }
+});
+
 test('TimelineCore uses local dates for brush snaps and UTC calendar arithmetic', () => {
   const core = loadCore();
   assert.equal(core.toISODateLocal(new Date(2026, 8, 22)), '2026-09-22');

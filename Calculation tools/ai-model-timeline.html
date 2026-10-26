@@ -188,7 +188,7 @@
       <span class="popover-anchor">
         <button type="button" class="btn" id="help-toggle" aria-label="Controls and shortcuts" aria-expanded="false" aria-controls="help-popover">?</button>
         <div class="popover" id="help-popover" hidden>
-          <p>Wheel or trackpad pinch to zoom time · mouse drag to pan · touch the overview strip to choose dates · filtering collapses lanes together.</p>
+          <p>Scroll over lab names to move the page · wheel or trackpad pinch over the plot to zoom time · mouse drag to pan · touch the overview strip to choose dates · filtering collapses lanes together.</p>
           <p style="margin-top:8px">T / R switch views · [ / ] change period · Esc closes this panel or a pinned tooltip. Reset clears filters and zoom.</p>
         </div>
       </span>
@@ -468,7 +468,8 @@
     }
     return result;
   }
-  window.TimelineCore = {toISODateLocal, snapToLocalDay, daysBetweenISO, addDays, daysInclusive,
+  const wheelInsidePlot = (x, left, right) => x >= left && x <= right;
+  window.TimelineCore = {wheelInsidePlot, toISODateLocal, snapToLocalDay, daysBetweenISO, addDays, daysInclusive,
     lastDayOfMonth, monthKey, fmtShortDate, fmtLongDate, fmtMonthLabel, presetSpec,
     periodOverlaps, stepSpec, normalizeCustom, resolveRange, domainPaddingDays,
     compareReleases, groupByMonth, monthlyTierCounts, formatReportText, encodeState, decodeState, placeLabelBoxes};
@@ -2028,6 +2029,12 @@ const zoom = d3.zoom()
   .touchable(() => false)
   .scaleExtent([1, 1])
   .on('zoom', (ev) => { x = ev.transform.rescaleX(x0); redraw(); });
+const defaultZoomFilter = zoom.filter();
+zoom.filter(function(event, ...args) {
+  if (event.type === 'wheel' &&
+      !TimelineCore.wheelInsidePlot(d3.pointer(event, svg.node())[0], MARGIN.left, W - MARGIN.right)) return false;
+  return defaultZoomFilter.call(this, event, ...args);
+});
 
 function updateZoomConstraints(){
   const [start, end] = x0.domain();

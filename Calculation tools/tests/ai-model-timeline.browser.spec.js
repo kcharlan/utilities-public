@@ -8,6 +8,50 @@ const october26 = require('../docs/ai_model_timeline_update_sources_2026_10_26.j
 
 for (const width of [1440, 375]) {
   for (const target of ['http', 'file']) {
+    test(`wheel scrolls the lab gutter and zooms the plot via ${target} at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 700 });
+      await page.goto(target === 'http' ? '/ai-model-timeline.html' : pathToFileURL(path.join(__dirname, '..', 'ai-model-timeline.html')).href);
+      const svg = page.locator('#chartwrap svg');
+      const transform = () => svg.evaluate(node => ({k: window.d3.zoomTransform(node).k, x: window.d3.zoomTransform(node).x}));
+      const position = async offset => {
+        const box = await svg.boundingBox();
+        return {x: box.x + offset, y: Math.max(200, box.y + 150)};
+      };
+      const left = width < 640 ? 96 : 150;
+      await page.mouse.move(...Object.values(await position(left + 30)));
+      const initial = await transform();
+      const initialScroll = await page.evaluate(() => window.scrollY);
+      await page.mouse.wheel(0, -250);
+      await expect.poll(async () => (await transform()).k).toBeGreaterThan(initial.k);
+      expect(await page.evaluate(() => window.scrollY)).toBe(initialScroll);
+      const zoomed = await transform();
+      await page.mouse.move(...Object.values(await position(left - 10)));
+      await page.mouse.wheel(0, 300);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(initialScroll);
+      expect(await transform()).toEqual(zoomed);
+      const scrolled = await page.evaluate(() => window.scrollY);
+      await page.mouse.wheel(0, -180);
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(scrolled);
+      expect(await transform()).toEqual(zoomed);
+      await page.mouse.move(...Object.values(await position(left + 30)));
+      await page.keyboard.down('Control');
+      await page.mouse.wheel(0, -30);
+      await page.keyboard.up('Control');
+      await expect.poll(async () => (await transform()).k).toBeGreaterThan(zoomed.k);
+      const beforePan = await transform();
+      await page.mouse.move(...Object.values(await position(left + 120)));
+      await page.mouse.down();
+      await page.mouse.move(...Object.values(await position(left + 80)), {steps: 5});
+      await page.mouse.up();
+      await expect.poll(async () => (await transform()).x).not.toBe(beforePan.x);
+      await page.getByRole('button', {name: 'Reset', exact: true}).click();
+      await expect.poll(async () => (await transform()).k).toBe(1);
+    });
+  }
+}
+
+for (const width of [1440, 375]) {
+  for (const target of ['http', 'file']) {
     test(`October update shows dated launches and access stages via ${target} at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       const errors = [];
