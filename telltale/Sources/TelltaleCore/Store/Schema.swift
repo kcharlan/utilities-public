@@ -153,7 +153,8 @@ enum Schema {
             episode_id INTEGER REFERENCES episodes (id) ON DELETE SET NULL,
             epoch_id INTEGER REFERENCES baseline_epochs (id) ON DELETE SET NULL,
             link TEXT,
-            undone_at REAL
+            undone_at REAL,
+            ends_at REAL
         )
         """,
         "CREATE INDEX idx_events_at ON events (at)",

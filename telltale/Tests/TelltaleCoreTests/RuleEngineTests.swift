@@ -188,6 +188,12 @@ extension RuleOutcome {
             #expect(slower[0].endedAt == h.sep4(10, 5) && slower[0].endReason == EpisodeRow.EndReason.cleared)
             #expect(faster[0].endedAt == nil && faster[0].onset == h.sep4(9, 25))
             #expect(slower[0].id != faster[0].id)
+            // Each transition writes its event row with its wording.
+            let events = try h.events()
+            #expect(events.map { $0[0] } == ["ruleFired", "ruleFired", "ruleCleared"])
+            #expect(events.last == [
+                "ruleCleared", "codex", h.model, "Slower than usual", "Example is back to usual speed.", "\(outcomes[2].episodeID)", "NULL",
+            ])
         }
     }
 
@@ -244,15 +250,21 @@ extension RuleOutcome {
             #expect(idle.map(\.at) == [h.sep4(12, 35)])
             #expect(try h.events().count == 1)
 
-            // The next activity starts a fresh episode, judged on the same last 10 responses.
+            // The next activity starts fresh: one small prompt doesn't refire on the 3 old large
+            // ones still in the last 10.
             try h.run(1, throughput: 40, hour: 13, minute: 1)
-            let fresh = try h.evaluate(through: h.sep4(13, 5))
-            #expect(fresh.map(\.at) == [h.sep4(13, 5)])
-            #expect(fresh.first?.firedOnset != nil)
+            #expect(try h.evaluate(through: h.sep4(13, 5)).isEmpty)
+            #expect(try h.episodes(.largePrompts).count == 1)
+
+            // A new large prompt meets the count with them (4 of the last 10) and fires.
+            try h.run(1, throughput: 40, hour: 13, minute: 6, inputTokens: 400_000)
+            let fresh = try h.evaluate(through: h.sep4(13, 10))
+            #expect(fresh.map(\.transition) == [.fired(onset: h.sep4(13, 6), severity: .amber)])
+            #expect(fresh.first?.message == "4 of your last 10 prompts were at least 300k tokens. A fresh session would speed things up.")
             let episodes = try h.episodes(.largePrompts)
             #expect(episodes.count == 2)
             #expect(episodes[0].endReason == EpisodeRow.EndReason.idleEnded && episodes[0].endedAt == h.sep4(12, 35))
-            #expect(episodes[1].endedAt == nil && episodes[1].firedAt == h.sep4(13, 5))
+            #expect(episodes[1].endedAt == nil && episodes[1].firedAt == h.sep4(13, 10) && episodes[1].onset == h.sep4(13, 6))
         }
     }
 
@@ -335,6 +347,38 @@ extension RuleOutcome {
         }
     }
 
+    @Test func disconnectWindowsOverlappingAConnectionGapAreUnknown() throws {
+        try withRules { h in
+            try h.store.upsert(connectionEvents: [
+                h.connection(1, at: h.sep4(9, 1), kind: .disconnect),
+                h.connection(2, at: h.sep4(9, 2), kind: .retry),
+                h.connection(3, at: h.sep4(9, 6), kind: .disconnect),
+            ])
+            // The log no longer covered 09:30–09:50 (spec section 6.3).
+            try h.store.recordConnectionGap(provider: .codex, gap: DateInterval(start: h.sep4(9, 30), end: h.sep4(9, 50)), calendar: h.calendar)
+            #expect(try h.events() == [[
+                "connectionHistoryIncomplete", "codex", "*", "Disconnects", "Connection history incomplete from 09:30 to 09:50.", "NULL", "NULL",
+            ]])
+            #expect(try h.store.connectionGaps(provider: .codex, overlapping: DateInterval(start: h.sep4(9), end: h.sep4(9, 31)))
+                == [DateInterval(start: h.sep4(9, 30), end: h.sep4(9, 50))])
+            #expect(try h.store.connectionGaps(provider: .codex, overlapping: DateInterval(start: h.sep4(9, 50), end: h.sep4(11))).isEmpty)
+
+            // Without the gap the episode would clear at 10:05 (one event in its window). Every
+            // window from 09:35 to 10:45 overlaps the gap, so those points are unknown and hold.
+            let outcomes = try h.evaluate(through: h.sep4(11))
+            #expect(outcomes.map(\.at) == [h.sep4(9, 10), h.sep4(10, 50)])
+            #expect(outcomes.map(\.transition) == [.fired(onset: h.sep4(9, 1), severity: .amber), .cleared])
+            #expect(try h.episodes(.disconnects).first?.worstValue == 3)
+        }
+        try withRules { h in
+            // A gap over the first events: no window that could count 3 is complete, so nothing fires.
+            try h.store.upsert(connectionEvents: (1...3).map { h.connection($0, at: h.sep4(9, $0), kind: .disconnect) })
+            try h.store.recordConnectionGap(provider: .codex, gap: DateInterval(start: h.sep4(8), end: h.sep4(9, 4)), calendar: h.calendar)
+            #expect(try h.evaluate(through: h.sep4(11)).isEmpty)
+            #expect(try h.episodes(.disconnects).isEmpty)
+        }
+    }
+
     // MARK: Provider incidents
 
     @Test func incidentOnWatchedComponentFires() throws {
@@ -405,6 +449,11 @@ extension RuleOutcome {
             #expect(later.map(\.transition) == [.escalated])
             #expect(later.map(\.at) == [h.sep4(9, 20)])
             #expect(later.first?.message == "Example Status: Degraded CLI is now an outage.")
+            let escalation = try #require(later.first)
+            #expect(try h.events().last == [
+                "ruleEscalated", RuleHarness.sourceID, "inc_synthetic_02", "Provider incident", escalation.message,
+                "\(escalation.episodeID)", "https://status.example.com/incidents/inc_synthetic_02",
+            ])
             let episodes = try h.episodes(.incident)
             #expect(episodes.map(\.severity) == ["red", "red"])
             #expect(episodes.map(\.worstValue) == [2, 3])
@@ -484,6 +533,61 @@ extension RuleOutcome {
             #expect(try h.episodes(.slower).isEmpty)
             #expect(try RawSQLite.scalar(h.url, "SELECT COUNT(*) FROM rule_state WHERE rule = 'slower'") == "0")
             #expect(try h.store.evalPoints(provider: .codex, model: h.model, in: h.sep4(9)...h.sep4(9, 30)).count == 7)
+        }
+    }
+
+    @Test func disablingRuleEndsItsOpenEpisodeSilently() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.run(30, throughput: 30, hour: 9)
+            try h.run(20, throughput: 40, hour: 11)
+            let fired = try h.evaluate(through: h.sep4(9, 20))
+            #expect(fired.map(\.transition) == [.fired(onset: h.sep4(8, 55), severity: .amber)])
+            // While the episode is open, Sep 4's responses from its onset are left out of usual:
+            // only Sep 1–3's 60 count.
+            #expect(try h.base.usual(h.at(9, 5, 12)).samples[BaselineHarness.defaultKey] == 60)
+
+            // "Slower than usual" turned off: the episode ends at the next point, with no event,
+            // no outcome and no state left.
+            h.settings.slower.enabled = false
+            #expect(try h.evaluate(through: h.sep4(9, 30)).isEmpty)
+            let episode = try #require(try h.episodes(.slower).first)
+            #expect(episode.endedAt == h.sep4(9, 25) && episode.endReason == EpisodeRow.EndReason.ruleDisabled)
+            #expect(approximately(episode.worstValue, 0.75))
+            #expect(try h.store.openEpisodes().isEmpty)
+            #expect(try h.events().map { $0[0] } == ["ruleFired"])
+            #expect(try RawSQLite.scalar(h.url, "SELECT COUNT(*) FROM rule_state WHERE rule = 'slower'") == "0")
+
+            // Usual takes Sep 4's responses from 09:25 on again: 5 slow ones (09:25–09:29) and 20 at 11:00.
+            #expect(try h.base.usual(h.at(9, 5, 12)).samples[BaselineHarness.defaultKey] == 85)
+            // Still off: later points write nothing for it.
+            #expect(try h.evaluate(through: h.sep4(12)).isEmpty)
+            #expect(try h.episodes(.slower).count == 1)
+        }
+        try withRules { h in
+            // Every other rule ends the same way.
+            try h.seedComponents()
+            try h.run(7, throughput: 40, hour: 9)
+            try h.run(3, throughput: 40, hour: 9, minute: 7, inputTokens: 400_000)
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
+            try h.store.upsert(connectionEvents: (1...3).map { h.connection($0, at: h.sep4(9, $0), kind: .disconnect) })
+            try h.store.upsert(incidents: [h.incident(published: h.sep4(9, 2), impacts: [ComponentImpact(componentID: "comp_cli", status: "degraded_performance", start: h.sep4(9, 2))])])
+            try h.store.setUsageLimit(UsageLimitSnapshot(provider: .codex, at: h.sep4(9), usedPercent: 99, windowMinutes: 300))
+            h.settings.usageLimit.enabled = true
+            let fired = try h.evaluate(through: h.sep4(9, 10))
+            let rules: Set<RuleID> = [.largePrompts, .failedTurns, .disconnects, .incident, .usageLimit]
+            #expect(Set(fired.map(\.rule)) == rules)
+
+            h.settings.largePrompts.enabled = false
+            h.settings.failedTurns.enabled = false
+            h.settings.disconnects.enabled = false
+            h.settings.incident.enabled = false
+            h.settings.usageLimit.enabled = false
+            #expect(try h.evaluate(through: h.sep4(9, 15)).isEmpty)
+            let ended = try RawSQLite.rows(h.url, "SELECT rule, ended_at = \(h.sep4(9, 15).timeIntervalSince1970), end_reason FROM episodes ORDER BY rule")
+            #expect(ended == rules.map(\.rawValue).sorted().map { [$0, "1", "ruleDisabled"] })
+            #expect(try h.events().allSatisfy { $0[0] == "ruleFired" })
+            #expect(try RawSQLite.scalar(h.url, "SELECT COUNT(*) FROM rule_state WHERE rule <> 'engine'") == "0")
         }
     }
 

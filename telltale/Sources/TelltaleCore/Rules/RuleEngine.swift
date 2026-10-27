@@ -88,12 +88,17 @@ public struct RuleOutcome: Sendable, Equatable {
 /// - Worst values: the extreme speed index, the peak large-prompt or disconnect count, the
 ///   episode's total failed turns, the peak impact rank for incidents (0 none, 1 degraded or
 ///   other, 2 partial outage, 3 full outage), and the peak percentage for the usage limit.
-/// - Non-speed onsets: the earliest large prompt in the sample, the earliest counted failure
+/// - Non-speed onsets: the earliest large prompt in the sample (after an idle end, the earliest
+///   after it), the earliest counted failure
 ///   or disconnect, the incident's publication and the usage snapshot's time.
 /// - Speed idleness counts responses with a throughput; large-prompt idleness counts any
 ///   response. While idle, a rule isn't judged, so its unchanged sample can't refire.
+/// - After a large-prompt episode ends idle, only a large prompt ending after the idle end can
+///   fire the next one; the old ones still in the last-`of` sample count toward it but can't
+///   fire it alone.
 /// - A failed turn counts at the first point evaluated at or after its completion (or start),
 ///   however late it was ingested. A connection event counts only while inside the window.
+/// - A disconnect point whose window overlaps a recorded connection-history gap is unknown.
 /// - The usage limit is unknown before its latest snapshot and clear once that snapshot's
 ///   window has reset. It has no lamp; its episodes are amber.
 ///
@@ -118,7 +123,9 @@ public final class RuleEngine {
 
     /// Evaluates `points` after the last evaluated point, oldest first, and returns what
     /// happened in order. Writes go through `Store.transaction`, so they join the caller's
-    /// transaction when there is one. A disabled rule isn't evaluated and writes nothing; while
+    /// transaction when there is one. A disabled rule isn't evaluated and writes nothing, except
+    /// that at the first point evaluated while it is off its open episodes end silently with
+    /// `ruleDisabled` and its state is dropped (no event, no outcome). While
     /// `statusAvailable` is false the incident rule isn't evaluated at all (spec section 10).
     @discardableResult
     public func evaluate(
@@ -163,6 +170,10 @@ private struct ScopeState: Codable {
     var extreme: Double?
     /// Failed turns: the point at which the latest failure was counted.
     var lastFailureAt: Date?
+    /// Large prompts: when the last episode ended idle. Until the sample holds no large prompt
+    /// from before it, only a large prompt after it can fire a new episode (spec section 7.2:
+    /// the next activity starts fresh).
+    var idleEndedAt: Date?
 }
 
 /// How an episode's worst value accumulates.
@@ -257,6 +268,9 @@ private final class EvaluationPass {
     private var olderResponses: [String: [ResponseRecord]] = [:]
     private var failures: [ProviderID: [FailedTurnRecord]] = [:]
     private var connections: [ProviderID: [ConnectionEventRecord]] = [:]
+    private var connectionGaps: [ProviderID: [DateInterval]] = [:]
+    /// Whether open episodes of disabled rules have been ended this pass.
+    private var disabledRulesSettled = false
     private var usage: [ProviderID: UsageLimitSnapshot] = [:]
     private var sources: [SourceIncidents] = []
 
@@ -309,6 +323,8 @@ private final class EvaluationPass {
                 let window = TimeInterval(settings.disconnects.windowMinutes * 60)
                 connections[provider] = try store.connectionEvents(provider: provider, in: first.addingTimeInterval(-window)...final)
                     .filter { $0.kind != .reconnect }
+                connectionGaps[provider] = try store.connectionGaps(
+                    provider: provider, overlapping: DateInterval(start: first.addingTimeInterval(-window), end: final))
             }
             if settings.usageLimit.enabled { usage[provider] = try store.usageLimit(provider: provider) }
         }
@@ -326,6 +342,10 @@ private final class EvaluationPass {
     }
 
     func evaluate(at point: Date) throws {
+        if !disabledRulesSettled {
+            try endDisabledRuleEpisodes(at: point)
+            disabledRulesSettled = true
+        }
         for provider in providers {
             for (model, series) in series[provider] ?? [] {
                 try speed(provider: provider, model: model, series: series, at: point)
@@ -351,6 +371,30 @@ private final class EvaluationPass {
             }
         }
         try store.insertEvalPoints(points)
+    }
+
+    /// Ends every open episode of a disabled rule at `point` with `ruleDisabled` and drops that
+    /// rule's state. Silent: no event and no outcome, so nothing notifies. Otherwise an open speed
+    /// episode would keep excluding the model's responses from usual for as long as the rule
+    /// stays off, and its lamp would stay lit.
+    private func endDisabledRuleEpisodes(at point: Date) throws {
+        let disabled = Set(RuleID.allCases.filter { !settings.notifications(for: $0).enabled })
+        guard !disabled.isEmpty else { return }
+        for (id, var episode) in openEpisodes.sorted(by: { $0.key < $1.key }) {
+            guard let rule = RuleID(rawValue: episode.rule), disabled.contains(rule) else { continue }
+            let key = StateKey(rule: rule, provider: episode.provider, scope: episode.scope)
+            episode.endedAt = point
+            episode.endReason = EpisodeRow.EndReason.ruleDisabled
+            if states[key]?.episodeID == id, let extreme = states[key]?.extreme { episode.worstValue = extreme }
+            try store.updateEpisode(episode)
+            openEpisodes[id] = nil
+            worstChanged.remove(id)
+            if rule == .slower || rule == .faster { baseline.discardCache() }
+        }
+        for key in states.keys where disabled.contains(key.rule) {
+            states[key] = nil
+            touchedKeys.insert(key)
+        }
     }
 
     // MARK: Rules
@@ -425,16 +469,24 @@ private final class EvaluationPass {
             return
         }
         let large = sample.filter { $0.inputTokens >= rule.inputTokens }
-        let conditions = SpeedConditions(trigger: Tri(large.count >= rule.count), clear: Tri(large.count <= rule.clearAtMost), red: .false)
+        // After an idle end, the old large prompts still in the sample can't fire on their own.
+        let idleEndedAt = states[key]?.idleEndedAt
+        let fresh = idleEndedAt.map { end in large.filter { $0.end > end } } ?? large
+        let staleRemain = fresh.count < large.count
+        let conditions = SpeedConditions(
+            trigger: Tri(large.count >= rule.count && !fresh.isEmpty), clear: Tri(large.count <= rule.clearAtMost), red: .false)
         let fired = Copy.largePromptsFired(count: large.count, of: rule.of, tokens: rule.inputTokens)
         try step(key, at: point, conditions: conditions, idle: false, value: Double(large.count), worst: .highest,
-                 context: StepContext(onset: large.map(\.end).min()) { transition, _ in
+                 context: StepContext(onset: fresh.map(\.end).min()) { transition, _ in
                      switch transition {
                      case .fired, .escalated: (fired, fired)
                      case .cleared: (Copy.largePromptsCleared, nil)
                      case .idleEnded: ("", nil)
                      }
-                 })
+                 }) { state in
+            // Once no large prompt from before the idle end is left, the restriction can't matter.
+            if !staleRemain { state.idleEndedAt = nil }
+        }
     }
 
     private func failedTurns(provider: ProviderID, at point: Date) throws {
@@ -479,9 +531,13 @@ private final class EvaluationPass {
         guard rule.enabled else { return }
         let windowStart = point.addingTimeInterval(-TimeInterval(rule.windowMinutes * 60))
         let counted = (connections[provider] ?? []).filter { $0.at > windowStart && $0.at <= point }
-        let conditions = SpeedConditions(trigger: Tri(counted.count >= rule.count), clear: Tri(counted.count < rule.count), red: .false)
+        // A window the connection log no longer fully covered can't be counted (spec section 6.3).
+        let incomplete = (connectionGaps[provider] ?? []).contains { $0.start < point && $0.end > windowStart }
+        let conditions = incomplete
+            ? SpeedConditions.unknown
+            : SpeedConditions(trigger: Tri(counted.count >= rule.count), clear: Tri(counted.count < rule.count), red: .false)
         let calendar = calendar
-        try step(key(.disconnects, provider, "*"), at: point, conditions: conditions, idle: false, value: Double(counted.count),
+        try step(key(.disconnects, provider, "*"), at: point, conditions: conditions, idle: false, value: incomplete ? nil : Double(counted.count),
                  worst: .highest, context: StepContext(onset: counted.first?.at) { transition, onset in
                      switch transition {
                      case .fired, .escalated:
@@ -606,6 +662,7 @@ private final class EvaluationPass {
                 openEpisodes[id] = nil
                 worstChanged.remove(id)
                 state.episodeID = nil
+                if transition == .idleEnded, key.rule == .largePrompts { state.idleEndedAt = point }
                 if speed { baseline.discardCache() }
                 try record(transition, key: key, at: point, episode: episode, context: context,
                            kind: transition == .cleared ? EventKind.ruleCleared : nil)
@@ -616,7 +673,7 @@ private final class EvaluationPass {
             openEpisodes[id]?.worstValue = extreme
             worstChanged.insert(id)
         }
-        if state.machine.isAtRest && state.episodeID == nil {
+        if state.machine.isAtRest && state.episodeID == nil && state.idleEndedAt == nil {
             states[key] = nil
         } else {
             states[key] = state

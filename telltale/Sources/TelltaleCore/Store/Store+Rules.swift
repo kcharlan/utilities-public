@@ -29,6 +29,9 @@ public struct EpisodeRow: Sendable, Equatable, Hashable {
         public static let cleared = "cleared"
         /// No qualifying responses for the idle period; the episode ended silently.
         public static let idleEnded = "idleEnded"
+        /// The rule was turned off while the episode was open; it ended silently at the first point
+        /// evaluated with the rule off. Not a clear, so it never lifts a shift dismissal.
+        public static let ruleDisabled = "ruleDisabled"
     }
 
     public var id: Int64?
@@ -75,6 +78,9 @@ public enum EventKind {
     public static let ruleCleared = "ruleCleared"
     /// The kinds Rebuild discards as "rule events" (spec section 7.3).
     public static let ruleKinds = [ruleFired, ruleEscalated, ruleCleared]
+    /// A span the provider's connection log no longer covered (spec section 6.3); `endsAt` holds
+    /// its end. Kept on Rebuild, since the log it came from is gone.
+    public static let connectionHistoryIncomplete = "connectionHistoryIncomplete"
 }
 
 /// How an evaluation point judged a model's speed.
@@ -126,10 +132,12 @@ public struct EventRow: Sendable, Equatable, Hashable {
     public var epochID: Int64?
     public var link: URL?
     public var undoneAt: Date?
+    /// The end of an event that spans time (a connection-history gap).
+    public var endsAt: Date?
 
     public init(
         at: Date, kind: String, provider: String, scope: String, title: String, body: String,
-        episodeID: Int64? = nil, epochID: Int64? = nil, link: URL? = nil, undoneAt: Date? = nil
+        episodeID: Int64? = nil, epochID: Int64? = nil, link: URL? = nil, undoneAt: Date? = nil, endsAt: Date? = nil
     ) {
         self.at = at
         self.kind = kind
@@ -141,6 +149,7 @@ public struct EventRow: Sendable, Equatable, Hashable {
         self.epochID = epochID
         self.link = link
         self.undoneAt = undoneAt
+        self.endsAt = endsAt
     }
 }
 
@@ -184,12 +193,12 @@ extension Store {
     @discardableResult
     public func insertEvent(_ event: EventRow) throws -> Int64 {
         try run("""
-            INSERT INTO events (at, kind, provider, scope, title, body, episode_id, epoch_id, link, undone_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (at, kind, provider, scope, title, body, episode_id, epoch_id, link, undone_at, ends_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
             .date(event.at), .text(event.kind), .text(event.provider), .text(event.scope), .text(event.title),
             .text(event.body), event.episodeID.map(SQLValue.int) ?? .null, event.epochID.map(SQLValue.int) ?? .null,
-            .string(event.link?.absoluteString), .date(event.undoneAt),
+            .string(event.link?.absoluteString), .date(event.undoneAt), .date(event.endsAt),
         ])
         return lastInsertedRowID
     }
@@ -355,6 +364,25 @@ extension Store {
         let statement = try prepare("UPDATE failed_turns SET evaluated_at = ? WHERE provider = ? AND turn_id = ?")
         for turn in turns {
             try statement.run([.date(at), .text(turn.provider.rawValue), .text(turn.turnID)])
+        }
+    }
+
+    /// Records a span the provider's connection log no longer covered as a
+    /// `connectionHistoryIncomplete` event: `at` is the gap's start and `endsAt` its end.
+    @discardableResult
+    public func recordConnectionGap(provider: ProviderID, gap: DateInterval, calendar: Calendar) throws -> Int64 {
+        try insertEvent(EventRow(
+            at: gap.start, kind: EventKind.connectionHistoryIncomplete, provider: provider.rawValue, scope: "*",
+            title: "Disconnects", body: Copy.connectionGap(from: gap.start, to: gap.end, calendar: calendar), endsAt: gap.end))
+    }
+
+    /// One provider's recorded connection-history gaps that overlap `interval`, oldest first.
+    public func connectionGaps(provider: ProviderID, overlapping interval: DateInterval) throws -> [DateInterval] {
+        try query("""
+            SELECT at, ends_at FROM events
+            WHERE kind = ? AND provider = ? AND ends_at IS NOT NULL AND at < ? AND ends_at > ? ORDER BY at, id
+            """, [.text(EventKind.connectionHistoryIncomplete), .text(provider.rawValue), .date(interval.end), .date(interval.start)]) { row in
+            DateInterval(start: row.date(0), end: max(row.date(0), row.date(1)))
         }
     }
 
