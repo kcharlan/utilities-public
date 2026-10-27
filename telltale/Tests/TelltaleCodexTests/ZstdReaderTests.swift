@@ -231,4 +231,131 @@ import TelltaleTestSupport
         }
         #expect(calls == 3)
     }
+
+    // MARK: Lines that span decode chunks
+
+    /// Widths that don't divide the output buffer put chunk boundaries in the middle of lines, so
+    /// the carry-over of a partial line is exercised, with `startingAfterLine` on both sides of it.
+    @Test func linesSpanningOutputChunksAreAssembled() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let width = 1000
+        #expect(ZstdReader.outputBufferSize % width != 0)
+        let content = Self.numberedLines(count: 330, width: width)  // 330,000 bytes: five-plus chunks.
+        let expected = Self.splitLines(content)
+        let file = try scratch.write(StoredZstdFrame.encode(content, blockSize: 4096))
+        // The first output boundary (byte 65,536) falls inside line 66; the second inside line 132.
+        let firstSpanning = ZstdReader.outputBufferSize / width + 1
+        #expect(firstSpanning == 66)
+
+        for skip in [0, 1, firstSpanning - 1, firstSpanning, firstSpanning + 1, 131, 132, 133, 329, 330] {
+            let seen = try Self.collect(file, startingAfterLine: skip)
+            #expect(seen.map(\.0) == Array((skip + 1)..<331), "line numbers after skipping \(skip)")
+            #expect(seen.map(\.1) == Array(expected[skip...]), "line contents after skipping \(skip)")
+        }
+    }
+
+    @Test func oneLineLongerThanSeveralOutputChunksIsAssembled() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let long = Data(repeating: UInt8(ascii: "L"), count: ZstdReader.outputBufferSize * 2 + 4321)
+        let content = Data("before\n".utf8) + long + Data("\nafter\n".utf8)
+        let file = try scratch.write(StoredZstdFrame.encode(content, blockSize: 30_000))
+        let seen = try Self.collect(file)
+        #expect(seen.map(\.0) == [1, 2, 3])
+        #expect(seen.map(\.1) == [Data("before".utf8), long, Data("after".utf8)])
+        // Skipping the long line neither yields it nor disturbs the lines around it.
+        let skipped = try Self.collect(file, startingAfterLine: 2)
+        #expect(skipped.map(\.0) == [3])
+        #expect(skipped.map(\.1) == [Data("after".utf8)])
+    }
+
+    // MARK: Inputs larger than one read
+
+    /// About 600 KiB of stored blocks: three reads, with frame data (and a block) split across them.
+    static func largeFrame() -> (content: Data, frame: Data) {
+        let content = numberedLines(count: 6000, width: 100)
+        let frame = StoredZstdFrame.encode(content, blockSize: 100_000)
+        return (content, frame)
+    }
+
+    @Test func fileLargerThanOneReadIsReadAcrossSeveralReads() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let (content, frame) = Self.largeFrame()
+        #expect(frame.count > 2 * ZstdReader.inputBufferSize)
+        let file = try scratch.write(frame)
+        let seen = try Self.collect(file)
+        #expect(seen.map(\.1) == Self.splitLines(content))
+        #expect(seen.map(\.0) == Array(1...6000))
+
+        // Several frames, the second starting inside the second read.
+        let second = Self.numberedLines(count: 500, width: 90)
+        let multi = try scratch.write(
+            StoredZstdFrame.encode(Data(content.prefix(200_000)), blockSize: 65_536)
+                + frame
+                + StoredZstdFrame.encode(second, blockSize: 70_000),
+            named: "multi.jsonl.zst")
+        let multiSeen = try Self.collect(multi)
+        let expectedLines = Self.splitLines(Data(content.prefix(200_000)) + content + second)
+        #expect(multiSeen.map(\.1) == expectedLines)
+    }
+
+    @Test func truncationBeyondTheFirstReadThrowsTruncated() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let (_, frame) = Self.largeFrame()
+        let cut = ZstdReader.inputBufferSize + 40_000
+        #expect(cut < frame.count)
+        // Recorded size equals the (cut) file: the data ends inside the frame.
+        let insideFrame = try scratch.write(frame.prefix(cut), named: "inside.jsonl.zst")
+        #expect(throws: ZstdError.truncated) {
+            try ZstdReader.lines(of: insideFrame, expectedSize: cut) { _, _ in }
+        }
+        // Recorded size is the full size but the file was cut after the first read:
+        // the second read returns nothing.
+        #expect(throws: ZstdError.truncated) {
+            try ZstdReader.lines(of: insideFrame, expectedSize: frame.count) { _, _ in }
+        }
+    }
+
+    @Test func shrinkAtFrameBoundaryBeyondTheFirstReadThrowsTruncated() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let (content, frame) = Self.largeFrame()
+        let tail = StoredZstdFrame.encode(Data("tail\n".utf8), blockSize: 16)
+        let file = try scratch.write(frame)  // The tail frame vanished after discovery.
+        #expect(frame.count > ZstdReader.inputBufferSize)
+        #expect(throws: ZstdError.truncated) {
+            try ZstdReader.lines(of: file, expectedSize: frame.count + tail.count) { _, _ in }
+        }
+        // Read at its real size, the same file is complete.
+        #expect(try Self.collect(file).count == Self.splitLines(content).count)
+    }
+
+    // MARK: Damage after a valid frame
+
+    @Test func corruptSecondFrameThrowsCorrupt() throws {
+        let scratch = try Scratch()
+        defer { scratch.cleanup() }
+        let good = StoredZstdFrame.encode(Self.numberedLines(count: 20, width: 40), blockSize: 100)
+        var badMagic = StoredZstdFrame.encode(Data("second\n".utf8), blockSize: 16)
+        badMagic[1] = 0x00
+        // A block of reserved type 3 inside an otherwise valid second frame.
+        var badBlock = StoredZstdFrame.encode(Data("second\n".utf8), blockSize: 16)
+        badBlock[6] |= 0b110  // block header low byte: type bits 1-2 = 3
+        for damaged in [badMagic, badBlock] {
+            let bytes = good + damaged
+            let file = try scratch.write(bytes, named: "damaged-\(damaged.hashValue).jsonl.zst")
+            do {
+                try ZstdReader.lines(of: file, expectedSize: bytes.count) { _, _ in }
+                Issue.record("expected a corrupt error")
+            } catch let error as ZstdError {
+                guard case .corrupt = error else {
+                    Issue.record("expected .corrupt, got \(error)")
+                    return
+                }
+            }
+        }
+    }
 }
