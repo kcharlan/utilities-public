@@ -64,6 +64,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - `anker_charge_monitor` (native app; see its README):
   - `make -C anker_charge_monitor test` (all Swift tests, scanner regressions, release/install checks and the maintained snapshot/runtime gate).
   - Deployment changes require all Static deployment/fleet audit tooling commands below, including the app installer lifecycle suite and complete Market Atlas suites when the fleet child runner changes. Real vault/cloud, GUI and launch-at-login acceptance remain separately authorized live checks.
+- `telltale` (native app; see its README):
+  - Full suite: `make -C telltale test` (all Swift tests, then every script in `telltale/Tests/ReleaseChecks/`: test-isolation scanner and its regressions, notification-check runner, release/install structure checks).
+  - Release: `make -C telltale release` (signed `build/release/Telltale.app` with the stable-identity resolver and strict verification; never ad-hoc).
 - `colophon` (from `colophon/`; see its README and `docs/development.md`):
   - `make` (release build; `SQLITE_PREFIX` selects an existing Homebrew SQLite prefix).
   - `make test` (all retained C units, standalone synthetic CLI/integration, Chromium browser cases, stable-sort and asset guards).
