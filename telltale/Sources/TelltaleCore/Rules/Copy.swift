@@ -22,6 +22,13 @@ public enum Copy {
 
     public static func statusPost(source: String, title: String) -> String { "\(source) posted: \(title)." }
 
+    /// Spec section 8's acceptance confirmation, with the signed percentage change.
+    public static func acceptance(model: String, percent: Int) -> String {
+        "\(model)'s usual speed is now \(abs(percent))% \(percent < 0 ? "lower" : "higher") than before."
+    }
+    /// The Undo event for an acceptance (controller ruling R11; not a Copy-table row).
+    public static func baselineRestored(model: String) -> String { "Baseline restored for \(model)." }
+
     public static func intervalError(min: Int, max: Int) -> String { "Choose an interval from \(min) to \(max) minutes" }
     public static let clearBandError = "The clear band must be stricter than the trigger"
     public static func invalidRuleParameter(field: String) -> String { "Choose a valid value for \(field)." }

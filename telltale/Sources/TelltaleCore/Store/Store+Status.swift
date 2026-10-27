@@ -63,6 +63,11 @@ extension Store {
         }
     }
 
+    /// Every status source with stored incidents, sorted.
+    func incidentSources() throws -> [String] {
+        try query("SELECT DISTINCT source FROM incidents ORDER BY source") { $0.text(0) }
+    }
+
     private func incidentRows(source: String, whereClause: String) throws -> [IncidentRecord] {
         try query("""
             SELECT incident_id, name, status, published_at, updated_at, link, history_json, impacts_json
@@ -90,19 +95,15 @@ extension Store {
     @discardableResult
     public func recordRSSItems(_ items: [RSSItem], source: String, displayName: String) throws -> [RSSItem] {
         try transaction {
-            let kind = "statusPost"
+            let kind = EventKind.statusPost
             let known = try prepare("SELECT 1 FROM events WHERE kind = ? AND provider = ? AND link = ? LIMIT 1")
-            let insert = try prepare("""
-                INSERT INTO events (at, kind, provider, scope, title, body, link) VALUES (?, ?, ?, '*', ?, ?, ?)
-                """)
             var recorded: [RSSItem] = []
             for item in items {
                 let link = item.link.absoluteString
                 guard try known.rows([.text(kind), .text(source), .text(link)], { _ in true }).isEmpty else { continue }
-                try insert.run([
-                    .date(item.publishedAt), .text(kind), .text(source), .text(item.title),
-                    .text(Copy.statusPost(source: displayName, title: item.title)), .text(link),
-                ])
+                try insertEvent(EventRow(
+                    at: item.publishedAt, kind: kind, provider: source, scope: "*", title: item.title,
+                    body: Copy.statusPost(source: displayName, title: item.title), link: item.link))
                 recorded.append(item)
             }
             return recorded

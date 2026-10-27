@@ -18,7 +18,7 @@ public struct SourceStateRow: Sendable, Equatable, Hashable, Codable {
 }
 
 extension Store {
-    private static let responseColumns = """
+    static let responseColumns = """
         provider, response_id, model, effort, service_tier, session_id, is_subagent, turn_id, \
         start_at, end_at, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens
         """
@@ -61,13 +61,16 @@ extension Store {
             SELECT \(Self.responseColumns) FROM responses
             WHERE provider = ? AND model = ? AND end_at BETWEEN ? AND ?
             ORDER BY end_at, response_id
-            """, [.text(provider.rawValue), .text(model), .date(range.lowerBound), .date(range.upperBound)]) { row in
-            ResponseRecord(
-                provider: ProviderID(rawValue: row.text(0)), model: row.text(2), effort: row.optionalText(3),
-                serviceTier: row.optionalText(4), sessionID: row.text(5), isSubagent: row.bool(6), turnID: row.optionalText(7),
-                responseID: row.text(1), start: row.date(8), end: row.date(9), inputTokens: row.int(10),
-                cachedInputTokens: row.int(11), outputTokens: row.int(12), reasoningTokens: row.optionalInt(13))
-        }
+            """, [.text(provider.rawValue), .text(model), .date(range.lowerBound), .date(range.upperBound)], Self.response)
+    }
+
+    /// Maps a row selected with `responseColumns`.
+    static func response(_ row: Row) -> ResponseRecord {
+        ResponseRecord(
+            provider: ProviderID(rawValue: row.text(0)), model: row.text(2), effort: row.optionalText(3),
+            serviceTier: row.optionalText(4), sessionID: row.text(5), isSubagent: row.bool(6), turnID: row.optionalText(7),
+            responseID: row.text(1), start: row.date(8), end: row.date(9), inputTokens: row.int(10),
+            cachedInputTokens: row.int(11), outputTokens: row.int(12), reasoningTokens: row.optionalInt(13))
     }
 
     /// Inserts failed turns; a later update to a stored turn replaces it. `evaluated_at`
