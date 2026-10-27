@@ -8,12 +8,13 @@ and OpenAI service status and tells you when something is off. The design is in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
 sequence in [`docs/telltale_implementation_plan.md`](docs/telltale_implementation_plan.md).
 
-Current state: the SwiftPM package scaffold (every target declared, most still
-placeholders), the vendored zstd decoder and the streaming `ZstdReader` for Codex `.jsonl.zst`
-rollouts, the release identifiers and runtime paths, and the notification
-check used for the spec's section 4 spike. The collector, rule engine and real UI
-arrive in later tasks. Running the app with no arguments shows a placeholder
-window that asks for notification permission and reports the answer.
+Current state: the SwiftPM package, the vendored zstd decoder and the streaming `ZstdReader`
+for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources, the usual-speed
+baseline, the rule engine with its notification policy (library code with tests; nothing runs
+them yet), the release identifiers and runtime paths, and the notification check used for the
+spec's section 4 spike. The collector and real UI arrive in later tasks. Running the app with
+no arguments shows a placeholder window that asks for notification permission and reports the
+answer.
 
 ## Requirements
 

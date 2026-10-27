@@ -1,7 +1,8 @@
 import Foundation
 
-// Episodes and events (spec sections 7.2 and 7.3). Rows are written once as evaluated; later
-// changes only end an episode or mark an event undone. Task 8 extends this file.
+// Episodes, events, evaluation points and rule state (spec sections 7.2 and 7.3). Rows are
+// written once as evaluated; later changes only end an episode, update an open episode's
+// severity or worst value, or mark an event undone.
 
 /// A speed rule's direction.
 public enum Direction: String, Codable, Sendable, CaseIterable {
@@ -68,6 +69,49 @@ public enum EventKind {
     public static let statusPost = "statusPost"
     public static let baselineAccepted = "baselineAccepted"
     public static let baselineUndone = "baselineUndone"
+    /// Rule transitions (Task 8). An idle end is silent and writes no event.
+    public static let ruleFired = "ruleFired"
+    public static let ruleEscalated = "ruleEscalated"
+    public static let ruleCleared = "ruleCleared"
+    /// The kinds Rebuild discards as "rule events" (spec section 7.3).
+    public static let ruleKinds = [ruleFired, ruleEscalated, ruleCleared]
+}
+
+/// How an evaluation point judged a model's speed.
+public enum EvalPointState: String, Sendable, Hashable, Codable {
+    /// Enough samples, and the model is past cold start.
+    case known
+    /// Fewer than `SpeedIndex.minimumSamples` judged responses (spec section 7.1).
+    case thin
+    /// Fewer than `BaselineEngine.coldStartDays` active days: speed rules stay quiet (spec section 8).
+    case cold
+}
+
+/// One row of `eval_points`: a model's speed at an evaluation point and the mix-matched usual
+/// it was judged against, stored once so history never changes color (spec section 7.3).
+public struct EvalPointRow: Sendable, Equatable, Hashable {
+    public var provider: ProviderID
+    public var model: String
+    public var at: Date
+    public var speedIndex: Double?
+    public var mixUsual: Double?
+    public var medianTPS: Double?
+    public var samples: Int
+    public var state: EvalPointState
+
+    public init(
+        provider: ProviderID, model: String, at: Date, speedIndex: Double?, mixUsual: Double?, medianTPS: Double?,
+        samples: Int, state: EvalPointState
+    ) {
+        self.provider = provider
+        self.model = model
+        self.at = at
+        self.speedIndex = speedIndex
+        self.mixUsual = mixUsual
+        self.medianTPS = medianTPS
+        self.samples = samples
+        self.state = state
+    }
 }
 
 /// One row of `events`, the user-visible history (spec section 9.2).
@@ -171,5 +215,182 @@ extension Store {
             id: Int64(row.int(0)), rule: row.text(1), provider: row.text(2), scope: row.text(3), direction: direction,
             onset: row.date(5), firedAt: row.date(6), endedAt: row.optionalDate(7), endReason: row.optionalText(8),
             severity: row.text(9), worstValue: row.double(10), detail: row.optionalText(11).map { Data($0.utf8) })
+    }
+}
+
+// MARK: - Rule engine storage (Task 8)
+
+extension Store {
+    /// `rule_state` rows that aren't a rule's own state.
+    private static let engineRule = "engine"
+    private static let notificationsRule = "notifications"
+
+    // MARK: Episodes
+
+    /// Episodes not yet ended, ordered by fire time.
+    public func openEpisodes() throws -> [EpisodeRow] {
+        try query("SELECT \(Self.episodeColumns) FROM episodes WHERE ended_at IS NULL ORDER BY fired_at, id", [], Self.episode)
+    }
+
+    /// Every episode of one rule (a `RuleID` raw value), ordered by fire time.
+    public func episodes(rule: String) throws -> [EpisodeRow] {
+        try query("SELECT \(Self.episodeColumns) FROM episodes WHERE rule = ? ORDER BY fired_at, id", [.text(rule)], Self.episode)
+    }
+
+    // MARK: Evaluation points
+
+    /// Inserts points; a point already stored for the same provider, model and time is an error,
+    /// since history is written once.
+    public func insertEvalPoints(_ points: [EvalPointRow]) throws {
+        guard !points.isEmpty else { return }
+        try transaction {
+            let statement = try prepare("""
+                INSERT INTO eval_points (provider, model, at, speed_index, mix_usual_tps, median_tps, samples, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """)
+            for point in points {
+                try statement.run([
+                    .text(point.provider.rawValue), .text(point.model), .date(point.at),
+                    point.speedIndex.map(SQLValue.double) ?? .null, point.mixUsual.map(SQLValue.double) ?? .null,
+                    point.medianTPS.map(SQLValue.double) ?? .null, .integer(point.samples), .text(point.state.rawValue),
+                ])
+            }
+        }
+    }
+
+    /// One model's points in `range` (both ends inclusive), oldest first.
+    public func evalPoints(provider: ProviderID, model: String, in range: ClosedRange<Date>) throws -> [EvalPointRow] {
+        try query("""
+            SELECT at, speed_index, mix_usual_tps, median_tps, samples, state FROM eval_points
+            WHERE provider = ? AND model = ? AND at BETWEEN ? AND ? ORDER BY at
+            """, [.text(provider.rawValue), .text(model), .date(range.lowerBound), .date(range.upperBound)]) { row in
+            guard let state = EvalPointState(rawValue: row.text(5)) else {
+                throw StoreError.invalidData("Unknown evaluation point state \(row.text(5))")
+            }
+            return EvalPointRow(
+                provider: provider, model: model, at: row.date(0), speedIndex: row.optionalDouble(1),
+                mixUsual: row.optionalDouble(2), medianTPS: row.optionalDouble(3), samples: row.int(4), state: state)
+        }
+    }
+
+    // MARK: Rule state
+
+    /// The latest evaluation point the rule engine finished, or nil before the first.
+    public func lastEvaluatedPoint() throws -> Date? {
+        guard let json = try ruleState(rule: Self.engineRule, provider: "*", scope: "lastPoint") else { return nil }
+        do {
+            return try StoreJSON.decode(Date.self, from: json)
+        } catch {
+            throw StoreError.invalidData("Unreadable last evaluation point")
+        }
+    }
+
+    func setLastEvaluatedPoint(_ point: Date) throws {
+        try setRuleState(rule: Self.engineRule, provider: "*", scope: "lastPoint", json: try StoreJSON.encode(point))
+    }
+
+    /// The failed-turn notice state `NotificationPolicy` carries between runs.
+    public func failureNotices() throws -> FailureNotices {
+        guard let json = try ruleState(rule: Self.notificationsRule, provider: "*", scope: "failedTurns") else { return FailureNotices() }
+        do {
+            return try StoreJSON.decode(FailureNotices.self, from: json)
+        } catch {
+            throw StoreError.invalidData("Unreadable failed-turn notice state")
+        }
+    }
+
+    public func setFailureNotices(_ notices: FailureNotices) throws {
+        try setRuleState(rule: Self.notificationsRule, provider: "*", scope: "failedTurns", json: try StoreJSON.encode(notices))
+    }
+
+    /// One rule's stored states.
+    func ruleStates(rule: String) throws -> [(provider: String, scope: String, json: String)] {
+        try query("SELECT provider, scope, json FROM rule_state WHERE rule = ? ORDER BY provider, scope", [.text(rule)]) {
+            (provider: $0.text(0), scope: $0.text(1), json: $0.text(2))
+        }
+    }
+
+    func ruleState(rule: String, provider: String, scope: String) throws -> String? {
+        try query("SELECT json FROM rule_state WHERE rule = ? AND provider = ? AND scope = ?", [.text(rule), .text(provider), .text(scope)]) {
+            $0.text(0)
+        }.first
+    }
+
+    func setRuleState(rule: String, provider: String, scope: String, json: String) throws {
+        try run("""
+            INSERT INTO rule_state (rule, provider, scope, json) VALUES (?, ?, ?, ?)
+            ON CONFLICT (rule, provider, scope) DO UPDATE SET json = excluded.json
+            """, [.text(rule), .text(provider), .text(scope), .text(json)])
+    }
+
+    func deleteRuleState(rule: String, provider: String, scope: String) throws {
+        try run("DELETE FROM rule_state WHERE rule = ? AND provider = ? AND scope = ?", [.text(rule), .text(provider), .text(scope)])
+    }
+
+    // MARK: Rule inputs
+
+    /// Failed turns the rule engine hasn't counted yet whose time (completion, else start) is at
+    /// or before `through`, oldest first. A turn stored without a model takes the model of a
+    /// response in the same turn (spec section 6.2), or stays nil.
+    public func unevaluatedFailedTurns(through: Date) throws -> [FailedTurnRecord] {
+        try query("""
+            SELECT f.provider, f.thread_id, f.turn_id, f.started_at, f.completed_at,
+                COALESCE(f.model, (SELECT r.model FROM responses r WHERE r.provider = f.provider AND r.turn_id = f.turn_id
+                                   ORDER BY r.end_at DESC LIMIT 1)),
+                f.error_code, f.message
+            FROM failed_turns f
+            WHERE f.evaluated_at IS NULL AND COALESCE(f.completed_at, f.started_at) <= ?
+            ORDER BY COALESCE(f.completed_at, f.started_at), f.provider, f.turn_id
+            """, [.date(through)]) { row in
+            FailedTurnRecord(
+                provider: ProviderID(rawValue: row.text(0)), threadID: row.text(1), turnID: row.text(2),
+                startedAt: row.date(3), completedAt: row.optionalDate(4), model: row.optionalText(5),
+                errorCode: row.text(6), message: row.text(7))
+        }
+    }
+
+    /// Marks failed turns counted at the evaluation point `at`.
+    public func markEvaluated(_ turns: [FailedTurnRecord], at: Date) throws {
+        guard !turns.isEmpty else { return }
+        let statement = try prepare("UPDATE failed_turns SET evaluated_at = ? WHERE provider = ? AND turn_id = ?")
+        for turn in turns {
+            try statement.run([.date(at), .text(turn.provider.rawValue), .text(turn.turnID)])
+        }
+    }
+
+    /// One provider's connection events in `range` (both ends inclusive), oldest first.
+    public func connectionEvents(provider: ProviderID, in range: ClosedRange<Date>) throws -> [ConnectionEventRecord] {
+        try query("""
+            SELECT source_id, at, kind, detail, retries, max_retries FROM connection_events
+            WHERE provider = ? AND at BETWEEN ? AND ? ORDER BY at, source_id
+            """, [.text(provider.rawValue), .date(range.lowerBound), .date(range.upperBound)]) { row in
+            guard let kind = ConnectionKind(rawValue: row.text(2)) else {
+                throw StoreError.invalidData("Unknown connection event kind \(row.text(2))")
+            }
+            return ConnectionEventRecord(
+                provider: provider, sourceID: row.text(0), at: row.date(1), kind: kind, detail: row.text(3),
+                retries: row.optionalInt(4), maxRetries: row.optionalInt(5))
+        }
+    }
+
+    /// Every model with stored responses for `provider`, sorted. Each step is one seek on the
+    /// `(provider, model, end_at)` index.
+    func models(provider: ProviderID) throws -> [String] {
+        try query("""
+            WITH RECURSIVE m(model) AS (
+                SELECT (SELECT MIN(model) FROM responses WHERE provider = ?1)
+                UNION ALL
+                SELECT (SELECT MIN(model) FROM responses WHERE provider = ?1 AND model > m.model) FROM m WHERE m.model IS NOT NULL
+            )
+            SELECT model FROM m WHERE model IS NOT NULL
+            """, [.text(provider.rawValue)]) { $0.text(0) }
+    }
+
+    /// The model's last `limit` responses ending before `before`, oldest first.
+    func responses(provider: ProviderID, model: String, before: Date, limit: Int) throws -> [ResponseRecord] {
+        try query("""
+            SELECT \(Self.responseColumns) FROM responses
+            WHERE provider = ? AND model = ? AND end_at < ? ORDER BY end_at DESC, response_id DESC LIMIT ?
+            """, [.text(provider.rawValue), .text(model), .date(before), .integer(limit)], Self.response).reversed()
     }
 }
