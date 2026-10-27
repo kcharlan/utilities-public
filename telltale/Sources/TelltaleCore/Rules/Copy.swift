@@ -20,6 +20,10 @@ public enum Copy {
 
     public static let collectorNotBuilt = "Collector not built yet"
 
+    public static func intervalError(min: Int, max: Int) -> String { "Choose an interval from \(min) to \(max) minutes" }
+    public static let clearBandError = "The clear band must be stricter than the trigger"
+    public static func invalidRuleParameter(field: String) -> String { "Choose a valid value for \(field)." }
+
     // Port: brew_version/Sources/BrewVersion/UserNotifier.swift, failureMessage, fbd3e03.
     private static func failureMessage(_ context: String, error: any Error) -> String {
         let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
