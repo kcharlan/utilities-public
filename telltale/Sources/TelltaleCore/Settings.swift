@@ -17,27 +17,9 @@ public enum Appearance: String, Sendable, Equatable, Hashable, Codable, CaseIter
     case dark, light, system
 }
 
-/// Every setting the app and the collector share (spec sections 3, 7.4, 9.3, 9.4).
+/// Shared validation for the collector interval. The keys themselves are static members of
+/// `SettingKey` (below), so callers write `store.value(.collectorEnabled)`.
 public enum Settings {
-    /// Whether the collector should be installed and running. On by default (plan Goal 1);
-    /// Task 11 limits the automatic turn-on to the installed app.
-    public static let collectorEnabled = SettingKey(name: "collectorEnabled", defaultValue: true)
-    /// Collector interval in minutes (spec section 9.3).
-    public static let intervalMinutes = SettingKey(name: "intervalMinutes", defaultValue: 5)
-    public static let rules = SettingKey(name: "rules", defaultValue: RuleSettings.defaults)
-    /// Spec section 7.4's watched-components defaults, matched against the status page's names.
-    public static let watchedComponents = SettingKey(
-        name: "watchedComponents",
-        defaultValue: ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"])
-    public static let appearance = SettingKey(name: "appearance", defaultValue: Appearance.dark)
-    public static let openAtLogin = SettingKey(name: "openAtLogin", defaultValue: true)
-    /// Set by the app to ask the collector for "Rebuild from Codex logs" (spec section 7.3).
-    public static let rebuildRequestedAt = SettingKey<Date?>(name: "rebuildRequestedAt", defaultValue: nil)
-    /// The end of the last completed backfill (Task 9).
-    public static let backfillThrough = SettingKey<Date?>(name: "backfillThrough", defaultValue: nil)
-    /// The last local day (`yyyy-MM-dd`) retention ran (Task 9).
-    public static let lastPrunedDay = SettingKey<String?>(name: "lastPrunedDay", defaultValue: nil)
-
     /// The collector interval range in minutes (spec section 9.3).
     public static let intervalRange = 1...60
 
@@ -45,6 +27,50 @@ public enum Settings {
     public static func intervalError(_ minutes: Int) -> String? {
         intervalRange.contains(minutes) ? nil : Copy.intervalError(min: intervalRange.lowerBound, max: intervalRange.upperBound)
     }
+}
+
+// MARK: - Keys (spec sections 3, 7.4, 9.3, 9.4)
+//
+// Static members of `SettingKey` in constrained extensions, so callers write
+// `store.value(.collectorEnabled)` and later tasks add their own keys the same way.
+
+extension SettingKey where Value == Bool {
+    /// Whether the collector should be installed and running. On by default (plan Goal 1);
+    /// Task 11 limits the automatic turn-on to the installed app.
+    public static var collectorEnabled: SettingKey<Bool> { SettingKey(name: "collectorEnabled", defaultValue: true) }
+    public static var openAtLogin: SettingKey<Bool> { SettingKey(name: "openAtLogin", defaultValue: true) }
+}
+
+extension SettingKey where Value == Int {
+    /// Collector interval in minutes (spec section 9.3); validate with `Settings.intervalError`.
+    public static var intervalMinutes: SettingKey<Int> { SettingKey(name: "intervalMinutes", defaultValue: 5) }
+}
+
+extension SettingKey where Value == RuleSettings {
+    public static var rules: SettingKey<RuleSettings> { SettingKey(name: "rules", defaultValue: RuleSettings.defaults) }
+}
+
+extension SettingKey where Value == [String] {
+    /// Spec section 7.4's watched-components defaults, matched against the status page's names.
+    public static var watchedComponents: SettingKey<[String]> {
+        SettingKey(name: "watchedComponents", defaultValue: ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"])
+    }
+}
+
+extension SettingKey where Value == Appearance {
+    public static var appearance: SettingKey<Appearance> { SettingKey(name: "appearance", defaultValue: .dark) }
+}
+
+extension SettingKey where Value == Date? {
+    /// Set by the app to ask the collector for "Rebuild from Codex logs" (spec section 7.3).
+    public static var rebuildRequestedAt: SettingKey<Date?> { SettingKey(name: "rebuildRequestedAt", defaultValue: nil) }
+    /// The end of the last completed backfill (Task 9).
+    public static var backfillThrough: SettingKey<Date?> { SettingKey(name: "backfillThrough", defaultValue: nil) }
+}
+
+extension SettingKey where Value == String? {
+    /// The last local day (`yyyy-MM-dd`) retention ran (Task 9).
+    public static var lastPrunedDay: SettingKey<String?> { SettingKey(name: "lastPrunedDay", defaultValue: nil) }
 }
 
 // MARK: - Rule settings (spec section 7.4)

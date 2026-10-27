@@ -72,15 +72,15 @@ private struct Abort: Error {}
     @Test func reopeningAMigratedDatabaseKeepsItsData() throws {
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")
-            try Store.open(url, mode: .readWrite).set(Settings.intervalMinutes, 9)
-            #expect(try Store.open(url, mode: .readWrite).value(Settings.intervalMinutes) == 9)
+            try Store.open(url, mode: .readWrite).set(SettingKey.intervalMinutes, 9)
+            #expect(try Store.open(url, mode: .readWrite).value(SettingKey.intervalMinutes) == 9)
         }
     }
 
     @Test func openRefusesANewerSchema() throws {
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")
-            try Store.open(url, mode: .readWrite).set(Settings.intervalMinutes, 9)
+            try Store.open(url, mode: .readWrite).set(SettingKey.intervalMinutes, 9)
             try RawSQLite.rows(url, "PRAGMA user_version = 2")
             #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readWrite) }
             #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readOnly) }
@@ -110,12 +110,12 @@ private struct Abort: Error {}
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")
             let writer = try Store.open(url, mode: .readWrite)
-            try writer.set(Settings.intervalMinutes, 12)
+            try writer.set(SettingKey.intervalMinutes, 12)
             let reader = try Store.open(url, mode: .readOnly)
-            #expect(try reader.value(Settings.intervalMinutes) == 12)
-            #expect(throws: StoreError.self) { try reader.set(Settings.intervalMinutes, 30) }
+            #expect(try reader.value(SettingKey.intervalMinutes) == 12)
+            #expect(throws: StoreError.self) { try reader.set(SettingKey.intervalMinutes, 30) }
             #expect(throws: StoreError.self) { try reader.upsert(responses: [Synthetic.response(1, endingAt: 100)]) }
-            #expect(try reader.value(Settings.intervalMinutes) == 12)
+            #expect(try reader.value(SettingKey.intervalMinutes) == 12)
         }
     }
 
@@ -123,15 +123,15 @@ private struct Abort: Error {}
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")
             let writer = try Store.open(url, mode: .readWrite)
-            try writer.set(Settings.intervalMinutes, 7)
+            try writer.set(SettingKey.intervalMinutes, 7)
             let reader = try Store.open(url, mode: .readOnly)
             let (first, second) = try reader.transaction {
-                let first = try reader.value(Settings.intervalMinutes)
-                try writer.set(Settings.intervalMinutes, 8)
-                return (first, try reader.value(Settings.intervalMinutes))
+                let first = try reader.value(SettingKey.intervalMinutes)
+                try writer.set(SettingKey.intervalMinutes, 8)
+                return (first, try reader.value(SettingKey.intervalMinutes))
             }
             #expect(first == 7 && second == 7)
-            #expect(try reader.value(Settings.intervalMinutes) == 8)
+            #expect(try reader.value(SettingKey.intervalMinutes) == 8)
         }
     }
 
@@ -141,17 +141,17 @@ private struct Abort: Error {}
             var aborted = false
             do {
                 try store.transaction { () throws -> Void in
-                    try store.set(Settings.intervalMinutes, 42)
+                    try store.set(SettingKey.intervalMinutes, 42)
                     throw Abort()
                 }
             } catch is Abort {
                 aborted = true
             }
             #expect(aborted)
-            #expect(try store.value(Settings.intervalMinutes) == 5)
+            #expect(try store.value(SettingKey.intervalMinutes) == 5)
             // Nested use joins the outer transaction rather than failing.
-            try store.transaction { try store.transaction { try store.set(Settings.intervalMinutes, 11) } }
-            #expect(try store.value(Settings.intervalMinutes) == 11)
+            try store.transaction { try store.transaction { try store.set(SettingKey.intervalMinutes, 11) } }
+            #expect(try store.value(SettingKey.intervalMinutes) == 11)
         }
     }
 
@@ -167,7 +167,7 @@ private struct Abort: Error {}
                     do {
                         // Schema v1 uses plain CREATE TABLE, so a second migration would throw "already exists".
                         let store = try Store.open(url, mode: .readWrite)
-                        try store.set(Settings.intervalMinutes, index + 1)
+                        try store.set(SettingKey.intervalMinutes, index + 1)
                         outcomes.finish()
                     } catch {
                         outcomes.finish(error: error)
@@ -199,7 +199,7 @@ private struct Abort: Error {}
                     opened.signal()
                     proceed.wait()
                     let began = Date()
-                    try writer.set(Settings.intervalMinutes, 17)
+                    try writer.set(SettingKey.intervalMinutes, 17)
                     outcomes.recordWait(Date().timeIntervalSince(began))
                     outcomes.finish()
                 } catch {
@@ -209,7 +209,7 @@ private struct Abort: Error {}
             }.start()
             opened.wait()
             try holder.transaction {
-                try holder.set(Settings.collectorEnabled, false)
+                try holder.set(SettingKey.collectorEnabled, false)
                 proceed.signal()
                 Thread.sleep(forTimeInterval: 0.3)
             }
@@ -218,8 +218,8 @@ private struct Abort: Error {}
             #expect(result.errors.isEmpty, "\(result.errors)")
             #expect(result.finished == 1)
             #expect(result.wait > 0.1, "the write should have waited for the open transaction")
-            #expect(try holder.value(Settings.intervalMinutes) == 17)
-            #expect(try holder.value(Settings.collectorEnabled) == false)
+            #expect(try holder.value(SettingKey.intervalMinutes) == 17)
+            #expect(try holder.value(SettingKey.collectorEnabled) == false)
         }
     }
 
@@ -229,11 +229,11 @@ private struct Abort: Error {}
             let holder = try Store.open(url, mode: .readWrite)
             let impatient = try Store.open(url, mode: .readWrite, busyTimeout: .milliseconds(100))
             try holder.transaction {
-                try holder.set(Settings.collectorEnabled, false)
-                #expect(throws: StoreError.self) { try impatient.set(Settings.intervalMinutes, 17) }
+                try holder.set(SettingKey.collectorEnabled, false)
+                #expect(throws: StoreError.self) { try impatient.set(SettingKey.intervalMinutes, 17) }
             }
-            try impatient.set(Settings.intervalMinutes, 17)
-            #expect(try holder.value(Settings.intervalMinutes) == 17)
+            try impatient.set(SettingKey.intervalMinutes, 17)
+            #expect(try holder.value(SettingKey.intervalMinutes) == 17)
         }
     }
 }

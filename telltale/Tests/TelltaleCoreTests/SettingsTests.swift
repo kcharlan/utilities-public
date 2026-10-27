@@ -7,17 +7,17 @@ import TelltaleTestSupport
     @Test func absentKeyReturnsDefault() throws {
         try withScratchDirectory { directory in
             let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
-            #expect(try store.value(Settings.collectorEnabled) == true)
-            #expect(try store.value(Settings.intervalMinutes) == 5)
-            #expect(try store.value(Settings.rules) == RuleSettings.defaults)
-            #expect(try store.value(Settings.watchedComponents) == [
+            #expect(try store.value(SettingKey.collectorEnabled) == true)
+            #expect(try store.value(SettingKey.intervalMinutes) == 5)
+            #expect(try store.value(SettingKey.rules) == RuleSettings.defaults)
+            #expect(try store.value(SettingKey.watchedComponents) == [
                 "CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses",
             ])
-            #expect(try store.value(Settings.appearance) == .dark)
-            #expect(try store.value(Settings.openAtLogin) == true)
-            #expect(try store.value(Settings.rebuildRequestedAt) == nil)
-            #expect(try store.value(Settings.backfillThrough) == nil)
-            #expect(try store.value(Settings.lastPrunedDay) == nil)
+            #expect(try store.value(SettingKey.appearance) == .dark)
+            #expect(try store.value(SettingKey.openAtLogin) == true)
+            #expect(try store.value(SettingKey.rebuildRequestedAt) == nil)
+            #expect(try store.value(SettingKey.backfillThrough) == nil)
+            #expect(try store.value(SettingKey.lastPrunedDay) == nil)
         }
     }
 
@@ -48,41 +48,68 @@ import TelltaleTestSupport
             let rebuild = Synthetic.at(12_345.678)
             let backfill = Synthetic.at(99_999)
             let writer = try Store.open(url, mode: .readWrite)
-            try writer.set(Settings.collectorEnabled, false)
-            try writer.set(Settings.intervalMinutes, 15)
-            try writer.set(Settings.rules, rules)
-            try writer.set(Settings.watchedComponents, ["Example component", "Other component"])
-            try writer.set(Settings.appearance, .system)
-            try writer.set(Settings.openAtLogin, false)
-            try writer.set(Settings.rebuildRequestedAt, rebuild)
-            try writer.set(Settings.backfillThrough, backfill)
-            try writer.set(Settings.lastPrunedDay, "2026-01-02")
+            try writer.set(SettingKey.collectorEnabled, false)
+            try writer.set(SettingKey.intervalMinutes, 15)
+            try writer.set(SettingKey.rules, rules)
+            try writer.set(SettingKey.watchedComponents, ["Example component", "Other component"])
+            try writer.set(SettingKey.appearance, .system)
+            try writer.set(SettingKey.openAtLogin, false)
+            try writer.set(SettingKey.rebuildRequestedAt, rebuild)
+            try writer.set(SettingKey.backfillThrough, backfill)
+            try writer.set(SettingKey.lastPrunedDay, "2026-01-02")
 
             let reader = try Store.open(url, mode: .readOnly)
-            #expect(try reader.value(Settings.collectorEnabled) == false)
-            #expect(try reader.value(Settings.intervalMinutes) == 15)
-            #expect(try reader.value(Settings.rules) == rules)
-            #expect(try reader.value(Settings.watchedComponents) == ["Example component", "Other component"])
-            #expect(try reader.value(Settings.appearance) == .system)
-            #expect(try reader.value(Settings.openAtLogin) == false)
-            #expect(try reader.value(Settings.rebuildRequestedAt) == rebuild)
-            #expect(try reader.value(Settings.backfillThrough) == backfill)
-            #expect(try reader.value(Settings.lastPrunedDay) == "2026-01-02")
+            #expect(try reader.value(SettingKey.collectorEnabled) == false)
+            #expect(try reader.value(SettingKey.intervalMinutes) == 15)
+            #expect(try reader.value(SettingKey.rules) == rules)
+            #expect(try reader.value(SettingKey.watchedComponents) == ["Example component", "Other component"])
+            #expect(try reader.value(SettingKey.appearance) == .system)
+            #expect(try reader.value(SettingKey.openAtLogin) == false)
+            #expect(try reader.value(SettingKey.rebuildRequestedAt) == rebuild)
+            #expect(try reader.value(SettingKey.backfillThrough) == backfill)
+            #expect(try reader.value(SettingKey.lastPrunedDay) == "2026-01-02")
 
             // Clearing an optional key returns it to nil, and a later set replaces the earlier row.
-            try writer.set(Settings.rebuildRequestedAt, nil)
-            try writer.set(Settings.intervalMinutes, 20)
-            #expect(try reader.value(Settings.rebuildRequestedAt) == nil)
-            #expect(try reader.value(Settings.intervalMinutes) == 20)
+            try writer.set(SettingKey.rebuildRequestedAt, nil)
+            try writer.set(SettingKey.intervalMinutes, 20)
+            #expect(try reader.value(SettingKey.rebuildRequestedAt) == nil)
+            #expect(try reader.value(SettingKey.intervalMinutes) == 20)
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM settings WHERE key = 'intervalMinutes'") == "1")
+        }
+    }
+
+    /// Later tasks write `store.value(.collectorEnabled)`; every key must resolve by leading-dot syntax.
+    @Test func keysResolveByImplicitMemberSyntax() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            try store.set(.collectorEnabled, false)
+            try store.set(.intervalMinutes, 9)
+            try store.set(.appearance, .light)
+            try store.set(.openAtLogin, false)
+            try store.set(.watchedComponents, ["Example component"])
+            try store.set(.rebuildRequestedAt, Synthetic.at(5))
+            try store.set(.backfillThrough, Synthetic.at(6))
+            try store.set(.lastPrunedDay, "2026-01-03")
+            var rules = RuleSettings.defaults
+            rules.slower.threshold = 0.25
+            try store.set(.rules, rules)
+            #expect(try store.value(.collectorEnabled) == false)
+            #expect(try store.value(.intervalMinutes) == 9)
+            #expect(try store.value(.appearance) == .light)
+            #expect(try store.value(.openAtLogin) == false)
+            #expect(try store.value(.watchedComponents) == ["Example component"])
+            #expect(try store.value(.rebuildRequestedAt) == Synthetic.at(5))
+            #expect(try store.value(.backfillThrough) == Synthetic.at(6))
+            #expect(try store.value(.lastPrunedDay) == "2026-01-03")
+            #expect(try store.value(.rules) == rules)
         }
     }
 
     @Test func settingKeyNamesAreStableAndDistinct() {
         let names = [
-            Settings.collectorEnabled.name, Settings.intervalMinutes.name, Settings.rules.name,
-            Settings.watchedComponents.name, Settings.appearance.name, Settings.openAtLogin.name,
-            Settings.rebuildRequestedAt.name, Settings.backfillThrough.name, Settings.lastPrunedDay.name,
+            SettingKey.collectorEnabled.name, SettingKey.intervalMinutes.name, SettingKey.rules.name,
+            SettingKey.watchedComponents.name, SettingKey.appearance.name, SettingKey.openAtLogin.name,
+            SettingKey.rebuildRequestedAt.name, SettingKey.backfillThrough.name, SettingKey.lastPrunedDay.name,
         ]
         #expect(Set(names).count == names.count)
         #expect(names == [
@@ -98,10 +125,10 @@ import TelltaleTestSupport
             try store.exec("INSERT INTO settings (key, value_json) VALUES ('rules', '{\"slower\": ')")
             try store.exec("INSERT INTO settings (key, value_json) VALUES ('appearance', '\"sepia\"')")
             try store.exec("INSERT INTO settings (key, value_json) VALUES ('collectorEnabled', '')")
-            #expect(try store.value(Settings.intervalMinutes) == 5)
-            #expect(try store.value(Settings.rules) == RuleSettings.defaults)
-            #expect(try store.value(Settings.appearance) == .dark)
-            #expect(try store.value(Settings.collectorEnabled) == true)
+            #expect(try store.value(SettingKey.intervalMinutes) == 5)
+            #expect(try store.value(SettingKey.rules) == RuleSettings.defaults)
+            #expect(try store.value(SettingKey.appearance) == .dark)
+            #expect(try store.value(SettingKey.collectorEnabled) == true)
         }
     }
 
