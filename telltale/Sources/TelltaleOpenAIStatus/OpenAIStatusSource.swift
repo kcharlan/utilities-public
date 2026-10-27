@@ -1,0 +1,154 @@
+import Foundation
+import TelltaleCore
+
+/// OpenAI's status page (spec section 10). Reads `status.openai.com/proxy/status.openai.com`,
+/// never the legacy `/api/v2/summary.json`.
+public struct OpenAIStatusSource: StatusSource {
+    public static let defaultBase = URL(string: "https://status.openai.com")!
+
+    public static let sourceID = "openai"
+    public static let name = "OpenAI"
+
+    public let id = OpenAIStatusSource.sourceID
+    public let displayName = OpenAIStatusSource.name
+
+    private let client: StatusClient
+    private let clock: @Sendable () -> Date
+
+    /// `clock` only dates an incident whose detail couldn't be fetched and that the summary
+    /// doesn't date either.
+    public init(transport: any HTTPTransport, base: URL = OpenAIStatusSource.defaultBase, clock: @escaping @Sendable () -> Date = { Date() }) {
+        client = StatusClient(transport: transport, base: base)
+        self.clock = clock
+    }
+
+    /// One collector run's fetch. Details are fetched for ongoing incidents that are new or
+    /// changed since `known`, and for stored-open incidents that left the ongoing list (to see
+    /// whether they resolved). Unchanged ongoing incidents come back as stored. If the summary
+    /// itself fails, the RSS feed answers instead (`.rssOnly`); if that fails too, this throws
+    /// the summary's error.
+    public func fetch(known: [IncidentRecord]) async throws -> StatusFetch {
+        let summary: StatusSummary
+        do {
+            summary = try await client.summary()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let summaryError {
+            do {
+                return .rssOnly(try await client.feed())
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw summaryError
+            }
+        }
+
+        let stored = Dictionary(known.filter { $0.source == id }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var incidents: [IncidentRecord] = []
+        var feed: [RSSItem]?
+        var feedTried = false
+        var ongoingIDs = Set<String>()
+
+        for ongoing in summary.ongoingIncidents where ongoingIDs.insert(ongoing.id).inserted {
+            let prior = stored[ongoing.id]
+            if let prior, !prior.isResolved, !Self.changed(ongoing, since: prior) {
+                incidents.append(prior)
+                continue
+            }
+            do {
+                incidents.append(record(ongoing.id, try await client.incident(ongoing.id), summary: ongoing))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if let prior {
+                    incidents.append(prior)
+                    continue
+                }
+                if ongoing.name == nil, !feedTried {
+                    feedTried = true
+                    feed = try? await client.feed()
+                }
+                incidents.append(placeholder(ongoing, feed: feed ?? []))
+            }
+        }
+
+        for prior in known.sorted(by: { $0.id < $1.id }) where prior.source == id && !prior.isResolved && !ongoingIDs.contains(prior.id) {
+            do {
+                incidents.append(record(prior.id, try await client.incident(prior.id), summary: nil))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue  // Still stored as open; the next run checks again.
+            }
+        }
+        return .full(components: summary.components, incidents: incidents)
+    }
+
+    // MARK: Building records
+
+    private static func changed(_ ongoing: StatusSummary.OngoingIncident, since prior: IncidentRecord) -> Bool {
+        if let name = ongoing.name, name != prior.name { return true }
+        if let status = ongoing.status, status != prior.status { return true }
+        guard let updatedAt = ongoing.updatedAt else { return true }  // Can't tell, so look.
+        return updatedAt > prior.updatedAt
+    }
+
+    private func record(_ incidentID: String, _ detail: DecodedIncident, summary: StatusSummary.OngoingIncident?) -> IncidentRecord {
+        IncidentRecord(
+            source: id, id: incidentID, name: detail.name, status: detail.status, publishedAt: detail.publishedAt,
+            updatedAt: max(detail.updatedAt, summary?.updatedAt ?? detail.updatedAt),
+            link: client.incidentLink(incidentID), history: detail.history, impacts: detail.impacts)
+    }
+
+    /// An incident whose detail couldn't be fetched and that isn't stored yet. The summary names
+    /// it, or else the RSS feed does (spec section 10: RSS is the fallback for titles and links).
+    private func placeholder(_ ongoing: StatusSummary.OngoingIncident, feed: [RSSItem]) -> IncidentRecord {
+        let post = feed.first { $0.link.lastPathComponent == ongoing.id }
+        let published = post?.publishedAt ?? ongoing.updatedAt ?? clock()
+        return IncidentRecord(
+            source: id, id: ongoing.id, name: ongoing.name ?? post?.title ?? "Incident \(ongoing.id)",
+            status: ongoing.status ?? "investigating", publishedAt: published, updatedAt: ongoing.updatedAt ?? published,
+            link: post?.link ?? client.incidentLink(ongoing.id), history: [], impacts: [])
+    }
+
+    // MARK: Applying a result
+
+    /// Stores a fetch result and returns whether incident data is available. RSS items give no
+    /// reliable open or resolved state, so they appear in Events but never light or clear a lamp.
+    ///
+    /// - `.full`: stores the components and incidents, clears `unavailableSince`, returns true.
+    /// - `.rssOnly`: records the posts, sets `unavailableSince` if unset, returns false.
+    /// - A failure: sets `unavailableSince` if unset, returns false. Incidents are untouched.
+    @discardableResult
+    public static func apply(
+        _ result: Result<StatusFetch, any Error>, sourceID: String, store: Store, now: Date
+    ) throws -> Bool {
+        try store.transaction {
+            switch result {
+            case .success(.full(let components, let incidents)):
+                try store.replace(components: components, source: sourceID)
+                try store.upsert(incidents: incidents)
+                try setUnavailable(false, sourceID: sourceID, store: store, now: now)
+                return true
+            case .success(.rssOnly(let items)):
+                try store.recordRSSItems(items, source: sourceID, displayName: Self.name)
+                try setUnavailable(true, sourceID: sourceID, store: store, now: now)
+                return false
+            case .failure:
+                try setUnavailable(true, sourceID: sourceID, store: store, now: now)
+                return false
+            }
+        }
+    }
+
+    private static func setUnavailable(_ unavailable: Bool, sourceID: String, store: Store, now: Date) throws {
+        var row = try store.sourceState(sourceID) ?? SourceStateRow(source: sourceID, state: .ready, updatedAt: now)
+        if unavailable {
+            row.unavailableSince = row.unavailableSince ?? now
+        } else {
+            row.unavailableSince = nil
+        }
+        row.updatedAt = now
+        try store.setSourceState(row)
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "id": "synthetic-page",
+    "name": "Example Status",
+    "ongoing_incidents": [
+      {
+        "id": "synthetic-01",
+        "name": "Elevated errors for Example Chat",
+        "status": "investigating",
+        "last_update_at": "2026-10-27T14:20:00.000Z"
+      },
+      {
+        "id": "synthetic-02",
+        "name": "Slow responses for Example API",
+        "status": "monitoring",
+        "last_update_at": "2026-10-27T13:05:30Z"
+      }
+    ],
+    "components": [
+      { "id": "component-a", "name": "Example Chat" },
+      { "id": "component-b", "name": "Example API" },
+      { "id": "component-c", "name": "Example Files" }
+    ],
+    "affected_components": [
+      { "component_id": "component-a", "status": "degraded_performance" },
+      { "component_id": "component-b", "status": "partial_outage" }
+    ]
+  }
+}

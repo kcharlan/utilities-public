@@ -20,6 +20,8 @@ public enum Copy {
 
     public static let collectorNotBuilt = "Collector not built yet"
 
+    public static func statusPost(source: String, title: String) -> String { "\(source) posted: \(title)." }
+
     public static func intervalError(min: Int, max: Int) -> String { "Choose an interval from \(min) to \(max) minutes" }
     public static let clearBandError = "The clear band must be stricter than the trigger"
     public static func invalidRuleParameter(field: String) -> String { "Choose a valid value for \(field)." }
