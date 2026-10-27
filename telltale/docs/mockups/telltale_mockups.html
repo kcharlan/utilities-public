@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telltale mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --cluster: #151B21; --housing: #262F37; --readout: #E9EDF0; --dim: #8D99A3;
+  --red: #E5484D; --amber: #F0A800; --blue: #4C8DFF; --green: #3DB879;
+  --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --gauge: "Barlow Semi Condensed", "DIN Alternate", var(--sf);
+  --page: #3A4148;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--readout); font: 13px/1.45 var(--sf); padding: 32px 24px 64px; }
+.board { max-width: 1180px; margin: 0 auto; display: grid; gap: 40px; }
+.note { color: #C3CBD2; font-size: 13px; max-width: 70ch; margin: 0 0 12px; }
+h2.part { font: 500 15px/1.3 var(--sf); color: #fff; margin: 0 0 6px; }
+.row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+.num { font-family: var(--gauge); font-variant-numeric: tabular-nums lining-nums; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* Menu bar strip */
+.menubar { display: flex; align-items: center; gap: 18px; height: 26px; padding: 0 12px; border-radius: 6px; font-size: 13px; }
+.menubar.light { background: #E8E9EB; color: #1d1d1f; }
+.menubar.dark { background: #2B2D31; color: #f2f2f2; }
+.glyph { position: relative; width: 18px; height: 16px; display: inline-block; }
+.glyph svg { width: 18px; height: 16px; }
+.glyph .dot { position: absolute; right: -3px; top: -2px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1px var(--ring); }
+.menubar.light { --ring: #E8E9EB; } .menubar.dark { --ring: #2B2D31; }
+
+/* Lamps */
+.lamps { display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr)); gap: 6px; }
+.lamp { display: grid; justify-items: center; gap: 3px; padding: 6px 2px 5px; border-radius: 6px; background: var(--lens); color: var(--icon); }
+.lamp svg { width: 20px; height: 20px; }
+.lamp span { font: 500 12px/1 var(--gauge); letter-spacing: .01em; color: var(--cap); }
+.lamp[data-on] { box-shadow: inset 0 0 0 1.5px var(--icon); }
+
+/* Panel */
+.panel { width: 340px; border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+.panel.dark { background: rgba(38,41,46,.97); color: #F2F3F5; --lens: #31363C; --icon: #59616A; --cap: #7E8790; --sec: #9AA2AA; --sep: rgba(255,255,255,.09); }
+.panel.light { background: rgba(244,244,246,.98); color: #1d1d1f; --lens: #E3E5E8; --icon: #A8AEB4; --cap: #7A8087; --sec: #6E737A; --sep: rgba(0,0,0,.08); --readout: #1d1d1f; }
+.panel.light .lamp[data-on] { --cap: #1d1d1f; }
+.phead { display: flex; align-items: flex-start; justify-content: space-between; }
+.phead b { font-weight: 600; font-size: 13px; display: block; }
+.sec { color: var(--sec); font-size: 11px; }
+.iconbtn { background: none; border: 0; color: var(--sec); padding: 2px; border-radius: 4px; cursor: default; }
+.sep { height: 1px; background: var(--sep); margin: 0 -2px; }
+.alerts { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.alerts li { display: grid; grid-template-columns: 14px 1fr; gap: 6px; font-size: 13px; line-height: 1.35; }
+.alerts li i { width: 8px; height: 8px; border-radius: 2px; margin-top: 5px; transform: rotate(45deg); }
+.alerts small { display: block; color: var(--sec); font-size: 11px; margin-top: 2px; }
+.empty { color: var(--sec); font-size: 13px; padding: 4px 0; }
+.models { display: grid; gap: 4px; }
+.mrow { display: grid; grid-template-columns: 52px 72px 1fr 64px; align-items: baseline; gap: 6px; }
+.mrow .v { font: 500 17px/1 var(--gauge); font-variant-numeric: tabular-nums; }
+.mrow .v small { font-size: 12px; color: var(--sec); font-weight: 400; }
+.mrow .u { color: var(--sec); font-size: 11px; }
+.spark { height: 16px; width: 64px; }
+.pfoot { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--sec); }
+.pfoot .state { display: flex; align-items: center; gap: 6px; }
+.pfoot .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.linkbtn { font: 13px var(--sf); color: inherit; background: rgba(127,127,127,.16); border: 0; border-radius: 6px; padding: 3px 10px; }
+
+/* Window */
+.window { border-radius: 12px; overflow: hidden; background: var(--cluster); box-shadow: 0 0 0 .5px rgba(255,255,255,.12), 0 20px 50px rgba(0,0,0,.35); }
+.titlebar { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: #1B2229; border-bottom: 1px solid #0F1418; }
+.titlebar i { width: 12px; height: 12px; border-radius: 50%; background: #4A525A; }
+.titlebar .t { margin-left: 12px; color: var(--dim); font-size: 13px; }
+.wbody { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 720px; }
+.side { background: #11171C; padding: 14px 10px; display: grid; align-content: start; gap: 2px; border-right: 1px solid #0D1216; }
+.side .grp { color: var(--dim); font-size: 11px; margin: 12px 8px 4px; }
+.side .grp:first-child { margin-top: 0; }
+.side a { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 6px; color: var(--readout); text-decoration: none; font-size: 13px; }
+.side a.on { background: var(--housing); }
+.side a.off { color: #5D6872; }
+.side a em { font-style: normal; width: 7px; height: 7px; border-radius: 2px; transform: rotate(45deg); }
+.side .bottom { margin-top: 24px; border-top: 1px solid var(--housing); padding-top: 10px; display: grid; gap: 2px; }
+.main { padding: 18px 22px 24px; display: grid; gap: 18px; align-content: start; }
+.main .lamps { display: flex; gap: 8px; flex-wrap: wrap; }
+.main .lamp { --lens: var(--housing); --icon: #4B5661; --cap: #6E7A85; width: 92px; padding: 9px 4px 7px; gap: 5px; }
+.main .lamp svg { width: 24px; height: 24px; }
+.main .lamp span { font-size: 14px; }
+/* Lit states come last so they win over every container's unlit defaults. */
+.lamp[data-on="amber"] { --icon: var(--amber); --cap: var(--readout); }
+.lamp[data-on="red"] { --icon: var(--red); --cap: var(--readout); }
+.lamp[data-on="blue"] { --icon: var(--blue); --cap: var(--readout); }
+.lamp[data-on="green"] { --icon: var(--green); --cap: var(--readout); }
+.panel.light .lamp[data-on="amber"] { --icon: #B87A00; }
+.sect { display: grid; gap: 8px; }
+.shead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.shead h3 { font: 500 15px/1.2 var(--sf); margin: 0; color: var(--readout); }
+.shead .aside { color: var(--dim); font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--housing); border-radius: 6px; overflow: hidden; }
+.seg button { background: none; border: 0; color: var(--dim); font: 12px var(--sf); padding: 3px 10px; }
+.seg button[aria-pressed="true"] { background: var(--housing); color: var(--readout); }
+.walerts { --sec: var(--dim); }
+.walerts li { font-size: 14px; }
+.readouts { display: flex; gap: 28px; align-items: baseline; flex-wrap: wrap; }
+.ro { display: grid; gap: 1px; }
+.ro .big { font: 500 34px/1 var(--gauge); font-variant-numeric: tabular-nums; }
+.ro .big small { font-size: 15px; font-weight: 400; color: var(--dim); margin-left: 4px; }
+.ro .lbl { color: var(--dim); font-size: 12px; }
+.ro.amber .big { color: var(--amber); }
+svg.plot { width: 100%; display: block; }
+.split { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 22px; }
+.wl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 22px; }
+.wl .ro .big { font-size: 22px; }
+.wl .ro.amber .big { color: var(--amber); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--dim); font-size: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+table.events { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.events td { padding: 6px 8px 6px 0; border-top: 1px solid var(--housing); vertical-align: top; }
+table.events td.when { color: var(--dim); white-space: nowrap; width: 96px; }
+table.events td.kind { white-space: nowrap; width: 120px; }
+table.events td.kind i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; transform: rotate(45deg); margin-right: 7px; vertical-align: 1px; }
+.btn { font: 13px var(--sf); color: var(--readout); background: var(--housing); border: 0; border-radius: 6px; padding: 5px 12px; }
+.btn.quiet { background: none; border: 1px solid var(--housing); }
+
+/* Collector */
+.col .lamps { max-width: 560px; }
+.col .lamp { width: 108px; }
+.kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; font-size: 13px; max-width: 640px; }
+.kv dt { color: var(--dim); } .kv dd { margin: 0; }
+.log { font: 12px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: #B8C2CA; background: #0F1418; border-radius: 8px; padding: 10px 12px; max-width: 760px; }
+.log .e { color: var(--red); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.inline-warn { display: grid; grid-template-columns: 14px 1fr; gap: 8px; max-width: 640px; font-size: 13px; }
+.inline-warn i { width: 8px; height: 8px; border-radius: 2px; transform: rotate(45deg); background: var(--red); margin-top: 5px; }
+
+@media (max-width: 900px) { .wbody { grid-template-columns: 1fr; } .side { display: none; } .split { grid-template-columns: 1fr; } .main .lamps { --n: 3; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-speed" viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 17l4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.6" fill="currentColor"/></symbol>
+    <symbol id="i-errors" viewBox="0 0 24 24"><path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.1" fill="currentColor"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-provider" viewBox="0 0 24 24"><path d="M4 10v4h3l6 4V6L7 10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M17 9a4 4 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-load" viewBox="0 0 24 24"><path d="M3 20h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 20V10h3v10M10.5 20V6h3v14M15 20v-7h3v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-collector" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4v4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-installed" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 12.5l2.5 2.5 4.5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-loaded" viewBox="0 0 24 24"><path d="M12 3v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 6.5a7.5 7.5 0 1 0 10 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-lastrun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-schedule" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-lens" viewBox="0 0 18 16"><rect x="1.5" y="2" width="15" height="12" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.5 8.5c1.2-2 2.3-2 3.5 0s2.3 2 3.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="board">
+
+<section>
+  <h2 class="part">Menu-bar glyph</h2>
+  <p class="note">A lamp lens with a filament. Unlit when healthy, like every other template icon in the bar. When a lamp lights, a dot in the most severe lamp color sits on the corner, drawn the way Brew Version draws its mug dot.</p>
+  <div class="row">
+    <div class="menubar light" role="img" aria-label="Menu bar, light, healthy"><span>Wed 12:41</span><span class="glyph"><svg><use href="#i-lens"/></svg></span></div>
+    <div class="menubar light" role="img" aria-label="Menu bar, light, amber alert"><span>Wed 12:41</span><span class="glyph"><svg><use href="#i-lens"/></svg><i class="dot" style="background:var(--amber)"></i></span></div>
+    <div class="menubar dark" role="img" aria-label="Menu bar, dark, red alert"><span>Wed 12:41</span><span class="glyph"><svg><use href="#i-lens"/></svg><i class="dot" style="background:var(--red)"></i></span></div>
+    <div class="menubar dark" role="img" aria-label="Menu bar, dark, faster than usual"><span>Wed 12:41</span><span class="glyph"><svg><use href="#i-lens"/></svg><i class="dot" style="background:var(--blue)"></i></span></div>
+  </div>
+</section>
+
+<section>
+  <h2 class="part">Panel</h2>
+  <p class="note">Left: a quiet hour in light appearance, with nothing lit. Right: dark appearance during a slowdown with heavy prompts. Speed and Load are lit. The alert says whether prompt size explains the slowdown.</p>
+  <div class="row">
+    <div class="panel light">
+      <div class="phead"><div><b>Telltale</b><span class="sec">Checked 12:40</span></div><button class="iconbtn" aria-label="Check now"><svg width="15" height="15"><use href="#i-collector"/></svg></button></div>
+      <div class="lamps">
+        <div class="lamp"><svg><use href="#i-speed"/></svg><span>Speed</span></div>
+        <div class="lamp"><svg><use href="#i-errors"/></svg><span>Errors</span></div>
+        <div class="lamp"><svg><use href="#i-link"/></svg><span>Link</span></div>
+        <div class="lamp"><svg><use href="#i-provider"/></svg><span>OpenAI</span></div>
+        <div class="lamp"><svg><use href="#i-load"/></svg><span>Load</span></div>
+      </div>
+      <div class="sep"></div>
+      <p class="empty">Nothing to report.</p>
+      <div class="sep"></div>
+      <div class="models">
+        <div class="mrow"><span>Sol</span><span class="v num">41 <small>tok/s</small></span><span class="u">usual 42</span><svg class="spark" data-spark="flat" data-color="#8A9097"></svg></div>
+        <div class="mrow"><span>Terra</span><span class="v num">76 <small>tok/s</small></span><span class="u">usual 74</span><svg class="spark" data-spark="flat2" data-color="#8A9097"></svg></div>
+      </div>
+      <div class="sep"></div>
+      <div class="pfoot"><span class="state"><i></i>Collector running, every 5 min</span><button class="linkbtn">Open dashboard</button></div>
+    </div>
+
+    <div class="panel dark">
+      <div class="phead"><div><b>Telltale</b><span class="sec">Checked 12:40</span></div><button class="iconbtn" aria-label="Check now"><svg width="15" height="15"><use href="#i-collector"/></svg></button></div>
+      <div class="lamps">
+        <div class="lamp" data-on="amber"><svg><use href="#i-speed"/></svg><span>Speed</span></div>
+        <div class="lamp"><svg><use href="#i-errors"/></svg><span>Errors</span></div>
+        <div class="lamp"><svg><use href="#i-link"/></svg><span>Link</span></div>
+        <div class="lamp"><svg><use href="#i-provider"/></svg><span>OpenAI</span></div>
+        <div class="lamp" data-on="amber"><svg><use href="#i-load"/></svg><span>Load</span></div>
+      </div>
+      <div class="sep"></div>
+      <ul class="alerts">
+        <li><i style="background:var(--amber)"></i><div>Sol is 26% slower than usual for prompts this size.<small>Since 08:10. OpenAI hasn't posted an incident.</small></div></li>
+        <li><i style="background:var(--amber)"></i><div>4 of your last 10 prompts were over 300k tokens.<small>Large prompts run about a third slower. A fresh session would speed things up.</small></div></li>
+      </ul>
+      <div class="sep"></div>
+      <div class="models">
+        <div class="mrow"><span>Sol</span><span class="v num" style="color:var(--amber)">31 <small>tok/s</small></span><span class="u">usual 42</span><svg class="spark" data-spark="drop" data-color="#F0A800"></svg></div>
+        <div class="mrow"><span>Terra</span><span class="v num">70 <small>tok/s</small></span><span class="u">usual 74</span><svg class="spark" data-spark="flat2" data-color="#7E8790"></svg></div>
+      </div>
+      <div class="sep"></div>
+      <div class="pfoot"><span class="state"><i></i>Collector running, every 5 min</span><button class="linkbtn">Open dashboard</button></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2 class="part">Dashboard window: Codex, Sol</h2>
+  <p class="note">The same moment as the dark panel, with room for the "them or me" view: speed against usual over time, with the prompt-size mix and workload right next to it. The 14-day view shows an earlier unannounced fast spell (blue) and a capacity morning (red markers).</p>
+  <div class="window">
+    <div class="titlebar"><i></i><i></i><i></i><span class="t">Telltale</span></div>
+    <div class="wbody">
+      <nav class="side" aria-label="Providers">
+        <div class="grp">Codex</div>
+        <a class="on" href="#">Sol <em style="background:var(--amber)"></em></a>
+        <a href="#">Terra</a>
+        <div class="grp">OpenRouter</div>
+        <a class="off" href="#">Not set up</a>
+        <div class="grp">Claude</div>
+        <a class="off" href="#">Not set up</a>
+        <div class="bottom">
+          <a href="#">Collector</a>
+          <a href="#">Settings</a>
+        </div>
+      </nav>
+      <main class="main">
+        <div class="lamps">
+          <div class="lamp" data-on="amber"><svg><use href="#i-speed"/></svg><span>Speed</span></div>
+          <div class="lamp"><svg><use href="#i-errors"/></svg><span>Errors</span></div>
+          <div class="lamp"><svg><use href="#i-link"/></svg><span>Link</span></div>
+          <div class="lamp"><svg><use href="#i-provider"/></svg><span>OpenAI</span></div>
+          <div class="lamp" data-on="amber"><svg><use href="#i-load"/></svg><span>Load</span></div>
+          <div class="lamp"><svg><use href="#i-collector"/></svg><span>Collector</span></div>
+        </div>
+
+        <ul class="alerts walerts">
+          <li><i style="background:var(--amber)"></i><div>Sol is 26% slower than usual for prompts this size.<small>Since 08:10. OpenAI hasn't posted an incident. Errors and disconnects are normal.</small></div></li>
+          <li><i style="background:var(--amber)"></i><div>4 of your last 10 prompts were over 300k tokens.<small>Large prompts run about a third slower. A fresh session would speed things up.</small></div></li>
+        </ul>
+
+        <div class="sect">
+          <div class="shead">
+            <h3>Speed against usual</h3>
+            <div class="seg" role="group" aria-label="Time range"><button>6h</button><button>24h</button><button>7d</button><button aria-pressed="true">14d</button></div>
+          </div>
+          <div class="readouts">
+            <div class="ro amber"><span class="big num">31<small>tok/s</small></span><span class="lbl">Last hour, usual 42 for this prompt size</span></div>
+            <div class="ro"><span class="big num">11.4<small>s</small></span><span class="lbl">Median response, usual 8.2</span></div>
+          </div>
+          <svg class="plot" id="speed" viewBox="0 0 860 220" role="img" aria-label="Hourly Sol speed relative to usual over 14 days. A fast spell on day 5, a slow morning with capacity failures on day 14."></svg>
+          <div class="legend">
+            <span><i style="background:var(--red)"></i>Much slower</span>
+            <span><i style="background:var(--amber)"></i>Slower</span>
+            <span><i style="background:#5A6670"></i>Usual</span>
+            <span><i style="background:var(--blue)"></i>Faster</span>
+            <span><i style="background:rgba(240,168,0,.09);outline:1px dashed rgba(240,168,0,.6);outline-offset:-1px"></i>OpenAI incident</span>
+            <span><svg width="10" height="10" viewBox="0 0 10 10"><path d="M5 1l4 8H1z" fill="var(--red)"/></svg>Failed turn</span>
+          </div>
+          <div class="shead"><span class="aside">Usual is the median of the last 14 days for the same prompt size, leaving out flagged hours.</span><button class="btn quiet">Accept as usual</button></div>
+        </div>
+
+        <div class="split">
+          <div class="sect">
+            <div class="shead"><h3>Prompt sizes</h3><span class="aside">Last 3 hours against usual</span></div>
+            <svg class="plot" id="hist" viewBox="0 0 440 190" role="img" aria-label="Prompt-size histogram. Last 3 hours: 300k-plus prompts are 40 percent of responses against 6 percent usually."></svg>
+            <div class="legend"><span><i style="background:var(--readout)"></i>Last 3 hours</span><span><i style="background:#4B5661"></i>Usual</span></div>
+          </div>
+          <div class="sect">
+            <div class="shead"><h3>Workload</h3><span class="aside">Last 3 hours, usual in gray</span></div>
+            <div class="wl">
+              <div class="ro amber"><span class="big num">286k<small>usual 128k</small></span><span class="lbl">Median prompt</span></div>
+              <div class="ro"><span class="big num">94<small>usual 120</small></span><span class="lbl">Responses an hour</span></div>
+              <div class="ro"><span class="big num">3<small>usual 4</small></span><span class="lbl">Active sessions</span></div>
+              <div class="ro"><span class="big num">98%<small>usual 98%</small></span><span class="lbl">Cached input</span></div>
+              <div class="ro amber"><span class="big num">61%<small>usual 33%</small></span><span class="lbl">Reasoning share of output</span></div>
+              <div class="ro"><span class="big num">22%<small>usual 55%</small></span><span class="lbl">Responses from subagents</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="shead"><h3>Events</h3><span class="aside">Kept indefinitely</span></div>
+          <table class="events">
+            <tr><td class="when num">Today 08:10</td><td class="kind"><i style="background:var(--amber)"></i>Slowdown</td><td>Sol dropped below 80% of usual and stayed there for an hour.</td></tr>
+            <tr><td class="when num">Today 07:52</td><td class="kind"><i style="background:#5A6670"></i>Disconnect</td><td>Stream reset and retried once. The turn completed.</td></tr>
+            <tr><td class="when num">Day 13 10:57</td><td class="kind"><i style="background:var(--red)"></i>Failed turn</td><td>Selected model is at capacity. 4 failures between 08:47 and 10:57.</td></tr>
+            <tr><td class="when num">Day 5 21:00</td><td class="kind"><i style="background:var(--blue)"></i>Speedup</td><td>Sol ran 1.3 to 1.6 times faster than usual for 24 hours. No incident was posted.</td></tr>
+          </table>
+        </div>
+      </main>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2 class="part">Dashboard window: Collector</h2>
+  <p class="note">The background job gets the same lamps. Green is used here, and only here, to mean "on". This shows a problem state: loaded and on schedule, but the last run failed.</p>
+  <div class="window">
+    <div class="titlebar"><i></i><i></i><i></i><span class="t">Telltale</span></div>
+    <div class="wbody" style="min-height: 0">
+      <nav class="side" aria-label="Providers">
+        <div class="grp">Codex</div>
+        <a href="#">Sol</a><a href="#">Terra</a>
+        <div class="grp">OpenRouter</div><a class="off" href="#">Not set up</a>
+        <div class="grp">Claude</div><a class="off" href="#">Not set up</a>
+        <div class="bottom"><a class="on" href="#">Collector <em style="background:var(--red)"></em></a><a href="#">Settings</a></div>
+      </nav>
+      <main class="main col">
+        <div class="lamps">
+          <div class="lamp" data-on="green"><svg><use href="#i-installed"/></svg><span>Installed</span></div>
+          <div class="lamp" data-on="green"><svg><use href="#i-loaded"/></svg><span>Loaded</span></div>
+          <div class="lamp" data-on="red"><svg><use href="#i-lastrun"/></svg><span>Last run</span></div>
+          <div class="lamp" data-on="green"><svg><use href="#i-schedule"/></svg><span>On schedule</span></div>
+        </div>
+        <div class="inline-warn"><i></i><div>The last run couldn't read the Codex history database because it was locked.<br><span style="color:var(--dim)">Telltale will try again at 12:45. If it keeps failing, check that Codex isn't mid-migration.</span></div></div>
+        <dl class="kv">
+          <dt>Runs</dt><dd>Every 5 minutes, also at login</dd>
+          <dt>Last run</dt><dd>12:40, failed after 0.4 s</dd>
+          <dt>Next run</dt><dd>12:45</dd>
+          <dt>Last success</dt><dd>12:35, 214 new responses</dd>
+          <dt>Job label</dt><dd>local.utilities.telltale.collector</dd>
+        </dl>
+        <div class="actions"><button class="btn">Run now</button><button class="btn quiet">Turn off</button><button class="btn quiet">Change interval</button><button class="btn quiet">Show log file</button></div>
+        <div class="log" role="log" aria-label="Recent collector log lines">12:35:02 scanned 3 rollouts, 214 responses, 0 failed turns<br>12:35:02 status page: no open incidents<br><span class="e">12:40:01 history database locked, will retry at 12:45</span></div>
+      </main>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+const C = { red:'#E5484D', amber:'#F0A800', blue:'#4C8DFF', usual:'#5A6670', grid:'#262F37', dim:'#8D99A3', readout:'#E9EDF0' };
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent && parent.appendChild(n); return n; }
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647) / 2147483647; }
+
+document.querySelectorAll('svg.spark').forEach(s => {
+  const r = rng(s.dataset.spark.length * 97 + 3), kind = s.dataset.spark, pts = [];
+  for (let i = 0; i < 18; i++) {
+    let v = 0.5 + (r() - 0.5) * 0.25;
+    if (kind === 'drop' && i > 10) v -= 0.3 + (i - 10) * 0.01;
+    pts.push([i * (64 / 17), 14 - v * 12]);
+  }
+  s.setAttribute('viewBox', '0 0 64 16');
+  el('polyline', { points: pts.map(p => p.join(',')).join(' '), fill: 'none', stroke: s.dataset.color, 'stroke-width': 1.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, s);
+});
+
+(function speed() {
+  const s = document.getElementById('speed'), W = 860, H = 220, L = 36, R = 8, T = 10, B = 26;
+  const x = h => L + (W - L - R) * h / (14 * 24), y = v => T + (H - T - B) * (1.7 - v) / 1.25;
+  [0.6, 0.8, 1.0, 1.2, 1.4, 1.6].forEach(v => {
+    el('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: C.grid, 'stroke-width': 1 }, s);
+    el('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', fill: C.dim, 'font-size': 11, 'font-family': 'Barlow Semi Condensed, sans-serif' }, s).textContent = v.toFixed(1) + 'x';
+  });
+  for (let d = 0; d < 14; d++) el('text', { x: x(d * 24 + 12), y: H - 8, 'text-anchor': 'middle', fill: C.dim, 'font-size': 11, 'font-family': 'Barlow Semi Condensed, sans-serif' }, s).textContent = d === 13 ? 'Today' : 'Day ' + (d + 1);
+  [[4, 12.5], [10 * 24 + 3, 10 * 24 + 6]].forEach(([a, b]) => el('rect', { x: x(a), y: T, width: Math.max(3, x(b) - x(a)), height: H - T - B, fill: 'rgba(240,168,0,0.09)', stroke: 'rgba(240,168,0,0.45)', 'stroke-dasharray': '2 3' }, s));
+  el('line', { x1: L, x2: W - R, y1: y(1), y2: y(1), stroke: C.dim, 'stroke-dasharray': '4 4', 'stroke-width': 1 }, s);
+  const r = rng(42);
+  for (let h = 0; h < 14 * 24; h++) {
+    const hod = h % 24, day = Math.floor(h / 24);
+    if (hod < 7 || hod > 22 || r() < 0.35) continue;
+    let v = 1 + (r() - 0.5) * 0.22;
+    if (day === 0 && hod <= 12) v -= 0.28;
+    if (day === 4 && hod >= 21 || day === 5 && hod <= 21) v += 0.38;
+    if (day === 12 && hod >= 8 && hod <= 11) v -= 0.36;
+    if (day === 13 && hod >= 8) v -= 0.27;
+    const col = v < 0.7 ? C.red : v < 0.85 ? C.amber : v > 1.15 ? C.blue : C.usual;
+    el('circle', { cx: x(h), cy: y(v), r: 3.2, fill: col, stroke: '#151B21', 'stroke-width': 1.5 }, s);
+  }
+  [12 * 24 + 8.8, 12 * 24 + 9, 12 * 24 + 9.5, 12 * 24 + 10.9].forEach(h => el('path', { d: `M${x(h)} ${y(0.5) - 6} l5 9 h-10 z`, fill: C.red }, s));
+})();
+
+(function hist() {
+  const s = document.getElementById('hist'), W = 440, H = 190, L = 34, B = 26, T = 8;
+  const labels = ['Under 50k', '50–100k', '100–200k', '200–300k', '300k+'];
+  const usual = [6, 27, 46, 15, 6], now = [2, 8, 22, 28, 40], max = 50;
+  const y = v => T + (H - T - B) * (1 - v / max), bw = 22, gw = (W - L) / labels.length;
+  [0, 25, 50].forEach(v => {
+    el('line', { x1: L, x2: W, y1: y(v), y2: y(v), stroke: C.grid }, s);
+    el('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', fill: C.dim, 'font-size': 11, 'font-family': 'Barlow Semi Condensed, sans-serif' }, s).textContent = v + '%';
+  });
+  labels.forEach((lab, i) => {
+    const cx = L + gw * i + gw / 2;
+    el('rect', { x: cx - bw - 1, y: y(usual[i]), width: bw, height: y(0) - y(usual[i]), rx: 3, fill: '#4B5661' }, s);
+    el('rect', { x: cx + 1, y: y(now[i]), width: bw, height: y(0) - y(now[i]), rx: 3, fill: i === 4 ? C.amber : C.readout }, s);
+    el('text', { x: cx, y: H - 8, 'text-anchor': 'middle', fill: C.dim, 'font-size': 11, 'font-family': 'Barlow Semi Condensed, sans-serif' }, s).textContent = lab;
+  });
+})();
+</script>
+</body>
+</html>

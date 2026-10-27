@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-27: Verify plan ports by test identity and injected boundaries
+
+A subset port cannot use whole-file test counts as a coverage check. Record
+source-to-destination test names, preserve the selected cases, and permit
+explicitly documented adaptations. Inject installation locations as well as
+runtime homes so an auto-install regression can run entirely in temporary
+storage. Run final validation after harness and snapshot edits, and include
+untracked files when inspecting a proposed implementation for private data.
+
 ## 2026-10-23: Apply provider policy throughout structured expansion
 
 Checking parameter membership only at the original changed path lets an
