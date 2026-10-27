@@ -79,8 +79,20 @@ notifications, matched by its request identifier.
 
 ## Spike results
 
-Pending: the spike has not been run yet, so there are no results. Record each run
-here (date, macOS build, result JSON and visual confirmation) once it has.
+Passed on 2026-10-27, macOS 27.0.1 (26A434). The bundle was a signed copy of the
+`make release` build of the Task 1 scaffold. Notification permission was granted from the
+placeholder app first.
+
+| Mode | Time | Result JSON | Visual |
+|---|---|---|---|
+| `ui-running` | 17:33:15 EDT | `{"authorization":"authorized","bundle":"local.utilities.telltale","delivered":true,"error":null,"posted":true}` | Kevin saw the banner from Telltale |
+| `ui-not-running` | 17:33:50 EDT | same as above | Kevin saw the banner from Telltale |
+
+The first run was started with `ui-not-running`, but the placeholder's window had been
+closed without quitting, so its process was still running. That run is recorded as
+`ui-running`. The second run had no Telltale process before or after it. Notifications from
+a launchd-started `Telltale` therefore carry Telltale's identity in both states, and the
+one-executable design (spec §4) stands.
 
 ## Third-party notices
 
