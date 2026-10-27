@@ -1,0 +1,13 @@
+{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-000000000001","cwd":"/tmp/com.example.project","originator":"synthetic_fixture","cli_version":"0.0.0-synthetic"}}
+{"timestamp":"2026-10-20T09:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_01","total_token_usage":{"input_tokens":1001,"output_tokens":101}}}}
+{"timestamp":"2026-10-20T09:00:02.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_02","total_token_usage":{"input_tokens":1002,"output_tokens":102}}}}
+{"timestamp":"2026-10-20T09:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_03","total_token_usage":{"input_tokens":1003,"output_tokens":103}}}}
+{"timestamp":"2026-10-20T09:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_04","total_token_usage":{"input_tokens":1004,"output_tokens":104}}}}
+{"timestamp":"2026-10-20T09:00:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_05","total_token_usage":{"input_tokens":1005,"output_tokens":105}}}}
+{"timestamp":"2026-10-20T09:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_06","total_token_usage":{"input_tokens":1006,"output_tokens":106}}}}
+{"timestamp":"2026-10-20T09:00:07.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_07","total_token_usage":{"input_tokens":1007,"output_tokens":107}}}}
+{"timestamp":"2026-10-20T09:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_08","total_token_usage":{"input_tokens":1008,"output_tokens":108}}}}
+{"timestamp":"2026-10-20T09:00:09.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_09","total_token_usage":{"input_tokens":1009,"output_tokens":109}}}}
+{"timestamp":"2026-10-20T09:00:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"response_id":"resp_synthetic_10","total_token_usage":{"input_tokens":1010,"output_tokens":110}}}}
+{"timestamp":"2026-10-20T09:01:00.000Z","type":"event_msg","payload":{"type":"note","text":"synthetic café line with multibyte: é"}}
+{"timestamp":"2026-10-20T09:01:01.000Z","type":"event_msg","payload":{"type":"task_complete"}}

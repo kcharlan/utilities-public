@@ -9,7 +9,8 @@ and OpenAI service status and tells you when something is off. The design is in
 sequence in [`docs/telltale_implementation_plan.md`](docs/telltale_implementation_plan.md).
 
 Current state: the SwiftPM package scaffold (every target declared, most still
-placeholders), the release identifiers and runtime paths, and the notification
+placeholders), the vendored zstd decoder and the streaming `ZstdReader` for Codex `.jsonl.zst`
+rollouts, the release identifiers and runtime paths, and the notification
 check used for the spec's section 4 spike. The collector, rule engine and real UI
 arrive in later tasks. Running the app with no arguments shows a placeholder
 window that asks for notification permission and reports the answer.
@@ -17,8 +18,8 @@ window that asks for notification permission and reports the answer.
 ## Requirements
 
 macOS 27 or newer, Xcode or Command Line Tools with Swift 6 and the macOS 27 SDK,
-Git, Bash and ripgrep. There are no third-party Swift dependencies; zstd will be
-vendored as the `CZstd` C target.
+Git, Bash and ripgrep. There are no third-party Swift dependencies; zstd decompression is
+vendored as the `CZstd` C target (see Third-party notices).
 
 ## Build and test
 
@@ -39,6 +40,9 @@ script in `Tests/ReleaseChecks/`:
   pattern). Tests inject every path.
 - `test_notification_check.sh` runs `tools/notification_check.sh` against a fake app
   and a fake `launchctl` on a private `PATH`; the system `launchctl` is never invoked.
+- `check_vendor.sh` recomputes the sha256 of every file listed in `Sources/CZstd/VERSION`
+  and fails on a mismatch, on a `.c` or `.h` file that is not listed (the `include/czstd.h`
+  shim excepted), or when `Package.swift` lacks a define that `VERSION` says was compiled.
 - `check_bundle.sh` assembles and installs a bundle with synthetic signing commands
   to check release assembly, executable replacement and installer recovery. It is
   structural only and proves nothing about real certificate trust.
@@ -77,3 +81,16 @@ notifications, matched by its request identifier.
 
 Pending: the spike has not been run yet, so there are no results. Record each run
 here (date, macOS build, result JSON and visual confirmation) once it has.
+
+## Third-party notices
+
+Telltale vendors the decompression half of [zstd](https://github.com/facebook/zstd) v1.5.7
+under `Sources/CZstd/`, copied byte for byte from `colophon/vendor/zstd/` (the same upstream
+release Colophon uses). zstd is dual-licensed BSD-3-Clause or GPLv2; Telltale uses it under
+the BSD-3-Clause terms. The license text is `Sources/CZstd/LICENSE`, and
+`Sources/CZstd/VERSION` records the source URL, the sha256 of the upstream archive and of every
+file, the excluded upstream files, and the compile-time defines that `Package.swift` applies
+(`XXH_NAMESPACE=ZSTD_`, `ZSTD_DISABLE_ASM=1`, `ZSTD_LEGACY_SUPPORT=0`). `Tests/ReleaseChecks/check_vendor.sh`
+keeps the tree and that record in agreement. Only `Sources/CZstd/include/czstd.h`, a shim that
+includes the two public zstd headers, is Telltale's own. These notices do not assign a new
+license to Telltale.

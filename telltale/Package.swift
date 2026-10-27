@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
 // Port: anker_charge_monitor/Package.swift, Package, 4f965e8.
-// Adaptation: Telltale's targets (spec section 13); CZstd holds vendored zstd from Task 2.
+// Adaptation: Telltale's targets (spec section 13); CZstd holds vendored zstd.
 import PackageDescription
 
 let package = Package(
@@ -13,7 +13,18 @@ let package = Package(
         .executable(name: "Telltale", targets: ["Telltale"])
     ],
     targets: [
-        .target(name: "CZstd"),
+        // Vendored zstd v1.5.7 decompression only; Sources/CZstd/VERSION records the provenance and
+        // the defines below (Tests/ReleaseChecks/check_vendor.sh verifies the digests).
+        .target(
+            name: "CZstd",
+            exclude: ["LICENSE", "VERSION"],
+            cSettings: [
+                .headerSearchPath("."),
+                .define("XXH_NAMESPACE", to: "ZSTD_"),
+                .define("ZSTD_DISABLE_ASM", to: "1"),
+                .define("ZSTD_LEGACY_SUPPORT", to: "0")
+            ]
+        ),
         .target(name: "TelltaleCore"),
         .target(name: "TelltaleCodex", dependencies: ["TelltaleCore", "CZstd"]),
         .target(name: "TelltaleOpenAIStatus", dependencies: ["TelltaleCore"]),
