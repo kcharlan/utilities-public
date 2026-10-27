@@ -24,7 +24,8 @@ public enum Copy {
 
     /// Spec section 8's acceptance confirmation, with the signed percentage change.
     public static func acceptance(model: String, percent: Int) -> String {
-        "\(model)'s usual speed is now \(abs(percent))% \(percent < 0 ? "lower" : "higher") than before."
+        if percent == 0 { return "\(model)'s usual speed is unchanged." }
+        return "\(model)'s usual speed is now \(abs(percent))% \(percent < 0 ? "lower" : "higher") than before."
     }
     /// The Undo event for an acceptance (controller ruling R11; not a Copy-table row).
     public static func baselineRestored(model: String) -> String { "Baseline restored for \(model)." }

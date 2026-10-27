@@ -20,6 +20,11 @@ extension Store {
     /// Responses with a throughput (spec section 6.1): enough output tokens and a positive duration.
     private static let hasThroughput = "output_tokens >= \(ResponseRecord.minimumThroughputTokens) AND end_at > start_at"
 
+    /// SQLite's `PRAGMA data_version`: it changes when another connection commits.
+    func dataVersion() throws -> Int {
+        try query("PRAGMA data_version") { $0.int(0) }.first ?? 0
+    }
+
     // MARK: Responses
 
     /// The end of the latest response with throughput ending before `before` and at or after

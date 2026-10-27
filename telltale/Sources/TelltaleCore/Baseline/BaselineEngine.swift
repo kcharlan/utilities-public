@@ -72,6 +72,9 @@ public final class BaselineEngine {
     private let store: Store
     private let calendar: Calendar
     private var cache: [CacheKey: UsualTable] = [:]
+    /// The store's `PRAGMA data_version` when the cache was last checked; another
+    /// connection's commit changes it.
+    private var cachedDataVersion: Int?
 
     public init(store: Store, calendar: Calendar) {
         self.store = store
@@ -79,12 +82,26 @@ public final class BaselineEngine {
     }
 
     /// Forgets cached tables, for example at the start of a collector run.
-    public func discardCache() { cache.removeAll() }
+    public func discardCache() {
+        cache.removeAll()
+        cachedDataVersion = nil
+    }
 
     // MARK: Usual
 
-    /// The usual table in effect at `instant` (cached by provider, model, cutoff and epoch).
+    /// The usual table in effect at `instant`, cached by provider, model, cutoff and epoch.
+    ///
+    /// The cache is dropped whenever another connection has committed since it was filled
+    /// (late-ingested responses or catch-up episodes before a cached cutoff would otherwise be
+    /// missed by a long-lived engine). Writes through this engine's own connection don't change
+    /// `data_version`; the collector calls `discardCache()` after ingesting, and Accept and Undo
+    /// clear it themselves.
     public func usual(provider: ProviderID, model: String, at instant: Date) throws -> UsualTable {
+        let version = try store.dataVersion()
+        if version != cachedDataVersion {
+            cache.removeAll()
+            cachedDataVersion = version
+        }
         let marks = try store.epochMarks(provider: provider, model: model)
         let hour = calendar.dateInterval(of: .hour, for: instant)?.start ?? instant
         let lastAction = marks.flatMap { [$0.createdAt, $0.undoneAt].compactMap { $0 } }.filter { $0 <= instant }.max()
@@ -165,8 +182,13 @@ public final class BaselineEngine {
     /// `baselineAccepted` event, all in one transaction.
     @discardableResult
     public func accept(provider: ProviderID, model: String, since: LocalDay, at instant: Date) throws -> Acceptance {
+        guard since <= LocalDay(instant, calendar: calendar) else {
+            throw StoreError.invalidData("A baseline can't start after the day it is accepted (\(since))")
+        }
         do {
             return try store.transaction {
+                // `before` becomes permanent history, so it is computed from the database as it is now.
+                discardCache()
                 let before = try usual(provider: provider, model: model, at: instant)
                 let epochID = try store.insertEpoch(provider: provider, model: model, since: since, createdAt: instant, before: before)
                 let after = try usual(provider: provider, model: model, at: instant)
@@ -200,6 +222,10 @@ public final class BaselineEngine {
                 throw StoreError.invalidData("No baseline acceptance \(epochID)")
             }
             guard selected.undoneAt == nil else { throw StoreError.invalidData("Baseline acceptance \(epochID) is already undone") }
+            guard instant >= selected.createdAt else {
+                throw StoreError.invalidData("Baseline acceptance \(epochID) can't be undone before it was made")
+            }
+            discardCache()
             let marks = try store.epochMarks(provider: selected.provider, model: selected.model)
             guard let position = marks.firstIndex(where: { $0.id == epochID }) else {
                 throw StoreError.invalidData("No baseline acceptance \(epochID)")

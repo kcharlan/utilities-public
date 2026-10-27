@@ -73,7 +73,9 @@ public enum ShiftDetector {
             let deviations = counted
                 .filter { $0.direction == direction && runDaySet.contains(LocalDay($0.firedAt, calendar: calendar)) }
                 .map { abs($0.worstValue - 1) }
-            let interval = DateInterval(start: firstDay.start(in: calendar), end: max(instant, firstDay.start(in: calendar)))
+            // The run spans its first day's start to its last day's end, never past the evaluation.
+            let runStart = firstDay.start(in: calendar)
+            let interval = DateInterval(start: runStart, end: max(runStart, min(instant, run[0].end(in: calendar))))
             var incidents: [String] = []
             for source in try store.incidentSources() {
                 incidents += try store.incidents(source: source, overlapping: interval).map(\.id)

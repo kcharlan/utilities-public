@@ -305,6 +305,7 @@ func approximately(_ value: Double?, _ expected: Double, tolerance: Double = 1e-
             let sentence = "example-model-1.0's usual speed is now 25% lower than before."
             #expect(Copy.acceptance(model: h.model, percent: -25) == sentence)
             #expect(Copy.acceptance(model: h.model, percent: 12) == "example-model-1.0's usual speed is now 12% higher than before.")
+            #expect(Copy.acceptance(model: h.model, percent: 0) == "example-model-1.0's usual speed is unchanged.")
             #expect(try h.events(EventKind.baselineAccepted) == [[h.model, "\(acceptance.epochID)", sentence, sentence, "live"]])
         }
     }
@@ -450,6 +451,84 @@ func approximately(_ value: Double?, _ expected: Double, tolerance: Double = 1e-
             #expect(try h.engine.learning(provider: .codex, model: h.model, at: h.at(9, 16, 8)) == .cold(days: 2))
             try h.add(5, throughput: 40, month: 9, day: 16)
             #expect(try h.engine.learning(provider: .codex, model: h.model, at: h.at(9, 17, 8)) == .learning(days: 3, of: 14))
+        }
+    }
+
+    @Test func warmEngineSeesOtherConnectionsCommits() throws {
+        try withBaseline { h in
+            let key = BaselineHarness.defaultKey
+            try h.add(20, throughput: 40, month: 9, day: 2, hour: 9)
+            let point = h.at(9, 2, 10, 30) // cutoff 10:00
+            #expect(try h.usual(point).samples[key] == 20)
+            func fresh() throws -> UsualTable {
+                try BaselineEngine(store: Store.open(h.url, mode: .readOnly), calendar: h.calendar)
+                    .usual(provider: .codex, model: h.model, at: point)
+            }
+
+            // The collector, on its own connection, ingests responses ending 09:30–09:49 late.
+            let collector = try Store.open(h.url, mode: .readWrite)
+            var synth = Synth(firstNumber: 100)
+            try collector.upsert(responses: synth.responses(20, throughput: 20, from: h.at(9, 2, 9, 30)))
+            let withLate = try fresh()
+            #expect(withLate.samples[key] == 40)
+            #expect(try h.usual(point) == withLate)
+
+            // Catch-up then records a slower episode over them that fired before the cutoff.
+            try collector.insertEpisode(EpisodeRow(
+                rule: EpisodeRow.slowerRule, provider: ProviderID.codex.rawValue, scope: h.model, direction: .slower,
+                onset: h.at(9, 2, 9, 25), firedAt: h.at(9, 2, 9, 50), endedAt: h.at(9, 2, 9, 55),
+                endReason: EpisodeRow.EndReason.idleEnded, severity: "red", worstValue: 0.5))
+            let withEpisode = try fresh()
+            #expect(withEpisode.samples[key] == 20)
+            #expect(try h.usual(point) == withEpisode)
+        }
+    }
+
+    @Test func acceptComputesBeforeFromCurrentData() throws {
+        try withBaseline { h in
+            let key = BaselineHarness.defaultKey
+            try h.add(20, throughput: 40, month: 9, day: 2, hour: 9)
+            #expect(try h.usual(h.at(9, 2, 10, 5)).samples[key] == 20)
+            // A write on the engine's own connection doesn't change data_version, so only
+            // Accept's own cache reset keeps `before` (permanent history) current.
+            try h.add(20, throughput: 20, month: 9, day: 2, hour: 9, minute: 30)
+            try h.engine.accept(provider: .codex, model: h.model, since: h.localDay(9, 2), at: h.at(9, 2, 10, 20))
+            let epoch = try #require(try h.engine.currentEpoch(provider: .codex, model: h.model))
+            #expect(epoch.before.samples[key] == 40)
+            #expect(approximately(epoch.before.medians[key], 30))
+        }
+    }
+
+    @Test func acceptAndUndoRejectInvalidTimes() throws {
+        try withBaseline { h in
+            try h.seedLastingSlowdown()
+            #expect(throws: StoreError.self) {
+                try h.engine.accept(provider: .codex, model: h.model, since: h.localDay(9, 19), at: h.at(9, 18, 10, 20))
+            }
+            #expect(try RawSQLite.scalar(h.url, "SELECT COUNT(*) FROM baseline_epochs") == "0")
+            #expect(try RawSQLite.scalar(h.url, "SELECT COUNT(*) FROM events") == "0")
+
+            // The acceptance day itself is a valid since day.
+            let acceptance = try h.engine.accept(provider: .codex, model: h.model, since: h.localDay(9, 18), at: h.at(9, 18, 10, 20))
+            #expect(throws: StoreError.self) { try h.engine.undo(epochID: acceptance.epochID, at: h.at(9, 18, 10, 10)) }
+            #expect(try h.engine.currentEpoch(provider: .codex, model: h.model)?.id == acceptance.epochID)
+            #expect(try h.events(EventKind.baselineAccepted).map { $0[4] } == ["live"])
+            #expect(try h.events(EventKind.baselineUndone).isEmpty)
+        }
+    }
+
+    @Test func speedRuleIDsArePinned() throws {
+        // Task 8's RuleID raw values for the speed rules reference these; stored rows use them.
+        #expect(EpisodeRow.slowerRule == "slower")
+        #expect(EpisodeRow.fasterRule == "faster")
+        #expect(EpisodeRow.speedRule(.slower) == "slower")
+        #expect(EpisodeRow.speedRule(.faster) == "faster")
+        #expect(EpisodeRow.EndReason.cleared == "cleared")
+        #expect(EpisodeRow.EndReason.idleEnded == "idleEnded")
+        try withBaseline { h in
+            try h.episode(onset: h.at(9, 1, 9), fired: h.at(9, 1, 9, 15), ended: nil)
+            try h.episode(rule: EpisodeRow.fasterRule, direction: .faster, onset: h.at(9, 1, 10), fired: h.at(9, 1, 10, 15), ended: nil)
+            #expect(try RawSQLite.column(h.url, "SELECT rule FROM episodes ORDER BY id") == ["slower", "faster"])
         }
     }
 

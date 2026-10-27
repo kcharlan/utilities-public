@@ -128,10 +128,17 @@ import TelltaleTestSupport
                 incident("synthetic-before", published: h.at(10, 1, 9), resolved: h.at(10, 1, 11)),
                 incident("synthetic-during", published: h.at(10, 6, 9), resolved: h.at(10, 6, 15)),
                 incident("synthetic-open", published: h.at(10, 7, 8), resolved: nil),
+                incident("synthetic-late-evening", published: h.at(10, 7, 22), resolved: h.at(10, 7, 23)),
                 incident("synthetic-after", published: h.at(10, 8, 9), resolved: h.at(10, 8, 10)),
             ])
             let prompt = try #require(try Self.prompt(h, h.at(10, 7, 20)))
             #expect(prompt.incidentIDs == ["synthetic-during", "synthetic-open"])
+
+            // Oct 8 has no responses, so the run (Oct 5–7) still stands on Oct 8. Its window ends
+            // with Oct 7: the late-evening incident overlaps it, Oct 8's incident doesn't.
+            let nextDay = try #require(try Self.prompt(h, h.at(10, 8, 20)))
+            #expect(nextDay.firstDay == h.localDay(10, 5))
+            #expect(nextDay.incidentIDs == ["synthetic-during", "synthetic-open", "synthetic-late-evening"])
         }
     }
 }

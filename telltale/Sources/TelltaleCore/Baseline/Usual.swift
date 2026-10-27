@@ -34,6 +34,15 @@ public struct LocalDay: Sendable, Hashable, Codable, Comparable, CustomStringCon
         return calendar.startOfDay(for: date)
     }
 
+    /// The first instant of the following day: the end of this one.
+    public func end(in calendar: Calendar) -> Date {
+        let first = start(in: calendar)
+        guard let next = calendar.date(byAdding: .day, value: 1, to: first) else {
+            preconditionFailure("No day after \(self) in \(calendar.timeZone.identifier)")
+        }
+        return calendar.startOfDay(for: next)
+    }
+
     public var description: String { String(format: "%04ld-%02ld-%02ld", year, month, day) }
 
     public static func < (lhs: LocalDay, rhs: LocalDay) -> Bool {
