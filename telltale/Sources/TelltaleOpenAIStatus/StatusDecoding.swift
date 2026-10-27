@@ -7,12 +7,16 @@ public struct StatusSummary: Sendable, Equatable {
         public var id: String
         public var name: String?
         public var status: String?
+        public var publishedAt: Date?
+        /// The newest update's time, else `publishedAt`: the change marker (the live element has no
+        /// `updated_at`). Nil when the entry carries neither.
         public var updatedAt: Date?
 
-        public init(id: String, name: String? = nil, status: String? = nil, updatedAt: Date? = nil) {
+        public init(id: String, name: String? = nil, status: String? = nil, publishedAt: Date? = nil, updatedAt: Date? = nil) {
             self.id = id
             self.name = name
             self.status = status
+            self.publishedAt = publishedAt
             self.updatedAt = updatedAt
         }
     }
@@ -40,7 +44,8 @@ public struct DecodedIncident: Sendable, Equatable {
 /// Decodes the status payloads. Anything that isn't the expected shape throws
 /// `StatusError.unexpectedPayload`, so a malformed answer never reads as "no incidents".
 public enum StatusDecoding {
-    /// `summary.ongoing_incidents` (id, and optionally name, status and last-update time) and
+    /// `summary.ongoing_incidents` (the same shape as an incident detail: id, and optionally name,
+    /// status, `published_at` and `updates[].published_at`, which date the last change) and
     /// `summary.components`, given either as a list of `{id, name}` or as an id-to-name map.
     public static func summary(_ data: Data) throws -> StatusSummary {
         let root = try jsonObject(data)
@@ -51,9 +56,11 @@ public enum StatusDecoding {
         var ongoing: [StatusSummary.OngoingIncident] = []
         for case let entry as [String: Any] in incidents {
             guard let id = nonEmpty(entry["id"]) else { throw missing("summary.ongoing_incidents[].id") }
+            let published = date(entry["published_at"])
+            let lastUpdate = updateTimes(entry).max()
             ongoing.append(StatusSummary.OngoingIncident(
                 id: id, name: nonEmpty(entry["name"]), status: nonEmpty(entry["status"]),
-                updatedAt: date(entry["last_update_at"] ?? entry["updated_at"])))
+                publishedAt: published, updatedAt: [published, lastUpdate].compactMap { $0 }.max()))
         }
         if ongoing.count != incidents.count { throw StatusError.unexpectedPayload("summary.ongoing_incidents has a non-object entry") }
         return StatusSummary(ongoingIncidents: ongoing, components: try decodeComponents(components))
@@ -82,7 +89,7 @@ public enum StatusDecoding {
             impacts.append(ComponentImpact(componentID: componentID, status: impactStatus, start: start, end: date(impact["end_at"])))
         }
         return DecodedIncident(
-            name: name, status: status, publishedAt: publishedAt, updatedAt: max(publishedAt, history.last?.at ?? publishedAt),
+            name: name, status: status, publishedAt: publishedAt, updatedAt: ([publishedAt] + updateTimes(incident)).max() ?? publishedAt,
             history: history, impacts: impacts)
     }
 
@@ -97,6 +104,11 @@ public enum StatusDecoding {
     }
 
     // MARK: Helpers
+
+    /// The `published_at` of each entry of `updates`.
+    private static func updateTimes(_ element: [String: Any]) -> [Date] {
+        ((element["updates"] as? [Any]) ?? []).compactMap { date(( $0 as? [String: Any])?["published_at"]) }
+    }
 
     private static func jsonObject(_ data: Data) throws -> [String: Any] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

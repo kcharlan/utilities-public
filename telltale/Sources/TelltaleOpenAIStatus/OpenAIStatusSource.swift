@@ -104,7 +104,7 @@ public struct OpenAIStatusSource: StatusSource {
     /// it, or else the RSS feed does (spec section 10: RSS is the fallback for titles and links).
     private func placeholder(_ ongoing: StatusSummary.OngoingIncident, feed: [RSSItem]) -> IncidentRecord {
         let post = feed.first { $0.link.lastPathComponent == ongoing.id }
-        let published = post?.publishedAt ?? ongoing.updatedAt ?? clock()
+        let published = post?.publishedAt ?? ongoing.publishedAt ?? ongoing.updatedAt ?? clock()
         return IncidentRecord(
             source: id, id: ongoing.id, name: ongoing.name ?? post?.title ?? "Incident \(ongoing.id)",
             status: ongoing.status ?? "investigating", publishedAt: published, updatedAt: ongoing.updatedAt ?? published,

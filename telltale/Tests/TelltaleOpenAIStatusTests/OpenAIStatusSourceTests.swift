@@ -23,7 +23,7 @@ import TelltaleTestSupport
 
     private static func summary(_ incidents: [(id: String, status: String, updated: String)]) -> Data {
         let entries = incidents.map {
-            #"{"id": "\#($0.id)", "name": "Name \#($0.id)", "status": "\#($0.status)", "last_update_at": "\#($0.updated)"}"#
+            #"{"id": "\#($0.id)", "name": "Name \#($0.id)", "status": "\#($0.status)", "published_at": "2026-10-27T12:00:00Z", "updates": [{"published_at": "2026-10-27T12:00:00Z", "to_status": "investigating"}, {"published_at": "\#($0.updated)", "to_status": "\#($0.status)"}]}"#
         }.joined(separator: ",")
         return Data(#"{"summary": {"ongoing_incidents": [\#(entries)], "components": [{"id": "component-a", "name": "Example Chat"}]}}"#.utf8)
     }
@@ -63,6 +63,31 @@ import TelltaleTestSupport
         #expect(incidents[2] == known[1])
     }
 
+    /// The live summary element has no `updated_at`: its newest update dates the change.
+    @Test func unchangedSummaryEntryIsNotRefetchedButANewerUpdateIs() async throws {
+        // summary_incident.json: synthetic-01 last updated 14:20:06.36, synthetic-02 at 13:05:30.
+        let upToDate = [
+            Self.stored("synthetic-01", status: "investigating", updatedAt: "2026-10-27T14:20:06.36Z", name: "Elevated errors for Example Chat"),
+            Self.stored("synthetic-02", status: "monitoring", updatedAt: "2026-10-27T13:05:30Z", name: "Slow responses for Example API"),
+        ]
+        let quiet = FakeTransport([Paths.summary: .body(try Fixtures.data("summary_incident.json"))])
+        guard case .full(_, let kept) = try await Self.source(quiet).fetch(known: upToDate) else { Issue.record("expected .full"); return }
+        #expect(await quiet.paths == [Paths.summary])
+        #expect(kept == upToDate)
+
+        // Same name and status, but the stored copy predates the newest update by a fraction of a second.
+        var older = upToDate
+        older[0].updatedAt = Fixtures.date("2026-10-27T14:20:06.30Z")
+        let busy = FakeTransport([
+            Paths.summary: .body(try Fixtures.data("summary_incident.json")),
+            Paths.detail("synthetic-01"): .body(try Fixtures.data("incident_detail.json")),
+        ])
+        guard case .full(_, let refreshed) = try await Self.source(busy).fetch(known: older) else { Issue.record("expected .full"); return }
+        #expect(await busy.paths == [Paths.summary, Paths.detail("synthetic-01")])
+        #expect(refreshed.count == 2 && refreshed[1] == older[1])
+        #expect(refreshed[0].history.count == 3)
+    }
+
     @Test func neverRequestsLegacySummaryJSON() async throws {
         let transport = FakeTransport([
             Paths.summary: .body(Self.summary([(id: "new-1", status: "investigating", updated: "2026-10-27T14:20:00Z")])),
@@ -84,7 +109,7 @@ import TelltaleTestSupport
     @Test func rssFillsTitleWhenDetailFails() async throws {
         // The summary lists the incident without a name, and its detail request fails.
         let summary = Data(#"""
-            {"summary": {"ongoing_incidents": [{"id": "synthetic-01", "last_update_at": "2026-10-27T14:20:00Z"}],
+            {"summary": {"ongoing_incidents": [{"id": "synthetic-01", "published_at": "2026-10-27T13:40:00Z", "updates": [{"published_at": "2026-10-27T14:20:00Z", "to_status": "investigating"}]}],
              "components": []}}
             """#.utf8)
         let transport = FakeTransport([

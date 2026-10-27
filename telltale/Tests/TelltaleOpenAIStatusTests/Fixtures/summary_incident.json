@@ -7,23 +7,71 @@
         "id": "synthetic-01",
         "name": "Elevated errors for Example Chat",
         "status": "investigating",
-        "last_update_at": "2026-10-27T14:20:00.000Z"
+        "type": "incident",
+        "status_page_id": "synthetic-page",
+        "published_at": "2026-10-27T13:40:00.000Z",
+        "updates": [
+          {
+            "id": "update-01-a",
+            "automated_update": false,
+            "message_string": "Synthetic update text.",
+            "published_at": "2026-10-27T13:40:00.000Z",
+            "to_status": "investigating",
+            "component_statuses": []
+          },
+          {
+            "id": "update-01-b",
+            "automated_update": false,
+            "message_string": "Synthetic update text.",
+            "published_at": "2026-10-27T14:20:06.36Z",
+            "to_status": "investigating",
+            "component_statuses": []
+          }
+        ],
+        "component_impacts": [
+          {
+            "id": "impact-01-a",
+            "component_id": "component-a",
+            "status_page_incident_id": "synthetic-01",
+            "status": "degraded_performance",
+            "start_at": "2026-10-27T13:38:00.000Z",
+            "end_at": null
+          }
+        ],
+        "status_summaries": [],
+        "affected_components": []
       },
       {
         "id": "synthetic-02",
         "name": "Slow responses for Example API",
         "status": "monitoring",
-        "last_update_at": "2026-10-27T13:05:30Z"
+        "type": "incident",
+        "status_page_id": "synthetic-page",
+        "published_at": "2026-10-27T12:30:00Z",
+        "updates": [
+          {
+            "id": "update-02-a",
+            "published_at": "2026-10-27T13:05:30Z",
+            "to_status": "monitoring"
+          },
+          {
+            "id": "update-02-b",
+            "published_at": "2026-10-27T12:30:00Z",
+            "to_status": "investigating"
+          }
+        ],
+        "component_impacts": [],
+        "status_summaries": [],
+        "affected_components": []
       }
     ],
     "components": [
-      { "id": "component-a", "name": "Example Chat" },
-      { "id": "component-b", "name": "Example API" },
-      { "id": "component-c", "name": "Example Files" }
+      { "id": "component-a", "name": "Example Chat", "status_page_id": "synthetic-page" },
+      { "id": "component-b", "name": "Example API", "status_page_id": "synthetic-page" },
+      { "id": "component-c", "name": "Example Files", "status_page_id": "synthetic-page" }
     ],
     "affected_components": [
-      { "component_id": "component-a", "status": "degraded_performance" },
-      { "component_id": "component-b", "status": "partial_outage" }
+      { "component_id": "component-a", "current_status": "degraded_performance", "status": "degraded_performance" }
     ]
   }
 }
