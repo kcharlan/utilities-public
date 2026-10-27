@@ -95,6 +95,34 @@ closed without quitting, so its process was still running. That run is recorded 
 a launchd-started `Telltale` therefore carry Telltale's identity in both states, and the
 one-executable design (spec §4) stands.
 
+## Rule replay against real data
+
+On 2026-10-27, the rule engine at commit 4ef61b2 was replayed against Kevin's real Codex
+history, read-only from a scratch package outside the repository. Nothing from that data is
+committed. Responses were ingested from 2026-09-13, and evaluation points ran from
+2026-09-13 through Oct 27 with the default rules. The incident rule was not stepped (no
+network).
+
+| Spec §12 anomaly | No user actions | Accepting each lasting-shift prompt |
+|---|---|---|
+| Oct 13 slower | missed | caught, 07:50, worst 0.72× |
+| Oct 16–17 faster | caught | caught, worst 1.68× |
+| Oct 22 evening slower | missed | caught, 22:05, red, worst 0.59× |
+| Oct 26 morning slower (4 capacity failures) | missed (failures caught) | caught, 10:25, red, worst 0.58× |
+| Oct 27 slower from about 08:30 | missed | caught, onset 08:15, fired 08:40 |
+
+- **With acceptances:** the run fired 7 slowdown notifications over Oct 20–27, the same as
+  §12, plus 13 other speed episodes (6 slower, 7 faster). These weren't checked against
+  status posts.
+- **Without acceptances:** the model sped up from about Oct 8–14. §8 keeps the earlier usual
+  until Kevin accepts, so later slowdowns read as normal, and about 20 "faster" episodes fire
+  instead.
+- **Thin data:** about half of the daytime 5-minute windows were too thin to judge (fewer
+  than 10 qualifying responses), mostly on low-volume days.
+
+Kevin reviewed these results and kept the defaults unchanged. The lasting-shift prompt and
+Accept are how usual follows a lasting change.
+
 ## Third-party notices
 
 Telltale vendors the decompression half of [zstd](https://github.com/facebook/zstd) v1.5.7
