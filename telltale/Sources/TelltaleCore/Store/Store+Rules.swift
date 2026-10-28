@@ -358,6 +358,17 @@ extension Store {
         }
     }
 
+    /// Marks the uncounted failed turns whose time (completion, else start) is before `start`, the
+    /// lookback start, as evaluated at `start` without counting them, and returns how many. No
+    /// evaluation point reaches before the lookback (spec sections 7.3 and 8), so such a turn, kept
+    /// through a Rebuild or ingested after more than the lookback with the collector off, would
+    /// otherwise be counted at the first point as a failure there.
+    func settleFailedTurns(before start: Date) throws -> Int {
+        try run(
+            "UPDATE failed_turns SET evaluated_at = ? WHERE evaluated_at IS NULL AND COALESCE(completed_at, started_at) < ?",
+            [.date(start), .date(start)])
+    }
+
     /// Marks failed turns counted at the evaluation point `at`.
     public func markEvaluated(_ turns: [FailedTurnRecord], at: Date) throws {
         guard !turns.isEmpty else { return }

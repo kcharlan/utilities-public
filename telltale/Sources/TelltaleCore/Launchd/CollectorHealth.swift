@@ -71,6 +71,19 @@ public enum CollectorHealth {
         return anchor.addingTimeInterval(interval * (floor(elapsed / interval) + 1))
     }
 
+    /// How long after its start the newest run counts as on schedule, and a `running` one as still in
+    /// progress: 2 × the interval + 1 minute.
+    public static func scheduleLimit(intervalMinutes: Int) -> TimeInterval {
+        2 * TimeInterval(Settings.usableInterval(intervalMinutes) * 60) + 60
+    }
+
+    /// A `running` record past the schedule limit: its process was killed (a Turn off or interval
+    /// change boots out a run in progress), and only the next run, which may never come while the
+    /// collector is off, closes the record.
+    public static func isStranded(_ run: CollectorRunRecord, intervalMinutes: Int, now: Date) -> Bool {
+        run.outcome == .running && now.timeIntervalSince(run.startedAt) > scheduleLimit(intervalMinutes: intervalMinutes)
+    }
+
     public static func evaluate(
         enabled: Bool, installedExecutable: URL?, installedAt: Date?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
         intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar
@@ -99,7 +112,7 @@ public enum CollectorHealth {
         }
 
         var onSchedule = LampState.unlit
-        let scheduleLimit = 2 * interval + 60
+        let scheduleLimit = Self.scheduleLimit(intervalMinutes: intervalMinutes)
         if let newest = counted.first {
             onSchedule = now.timeIntervalSince(newest.startedAt) <= scheduleLimit ? .green : .red
             if onSchedule == .red { problems.append(Copy.collectorOverdue(since: newest.startedAt, calendar: calendar)) }
@@ -108,7 +121,7 @@ public enum CollectorHealth {
         let twoFailures = finished.count >= 2 && finished.prefix(2).allSatisfy { $0.outcome == .failed }
         var noSuccess = false
         if let reference = finished.first(where: { $0.outcome == .succeeded })?.startedAt ?? counted.last?.startedAt ?? installedAt {
-            let pending = counted.first.map { $0.outcome == .running && now.timeIntervalSince($0.startedAt) <= scheduleLimit } ?? false
+            let pending = counted.first.map { $0.outcome == .running && !isStranded($0, intervalMinutes: intervalMinutes, now: now) } ?? false
             noSuccess = !pending && now.timeIntervalSince(reference) > 3 * interval
             if noSuccess, problems.isEmpty { problems.append(Copy.collectorOverdue(since: reference, calendar: calendar)) }
         }

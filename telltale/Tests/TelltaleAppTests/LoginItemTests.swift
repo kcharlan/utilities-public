@@ -74,6 +74,31 @@ import TelltaleTestSupport
         }
     }
 
+    /// The first launch is recorded only once its registration succeeded, so a failed first
+    /// register is tried again at the next launch; after a success, launch never registers (R32).
+    @Test func failedFirstRegistrationIsRetriedAtTheNextLaunch() async throws {
+        try await withDelegate { h in
+            h.login.fail = true
+            let failed = h.delegate()
+            h.launch(failed)
+            h.terminate(failed)
+            #expect(h.login.registrations == 0 && !h.launchRecord.openAtLoginDefaultApplied)
+            #expect(!h.failures.isEmpty)
+
+            h.login.fail = false
+            let retried = h.delegate()
+            h.launch(retried)
+            h.terminate(retried)
+            #expect(h.login.registrations == 1 && h.launchRecord.openAtLoginDefaultApplied)
+
+            h.login.status = .notRegistered
+            let later = h.delegate()
+            h.launch(later)
+            h.terminate(later)
+            #expect(h.login.registrations == 1)
+        }
+    }
+
     /// A first launch over a database whose setting is already off registers nothing.
     @Test func firstLaunchKeepsStoredOff() async throws {
         try await withDelegate { h in

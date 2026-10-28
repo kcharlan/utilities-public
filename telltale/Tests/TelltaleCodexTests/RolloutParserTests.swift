@@ -540,6 +540,23 @@ import TelltaleTestSupport
         }
     }
 
+    /// Only a corrupted database can hold a negative offset; it reads from the start instead of
+    /// trapping on every run until a Rebuild.
+    @Test func negativeStoredOffsetReadsFromTheStart() throws {
+        try withScratchDirectory { home in
+            var builder = Self.session()
+            builder.userMessage(at: 1)
+            builder.usage(at: 5, response: 1)
+            let data = builder.encoded()
+            try builder.writePlain(data, codexHome: home)
+
+            let parse = try Self.parse(home, cursor: SessionCursor(byteOffset: -7))
+
+            #expect(Self.ids(parse) == Self.ids(1))
+            #expect(parse.cursor.byteOffset == data.count)
+        }
+    }
+
     // MARK: Privacy
 
     @Test func noContentFieldsAreRetained() throws {

@@ -184,7 +184,7 @@ import UserNotifications
         let stored = try store.value(.collectorHealthNotice)
         return Inputs(
             enabled: try store.value(.collectorEnabled), intervalMinutes: try store.value(.intervalMinutes),
-            rule: try store.value(.rules).collectorHealth, runs: try store.recentRuns(limit: Self.runWindow, includingSkipped: false),
+            rule: try store.usableRules().rules.collectorHealth, runs: try store.recentRuns(limit: Self.runWindow, includingSkipped: false),
             sourceStates: try store.sourceStates(), notice: heldNotice ?? stored)
     }
 

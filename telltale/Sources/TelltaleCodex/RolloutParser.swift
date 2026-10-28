@@ -53,7 +53,8 @@ public enum RolloutParser {
     ///
     /// - A plain file is read from the cursor's byte offset, and only lines ending in a newline are
     ///   processed; a partial last line waits for the next run. If the file is now shorter than
-    ///   the offset, it is read from the start and ordinals keep processed lines out.
+    ///   the offset, or the offset is negative, it is read from the start and ordinals keep
+    ///   processed lines out.
     /// - A compressed file is read in full. Lines whose ordinal is at or below the cursor's are
     ///   skipped, so a plain file's cursor resumes on its compressed replacement.
     ///
@@ -86,7 +87,7 @@ public enum RolloutParser {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let size = try handle.seekToEnd()
-        var consumed = UInt64(offset) <= size ? offset : 0
+        var consumed = UInt64(exactly: offset).map { $0 <= size } == true ? offset : 0
         try handle.seek(toOffset: UInt64(consumed))
         var buffer = Data()
         while let chunk = try handle.read(upToCount: readChunkSize), !chunk.isEmpty {

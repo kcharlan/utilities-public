@@ -309,7 +309,6 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             let url = harness.paths.database
             let old = harness.at(7, 1, 12)
             var rules = RuleSettings.defaults
-            rules.failedTurns.enabled = false  // so the reset evaluated_at stays visible after the run
             rules.slower.threshold = 0.2
             do {
                 let store = try harness.store()
@@ -369,7 +368,8 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(harness.source.cursorsSeen == [nil])
             let store = try harness.store()
             // Discarded: responses, evaluation points, episodes, rule events, rule state, cursors (replaced by
-            // this run's), and failed_turns.evaluated_at.
+            // this run's), and failed_turns.evaluated_at. With the failed-turn rule on, the July turn, from
+            // before the Aug 5 10:00 lookback start, is settled there uncounted: no episode above.
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses") == "0")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM eval_points") == "0")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM episodes") == "0")
@@ -379,7 +379,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(try store.lastEvaluatedPoint() == now)
             #expect(try store.failureNotices() == FailureNotices())
             #expect(try store.cursor("codex") == FakeUsageSource.cursor(now))
-            #expect(try RawSQLite.rows(url, "SELECT turn_id, evaluated_at FROM failed_turns") == [["turn_synthetic_901", "NULL"]])
+            #expect(try RawSQLite.rows(url, "SELECT turn_id, CAST(evaluated_at AS INTEGER) FROM failed_turns") == [["turn_synthetic_901", unix(harness.at(8, 5, 10))]])
             // Kept.
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM connection_events") == "1")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM baseline_epochs") == "1")
@@ -393,6 +393,67 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             // The request is consumed and the replay ends at this run.
             #expect(try store.value(.rebuildRequestedAt) == nil)
             #expect(try store.value(.backfillThrough) == now)
+        }
+    }
+
+    /// A failed turn on Sep 4 09:01–09:02, ingested by the next run.
+    func recentFailure(_ harness: CollectorHarness) -> FailedTurnRecord {
+        FailedTurnRecord(
+            provider: .codex, threadID: "thread_synthetic_02", turnID: "turn_synthetic_902", startedAt: harness.at(9, 4, 9, 1),
+            completedAt: harness.at(9, 4, 9, 2), errorCode: "serverOverloaded", message: "Synthetic failure 2")
+    }
+
+    /// The failed-turn episodes and their fired events, as (onset, worst value) and (time, body).
+    func failedTurnHistory(_ harness: CollectorHarness) throws -> (episodes: [[String]], events: [[String]]) {
+        let url = harness.paths.database
+        return (
+            try RawSQLite.rows(url, "SELECT CAST(onset_at AS INTEGER), worst_value FROM episodes WHERE rule = 'failedTurns' ORDER BY id"),
+            try RawSQLite.rows(url, "SELECT CAST(at AS INTEGER), body FROM events WHERE kind = 'ruleFired' AND title = 'Failed turns' ORDER BY id"))
+    }
+
+    @Test func rebuildCountsOnlyFailedTurnsInsideTheLookback() async throws {
+        try await withCollector { harness throws in
+            let old = harness.at(7, 1, 12)
+            do {
+                let store = try harness.store()
+                try store.upsert(failedTurns: [FailedTurnRecord(
+                    provider: .codex, threadID: "thread_synthetic_01", turnID: "turn_synthetic_901", startedAt: old,
+                    completedAt: old, errorCode: "serverOverloaded", message: "Synthetic failure 1")])
+                try store.markEvaluated(try store.unevaluatedFailedTurns(through: old), at: old)
+                try store.setLastEvaluatedPoint(old)
+                try store.set(.rebuildRequestedAt, harness.at(9, 4, 9, 55))
+            }
+            harness.source.setNextBatch(IngestBatch(failedTurns: [recentFailure(harness)]))
+
+            #expect(await harness.run(at: harness.at(9, 4, 10)).outcome == .succeeded)
+
+            // Only the Sep 4 failure is counted, at 09:05. The July one, from before the Aug 5 10:00
+            // lookback start, is settled there uncounted rather than reported as failing then.
+            let history = try failedTurnHistory(harness)
+            #expect(history.episodes == [[unix(harness.at(9, 4, 9, 1)), "1.0"]])
+            #expect(history.events == [[unix(harness.at(9, 4, 9, 5)), "1 turn failed: model at capacity"]])
+            #expect(try RawSQLite.rows(harness.paths.database, "SELECT turn_id, CAST(evaluated_at AS INTEGER) FROM failed_turns ORDER BY turn_id") == [
+                ["turn_synthetic_901", unix(harness.at(8, 5, 10))],
+                ["turn_synthetic_902", unix(harness.at(9, 4, 9, 5))],
+            ])
+        }
+    }
+
+    @Test func catchUpAfterMoreThanTheLookbackCountsOnlyFailedTurnsInsideIt() async throws {
+        try await withCollector { harness throws in
+            #expect(await harness.run(at: harness.at(7, 1, 10)).outcome == .succeeded)  // cold start, then off
+            // The old cursor hands over everything since, including a failure from before the lookback.
+            let gapFailure = FailedTurnRecord(
+                provider: .codex, threadID: "thread_synthetic_01", turnID: "turn_synthetic_901", startedAt: harness.at(7, 20, 12),
+                completedAt: harness.at(7, 20, 12, 1), errorCode: "serverOverloaded", message: "Synthetic failure 1")
+            harness.source.setNextBatch(IngestBatch(failedTurns: [gapFailure, recentFailure(harness)]))
+
+            #expect(await harness.run(at: harness.at(9, 4, 10)).outcome == .succeeded)
+
+            let history = try failedTurnHistory(harness)
+            #expect(history.episodes == [[unix(harness.at(9, 4, 9, 1)), "1.0"]])
+            #expect(history.events.map { $0[0] } == [unix(harness.at(9, 4, 9, 5))])
+            #expect(try RawSQLite.scalar(harness.paths.database, "SELECT COUNT(*) FROM failed_turns WHERE evaluated_at IS NULL") == "0")
         }
     }
 
@@ -415,6 +476,28 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(report.detail == "1 notification couldn't be posted: synthetic notification refusal")
             #expect(try harness.store().recentRuns(limit: 1).first?.detail == report.detail)
             #expect(harness.log.contains("synthetic notification refusal"))
+        }
+    }
+
+    @Test func unpostedFailedTurnNoticeWaitsForTheNextRun() async throws {
+        try await withCollector { harness throws in
+            _ = await harness.run(at: harness.at(9, 4, 8))  // cold start
+            let failure = recentFailure(harness)
+            harness.source.setNextBatch(IngestBatch(failedTurns: [failure]))
+            await harness.notifier.refuseAll()
+
+            let refused = await harness.run(at: harness.at(9, 4, 9, 5))
+
+            #expect(refused.outcome == .succeeded && refused.notificationsPosted == 0)
+            // The failure waits again and no notice counts as sent, so the coalescing window stays open.
+            #expect(try harness.store().failureNotices() == FailureNotices(lastNoticeAt: nil, waiting: [failure]))
+
+            await harness.notifier.acceptAll()
+            let retried = await harness.run(at: harness.at(9, 4, 9, 10))
+
+            #expect(retried.notificationsPosted == 1)
+            #expect(await harness.notifier.posted.map(\.body) == ["1 turn failed: model at capacity"])
+            #expect(try harness.store().failureNotices() == FailureNotices(lastNoticeAt: harness.at(9, 4, 9, 10), waiting: []))
         }
     }
 
@@ -640,3 +723,6 @@ extension CollectorRunTests {
         }
     }
 }
+
+/// A date as the whole Unix seconds `CAST(... AS INTEGER)` prints.
+func unix(_ date: Date) -> String { String(Int(date.timeIntervalSince1970)) }

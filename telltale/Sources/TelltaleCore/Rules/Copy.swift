@@ -186,6 +186,11 @@ public enum Copy {
     public static let storedRulesUnusable = "The saved rules couldn't be used, so Telltale is using the defaults shown here."
     /// Settings' interval, committed while the collector view runs another change; the draft stays.
     public static let collectorChangeRunning = "Another collector change is still running. Try again in a moment."
+    /// A collector change whose launchd step failed after its setting was stored, and whose setting
+    /// couldn't be put back either (final review M8).
+    public static func collectorChangePartial(reason: String, restoreReason: String) -> String {
+        "\(reason) The setting couldn't be put back (\(restoreReason)), so the change is only partly applied."
+    }
     /// Ruling R16's reason when the stored rules no longer decode (the collector log and Settings).
     public static let storedRulesUndecodable = "The stored rules couldn't be read."
     /// The watched-components checklist before the collector has stored the status page's list.
@@ -194,12 +199,16 @@ public enum Copy {
     public static func collectorSchedule(minutes: Int) -> String {
         minutes == 1 ? "Every minute, also at login" : "Every \(minutes) minutes, also at login"
     }
-    /// The collector view's last-run line: "12:40, failed after 0.4 s".
-    public static func collectorLastRun(at start: Date, outcome: RunOutcome, seconds: TimeInterval?, calendar: Calendar) -> String {
+    /// The collector view's last-run line: "12:40, failed after 0.4 s". A `running` record past the
+    /// schedule limit (`CollectorHealth.isStranded`) reads "12:40, interrupted".
+    public static func collectorLastRun(
+        at start: Date, outcome: RunOutcome, seconds: TimeInterval?, calendar: Calendar, stranded: Bool = false
+    ) -> String {
         let duration = seconds.map { String(format: "%.1f s", max(0, $0)) }
         let detail = switch (outcome, duration) {
         case (.succeeded, let duration?): "succeeded in \(duration)"
         case (.failed, let duration?): "failed after \(duration)"
+        case (.running, _) where stranded: CollectorRun.interruptedDetail
         case (.running, _): "running"
         default: outcome.rawValue
         }

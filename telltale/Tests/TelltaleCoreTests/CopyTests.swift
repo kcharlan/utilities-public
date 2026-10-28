@@ -142,6 +142,9 @@ private enum Fixture {
             CopyCase("storedRulesUnusable", Copy.storedRulesUnusable, "The saved rules couldn't be used, so Telltale is using the defaults shown here."),
             CopyCase("componentsNotLoaded", Copy.componentsNotLoaded, "The status page's components appear here after the collector reads it."),
             CopyCase("collectorChangeRunning", Copy.collectorChangeRunning, "Another collector change is still running. Try again in a moment."),
+            CopyCase(
+                "collectorChangePartial", Copy.collectorChangePartial(reason: "Synthetic reason.", restoreReason: "synthetic restore"),
+                "Synthetic reason. The setting couldn't be put back (synthetic restore), so the change is only partly applied."),
             CopyCase("storedRulesUndecodable", Copy.storedRulesUndecodable, "The stored rules couldn't be read."),
         ]
     }()

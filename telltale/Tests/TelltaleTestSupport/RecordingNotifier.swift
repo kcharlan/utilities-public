@@ -14,6 +14,7 @@ public actor RecordingNotifier: NotificationPosting {
     public init() {}
 
     public func refuseAll() { refuses = true }
+    public func acceptAll() { refuses = false }
 
     public func post(_ notification: PendingNotification) async throws {
         if refuses { throw Refused() }

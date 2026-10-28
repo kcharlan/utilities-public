@@ -111,6 +111,88 @@ import TelltaleTestSupport
         }
     }
 
+    /// A world whose collector is on, with its plist written through the fake `launchctl`.
+    private func onWorld(_ directory: URL) async throws -> DashboardWorld {
+        let world = try DashboardWorld(directory, health: DashboardWorld.running)
+        try PanelWorld.seed(world.paths)
+        await world.live.refresh()
+        world.collector.load()
+        await world.collector.turnOn()
+        #expect(world.collector.error == nil)
+        #expect(FileManager.default.fileExists(atPath: world.collector.manager.plistURL.path))
+        return world
+    }
+
+    private func storedEnabled(_ world: DashboardWorld) throws -> Bool {
+        try Store.open(world.paths.database, mode: .readOnly).value(.collectorEnabled)
+    }
+
+    /// The setting is stored before launchd changes. When it can't be stored, launchd is left
+    /// alone: a turn-off that booted the job out first would leave the setting on with no plist,
+    /// and the next launch would turn the collector back on.
+    @Test func turnOffThatCantStoreTheSettingLeavesTheCollectorOn() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await onWorld(directory)
+            let calls = world.runner.calls.count
+            try DashboardWorld.exec(world.paths.database, """
+                CREATE TRIGGER synthetic_refuse_insert BEFORE INSERT ON settings BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END;
+                CREATE TRIGGER synthetic_refuse_update BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END;
+                """)
+
+            await world.collector.turnOff()
+
+            #expect(world.collector.error != nil)
+            #expect(world.runner.calls.count == calls)
+            #expect(FileManager.default.fileExists(atPath: world.collector.manager.plistURL.path))
+            #expect(try storedEnabled(world))
+        }
+    }
+
+    /// A launchd change that fails puts the stored setting back; when that fails too, the error
+    /// says the change is only partly applied.
+    @Test func failedLaunchdChangeRestoresTheSettingOrSaysItIsPartial() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await onWorld(directory)
+            world.runner.respond(to: "bootout", with: CommandResult(status: 5, stdout: "", stderr: "Synthetic bootout failure\n"))
+            let failure = Copy.launchctlError(command: "bootout", status: 5, stderr: "Synthetic bootout failure")
+
+            await world.collector.turnOff()
+            #expect(world.collector.error == failure)
+            #expect(try storedEnabled(world))
+
+            // The setting can be turned off but not back on: the turn-off is stored, the job stays.
+            try DashboardWorld.exec(world.paths.database, """
+                CREATE TRIGGER synthetic_refuse_on BEFORE UPDATE ON settings WHEN NEW.key = 'collectorEnabled' AND NEW.value_json = 'true'
+                BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END;
+                """)
+            await world.collector.turnOff()
+            #expect(world.collector.error?.hasPrefix(failure + " The setting couldn't be put back (") == true)
+            #expect(world.collector.error?.hasSuffix("), so the change is only partly applied.") == true)
+            #expect(try !storedEnabled(world))
+            #expect(FileManager.default.fileExists(atPath: world.collector.manager.plistURL.path))
+        }
+    }
+
+    /// A Turn off or interval change boots out a run in progress, and nothing closes its `running`
+    /// record while the collector is off: past the schedule limit it reads as interrupted.
+    @Test func runningRecordPastTheScheduleLimitReadsAsInterrupted() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory, health: Self.off)
+            let store = try PanelWorld.seed(world.paths)
+            try store.set(.collectorEnabled, false)
+            _ = try store.beginRun(at: PanelWorld.now.addingTimeInterval(-30))  // 09:29:30, after the seeded run
+            await world.live.refresh()
+            world.clock.now = PanelWorld.now.addingTimeInterval(3_600)
+            world.collector.load()
+            #expect(world.collector.facts.first { $0.label == "Last run" }?.value == "09:29, interrupted")
+
+            // Still inside the limit (2 × 5 min + 1 min), it is running.
+            world.clock.now = PanelWorld.now
+            world.collector.load()
+            #expect(world.collector.facts.first { $0.label == "Last run" }?.value == "09:29, running")
+        }
+    }
+
     /// Ruling R30: before the collector's first run there is no database to store an off choice in
     /// (R27 forbids creating it), so the next launch would turn the collector back on. Turn off
     /// waits for the first run, and the view says so; nothing reaches launchctl.

@@ -150,9 +150,14 @@ import TelltaleCore
             return
         }
         let firstLaunch = !launchRecord.openAtLoginDefaultApplied
-        launchRecord.openAtLoginDefaultApplied = true
         let system = login.applyAtLaunch(openAtLogin: openAtLogin, firstLaunch: firstLaunch)
-        if let error = login.error { reportFailure(error) }
+        if let error = login.error {
+            reportFailure(error)
+        } else if firstLaunch {
+            // Recorded only once the default is applied, so a failed first registration is tried
+            // again at the next launch; after that, launch never registers (ruling R32).
+            launchRecord.openAtLoginDefaultApplied = true
+        }
         if databaseExists, let system, system != openAtLogin {
             do {
                 try Store.open(paths.database, mode: .readWriteExisting).set(.openAtLogin, system)

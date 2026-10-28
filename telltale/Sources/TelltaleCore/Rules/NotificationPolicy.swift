@@ -50,24 +50,8 @@ public enum NotificationPolicy {
         failureNotices: inout FailureNotices, calendar: Calendar
     ) -> [PendingNotification] {
         guard mode == .live else { return [] }
-        let freshness = TimeInterval(intervalMinutes * 60)
-        func isFresh(_ outcome: RuleOutcome) -> Bool { latestPoint.timeIntervalSince(outcome.at) <= freshness }
-
-        var ended: Set<Int64> = []
-        var latestCatchUp: [Int64: String] = [:]
-        var staleFires: Set<Int64> = []
-        for outcome in outcomes {
-            switch outcome.transition {
-            case .cleared?, .idleEnded?: ended.insert(outcome.episodeID)
-            case .fired?:
-                if !isFresh(outcome) { staleFires.insert(outcome.episodeID) }
-                fallthrough
-            case .escalated?:
-                if let catchUp = outcome.catchUpMessage { latestCatchUp[outcome.episodeID] = catchUp }
-            case nil: break
-            }
-        }
-        let caughtUp = staleFires.subtracting(ended)
+        let isFresh = freshness(latestPoint: latestPoint, intervalMinutes: intervalMinutes)
+        let (caughtUp, latestCatchUp) = catchUps(outcomes, isFresh: isFresh)
 
         var notices: [PendingNotification] = []
         for outcome in outcomes where outcome.rule != .failedTurns || outcome.transition == .cleared {
@@ -99,9 +83,57 @@ public enum NotificationPolicy {
         return notices
     }
 
+    /// The `threadID` of the coalesced failed-turn notice.
+    public static let failedTurnsThreadID = "failedTurns"
+
+    /// The coalescing state to store when the failed-turn notice that `select` chose from these
+    /// same inputs couldn't be posted; `failureNotices` is the state from before `select`. The
+    /// notice's failures wait again and its time isn't recorded, so the next run retries it (in the
+    /// plain wording, like any waiting failure).
+    public static func withheldFailureNotices(
+        _ outcomes: [RuleOutcome], latestPoint: Date, intervalMinutes: Int, settings: RuleSettings, failureNotices: FailureNotices
+    ) -> FailureNotices {
+        let isFresh = freshness(latestPoint: latestPoint, intervalMinutes: intervalMinutes)
+        var notices = failureNotices
+        _ = failedTurnNotices(
+            outcomes.filter { $0.rule == .failedTurns }, caughtUp: catchUps(outcomes, isFresh: isFresh).caughtUp, isFresh: isFresh,
+            latestPoint: latestPoint, rule: settings.failedTurns, failureNotices: &notices,
+            calendar: Calendar(identifier: .gregorian),  // only words a notice, which a held window never makes
+            holdWindow: true)
+        return notices
+    }
+
+    /// Whether an outcome is at most one interval older than the latest point.
+    private static func freshness(latestPoint: Date, intervalMinutes: Int) -> (RuleOutcome) -> Bool {
+        let window = TimeInterval(intervalMinutes * 60)
+        return { latestPoint.timeIntervalSince($0.at) <= window }
+    }
+
+    /// The episodes that fired inside the gap and are still open at the end, and each episode's
+    /// latest catch-up wording.
+    private static func catchUps(
+        _ outcomes: [RuleOutcome], isFresh: (RuleOutcome) -> Bool
+    ) -> (caughtUp: Set<Int64>, latestCatchUp: [Int64: String]) {
+        var ended: Set<Int64> = []
+        var latestCatchUp: [Int64: String] = [:]
+        var staleFires: Set<Int64> = []
+        for outcome in outcomes {
+            switch outcome.transition {
+            case .cleared?, .idleEnded?: ended.insert(outcome.episodeID)
+            case .fired?:
+                if !isFresh(outcome) { staleFires.insert(outcome.episodeID) }
+                fallthrough
+            case .escalated?:
+                if let catchUp = outcome.catchUpMessage { latestCatchUp[outcome.episodeID] = catchUp }
+            case nil: break
+            }
+        }
+        return (staleFires.subtracting(ended), latestCatchUp)
+    }
+
     private static func failedTurnNotices(
         _ outcomes: [RuleOutcome], caughtUp: Set<Int64>, isFresh: (RuleOutcome) -> Bool, latestPoint: Date,
-        rule: FailedTurnRule, failureNotices: inout FailureNotices, calendar: Calendar
+        rule: FailedTurnRule, failureNotices: inout FailureNotices, calendar: Calendar, holdWindow: Bool = false
     ) -> [PendingNotification] {
         guard rule.enabled, rule.notify else {
             failureNotices.waiting = []
@@ -122,7 +154,7 @@ public enum NotificationPolicy {
         let windowOver = failureNotices.lastNoticeAt.map {
             latestPoint.timeIntervalSince($0) >= TimeInterval(rule.coalesceMinutes * 60)
         } ?? true
-        guard windowOver else {
+        guard windowOver, !holdWindow else {
             failureNotices.waiting = all
             return []
         }
@@ -137,7 +169,7 @@ public enum NotificationPolicy {
         failureNotices = FailureNotices(lastNoticeAt: latestPoint, waiting: [])
         return [PendingNotification(
             id: "failedTurns-\(Int(latestPoint.timeIntervalSince1970))", title: RuleID.failedTurns.title, body: body,
-            threadID: "failedTurns")]
+            threadID: failedTurnsThreadID)]
     }
 
     private static func notice(_ outcome: RuleOutcome, kind: String, body: String) -> PendingNotification {

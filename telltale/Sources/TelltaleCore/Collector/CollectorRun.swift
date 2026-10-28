@@ -50,9 +50,12 @@ public struct RunReport: Sendable, Equatable {
 /// 4. Fetch and store each status source.
 /// 5. Evaluate every point after the last evaluated one (or from the lookback) through now, one
 ///    day per transaction. A point at or before `backfillThrough` is backfill; later points are
-///    live. A crash mid-backfill therefore resumes still in backfill.
+///    live. A crash mid-backfill therefore resumes still in backfill. Failed turns from before the
+///    lookback start are first settled uncounted (`Store.settleFailedTurns`), since no point
+///    reaches them.
 /// 6. Select notifications from the live outcomes and post them. A failed post is logged and
-///    counted in the run's detail; the run still succeeds.
+///    counted in the run's detail; the run still succeeds. An unposted failed-turn notice puts its
+///    failures back in waiting for the next run.
 /// 7. Prune per the retention table, then record the run as `succeeded`, or `failed` with the
 ///    first error's description (exit 1).
 public struct CollectorRun: Sendable {
@@ -288,6 +291,8 @@ public struct CollectorRun: Sendable {
             func isLive(_ point: Date) -> Bool { backfillThrough.map { point > $0 } ?? true }
             var liveOutcomes: [RuleOutcome] = []
             do {
+                let settled = try store.settleFailedTurns(before: backfillFrom)
+                if settled > 0 { log.write("Settled \(settled) failed turn(s) from before the lookback without counting them", at: now) }
                 let points = EvaluationPoints.after(try store.lastEvaluatedPoint(), through: now, earliest: backfillFrom)
                 var backfilled = 0
                 for (index, start) in stride(from: 0, to: points.count, by: CollectorRun.pointsPerChunk).enumerated() {
@@ -308,12 +313,19 @@ public struct CollectorRun: Sendable {
             do {
                 // Backfill never notifies (spec section 7.3), so a run that ends inside it selects nothing.
                 if let latest = try store.lastEvaluatedPoint(), isLive(latest) {
-                    var notices = try store.failureNotices()
+                    let previous = try store.failureNotices()
+                    var notices = previous
                     let pending = NotificationPolicy.select(
                         liveOutcomes, latestPoint: latest, intervalMinutes: interval, settings: settings, mode: .live,
                         failureNotices: &notices, calendar: calendar)
                     try store.setFailureNotices(notices)
-                    await post(pending, notifier: run.notifier)
+                    let unposted = await post(pending, notifier: run.notifier)
+                    // As CollectorMonitor does: saved before posting, put back when the post fails, so
+                    // the failed-turn notice's failures wait for the next run instead of being lost.
+                    if unposted.contains(where: { $0.threadID == NotificationPolicy.failedTurnsThreadID }) {
+                        try store.setFailureNotices(NotificationPolicy.withheldFailureNotices(
+                            liveOutcomes, latestPoint: latest, intervalMinutes: interval, settings: settings, failureNotices: previous))
+                    }
                 }
             } catch {
                 fail("Couldn't select notifications", error)
@@ -390,8 +402,10 @@ public struct CollectorRun: Sendable {
             }
         }
 
-        private mutating func post(_ pending: [PendingNotification], notifier: any NotificationPosting) async {
+        /// Posts each notification and returns the ones that couldn't be posted.
+        private mutating func post(_ pending: [PendingNotification], notifier: any NotificationPosting) async -> [PendingNotification] {
             var failures: [any Error] = []
+            var unposted: [PendingNotification] = []
             for notification in pending {
                 do {
                     try await notifier.post(notification)
@@ -399,6 +413,7 @@ public struct CollectorRun: Sendable {
                 } catch {
                     log.write("Couldn't post notification \(notification.id): \(CollectorRun.describe(error))", at: now)
                     failures.append(error)
+                    unposted.append(notification)
                 }
             }
             if !pending.isEmpty { log.write("Posted \(posted) of \(pending.count) notifications", at: now) }
@@ -406,6 +421,7 @@ public struct CollectorRun: Sendable {
                 let noun = failures.count == 1 ? "notification" : "notifications"
                 notes.append("\(failures.count) \(noun) couldn't be posted: \(CollectorRun.describe(first))")
             }
+            return unposted
         }
 
         private static func describe(_ state: SetupState) -> String {

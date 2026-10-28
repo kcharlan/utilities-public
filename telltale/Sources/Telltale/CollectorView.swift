@@ -135,20 +135,26 @@ import TelltaleCore
     }
 
     func turnOn() async {
-        await manage(change: { manager, executable, interval in try manager.turnOn(executable: executable, intervalMinutes: interval) }) {
-            // Before the collector's first run there is no database to store it in (ruling R27):
-            // on matches the default, so nothing is lost.
+        // Before the collector's first run there is no database to store it in (ruling R27): on
+        // matches the default, so nothing is lost, and there is nothing to put back either.
+        let storeEnabled = { (value: Bool) in
             do {
-                try self.actions.set(.collectorEnabled, true)
+                try self.actions.set(.collectorEnabled, value)
             } catch StoreError.notInitialized {
             }
         }
+        let was = stored(.collectorEnabled)
+        await manage(
+            change: { manager, executable, interval in try manager.turnOn(executable: executable, intervalMinutes: interval) },
+            save: { try storeEnabled(true) }, restore: { if let was { try storeEnabled(was) } })
     }
 
     /// Not offered until the first run has created the database the off choice is stored in (R30).
     func turnOff() async {
         guard offersTurnOff else { return }
-        await manage(change: { manager, _, _ in try manager.turnOff() }) { try self.actions.set(.collectorEnabled, false) }
+        await manage(
+            change: { manager, _, _ in try manager.turnOff() },
+            save: { try self.actions.set(.collectorEnabled, false) }, restore: { try self.actions.set(.collectorEnabled, true) })
     }
 
     func repair() async {
@@ -156,8 +162,8 @@ import TelltaleCore
         await manage(change: { manager, executable, interval in try manager.repair(executable: executable, intervalMinutes: interval) })
     }
 
-    /// Spec section 9.3's Change interval, from Settings: while the collector is on, rewrite the
-    /// plist and reload the job, then store the interval; while it is off, only store it. Like Turn
+    /// Spec section 9.3's Change interval, from Settings: store the interval, then, while the
+    /// collector is on, rewrite the plist and reload the job; while it is off, only store it. Like Turn
     /// off, it waits for the first run, which creates the database the interval is stored in
     /// (rulings R27 and R30). An out-of-range value fails with `Settings.intervalError`'s message.
     @discardableResult func changeInterval(_ minutes: Int) async -> ChangeOutcome {
@@ -170,7 +176,10 @@ import TelltaleCore
         if enabled {
             reload = { manager, executable, _ in try manager.changeInterval(executable: executable, intervalMinutes: minutes) }
         }
-        return await manage(change: reload) { try self.actions.set(.intervalMinutes, minutes) }
+        let previous = stored(.intervalMinutes) ?? intervalMinutes
+        return await manage(
+            change: reload, save: { try self.actions.set(.intervalMinutes, minutes) },
+            restore: { try self.actions.set(.intervalMinutes, previous) })
     }
 
     /// "Run now": one collector run outside its schedule.
@@ -182,18 +191,44 @@ import TelltaleCore
 
     // MARK: Internals
 
-    /// Runs a launchd change (when there is one) off the main actor, then `save` stores the setting
-    /// it implies. A failed change leaves the setting as it was; while another change runs, nothing
-    /// happens and the outcome says so.
+    /// The stored value of `key` now, to put back after a failed change; nil before the database exists.
+    private func stored<V>(_ key: SettingKey<V>) -> V? {
+        (try? live.read { store, _ in try store.value(key) }) ?? nil
+    }
+
+    /// A launchd change that failed after its setting was stored, and whose setting couldn't be
+    /// put back.
+    private struct PartialChange: LocalizedError {
+        var errorDescription: String?
+    }
+
+    /// `save` stores the setting a change implies, then the launchd change (when there is one) runs
+    /// off the main actor. Saving first means a setting that can't be stored leaves launchd alone:
+    /// a Turn off that booted the job out and then couldn't store "off" would be undone by the next
+    /// launch, which turns an enabled collector without a plist back on. A failed launchd change
+    /// runs `restore` to put the setting back; if that fails too, the error says the change is only
+    /// partly applied. While another change runs, nothing happens and the outcome says so.
     @discardableResult private func manage(
-        change: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?, save: (() throws -> Void)? = nil
+        change: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?, save: (() throws -> Void)? = nil,
+        restore: (() throws -> Void)? = nil
     ) async -> ChangeOutcome {
         guard canManage else { return .failed }
         guard !busy else { return .busy }
         let manager = manager, executable = currentExecutable, interval = intervalMinutes
         let succeeded = await perform {
-            if let change { try await Task.detached { try change(manager, executable, interval) }.value }
             try save?()
+            guard let change else { return }
+            do {
+                try await Task.detached { try change(manager, executable, interval) }.value
+            } catch {
+                do {
+                    try restore?()
+                } catch let restoreError {
+                    throw PartialChange(errorDescription: Copy.collectorChangePartial(
+                        reason: error.localizedDescription, restoreReason: restoreError.localizedDescription))
+                }
+                throw error
+            }
         }
         await live.refresh()
         load()
@@ -217,7 +252,8 @@ import TelltaleCore
         var facts = [Fact(label: "Runs", value: Copy.collectorSchedule(minutes: interval))]
         if let last = runs.first {
             facts.append(Fact(label: "Last run", value: Copy.collectorLastRun(
-                at: last.startedAt, outcome: last.outcome, seconds: last.finishedAt.map { $0.timeIntervalSince(last.startedAt) }, calendar: calendar)))
+                at: last.startedAt, outcome: last.outcome, seconds: last.finishedAt.map { $0.timeIntervalSince(last.startedAt) }, calendar: calendar,
+                stranded: CollectorHealth.isStranded(last, intervalMinutes: interval, now: now()))))
             if enabled {
                 let next = CollectorHealth.nextRun(after: last.startedAt, intervalMinutes: interval, now: now())
                 facts.append(Fact(label: "Next run", value: Copy.clock(next, calendar)))

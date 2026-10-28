@@ -220,6 +220,24 @@ private let recovered = "Telltale's collector is running again."
         }
     }
 
+    @Test func invalidStoredRulesUseTheDefaultHealthRule() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            // Ruling R16: rules that fail validation are replaced by the defaults as a whole, so the
+            // stored health switch (off here) doesn't count; the default rule (on) does.
+            var rules = try h.store.value(.rules)
+            rules.collectorHealth.enabled = false
+            rules.failedTurns.coalesceMinutes = 0
+            try h.store.set(.rules, rules)
+            #expect(try !h.store.usableRules().problems.isEmpty)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+        }
+    }
+
     @Test func collectorOffByChoiceNeverNotifies() async throws {
         try await withMonitor { h in
             try h.store.set(.collectorEnabled, false)

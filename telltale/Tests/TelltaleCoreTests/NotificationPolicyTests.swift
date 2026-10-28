@@ -166,6 +166,26 @@ import TelltaleTestSupport
         #expect(quiet == FailureNotices())
     }
 
+    @Test func withheldFailedTurnNoticeKeepsEveryFailureWaiting() {
+        // A waiting failure, a fresh one, and a catch-up one from an episode still open: select sends all
+        // three; when that notice can't be posted, all three wait again and the last notice time stays.
+        let before = FailureNotices(lastNoticeAt: minutesBefore(40), waiting: [failure(1, at: minutesBefore(45))])
+        let outcomes = [
+            outcome(.failedTurns, at: minutesBefore(30), fired(minutesBefore(30), severity: .red), episode: 3, scope: "*",
+                    failures: [failure(2, at: minutesBefore(33))]),
+            outcome(.failedTurns, at: latest, nil, episode: 3, scope: "*", failures: [failure(3, at: minutesBefore(2))]),
+        ]
+        var sent = before
+        #expect(select(outcomes, notices: &sent).count == 1)
+        #expect(sent == FailureNotices(lastNoticeAt: latest, waiting: []))
+
+        let withheld = NotificationPolicy.withheldFailureNotices(
+            outcomes, latestPoint: latest, intervalMinutes: 5, settings: .defaults, failureNotices: before)
+
+        #expect(withheld.lastNoticeAt == minutesBefore(40))
+        #expect(Set(withheld.waiting.map(\.turnID)) == ["turn_synthetic_1", "turn_synthetic_2", "turn_synthetic_3"])
+    }
+
     @Test func notifyOffRuleStillWritesEvents() throws {
         try withRules { h in
             try h.seedUsual()
