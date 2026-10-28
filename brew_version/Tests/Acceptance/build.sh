@@ -4,9 +4,30 @@ project_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 prototype=false
 if [[ "${1:-}" == --settings-prototype && $# == 1 ]]; then prototype=true
 elif (( $# != 0 )); then print -u2 -- "Unexpected builder arguments"; exit 2; fi
-acceptance_home="$(mktemp -d)"
-chmod 700 "$acceptance_home"
+# A caller that removes its own scratch passes BREW_VERSION_HARNESS_HOME, a new
+# path inside that scratch, and the builder keeps everything there. Otherwise the
+# builder owns a fresh home: it keeps the signed bundle and its synthetic state
+# and removes the scratch package, or removes everything after a failure.
+if [[ -n "${BREW_VERSION_HARNESS_HOME:-}" ]]; then
+  acceptance_home="$BREW_VERSION_HARNESS_HOME"
+  mkdir -m 700 -- "$acceptance_home"
+  owned=false
+else
+  acceptance_home="$(mktemp -d "${${TMPDIR:-/tmp}%/}/brew-version-acceptance.XXXXXX")"
+  owned=true
+fi
 package_dir="$acceptance_home/package"
+finish() {
+  local code=$?
+  if $owned; then
+    if (( code )); then rm -rf -- "$acceptance_home"; else rm -rf -- "$package_dir"; fi
+  fi
+  return $code
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+chmod 700 "$acceptance_home"
 mkdir -p "$package_dir/Sources/BrewVersionCore" "$package_dir/Sources/Acceptance"
 cp "$project_dir"/Sources/BrewVersionCore/*.swift "$package_dir/Sources/BrewVersionCore/"
 for source in "$project_dir"/Sources/BrewVersion/*.swift; do
@@ -44,3 +65,4 @@ codesign --verify --strict "$app"
 if $prototype; then print -r -- "Settings prototype: $app"
 else print -r -- "Acceptance app: $app"; fi
 print -r -- "Private synthetic home: $acceptance_home"
+if $owned; then print -r -- "Remove when finished: rm -r -- ${(q)acceptance_home}"; fi

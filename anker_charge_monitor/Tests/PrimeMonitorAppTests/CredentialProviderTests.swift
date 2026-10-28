@@ -73,7 +73,7 @@ actor SyntheticProvider: CredentialProvider {
 struct SyntheticCLI {
     let url: URL
     init(_ body: String) throws {
-        url = FileManager.default.temporaryDirectory.appending(path: "synthetic-op-" + UUID().uuidString)
+        url = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-op-" + UUID().uuidString)
         try Data(("#!/bin/sh\n" + body + "\n").utf8).write(to: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path(percentEncoded: false))
     }
@@ -348,7 +348,7 @@ actor OrderedCredentialProvider: CredentialProvider {
     }
     @Test func timeoutAndCancellationJoinTERMResistantChild() async throws {
         for cancel in [true, false] {
-            let marker = FileManager.default.temporaryDirectory.appending(path: "synthetic-child-" + UUID().uuidString)
+            let marker = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-child-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: marker) }
             let script = try SyntheticCLI("trap '' TERM\nprintf '%s' \"$$\" > '\(marker.path(percentEncoded: false))'\nwhile :; do :; done")
             defer { script.remove() }

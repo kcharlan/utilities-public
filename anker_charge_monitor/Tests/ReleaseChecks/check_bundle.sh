@@ -141,12 +141,19 @@ cat <&8 > "$scratch/held-installed"; cmp "$scratch/installed-prior" "$scratch/he
 rg -q -- '--force --sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none' "$SYNTHETIC_SIGN_LOG"
 rg -q -- '--verify --strict' "$SYNTHETIC_SIGN_LOG"
 # Port: BV release.test.mjs, "maintained snapshot builder uses the same supported
-# runtime", 579ebb7. This invokes the public target once as part of the full gate;
-# keep its private PNGs/executable for visual inspection after scratch cleanup.
-make snapshots > "$scratch/snapshots.log" 2>&1
+# runtime", 579ebb7. This invokes the public target once as part of the full gate,
+# in a caller-owned home inside this scratch so the trap removes it with the rest.
+# Run `make snapshots` by hand to keep the PNGs for visual inspection.
+PRIME_MONITOR_HARNESS_HOME="$scratch/snapshots" make snapshots > "$scratch/snapshots.log" 2>&1
 cat "$scratch/snapshots.log"
 snapshot_binary=$(sed -n 's/^Snapshot executable: //p' "$scratch/snapshots.log")
 [ -x "$snapshot_binary" ]
 vtool -show-build "$snapshot_binary" | rg -q '\bminos 27\.0\b'
 vtool -show-build "$snapshot_binary" | rg -q '\bsdk 27\.0\b'
+# A failed build in a builder-owned home removes that whole home.
+mkdir -m 700 "$scratch/failing-bin" "$scratch/failing-tmp"
+printf '#!/bin/sh\nexit 7\n' > "$scratch/failing-bin/swift"; chmod 700 "$scratch/failing-bin/swift"
+code=0; PATH="$scratch/failing-bin:$PATH" TMPDIR="$scratch/failing-tmp" Tests/Snapshots/build.sh > "$scratch/failing.log" 2>&1 || code=$?
+[ "$code" = 7 ] || { echo "FAIL: failed snapshot build exited $code"; exit 1; }
+[ -z "$(ls -A "$scratch/failing-tmp")" ] || { echo 'FAIL: failed snapshot build left its home'; exit 1; }
 echo 'bundle/install structural checks passed (synthetic signing only)'

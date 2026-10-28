@@ -31,7 +31,7 @@ import PrimeMonitorCore
 }
 
 @MainActor final class CatalogRig {
-    let root = FileManager.default.temporaryDirectory.appending(path: "catalog-" + UUID().uuidString, directoryHint: .isDirectory)
+    let root = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-catalog-" + UUID().uuidString, directoryHint: .isDirectory)
     let file: URL, seed: URL
     let scheduler = ManualScheduler()
     let files: RecordingCatalogFiles

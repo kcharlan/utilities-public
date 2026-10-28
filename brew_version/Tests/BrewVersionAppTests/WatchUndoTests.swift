@@ -14,7 +14,7 @@ private struct UndoTransport: HTTPTransport {
 }
 private struct UndoNotifier: Notifier { func post(_ notice: Notice) async {} }
 private struct UndoFixture {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-undo-" + UUID().uuidString)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-undo-" + UUID().uuidString)
     var file: URL { directory.appendingPathComponent("state.json") }
     var failure: URL { directory.appendingPathComponent("synthetic-fail-replace") }
     var store: WatchStore {

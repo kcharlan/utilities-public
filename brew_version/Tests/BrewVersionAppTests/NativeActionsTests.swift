@@ -185,7 +185,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(!notifier.isSendingTestNotification)
     }
     @Test func retainedStatusContentKeepsBoundedPreferredSizeAcrossAttachment() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-retained-host-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-retained-host-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         for count in [0, 3, 12] {
             let fixture = home.appendingPathComponent("case-\(count)")
@@ -247,7 +247,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         }
     }
     @Test func longNotificationWarningWrapsWithinMaintainedPopover() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-warning-layout-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-warning-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let service = NotificationServiceStub()
         service.authorizationFailure = "Synthetic authorization was refused. Open System Settings, choose Notifications, select Brew Version, enable notifications, then retry."
@@ -280,7 +280,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(footerSpace >= 30)
     }
     @Test func sharedWatchSelectionRenewsNativeFocusWithoutStealingSearchEditing() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-accessible-rows-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-accessible-rows-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var state = AppState.initial; state.showOtherUpdates = false
@@ -333,7 +333,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
     }
     /// Hosts a popover whose watch list must scroll, in an offscreen window.
     private func scrollingPopover(_ name: String) throws -> (window: NSWindow, host: NSHostingView<PopoverView>, scroll: NSScrollView, cleanup: () -> Void) {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-\(name)-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-\(name)-" + UUID().uuidString)
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var state = AppState.initial; state.showOtherUpdates = false
         state.watched = (0..<16).map { index in
@@ -391,7 +391,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(rowStrip() != rowsBefore)
     }
     @Test func fullPopoverKeepsWatchingViewportAfterFreshHostingWithOtherHidden() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-popover-layout-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-popover-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var state = AppState.initial
@@ -414,7 +414,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         }
     }
     @Test func maintainedStatusHostKeepsViewportAcrossAppearanceAndRehosting() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-status-layout-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-status-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var state = AppState.initial; state.showOtherUpdates = false
@@ -449,7 +449,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         }
     }
     @Test func watchRowNativeDeleteRoutesBothKeysAndPreservesSearchEditing() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-delete-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-delete-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         let entry = WatchEntry(name: PackageName("synthetic-delete")!, kind: .formula)
@@ -484,7 +484,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         window.makeFirstResponder(nil)
     }
     @Test func normalAppReopenShowsPopoverWithOrWithoutSettingsVisible() {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-reopen-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-reopen-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let notifier = UserNotifier(service: NotificationServiceStub())
         let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: notifier)
@@ -520,7 +520,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         }
     }
     @Test func statusObservationPublishesAmberChanges() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-status-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-status-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         var state = AppState.initial
@@ -563,7 +563,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(notifier.lastError?.contains("authorization") == true)
     }
     @Test func settingsReuseRefreshAndLoginApprovalAction() {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-settings-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-settings-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: QuietNotifier())
         let service = LoginServiceStub()
@@ -608,7 +608,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(catalogTimestamp(yesterday, now: now, calendar: calendar) == yesterday.formatted(date: .abbreviated, time: .shortened))
     }
     @Test func settingsWindowOpensOnActiveSpace() {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-settings-space-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-settings-space-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: QuietNotifier())
         var windows: [NSWindow] = []
@@ -633,7 +633,7 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(opened.count == 2)
     }
     @Test func customIntervalRetainsInvalidAndFailedSaveInput() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-interval-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-interval-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = home.appendingPathComponent("state.json")
         let live = WatchStore(fileURL: file)

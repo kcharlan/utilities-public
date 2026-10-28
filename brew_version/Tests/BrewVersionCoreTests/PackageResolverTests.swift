@@ -3,7 +3,7 @@ import Testing
 @testable import BrewVersionCore
 
 private final class ResolverFixture {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-resolver-\(UUID().uuidString)")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-resolver-\(UUID().uuidString)")
     init(_ packages: [(String, PackageKind)]) throws {
         for (full, kind) in packages {
             let parts = full.split(separator: "/")

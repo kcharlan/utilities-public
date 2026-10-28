@@ -217,7 +217,7 @@ private final class PanelSaveCounter: Sendable {
     @Test func alertIconIsDrawnInItsOwnColoursWithoutButtonTint() throws {
         // A template image tinted through contentTintColor renders black in
         // the macOS 27 menu bar, which hides the alert on a dark bar.
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         let button = try #require(fixture.item.button)
@@ -234,7 +234,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(item.length == NSStatusItem.variableLength)
     }
     @Test func repeatedNativeSessionsAndProgrammaticRequestsUseSameRetainedHost() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         let host = fixture.panel.contentViewController
@@ -252,7 +252,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.shows == 7 && fixture.panel.hides == 7)
     }
     @Test func ownedDismissalHidesAtOnceAndIgnoresLateAcknowledgment() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin(); fixture.immediateCancel = false
@@ -271,7 +271,7 @@ private final class PanelSaveCounter: Sendable {
 
 @MainActor struct StatusPanelOwnershipTests {
     @Test func lateOldEndCannotHideNewNativePresentation() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.immediateCancel = false
@@ -288,7 +288,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.hides == 2)
     }
     @Test func programmaticOpeningSurvivesLateAcknowledgmentAndStillDismisses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.immediateCancel = false
@@ -305,7 +305,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(!fixture.panel.isVisible && fixture.activations == 2 && fixture.cancelCount == 2)
     }
     @Test func hostingEscapeAndPanelResignUseNativeCancel() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -319,7 +319,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.styleMask.contains(.nonactivatingPanel))
     }
     @Test func actualHostingPreferredSizeChangesRepositionRetainedPanel() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -346,7 +346,7 @@ private final class PanelSaveCounter: Sendable {
         }
     }
     @Test func warningGrowthAndShrinkKeepTheWholeRootVisible() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -372,7 +372,7 @@ private final class PanelSaveCounter: Sendable {
         }
     }
     @Test func delayedParentResizeCannotExpandTheViewportPastItsWindow() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -397,7 +397,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(hosting.view.visibleRect.minY == hosting.view.bounds.minY)
     }
     @Test func observerDoesNotRetainController() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         weak var status: StatusItemController?
         var notifications: NotificationCenter!
@@ -411,7 +411,7 @@ private final class PanelSaveCounter: Sendable {
         notifications.post(name: NSApplication.didResignActiveNotification, object: NSApp)
     }
     @Test func appearanceReachesPanelAndHostedContent() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         defer { fixture.status.setAppearance(nil) }
@@ -425,7 +425,7 @@ private final class PanelSaveCounter: Sendable {
 }
 @MainActor struct DirectPanelOpeningTests {
     @Test func programmaticOpeningIsIdempotentAndFirstNativePressCloses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover(); fixture.status.showPopover()
@@ -443,7 +443,7 @@ private final class PanelSaveCounter: Sendable {
         // from the app about 45 ms before the system's begin. Dismissing for
         // that focus loss hid the panel, and the begin then reopened it.
         for immediate in [true, false] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let fixture = try PanelFixture(home: home)
             fixture.immediateCancel = immediate
@@ -462,7 +462,7 @@ private final class PanelSaveCounter: Sendable {
         }
     }
     @Test func focusLossFromPressingTheIconLeavesNativeSessionInCharge() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         for _ in 0..<3 {
@@ -475,7 +475,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.shows == 3 && fixture.panel.hides == 3)
     }
     @Test func focusMovingElsewhereClosesAndTheNextPressOpens() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -491,7 +491,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.isVisible && fixture.panel.shows == 3 && fixture.panel.hides == 2)
     }
     @Test func keyboardApplicationSwitchDismissesWithPointerRestingOnIcon() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -506,7 +506,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.cancelCount == 0)
     }
     @Test func workspaceActivationPreservesOwnPanelAndCancelsANativeSessionForAnotherApp() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.pointAtIcon(); fixture.begin()
@@ -527,7 +527,7 @@ private final class PanelSaveCounter: Sendable {
     // on the icon delivered no event and no end, so it never closed.
     @Test func pressingTheIconOfAnOpenNativePanelClosesIt() throws {
         for immediate in [true, false] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let fixture = try PanelFixture(home: home)
             fixture.immediateCancel = immediate
@@ -544,7 +544,7 @@ private final class PanelSaveCounter: Sendable {
         }
     }
     @Test func theOpeningPressNeverClosesItsOwnPanel() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         // The monitor sees the opening press before the begin arrives...
@@ -560,7 +560,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
     }
     @Test func onlyAPressOnTheIconCloses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -575,7 +575,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(!fixture.panel.isVisible && fixture.cancelCount == 0 && fixture.panel.hides == 1)
     }
     @Test func programmaticPanelLeavesIconPressToItsBegin() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -587,7 +587,7 @@ private final class PanelSaveCounter: Sendable {
 }
 @MainActor struct StatusPanelKeyboardTests {
     @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -603,7 +603,7 @@ private final class PanelSaveCounter: Sendable {
 }
 @MainActor struct StatusPanelIntegrationTests {
     @Test func nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         for _ in 0..<6 { fixture.begin(); fixture.end() }
@@ -613,7 +613,7 @@ private final class PanelSaveCounter: Sendable {
         fixture.end(); #expect(fixture.saves.count == 2 && fixture.panel.hides == 6)
     }
     @Test func settingsAndCustomIntervalCancelBeforePresentingOwnedSettings() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -626,7 +626,7 @@ private final class PanelSaveCounter: Sendable {
         #expect(!fixture.visibleAtSettingsPresentation)
     }
     @Test func applicationResignAndPendingNativeEndLeaveNoDelayedReopen() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()

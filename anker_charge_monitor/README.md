@@ -21,7 +21,19 @@ make release
 Normal compilation treats warnings as errors. `make test` runs every Swift test,
 scanner regressions and release/install structure checks. The bundle gate builds
 the maintained synthetic snapshot renderer once, including its macOS 27 runtime
-checks. It writes PNGs and the executable to a private temporary directory.
+checks, in a `PRIME_MONITOR_HARNESS_HOME` inside its own scratch directory, and
+checks that a failed renderer build removes its whole home. `make test` runs the
+suite under `Tests/ReleaseChecks/check_tmpdir.sh`, which fails if the suite,
+passing or failing, leaves a new `prime-` entry in `$TMPDIR` or Foundation's
+per-user temporary directory. Every test and harness temporary name uses that
+prefix. Run one suite at a time: a concurrent run of this project's suite can
+trip the check.
+
+To review the rendered views, run `make snapshots`. It builds in a fresh mode-0700
+`$TMPDIR/prime-snapshots.*` directory and prints its path and the command that
+removes it. It keeps only the PNGs: it removes its scratch package and fixtures
+when it finishes, and the whole directory if the build fails or is interrupted.
+Remove the directory once you have reviewed the images.
 Signing commands are synthetic only inside isolated release tests; these tests
 cannot establish real certificate trust, vault access, physical input delivery,
 cloud connectivity or login-item registration. See [SDK audit](docs/macos_sdk_audit_20261019.md)

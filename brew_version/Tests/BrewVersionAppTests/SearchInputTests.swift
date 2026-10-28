@@ -33,7 +33,7 @@ private actor SourceLossTransport: HTTPTransport {
 
 @MainActor struct SearchInputTests {
     @Test func explicitSuggestionKindOverridesKnownWatchKind() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-choice-kind-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-choice-kind-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
         let controller = WatchController(transport: SourceLossTransport(), installed: nil, store: store, notifier: SearchNotifier())
@@ -46,7 +46,7 @@ private actor SourceLossTransport: HTTPTransport {
     }
     @Test func explicitOfficialChoiceNeverWatchesOrCopiesTapAfterSourceLoss() async throws {
         for action in ["suggestion", "result", "other-updates", "copy"] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-source-loss-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-source-loss-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let prefix = home.appendingPathComponent("prefix")
             let tap = prefix.appendingPathComponent("Library/Taps/synthetic-owner/homebrew-synthetic-tap")
@@ -80,7 +80,7 @@ private actor SourceLossTransport: HTTPTransport {
     }
     @Test func copySuggestionVersionRejectsEditedOrCancelledIntent() async throws {
         for cancel in [false, true] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-copy-intent-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-copy-intent-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
             let clock = DebounceGate()
@@ -95,7 +95,7 @@ private actor SourceLossTransport: HTTPTransport {
         }
     }
     @Test func tapSuggestionPreservesCanonicalIdentityAndCopiesItsVersion() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-choice-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-choice-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let prefix = home.appendingPathComponent("prefix")
         try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Cellar"), withIntermediateDirectories: true)
@@ -128,7 +128,7 @@ private actor SourceLossTransport: HTTPTransport {
         #expect(visibleSearchResultIndices([.failed(name, "Synthetic unreachable"), .invalid("INVALID")], query: "synthetic", hasSuggestions: true) == [0, 1])
     }
     @Test func keyboardSuggestionSelectionKeepsKindAndResultOffset() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-suggestion-keyboard-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-suggestion-keyboard-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = SearchTransport()
         let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
@@ -154,7 +154,7 @@ private actor SourceLossTransport: HTTPTransport {
         catch { #expect(error is SearchGateTimeout) }
     }
     @Test func inFlightLookupRetainsPreviousRows() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-retained-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-retained-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = HeldSearchTransport()
         let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
@@ -170,7 +170,7 @@ private actor SourceLossTransport: HTTPTransport {
         #expect(listing.name.rawValue == "synthetic-held")
     }
     @Test func debounceRetainsResultsAndReturnWaitsForCurrentIntent() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-debounce-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-debounce-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = SearchTransport()
         let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
@@ -195,7 +195,7 @@ private actor SourceLossTransport: HTTPTransport {
     }
 
     @Test func editingAfterReturnExcludesStaleSubmission() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-return-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-return-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
         let clock = DebounceGate()
@@ -210,7 +210,7 @@ private actor SourceLossTransport: HTTPTransport {
         #expect(controller.state.watched.isEmpty)
     }
     @Test func selectedCaskSurvivesLookupAndWatchThenEditingRestoresAutomaticLookup() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-search-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-search-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = SearchTransport()
         let controller = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
@@ -243,7 +243,7 @@ private actor SourceLossTransport: HTTPTransport {
     }
 
     @Test func largeSearchLayoutStaysBoundedOffscreen() async {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-search-layout-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-search-layout-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let controller = WatchController(transport: SearchTransport(), installed: nil, store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: SearchNotifier())
         let input = SearchInput()

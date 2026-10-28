@@ -3,9 +3,30 @@ set -euo pipefail
 # Port: BV Tests/Snapshots/build.sh, 579ebb7. Compile maintained sources with
 # a separate synthetic entry point, never the cloud composition or live check.
 project_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
-snapshot_home="$(mktemp -d "${TMPDIR:-/tmp}/prime-snapshots.XXXXXX")"
-chmod 700 "$snapshot_home"
+# A caller that removes its own scratch passes PRIME_MONITOR_HARNESS_HOME, a new
+# path inside that scratch, and the builder keeps everything there. Otherwise the
+# builder owns a fresh home: it keeps only the PNGs, or nothing after a failure.
+if [[ -n "${PRIME_MONITOR_HARNESS_HOME:-}" ]]; then
+  snapshot_home="$PRIME_MONITOR_HARNESS_HOME"
+  mkdir -m 700 -- "$snapshot_home"
+  owned=false
+else
+  snapshot_home="$(mktemp -d "${${TMPDIR:-/tmp}%/}/prime-snapshots.XXXXXX")"
+  owned=true
+fi
 package_dir="$snapshot_home/package"
+finish() {
+  local code=$?
+  if $owned; then
+    if (( code )); then rm -rf -- "$snapshot_home"
+    else rm -rf -- "$package_dir"; find "$snapshot_home" -mindepth 1 -maxdepth 1 -type d -exec rm -rf -- {} +; fi
+  fi
+  return $code
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+chmod 700 "$snapshot_home"
 mkdir -p "$package_dir/Sources/PrimeMonitorCore" "$package_dir/Sources/Snapshots"
 cp "$project_dir"/Sources/PrimeMonitorCore/*.swift "$package_dir/Sources/PrimeMonitorCore/"
 for source in "$project_dir"/Sources/PrimeMonitor/*.swift; do
@@ -24,5 +45,6 @@ SWIFT
 swift build --package-path "$package_dir" -c release --product Snapshots -Xswiftc -warnings-as-errors
 binary_dir="$(swift build --package-path "$package_dir" -c release --show-bin-path)"
 "$binary_dir/Snapshots" "$snapshot_home"
-print -r -- "Snapshot executable: $binary_dir/Snapshots"
 print -r -- "Private snapshots: $snapshot_home"
+if $owned; then print -r -- "Remove when finished: rm -r -- ${(q)snapshot_home}"
+else print -r -- "Snapshot executable: $binary_dir/Snapshots"; fi

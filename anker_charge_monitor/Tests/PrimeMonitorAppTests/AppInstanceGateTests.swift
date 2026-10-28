@@ -4,7 +4,7 @@ import Testing
 
 @Suite @MainActor struct AppInstanceGateTests {
     @Test func decodedSpecialPathKeepsExclusiveLock() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let root = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let directory = root.appending(path: "spaces % café/%2F", directoryHint: .isDirectory)
         let path = directory.appending(path: "instance.lock", directoryHint: .notDirectory)
@@ -20,7 +20,7 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false)) == ["spaces % café"])
     }
     @Test func concurrentAcquisitionAndRelease() throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appending(path: "instance.lock", directoryHint: .notDirectory)
         let first = try AppInstanceGate.acquire(at: path)

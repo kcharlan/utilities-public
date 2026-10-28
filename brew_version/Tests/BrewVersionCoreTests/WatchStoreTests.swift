@@ -3,7 +3,7 @@ import Testing
 @testable import BrewVersionCore
 
 struct WatchFixture {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-brew-watch-\(UUID())")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-brew-watch-\(UUID())")
     var file: URL { directory.appendingPathComponent("state.json") }
     var store: WatchStore { WatchStore(fileURL: file) }
     func clean() { try? FileManager.default.removeItem(at: directory) }

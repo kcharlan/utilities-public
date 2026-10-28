@@ -23,7 +23,9 @@ import PrimeMonitorCore
         guard CommandLine.arguments.count == 2 else { fatalError("Expected private temporary output directory") }
         let home = URL(filePath: CommandLine.arguments[1], directoryHint: .isDirectory).standardizedFileURL
         let temporary = FileManager.default.temporaryDirectory.standardizedFileURL.resolvingSymlinksInPath()
-        guard Array(home.resolvingSymlinksInPath().pathComponents.dropLast()) == temporary.pathComponents,
+        // A caller-owned home may sit inside the caller's own private scratch.
+        guard home.resolvingSymlinksInPath().pathComponents.starts(with: temporary.pathComponents),
+              home.resolvingSymlinksInPath().pathComponents.count > temporary.pathComponents.count,
               (try FileManager.default.attributesOfItem(atPath: home.path(percentEncoded: false))[.posixPermissions] as? NSNumber)?.intValue == 0o700 else { fatalError("Snapshots require a private OS temporary directory") }
         for dark in [false, true] {
             let palette = dark ? "dark" : "light"

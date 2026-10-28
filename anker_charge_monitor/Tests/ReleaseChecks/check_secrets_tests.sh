@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 scanner="$(cd "$(dirname "$0")/../.." && pwd)/tools/check_secrets.sh"
-work=$(mktemp -d)
+work=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-tests.XXXXXX")
 work=$(cd "$work" && pwd -P)
 trap 'chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
 chmod 700 "$work"
@@ -11,8 +11,10 @@ printf '.secrets-patterns\nignored/\n' > .gitignore
 printf 'owner@example.invalid\nserial[.*]fixture\nuser-fixture\ncertificate-fixture\ntoken-fixture\n' > .secrets-patterns
 chmod 600 .secrets-patterns
 cp .secrets-patterns patterns-copy
-mv patterns-copy "$work/../$(basename "$work").patterns"
-patterns="$work/../$(basename "$work").patterns"
+# Name the sibling by its real parent: a "$work/.." path stops resolving once
+# the trap has removed $work, and rm -f would then silently keep the file.
+patterns="${work%/*}/${work##*/}.patterns"
+mv patterns-copy "$patterns"
 trap 'chmod -R u+rwX "$work"; rm -rf "$work"; rm -f "$patterns"' EXIT
 check() {
   local want=$1 code=0
