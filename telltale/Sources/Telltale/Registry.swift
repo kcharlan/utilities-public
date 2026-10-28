@@ -13,4 +13,15 @@ enum Registry {
     static func statusSources() -> [any StatusSource] {
         [OpenAIStatusSource(transport: URLSessionTransport())]
     }
+
+    /// The usage sources as the panel sees them: name, the status source's name for the Provider
+    /// lamp, declared signals and model naming.
+    static func sourceSummaries(paths: TelltalePaths) -> [SourceSummary] {
+        let statusNames = Dictionary(statusSources().map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+        return usageSources(paths: paths).map { source in
+            SourceSummary(
+                provider: source.provider, name: source.displayName, statusName: statusNames[source.statusSourceID] ?? source.displayName,
+                signals: source.signals, naming: source)
+        }
+    }
 }

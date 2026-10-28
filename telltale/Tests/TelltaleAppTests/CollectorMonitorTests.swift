@@ -258,7 +258,10 @@ private let recovered = "Telltale's collector is running again."
             let monitor = h.monitor(paths: fresh)
             h.setLoaded(false)
             let report = try #require(await h.tick(monitor))
-            #expect(report.footer == "Waiting for the collector's first run.")
+            // Task 11 footer fix: not loaded is a problem, so the footer no longer also says it is
+            // waiting for a first run (the panel shows the problem instead).
+            #expect(report.footer == "")
+            #expect(report.problems == [notLoaded])
             #expect(report.installed == .red)
             #expect(!FileManager.default.fileExists(atPath: fresh.database.path))
 
@@ -337,6 +340,32 @@ private let recovered = "Telltale's collector is running again."
             await h.tick(monitor)
             await h.tick(monitor)
             #expect(h.bodies == ["The collector hasn't run since 09:00."])
+        }
+    }
+
+    /// Ruling R24: the read-only evaluation a non-installed copy uses reports health but never posts,
+    /// never writes the notice, and never creates the database.
+    @Test func evaluateReportsWithoutPostingOrWriting() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let h = try MonitorHarness(directory)
+            h.setLoaded(false)
+            let monitor = h.monitor()
+            for _ in 0..<3 {
+                h.now = h.now.addingTimeInterval(CollectorMonitor.checkInterval)
+                let report = try #require(await monitor.evaluate())
+                #expect(report.notify && report.problems.first == notLoaded)
+            }
+            #expect(monitor.lastReport?.notify == true)
+            #expect(h.service.posted.isEmpty)
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            // Without a database it reads the defaults and leaves the database uncreated.
+            let elsewhere = TelltalePaths(home: directory.appending(path: "other-home", directoryHint: .isDirectory))
+            let report = try #require(await h.monitor(paths: elsewhere).evaluate())
+            #expect(report.footer == "")
+            #expect(report.problems.first == notLoaded)
+            #expect(!FileManager.default.fileExists(atPath: elsewhere.database.path))
+            #expect(h.service.posted.isEmpty)
         }
     }
 }

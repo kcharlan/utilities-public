@@ -40,4 +40,11 @@ import TelltaleCore
         #expect(request.content.threadIdentifier == "slower.codex.example")
         #expect(request.trigger == nil)
     }
+
+    @Test func sourceSummariesNameTheStatusSource() throws {
+        let summary = try #require(Registry.sourceSummaries(paths: Self.paths).first)
+        #expect(Registry.sourceSummaries(paths: Self.paths).count == 1)
+        #expect(summary.provider == .codex && summary.name == "Codex" && summary.statusName == "OpenAI")
+        #expect(summary.signals == [.speed, .errors, .link, .provider, .load])
+    }
 }

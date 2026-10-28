@@ -150,6 +150,10 @@ public enum Copy {
     public static func databaseUnavailable(reason: String) -> String {
         "Telltale can't read its database: \(reason). Retrying automatically."
     }
+    /// The panel header's last-successful-run time (visual doc's panel wireframe; not a Copy-table row).
+    public static func checked(at date: Date, calendar: Calendar) -> String { "Checked \(clock(date, calendar))" }
+    /// The footer while the collector is healthy (visual doc's panel wireframe; not a Copy-table row).
+    public static func collectorRunning(minutes: Int) -> String { "Collector running, every \(minutes) min" }
 
     // MARK: Notifications
 

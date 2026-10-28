@@ -65,6 +65,24 @@ import UserNotifications
     /// One health check: evaluates, posts what the episode calls for, and returns the report (nil
     /// when the database couldn't be read).
     @discardableResult func check() async -> CollectorHealthReport? {
+        guard let (report, inputs, at) = await assess() else { return nil }
+        do {
+            try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
+        } catch {
+            lastError = error.localizedDescription
+        }
+        return report
+    }
+
+    /// Spec section 9.3's health, read-only: no notification, no notice written, and no database
+    /// created (ruling R24: a copy that isn't the installed app shows health but never acts on it).
+    @discardableResult func evaluate() async -> CollectorHealthReport? {
+        await assess()?.report
+    }
+
+    /// Reads the inputs through a read-only connection, asks launchd off the main actor, and
+    /// records the report (or the read failure).
+    private func assess() async -> (report: CollectorHealthReport, inputs: Inputs, at: Date)? {
         let inputs: Inputs
         do {
             inputs = try readInputs()
@@ -82,12 +100,7 @@ import UserNotifications
             runs: inputs.runs, intervalMinutes: inputs.intervalMinutes, sourceStates: inputs.sourceStates, now: at, calendar: calendar)
         lastReport = report
         lastError = nil
-        do {
-            try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
-        } catch {
-            lastError = error.localizedDescription
-        }
-        return report
+        return (report, inputs, at)
     }
 
     // MARK: Episodes

@@ -195,6 +195,11 @@ private enum Health {
         #expect(late.problems == ["The collector hasn't run since 09:00."])
         #expect([late.lastRun, late.onSchedule] == [.unlit, .unlit])
         #expect(late.lamp == .red)
+        // Task 11: the footer no longer says it's waiting beside a problem that says it gave up.
+        #expect(late.footer == "")
+        let unloaded = Health.evaluate(installedAt: turnedOn, loaded: false, runs: [], now: Health.at(9, 1))
+        #expect(unloaded.problems == ["Telltale's collector isn't loaded. Open the Collector view to turn it back on."])
+        #expect(unloaded.footer == "")
 
         // No plist, no reference: nothing to measure from.
         #expect(!Health.evaluate(installed: nil, installedAt: nil, runs: [], now: Health.at(12, 0)).notify)

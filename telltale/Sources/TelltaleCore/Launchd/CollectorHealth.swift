@@ -115,7 +115,7 @@ public enum CollectorHealth {
 
         return CollectorHealthReport(
             installed: installedMatches ? .green : .red, loaded: loaded ? .green : .red, lastRun: lastRun, onSchedule: onSchedule,
-            problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty ? Copy.waitingForFirstRun : "",
+            problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty && problems.isEmpty ? Copy.waitingForFirstRun : "",
             notify: !loaded || twoFailures || noSuccess || !formatProblems.isEmpty)
     }
 }

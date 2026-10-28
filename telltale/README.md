@@ -12,9 +12,9 @@ Current state: the SwiftPM package, the vendored zstd decoder and the streaming 
 for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources, the usual-speed
 baseline, the rule engine with its notification policy, the collector run
 (`Telltale --collect`, see "How the collector runs"), the release identifiers and runtime paths,
-and the notification check used for the spec's section 4 spike. Installing the collector's
-launchd job and the real UI arrive in later tasks. Running the app with no arguments shows a
-placeholder window that asks for notification permission and reports the answer.
+and the notification check used for the spec's section 4 spike, the collector's launchd job and
+its health, and the menu-bar status item and panel (see "Menu bar and panel"). The dashboard
+window and Settings arrive in later tasks.
 
 ## Requirements
 
@@ -31,6 +31,8 @@ make build
 make test
 make signing-preflight
 make release
+make snapshots
+make acceptance
 ```
 
 `make test` compiles with warnings as errors, runs every Swift test, then runs each
@@ -47,8 +49,33 @@ script in `Tests/ReleaseChecks/`:
 - `check_bundle.sh` assembles and installs a bundle with synthetic signing commands
   to check release assembly, executable replacement and installer recovery. It is
   structural only and proves nothing about real certificate trust.
+- `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
+  snapshot executable and the acceptance app carry the supported runtime (minos and SDK
+  27.0), that six panel PNGs were written, that the acceptance service tests passed, and
+  that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
+  It leaves both private homes in place for inspection.
 
 `make release` creates `build/release/Telltale.app`.
+
+`make snapshots` (`Tests/Snapshots/build.sh`) compiles the maintained app sources, without
+the production lifecycle (`TelltaleMain`, `AppDelegate`), the collector entry, the source
+registry or the notification check, into a separate synthetic renderer in a new 0700
+directory under the OS temporary directory. It seeds a database per scene from
+`Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
+renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
+lasting-shift prompt (spec section 13's panel states). It checks each layout's width,
+whole-point height and painted pixels, prints every PNG path, the executable and the
+directory. Look at every PNG; the checks don't judge the design.
+
+`make acceptance` (`Tests/Acceptance/build.sh`) builds the same sources with
+`AcceptanceApp.swift` as the app lifecycle. It first runs the generated
+`AcceptanceServiceTests` target, then assembles `Telltale Synthetic Acceptance.app` (ad-hoc
+signed, identifier `com.example.telltale.acceptance`, which `LaunchAgentManager` refuses) in
+a new 0700 temporary home recorded in its Info.plist as `SyntheticAcceptanceHome`. On first
+launch the app seeds that home with an alerting model, a lasting-shift prompt and the
+collector off. `launchctl` goes through a recording double, and Check now records a
+synthetic run instead of kickstarting launchd. The builder prints the bundle path; it never
+launches it.
 
 ## Signing
 
@@ -108,6 +135,68 @@ format problem. An episode starts only when two checks in a row see it, so the m
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.
 
+## Menu bar and panel
+
+The status item and its panel are ported from Brew Version's (see its README's "Settings and
+native acceptance gates"): AppKit owns the delegate, the status item and an owned borderless
+panel; SwiftUI supplies the content. On macOS 27 a press on the closed item starts the
+expanded-interface session, whose begin shows the panel; a press while it is open is caught by
+a global mouse monitor and closes it. Escape and clicks elsewhere hide it. While the item is
+hidden or not yet placed, the panel opens at the top right of the menu-bar screen.
+
+The glyph is a lamp lens: a template image while nothing is lit, and the lens with a 7 pt dot
+in the most severe lamp color when a lamp lights. Its accessibility label names the lit lamps.
+The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
+"Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline),
+the lasting-shift prompt with Accept as usual… and Keep as abnormal, and the collector footer.
+Settings and Open dashboard stay disabled until the dashboard window exists.
+
+The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
+database, its `-wal` file and, while they don't exist yet, the nearest existing parent
+directory. Before the collector's first run it shows the waiting footer; it never creates the
+database. Its few writes (Accept, Undo, Keep as abnormal) open the database only if it exists.
+
+Only the installed copy (`/Applications/Telltale.app`, compared by its resolved main
+executable) turns the collector on when the setting says it should be on, requests
+notification permission and posts Collector health notifications. A copy run from elsewhere,
+such as `build/release/Telltale.app`, shows the same health read-only and changes nothing.
+Only one app instance runs at a time.
+
+## Native acceptance
+
+Automated tests, offscreen snapshots and signatures establish no native input result. Run
+these checks by hand on `make acceptance`'s bundle (and the installed release where noted)
+and record each one separately, with the date and macOS build. One missed press fails the
+check. The Settings, Open dashboard and launch-at-login checks join this list with the
+dashboard tasks.
+
+- Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
+  and quickly; every press must open or close the panel exactly once, with the whole panel,
+  header and footer included, on-screen. Reopen the app from Finder, or click a notification,
+  then press the icon once: the panel must close. Click outside the panel, then press the
+  icon once: it must open. Run these with the menu bar manager running; while it hides the
+  item, Finder reopening places the panel at the top right.
+- Escape closes the panel; the panel also appears over a full-screen app and on the current
+  desktop Space.
+- Check now: the checked time moves (the acceptance double records a synthetic run).
+- **Add red alert** lights Errors red and turns the glyph's dot red; VoiceOver reads the lit
+  lamps from the status item and the lamp strip.
+- Accept as usual… with its date, then Undo; Keep as abnormal hides the prompt.
+- **Test notification** shows a visible notification, and clicking it opens the panel.
+  **Test posting failure** shows the warning with Retry, and Retry clears it.
+- **Light** and **Dark**: both appearances are legible, and the lit lamps keep their colors.
+- In the installed release only: the collector turns on at first launch, and no launchd job
+  exists for the acceptance bundle (`launchctl print gui/$UID/local.utilities.telltale.collector`
+  names the installed executable).
+
+### Results
+
+Native results are recorded separately from automated ones.
+
+| Check | Result |
+| --- | --- |
+| All of the above | Not yet run |
+
 ## Notification spike
 
 Spec section 4 builds on one executable posting notifications as Telltale when
@@ -119,7 +208,8 @@ tools/notification_check.sh build/release/Telltale.app ui-not-running
 tools/notification_check.sh build/release/Telltale.app ui-running
 ```
 
-Open the app once first to grant notification permission. The script loads a
+Grant notification permission first: the installed app asks at launch; a copy elsewhere never
+asks (see "Menu bar and panel"), but the check itself asks when permission is undetermined. The script loads a
 one-shot launchd job named `local.utilities.telltale.notification-check` into
 `gui/$UID` from a private temporary directory (never `~/Library/LaunchAgents`),
 waits up to 20 s for the result JSON, prints it and boots the job out. The run

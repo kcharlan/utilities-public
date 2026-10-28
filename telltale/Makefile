@@ -1,9 +1,10 @@
 # Port: anker_charge_monitor/Makefile, release/test recipes, 023737f.
 # Adaptation: Telltale.app; no bundled resources; test runs every Tests/ReleaseChecks script;
-# no live-check target (tools/notification_check.sh is the spike runner).
+# no live-check target (tools/notification_check.sh is the spike runner); snapshots and
+# acceptance port BV's harness targets.
 SIGN_IDENTITY ?= CodexBar Local
 export SIGN_IDENTITY
-.PHONY: build test clean release install deploy signing-preflight
+.PHONY: build test clean release install deploy signing-preflight snapshots acceptance
 build:
 	swift build -Xswiftc -warnings-as-errors
 test:
@@ -26,3 +27,9 @@ release:
 		codesign --verify --strict "build/release/Telltale.app"
 install deploy:
 	node ../tools/deploy_telltale.mjs
+# Private OS temporary builds only: maintained panel PNGs, and the synthetic acceptance bundle
+# (com.example.telltale.acceptance, its service tests run first). Neither launches a GUI.
+snapshots:
+	Tests/Snapshots/build.sh
+acceptance:
+	Tests/Acceptance/build.sh
