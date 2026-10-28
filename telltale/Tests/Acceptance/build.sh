@@ -4,7 +4,7 @@ set -euo pipefail
 # Adaptation: Telltale's harness module names; the snapshot builder's production-source exclusions
 # (TelltaleMain, AppDelegate, CollectorEntry, Registry, NotificationCheck) and recursive
 # TelltaleCore copy; SyntheticEnvironment.swift replaces the Homebrew SyntheticTransport.swift;
-# Telltale's release recipe (Info.plist and an empty Resources directory, no Homebrew licence);
+# Telltale's release recipe (Info.plist and the bundled fonts in Resources, no Homebrew licence);
 # bundle identifier com.example.telltale.acceptance, which LaunchAgentManager refuses; no
 # --settings-prototype option. Ruling R28, as in Tests/Snapshots/build.sh: everything stays in
 # the private home (TELLTALE_HARNESS_ROOT places it in a caller's scratch), and a manual run
@@ -22,7 +22,7 @@ for source in "$project_dir"/Sources/Telltale/*.swift; do
   case "${source:t}" in TelltaleMain.swift|AppDelegate.swift|CollectorEntry.swift|Registry.swift|NotificationCheck.swift) continue ;; esac
   cp "$source" "$package_dir/Sources/Acceptance/"
 done
-if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Observation|Darwin|Synchronization|SQLite3|UserNotifications|TelltaleCore)$'; then
+if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Charts|Observation|Darwin|Synchronization|SQLite3|UserNotifications|TelltaleCore)$'; then
   print -u2 'Unsupported import in maintained acceptance sources'; exit 1
 fi
 cp "$project_dir/Tests/Acceptance/AcceptanceApp.swift" "$project_dir/Tests/Acceptance/SyntheticEnvironment.swift" "$package_dir/Sources/Acceptance/"
@@ -39,6 +39,8 @@ swift test --package-path "$package_dir" -Xswiftc -warnings-as-errors
 swift build --package-path "$package_dir" -c release --product Acceptance -Xswiftc -warnings-as-errors
 app="$acceptance_home/Telltale Synthetic Acceptance.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/Resources/Fonts"
+cp -p "$project_dir"/Resources/Fonts/*.ttf "$project_dir/Resources/Fonts/OFL.txt" "$app/Contents/Resources/Fonts/"
 cp "$(swift build --package-path "$package_dir" -c release -Xswiftc -warnings-as-errors --show-bin-path)/Acceptance" "$app/Contents/MacOS/Acceptance"
 cp "$project_dir/Resources/Info.plist" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.example.telltale.acceptance' "$app/Contents/Info.plist"

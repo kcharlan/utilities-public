@@ -27,6 +27,8 @@ release:
 		cp -p "$$(swift build -c release -Xswiftc -warnings-as-errors --show-bin-path)/Telltale" "$$app_tmp"; \
 		mv "$$app_tmp" "build/release/Telltale.app/Contents/MacOS/Telltale"; \
 		cp Resources/Info.plist "build/release/Telltale.app/Contents/Info.plist"; \
+		mkdir -p "build/release/Telltale.app/Contents/Resources/Fonts"; \
+		cp -p Resources/Fonts/*.ttf Resources/Fonts/OFL.txt "build/release/Telltale.app/Contents/Resources/Fonts/"; \
 		codesign --force --sign "$$identity" --timestamp=none "build/release/Telltale.app"; \
 		codesign --verify --strict "build/release/Telltale.app"
 install deploy:

@@ -18,17 +18,20 @@ import TelltaleCore
     private(set) var snapshot: PanelSnapshot
     /// The latest open or read failure; nil after a clean read.
     private(set) var lastError: String?
+    /// The latest collector health report (the dashboard's collector view shows its four lamps).
+    private(set) var health: CollectorHealthReport?
+    /// Counts rereads, so views that read more than the snapshot (the dashboard) know to reload.
+    private(set) var generation = 0
 
     @ObservationIgnored private let paths: TelltalePaths
     @ObservationIgnored private let sources: [SourceSummary]
     @ObservationIgnored private let calendar: Calendar
     @ObservationIgnored private let now: @MainActor () -> Date
-    @ObservationIgnored private let health: @MainActor () async -> CollectorHealthReport?
+    @ObservationIgnored private let assessHealth: @MainActor () async -> CollectorHealthReport?
     @ObservationIgnored private let pollInterval: Duration
     @ObservationIgnored private let watchFiles: Bool
     @ObservationIgnored private var store: Store?
     @ObservationIgnored private var opened: FileIdentity?
-    @ObservationIgnored private var report: CollectorHealthReport?
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var pending = false
     @ObservationIgnored private var poll: Task<Void, Never>?
@@ -46,7 +49,7 @@ import TelltaleCore
         self.sources = sources
         self.calendar = calendar
         self.now = now
-        self.health = health
+        assessHealth = health
         self.pollInterval = pollInterval
         self.watchFiles = watchFiles
         snapshot = .waiting(sources: sources)
@@ -85,7 +88,7 @@ import TelltaleCore
         defer { refreshing = false }
         repeat {
             pending = false
-            report = await health()
+            health = await assessHealth()
             reload()
         } while pending
     }
@@ -103,13 +106,13 @@ import TelltaleCore
             }
             guard let store else { return }
             snapshot = try PanelSnapshot.load(
-                store: store, baseline: BaselineEngine(store: store, calendar: calendar), health: report, sources: sources, now: now(),
+                store: store, baseline: BaselineEngine(store: store, calendar: calendar), health: health, sources: sources, now: now(),
                 calendar: calendar)
             lastError = nil
         } catch StoreError.notInitialized {
             store = nil
             opened = nil
-            snapshot = .waiting(sources: sources, health: report)
+            snapshot = .waiting(sources: sources, health: health)
             lastError = nil
         } catch {
             store = nil
@@ -118,7 +121,15 @@ import TelltaleCore
             lastError = message
             snapshot.footer = message
         }
+        generation += 1
         if watchFiles, poll != nil { rearm() }
+    }
+
+    /// Runs `body` on the open read-only connection, with a fresh baseline engine; nil before the
+    /// collector has created the database, or after a read failure (the snapshot's footer says so).
+    func read<T>(_ body: (Store, BaselineEngine) throws -> T) throws -> T? {
+        guard let store else { return nil }
+        return try body(store, BaselineEngine(store: store, calendar: calendar))
     }
 
     /// A model's display name from its source's naming.

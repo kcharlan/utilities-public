@@ -13,14 +13,16 @@ for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources,
 baseline, the rule engine with its notification policy, the collector run
 (`Telltale --collect`, see "How the collector runs"), the release identifiers and runtime paths,
 and the notification check used for the spec's section 4 spike, the collector's launchd job and
-its health, and the menu-bar status item and panel (see "Menu bar and panel"). The dashboard
-window and Settings arrive in later tasks.
+its health, the menu-bar status item and panel (see "Menu bar and panel"), and the dashboard
+window with its model and collector views (see "Dashboard"). Settings arrives in a later task;
+until then the dashboard's Settings section is a placeholder.
 
 ## Requirements
 
 macOS 27 or newer, Xcode or Command Line Tools with Swift 6 and the macOS 27 SDK,
 Git, Bash and ripgrep. There are no third-party Swift dependencies; zstd decompression is
-vendored as the `CZstd` C target (see Third-party notices).
+vendored as the `CZstd` C target, and the readout font is bundled in `Resources/Fonts` (see
+Third-party notices).
 
 ## Build and test
 
@@ -56,16 +58,18 @@ build packages point `TMPDIR` into that scratch.
   and fails on a mismatch, on a `.c` or `.h` file that is not listed (the `include/czstd.h`
   shim excepted), or when `Package.swift` lacks a define that `VERSION` says was compiled.
 - `check_bundle.sh` assembles and installs a bundle with synthetic signing commands
-  to check release assembly, executable replacement and installer recovery. It is
+  to check release assembly (including the bundled fonts, byte for byte), executable
+  replacement and installer recovery. It is
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that six panel PNGs were written, that the acceptance service tests passed, and
+  27.0), that six panel PNGs and four dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`), which it removes on success
   and failure, so the suite keeps no PNGs; run `make snapshots` to look at them.
 
-`make release` creates `build/release/Telltale.app`.
+`make release` creates `build/release/Telltale.app`, with the two Barlow Semi Condensed
+fonts and `OFL.txt` in `Contents/Resources/Fonts`.
 
 `make snapshots` (`Tests/Snapshots/build.sh`) compiles the maintained app sources, without
 the production lifecycle (`TelltaleMain`, `AppDelegate`), the collector entry, the source
@@ -73,8 +77,12 @@ registry or the notification check, into a separate synthetic renderer in a new 
 directory under the OS temporary directory. It seeds a database per scene from
 `Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
 renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
-lasting-shift prompt (spec section 13's panel states). It checks each layout's width,
-whole-point height and painted pixels, prints every PNG path, the executable and the
+lasting-shift prompt (spec section 13's panel states). It also renders the dashboard window at
+its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
+content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
+provider incident, workload and events), and the collector view's problem state at 760 pt
+(the last run failed). It registers the bundled fonts first and fails if they don't register.
+It checks each panel layout's width, whole-point height and painted pixels, prints every PNG path, the executable and the
 directory, followed by the `rm -r` command that removes it. Look at every PNG; the checks
 don't judge the design. A manual run keeps its directory (SwiftPM's lock files included)
 until you remove it.
@@ -85,7 +93,9 @@ until you remove it.
 signed, identifier `com.example.telltale.acceptance`, which `LaunchAgentManager` refuses) in
 a new 0700 temporary home recorded in its Info.plist as `SyntheticAcceptanceHome`. On first
 launch the app seeds that home with an alerting model, a lasting-shift prompt and the
-collector off. `launchctl` goes through a recording double, and Check now records a
+collector off. Open dashboard and Settings open the dashboard window (its collector view is
+read-only here, since only the installed copy may change launchd state), and Light and Dark
+apply to it too. `launchctl` goes through a recording double, and Check now records a
 synthetic run instead of kickstarting launchd. The builder prints the bundle path and the
 `rm -r` command that removes its home; it never launches the app.
 
@@ -162,7 +172,7 @@ The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with Accept as usual… and Keep as abnormal, and the collector footer.
-Settings and Open dashboard stay disabled until the dashboard window exists.
+Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
 database, its `-wal` file and, while they don't exist yet, the nearest existing parent
@@ -178,13 +188,41 @@ notification permission and posts Collector health notifications. A copy run fro
 such as `build/release/Telltale.app`, shows the same health read-only and changes nothing.
 Only one app instance runs at a time.
 
+## Dashboard
+
+The dashboard window (`DashboardWindowController`, ported from Brew Version's Settings window
+controller) is one reused, resizable window, 1100 × 760 pt by default and at least 860 × 600.
+Opening it switches the app to a regular app with a Dock icon, activates it and brings the
+window to the current Space; closing it returns the app to a menu-bar-only accessory. Open
+dashboard shows the last section shown, or the first model; Settings shows the Settings
+section. It is dark by default and follows the stored appearance setting (spec section 9.4).
+
+The sidebar lists each provider's models (a provider whose source isn't set up shows
+"Not set up", dimmed), then Collector and Settings. A model's view shows the lamp strip with
+Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
+response time against usual, hourly speed-index dots colored by the episode in effect,
+the dashed usual line, provider incident bands and failed-turn markers, drawn with Swift
+Charts), Accept as usual… with its date picker, drift, learning and missing-history notes,
+Prompt sizes (the last 3 hours against usual) beside Workload (median prompt, responses an
+hour, active sessions, cached input, reasoning and subagent shares, effort mix and the usage
+limit), and Events, newest first, with Undo on each live acceptance (undoing an older one
+asks first, since later acceptances are undone too). Readout numbers use Barlow Semi
+Condensed, registered for the process at launch; if it can't be registered, the system font
+stands in and one line is logged.
+
+The collector view shows the four collector lamps, any problem, the schedule, the last and
+next run, the last success and the job label, Run now, Turn on or Turn off, Repair (only when
+the job's plist doesn't match this app), Change interval (opens Settings), Show log file, and
+the last lines of `collector.log`, failures in red. Turn on, Turn off and Repair change launchd
+state, so only the installed copy offers them; any other copy says so and shows the rest
+read-only.
+
 ## Native acceptance
 
 Automated tests, offscreen snapshots and signatures establish no native input result. Run
 these checks by hand on `make acceptance`'s bundle (and the installed release where noted)
 and record each one separately, with the date and macOS build. One missed press fails the
-check. The Settings, Open dashboard and launch-at-login checks join this list with the
-dashboard tasks.
+check. The launch-at-login check joins this list with the Settings task.
 
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
@@ -201,6 +239,17 @@ dashboard tasks.
 - **Test notification** shows a visible notification, and clicking it opens the panel.
   **Test posting failure** shows the warning with Retry, and Retry clears it.
 - **Light** and **Dark**: both appearances are legible, and the lit lamps keep their colors.
+- Open dashboard from the panel: the dashboard window opens on the current desktop Space with
+  a Dock icon, on the first model (Example); pressing it again while the window is behind other
+  windows brings the same window forward. Close it: the Dock icon goes away. Open it from
+  another Space: it moves to that Space.
+- The gear (Settings) in the panel opens the same window on its Settings section.
+- In the dashboard, select Sample, Collector and Settings in the sidebar; switch Speed against
+  usual through 6h, 24h, 7d and 14d; Accept as usual… with a date, then Undo from Events.
+  **Light** and **Dark** apply to the dashboard, and the readouts use Barlow Semi Condensed.
+- The collector view shows the four lamps, the run facts and the log lines; Turn on, Turn off
+  and Repair stay unavailable in the acceptance bundle, with the note saying why, and Show log
+  file reveals the log in Finder.
 - In the installed release only: the collector turns on at first launch, and no launchd job
   exists for the acceptance bundle (`launchctl print gui/$UID/local.utilities.telltale.collector`
   names the installed executable).
@@ -212,6 +261,7 @@ Native results are recorded separately from automated ones.
 | Check | Result |
 | --- | --- |
 | All of the above | Not yet run |
+| Dashboard, Settings and Open dashboard checks | Not yet run |
 
 ## Notification spike
 
@@ -289,5 +339,11 @@ the BSD-3-Clause terms. The license text is `Sources/CZstd/LICENSE`, and
 file, the excluded upstream files, and the compile-time defines that `Package.swift` applies
 (`XXH_NAMESPACE=ZSTD_`, `ZSTD_DISABLE_ASM=1`, `ZSTD_LEGACY_SUPPORT=0`). `Tests/ReleaseChecks/check_vendor.sh`
 keeps the tree and that record in agreement. Only `Sources/CZstd/include/czstd.h`, a shim that
-includes the two public zstd headers, is Telltale's own. These notices do not assign a new
+includes the two public zstd headers, is Telltale's own. The dashboard's readout font, [Barlow Semi Condensed](https://github.com/jpt/barlow) Regular and Medium
+(Copyright 2017 The Barlow Project Authors), is bundled under `Resources/Fonts/` and in the app's
+`Contents/Resources/Fonts`, copied byte for byte from the Google Fonts repository. It is licensed
+under the SIL Open Font License 1.1, whose text is `Resources/Fonts/OFL.txt` and ships beside the
+fonts in the app. `Resources/Fonts/SOURCE.md` records each file's source URL and sha256.
+
+These notices do not assign a new
 license to Telltale.

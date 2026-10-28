@@ -15,13 +15,15 @@ import TelltaleCore
     private let calendar: Calendar
     private let eventSources: [any SystemEventSource]?
     private let watchFiles: Bool
-    private let makeStatus: @MainActor (PanelModel) -> any PopoverPresenting
+    private let makeStatus: @MainActor (PanelModel, any DashboardOpening) -> any PopoverPresenting
     private let quit: @MainActor () -> Void
     private let reportFailure: @MainActor (String) -> Void
 
     private(set) var liveStore: LiveStore?
     let notifier: UserNotifier
     private(set) var monitor: CollectorMonitor?
+    /// The dashboard window (spec section 9.2), which Open dashboard and Settings show.
+    private(set) var dashboard: DashboardWindowController?
     /// Whether this copy posts health notifications and writes their notice (R24: installed only).
     private(set) var monitorStarted = false
     private var status: (any PopoverPresenting)?
@@ -31,15 +33,15 @@ import TelltaleCore
     /// - `installedAppURL`: the bundle whose main executable may manage the collector
     ///   (`/Applications/Telltale.app` in production, a synthetic bundle in tests).
     /// - `eventSources`: nil uses the native wake notification.
-    /// - `makeStatus`: builds the status item around the panel's model.
+    /// - `makeStatus`: builds the status item around the panel's model and the dashboard.
     /// - `reportFailure`: launch problems the panel can't show (the default writes to standard error;
     ///   collector problems reach the panel footer through collector health).
     init(
         paths: TelltalePaths, currentExecutable: URL, installedAppURL: URL, runner: any CommandRunner, sources: [SourceSummary],
         notificationService: any NotificationService, uid: uid_t = getuid(), calendar: Calendar = .current,
         eventSources: [any SystemEventSource]? = nil, watchFiles: Bool = true,
-        makeStatus: @escaping @MainActor (PanelModel) -> any PopoverPresenting = { model in
-            StatusItemController(model: model)
+        makeStatus: @escaping @MainActor (PanelModel, any DashboardOpening) -> any PopoverPresenting = { model, dashboard in
+            StatusItemController(model: model, dashboard: dashboard)
         },
         quit: @escaping @MainActor () -> Void = { NSApp.terminate(nil) },
         reportFailure: @escaping @MainActor (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
@@ -92,12 +94,18 @@ import TelltaleCore
         let live = LiveStore(paths: paths, sources: sources, calendar: calendar, health: { [weak monitor] in await monitor?.evaluate() }, watchFiles: watchFiles)
         let manager = manager
         let actions = UserActions(paths: paths, calendar: calendar, kickstart: { try manager.kickstart() }, changed: { [weak live] in live?.reload() })
-        let status = makeStatus(PanelModel(store: live, actions: actions, notifier: notifier, calendar: calendar))
+        let panel = PanelModel(store: live, actions: actions, notifier: notifier, calendar: calendar)
+        // Turn on, Turn off and Repair change launchd state, so only the installed copy may (R24).
+        let collector = CollectorViewModel(
+            live: live, actions: actions, manager: manager, currentExecutable: currentExecutable, canManage: installed, paths: paths, calendar: calendar)
+        let dashboard = DashboardWindowController(model: DashboardModel(live: live, panel: panel, collector: collector, sources: sources, calendar: calendar))
+        let status = makeStatus(panel, dashboard)
         notifier.showPopover = { [weak status] in status?.showPopover() }
         let events = eventSources.map { SystemEvents(sources: $0) { [weak live] in await live?.refresh() } }
             ?? SystemEvents { [weak live] in await live?.refresh() }
 
         self.monitor = monitor
+        self.dashboard = dashboard
         liveStore = live
         self.status = status
         self.events = events

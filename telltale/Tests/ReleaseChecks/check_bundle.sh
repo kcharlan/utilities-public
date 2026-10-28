@@ -110,6 +110,12 @@ exe="$app/Contents/MacOS/Telltale"
 vtool -show-build "$exe" | rg -q '\bminos 27\.0\b'
 [ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = '27.0' ]
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = 'local.utilities.telltale' ]
+# The bundled readout fonts and their license, byte for byte, and nothing else in Fonts.
+check_fonts() {
+ for font in Resources/Fonts/*.ttf Resources/Fonts/OFL.txt; do cmp "$font" "$app/Contents/Resources/Fonts/${font##*/}"; done
+ [ "$(ls "$app/Contents/Resources/Fonts" | wc -l | tr -d ' ')" = 3 ]
+}
+check_fonts
 # Keep an open reader of the prior executable: release must replace, not truncate.
 printf 'synthetic prior executable\n' > "$scratch/prior"
 rm "$exe"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
@@ -118,6 +124,7 @@ exec 9< "$exe"
 old_inode=$(stat -f %i "$exe")
 make release >> "$scratch/release.log" 2>&1
 [ ! -e "$app/Contents/Resources/synthetic-stale.txt" ]
+check_fonts
 [ "$(stat -f %i "$exe")" != "$old_inode" ]
 cat <&9 > "$scratch/held"; cmp "$scratch/prior" "$scratch/held"; exec 9<&-
 # Successful activation, failed activation recovery, and notice preserve old readers.

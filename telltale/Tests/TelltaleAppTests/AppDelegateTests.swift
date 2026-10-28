@@ -54,7 +54,7 @@ import TelltaleTestSupport
             paths: paths, currentExecutable: current ?? installedExecutable, installedAppURL: installedApp, runner: runner,
             sources: PanelWorld.sources, notificationService: service, uid: 4_242, calendar: Synth.newYork,
             eventSources: [], watchFiles: false,
-            makeStatus: { [presenter] _ in presenter },
+            makeStatus: { [presenter] _, _ in presenter },
             quit: { [unowned self] in quits += 1 },
             reportFailure: { [unowned self] in failures.append($0) })
     }
@@ -86,6 +86,8 @@ import TelltaleTestSupport
             #expect(h.stateChanges.filter { $0 == "bootstrap" }.count == 1)
             #expect(h.plistExists && h.failures.isEmpty && h.quits == 0)
             #expect(delegate.isInstalledCopy && delegate.monitorStarted)
+            // The dashboard's collector view may change launchd state only in the installed copy (R24).
+            #expect(delegate.dashboard?.model.collector.canManage == true)
             let plist = try TestPaths.plistDictionary(at: LaunchAgentManager(paths: h.paths, uid: 4_242, runner: h.runner).plistURL)
             #expect((plist["ProgramArguments"] as? [String])?.first == h.installedExecutable.path)
             #expect(await eventually { h.service.authorizationRequests == 1 })
@@ -108,6 +110,7 @@ import TelltaleTestSupport
             await delegate.liveStore?.refresh()
             #expect(h.stateChanges.isEmpty)
             #expect(!h.plistExists && !delegate.isInstalledCopy)
+            #expect(delegate.dashboard?.model.collector.canManage == false)
             // Through a symlink to the installed copy, it is the installed copy.
             let link = h.directory.appending(path: "linked-Telltale", directoryHint: .notDirectory)
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: h.installedExecutable)

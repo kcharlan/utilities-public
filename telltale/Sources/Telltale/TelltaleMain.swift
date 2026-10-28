@@ -69,6 +69,8 @@ enum LaunchCommand: Equatable {
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
             ApplicationMenu.install()
+            // Barlow Semi Condensed for the dashboard's readouts; the system font stands in on failure.
+            if let fonts = Fonts.bundled { Fonts.register(from: fonts) }
             let paths = TelltalePaths.live()
             let delegate = AppDelegate(
                 paths: paths, currentExecutable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]),

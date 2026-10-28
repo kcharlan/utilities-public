@@ -54,19 +54,30 @@ import TelltaleCore
     func acceptSince(for prompt: ShiftPrompt) -> Date { prompt.firstDay.start(in: calendar) }
 
     func accept(_ prompt: ShiftPrompt, since date: Date) {
+        accept(provider: prompt.provider, model: prompt.model, since: date)
+    }
+
+    /// "Accept as usual…" for any model, from the panel's prompt or the dashboard (spec section 8).
+    func accept(provider: ProviderID, model: String, since date: Date) {
         perform {
-            let acceptance = try actions.accept(provider: prompt.provider, model: prompt.model, since: LocalDay(date, calendar: calendar))
+            let acceptance = try actions.accept(provider: provider, model: model, since: LocalDay(date, calendar: calendar))
             confirmation = Confirmation(
-                text: Copy.acceptance(model: store.displayName(provider: prompt.provider, model: prompt.model), percent: acceptance.percentChange),
+                text: Copy.acceptance(model: store.displayName(provider: provider, model: model), percent: acceptance.percentChange),
                 epochID: acceptance.epochID)
         }
     }
 
     func undoAcceptance() {
         guard let confirmation else { return }
+        undo(epochID: confirmation.epochID)
+    }
+
+    /// Undoes an acceptance (spec section 8), from the confirmation or the dashboard's event list.
+    func undo(epochID: Int64) {
         perform {
-            try actions.undo(epochID: confirmation.epochID)
-            self.confirmation = nil
+            try actions.undo(epochID: epochID)
+            // Undo also undoes the model's later acceptances, so a confirmation at or after it goes.
+            if let shown = confirmation?.epochID, shown >= epochID { confirmation = nil }
         }
     }
 
@@ -247,7 +258,7 @@ struct IntegralSize: Layout {
 
 /// The lamp strip: unlit lamps sit in the housing color; a lit lamp outlines and colors its icon
 /// and caption in its lamp color.
-private struct LampStrip: View {
+struct LampStrip: View {
     let signals: [Signal]
     let snapshot: PanelSnapshot
 

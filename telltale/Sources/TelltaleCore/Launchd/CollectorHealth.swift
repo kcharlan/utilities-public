@@ -63,6 +63,14 @@ public enum CollectorHealth {
     /// Section 7.4's rule name, used as the notification title.
     public static let title = "Collector health"
 
+    /// The next scheduled start: the first interval boundary after `now`, counted from `anchor`, the
+    /// newest run's start (launchd's StartInterval clock).
+    public static func nextRun(after anchor: Date, intervalMinutes: Int, now: Date) -> Date {
+        let interval = TimeInterval(Settings.usableInterval(intervalMinutes) * 60)
+        let elapsed = max(0, now.timeIntervalSince(anchor))
+        return anchor.addingTimeInterval(interval * (floor(elapsed / interval) + 1))
+    }
+
     public static func evaluate(
         enabled: Bool, installedExecutable: URL?, installedAt: Date?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
         intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar
@@ -85,8 +93,7 @@ public enum CollectorHealth {
         if let last = finished.first {
             lastRun = last.outcome == .succeeded ? .green : .red
             if last.outcome == .failed, let anchor = counted.first?.startedAt {
-                let elapsed = max(0, now.timeIntervalSince(anchor))
-                let next = anchor.addingTimeInterval(interval * (floor(elapsed / interval) + 1))
+                let next = nextRun(after: anchor, intervalMinutes: intervalMinutes, now: now)
                 problems.append(Copy.collectorFailing(at: last.finishedAt ?? last.startedAt, reason: last.detail, next: next, calendar: calendar))
             }
         }

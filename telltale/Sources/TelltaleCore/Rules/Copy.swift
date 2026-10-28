@@ -155,6 +155,47 @@ public enum Copy {
     /// The footer while the collector is healthy (visual doc's panel wireframe; not a Copy-table row).
     public static func collectorRunning(minutes: Int) -> String { "Collector running, every \(minutes) min" }
 
+    // MARK: Dashboard (spec sections 9.2 and 9.3; not Copy-table rows)
+
+    /// Spec section 8's usual, as the speed section explains it (the mockup's sentence, with the
+    /// whole baseline key).
+    public static let usualExplanation =
+        "Usual is the median of the last 14 active days for the same prompt size, effort and service tier, leaving out flagged hours."
+    /// An episode that ended silently (spec section 7.2's idle end), in the Events list.
+    public static let episodeEndedIdle = "Ended with no recent responses to judge."
+    /// An episode its rule's switch ended (ruling R13), in the Events list.
+    public static let episodeEndedRuleOff = "Ended because the rule was turned off."
+    /// A streak of failed collector runs in the Events list; `reason` is the last run's detail.
+    public static func collectorRunsFailed(count: Int, from: Date, to: Date, reason: String, calendar: Calendar) -> String {
+        var reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if reason.hasSuffix(".") { reason.removeLast() }
+        if reason.isEmpty { reason = "no detail recorded" }
+        return count == 1
+            ? "The collector run at \(clock(from, calendar)) failed: \(reason)."
+            : "\(count) collector runs failed from \(clock(from, calendar)) to \(clock(to, calendar)): \(reason)."
+    }
+    /// Ruling R24: a copy that isn't the installed app shows the collector but doesn't manage it.
+    public static let collectorManagedByInstalledCopy = "Only Telltale in Applications can turn the collector on or off, or repair it."
+    /// The collector view's schedule line (the mockup's "Every 5 minutes, also at login").
+    public static func collectorSchedule(minutes: Int) -> String {
+        minutes == 1 ? "Every minute, also at login" : "Every \(minutes) minutes, also at login"
+    }
+    /// The collector view's last-run line: "12:40, failed after 0.4 s".
+    public static func collectorLastRun(at start: Date, outcome: RunOutcome, seconds: TimeInterval?, calendar: Calendar) -> String {
+        let duration = seconds.map { String(format: "%.1f s", max(0, $0)) }
+        let detail = switch (outcome, duration) {
+        case (.succeeded, let duration?): "succeeded in \(duration)"
+        case (.failed, let duration?): "failed after \(duration)"
+        case (.running, _): "running"
+        default: outcome.rawValue
+        }
+        return "\(clock(start, calendar)), \(detail)"
+    }
+    /// The sidebar entry of a provider whose source isn't set up (spec section 9.2).
+    public static let notSetUp = "Not set up"
+    /// The sidebar entry of a set-up provider with no stored responses yet.
+    public static let noResponsesYet = "No responses yet"
+
     // MARK: Notifications
 
     public static let notificationCheckTitle = "Telltale notification check"
@@ -179,7 +220,7 @@ public enum Copy {
     // MARK: Formatting
 
     /// `HH:mm` in `calendar`'s time zone.
-    static func clock(_ date: Date, _ calendar: Calendar) -> String {
+    public static func clock(_ date: Date, _ calendar: Calendar) -> String {
         let parts = calendar.dateComponents([.hour, .minute], from: date)
         return String(format: "%02ld:%02ld", parts.hour ?? 0, parts.minute ?? 0)
     }

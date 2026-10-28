@@ -50,6 +50,11 @@ enum SyntheticEnvironment {
         case quiet, alerting, shift
         /// The acceptance app: an alerting model, a shift prompt and the collector off.
         case acceptance
+        /// The dashboard's model view: alerting, plus 14 days of hourly points with a fast spell, a
+        /// slow morning with failed turns and a provider incident, and their events.
+        case dashboard
+        /// The collector view's problem state: loaded and on schedule, but the last run failed.
+        case collectorProblem
     }
 
     static func paths(home: URL) -> TelltalePaths {
@@ -64,9 +69,17 @@ enum SyntheticEnvironment {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    /// Collector health for a scene: running, or off by choice for the acceptance app.
+    /// Collector health for a scene: running, off by choice for the acceptance app, or the problem
+    /// scene's failed last run (as `seed` records it at `snapshotNow`).
     static func health(_ scene: Scene) -> CollectorHealthReport {
-        scene == .acceptance
+        if scene == .collectorProblem {
+            return CollectorHealthReport(
+                installed: .green, loaded: .green, lastRun: .red, onSchedule: .green,
+                problems: [Copy.collectorFailing(
+                    at: snapshotNow.addingTimeInterval(-30), reason: failedRunDetail, next: snapshotNow.addingTimeInterval(270), calendar: calendar)],
+                needsRepair: false, footer: "", notify: true)
+        }
+        return scene == .acceptance
             ? CollectorHealthReport(
                 installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
                 footer: Copy.collectorOff, notify: false)
@@ -110,7 +123,7 @@ enum SyntheticEnvironment {
                     endReason: EpisodeRow.EndReason.cleared, severity: LampColor.amber.rawValue, worstValue: 0.74))
             }
         }
-        let alerting = scene == .alerting || scene == .acceptance
+        let alerting = scene == .alerting || scene == .acceptance || scene == .dashboard
         let exampleNow: Double = alerting ? 31 : 41
         try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118)
         try responses(sample, count: 20, tps: 70, from: now.addingTimeInterval(-3_600 + 90), spacing: 170)
@@ -137,7 +150,89 @@ enum SyntheticEnvironment {
         if scene == .acceptance { try store.set(.collectorEnabled, false) }
         let run = try store.beginRun(at: now.addingTimeInterval(-64))
         try store.finishRun(run, at: now.addingTimeInterval(-60), outcome: .succeeded)
+        if scene == .dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
+        if scene == .collectorProblem { try collectorProblem(store, paths: paths, now: now) }
         return paths
+    }
+
+    /// The collector problem scene's failed run: why it failed, as the run record and log say.
+    static let failedRunDetail = "the synthetic history database was locked"
+
+    /// 14 days of hourly speed points (09:00–16:00), with a fast spell 10 days back and a slow,
+    /// failing morning yesterday under a provider incident; each with its event. A status post and
+    /// a disconnect event round out the event list.
+    static func dashboardHistory(_ store: Store, now: Date, calendar: Calendar) throws {
+        let today = calendar.startOfDay(for: now)
+        var points: [EvalPointRow] = []
+        for daysBack in 1...14 {
+            let day = calendar.date(byAdding: .day, value: -daysBack, to: today)!
+            for hour in 9...16 {
+                let at = day.addingTimeInterval(Double(hour) * 3_600 + 1_200)
+                let wave = sin(Double(daysBack * 8 + hour)) * 0.05
+                let index = daysBack == 10 ? 1.42 + wave : daysBack == 1 && hour < 12 ? 0.66 + wave : 1 + wave
+                points.append(EvalPointRow(
+                    provider: .codex, model: example, at: at, speedIndex: index, mixUsual: 42, medianTPS: 42 * index, samples: 12, state: .known))
+            }
+        }
+        try store.insertEvalPoints(points)
+        let fast = calendar.date(byAdding: .day, value: -10, to: today)!.addingTimeInterval(9 * 3_600)
+        let fastID = try store.insertEpisode(EpisodeRow(
+            rule: RuleID.faster.rawValue, provider: ProviderID.codex.rawValue, scope: example, direction: .faster, onset: fast,
+            firedAt: fast.addingTimeInterval(3_600), endedAt: fast.addingTimeInterval(8 * 3_600), endReason: EpisodeRow.EndReason.cleared,
+            severity: LampColor.blue.rawValue, worstValue: 1.48))
+        try store.insertEvent(EventRow(
+            at: fast.addingTimeInterval(3_600), kind: EventKind.ruleFired, provider: ProviderID.codex.rawValue, scope: example,
+            title: RuleID.faster.title, body: Copy.fasterFired(model: "Example", percent: 42, since: fast, calendar: calendar), episodeID: fastID))
+        let slow = calendar.date(byAdding: .day, value: -1, to: today)!.addingTimeInterval(9 * 3_600)
+        try store.insertEpisode(EpisodeRow(
+            rule: RuleID.slower.rawValue, provider: ProviderID.codex.rawValue, scope: example, direction: .slower, onset: slow,
+            firedAt: slow.addingTimeInterval(1_800), endedAt: slow.addingTimeInterval(3 * 3_600), endReason: EpisodeRow.EndReason.cleared,
+            severity: LampColor.red.rawValue, worstValue: 0.62))
+        try store.upsert(failedTurns: (1...3).map { number in
+            FailedTurnRecord(
+                provider: .codex, threadID: sessionID, turnID: String(format: "turn_synthetic_failed_%02ld", number),
+                startedAt: slow.addingTimeInterval(Double(number) * 2_400), completedAt: slow.addingTimeInterval(Double(number) * 2_400 + 30),
+                model: example, errorCode: "synthetic_capacity", message: "Synthetic model is at capacity")
+        })
+        let failedID = try store.insertEpisode(EpisodeRow(
+            rule: RuleID.failedTurns.rawValue, provider: ProviderID.codex.rawValue, scope: "*", direction: nil, onset: slow.addingTimeInterval(2_400),
+            firedAt: slow.addingTimeInterval(7_230), endedAt: slow.addingTimeInterval(4 * 3_600), endReason: EpisodeRow.EndReason.cleared,
+            severity: LampColor.red.rawValue, worstValue: 3))
+        try store.insertEvent(EventRow(
+            at: slow.addingTimeInterval(7_230), kind: EventKind.ruleFired, provider: ProviderID.codex.rawValue, scope: "*",
+            title: RuleID.failedTurns.title, body: Copy.failedTurns(count: 3, reasons: ["Synthetic model is at capacity"]), episodeID: failedID))
+        let link = URL(string: "https://status.example.com/incidents/inc_synthetic_01")!
+        try store.upsert(incidents: [IncidentRecord(
+            source: "status.example.com", id: "inc_synthetic_01", name: "Synthetic elevated latency", status: "resolved",
+            publishedAt: slow.addingTimeInterval(1_200), updatedAt: slow.addingTimeInterval(3 * 3_600), link: link,
+            history: [StatusChange(at: slow.addingTimeInterval(1_200), status: "investigating")], impacts: [])])
+        try store.insertEvent(EventRow(
+            at: slow.addingTimeInterval(1_200), kind: EventKind.statusPost, provider: ProviderID.codex.rawValue, scope: "*",
+            title: "Demo status", body: Copy.statusPost(source: "Demo", title: "Synthetic elevated latency"), link: link))
+        let disconnectsID = try store.insertEpisode(EpisodeRow(
+            rule: RuleID.disconnects.rawValue, provider: ProviderID.codex.rawValue, scope: "*", direction: nil, onset: now.addingTimeInterval(-7_200),
+            firedAt: now.addingTimeInterval(-6_900), endedAt: now.addingTimeInterval(-5_400), endReason: EpisodeRow.EndReason.cleared,
+            severity: LampColor.amber.rawValue, worstValue: 3))
+        try store.insertEvent(EventRow(
+            at: now.addingTimeInterval(-6_900), kind: EventKind.ruleFired, provider: ProviderID.codex.rawValue, scope: "*",
+            title: RuleID.disconnects.title, body: Copy.disconnectsFired(count: 3, windowMinutes: 30), episodeID: disconnectsID))
+    }
+
+    /// A failed run after the succeeded one, and the log lines both runs wrote.
+    static func collectorProblem(_ store: Store, paths: TelltalePaths, now: Date) throws {
+        let failed = try store.beginRun(at: now.addingTimeInterval(-30))
+        try store.finishRun(failed, at: now.addingTimeInterval(-29.6), outcome: .failed, detail: failedRunDetail)
+        let stamp = Date.ISO8601FormatStyle(timeZone: calendar.timeZone)
+        let lines = [
+            (now.addingTimeInterval(-64), "run started"),
+            (now.addingTimeInterval(-62), "scanned 3 synthetic rollouts, 40 responses, 0 failed turns"),
+            (now.addingTimeInterval(-61), "status page: no open incidents"),
+            (now.addingTimeInterval(-60), "run succeeded in 4.0 s"),
+            (now.addingTimeInterval(-30), "run started"),
+            (now.addingTimeInterval(-29.6), "run failed: \(failedRunDetail)"),
+        ]
+        try FileManager.default.createDirectory(at: paths.log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(lines.map { "\(stamp.format($0.0)) \($0.1)\n" }.joined().utf8).write(to: paths.log)
     }
 
     /// An open amber episode with its fired event.

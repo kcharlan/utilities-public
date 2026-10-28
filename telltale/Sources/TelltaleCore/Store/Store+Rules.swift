@@ -154,7 +154,7 @@ public struct EventRow: Sendable, Equatable, Hashable {
 }
 
 extension Store {
-    private static let episodeColumns = """
+    static let episodeColumns = """
         id, rule, provider, scope, direction, onset_at, fired_at, ended_at, end_reason, severity, worst_value, detail_json
         """
 
@@ -212,7 +212,7 @@ extension Store {
         ]
     }
 
-    private static func episode(_ row: Row) throws -> EpisodeRow {
+    static func episode(_ row: Row) throws -> EpisodeRow {
         var direction: Direction?
         if let raw = row.optionalText(4) {
             guard let parsed = Direction(rawValue: raw) else {

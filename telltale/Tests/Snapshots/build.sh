@@ -22,10 +22,13 @@ for source in "$project_dir"/Sources/Telltale/*.swift; do
   case "${source:t}" in TelltaleMain.swift|AppDelegate.swift|CollectorEntry.swift|Registry.swift|NotificationCheck.swift) continue ;; esac
   cp "$source" "$package_dir/Sources/Snapshots/"
 done
-if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Observation|Darwin|Synchronization|SQLite3|UserNotifications|TelltaleCore)$'; then
+if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Charts|Observation|Darwin|Synchronization|SQLite3|UserNotifications|TelltaleCore)$'; then
   print -u2 'Unsupported import in maintained snapshot sources'; exit 1
 fi
 cp "$project_dir/Tests/Snapshots/Snapshots.swift" "$project_dir/Tests/Acceptance/SyntheticEnvironment.swift" "$package_dir/Sources/Snapshots/"
+# The bundled readout fonts, registered by the snapshot executable from the home.
+mkdir -p "$snapshot_home/Fonts"
+cp "$project_dir"/Resources/Fonts/*.ttf "$project_dir/Resources/Fonts/OFL.txt" "$snapshot_home/Fonts/"
 cat > "$package_dir/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.0
 import PackageDescription

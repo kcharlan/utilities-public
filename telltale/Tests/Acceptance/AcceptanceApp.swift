@@ -16,6 +16,7 @@ import UserNotifications
     @MainActor static func main() {
         let app = NSApplication.shared
         ApplicationMenu.install()
+        if let fonts = Fonts.bundled { Fonts.register(from: fonts) }
         let delegate = AcceptanceDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
@@ -69,6 +70,7 @@ import UserNotifications
     let notificationService = SyntheticNotificationService(native: NativeNotificationService())
     let harness: AcceptanceHarness
     private var status: StatusItemController?
+    private var dashboard: DashboardWindowController?
     override init() {
         let home = SyntheticEnvironment.requireHome(Bundle.main.object(forInfoDictionaryKey: "SyntheticAcceptanceHome"))
         do {
@@ -84,8 +86,14 @@ import UserNotifications
         let controls = AnyView(VStack {
             Text("Synthetic acceptance only").font(.caption)
             HStack {
-                Button("Light") { self.status?.setAppearance(NSAppearance(named: .aqua)) }
-                Button("Dark") { self.status?.setAppearance(NSAppearance(named: .darkAqua)) }
+                Button("Light") {
+                    self.status?.setAppearance(NSAppearance(named: .aqua))
+                    self.dashboard?.setAppearance(NSAppearance(named: .aqua))
+                }
+                Button("Dark") {
+                    self.status?.setAppearance(NSAppearance(named: .darkAqua))
+                    self.dashboard?.setAppearance(NSAppearance(named: .darkAqua))
+                }
                 Button("Add red alert") { try? harness.addRedAlert() }
             }
             HStack {
@@ -96,8 +104,15 @@ import UserNotifications
                 }
             }
         }.padding(10))
-        let status = StatusItemController(model: PanelModel(store: harness.live, actions: harness.actions, notifier: harness.notifier), accessory: controls)
+        let panel = PanelModel(store: harness.live, actions: harness.actions, notifier: harness.notifier)
+        // The synthetic bundle may not manage launchd (R24); its collector view is read-only.
+        let collector = CollectorViewModel(
+            live: harness.live, actions: harness.actions, manager: LaunchAgentManager(paths: harness.paths, uid: getuid(), runner: harness.runner),
+            currentExecutable: Bundle.main.executableURL ?? harness.paths.database, canManage: false, paths: harness.paths)
+        let dashboard = DashboardWindowController(model: DashboardModel(live: harness.live, panel: panel, collector: collector, sources: SyntheticEnvironment.sources))
+        let status = StatusItemController(model: panel, dashboard: dashboard, accessory: controls)
         self.status = status
+        self.dashboard = dashboard
         harness.notifier.showPopover = { [weak status] in status?.showPopover() }
         harness.live.start()
         status.showPopover()
