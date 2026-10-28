@@ -27,7 +27,10 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 chmod 700 "$snapshot_home"
-mkdir -p "$package_dir/Sources/PrimeMonitorCore" "$package_dir/Sources/Snapshots"
+# SwiftPM writes package lock files and TemporaryDirectory.* folders to TMPDIR; keep them in the
+# home, in a directory the finish trap removes with the scratch package.
+mkdir -p "$package_dir/Sources/PrimeMonitorCore" "$package_dir/Sources/Snapshots" "$snapshot_home/tmp"
+export TMPDIR="$snapshot_home/tmp/"
 cp "$project_dir"/Sources/PrimeMonitorCore/*.swift "$package_dir/Sources/PrimeMonitorCore/"
 for source in "$project_dir"/Sources/PrimeMonitor/*.swift; do
   case "${source:t}" in PrimeMonitorApp.swift|AppDelegate.swift|LiveCheck.swift) continue ;; esac

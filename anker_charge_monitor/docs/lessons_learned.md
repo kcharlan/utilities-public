@@ -551,3 +551,12 @@ not reported its PID before the timeout killed it (`CredentialFailure.timedOut`)
 The cancel case now uses a 60s timeout, so only cancellation can end it, and the
 timeout case uses 2s, with 5s to wait for the PID. Give any timing test a margin
 well above process startup on a loaded machine.
+
+## 2026-10-28: The prefix check passed while the toolchain leaked
+
+`check_tmpdir.sh` matched only `prime-` names, so `make test` passed while it left about 21 entries
+in temporary space: SwiftPM lock files named after the package path (`..._anker_charge_monitor_
+.build.lock`, `..._prime-snapshots.XXXXXX_package_.build.lock`), empty `TemporaryDirectory.*`
+folders and one marker per compile in the Darwin user temp dir. The suite and `make snapshots` now
+run under the repository's `tools/check_no_temp_leaks.sh`, and the snapshot builder points
+SwiftPM's `TMPDIR` inside its home. See the root `docs/lessons_learned.md` entry of the same date.

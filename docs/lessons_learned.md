@@ -1467,3 +1467,20 @@ fall back to the closing list's row or the results heading. Search option
 navigation must ignore an empty suggestion list, and its active descendant
 must name an existing option. Regress these transitions in the real browser,
 including recovery from empty suggestions to a selectable result.
+
+## 2026-10-28: A prefix-only temp check misses the toolchain's own leftovers
+
+Brew Version's and Anker's `check_tmpdir.sh` watched only their own `brew-version-` and `prime-`
+names, so `make test` passed while each run left dozens of entries in temporary space: empty
+`TemporaryDirectory.*` folders and SwiftPM lock files named after the package path
+(`..._brew_version_.build.lock`, `..._brew-version-acceptance.XXXXXX_package_.build.lock`), plus
+one marker-only `TemporaryDirectory.*` per compile in `getconf DARWIN_USER_TEMP_DIR`, which
+ignores `TMPDIR`. A leak check has to own where the toolchain writes, not just match names: run
+the suite with `TMPDIR` in a private directory the check removes, point every nested builder's
+SwiftPM at a directory inside its own home, and sweep only the run's new marker-only Darwin
+folders. `tools/check_no_temp_leaks.sh` does all three for both projects; Telltale's copy predates
+it. Moving the suite's `TMPDIR` into the checkout broke two hidden assumptions: the snapshot
+renderers require their home under `FileManager.default.temporaryDirectory`, which stays the
+Darwin user temp dir, so a test's snapshot home must be made there explicitly; and Anker's
+secrets-scanner test expected no Git repository above its scratch, so it now sets
+`GIT_CEILING_DIRECTORIES`.

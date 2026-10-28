@@ -7,22 +7,28 @@ export SIGN_IDENTITY
 # identity resolves, so a missing one leaves no .build behind.
 PROJECT_TMPDIR := $(CURDIR)/.build/tmp/
 build release: export TMPDIR := $(PROJECT_TMPDIR)
+# The repository's shared leak check (see the comment at its top). The suite runs under a private
+# TMPDIR inside .build/tmp/, removed afterwards with the toolchain's leftovers, and fails on any
+# prime- or anker_charge_monitor entry it leaves in either temp dir. The snapshot builder keeps its
+# printed home in TMPDIR on purpose, so it gets --sweep-only. Every run removes its empty
+# TemporaryDirectory.* markers from the Darwin user temp dir, which compiles write whatever TMPDIR
+# says.
+LEAK_CHECK := $(CURDIR)/../tools/check_no_temp_leaks.sh
+TEMP_NAMES := (^|_)(prime|anker[-_]charge[-_]monitor)[-_]
 build:
 	@mkdir -p "$(PROJECT_TMPDIR)"
 	swift build -Xswiftc -warnings-as-errors
-# The leak check wraps the whole suite and fails on anything it leaves in
-# temporary space.
 test:
-	Tests/ReleaseChecks/check_tmpdir.sh $(MAKE) --no-print-directory test-suite
+	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" "$(LEAK_CHECK)" --names '$(TEMP_NAMES)' $(MAKE) --no-print-directory test-suite
 test-suite:
 	swift test -Xswiftc -warnings-as-errors
 	Tests/ReleaseChecks/check_secrets_tests.sh
-	Tests/ReleaseChecks/check_tmpdir_tests.sh
 	Tests/ReleaseChecks/check_bundle.sh
+	../tools/tests/test_check_no_temp_leaks.sh
 clean:
 	rm -rf .build build
 snapshots:
-	Tests/Snapshots/build.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Snapshots/build.sh
 signing-preflight:
 	@tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"
 release:

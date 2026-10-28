@@ -8,9 +8,16 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 bash "$root/Tests/ReleaseChecks/check_rename.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-bundle.XXXXXX")
 chmod 700 "$scratch"
-trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
+# The snapshot renderer requires its home in Foundation's temporary directory, the Darwin user
+# temp dir whatever TMPDIR says (`make test` points TMPDIR into .build/tmp), so it gets its own
+# scratch there, removed with this one.
+snapshot_scratch=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)prime-bundle-snapshots.XXXXXX")
+chmod 700 "$snapshot_scratch"
+trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch" "$snapshot_scratch"' EXIT
 mkdir -p "$scratch/project" "$scratch/bin" "$scratch/home"
 for item in Package.swift Makefile Sources Resources tools Tests; do cp -Rp "$root/$item" "$scratch/project/"; done
+# The Makefile's harness targets use the repository's shared leak check, found at ../tools/.
+mkdir -p "$scratch/tools"; cp -p "$root/../tools/check_no_temp_leaks.sh" "$scratch/tools/"
 cat > "$scratch/bin/security" <<'MOCK'
 #!/bin/bash
 [ "${SYNTHETIC_SECURITY_FAILURE:-0}" = 0 ] || exit 89
@@ -142,9 +149,12 @@ rg -q -- '--force --sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=no
 rg -q -- '--verify --strict' "$SYNTHETIC_SIGN_LOG"
 # Port: BV release.test.mjs, "maintained snapshot builder uses the same supported
 # runtime", 579ebb7. This invokes the public target once as part of the full gate,
-# in a caller-owned home inside this scratch so the trap removes it with the rest.
+# in a caller-owned home inside the snapshot scratch so the trap removes it with the rest.
 # Run `make snapshots` by hand to keep the PNGs for visual inspection.
-PRIME_MONITOR_HARNESS_HOME="$scratch/snapshots" make snapshots > "$scratch/snapshots.log" 2>&1
+# SwiftPM's lock files and TemporaryDirectory.* folders stay in that home, not in TMPDIR.
+mkdir -m 700 "$scratch/snapshots-tmp"
+TMPDIR="$scratch/snapshots-tmp" PRIME_MONITOR_HARNESS_HOME="$snapshot_scratch/snapshots" make snapshots > "$scratch/snapshots.log" 2>&1
+[ -z "$(ls -A "$scratch/snapshots-tmp")" ] || { echo "FAIL: snapshot build left TMPDIR entries: $(ls -A "$scratch/snapshots-tmp")"; exit 1; }
 cat "$scratch/snapshots.log"
 snapshot_binary=$(sed -n 's/^Snapshot executable: //p' "$scratch/snapshots.log")
 [ -x "$snapshot_binary" ]

@@ -17,10 +17,11 @@ else
   owned=true
 fi
 package_dir="$acceptance_home/package"
+build_tmp="$acceptance_home/tmp"
 finish() {
   local code=$?
   if $owned; then
-    if (( code )); then rm -rf -- "$acceptance_home"; else rm -rf -- "$package_dir"; fi
+    if (( code )); then rm -rf -- "$acceptance_home"; else rm -rf -- "$package_dir" "$build_tmp"; fi
   fi
   return $code
 }
@@ -28,7 +29,10 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 chmod 700 "$acceptance_home"
-mkdir -p "$package_dir/Sources/BrewVersionCore" "$package_dir/Sources/Acceptance"
+# SwiftPM writes package lock files and TemporaryDirectory.* folders to TMPDIR; keep them in the
+# home, removed with the scratch package.
+mkdir -p "$package_dir/Sources/BrewVersionCore" "$package_dir/Sources/Acceptance" "$build_tmp"
+export TMPDIR="$build_tmp/"
 cp "$project_dir"/Sources/BrewVersionCore/*.swift "$package_dir/Sources/BrewVersionCore/"
 for source in "$project_dir"/Sources/BrewVersion/*.swift; do
   case "${source:t}" in BrewVersionApp.swift|AppDelegate.swift) continue ;; esac

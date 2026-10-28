@@ -54,15 +54,15 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
 - `brew_version` (Swift command line, from repository root; see its README):
-  - `make -C brew_version test` (complete Swift Testing suite and isolated release build integration tests; no skips).
+  - `make -C brew_version test` (complete Swift Testing suite, isolated release build integration tests and the shared temp-leak checker's self-test; no skips). It runs under `tools/check_no_temp_leaks.sh`, which gives the suite a private `$TMPDIR` inside the project's ignored `.build/tmp/` that it then removes, fails if the run leaves any Brew Version entry in `$TMPDIR` or the Darwin user temp dir, and removes only the run's new marker-only `TemporaryDirectory.*` there.
   - `make -C brew_version release` (signed CLI/app release and signature verification).
-  - `make -C brew_version acceptance` (synthetic service test and signed harness build in a fresh private OS temporary directory; no GUI launch or real state/inventory).
+  - `make -C brew_version acceptance` (synthetic service test and signed harness build in a fresh private OS temporary directory; no GUI launch or real state/inventory). It and `snapshots` run their builder under `tools/check_no_temp_leaks.sh --sweep-only`: the printed home is the only entry they may leave.
   - `make -C brew_version snapshots` (twenty maintained-view PNGs in private OS temporary space, light/dark pixel and layout checks; inspect every state visually).
   - `brew_version/build/release/brew-version --help` and `brew_version/build/release/brew-version --version` (offline CLI smoke checks).
   - Native GUI and current minimum macOS 27 runtime acceptance remain separate release gates described in the project README; do not install an older OS on the owner's development machine for acceptance.
   - Deployment changes require all Static deployment/fleet audit tooling commands below, including the Brew Version installer suite and affected Market Atlas suites. Real deployment needs separate authorization.
 - `anker_charge_monitor` (native app; see its README):
-  - `make -C anker_charge_monitor test` (all Swift tests, scanner regressions, release/install checks and the maintained snapshot/runtime gate).
+  - `make -C anker_charge_monitor test` (all Swift tests, scanner regressions, release/install checks, the maintained snapshot/runtime gate and the shared temp-leak checker's self-test), under `tools/check_no_temp_leaks.sh` as for Brew Version. `make -C anker_charge_monitor snapshots` runs its builder under `--sweep-only`; the printed home is the only entry it may leave.
   - Deployment changes require all Static deployment/fleet audit tooling commands below, including the app installer lifecycle suite and complete Market Atlas suites when the fleet child runner changes. Real vault/cloud, GUI and launch-at-login acceptance remain separately authorized live checks.
 - `telltale` (native app; see its README):
   - Full suite: `make -C telltale test` (all Swift tests, then every script in `telltale/Tests/ReleaseChecks/`: test-isolation scanner and its regressions, notification-check runner, vendored zstd digests, release/install structure checks, the temp-leak checker's self-test, and the snapshot and acceptance builders below inside a removed scratch). `build`, `release` and the whole test run are wrapped in `telltale/tools/check_no_temp_leaks.sh`, which runs them under a private `$TMPDIR` inside the project's ignored `.build/tmp/` that it then removes, fails if the run leaves any Telltale entry in `$TMPDIR` or the Darwin user temp dir, and removes only the run's new marker-only `TemporaryDirectory.*` there (the snapshot and acceptance builders get only that sweep).
@@ -94,6 +94,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `npm run test:synthetic` (complete invented subset and both original compiler modules; run root audit suites separately; this does not replace historical acceptance).
   - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).
   - Installed browser acceptance requires separate live authorization and uses `http://127.0.0.1:7711/calculators/backtest/index.html`, checking response bytes as well as application behavior. Preserve the shared folder routing.
+- Shared temp-leak checker (`tools/check_no_temp_leaks.sh`, used by the Brew Version and Anker Makefiles; Telltale keeps its own copy):
+  - `tools/tests/test_check_no_temp_leaks.sh` (checker cases with a fake TMPDIR and Darwin temp dir, and both Makefiles' `test` and harness targets with a fake `swift`).
+  - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
 - Static deployment/fleet audit tooling:
   - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs` (native and calculator-page installer lifecycles and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`

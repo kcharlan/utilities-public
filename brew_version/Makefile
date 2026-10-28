@@ -4,18 +4,24 @@
 # release keep them in the ignored .build/tmp/.
 PROJECT_TMPDIR := $(CURDIR)/.build/tmp/
 build release: export TMPDIR := $(PROJECT_TMPDIR)
+# The repository's shared leak check (see the comment at its top). The suite runs under a private
+# TMPDIR inside .build/tmp/, removed afterwards with the toolchain's leftovers, and fails on any
+# brew-version entry it leaves in either temp dir. The harness builders keep their printed homes in
+# TMPDIR on purpose, so they get --sweep-only. Every run removes its empty TemporaryDirectory.*
+# markers from the Darwin user temp dir, which compiles write whatever TMPDIR says.
+LEAK_CHECK := $(CURDIR)/../tools/check_no_temp_leaks.sh
+TEMP_NAMES := (^|_)brew[-_]version[-_]
 build:
 	@mkdir -p "$(PROJECT_TMPDIR)"
 	swift build
 
-# The leak check wraps the whole suite and fails on anything it leaves in
-# temporary space.
 test:
-	Tests/ReleaseChecks/check_tmpdir.sh $(MAKE) --no-print-directory test-suite
+	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" "$(LEAK_CHECK)" --names '$(TEMP_NAMES)' $(MAKE) --no-print-directory test-suite
 
 test-suite:
 	swift test
 	node --test Tests/ReleaseChecks/*.test.mjs
+	../tools/tests/test_check_no_temp_leaks.sh
 
 clean:
 	rm -rf .build build
@@ -39,12 +45,12 @@ release:
 	codesign --verify --strict "build/release/Brew Version.app"
 
 acceptance:
-	Tests/Acceptance/build.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Acceptance/build.sh
 
 .PHONY: settings-prototype
 settings-prototype:
-	Tests/Acceptance/build-settings-prototype.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Acceptance/build-settings-prototype.sh
 
 .PHONY: snapshots
 snapshots:
-	Tests/Snapshots/build.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Snapshots/build.sh
