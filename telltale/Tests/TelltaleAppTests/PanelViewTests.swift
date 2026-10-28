@@ -25,9 +25,11 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let host = NSHostingView(rootView: PanelView(model: model, openSettings: {}, openDashboard: nil))
             #expect(host.fittingSize.width == 340)
             let quietHeight = host.fittingSize.height
-            // The hosted view has no accessibility tree outside a live window, so the rendered text is
-            // inspected in the snapshot harness (Tests/Snapshots); here the panel lays out at its width
-            // and follows the model's empty message.
+            // The rendered text isn't asserted here: even hosted in an offscreen window, SwiftUI
+            // publishes no accessibility children without an assistive client (probed: the hosting
+            // view reports 0), and AppKit exposes no text otherwise. The snapshot harness
+            // (Tests/Snapshots) checks each scene's snapshot and its PNGs are read by eye; here the
+            // panel lays out at its width and follows the model's empty message.
 
             // A two-line alert replaces the one-line empty message.
             try PanelWorld.addAlert(try Store.open(paths.database, mode: .readWrite))
@@ -79,7 +81,14 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let actions = PanelWorld.actions(paths)
             #expect(throws: StoreError.notInitialized) { try actions.set(.collectorEnabled, false) }
             #expect(throws: StoreError.notInitialized) { try actions.requestRebuild() }
-            #expect(!FileManager.default.fileExists(atPath: paths.database.path))
+            #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))
+
+            // A file the collector created but hasn't migrated is left alone too (ruling R27).
+            try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+            #expect(FileManager.default.createFile(atPath: paths.database.path, contents: Data()))
+            #expect(throws: StoreError.notInitialized) { try actions.set(.collectorEnabled, false) }
+            #expect(try FileManager.default.attributesOfItem(atPath: paths.database.path)[.size] as? Int == 0)
+            try FileManager.default.removeItem(at: paths.database)
 
             try PanelWorld.seed(paths)
             try actions.set(.collectorEnabled, false)
@@ -116,7 +125,6 @@ private struct SyntheticKickstartFailure: LocalizedError {
         }
     }
 
-    /// Sep 1–14 at 40 tok/s, then Sep 15–17 at 30 tok/s inside a slower episode each day.
     /// The snapshot harness showed a 2 tok/s wobble around usual 42 drawn as a full-height wave:
     /// the scale has a floor of a quarter of usual, so noise stays small and a 26% drop still fills it.
     @Test func sparklineKeepsSmallWobblesSmall() {
@@ -129,6 +137,7 @@ private struct SyntheticKickstartFailure: LocalizedError {
         #expect(drop.minY >= rect.minY && drop.maxY <= rect.maxY)
     }
 
+    /// Sep 1–14 at 40 tok/s, then Sep 15–17 at 30 tok/s inside a slower episode each day.
     private func seedShift(_ paths: TelltalePaths) throws {
         let store = try Store.open(paths.database, mode: .readWrite)
         var synth = Synth()

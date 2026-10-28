@@ -39,7 +39,7 @@ import TelltaleCore
         notificationService: any NotificationService, uid: uid_t = getuid(), calendar: Calendar = .current,
         eventSources: [any SystemEventSource]? = nil, watchFiles: Bool = true,
         makeStatus: @escaping @MainActor (PanelModel) -> any PopoverPresenting = { model in
-            StatusItemController(store: model.store, actions: model.actions, notifier: model.notifier, calendar: model.calendar)
+            StatusItemController(model: model)
         },
         quit: @escaping @MainActor () -> Void = { NSApp.terminate(nil) },
         reportFailure: @escaping @MainActor (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }

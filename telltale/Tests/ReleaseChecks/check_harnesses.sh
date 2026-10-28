@@ -2,8 +2,9 @@
 set -euo pipefail
 # Port: anker_charge_monitor/Tests/ReleaseChecks/check_bundle.sh, maintained-snapshot runtime block
 # (itself BV release.test.mjs, "maintained snapshot builder uses the same supported runtime"), 4f965e8.
-# Adaptation: Telltale's builders, run from the project; both write only to private OS temporary
-# homes, which are kept so the PNGs and the acceptance bundle can be inspected afterwards. The
+# Adaptation: Telltale's builders, run from the project. Ruling R28: both build inside this
+# script's scratch (TELLTALE_HARNESS_ROOT), which the trap removes on success and failure, so a
+# suite run leaves nothing in TMPDIR; run `make snapshots` by hand to keep PNGs to look at. The
 # synthetic acceptance build (with its generated service tests) runs here too, and its executable
 # must carry the same supported runtime. PNG inspection and real-click acceptance stay README checks.
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -11,6 +12,7 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-harnesses.XXXXXX")
 chmod 700 "$scratch"
 trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
 cd "$root"
+export TELLTALE_HARNESS_ROOT="$scratch"
 
 make snapshots > "$scratch/snapshots.log" 2>&1
 grep -v '^\[' "$scratch/snapshots.log" | grep -E '\.png |^Validated|^Snapshot executable|^Private snapshots'
@@ -29,4 +31,6 @@ app=$(sed -n 's/^Acceptance app: //p' "$scratch/acceptance.log")
 codesign --verify --strict "$app"
 vtool -show-build "$app/Contents/MacOS/Acceptance" | grep -Eq '\bminos 27\.0\b'
 vtool -show-build "$app/Contents/MacOS/Acceptance" | grep -Eq '\bsdk 27\.0\b'
-echo 'snapshot and acceptance harness checks passed (synthetic only; PNGs and native clicks are inspected separately)'
+case "$snapshot_binary" in "$scratch"/*|"$(cd "$scratch" && pwd -P)"/*) ;; *) echo "FAIL: snapshot build outside the scratch: $snapshot_binary"; exit 1 ;; esac
+case "$app" in "$scratch"/*) ;; *) echo "FAIL: acceptance build outside the scratch: $app"; exit 1 ;; esac
+echo 'snapshot and acceptance harness checks passed (synthetic only; built in a removed scratch; PNGs and native clicks are inspected separately)'

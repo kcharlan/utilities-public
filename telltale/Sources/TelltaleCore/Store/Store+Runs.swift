@@ -37,6 +37,15 @@ extension Store {
         if changed == 0 { throw StoreError.invalidData("No collector run \(id) to finish") }
     }
 
+    /// When the newest succeeded run finished: the panel's "Checked HH:MM", however many failed or
+    /// skipped runs came after it.
+    public func lastSucceededRunFinish() throws -> Date? {
+        try query("""
+            SELECT finished_at FROM collector_runs WHERE outcome = ? AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC, id DESC LIMIT 1
+            """, [.text(RunOutcome.succeeded.rawValue)]) { $0.date(0) }.first
+    }
+
     /// The latest runs, newest first. Collector health passes `includingSkipped: false`: skipped runs
     /// count for nothing there, so they mustn't use up the limit.
     public func recentRuns(limit: Int, includingSkipped: Bool = true) throws -> [CollectorRunRecord] {

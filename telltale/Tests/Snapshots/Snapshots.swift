@@ -45,9 +45,10 @@ import TelltaleCore
         guard snapshot.checkedAt != nil, snapshot.models.count == 2 else { fatalError("\(state): expected a checked time and two model rows") }
         switch state {
         case .quiet:
-            guard snapshot.alerts.isEmpty, snapshot.shift == nil else { fatalError("quiet: expected no alerts and no shift prompt") }
+            guard snapshot.alerts.isEmpty, snapshot.shift == nil, snapshot.models.allSatisfy({ $0.color == nil }) else { fatalError("quiet: expected no alerts, rows or shift prompt in color") }
         case .alerting:
-            guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber, snapshot.lamps[.load] == .amber else { fatalError("alerting: expected Speed and Load amber") }
+            guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber, snapshot.lamps[.load] == .amber,
+                  snapshot.models.map(\.color) == [.amber, nil] else { fatalError("alerting: expected Speed and Load amber and an amber Example row") }
         case .shift:
             guard snapshot.alerts.isEmpty, snapshot.shift?.days == 3, snapshot.shiftText != nil else { fatalError("shift: expected a 3-day lasting-shift prompt") }
         case .acceptance:

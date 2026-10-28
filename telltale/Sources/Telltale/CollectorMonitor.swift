@@ -27,6 +27,10 @@ import UserNotifications
     private let now: @MainActor () -> Date
     /// The previous check found the notify condition: one more makes an episode.
     private var unconfirmed = false
+    /// A notice change made while the database doesn't exist yet (ruling R27: the app never creates
+    /// it): held here, read in place of the stored notice, and written once the collector has
+    /// created the database. `.some(nil)` holds a cleared notice.
+    private var heldNotice: HealthNoticeState??
     private var loop: Task<Void, Never>?
 
     /// The latest report, for the UI.
@@ -67,6 +71,7 @@ import UserNotifications
     @discardableResult func check() async -> CollectorHealthReport? {
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
+            if let held = heldNotice { try save(held) }
             try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {
             lastError = error.localizedDescription
@@ -174,16 +179,23 @@ import UserNotifications
         } catch StoreError.notInitialized {
             return Inputs(
                 enabled: SettingKey.collectorEnabled.defaultValue, intervalMinutes: SettingKey.intervalMinutes.defaultValue,
-                rule: RuleSettings.defaults.collectorHealth, runs: [], sourceStates: [], notice: nil)
+                rule: RuleSettings.defaults.collectorHealth, runs: [], sourceStates: [], notice: heldNotice ?? nil)
         }
+        let stored = try store.value(.collectorHealthNotice)
         return Inputs(
             enabled: try store.value(.collectorEnabled), intervalMinutes: try store.value(.intervalMinutes),
             rule: try store.value(.rules).collectorHealth, runs: try store.recentRuns(limit: Self.runWindow, includingSkipped: false),
-            sourceStates: try store.sourceStates(), notice: try store.value(.collectorHealthNotice))
+            sourceStates: try store.sourceStates(), notice: heldNotice ?? stored)
     }
 
-    /// Writes the notice through a short-lived read-write connection, as the app does for settings.
+    /// Writes the notice through a short-lived connection to the existing database, as the app does
+    /// for settings; before the collector has created it, holds the notice in memory instead.
     private func save(_ notice: HealthNoticeState?) throws {
-        try Store.open(paths.database, mode: .readWrite).set(.collectorHealthNotice, notice)
+        do {
+            try Store.open(paths.database, mode: .readWriteExisting).set(.collectorHealthNotice, notice)
+            heldNotice = nil
+        } catch StoreError.notInitialized {
+            heldNotice = .some(notice)
+        }
     }
 }

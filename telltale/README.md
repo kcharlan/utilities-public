@@ -36,11 +36,20 @@ make acceptance
 ```
 
 `make test` compiles with warnings as errors, runs every Swift test, then runs each
-script in `Tests/ReleaseChecks/`:
+script in `Tests/ReleaseChecks/`. The whole run is wrapped in `tools/check_no_temp_leaks.sh`,
+which runs it with `TMPDIR` set to a private directory under the real one and removes that
+directory afterwards, so the Swift toolchain's own leftovers (`TemporaryDirectory.*` folders and
+package lock files) go with it. It fails the run if it left a Telltale entry (a name starting
+`telltale-`, or a SwiftPM lock file naming such a directory) inside that directory or in the
+real temporary directory. Every test and script cleans up its own scratch, and scripts that
+build packages point `TMPDIR` into that scratch.
 
 - `check_test_isolation.sh` fails if a Swift test reaches the real home, `~/Library`
   or `~/.codex` (and `test_check_test_isolation.sh` proves the scanner catches each
   pattern). Tests inject every path.
+- `test_check_no_temp_leaks.sh` proves the leak check names a leaked directory or lock file,
+  ignores entries from before the run and other tools' entries, and passes a failing
+  command's status through.
 - `test_notification_check.sh` runs `tools/notification_check.sh` against a fake app
   and a fake `launchctl` on a private `PATH`; the system `launchctl` is never invoked.
 - `check_vendor.sh` recomputes the sha256 of every file listed in `Sources/CZstd/VERSION`
@@ -53,7 +62,8 @@ script in `Tests/ReleaseChecks/`:
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
   27.0), that six panel PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
-  It leaves both private homes in place for inspection.
+  Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`), which it removes on success
+  and failure, so the suite keeps no PNGs; run `make snapshots` to look at them.
 
 `make release` creates `build/release/Telltale.app`.
 
@@ -65,7 +75,9 @@ directory under the OS temporary directory. It seeds a database per scene from
 renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
 lasting-shift prompt (spec section 13's panel states). It checks each layout's width,
 whole-point height and painted pixels, prints every PNG path, the executable and the
-directory. Look at every PNG; the checks don't judge the design.
+directory, followed by the `rm -r` command that removes it. Look at every PNG; the checks
+don't judge the design. A manual run keeps its directory (SwiftPM's lock files included)
+until you remove it.
 
 `make acceptance` (`Tests/Acceptance/build.sh`) builds the same sources with
 `AcceptanceApp.swift` as the app lifecycle. It first runs the generated
@@ -74,8 +86,8 @@ signed, identifier `com.example.telltale.acceptance`, which `LaunchAgentManager`
 a new 0700 temporary home recorded in its Info.plist as `SyntheticAcceptanceHome`. On first
 launch the app seeds that home with an alerting model, a lasting-shift prompt and the
 collector off. `launchctl` goes through a recording double, and Check now records a
-synthetic run instead of kickstarting launchd. The builder prints the bundle path; it never
-launches it.
+synthetic run instead of kickstarting launchd. The builder prints the bundle path and the
+`rm -r` command that removes its home; it never launches the app.
 
 ## Signing
 
@@ -147,14 +159,18 @@ hidden or not yet placed, the panel opens at the top right of the menu-bar scree
 The glyph is a lamp lens: a template image while nothing is lit, and the lens with a 7 pt dot
 in the most severe lamp color when a lamp lights. Its accessibility label names the lit lamps.
 The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
-"Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline),
+"Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
+a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with Accept as usual… and Keep as abnormal, and the collector footer.
 Settings and Open dashboard stay disabled until the dashboard window exists.
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
 database, its `-wal` file and, while they don't exist yet, the nearest existing parent
-directory. Before the collector's first run it shows the waiting footer; it never creates the
-database. Its few writes (Accept, Undo, Keep as abnormal) open the database only if it exists.
+directory. Before the collector's first run it shows the waiting footer, or the collector's
+problem with a red Collector lamp when health finds one (not loaded, say). The app never creates
+the database (ruling R27): its writes (Accept, Undo, Keep as abnormal, settings and the stored
+collector-health notice) use `Store.Mode.readWriteExisting`, which opens only a database the
+collector already created and migrated. Until then the health notice is held in memory.
 
 Only the installed copy (`/Applications/Telltale.app`, compared by its resolved main
 executable) turns the collector on when the setting says it should be on, requests

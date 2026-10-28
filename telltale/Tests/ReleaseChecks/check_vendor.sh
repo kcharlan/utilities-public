@@ -13,8 +13,8 @@ fail() { echo "check_vendor: $*" >&2; failures=$((failures + 1)); }
 
 [ -f "$version" ] || { echo "check_vendor: missing $version" >&2; exit 1; }
 
-listed=$(mktemp "${TMPDIR:-/tmp}/check-vendor-listed.XXXXXX")
-actual=$(mktemp "${TMPDIR:-/tmp}/check-vendor-actual.XXXXXX")
+listed=$(mktemp "${TMPDIR:-/tmp}/telltale-vendor-listed.XXXXXX")
+actual=$(mktemp "${TMPDIR:-/tmp}/telltale-vendor-actual.XXXXXX")
 trap 'rm -f "$listed" "$actual"' EXIT
 
 checked=0

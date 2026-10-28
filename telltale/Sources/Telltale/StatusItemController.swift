@@ -74,7 +74,8 @@ struct StatusContent: View {
     /// System uptime when the visible session began, on the NSEvent clock.
     private var sessionBegan: TimeInterval = 0
     private var iconPressStartedWhileOpen = false
-    init(store: LiveStore, actions: UserActions, notifier: UserNotifier, dashboard: (any DashboardOpening)? = nil, calendar: Calendar = .current, accessory: AnyView? = nil,
+    /// `model` is the panel's model, built once by the owner (AppDelegate or a harness).
+    init(model: PanelModel, dashboard: (any DashboardOpening)? = nil, accessory: AnyView? = nil,
          item suppliedItem: NSStatusItem? = nil, panel suppliedPanel: StatusPanel? = nil, notifications: NotificationCenter = .default,
          workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
          screens: @escaping () -> [StatusScreen] = { NSScreen.screens.map { StatusScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) } },
@@ -90,7 +91,7 @@ struct StatusContent: View {
          },
          cancelSession: @escaping (NSStatusItemExpandedInterfaceSession) -> Void = { $0.cancel() },
          activate: @escaping () -> Void = { NSApp.activate(ignoringOtherApps: true) }) {
-        self.store = store
+        store = model.store
         let item = suppliedItem ?? Self.makeItem()
         self.item = item
         panel = suppliedPanel ?? StatusPanel()
@@ -106,7 +107,7 @@ struct StatusContent: View {
             return window.convertToScreen(button.convert(button.bounds, to: nil))
         }
         super.init()
-        let hosting = StatusContent(model: PanelModel(store: store, actions: actions, notifier: notifier, calendar: calendar), dashboard: dashboard, focus: focus, accessory: accessory, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
+        let hosting = StatusContent(model: model, dashboard: dashboard, focus: focus, accessory: accessory, dismiss: { [weak self] in self?.dismiss() }).makeHostingController()
         let content = StatusPanelContentController(hosting: hosting)
         content.sizeChanged = { [weak self] in self?.positionPanel() }
         panel.contentViewController = content

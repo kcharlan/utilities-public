@@ -258,11 +258,15 @@ private struct LampStrip: View {
             ForEach(signals, id: \.self) { signal in
                 let color = snapshot.lamps[signal].flatMap { $0 }
                 let label = snapshot.labels[signal] ?? signal.rawValue.capitalized
+                let unlit = Color.secondary.opacity(0.6)
+                // A lit lamp colors its icon and outline; its caption turns Readout (primary), as in
+                // the mockup's `.lamp[data-on] { --cap: var(--readout) }`.
                 VStack(spacing: 3) {
                     Image(systemName: Self.symbol(signal)).font(.system(size: 15)).frame(height: 18)
+                        .foregroundStyle(color.map(Theme.color) ?? unlit)
                     Text(label).font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.7).frame(height: 14)
+                        .foregroundStyle(color == nil ? unlit : Color.primary)
                 }
-                .foregroundStyle(color.map(Theme.color) ?? Color.secondary.opacity(0.6))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 6).padding(.bottom, 5).padding(.horizontal, 2)
                 .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
@@ -294,14 +298,16 @@ private struct ModelRowView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(row.name).lineLimit(1).frame(width: 60, alignment: .leading)
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    // A model in a speed episode shows its numeral and sparkline in the lamp color (mockup).
                     Text(row.tps.map { String(Int($0.rounded())) } ?? "–").font(.system(size: 17, weight: .medium).monospacedDigit())
+                        .foregroundStyle(row.color.map(Theme.color) ?? Color.primary)
                     Text("tok/s").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 .frame(width: 80, alignment: .leading)
                 Text(row.usual.map { "usual \(Int($0.rounded()))" } ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 Sparkline(values: row.sparkline, reference: row.usual)
-                    .stroke(Color.secondary, style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    .stroke(row.color.map(Theme.color) ?? Color.secondary, style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
                     .frame(width: 64, height: 16)
                     .accessibilityHidden(true)
             }

@@ -10,7 +10,10 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-bundle.XXXXXX")
 chmod 700 "$scratch"
 trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
-mkdir -p "$scratch/project" "$scratch/bin" "$scratch/home"
+mkdir -p "$scratch/project" "$scratch/bin" "$scratch/home" "$scratch/tmp"
+# Ruling R28: SwiftPM's per-package lock files and every other temporary file of this run stay in
+# the scratch, which the trap removes.
+export TMPDIR="$scratch/tmp"
 for item in Package.swift Makefile Sources Resources tools Tests; do cp -Rp "$root/$item" "$scratch/project/"; done
 cat > "$scratch/bin/security" <<'MOCK'
 #!/bin/bash

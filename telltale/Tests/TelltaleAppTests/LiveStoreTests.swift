@@ -54,6 +54,31 @@ import TelltaleTestSupport
         }
     }
 
+    /// Before the first run the collector can already be broken (not loaded): the waiting panel
+    /// shows the red Collector lamp and the problem instead of waiting quietly.
+    @Test func waitingPanelShowsCollectorProblems() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let notLoaded = CollectorHealthReport(
+                installed: .green, loaded: .red, lastRun: .unlit, onSchedule: .unlit, problems: [Copy.collectorNotLoaded], needsRepair: false,
+                footer: "", notify: true)
+            let live = PanelWorld.live(paths, health: { notLoaded })
+            await live.refresh()
+            #expect(live.snapshot.collector == .red && live.snapshot.lamps[.collector] == .red)
+            #expect(live.snapshot.footer == Copy.collectorNotLoaded)
+            #expect(live.snapshot.checkedAt == nil && live.snapshot.models.isEmpty && live.lastError == nil)
+            #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))
+
+            // Health's own waiting line stays the waiting line.
+            let waiting = CollectorHealthReport(
+                installed: .green, loaded: .green, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
+                footer: Copy.waitingForFirstRun, notify: false)
+            let quiet = PanelWorld.live(paths, health: { waiting })
+            await quiet.refresh()
+            #expect(quiet.snapshot.collector == .green && quiet.snapshot.footer == Copy.waitingForFirstRun)
+        }
+    }
+
     @Test func uninitializedDatabaseIsRetried() async throws {
         try await withAsyncScratchDirectory { directory in
             let paths = PanelWorld.paths(directory)

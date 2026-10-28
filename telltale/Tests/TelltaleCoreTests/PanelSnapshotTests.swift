@@ -117,6 +117,42 @@ private enum Panel {
         }
     }
 
+    /// The mockup colors a slowed model's tok/s and sparkline in its lamp color: an open speed
+    /// episode scoped to that model sets the row's color; other rules and models don't.
+    @Test func speedEpisodeColorsItsModelRow() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.seedUsual(model: Synth.otherModel)
+            try h.run(30, throughput: 40, hour: 9)
+            try h.run(30, throughput: 40, hour: 9, model: Synth.otherModel)
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9, 20), body: "Example is slower.")
+            try Panel.episode(h, rule: .largePrompts, scope: "*", severity: .red, fired: h.sep4(9, 21), body: "Large prompts.")
+            let snapshot = try Panel.load(h, at: h.sep4(9, 30))
+            #expect(snapshot.models.first { $0.model == Synth.model }?.color == .amber)
+            #expect(snapshot.models.first { $0.model == Synth.otherModel }?.color == nil)
+
+            // A faster episode colors its own model, blue.
+            try Panel.episode(h, rule: .faster, scope: Synth.otherModel, severity: .blue, fired: h.sep4(9, 22), body: "Sample is faster.")
+            let later = try Panel.load(h, at: h.sep4(9, 30))
+            #expect(later.models.first { $0.model == Synth.otherModel }?.color == .blue)
+            #expect(later.models.first { $0.model == Synth.model }?.color == .amber)
+        }
+    }
+
+    /// The checked time is the newest succeeded run, however many failures followed it.
+    @Test func checkedTimeOutlastsManyFailures() throws {
+        try withRules { h in
+            let succeeded = try h.store.beginRun(at: h.sep4(8))
+            try h.store.finishRun(succeeded, at: h.sep4(8).addingTimeInterval(4), outcome: .succeeded)
+            for index in 0..<25 {
+                let start = h.sep4(8, 5).addingTimeInterval(Double(index) * 60)
+                let failed = try h.store.beginRun(at: start)
+                try h.store.finishRun(failed, at: start.addingTimeInterval(2), outcome: .failed, detail: "synthetic failure")
+            }
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).checkedAt == h.sep4(8).addingTimeInterval(4))
+        }
+    }
+
     @Test func usualIsMixMatched() throws {
         try withRules { h in
             // Usual: 40 tok/s under 50k input, 20 tok/s at 100-200k.

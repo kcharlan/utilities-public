@@ -57,9 +57,13 @@ public struct PanelSnapshot: Sendable, Equatable {
         public var sparkline: [Double?]
         /// Thin data or learning (Copy).
         public var note: String?
+        /// The most severe open slower or faster episode scoped to this model: the tok/s numeral and
+        /// sparkline take its lamp color (the visual doc's mockup); nil while speed is usual.
+        public var color: LampColor?
 
         public init(
-            provider: ProviderID, model: String, name: String, tps: Double?, usual: Double?, sparkline: [Double?], note: String?
+            provider: ProviderID, model: String, name: String, tps: Double?, usual: Double?, sparkline: [Double?], note: String?,
+            color: LampColor? = nil
         ) {
             self.id = "\(provider.rawValue)/\(model)"
             self.provider = provider
@@ -69,6 +73,7 @@ public struct PanelSnapshot: Sendable, Equatable {
             self.usual = usual
             self.sparkline = sparkline
             self.note = note
+            self.color = color
         }
     }
 
@@ -117,13 +122,19 @@ public struct PanelSnapshot: Sendable, Equatable {
     /// The most severe lit lamp: the glyph's dot.
     public var mostSevere: LampColor? { lamps.values.compactMap { $0 }.max() }
 
-    /// Before the collector has created the database: nothing lit, no rows, no checked time.
-    public static func waiting(sources: [SourceSummary], footer: String = Copy.waitingForFirstRun) -> PanelSnapshot {
+    /// Before the collector has created the database: no rows and no checked time. Collector health
+    /// still shows: a problem lights the Collector lamp red and becomes the footer, and the off
+    /// line shows as is; otherwise (no report, or health's own waiting line) `footer`.
+    public static func waiting(
+        sources: [SourceSummary], health: CollectorHealthReport? = nil, footer: String = Copy.waitingForFirstRun
+    ) -> PanelSnapshot {
         let admitted = admittedSignals(sources)
+        var lamps = Dictionary(uniqueKeysWithValues: admitted.map { ($0, LampColor?.none) })
+        if health?.lamp == .red { lamps[.collector] = .red }
+        let line = health.flatMap { $0.problems.first ?? ($0.footer.isEmpty ? nil : $0.footer) } ?? footer
         return PanelSnapshot(
-            checkedAt: nil, lamps: Dictionary(uniqueKeysWithValues: admitted.map { ($0, LampColor?.none) }),
-            labels: labels(admitted, sources: sources), alerts: [], models: [], shift: nil, shiftText: nil, collector: .unlit,
-            footer: footer)
+            checkedAt: nil, lamps: lamps, labels: labels(admitted, sources: sources), alerts: [], models: [], shift: nil, shiftText: nil,
+            collector: health?.lamp ?? .unlit, footer: line)
     }
 
     public static func load(
@@ -135,6 +146,8 @@ public struct PanelSnapshot: Sendable, Equatable {
             let byProvider = Dictionary(sources.map { ($0.provider.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
 
             var alerts: [(alert: Alert, at: Date)] = []
+            // Open speed episodes by `provider/model`: the row's numeral and sparkline color.
+            var speedColors: [String: LampColor] = [:]
             for episode in try store.openEpisodes() {
                 guard let id = episode.id, let rule = RuleID(rawValue: episode.rule) else { continue }
                 let color = LampColor(rawValue: episode.severity) ?? .amber
@@ -147,6 +160,10 @@ public struct PanelSnapshot: Sendable, Equatable {
                     if let signal, !source.signals.contains(signal) { continue }
                 }
                 if let signal { lamps[signal] = [lamps[signal] ?? nil, color].compactMap { $0 }.max() }
+                if rule == .slower || rule == .faster {
+                    let key = "\(episode.provider)/\(episode.scope)"
+                    speedColors[key] = max(speedColors[key] ?? color, color)
+                }
                 let latest = try store.latestAlertEvent(episodeID: id)
                 var text = latest?.body ?? rule.title
                 if sources.count > 1, rule != .incident, let source = byProvider[episode.provider] {
@@ -164,7 +181,9 @@ public struct PanelSnapshot: Sendable, Equatable {
                 let models = try store.models(provider: source.provider)
                 for model in models {
                     guard try store.hasResponse(provider: source.provider, model: model, after: now.addingTimeInterval(-activeWindow), through: now) else { continue }
-                    rows.append(try row(store: store, baseline: baseline, source: source, model: model, now: now))
+                    var modelRow = try row(store: store, baseline: baseline, source: source, model: model, now: now)
+                    modelRow.color = speedColors[modelRow.id]
+                    rows.append(modelRow)
                 }
                 guard shift == nil else { continue }
                 let shiftSince = now.addingTimeInterval(-TimeInterval(shiftLookbackDays) * 86_400)
@@ -180,7 +199,7 @@ public struct PanelSnapshot: Sendable, Equatable {
                 }
             }
 
-            let checkedAt = try store.recentRuns(limit: 20, includingSkipped: false).first { $0.outcome == .succeeded }?.finishedAt
+            let checkedAt = try store.lastSucceededRunFinish()
             return PanelSnapshot(
                 checkedAt: checkedAt, lamps: lamps, labels: labels(admitted, sources: sources), alerts: alerts.map(\.alert),
                 models: rows, shift: shift, shiftText: shiftText, collector: health?.lamp ?? .unlit,

@@ -96,7 +96,7 @@ import UserNotifications
                 }
             }
         }.padding(10))
-        let status = StatusItemController(store: harness.live, actions: harness.actions, notifier: harness.notifier, accessory: controls)
+        let status = StatusItemController(model: PanelModel(store: harness.live, actions: harness.actions, notifier: harness.notifier), accessory: controls)
         self.status = status
         harness.notifier.showPopover = { [weak status] in status?.showPopover() }
         harness.live.start()

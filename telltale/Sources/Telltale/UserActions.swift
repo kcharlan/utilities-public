@@ -56,9 +56,10 @@ import TelltaleCore
         try write { store in try store.set(.rebuildRequestedAt, now()) }
     }
 
+    /// Writes only into the database the collector created (ruling R27): a missing or uninitialized
+    /// database throws `StoreError.notInitialized` and nothing is created.
     private func write<T>(_ body: (Store) throws -> T) throws -> T {
-        _ = try Store.open(paths.database, mode: .readOnly)
-        let result = try body(try Store.open(paths.database, mode: .readWrite))
+        let result = try body(try Store.open(paths.database, mode: .readWriteExisting))
         changed()
         return result
     }

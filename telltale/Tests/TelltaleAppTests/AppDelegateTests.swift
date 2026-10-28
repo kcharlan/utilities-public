@@ -157,7 +157,9 @@ import TelltaleTestSupport
             defer { h.terminate(delegate) }
             #expect(!delegate.monitorStarted)
             for _ in 0..<3 { await delegate.liveStore?.refresh() }
-            #expect(delegate.liveStore?.snapshot.footer == "Waiting for the collector's first run.")
+            // No database yet, but the panel still shows that the collector isn't loaded.
+            #expect(delegate.liveStore?.snapshot.collector == .red)
+            #expect(delegate.liveStore?.snapshot.footer == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
             #expect(h.service.requests.isEmpty && h.service.authorizationRequests == 0)
             #expect(!h.databaseExists && h.stateChanges.isEmpty)
 

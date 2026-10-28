@@ -109,7 +109,7 @@ import TelltaleCore
         } catch StoreError.notInitialized {
             store = nil
             opened = nil
-            snapshot = .waiting(sources: sources)
+            snapshot = .waiting(sources: sources, health: report)
             lastError = nil
         } catch {
             store = nil

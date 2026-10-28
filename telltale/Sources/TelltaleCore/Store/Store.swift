@@ -29,9 +29,12 @@ public enum StoreError: Error, Equatable, Sendable, LocalizedError {
 ///
 /// One `Store` per thread; it is not `Sendable`. The collector is the single writer; the app
 /// opens `.readOnly` and writes only settings and user actions through a short-lived
-/// `.readWrite` connection.
+/// `.readWriteExisting` connection, so it never creates the database (ruling R27).
 public final class Store {
-    public enum Mode: Sendable { case readOnly, readWrite }
+    /// `.readWriteExisting` is the app's writer (ruling R27): it opens only a database the collector
+    /// already created and migrated, and throws `notInitialized` instead of creating or migrating one.
+    public enum Mode: Sendable { case readOnly, readWrite, readWriteExisting }
+    var writes: Bool { mode != .readOnly }
 
     public let mode: Mode
     let db: OpaquePointer
@@ -56,6 +59,9 @@ public final class Store {
         case .readOnly:
             guard FileManager.default.fileExists(atPath: url.path) else { throw StoreError.notInitialized }
             flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+        case .readWriteExisting:
+            guard FileManager.default.fileExists(atPath: url.path) else { throw StoreError.notInitialized }
+            flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
         case .readWrite:
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -75,6 +81,11 @@ public final class Store {
             let version = try store.userVersion()
             if version == 0 { throw StoreError.notInitialized }
             if version > Schema.currentVersion { throw StoreError.unsupportedSchemaVersion(version) }
+        case .readWriteExisting:
+            let version = try store.userVersion()
+            if version == 0 { throw StoreError.notInitialized }
+            if version != Schema.currentVersion { throw StoreError.unsupportedSchemaVersion(version) }
+            try store.exec("PRAGMA foreign_keys = ON")
         case .readWrite:
             try store.exec("PRAGMA foreign_keys = ON")
             // Switching a fresh file to WAL can report busy without consulting the busy handler
@@ -93,7 +104,7 @@ public final class Store {
     /// joins the outer transaction.
     public func transaction<T>(_ body: () throws -> T) throws -> T {
         if inTransaction { return try body() }
-        try exec(mode == .readWrite ? "BEGIN IMMEDIATE" : "BEGIN")
+        try exec(writes ? "BEGIN IMMEDIATE" : "BEGIN")
         inTransaction = true
         defer { inTransaction = false }
         do {

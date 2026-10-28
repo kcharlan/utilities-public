@@ -4,10 +4,14 @@
 # acceptance port BV's harness targets.
 SIGN_IDENTITY ?= CodexBar Local
 export SIGN_IDENTITY
-.PHONY: build test clean release install deploy signing-preflight snapshots acceptance
+.PHONY: build test test-suite clean release install deploy signing-preflight snapshots acceptance
 build:
 	swift build -Xswiftc -warnings-as-errors
+# Ruling R28: the whole suite runs inside tools/check_no_temp_leaks.sh, which gives it a private
+# TMPDIR (removed afterwards, toolchain leftovers included) and fails if it leaves a Telltale entry.
 test:
+	@tools/check_no_temp_leaks.sh $(MAKE) --no-print-directory test-suite
+test-suite:
 	swift test -Xswiftc -warnings-as-errors
 	@set -e; for script in Tests/ReleaseChecks/*.sh; do echo "== $$script"; "$$script"; done
 clean:

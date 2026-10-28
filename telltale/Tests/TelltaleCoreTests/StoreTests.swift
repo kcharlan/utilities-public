@@ -106,6 +106,33 @@ private struct Abort: Error {}
         }
     }
 
+    /// Ruling R27: the app writes only into a database the collector created and migrated.
+    @Test func existingReadWriteOpenNeverCreatesOrMigrates() throws {
+        try withScratchDirectory { directory in
+            let absent = directory.appending(path: "absent/telltale.sqlite")
+            #expect(throws: StoreError.notInitialized) { try Store.open(absent, mode: .readWriteExisting) }
+            #expect(!FileManager.default.fileExists(atPath: absent.deletingLastPathComponent().path))
+
+            let empty = directory.appending(path: "empty.sqlite")
+            #expect(FileManager.default.createFile(atPath: empty.path, contents: Data()))
+            #expect(throws: StoreError.notInitialized) { try Store.open(empty, mode: .readWriteExisting) }
+            #expect(try FileManager.default.attributesOfItem(atPath: empty.path)[.size] as? Int == 0)
+
+            let unmigrated = directory.appending(path: "unmigrated.sqlite")
+            try RawSQLite.rows(unmigrated, "CREATE TABLE unrelated (x INTEGER)")
+            #expect(throws: StoreError.notInitialized) { try Store.open(unmigrated, mode: .readWriteExisting) }
+            #expect(try RawSQLite.scalar(unmigrated, "PRAGMA user_version") == "0")
+
+            let url = directory.appending(path: "telltale.sqlite")
+            try Store.open(url, mode: .readWrite).set(SettingKey.intervalMinutes, 9)
+            let writer = try Store.open(url, mode: .readWriteExisting)
+            try writer.transaction { try writer.set(SettingKey.intervalMinutes, 12) }
+            #expect(try Store.open(url, mode: .readOnly).value(SettingKey.intervalMinutes) == 12)
+            try RawSQLite.rows(url, "PRAGMA user_version = 2")
+            #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readWriteExisting) }
+        }
+    }
+
     @Test func readOnlyConnectionCannotWrite() throws {
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")

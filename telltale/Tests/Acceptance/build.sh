@@ -6,13 +6,17 @@ set -euo pipefail
 # TelltaleCore copy; SyntheticEnvironment.swift replaces the Homebrew SyntheticTransport.swift;
 # Telltale's release recipe (Info.plist and an empty Resources directory, no Homebrew licence);
 # bundle identifier com.example.telltale.acceptance, which LaunchAgentManager refuses; no
-# --settings-prototype option.
+# --settings-prototype option. Ruling R28, as in Tests/Snapshots/build.sh: everything stays in
+# the private home (TELLTALE_HARNESS_ROOT places it in a caller's scratch), and a manual run
+# prints the command that removes it.
 project_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 if (( $# != 0 )); then print -u2 -- "Unexpected builder arguments"; exit 2; fi
-acceptance_home="$(mktemp -d "${TMPDIR:-/tmp}/telltale-acceptance.XXXXXX")"
+root="${TELLTALE_HARNESS_ROOT:-${TMPDIR:-/tmp}}"
+[[ -d "$root" ]] || { print -u2 -- "TELLTALE_HARNESS_ROOT is not a directory: $root"; exit 2; }
+acceptance_home="$(mktemp -d "${root%/}/telltale-acceptance.XXXXXX")"
 chmod 700 "$acceptance_home"
 package_dir="$acceptance_home/package"
-mkdir -p "$package_dir/Sources/TelltaleCore" "$package_dir/Sources/Acceptance"
+mkdir -p "$package_dir/Sources/TelltaleCore" "$package_dir/Sources/Acceptance" "$acceptance_home/tmp"
 cp -R "$project_dir/Sources/TelltaleCore/." "$package_dir/Sources/TelltaleCore/"
 for source in "$project_dir"/Sources/Telltale/*.swift; do
   case "${source:t}" in TelltaleMain.swift|AppDelegate.swift|CollectorEntry.swift|Registry.swift|NotificationCheck.swift) continue ;; esac
@@ -29,6 +33,8 @@ cat > "$package_dir/Package.swift" <<'SWIFT'
 import PackageDescription
 let package = Package(name: "Acceptance", platforms: [.macOS("27.0")], products: [.executable(name: "Acceptance", targets: ["Acceptance"])], targets: [.target(name: "TelltaleCore"), .executableTarget(name: "Acceptance", dependencies: ["TelltaleCore"]), .testTarget(name: "AcceptanceServiceTests", dependencies: ["Acceptance", "TelltaleCore"])], swiftLanguageModes: [.v6])
 SWIFT
+# SwiftPM's lock files and the service tests' scratch directories stay in the home.
+export TMPDIR="$acceptance_home/tmp"
 swift test --package-path "$package_dir" -Xswiftc -warnings-as-errors
 swift build --package-path "$package_dir" -c release --product Acceptance -Xswiftc -warnings-as-errors
 app="$acceptance_home/Telltale Synthetic Acceptance.app"
@@ -44,3 +50,4 @@ codesign --force --sign - --timestamp=none "$app"
 codesign --verify --strict "$app"
 print -r -- "Acceptance app: $app"
 print -r -- "Private synthetic home: $acceptance_home"
+print -r -- "Remove with: rm -r -- ${(q)acceptance_home}"

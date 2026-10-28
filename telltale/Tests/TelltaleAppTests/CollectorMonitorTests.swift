@@ -265,7 +265,16 @@ private let recovered = "Telltale's collector is running again."
             #expect(report.installed == .red)
             #expect(!FileManager.default.fileExists(atPath: fresh.database.path))
 
-            // Collector on by default and not loaded: the episode is announced and stored.
+            // Collector on by default and not loaded: the episode is announced once. Ruling R27:
+            // the app never creates the database, so the notice is held in memory until it exists.
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+            #expect(!FileManager.default.fileExists(atPath: fresh.appSupport.path))
+
+            // Once the collector creates the database, the held notice is stored there, and the
+            // open episode is still not announced again.
+            try Store.open(fresh.database, mode: .readWrite).set(.collectorEnabled, true)
             await h.tick(monitor)
             #expect(h.bodies == [notLoaded])
             #expect(try Store.open(fresh.database, mode: .readOnly).value(.collectorHealthNotice)?.problem == notLoaded)

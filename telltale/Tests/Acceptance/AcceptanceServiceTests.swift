@@ -38,6 +38,7 @@ import TelltaleCore
                 #expect(snapshot.alerts.isEmpty && snapshot.shift == nil)
             case .alerting:
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
+                #expect(snapshot.models.map(\.color) == [.amber, nil])
                 #expect(snapshot.alerts.map(\.text).contains("Example is 26% slower than usual for prompts this size. Since 08:40."))
             case .shift:
                 #expect(snapshot.alerts.isEmpty)

@@ -4,7 +4,8 @@
 // through DashboardOpening; there is no custom interval and no update acknowledgment to save.
 //
 // Source tests at 10a0fe2 -> destination tests (unlisted names are unchanged):
-// - statusItemFitsTheLensInsteadOfTheBarThickness -> statusItemFitsTheLensInsteadOfTheBarThickness
+// - statusItemFitsTheMugInsteadOfTheBarThickness -> same name (kept from the source; the item fits
+//   Telltale's lens glyph)
 // - keyboardApplicationSwitchDismissesWithPointerRestingOnIcon -> same name (its acknowledgment-save
 //   assertions become "the database is not written")
 // - nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication -> nativeCyclesWriteNothingAndNeverActivateApplication
@@ -191,7 +192,8 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         try PanelWorld.seed(paths, alerting: true)
         store = PanelWorld.live(paths)
         let notifier = UserNotifier(service: notificationService)
-        status = StatusItemController(store: store, actions: PanelWorld.actions(paths), notifier: notifier, dashboard: dashboard,
+        status = StatusItemController(
+            model: PanelModel(store: store, actions: PanelWorld.actions(paths), notifier: notifier), dashboard: dashboard,
             item: item, panel: panel, notifications: notifications, workspaceNotifications: workspaceNotifications,
             screens: { [Self.screen] }, anchor: { Self.icon },
             pointer: { [weak self] in self?.pointer ?? .zero },
@@ -241,7 +243,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     @Test func alertIconIsDrawnInItsOwnColoursWithoutButtonTint() throws {
         // A template image tinted through contentTintColor renders black in
         // the macOS 27 menu bar, which hides the alert on a dark bar.
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         let button = try #require(fixture.item.button)
@@ -258,7 +260,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(item.length == NSStatusItem.variableLength)
     }
     @Test func repeatedNativeSessionsAndProgrammaticRequestsUseSameRetainedHost() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         let host = fixture.panel.contentViewController
@@ -276,7 +278,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.shows == 7 && fixture.panel.hides == 7)
     }
     @Test func ownedDismissalHidesAtOnceAndIgnoresLateAcknowledgment() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin(); fixture.immediateCancel = false
@@ -295,7 +297,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
 
 @MainActor struct StatusPanelOwnershipTests {
     @Test func lateOldEndCannotHideNewNativePresentation() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.immediateCancel = false
@@ -312,7 +314,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.hides == 2)
     }
     @Test func programmaticOpeningSurvivesLateAcknowledgmentAndStillDismisses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.immediateCancel = false
@@ -329,7 +331,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(!fixture.panel.isVisible && fixture.activations == 2 && fixture.cancelCount == 2)
     }
     @Test func hostingEscapeAndPanelResignUseNativeCancel() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -343,7 +345,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.styleMask.contains(.nonactivatingPanel))
     }
     @Test func actualHostingPreferredSizeChangesRepositionRetainedPanel() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -370,7 +372,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         }
     }
     @Test func warningGrowthAndShrinkKeepTheWholeRootVisible() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -396,7 +398,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         }
     }
     @Test func delayedParentResizeCannotExpandTheViewportPastItsWindow() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -421,7 +423,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(hosting.view.visibleRect.minY == hosting.view.bounds.minY)
     }
     @Test func observerDoesNotRetainController() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         weak var status: StatusItemController?
         var notifications: NotificationCenter!
@@ -435,7 +437,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         notifications.post(name: NSApplication.didResignActiveNotification, object: NSApp)
     }
     @Test func appearanceReachesPanelAndHostedContent() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         defer { fixture.status.setAppearance(nil) }
@@ -449,7 +451,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
 }
 @MainActor struct DirectPanelOpeningTests {
     @Test func programmaticOpeningIsIdempotentAndFirstNativePressCloses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover(); fixture.status.showPopover()
@@ -467,7 +469,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         // from the app about 45 ms before the system's begin. Dismissing for
         // that focus loss hid the panel, and the begin then reopened it.
         for immediate in [true, false] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let fixture = try PanelFixture(home: home)
             fixture.immediateCancel = immediate
@@ -486,7 +488,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         }
     }
     @Test func focusLossFromPressingTheIconLeavesNativeSessionInCharge() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         for _ in 0..<3 {
@@ -499,7 +501,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.shows == 3 && fixture.panel.hides == 3)
     }
     @Test func focusMovingElsewhereClosesAndTheNextPressOpens() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -515,7 +517,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.isVisible && fixture.panel.shows == 3 && fixture.panel.hides == 2)
     }
     @Test func keyboardApplicationSwitchDismissesWithPointerRestingOnIcon() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -530,7 +532,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.cancelCount == 0)
     }
     @Test func workspaceActivationPreservesOwnPanelAndCancelsANativeSessionForAnotherApp() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.pointAtIcon(); fixture.begin()
@@ -551,7 +553,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     // on the icon delivered no event and no end, so it never closed.
     @Test func pressingTheIconOfAnOpenNativePanelClosesIt() throws {
         for immediate in [true, false] {
-            let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: home) }
             let fixture = try PanelFixture(home: home)
             fixture.immediateCancel = immediate
@@ -568,7 +570,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         }
     }
     @Test func theOpeningPressNeverClosesItsOwnPanel() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         // The monitor sees the opening press before the begin arrives...
@@ -584,7 +586,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.panel.isVisible && fixture.cancelCount == 0)
     }
     @Test func onlyAPressOnTheIconCloses() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -599,7 +601,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(!fixture.panel.isVisible && fixture.cancelCount == 0 && fixture.panel.hides == 1)
     }
     @Test func programmaticPanelLeavesIconPressToItsBegin() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.status.showPopover()
@@ -611,7 +613,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
 }
 @MainActor struct StatusPanelKeyboardTests {
     @Test func escapeKeyEquivalentDismissesEvenWithSearchResponder() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -627,7 +629,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
 }
 @MainActor struct StatusPanelIntegrationTests {
     @Test func nativeCyclesWriteNothingAndNeverActivateApplication() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         // Telltale has nothing to acknowledge on close: the panel reads the database and never writes it.
@@ -638,7 +640,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         fixture.end(); #expect(fixture.panel.hides == 6)
     }
     @Test func settingsAndDashboardCancelBeforePresenting() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
@@ -650,7 +652,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         #expect(fixture.dashboard.visibleAtPresentation == [false, false])
     }
     @Test func applicationResignAndPendingNativeEndLeaveNoDelayedReopen() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-panel-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         fixture.begin()
