@@ -456,7 +456,9 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     }
 
     /// Validates with `Settings.intervalError`, then changes it through the collector view's
-    /// `LaunchAgentManager` path; a launchd failure shows as the collector's error.
+    /// `LaunchAgentManager` path; a launchd failure shows as the collector's error. The draft stays
+    /// until this change is done, so a failed change, or one the collector view couldn't start
+    /// because another was running (which says so), can be committed again.
     func commitInterval() async {
         guard databaseReady, canManage, let text = intervalDraft else { return }
         guard let minutes = Int(text.trimmingCharacters(in: .whitespaces)), Settings.intervalError(minutes) == nil else {
@@ -464,8 +466,15 @@ enum RuleParameter: String, CaseIterable, Identifiable {
             return
         }
         intervalError = nil
-        if minutes != collector.intervalMinutes { await collector.changeInterval(minutes) }
-        if collector.error == nil { intervalDraft = nil }
+        guard minutes != collector.intervalMinutes else {
+            intervalDraft = nil
+            return
+        }
+        switch await collector.changeInterval(minutes) {
+        case .done: intervalDraft = nil
+        case .failed: break
+        case .busy: intervalError = Copy.collectorChangeRunning
+        }
     }
 
     // MARK: Watched status components
@@ -534,14 +543,26 @@ enum RuleParameter: String, CaseIterable, Identifiable {
 
     // MARK: General
 
-    /// Spec section 3's Open at login: registers or unregisters through the login item, then stores
-    /// the choice the next launch applies.
+    /// Spec section 3's Open at login, the only way the app registers after its first launch
+    /// (ruling R32). The choice is stored first, and the system changes only once that worked; if
+    /// the system change then fails, the stored setting goes back to the system's state, so the
+    /// two never disagree.
     func setOpenAtLogin(_ on: Bool) {
         guard canManage, databaseReady else { return }
-        login.setEnabled(on)
-        guard login.error == nil else { return }
         do {
             try actions.set(.openAtLogin, on)
+        } catch {
+            errors[.general] = error.localizedDescription
+            return
+        }
+        login.setEnabled(on)
+        guard login.enabled != on else {
+            errors[.general] = nil
+            return
+        }
+        // The system didn't change (the login item's error says why): store its state again.
+        do {
+            try actions.set(.openAtLogin, login.enabled)
             errors[.general] = nil
         } catch {
             errors[.general] = error.localizedDescription

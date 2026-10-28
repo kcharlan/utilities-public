@@ -184,6 +184,10 @@ public enum Copy {
     public static let settingsInstalledCopyOnly = "Only Telltale in Applications can change this."
     /// Ruling R16 in Settings: the stored rules don't decode or validate, so the defaults apply.
     public static let storedRulesUnusable = "The saved rules couldn't be used, so Telltale is using the defaults shown here."
+    /// Settings' interval, committed while the collector view runs another change; the draft stays.
+    public static let collectorChangeRunning = "Another collector change is still running. Try again in a moment."
+    /// Ruling R16's reason when the stored rules no longer decode (the collector log and Settings).
+    public static let storedRulesUndecodable = "The stored rules couldn't be read."
     /// The watched-components checklist before the collector has stored the status page's list.
     public static let componentsNotLoaded = "The status page's components appear here after the collector reads it."
     /// The collector view's schedule line (the mockup's "Every 5 minutes, also at login").

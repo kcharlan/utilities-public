@@ -66,8 +66,6 @@ public struct CollectorRun: Sendable {
     public static let interruptedDetail = "interrupted"
     /// R16's note when the stored rules can't be used; the reasons follow it.
     static let invalidRulesNote = "Rule settings are invalid, so this run used the defaults:"
-    /// The reason given when the stored rules no longer decode.
-    static let undecodableRules = "The stored rules couldn't be read."
 
     /// Process exit codes for `Telltale --collect` (and the command line's usage error).
     public enum ExitCode {

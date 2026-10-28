@@ -256,9 +256,9 @@ import TelltaleCore
     }
 }
 
-/// Open at login, registered: Settings shows the switch on. Nothing reaches `SMAppService`.
+/// Open at login, registered: Settings shows the switch on. Nothing reaches the system login service.
 @MainActor private struct SnapshotLoginService: LoginService {
-    var status: SMAppService.Status { .enabled }
+    var status: LoginStatus { .enabled }
     func register() throws {}
     func unregister() throws {}
     func openSettings() {}

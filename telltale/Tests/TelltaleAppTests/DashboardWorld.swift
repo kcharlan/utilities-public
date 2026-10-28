@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SQLite3
 import TelltaleCore
 import TelltaleTestSupport
 @testable import Telltale
@@ -24,7 +25,7 @@ import TelltaleTestSupport
     let panel: PanelModel
     let collector: CollectorViewModel
     let settings: SettingsModel
-    /// The login-item service behind Settings' Open at login (never `SMAppService`).
+    /// The login-item service behind Settings' Open at login (never the system service).
     let login: LoginServiceStub
     let model: DashboardModel
     let executable: URL
@@ -64,6 +65,15 @@ import TelltaleTestSupport
     }
 
     /// A minimal app bundle whose Info.plist names Telltale's executable and `identifier`.
+    /// Runs SQL on the scratch database directly, as a test fault only (a schema change, or a
+    /// stored value the app's own writes can't produce).
+    static func exec(_ database: URL, _ sql: String) throws {
+        var handle: OpaquePointer?
+        guard sqlite3_open(database.path, &handle) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
+        defer { sqlite3_close(handle) }
+        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw CocoaError(.fileWriteUnknown) }
+    }
+
     static func makeApp(_ app: URL, identifier: String = TelltaleRelease.bundleIdentifier) throws -> URL {
         let macOS = app.appending(path: "Contents/MacOS", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)

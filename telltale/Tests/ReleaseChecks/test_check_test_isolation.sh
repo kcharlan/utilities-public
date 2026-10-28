@@ -24,6 +24,11 @@ let home = NSHomeDirectory()
 let codex = "~/.codex/sessions"
 let library = "~/Library/Logs"
 let absolute = "/Users/someone/project"
+let login = LoginItem()
+let item = LoginItem( )
+let status = SMAppService.mainApp.status
+let appService: SMAppService.Status = .enabled
+let defaults = UserDefaults.standard
 CASES
 
 # Permitted injected-path code and /bin/launchctl literals pass.
@@ -34,6 +39,10 @@ let environment = ["CODEX_HOME": "/tmp/synthetic-codex"]
 let paths = TelltalePaths.live(environment: environment)
 let injected = TelltalePaths(home: URL(fileURLWithPath: "/tmp/synthetic-home", isDirectory: true))
 let expectedExecutable = "/bin/launchctl"
+let login = LoginItem(service: LoginServiceStub())
+let status: LoginStatus = .notRegistered
+let record = PreferencesLaunchRecord(preferences: MemoryPreferences())
+let suite = MyLoginItem()
 SWIFT
 "$checker" "$scratch/permitted" || fail 'permitted injected-path code was rejected'
 

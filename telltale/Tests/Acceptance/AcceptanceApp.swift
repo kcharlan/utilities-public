@@ -5,7 +5,7 @@
 // launchctl goes through SyntheticCommandRunner, so CollectorMonitor's read-only health never
 // reaches launchd, and Check now's kickstart is a double that records a synthetic run. The
 // Homebrew transport controls become Telltale's: an added red alert and a posting failure.
-// Settings gets a login-item double that never reaches SMAppService; this bundle isn't the
+// Settings gets a login-item double that never reaches the system service; this bundle isn't the
 // installed copy, so its interval, Rebuild and Open at login stay unavailable (R24).
 import AppKit
 import ServiceManagement
@@ -132,9 +132,9 @@ import UserNotifications
     }
 }
 
-/// The acceptance bundle's login item: never registered, and it never calls `SMAppService`.
+/// The acceptance bundle's login item: never registered, and it never calls the system login service.
 @MainActor final class SyntheticLoginService: LoginService {
-    private(set) var status: SMAppService.Status = .notRegistered
+    private(set) var status: LoginStatus = .notRegistered
     func register() throws { status = .requiresApproval }
     func unregister() throws { status = .notRegistered }
     func openSettings() {}

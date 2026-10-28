@@ -1,5 +1,4 @@
 import AppKit
-import SQLite3
 import SwiftUI
 import Testing
 import TelltaleCore
@@ -141,22 +140,14 @@ import TelltaleTestSupport
             try PanelWorld.seed(world.paths)
             await world.live.refresh()
             // Hide the run records behind the open read-only connection, then read again.
-            try Self.exec(world.paths.database, "ALTER TABLE collector_runs RENAME TO collector_runs_hidden")
+            try DashboardWorld.exec(world.paths.database, "ALTER TABLE collector_runs RENAME TO collector_runs_hidden")
             world.collector.load()
             #expect(world.collector.loadError != nil)
             #expect(world.collector.error == nil)
-            try Self.exec(world.paths.database, "ALTER TABLE collector_runs_hidden RENAME TO collector_runs")
+            try DashboardWorld.exec(world.paths.database, "ALTER TABLE collector_runs_hidden RENAME TO collector_runs")
             world.collector.load()
             #expect(world.collector.loadError == nil && world.collector.error == nil)
         }
-    }
-
-    /// Changes the scratch database's schema directly, as a test fault only.
-    private static func exec(_ database: URL, _ sql: String) throws {
-        var handle: OpaquePointer?
-        guard sqlite3_open(database.path, &handle) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
-        defer { sqlite3_close(handle) }
-        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw CocoaError(.fileWriteUnknown) }
     }
 
     @Test func logTailAndShowLogFile() async throws {

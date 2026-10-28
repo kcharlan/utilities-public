@@ -1,5 +1,3 @@
-| Settings (acceptance bundle) | Not yet run |
-| Launch at login and Settings in the installed release | Not yet run |
 # Telltale
 
 ## Purpose
@@ -48,9 +46,10 @@ package lock files) go with it. It fails the run if it left a Telltale entry (a 
 real temporary directory. Every test and script cleans up its own scratch, and scripts that
 build packages point `TMPDIR` into that scratch.
 
-- `check_test_isolation.sh` fails if a Swift test reaches the real home, `~/Library`
-  or `~/.codex` (and `test_check_test_isolation.sh` proves the scanner catches each
-  pattern). Tests inject every path.
+- `check_test_isolation.sh` fails if a Swift test reaches the real home, `~/Library`,
+  `~/.codex`, the real login item (`SMAppService`, or `LoginItem()` with its default service) or
+  the app's real preferences (`UserDefaults.standard`); `test_check_test_isolation.sh` proves the
+  scanner catches each pattern. Tests inject every path and these services.
 - `test_check_no_temp_leaks.sh` proves the leak check names a leaked directory or lock file,
   ignores entries from before the run and other tools' entries, and passes a failing
   command's status through.
@@ -251,10 +250,17 @@ Settings (spec section 9.4) has five parts:
 Every change is stored through the same read-write-existing path as Accept, so until the
 collector's first run creates the database Settings shows the defaults read-only and says so. The
 interval, the collector switch, Rebuild and Open at login change launchd or login-item state, so
-only the installed copy offers them; another copy says so. Open at login is on by default: at each
-launch the installed copy registers the app as a login item (`SMAppService.mainApp`) while the
-setting is on and nothing is registered, and leaves an existing registration, enabled or waiting
-for approval, alone. Login-item approval is reread whenever the dashboard window becomes key.
+only the installed copy offers them; another copy says so.
+
+Open at login is on by default, applied once (ruling R32): the installed copy's first launch
+registers the app as a login item (`SMAppService.mainApp`) unless the stored setting is already
+off, and records that it did in the app's own preferences
+(`local.utilities.telltale.openAtLoginDefaultApplied`), since the database may not exist yet.
+After that, launch never registers; only the Settings switch does. Removing Telltale in System
+Settings > Login Items therefore stands, and at the next launch the stored setting follows the
+system (where the database exists). The switch stores the choice first and changes the login item
+only once that worked; if the login-item change fails, the stored setting goes back to the
+system's state. Login-item approval is reread whenever the dashboard window becomes key.
 
 ## Native acceptance
 
@@ -310,8 +316,9 @@ check.
   "Approval required in System Settings" with Open Login Items Settings, and approving it there
   turns the description to "Enabled" when the dashboard window is next focused). Log out and in:
   Telltale's status item appears. Turn Open at login off in Settings: Telltale leaves Login Items,
-  and a relaunch doesn't add it back. Turn it on again. Then turn Telltale off in System Settings'
-  Login Items instead and relaunch: Telltale must not re-register itself.
+  and a relaunch doesn't add it back. Turn it on again in Settings: Telltale is listed again. Then
+  turn Telltale off in System Settings' Login Items instead and relaunch, twice: Telltale must not
+  re-register itself, and Settings shows Open at login off.
 - In the installed release only, Settings after the first run: change the interval to 2 minutes;
   the plist's `StartInterval` is 120 and `launchctl print` still finds the job. Rebuild from Codex
   logs… asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
@@ -326,6 +333,8 @@ Native results are recorded separately from automated ones.
 | --- | --- |
 | All of the above | Not yet run |
 | Dashboard, Settings and Open dashboard checks | Not yet run |
+| Settings (acceptance bundle) | Not yet run |
+| Launch at login and Settings in the installed release | Not yet run |
 
 ## Notification spike
 

@@ -76,7 +76,7 @@ enum LaunchCommand: Equatable {
                 paths: paths, currentExecutable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]),
                 installedAppURL: URL(fileURLWithPath: "/Applications/\(TelltaleRelease.displayName).app", isDirectory: true),
                 runner: ProcessRunner(), sources: Registry.sourceSummaries(paths: paths), notificationService: NativeNotificationService(),
-                login: LoginItem())
+                login: LoginItem(), launchRecord: PreferencesLaunchRecord(preferences: UserDefaults.standard))
             app.delegate = delegate
             withExtendedLifetime(delegate) { app.run() }
         }

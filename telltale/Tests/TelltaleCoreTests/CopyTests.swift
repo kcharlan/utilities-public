@@ -141,6 +141,8 @@ private enum Fixture {
             CopyCase("settingsInstalledCopyOnly", Copy.settingsInstalledCopyOnly, "Only Telltale in Applications can change this."),
             CopyCase("storedRulesUnusable", Copy.storedRulesUnusable, "The saved rules couldn't be used, so Telltale is using the defaults shown here."),
             CopyCase("componentsNotLoaded", Copy.componentsNotLoaded, "The status page's components appear here after the collector reads it."),
+            CopyCase("collectorChangeRunning", Copy.collectorChangeRunning, "Another collector change is still running. Try again in a moment."),
+            CopyCase("storedRulesUndecodable", Copy.storedRulesUndecodable, "The stored rules couldn't be read."),
         ]
     }()
 

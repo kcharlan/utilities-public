@@ -113,6 +113,27 @@ import TelltaleTestSupport
         }
     }
 
+    /// Ruling R16 when the stored rules JSON no longer decodes at all: the defaults, with the note.
+    @Test func undecodableStoredRulesShowDefaultsWithNote() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths)
+            try DashboardWorld.exec(
+                world.paths.database, "INSERT OR REPLACE INTO settings (key, value_json) VALUES ('\(SettingKey.rules.name)', '{\"slower\": \"synthetic\"')")
+            #expect(try Store.open(world.paths.database, mode: .readOnly).usableRules().problems == [Copy.storedRulesUndecodable])
+            await world.live.refresh()
+            world.model.select(.settings)
+            #expect(world.settings.rulesNote == Copy.storedRulesUnusable)
+            #expect(world.settings.text(.slowerThreshold) == "15" && world.settings.text(.fasterClearBand) == "8")
+            // A change stores a complete, decodable rules value built on the defaults.
+            world.settings.edit(.slowerThreshold, "20")
+            #expect(world.settings.rulesNote == nil)
+            var expected = RuleSettings.defaults
+            expected.slower.threshold = 0.20
+            #expect(try stored(world, .rules) == expected)
+        }
+    }
+
     /// Spec section 9.3's Change interval: the plist is rewritten for this app's executable, then
     /// the job is booted out and bootstrapped, and only then is the interval stored.
     @Test func intervalChangeRewritesLaunchAgent() async throws {
@@ -169,6 +190,48 @@ import TelltaleTestSupport
             #expect(other.settings.installedCopyNote == Copy.settingsInstalledCopyOnly)
             await other.settings.editInterval("10")
             #expect(try other.runner.calls.isEmpty && stored(other, .intervalMinutes) == 5)
+        }
+    }
+
+    /// The interval draft follows this change's own outcome, not the collector view's last error:
+    /// an unchanged value clears it even after an unrelated failure, and a change the collector view
+    /// couldn't start because another was running keeps it and says so.
+    @Test func intervalDraftFollowsItsOwnChange() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            let settings = world.settings
+
+            // An unrelated failure (Run now's kickstart) leaves the collector view's error set.
+            world.runner.respond(to: "kickstart", with: CommandResult(status: 3, stdout: "", stderr: "Synthetic kickstart failure\n"))
+            await world.collector.runNow()
+            #expect(world.collector.error != nil)
+            await settings.editInterval("5")
+            #expect(settings.intervalDraft == nil && settings.intervalError == nil)
+
+            // Run now is still running: the interval draft stays, with a note, and nothing changes.
+            world.runner.respond(to: "kickstart", with: CommandResult(status: 0, stdout: "", stderr: ""))
+            let release = DispatchSemaphore(value: 0)
+            world.runner.observe { call in
+                if call.arguments.first == "kickstart" { release.wait() }
+            }
+            let run = Task { await world.collector.runNow() }
+            var waits = 0
+            while !world.collector.busy, waits < 1_000 {
+                await Task.yield()
+                waits += 1
+            }
+            #expect(world.collector.busy)
+            await settings.editInterval("10")
+            #expect(settings.intervalDraft == "10" && settings.intervalError == Copy.collectorChangeRunning)
+            #expect(try !world.runner.calls.contains { $0.arguments.first == "bootstrap" } && stored(world, .intervalMinutes) == 5)
+            release.signal()
+            await run.value
+            #expect(!world.collector.busy && world.collector.error == nil)
+
+            // Once it finishes, committing the kept draft changes the interval.
+            await settings.commitInterval()
+            #expect(settings.intervalDraft == nil && settings.intervalError == nil)
+            #expect(try stored(world, .intervalMinutes) == 10)
         }
     }
 

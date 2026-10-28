@@ -139,7 +139,7 @@ public final class Store {
         let stored = try value(.rules)
         // `value` falls back to the defaults silently when the JSON no longer decodes; R16 wants
         // that named like any other invalid setting.
-        let problems = try storedSettingDecodes(.rules) ? stored.validationErrors() : [CollectorRun.undecodableRules]
+        let problems = try storedSettingDecodes(.rules) ? stored.validationErrors() : [Copy.storedRulesUndecodable]
         return problems.isEmpty ? (stored, []) : (.defaults, problems)
     }
 

@@ -1,8 +1,9 @@
 // Port: brew_version/Sources/BrewVersion/AppDelegate.swift, AppDelegate, eb960f3.
 // Adaptation: Telltale's composition (spec sections 9.1 and 9.3): the instance gate, the live
 // store, the collector monitor and wake events, wired to the status item; the installed copy also
-// applies the Open at login setting (spec section 3). Every path, runner and service, the login
-// item's included, is injected; the composition root (TelltaleMain) supplies the live ones.
+// applies Open at login (spec section 3, ruling R32). Every path, runner and
+// service, the login item's and its first-launch record included, is injected; the composition
+// root (TelltaleMain) supplies the live ones.
 import AppKit
 import TelltaleCore
 
@@ -19,6 +20,7 @@ import TelltaleCore
     private let makeStatus: @MainActor (PanelModel, any DashboardOpening) -> any PopoverPresenting
     private let quit: @MainActor () -> Void
     private let reportFailure: @MainActor (String) -> Void
+    private let launchRecord: any LaunchRecord
 
     private(set) var liveStore: LiveStore?
     let notifier: UserNotifier
@@ -37,11 +39,12 @@ import TelltaleCore
     ///   (`/Applications/Telltale.app` in production, a synthetic bundle in tests).
     /// - `eventSources`: nil uses the native wake notification.
     /// - `makeStatus`: builds the status item around the panel's model and the dashboard.
+    /// - `launchRecord`: where the installed copy remembers it applied Open at login's default (R32).
     /// - `reportFailure`: launch problems the panel can't show (the default writes to standard error;
     ///   collector problems reach the panel footer through collector health).
     init(
         paths: TelltalePaths, currentExecutable: URL, installedAppURL: URL, runner: any CommandRunner, sources: [SourceSummary],
-        notificationService: any NotificationService, login: LoginItem, uid: uid_t = getuid(), calendar: Calendar = .current,
+        notificationService: any NotificationService, login: LoginItem, launchRecord: any LaunchRecord, uid: uid_t = getuid(), calendar: Calendar = .current,
         eventSources: [any SystemEventSource]? = nil, watchFiles: Bool = true,
         makeStatus: @escaping @MainActor (PanelModel, any DashboardOpening) -> any PopoverPresenting = { model, dashboard in
             StatusItemController(model: model, dashboard: dashboard)
@@ -63,6 +66,7 @@ import TelltaleCore
         self.reportFailure = reportFailure
         notifier = UserNotifier(service: notificationService)
         self.login = login
+        self.launchRecord = launchRecord
         super.init()
         // Before launch finishes, so a click that launched the app reaches the notifier.
         (notificationService as? NativeNotificationService)?.center.delegate = notifier
@@ -124,26 +128,38 @@ import TelltaleCore
         }
     }
 
-    /// At launch, an installed copy registers the login item while Open at login is on (spec
-    /// section 3) and turns the collector on when it should be on and its plist is missing (spec
-    /// section 9.3). Settings are read read-only: before the first run they are the defaults, and
-    /// the app never creates the database.
+    /// At launch, an installed copy applies Open at login (spec section 3, ruling R32) and turns the
+    /// collector on when it should be on and its plist is missing (spec section 9.3). Settings are
+    /// read read-only: before the first run they are the defaults, and the app never creates the
+    /// database (R27). Open at login's default registers only at the first launch; afterwards the
+    /// stored setting follows the system, so a removal in System Settings > Login Items stands.
     private func applyLaunchSettings() {
         var enabled = SettingKey.collectorEnabled.defaultValue
         var interval = SettingKey.intervalMinutes.defaultValue
         var openAtLogin = SettingKey.openAtLogin.defaultValue
+        var databaseExists = true
         do {
             let store = try Store.open(paths.database, mode: .readOnly)
             enabled = try store.value(.collectorEnabled)
             interval = Settings.usableInterval(try store.value(.intervalMinutes))
             openAtLogin = try store.value(.openAtLogin)
         } catch StoreError.notInitialized {
+            databaseExists = false
         } catch {
             reportFailure(Copy.databaseUnavailable(reason: error.localizedDescription))
             return
         }
-        login.applyAtLaunch(openAtLogin: openAtLogin)
+        let firstLaunch = !launchRecord.openAtLoginDefaultApplied
+        launchRecord.openAtLoginDefaultApplied = true
+        let system = login.applyAtLaunch(openAtLogin: openAtLogin, firstLaunch: firstLaunch)
         if let error = login.error { reportFailure(error) }
+        if databaseExists, let system, system != openAtLogin {
+            do {
+                try Store.open(paths.database, mode: .readWriteExisting).set(.openAtLogin, system)
+            } catch {
+                reportFailure(Copy.databaseUnavailable(reason: error.localizedDescription))
+            }
+        }
         guard enabled, !FileManager.default.fileExists(atPath: manager.plistURL.path) else { return }
         do {
             try manager.turnOn(executable: currentExecutable, intervalMinutes: interval)

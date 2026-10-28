@@ -1,17 +1,16 @@
 // Port: anker_charge_monitor/Tests/PrimeMonitorAppTests/LoginItemTests.swift, LoginItemTests, 4f965e8
 // (with LoginServiceStub from that commit's SettingsWindowTests.swift).
-// Adaptation: the stub counts registrations; Telltale adds spec section 3's launch registration
-// (Open at login, on by default, applied only by the installed copy) and turning it off in
-// Settings, which stores the choice only in the collector's database (ruling R27).
+// Adaptation: the stub counts registrations; Telltale adds spec section 3's Open at login under
+// ruling R32 (the default applied once, by the installed copy; launch never overrides a removal)
+// and the Settings switch, which stores the choice only in the collector's database (ruling R27).
 import Foundation
-import ServiceManagement
 import Testing
 import TelltaleCore
 import TelltaleTestSupport
 @testable import Telltale
 
 @MainActor final class LoginServiceStub: LoginService {
-    var status: SMAppService.Status = .notRegistered
+    var status: LoginStatus = .notRegistered
     var fail = false
     var settingsOpened = false
     private(set) var registrations = 0
@@ -43,41 +42,119 @@ import TelltaleTestSupport
         service.status = .notFound; subject.refresh(); #expect(subject.description == "App service unavailable")
     }
 
-    /// Spec section 3: Open at login is on by default, so the installed copy registers at launch
-    /// while the setting is on and nothing is registered. A registration that exists (enabled, or
-    /// waiting for approval in System Settings) is left alone, and a copy outside Applications
-    /// never registers itself (ruling R24's reasoning).
-    @Test func launchRegistersWhenOpenAtLoginOn() async throws {
+    /// Ruling R32: spec section 3's default (on) is applied once, at the installed copy's first
+    /// launch, and remembered outside the database, which doesn't exist yet (R27). A copy outside
+    /// Applications neither registers nor uses up that first launch (R24's reasoning).
+    @Test func firstLaunchRegistersOnce() async throws {
         try await withDelegate { h in
-            // Before the first run the setting is its default, on.
+            let build = h.delegate(current: h.buildExecutable)
+            h.launch(build)
+            h.terminate(build)
+            #expect(h.login.registrations == 0 && !h.launchRecord.openAtLoginDefaultApplied)
+
             let first = h.delegate()
             h.launch(first)
-            #expect(h.login.registrations == 1 && first.login.enabled && first.login.requiresApproval)
+            #expect(h.login.registrations == 1 && first.login.requiresApproval)
             h.terminate(first)
+            #expect(h.preferences.values == [PreferencesLaunchRecord.defaultAppliedKey: true])
+            #expect(PreferencesLaunchRecord.defaultAppliedKey.hasPrefix("local.utilities.telltale."))
 
             let again = h.delegate()
             h.launch(again)
             h.terminate(again)
             #expect(h.login.registrations == 1)
 
-            // Off by choice: nothing is registered.
+            // Removed in System Settings before the first run: nothing registers, and there is no
+            // database to store the mirrored setting in, so none is created.
             h.login.status = .notRegistered
-            try PanelWorld.seed(h.paths).set(.openAtLogin, false)
-            let off = h.delegate()
-            h.launch(off)
-            h.terminate(off)
-            #expect(h.login.registrations == 1)
+            let removed = h.delegate()
+            h.launch(removed)
+            h.terminate(removed)
+            #expect(h.login.registrations == 1 && !removed.login.enabled && !h.databaseExists)
+        }
+    }
 
-            // Back on: a copy outside Applications still registers nothing; the installed one does.
-            try Store.open(h.paths.database, mode: .readWrite).set(.openAtLogin, true)
-            let build = h.delegate(current: h.buildExecutable)
-            h.launch(build)
-            h.terminate(build)
-            #expect(h.login.registrations == 1)
-            let installed = h.delegate()
-            h.launch(installed)
-            h.terminate(installed)
-            #expect(h.login.registrations == 2)
+    /// A first launch over a database whose setting is already off registers nothing.
+    @Test func firstLaunchKeepsStoredOff() async throws {
+        try await withDelegate { h in
+            try PanelWorld.seed(h.paths).set(.openAtLogin, false)
+            let first = h.delegate()
+            h.launch(first)
+            h.terminate(first)
+            #expect(h.login.registrations == 0 && h.launchRecord.openAtLoginDefaultApplied)
+            #expect(try Store.open(h.paths.database, mode: .readOnly).value(.openAtLogin) == false)
+        }
+    }
+
+    /// Ruling R32: launch never overrides a removal in System Settings > Login Items; the stored
+    /// setting mirrors the system instead, in both directions.
+    @Test func launchNeverOverridesRemoval() async throws {
+        try await withDelegate { h in
+            try PanelWorld.seed(h.paths).set(.openAtLogin, true)
+            h.launchRecord.openAtLoginDefaultApplied = true
+            h.login.status = .enabled
+            let registered = h.delegate()
+            h.launch(registered)
+            h.terminate(registered)
+            #expect(h.login.registrations == 0 && h.login.unregistrations == 0)
+
+            // The user removes Telltale in System Settings, then relaunches it.
+            h.login.status = .notRegistered
+            let removed = h.delegate()
+            h.launch(removed)
+            #expect(h.login.registrations == 0 && !removed.login.enabled)
+            #expect(try Store.open(h.paths.database, mode: .readOnly).value(.openAtLogin) == false)
+            h.terminate(removed)
+
+            // Allowed again in System Settings: the stored setting follows, and still nothing registers.
+            h.login.status = .enabled
+            let allowed = h.delegate()
+            h.launch(allowed)
+            h.terminate(allowed)
+            #expect(h.login.registrations == 0)
+            #expect(try Store.open(h.paths.database, mode: .readOnly).value(.openAtLogin) == true)
+            #expect(h.failures.isEmpty)
+        }
+    }
+
+    /// Only the user's switch in Settings registers.
+    @Test func togglingOnRegisters() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths).set(.openAtLogin, false)
+            await world.live.refresh()
+            world.model.select(.settings)
+            #expect(!world.settings.login.enabled)
+            world.settings.setOpenAtLogin(true)
+            #expect(world.login.registrations == 1 && world.settings.login.enabled)
+            #expect(try Store.open(world.paths.database, mode: .readOnly).value(.openAtLogin) == true)
+            #expect(world.settings.errors[.general] == nil)
+        }
+    }
+
+    /// The switch stores the choice first and changes the system only once that worked; a failed
+    /// system change puts the stored setting back to the system's state, so the two never disagree.
+    @Test func openAtLoginWritesStayInStep() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths).set(.openAtLogin, false)
+            await world.live.refresh()
+            world.model.select(.settings)
+
+            world.login.fail = true
+            world.settings.setOpenAtLogin(true)
+            #expect(world.settings.login.error != nil && !world.settings.login.enabled)
+            #expect(try Store.open(world.paths.database, mode: .readOnly).value(.openAtLogin) == false)
+
+            // The store write fails (the database went away): the system isn't changed.
+            world.login.fail = false
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: world.paths.database.path + suffix)
+            }
+            world.settings.setOpenAtLogin(true)
+            #expect(world.settings.errors[.general] != nil)
+            #expect(world.login.registrations == 0 && !world.settings.login.enabled)
+            #expect(!FileManager.default.fileExists(atPath: world.paths.database.path))
         }
     }
 

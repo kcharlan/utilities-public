@@ -10,6 +10,13 @@ import TelltaleCore
 import TelltaleTestSupport
 @testable import Telltale
 
+/// In-memory boolean preferences for `PreferencesLaunchRecord`.
+final class MemoryPreferences: BoolPreferences {
+    private(set) var values: [String: Bool] = [:]
+    func bool(forKey key: String) -> Bool { values[key] ?? false }
+    func set(_ value: Bool, forKey key: String) { values[key] = value }
+}
+
 @MainActor final class PopoverPresenterStub: PopoverPresenting {
     var opens = 0
     func showPopover() { opens += 1 }
@@ -26,6 +33,9 @@ import TelltaleTestSupport
     let presenter = PopoverPresenterStub()
     /// The login-item service every delegate shares, so a relaunch sees the last registration.
     let login = LoginServiceStub()
+    /// Open at login's first-launch record (R32), in memory so tests never touch real preferences.
+    let preferences = MemoryPreferences()
+    let launchRecord: PreferencesLaunchRecord
     let installedApp: URL
     let installedExecutable: URL
     let buildExecutable: URL
@@ -38,6 +48,7 @@ import TelltaleTestSupport
         installedApp = directory.appending(path: "Applications/Telltale.app", directoryHint: .isDirectory)
         installedExecutable = try Self.makeApp(installedApp)
         buildExecutable = try Self.makeApp(directory.appending(path: "build/release/Telltale.app", directoryHint: .isDirectory))
+        launchRecord = PreferencesLaunchRecord(preferences: preferences)
     }
 
     static func makeApp(_ app: URL) throws -> URL {
@@ -54,7 +65,8 @@ import TelltaleTestSupport
     func delegate(current: URL? = nil) -> AppDelegate {
         AppDelegate(
             paths: paths, currentExecutable: current ?? installedExecutable, installedAppURL: installedApp, runner: runner,
-            sources: PanelWorld.sources, notificationService: service, login: LoginItem(service: login), uid: 4_242, calendar: Synth.newYork,
+            sources: PanelWorld.sources, notificationService: service, login: LoginItem(service: login), launchRecord: launchRecord, uid: 4_242,
+            calendar: Synth.newYork,
             eventSources: [], watchFiles: false,
             makeStatus: { [presenter] _, _ in presenter },
             quit: { [unowned self] in quits += 1 },

@@ -31,6 +31,10 @@ import TelltaleCore
         var isError: Bool
     }
 
+    /// How a launchd change ended: done, failed (`error` says why), or not started because another
+    /// change was still running.
+    enum ChangeOutcome: Equatable { case done, failed, busy }
+
     /// Lines of `collector.log` the view shows.
     static let logLineCount = 12
     /// How much of the log's end is read for them.
@@ -156,17 +160,17 @@ import TelltaleCore
     /// plist and reload the job, then store the interval; while it is off, only store it. Like Turn
     /// off, it waits for the first run, which creates the database the interval is stored in
     /// (rulings R27 and R30). An out-of-range value fails with `Settings.intervalError`'s message.
-    func changeInterval(_ minutes: Int) async {
-        guard canManage, databaseReady else { return }
+    @discardableResult func changeInterval(_ minutes: Int) async -> ChangeOutcome {
+        guard canManage, databaseReady else { return .failed }
         if let message = Settings.intervalError(minutes) {
             error = message
-            return
+            return .failed
         }
         var reload: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?
         if enabled {
             reload = { manager, executable, _ in try manager.changeInterval(executable: executable, intervalMinutes: minutes) }
         }
-        await manage(change: reload) { try self.actions.set(.intervalMinutes, minutes) }
+        return await manage(change: reload) { try self.actions.set(.intervalMinutes, minutes) }
     }
 
     /// "Run now": one collector run outside its schedule.
@@ -179,28 +183,33 @@ import TelltaleCore
     // MARK: Internals
 
     /// Runs a launchd change (when there is one) off the main actor, then `save` stores the setting
-    /// it implies. A failed change leaves the setting as it was.
-    private func manage(
+    /// it implies. A failed change leaves the setting as it was; while another change runs, nothing
+    /// happens and the outcome says so.
+    @discardableResult private func manage(
         change: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?, save: (() throws -> Void)? = nil
-    ) async {
-        guard canManage, !busy else { return }
+    ) async -> ChangeOutcome {
+        guard canManage else { return .failed }
+        guard !busy else { return .busy }
         let manager = manager, executable = currentExecutable, interval = intervalMinutes
-        await perform {
+        let succeeded = await perform {
             if let change { try await Task.detached { try change(manager, executable, interval) }.value }
             try save?()
         }
         await live.refresh()
         load()
+        return succeeded ? .done : .failed
     }
 
-    private func perform(_ body: () async throws -> Void) async {
+    @discardableResult private func perform(_ body: () async throws -> Void) async -> Bool {
         busy = true
         defer { busy = false }
         do {
             try await body()
             error = nil
+            return true
         } catch {
             self.error = error.localizedDescription
+            return false
         }
     }
 
