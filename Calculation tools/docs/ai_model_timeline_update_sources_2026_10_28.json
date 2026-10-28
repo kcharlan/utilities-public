@@ -1,0 +1,98 @@
+{
+  "checked": "2026-10-28",
+  "latestRelease": "2026-10-28",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_26.json",
+  "preservedHistoricalRows": 519,
+  "additions": [
+    {
+      "model": "Gemini 4 Carbon (limited preview)",
+      "lab": "Google",
+      "date": "2026-10-28",
+      "tier": "flagship",
+      "note": "Frontier model for long-horizon engineering, coding and cybersecurity. Google is initially rolling it out to selected cyber defenders and trusted Fairwind partners; broader product and developer access is forthcoming.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
+    },
+    {
+      "model": "Prism",
+      "lab": "Rime",
+      "date": "2026-10-28",
+      "tier": "specialty",
+      "note": "Enterprise speech-to-speech model for voice agents, with inspectable text and tool calls alongside spoken responses.",
+      "source": "https://www.rime.ai/resources/prism-first-speech-to-speech-for-enterprise"
+    },
+    {
+      "model": "Genie 4 (research preview)",
+      "lab": "Google",
+      "date": "2026-10-27",
+      "tier": "specialty",
+      "note": "Interactive world simulation model with real-time text steering and native audio. Research preview for trusted testers; Project Genie and developer access are planned.",
+      "source": "https://deepmind.google/blog/genie-4-a-new-generation-of-world-simulation/"
+    },
+    {
+      "model": "LFM3 family",
+      "lab": "Liquid AI",
+      "date": "2026-10-27",
+      "tier": "open-weights",
+      "note": "Compact shared-backbone family covering text, vision, audio, omni and decision tasks; six specialized models build on a 1.7B base. The LFM Open License imposes commercial conditions.",
+      "source": "https://huggingface.co/blog/LiquidAI/lfm3"
+    },
+    {
+      "model": "MAI Image 2.7 (preview)",
+      "lab": "Microsoft",
+      "date": "2026-10-27",
+      "tier": "specialty",
+      "note": "Image-editing model preview available on Arena, Artificial Analysis and MAI Playground. Text-to-image generation is planned separately.",
+      "source": "https://microsoft.ai/news/mai-image-2-7-debut/"
+    },
+    {
+      "model": "Giotto Alto / Solo",
+      "lab": "Giotto AI",
+      "date": "2026-10-27",
+      "tier": "mid",
+      "note": "Swiss-developed reasoning models for cloud and on-premises deployment. Alto is available in free chat; Solo targets single-GPU deployment.",
+      "source": "https://www.eqs-news.com/news/corporate/giotto-launches-sovereign-ai-family-to-make-ai-public-infrastructure/165f1e84-de97-428b-b77a-9e3c65dd5b57_en"
+    },
+    {
+      "model": "Unlimited-OCR-2",
+      "lab": "Baidu",
+      "date": "2026-10-26",
+      "tier": "open-weights",
+      "note": "Open-weight document parsing model for long multi-page documents. Weights were uploaded October 26 UTC; the model card dates its release October 27.",
+      "source": "https://huggingface.co/baidu/Unlimited-OCR-2"
+    },
+    {
+      "model": "Hy-SimulMT-30B-A3B",
+      "lab": "Tencent",
+      "date": "2026-10-26",
+      "tier": "open-weights",
+      "note": "Apache-2.0 30B mixture-of-experts model with 3B active parameters for simultaneous translation.",
+      "source": "https://huggingface.co/tencent/Hy-SimulMT-30B-A3B"
+    }
+  ],
+  "corrections": [],
+  "sourceSweep": [
+    {
+      "lab": "Google / Rime / Liquid AI / Microsoft / Giotto / Baidu / Tencent",
+      "sourceURLs": [
+        "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/",
+        "https://www.rime.ai/resources/prism-first-speech-to-speech-for-enterprise",
+        "https://deepmind.google/blog/genie-4-a-new-generation-of-world-simulation/",
+        "https://huggingface.co/blog/LiquidAI/lfm3",
+        "https://microsoft.ai/news/mai-image-2-7-debut/",
+        "https://www.eqs-news.com/news/corporate/giotto-launches-sovereign-ai-family-to-make-ai-public-infrastructure/165f1e84-de97-428b-b77a-9e3c65dd5b57_en",
+        "https://huggingface.co/baidu/Unlimited-OCR-2",
+        "https://huggingface.co/tencent/Hy-SimulMT-30B-A3B"
+      ],
+      "result": "Checked publisher announcements and model cards. Carbon and Genie have restricted access; OCR weights appeared October 26 ahead of the dated release note."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Gemini Robotics ER 2 public preview",
+      "reason": "A later availability milestone for a model announced in July; not a new model launch.",
+      "sources": [
+        "https://blog.google/innovation-and-ai/models-and-research/google-deepmind/gemini-robotics-er-2/"
+      ]
+    }
+  ]
+}
