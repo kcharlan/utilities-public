@@ -38,7 +38,12 @@ real="${real%/}"
 darwin="${TELLTALE_DARWIN_TEMP_DIR:-$(getconf DARWIN_USER_TEMP_DIR)}"
 darwin="${darwin%/}"
 entries() { ls -A "$1" 2>/dev/null | grep -E '(^|_)telltale[-_]' | LC_ALL=C sort; return 0; }
-markers() { ls -A "$darwin" 2>/dev/null | grep -E '^TemporaryDirectory\.' | LC_ALL=C sort; return 0; }
+markers() {
+    local list
+    list=$(ls -A "$darwin" 2>/dev/null) || return 1
+    printf '%s\n' "$list" | grep -E '^TemporaryDirectory\.' | LC_ALL=C sort
+    return 0
+}
 added() { LC_ALL=C comm -13 <(printf '%s\n' "$1") <(printf '%s\n' "$2") | sed '/^$/d'; }
 # A directory holding nothing but an empty, regular `.keep-directory`.
 marker_only() {
@@ -47,6 +52,10 @@ marker_only() {
 }
 sweep() {
     local name removed=0 kept=()
+    if [ "$markers_listed" -eq 0 ]; then
+        echo "check_no_temp_leaks: skipped the marker sweep: couldn't list $darwin before the run" >&2
+        return 0
+    fi
     while IFS= read -r name; do
         if marker_only "$darwin/$name" && rm -- "$darwin/$name/.keep-directory" && rmdir -- "$darwin/$name"; then
             removed=$((removed + 1))
@@ -60,7 +69,9 @@ sweep() {
         printf '  %s\n' "${kept[@]}" >&2
     fi
 }
-markers_before=$(markers)
+# Without a before-list every marker would look new, so a failed listing turns the sweep off.
+markers_listed=1
+markers_before=$(markers) || markers_listed=0
 if [ "$sweep_only" -eq 1 ]; then
     "$@"
     status=$?

@@ -91,6 +91,15 @@ expect_swept
 rmdir "$fake/telltale-snapshots.Kept12"
 if TMPDIR="$fake" "$checker" --sweep-only sh -c 'exit 5' > /dev/null 2>&1; then echo "FAIL: --sweep-only hid a failure"; exit 1
 else [ $? -eq 5 ] || { echo "FAIL: --sweep-only did not pass the status through"; exit 1; }; fi
+# A Darwin temp dir that can't be listed before the run turns the sweep off: a marker-only
+# directory that appears during the run is kept, never removed.
+if ! TMPDIR="$fake" TELLTALE_DARWIN_TEMP_DIR="$scratch/unlisted" "$checker" --sweep-only sh -c \
+    'mkdir -p "$1/TemporaryDirectory.late" && : > "$1/TemporaryDirectory.late/.keep-directory"' sh "$scratch/unlisted" \
+    > "$scratch/out.log" 2>&1; then
+    echo "FAIL: an unlisted Darwin temp dir failed the run"; cat "$scratch/out.log"; exit 1
+fi
+grep -qF 'skipped the marker sweep' "$scratch/out.log" || { echo "FAIL: skipped sweep not reported"; cat "$scratch/out.log"; exit 1; }
+[ -f "$scratch/unlisted/TemporaryDirectory.late/.keep-directory" ] || { echo "FAIL: sweep ran without a before-list"; exit 1; }
 
 # The Makefile: `make build` and `make test` run SwiftPM with TMPDIR in a private run directory
 # under the project's own .build/tmp/, which is removed with the package's lock files and honored
