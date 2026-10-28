@@ -541,3 +541,13 @@ Its first full run caught the scanner suite leaking a patterns file on every run
 the trap removed `$work`, then `rm -f "$work/../x.patterns"` could not resolve the
 path and failed silently. Name a sibling of a scratch directory by its real
 parent, never through the scratch directory itself.
+
+## 2026-10-28: A provider timeout must not race child startup in tests
+
+`timeoutAndCancellationJoinTERMResistantChild` gave its TERM-resistant child a
+0.5s provider timeout and failed about one full suite run in five, including on
+clean `HEAD`: under the parallel suite, the freshly written script sometimes had
+not reported its PID before the timeout killed it (`CredentialFailure.timedOut`).
+The cancel case now uses a 60s timeout, so only cancellation can end it, and the
+timeout case uses 2s, with 5s to wait for the PID. Give any timing test a margin
+well above process startup on a loaded machine.

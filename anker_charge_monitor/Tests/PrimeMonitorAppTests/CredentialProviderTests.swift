@@ -353,8 +353,12 @@ actor OrderedCredentialProvider: CredentialProvider {
             let script = try SyntheticCLI("trap '' TERM\nprintf '%s' \"$$\" > '\(marker.path(percentEncoded: false))'\nwhile :; do :; done")
             defer { script.remove() }
             let config = OnePasswordConfiguration(item: "Synthetic item", vault: nil, country: "US")
-            let task = Task { try await OnePasswordProvider(configuration: config, executable: script.url, timeout: 0.5).retrieve() }
-            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            // A loaded parallel suite can take over 0.5s to start the child shell,
+            // and a timeout that fires first kills it before it reports its PID.
+            // Only cancellation may end the cancel case.
+            let timeout: TimeInterval = cancel ? 60 : 2
+            let task = Task { try await OnePasswordProvider(configuration: config, executable: script.url, timeout: timeout).retrieve() }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
             // The shell creates the marker before printf writes the PID: wait for content.
             var written: Int32?
             while written == nil, ContinuousClock.now < deadline {
