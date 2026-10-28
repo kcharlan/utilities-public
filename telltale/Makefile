@@ -1,7 +1,7 @@
 # Port: anker_charge_monitor/Makefile, release/test recipes, 023737f.
-# Adaptation: Telltale.app; no bundled resources; test runs every Tests/ReleaseChecks script;
-# no live-check target (tools/notification_check.sh is the spike runner); snapshots and
-# acceptance port BV's harness targets.
+# Adaptation: Telltale.app; the only bundled resources are the readout fonts and OFL.txt; test
+# runs every Tests/ReleaseChecks script; no live-check target (tools/notification_check.sh is the
+# spike runner); snapshots and acceptance port BV's harness targets.
 SIGN_IDENTITY ?= CodexBar Local
 export SIGN_IDENTITY
 .PHONY: build test test-suite clean release install deploy signing-preflight snapshots acceptance

@@ -13,9 +13,9 @@ for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources,
 baseline, the rule engine with its notification policy, the collector run
 (`Telltale --collect`, see "How the collector runs"), the release identifiers and runtime paths,
 and the notification check used for the spec's section 4 spike, the collector's launchd job and
-its health, the menu-bar status item and panel (see "Menu bar and panel"), and the dashboard
-window with its model and collector views (see "Dashboard"). Settings arrives in a later task;
-until then the dashboard's Settings section is a placeholder.
+its health, the menu-bar status item and panel (see "Menu bar and panel"), the dashboard
+window with its model, collector and Settings views (see "Dashboard"), and the deployment to
+`/Applications` (see "Deploy").
 
 ## Requirements
 
@@ -112,6 +112,37 @@ Release builds require an existing usable code-signing identity, selected with
 Monitor. See the "Signing and installation" section of the
 [Anker Charge Monitor README](../anker_charge_monitor/README.md). The resolver and
 installer in `tools/` are ports of that project's scripts.
+
+## Deploy
+
+The release installs as `/Applications/Telltale.app` through the root deployment CLI,
+`tools/deploy_telltale.mjs`, a port of Anker Charge Monitor's. Deploy only reviewed, merged
+`main` after the full suite and the root deployment suites pass; a real deployment needs the
+owner's authorization. From the repository root:
+
+```sh
+node tools/deploy_telltale.mjs --dry-run
+node tools/deploy_telltale.mjs
+node tools/deploy_telltale.mjs --audit
+zsh tools/check_local_deployments.zsh
+```
+
+`make install` (or `make deploy`) from `telltale/` runs the same CLI. It copies the tracked,
+staged build inputs (including the bundled fonts) to a private scratch directory, runs
+`make release` there with the `SIGN_IDENTITY` identity, validates the bundle (identifiers,
+version, macOS 27 minimum, signature), activates it with `tools/install.sh`, and writes the
+provenance receipt `~/Library/Scripts/.telltale-native.json`. Each deployment keeps a
+private backup under `~/.utilities-deploy-backups/telltale/`; `--rollback BACKUP` restores
+one, and any failure restores the previous app. `--audit` checks the installed app against
+current source without building or running anything.
+
+The deployer never runs `launchctl` and leaves the database, the log and the collector's
+job plist alone. A running Telltale keeps running the old release: quit and reopen it. The
+installed copy turns the collector on at launch when it should be on and its plist is
+missing. After deploying, if the collector is on, open Collector in the dashboard: Installed
+must be lit green and Repair must not be offered (spec section 13); if it is, press it. Then
+run the installed-release checks under "Native acceptance". The full contract is in the
+[deployment guide](../docs/local_deployment_sync.md#telltale-app-deployment).
 
 ## How the collector runs
 
