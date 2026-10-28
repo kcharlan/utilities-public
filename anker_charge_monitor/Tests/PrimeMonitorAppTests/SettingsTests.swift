@@ -8,7 +8,7 @@ private struct SettingsProvider: CredentialProvider {
 }
 @Suite @MainActor struct SettingsTests {
     @Test func signInStoresOnlyNonsecretProviderSettings() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
         let backend = AppBackend(), cache = MemorySessionStore(), clock = ManualScheduler()

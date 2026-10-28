@@ -1,9 +1,14 @@
-.PHONY: build test clean
+.PHONY: build test test-suite clean
 
 build:
 	swift build
 
+# The leak check wraps the whole suite and fails on anything it leaves in
+# temporary space.
 test:
+	Tests/ReleaseChecks/check_tmpdir.sh $(MAKE) --no-print-directory test-suite
+
+test-suite:
 	swift test
 	node --test Tests/ReleaseChecks/*.test.mjs
 

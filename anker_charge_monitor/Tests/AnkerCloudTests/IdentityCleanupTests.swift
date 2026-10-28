@@ -72,7 +72,7 @@ private func observedIdentityDirectory(_ directory: URL) throws -> [String] {
 }
 
 @Test func identityDirectoryObservationSortsEntriesAndRejectsNonDirectory() throws {
-    let directory = FileManager.default.temporaryDirectory.appending(path: "synthetic-observation-" + UUID().uuidString)
+    let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-observation-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     #expect(try observedIdentityDirectory(directory).isEmpty)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

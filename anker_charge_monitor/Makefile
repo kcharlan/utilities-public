@@ -1,12 +1,17 @@
 # App-only release adapted from brew_version/Makefile at 579ebb7.
 SIGN_IDENTITY ?= CodexBar Local
 export SIGN_IDENTITY
-.PHONY: build test snapshots clean release install deploy live-check signing-preflight
+.PHONY: build test test-suite snapshots clean release install deploy live-check signing-preflight
 build:
 	swift build -Xswiftc -warnings-as-errors
+# The leak check wraps the whole suite and fails on anything it leaves in
+# temporary space.
 test:
+	Tests/ReleaseChecks/check_tmpdir.sh $(MAKE) --no-print-directory test-suite
+test-suite:
 	swift test -Xswiftc -warnings-as-errors
 	Tests/ReleaseChecks/check_secrets_tests.sh
+	Tests/ReleaseChecks/check_tmpdir_tests.sh
 	Tests/ReleaseChecks/check_bundle.sh
 clean:
 	rm -rf .build build

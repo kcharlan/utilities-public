@@ -3,7 +3,7 @@ import Testing
 @testable import BrewVersionCore
 
 private final class TapFixture {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-taps-\(UUID().uuidString)")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-taps-\(UUID().uuidString)")
     let fm = FileManager.default
     init() throws { try fm.createDirectory(at: root, withIntermediateDirectories: true) }
     deinit { try? fm.removeItem(at: root) }

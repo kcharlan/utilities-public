@@ -526,3 +526,28 @@ although the same comparison is true outside the macro. Convert both operands to
 one type (CGFloat for AppKit metrics) before `#expect`. New persisted settings
 stay optional in AppState: synthesized decoding rejects a missing non-optional
 key, and the store would then quarantine the user's whole saved state.
+
+## 2026-10-28: Harness builders must remove what they create
+
+The snapshot gate kept a roughly 100 MB `prime-snapshots.*` home in `$TMPDIR` on
+every `make test`, and test rigs that cleaned up only in `finish()` leaked a
+directory whenever a test threw first. A builder run by the suite now builds in a
+caller-owned home inside the caller's trap-removed scratch; a manual run keeps only
+its PNGs and prints how to remove them. Rigs also remove their directory in
+`deinit`. Foundation's `temporaryDirectory` ignores `$TMPDIR` on macOS and uses the
+per-user directory, so a leak check must watch both. `check_tmpdir.sh` wraps the
+suite and fails on any new `prime-` entry; keep every temporary name on that prefix.
+Its first full run caught the scanner suite leaking a patterns file on every run:
+the trap removed `$work`, then `rm -f "$work/../x.patterns"` could not resolve the
+path and failed silently. Name a sibling of a scratch directory by its real
+parent, never through the scratch directory itself.
+
+## 2026-10-28: A provider timeout must not race child startup in tests
+
+`timeoutAndCancellationJoinTERMResistantChild` gave its TERM-resistant child a
+0.5s provider timeout and failed about one full suite run in five, including on
+clean `HEAD`: under the parallel suite, the freshly written script sometimes had
+not reported its PID before the timeout killed it (`CredentialFailure.timedOut`).
+The cancel case now uses a 60s timeout, so only cancellation can end it, and the
+timeout case uses 2s, with 5s to wait for the PID. Give any timing test a margin
+well above process startup on a loaded machine.

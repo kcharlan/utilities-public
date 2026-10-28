@@ -165,7 +165,7 @@ actor AppBackend: ChargerBackend {
 @MainActor func settle() async { for _ in 0..<100 { await Task.yield() } }
 @MainActor final class ControllerRig {
     let backend = AppBackend(), secrets: MemorySecrets, events = TestEvents(), clock = ManualScheduler()
-    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
     let controller: MonitorController
     init(configured: Bool = true) throws {
         secrets = MemorySecrets(configured ? .init(credentials: appCredentials, session: appSession) : nil)
@@ -175,6 +175,8 @@ actor AppBackend: ChargerBackend {
     }
     func start() async { controller.start(); await events.send(.network(true)); await settle() }
     func finish() async { await controller.stop(); try? FileManager.default.removeItem(at: directory) }
+    // Also covers a test that throws before reaching finish().
+    deinit { try? FileManager.default.removeItem(at: directory) }
     func reply() async { backend.output.snapshot(.init(receivedAt: clock.date, readings: [])); await settle() }
 }
 

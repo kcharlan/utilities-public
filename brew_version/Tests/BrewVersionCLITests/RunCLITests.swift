@@ -40,7 +40,7 @@ private final class Recording {
 }
 
 private final class CLITapFixture {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-cli-taps-\(UUID().uuidString)")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-cli-taps-\(UUID().uuidString)")
     init(_ taps: [String] = ["synthetic-owner/homebrew-synthetic-tap"], kind: PackageKind = .formula) throws {
         for name in taps {
             let tap = root.appendingPathComponent("Library/Taps/\(name)")

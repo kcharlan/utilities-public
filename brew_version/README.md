@@ -45,7 +45,16 @@ They also check that the release plist, both Mach-O products and the snapshot
 builder require the supported macOS 27 runtime.
 The integration category also runs the acceptance and Settings prototype
 builders with an invented HOME, requiring their printed private homes to be
-children of the OS temporary root with mode 0700.
+mode-0700 children of their `TMPDIR` that keep only the signed bundle, and
+checks that a failed builder removes its whole home.
+`make test` runs the suite under `Tests/ReleaseChecks/check_tmpdir.sh`, which
+fails if the suite, passing or failing, leaves a new `brew-version-` entry in
+`$TMPDIR` or Foundation's per-user temporary directory. Every test and harness
+temporary name uses that prefix, and the integration tests put each builder
+home inside their own scratch directory, which they remove: through `TMPDIR`,
+or through `BREW_VERSION_HARNESS_HOME`, a new path where a builder keeps its
+whole build for the caller to inspect and remove. Run one suite at a
+time: a concurrent run of this project's suite can trip the check.
 Tests use synthetic responses; a live lookup is a separate acceptance check.
 
 Render the maintained native views without reading owner state or showing windows:
@@ -54,15 +63,19 @@ Render the maintained native views without reading owner state or showing window
 make -C brew_version snapshots
 ```
 
-This required visual category builds in a fresh mode-0700 OS temporary directory
-and prints its path. It writes twenty mode-0600 PNGs: `empty`, `watching`,
+This required visual category builds in a fresh mode-0700
+`$TMPDIR/brew-version-snapshots.*` directory and prints its path and the command
+that removes it. It writes twenty mode-0600 PNGs: `empty`, `watching`,
 `other-updates`, `search-results`, `suggestions`, `error`, `settings`, `tap-watching`,
 `tap-suggestions` and `scrolled` (a long list scrolled under its pinned header), each with
 `-light.png` and `-dark.png`. The renderer checks actual painted pixels, widths,
 content-hugging empty state, long-list bounds and native scroll viewports.
 Inspect every PNG, then check the real popover, menus and Settings in both
 appearances; offscreen rendering does not establish native input or activation.
-Keep the printed images outside the repository for review.
+Keep the printed images outside the repository for review. The builder keeps
+only the PNGs: it removes its scratch package and fixtures when it finishes, and
+its whole directory if the build fails or is interrupted. Remove the directory
+once you have reviewed the images.
 
 To run the debug command from the repository root, resolve SwiftPM's binary
 directory (its layout varies by toolchain):
@@ -432,8 +445,10 @@ persisting the switch across Settings reopens establishes only its current state
 
 `make -C brew_version acceptance` is a required automated validation category.
 It builds a separately identified, signed synthetic bundle in a fresh private
-home created by `mktemp -d` in OS temporary space and prints its
-path. It copies the maintained production UI/notifier/core sources into a
+`$TMPDIR/brew-version-acceptance.*` home and prints its path and the command that
+removes it. The home keeps only the bundle and its synthetic state; the builder
+removes its scratch package when it finishes, and the whole home if the build
+fails or is interrupted. It copies the maintained production UI/notifier/core sources into a
 scratch Swift package, replacing only the application entry and services.
 It also runs a synthetic service test without launching a GUI. The harness
 uses no owner state, inventory, application folders or live HTTP requests.

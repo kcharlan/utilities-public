@@ -13,7 +13,7 @@ while [ -n "$component" ]; do
   case "$component" in */*) parent=${component%/*}; [ "$parent" != "$component" ] || break; component=$parent;; *) break;; esac
 done
 umask 077
-scratch=$(mktemp -d) || fail 2
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-scan.XXXXXX") || fail 2
 trap 'rm -rf "$scratch"' EXIT
 # No -q: grep must finish reading every input and report read errors.
 match_file() {

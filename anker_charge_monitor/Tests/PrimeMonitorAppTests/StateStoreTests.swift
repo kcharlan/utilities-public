@@ -4,7 +4,7 @@ import PrimeMonitorCore
 @testable import PrimeMonitor
 @Suite struct StateStoreTests {
     @Test func decodedPathsPreserveAtomicReplacementAndQuarantine() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let root = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let directory = root.appending(path: "spaces % café/%2F", directoryHint: .isDirectory)
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
@@ -31,7 +31,7 @@ import PrimeMonitorCore
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false)) == ["spaces % café"])
     }
     @Test func roundTripAndDefaults() throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
         #expect(store.load().state == AppState(charger: nil, closedInterval: .m1))
@@ -45,7 +45,7 @@ import PrimeMonitorCore
         try store.save(value); #expect(store.load().state == value)
     }
     @Test func stateSavedBeforeTextSizeLoadsWithoutQuarantine() throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
         try store.save(AppState(charger: appCharger, closedInterval: .m5))

@@ -11,7 +11,7 @@ import BrewVersionCore
 }
 @MainActor struct SystemEventsTests {
     @Test func initialOfflineAndReconnectUseControllerRetryCadence() async throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-network-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-network-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let transport = EventTransport()
         let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))

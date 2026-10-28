@@ -6,7 +6,7 @@ import BrewVersionCore
 struct AcceptanceServiceTests {
     @MainActor @Test func tapTransportAndInventoryAreSynthetic() async throws {
         let service = SyntheticTransport()
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-taps-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-taps-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let prefix = try SyntheticEnvironment.prepareTapFixtures(home: home)
         let prefixes = HomebrewPrefix.detectAll(candidates: [prefix])
@@ -49,7 +49,7 @@ struct AcceptanceServiceTests {
         #expect(try await client.lookup(name, kinds: .auto).version == "2.0-synthetic")
         let unknown = URL(string: "https://formulae.brew.sh/api/formula/synthetic-missing.json")!
         #expect(try await service.get(unknown, ifNoneMatch: nil).status == 404)
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-catalog-" + UUID().uuidString)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-catalog-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let catalog = try await CatalogClient(transport: service, cacheDirectory: home).load().catalog
         let installed = try #require(catalog.listing(for: PackageName("synthetic-installed")!, kind: .formula))

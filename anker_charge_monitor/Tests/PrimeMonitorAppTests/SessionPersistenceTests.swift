@@ -21,7 +21,7 @@ private actor PersistenceTransport: HTTPTransport {
         // No charger is selected, so this integration exercises real REST/backend
         // session forwarding without creating any MQTT identity or connection.
         for proactive in [true, false] {
-            let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
             defer { try? FileManager.default.removeItem(at: directory) }
             let provider = SyntheticProvider(), secret = MemorySessionStore()
             let selection = CredentialSelection(provider: "synthetic", settings: ["item": "Synthetic account", "country": "US"])
