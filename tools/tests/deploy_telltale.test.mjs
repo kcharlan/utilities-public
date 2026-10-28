@@ -184,3 +184,15 @@ test('canonical make install delegates to the root CLI without a separate releas
   assert.match(make,/^install deploy:\n\tnode ..\/tools\/deploy_telltale\.mjs\n(?!\t)/m);
   for(const file of ['../../telltale/Makefile','../../telltale/tools/install.sh','../deploy_telltale.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(file,import.meta.url),'utf8'),/\blaunchctl\b/,file);
 });
+
+test('the release build gets a TMPDIR inside the removed scratch, so the caller TMPDIR gets no Telltale entries',t=>{
+  // Stands in for SwiftPM, which writes path-named lock files and TemporaryDirectory.* to TMPDIR
+  // (always inside TMPDIR, so even a failing run leaves them in the removed fixture).
+  const f=fixture(t),make=fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),log=path.join(f.base,'synthetic-tmpdir.log');
+  f.write('Makefile',make.replace('release:\n',()=>"release:\n\tprintf '%s\\n' \"$$TMPDIR\" > \"$$SYNTHETIC_TMPDIR_LOG\"\n\t: > \"$${TMPDIR%/}/_synthetic_telltale_.build.lock\"\n\tmkdir \"$${TMPDIR%/}/TemporaryDirectory.synthetic\"\n"));f.git('add','.');
+  f.env.SYNTHETIC_TMPDIR_LOG=log;ok(f.run());
+  const child=fs.readFileSync(log,'utf8').trim();
+  assert.match(child,new RegExp('^'+f.base.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'/telltale-build-[^/]+/tmp/$'),child);
+  assert.equal(fs.existsSync(child),false,'the scratch TMPDIR must be removed with the scratch');
+  assert.deepEqual(fs.readdirSync(f.base).filter(name=>/telltale|TemporaryDirectory/i.test(name)),[]);
+});

@@ -103,6 +103,10 @@ done
 # Make command-line variables require $$ for a literal dollar.
 make signing-preflight SIGN_IDENTITY='Custom $$ ` Identity' > "$scratch/custom.log" 2>&1
 make release > "$scratch/release.log" 2>&1
+# Ruling R28: the release build's SwiftPM files went to a removed run directory under .build/tmp/,
+# not to the caller's TMPDIR.
+[ -z "$(ls -A .build/tmp)" ] || { echo 'FAIL: release left .build/tmp entries'; ls -A .build/tmp; exit 1; }
+[ -z "$(ls -A "$TMPDIR")" ] || { echo 'FAIL: release wrote to the caller TMPDIR'; ls -A "$TMPDIR"; exit 1; }
 app='build/release/Telltale.app'
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = 'Telltale' ]
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Contents/Info.plist")" = 'Telltale' ]

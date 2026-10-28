@@ -8,7 +8,10 @@ set -euo pipefail
 # synthetic acceptance build (with its generated service tests) runs here too, and its executable
 # must carry the same supported runtime. PNG inspection and real-click acceptance stay README checks.
 root=$(cd "$(dirname "$0")/../.." && pwd)
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-harnesses.XXXXXX")
+# In the OS temporary directory, not TMPDIR: the snapshot executable requires its home there, and
+# Foundation takes it from the Darwin user temp dir whatever TMPDIR says (`make test` points
+# TMPDIR into .build/tmp).
+scratch=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)telltale-harnesses.XXXXXX")
 chmod 700 "$scratch"
 trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
 cd "$root"

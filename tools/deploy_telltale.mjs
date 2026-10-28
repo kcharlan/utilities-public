@@ -146,7 +146,10 @@ export function main(argv=process.argv.slice(2)) {
   try {
     if(!rollback) {
       for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});fs.chmodSync(file,entry.permissions);}
-      execFileSync('make',['-C',path.join(scratch,project),'release'],{env:{...process.env,SIGN_IDENTITY:identity,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''},stdio:'pipe',timeout:900000});
+      // SwiftPM writes path-named lock files and TemporaryDirectory.* folders to TMPDIR; keep them in
+      // the scratch so its removal takes them too (ruling R28).
+      const tmp=path.join(scratch,'tmp');fs.mkdirSync(tmp,{mode:0o700});
+      execFileSync('make',['-C',path.join(scratch,project),'release'],{env:{...process.env,TMPDIR:tmp+'/',SIGN_IDENTITY:identity,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''},stdio:'pipe',timeout:900000});
       validate(path.join(scratch,project,'build/release',appName),expectation,identity);
       if(sourceInventory(repo).sourceHash!==inputs.sourceHash)throw Error('App inputs changed during build');
     }
