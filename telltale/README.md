@@ -383,6 +383,7 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Dashboard, Settings and Open dashboard checks (acceptance bundle) | Passed after one fix: Match system rendered Light under a Dark system and ignored system changes, because the harness's Light/Dark buttons pinned `NSApp.appearance`. Fixed in a604a1f; Match system then passed before and after pressing those buttons |
 | Settings (acceptance bundle) | Passed |
 | Launch at login, collector and Settings in the installed release | Not yet run (checked after the first install) |
+| Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 
 The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin
 confirmed that is the intended behavior (spec section 9.4).

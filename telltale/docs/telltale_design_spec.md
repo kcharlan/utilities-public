@@ -667,7 +667,8 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
   - `TelltaleCore`: models, rule engine, baseline, storage.
   - `TelltaleCodex` and `TelltaleOpenAIStatus`: plugins.
 - One executable target, `Telltale`.
-- `Makefile` targets: `build`, `test`, `release` (ad-hoc signed app bundle),
+- `Makefile` targets: `build`, `test`, `release` (app bundle signed with a stable identity,
+  `CodexBar Local` by default, never ad-hoc: an approved deviation, as in `anker_charge_monitor`),
   `snapshots`, `acceptance`.
 
 **Tests (all required, per the repo's Testing Scope):**

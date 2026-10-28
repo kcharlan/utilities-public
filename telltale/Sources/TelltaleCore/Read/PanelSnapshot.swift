@@ -244,9 +244,7 @@ public struct PanelSnapshot: Sendable, Equatable {
     }
 
     private static func row(store: Store, baseline: BaselineEngine, source: SourceSummary, model: String, now: Date) throws -> ModelRow {
-        let recent = try store.responses(provider: source.provider, model: model, endingIn: now.addingTimeInterval(-rateWindow)...now)
-            .filter { $0.throughput != nil }
-        let table = try baseline.usual(provider: source.provider, model: model, at: now)
+        let readout = try ModelDetail.Readout.lastHour(store: store, baseline: baseline, provider: source.provider, model: model, now: now)
 
         let last = EvaluationPoints.after(nil, through: now, earliest: now.addingTimeInterval(-EvaluationPoints.cadence)).last ?? now
         let first = last.addingTimeInterval(-EvaluationPoints.cadence * Double(sparklinePoints - 1))
@@ -268,7 +266,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         }
         return ModelRow(
             provider: source.provider, model: model, name: source.naming.displayName(model: model),
-            tps: median(recent.compactMap(\.throughput)), usual: mixUsual(recent, table: table), sparkline: sparkline, note: note)
+            tps: readout.tps, usual: readout.usualTPS, sparkline: sparkline, note: note)
     }
 
     /// A problem first, then the off or first-run line, else the running line.

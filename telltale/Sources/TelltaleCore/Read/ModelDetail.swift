@@ -53,6 +53,19 @@ public struct ModelDetail: Sendable, Equatable {
             self.medianSeconds = medianSeconds
             self.usualMedianSeconds = usualMedianSeconds
         }
+
+        /// The readout over the responses that ended in the `readoutWindow` before `now`: the one
+        /// implementation behind the dashboard's readout and the panel row, which spec section 8
+        /// requires to be the same number.
+        public static func lastHour(store: Store, baseline: BaselineEngine, provider: ProviderID, model: String, now: Date) throws -> Readout {
+            let table = try baseline.usual(provider: provider, model: model, at: now)
+            let recent = try store.responses(provider: provider, model: model, endingIn: now.addingTimeInterval(-readoutWindow)...now)
+                .filter { $0.throughput != nil }
+            let usualSeconds = recent.compactMap { response in table.usual(for: response).map { Double(response.outputTokens) / $0 } }
+            return Readout(
+                tps: median(recent.compactMap(\.throughput)), usualTPS: mixUsual(recent, table: table),
+                medianSeconds: median(recent.map(\.duration)), usualMedianSeconds: median(usualSeconds))
+        }
     }
 
     public struct SpeedDot: Sendable, Equatable, Hashable {
@@ -92,13 +105,7 @@ public struct ModelDetail: Sendable, Equatable {
         try store.transaction {
             let interval = DateInterval(start: now.addingTimeInterval(-range.duration), end: now)
             let table = try baseline.usual(provider: provider, model: model, at: now)
-
-            let recent = try store.responses(provider: provider, model: model, endingIn: now.addingTimeInterval(-readoutWindow)...now)
-                .filter { $0.throughput != nil }
-            let usualSeconds = recent.compactMap { response in table.usual(for: response).map { Double(response.outputTokens) / $0 } }
-            let readout = Readout(
-                tps: median(recent.compactMap(\.throughput)), usualTPS: mixUsual(recent, table: table),
-                medianSeconds: median(recent.map(\.duration)), usualMedianSeconds: median(usualSeconds))
+            let readout = try Readout.lastHour(store: store, baseline: baseline, provider: provider, model: model, now: now)
 
             let learning = try baseline.learning(provider: provider, model: model, at: now)
             var gaps: [InputBucket] = []
@@ -149,7 +156,7 @@ public struct ModelDetail: Sendable, Equatable {
     private static func incidentBands(store: Store, source: String, interval: DateInterval) throws -> [DateInterval] {
         try store.incidents(source: source, overlapping: interval).compactMap { incident in
             let start = max(incident.publishedAt, interval.start)
-            let end = min(incident.isResolved ? incident.updatedAt : interval.end, interval.end)
+            let end = min(incident.resolvedAt ?? interval.end, interval.end)
             return start < end ? DateInterval(start: start, end: end) : nil
         }
         .sorted { $0.start < $1.start }

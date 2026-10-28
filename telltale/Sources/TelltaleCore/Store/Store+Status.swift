@@ -50,12 +50,12 @@ extension Store {
     }
 
     /// Incidents whose component impacts overlap `interval` (both ends inclusive), oldest first.
-    /// An impact without an end is open until the incident resolves (its `updated_at`), or
+    /// An impact without an end is open until the incident resolves (`IncidentRecord.resolvedAt`), or
     /// without bound while the incident is open. An incident with no impacts counts as one
     /// impact from publication on, on the same terms.
     public func incidents(source: String, overlapping interval: DateInterval) throws -> [IncidentRecord] {
         try incidentRows(source: source, whereClause: "").filter { incident in
-            let open = incident.isResolved ? incident.updatedAt : Date.distantFuture
+            let open = incident.resolvedAt ?? Date.distantFuture
             let spans = incident.impacts.isEmpty
                 ? [(start: incident.publishedAt, end: open)]
                 : incident.impacts.map { (start: $0.start, end: $0.end ?? open) }

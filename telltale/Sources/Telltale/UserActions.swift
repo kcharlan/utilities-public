@@ -2,9 +2,10 @@ import Foundation
 import TelltaleCore
 
 /// The app's narrow read-write path (spec section 4): settings, baseline acceptance and undo,
-/// "Keep as abnormal", a rebuild request, and Check now. Each write opens a short-lived read-write
-/// connection, but only after a read-only open succeeds, so the app never creates or initializes
-/// the database: before the collector's first run every write throws `StoreError.notInitialized`.
+/// "Keep as abnormal", a rebuild request, and Check now. Each write opens a short-lived
+/// `.readWriteExisting` connection, which refuses a missing or unmigrated file, so the app never
+/// creates or initializes the database: before the collector's first run every write throws
+/// `StoreError.notInitialized`.
 @MainActor final class UserActions {
     private let paths: TelltalePaths
     private let calendar: Calendar

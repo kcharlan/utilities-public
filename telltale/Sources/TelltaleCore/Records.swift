@@ -220,6 +220,23 @@ public struct IncidentRecord: Sendable, Equatable, Hashable, Codable {
 
     /// True for status `resolved` or `postmortem`.
     public var isResolved: Bool { status == "resolved" || status == "postmortem" }
+
+    /// When the incident ended: the start of the final run of resolved or postmortem statuses in
+    /// its history, or its last update when the history doesn't say. Nil while it is open. The one
+    /// definition the rule engine, the store's overlap query and the dashboard's bands share, so a
+    /// later postmortem update doesn't move the end.
+    public var resolvedAt: Date? {
+        guard isResolved else { return nil }
+        var start: Date?
+        for change in history.sorted(by: { $0.at < $1.at }) {
+            if change.status == "resolved" || change.status == "postmortem" {
+                start = start ?? change.at
+            } else {
+                start = nil
+            }
+        }
+        return start ?? updatedAt
+    }
 }
 
 public struct RSSItem: Sendable, Equatable, Hashable, Codable {

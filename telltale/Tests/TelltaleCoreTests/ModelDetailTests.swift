@@ -110,6 +110,21 @@ private enum Detail {
         }
     }
 
+    /// An incident ends when it resolved, not at a later postmortem update, here as in the rule
+    /// engine (`IncidentRecord.resolvedAt`).
+    @Test func incidentBandEndsAtResolutionNotAtTheLaterPostmortem() throws {
+        try withRules { h in
+            var incident = h.incident("inc_synthetic_01", published: h.sep4(8), resolved: h.sep4(9), impacts: [])
+            incident.history.append(StatusChange(at: h.sep4(10, 30), status: "postmortem"))
+            incident.status = "postmortem"
+            incident.updatedAt = h.sep4(10, 30)
+            try h.store.upsert(incidents: [incident])
+            #expect(incident.resolvedAt == h.sep4(9))
+            #expect(try Detail.load(h, at: h.sep4(11)).incidents == [DateInterval(start: h.sep4(8), end: h.sep4(9))])
+            #expect(try h.store.incidents(source: RuleHarness.sourceID, overlapping: DateInterval(start: h.sep4(9, 30), end: h.sep4(11))).isEmpty)
+        }
+    }
+
     @Test func readoutUsualIsMixMatched() throws {
         try withRules { h in
             // Usual: small prompts at 40 tok/s, 300k+ prompts at 20 tok/s.
@@ -131,6 +146,27 @@ private enum Detail {
             let slow = try Detail.load(h, at: h.sep4(10, 30)).lastHour
             #expect(approximately(slow.tps, 10) && approximately(slow.usualTPS, 20))
             #expect(approximately(slow.medianSeconds, 100) && approximately(slow.usualMedianSeconds, 50))
+        }
+    }
+
+    @Test func panelRowShowsTheDashboardReadout() throws {
+        try withRules { h in
+            for day in 1...3 {
+                try h.base.add(20, throughput: 40, month: 9, day: day)
+                try h.base.add(20, throughput: 20, month: 9, day: day, hour: 14, inputTokens: 320_000)
+            }
+            try h.run(30, throughput: 30, hour: 9)
+            try h.run(30, throughput: 10, hour: 9, inputTokens: 320_000)
+            let now = h.sep4(9, 45)
+            let readout = try Detail.load(h, at: now).lastHour
+            let codex = SourceSummary(
+                provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID,
+                signals: [.speed], naming: SyntheticNaming())
+            let row = try #require(try PanelSnapshot.load(
+                store: h.store, baseline: h.base.engine, health: nil, sources: [codex], now: now, calendar: h.calendar).models.first)
+            // Spec section 8: the panel row and the dashboard readout are the same numbers.
+            #expect(readout.tps != nil && readout.usualTPS != nil)
+            #expect(row.tps == readout.tps && row.usual == readout.usualTPS)
         }
     }
 

@@ -437,14 +437,6 @@ public struct CollectorRun: Sendable {
 // MARK: - Rebuild
 
 extension Store {
-    /// Spec section 7.3's "Rebuild from Codex logs", as Task 9's storage mapping:
-    ///
-    /// - discarded: responses, evaluation points, episodes, rule events (`EventKind.ruleKinds`),
-    ///   rule state (including the last evaluated point and failed-turn notices), cursors, and
-    ///   `failed_turns.evaluated_at` (reset to null);
-    /// - kept: baseline epochs and their events, shift dismissals, incidents, status components,
-    ///   `statusPost` and `connectionHistoryIncomplete` events, failed-turn and connection-event
-    ///   rows, usage limits and source state (the next ingest overwrites both), and settings.
     /// Ends every `running` run record as `failed` with `CollectorRun.interruptedDetail` at `at`.
     /// Called only by the lock holder, before it records its own start. Returns the rows closed.
     func closeInterruptedRuns(at: Date) throws -> Int {
@@ -453,6 +445,15 @@ extension Store {
             [.text(RunOutcome.failed.rawValue), .text(CollectorRun.interruptedDetail), .date(at), .text(RunOutcome.running.rawValue)])
     }
 
+    /// Spec section 7.3's "Rebuild from Codex logs", as Task 9's storage mapping:
+    ///
+    /// - discarded: responses, evaluation points, episodes, rule events (`EventKind.ruleKinds`),
+    ///   rule state (including the last evaluated point and failed-turn notices), cursors, and
+    ///   `failed_turns.evaluated_at` (reset to null; the backfill counts the turns inside the
+    ///   lookback again and settles older ones uncounted, `settleFailedTurns`);
+    /// - kept: baseline epochs and their events, shift dismissals, incidents, status components,
+    ///   `statusPost` and `connectionHistoryIncomplete` events, failed-turn and connection-event
+    ///   rows, usage limits and source state (the next ingest overwrites both), and settings.
     func discardForRebuild() throws {
         try transaction {
             let kinds = EventKind.ruleKinds

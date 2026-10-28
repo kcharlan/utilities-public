@@ -332,7 +332,7 @@ private final class EvaluationPass {
         for source in statusSources {
             let watchedIDs = Set(try store.components(source: source.id).filter { watchedComponents.contains($0.name) }.map(\.id))
             let incidents = try store.incidents(source: source.id, overlapping: DateInterval(start: .distantPast, end: final))
-                .map { (record: $0, resolvedAt: Self.resolvedAt($0)) }
+                .map { (record: $0, resolvedAt: $0.resolvedAt) }
                 .filter { incident in
                     incident.resolvedAt.map { $0 > first } ?? true
                         || states[StateKey(rule: .incident, provider: source.id, scope: incident.record.id)] != nil
@@ -757,20 +757,5 @@ private final class EvaluationPass {
         case "partial_outage": 2
         default: 1
         }
-    }
-
-    /// When the incident's final run of resolved or postmortem statuses began; its last update
-    /// when the history doesn't say. Nil while it is open.
-    static func resolvedAt(_ incident: IncidentRecord) -> Date? {
-        guard incident.isResolved else { return nil }
-        var start: Date?
-        for change in incident.history.sorted(by: { $0.at < $1.at }) {
-            if change.status == "resolved" || change.status == "postmortem" {
-                start = start ?? change.at
-            } else {
-                start = nil
-            }
-        }
-        return start ?? incident.updatedAt
     }
 }
