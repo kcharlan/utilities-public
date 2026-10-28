@@ -1,5 +1,20 @@
 # Lessons learned
 
+## 2026-10-28: Never pin NSApp.appearance, and make "follow the system" nil all the way up
+
+A native acceptance harness pinned light or dark with its own buttons. They
+set `NSApp.appearance` as well as the panel's, and that pin outranks the
+system for every window that has no appearance of its own. A dashboard set to
+Match system (`window.appearance = nil`) then inherited the pin, so it stayed
+Light under a Dark system, ignored system changes even after closing and
+reopening, and looked intermittent because it depended on whether a harness
+button had been pressed first. A harness may override only the specific window
+or panel it is exercising; it must never set `NSApp.appearance`. Following the
+system means `nil` at every level above the view: no window appearance and no
+application appearance. Test it by pinning through the harness, choosing the
+follow-the-system setting, then asserting both appearances are nil and that
+the window's `effectiveAppearance` matches `NSApp.effectiveAppearance`.
+
 ## 2026-10-27: Verify plan ports by test identity and injected boundaries
 
 A subset port cannot use whole-file test counts as a coverage check. Record

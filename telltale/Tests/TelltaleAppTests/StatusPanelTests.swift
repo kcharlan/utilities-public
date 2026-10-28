@@ -129,21 +129,21 @@ struct StatusPanelGeometryTests {
     }
 }
 
-private final class PanelItem: NSStatusItem {
+final class PanelItem: NSStatusItem {
     let anchor: NSStatusBarButton
     init(anchor: NSStatusBarButton) { self.anchor = anchor; super.init() }
     override var button: NSStatusBarButton? { anchor }
     var session: NSStatusItemExpandedInterfaceSession?
     override var expandedInterfaceSession: NSStatusItemExpandedInterfaceSession? { session }
 }
-private final class PanelSession: NSStatusItemExpandedInterfaceSession { override func cancel() {} }
+final class PanelSession: NSStatusItemExpandedInterfaceSession { override func cancel() {} }
 private final class SyntheticActivatedApplication: NSRunningApplication, @unchecked Sendable {
     let identifier: String
     init(_ identifier: String) { self.identifier = identifier; super.init() }
     override var processIdentifier: pid_t { 424242 }
     override var bundleIdentifier: String? { identifier }
 }
-@MainActor private final class OffscreenStatusPanel: StatusPanel {
+@MainActor final class OffscreenStatusPanel: StatusPanel {
     var shown = false
     var shows = 0
     var hides = 0
@@ -161,14 +161,14 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     override func orderOut(_ sender: Any?) { shown = false; hides += 1 }
 }
 /// Records the panel's Settings and Open dashboard requests (Task 12's dashboard controller).
-@MainActor private final class DashboardStub: DashboardOpening {
+@MainActor final class DashboardStub: DashboardOpening {
     var presentations: [String] = []
     var visibleAtPresentation: [Bool] = []
     var panelVisible: () -> Bool = { false }
     func openDashboard() { presentations.append("dashboard"); visibleAtPresentation.append(panelVisible()) }
     func openSettings() { presentations.append("settings"); visibleAtPresentation.append(panelVisible()) }
 }
-@MainActor private final class PanelFixture {
+@MainActor final class PanelFixture {
     static let screen = StatusScreen(frame: NSRect(x: -900, y: 100, width: 900, height: 700), visibleFrame: NSRect(x: -900, y: 140, width: 900, height: 630))
     static let icon = NSRect(x: -50, y: 778, width: 22, height: 22)
     let item = PanelItem(anchor: NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 22, height: 22)))
@@ -447,6 +447,26 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
             #expect(fixture.panel.appearance?.name == name)
             #expect(host.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == name)
         }
+    }
+    /// Ruling R33: a harness's panel appearance never pins the whole application, or the dashboard
+    /// window could no longer follow the system.
+    @Test func panelAppearanceNeverPinsTheApplication() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("telltale-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home)
+        defer {
+            fixture.status.setAppearance(nil)
+            NSApp.appearance = nil
+        }
+        #expect(NSApp.appearance == nil)
+        fixture.status.setAppearance(NSAppearance(named: .aqua))
+        #expect(NSApp.appearance == nil)
+        #expect(fixture.panel.appearance?.name == .aqua)
+        fixture.status.setAppearance(NSAppearance(named: .darkAqua))
+        #expect(NSApp.appearance == nil)
+        #expect(fixture.panel.appearance?.name == .darkAqua)
+        fixture.status.setAppearance(nil)
+        #expect(NSApp.appearance == nil && fixture.panel.appearance == nil)
     }
 }
 @MainActor struct DirectPanelOpeningTests {

@@ -317,6 +317,57 @@ import TelltaleTestSupport
         }
     }
 
+    /// Ruling R33: Match system means nil all the way up. After the acceptance harness pinned the
+    /// panel and the dashboard, the next Settings choice of Match system leaves the window with no
+    /// appearance of its own, the application unpinned and the window resolving as the application does.
+    @Test func matchSystemAfterHarnessOverrideFollowsTheSystem() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            let panel = try PanelFixture(home: directory.appending(path: "panel", directoryHint: .isDirectory))
+            defer {
+                panel.status.setAppearance(nil)
+                NSApp.appearance = nil
+            }
+            var windows: [NSWindow] = []
+            let controller = world.controller(activation: ActivationRecorder(), presented: { windows.append($0) })
+            controller.openSettings()
+
+            panel.status.setAppearance(NSAppearance(named: .aqua))
+            controller.setAppearance(NSAppearance(named: .aqua))
+            #expect(windows.last?.appearance?.name == .aqua)
+
+            world.settings.setAppearance(.system)
+            let window = try #require(windows.last)
+            #expect(window.appearance == nil)
+            #expect(NSApp.appearance == nil)
+            #expect(window.effectiveAppearance.name == NSApp.effectiveAppearance.name)
+
+            // Closing and reopening keeps following the system.
+            controller.openDashboard()
+            #expect(window.appearance == nil && NSApp.appearance == nil)
+            #expect(window.effectiveAppearance.name == NSApp.effectiveAppearance.name)
+            window.close()
+        }
+    }
+
+    /// A dashboard opened with the stored Match system choice has no window appearance of its own.
+    @Test func storedMatchSystemOpensWithNoWindowAppearance() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            world.settings.setAppearance(.system)
+            #expect(try stored(world, .appearance) == .system)
+
+            var windows: [NSWindow] = []
+            let controller = world.controller(activation: ActivationRecorder(), presented: { windows.append($0) })
+            controller.openDashboard()
+            let window = try #require(windows.last)
+            #expect(window.appearance == nil)
+            #expect(NSApp.appearance == nil)
+            #expect(window.effectiveAppearance.name == NSApp.effectiveAppearance.name)
+            window.close()
+        }
+    }
+
     /// Ruling R27: before the collector's first run there is no database to store a setting in, so
     /// Settings shows the defaults read-only, says why, and creates nothing.
     @Test func settingsWaitForTheFirstRun() async throws {

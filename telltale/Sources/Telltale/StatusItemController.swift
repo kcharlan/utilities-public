@@ -233,8 +233,10 @@ struct StatusContent: View {
         guard let frame = StatusPanelFrame.make(contentSize: size, anchor: anchor(), screens: screens()) else { return }
         panel.setFrame(frame, display: panel.isVisible)
     }
+    /// A harness's explicit appearance for the panel and its hosted content only. It never sets
+    /// `NSApp.appearance` (Ruling R33): that pins every window, so the dashboard's Match system
+    /// would inherit the pin and stop following the system. Production never calls this.
     func setAppearance(_ appearance: NSAppearance?) {
-        NSApp.appearance = appearance
         panel.appearance = appearance
     }
 }
