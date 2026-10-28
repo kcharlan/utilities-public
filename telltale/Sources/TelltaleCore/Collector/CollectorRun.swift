@@ -36,13 +36,17 @@ public struct RunReport: Sendable, Equatable {
 
 /// One `Telltale --collect` run (spec sections 4, 7.3 and 9.3), in this order:
 ///
-/// 1. Create the directories and take `RunLock`. A held lock records a `skipped` run and exits 0.
-/// 2. Record the run's start, then read settings. A pending Rebuild discards derived data (the
-///    storage mapping in `Store.discardForRebuild`), sets `backfillThrough` to now and clears the
-///    request. A cold start (no evaluated point, no `backfillThrough`) also sets `backfillThrough`.
+/// 1. Create the directories and take `RunLock`. A held lock records a `skipped` run and exits 0;
+///    any other lock failure records a `failed` run when the database opens.
+/// 2. Close `running` records a killed run left (`interrupted`) and record this run's start, then
+///    read settings. Rules that don't validate or don't decode are replaced by the defaults, with a
+///    note in the log and run detail. A pending Rebuild discards derived data (the storage mapping
+///    in `Store.discardForRebuild`), sets `backfillThrough` to now and clears the request. A cold
+///    start (no evaluated point, no `backfillThrough`) also sets `backfillThrough`.
 /// 3. Ingest each usage source from §8's 30-day lookback: its records, usage limit, connection
 ///    gaps (as `connectionHistoryIncomplete` events), cursor and setup state, in one transaction
-///    per source. One source's problem never stops another.
+///    per source. One source's problem never stops another source's ingest, but an ingest that
+///    throws skips steps 5 and 6 for the whole run (the run fails; the next one catches up).
 /// 4. Fetch and store each status source.
 /// 5. Evaluate every point after the last evaluated one (or from the lookback) through now, one
 ///    day per transaction. A point at or before `backfillThrough` is backfill; later points are
@@ -58,6 +62,12 @@ public struct CollectorRun: Sendable {
     public static let pointsPerChunk = 24 * 60 / EvaluationPoints.cadenceMinutes
     /// Spec section 4's wording for a run that found the lock held.
     public static let skippedDetail = "skipped: previous run still active"
+    /// The detail of a run record left `running` by a process that died; the next run closes it.
+    public static let interruptedDetail = "interrupted"
+    /// R16's note when the stored rules can't be used; the reasons follow it.
+    static let invalidRulesNote = "Rule settings are invalid, so this run used the defaults:"
+    /// The reason given when the stored rules no longer decode.
+    static let undecodableRules = "The stored rules couldn't be read."
 
     /// Process exit codes for `Telltale --collect` (and the command line's usage error).
     public enum ExitCode {
@@ -107,21 +117,29 @@ public struct CollectorRun: Sendable {
             guard let acquired = try RunLock.acquire(paths.lock) else { return recordSkipped(log: log) }
             lock = acquired
         } catch {
+            // Every attempt leaves a run record when the database opens (Task 10 reads them).
             log.write("Run failed before starting: \(Self.describe(error))", at: now)
+            recordUnstartedRun(.failed, detail: Self.describe(error), log: log)
             return RunReport(outcome: .failed, exitCode: ExitCode.failure, detail: Self.describe(error), notificationsPosted: 0)
         }
         defer { withExtendedLifetime(lock) {} }
 
         let store: Store
         let runID: Int64
+        let interrupted: Int
         do {
             store = try Store.open(paths.database, mode: .readWrite)
-            runID = try store.beginRun(at: now)
+            // Holding the lock, no other run can own a `running` row: any left belong to a killed process.
+            (runID, interrupted) = try store.transaction {
+                let closed = try store.closeInterruptedRuns(at: now)
+                return (try store.beginRun(at: now), closed)
+            }
         } catch {
             log.write("Run failed: couldn't open the database: \(Self.describe(error))", at: now)
             return RunReport(outcome: .failed, exitCode: ExitCode.failure, detail: Self.describe(error), notificationsPosted: 0)
         }
         log.write("Run \(runID) started", at: now)
+        if interrupted > 0 { log.write("Closed \(interrupted) interrupted run record(s)", at: now) }
 
         var pass = Pass(store: store, log: log, now: now)
         await pass.perform(self)
@@ -145,15 +163,23 @@ public struct CollectorRun: Sendable {
 
     /// Spec section 4: a run that can't get the lock exits 0 and records itself as skipped.
     private func recordSkipped(log: CollectorLog) -> RunReport {
-        do {
-            let store = try Store.open(paths.database, mode: .readWrite)
-            let id = try store.beginRun(at: now)
-            try store.finishRun(id, at: now, outcome: .skipped, detail: Self.skippedDetail)
-        } catch {
-            log.write("Couldn't record a skipped run: \(Self.describe(error))", at: now)
-        }
+        recordUnstartedRun(.skipped, detail: Self.skippedDetail, log: log)
         log.write("Run \(Self.skippedDetail)", at: now)
         return RunReport(outcome: .skipped, exitCode: ExitCode.success, detail: Self.skippedDetail, notificationsPosted: 0)
+    }
+
+    /// Records a run that never held the lock as already finished. Start and finish share one
+    /// transaction, so the lock holder never sees its row as `running` (and closes it as interrupted).
+    private func recordUnstartedRun(_ outcome: RunOutcome, detail: String, log: CollectorLog) {
+        do {
+            let store = try Store.open(paths.database, mode: .readWrite)
+            try store.transaction {
+                let id = try store.beginRun(at: now)
+                try store.finishRun(id, at: now, outcome: outcome, detail: detail)
+            }
+        } catch {
+            log.write("Couldn't record a \(outcome.rawValue) run: \(Self.describe(error))", at: now)
+        }
     }
 
     static func describe(_ error: any Error) -> String {
@@ -198,13 +224,15 @@ public struct CollectorRun: Sendable {
             let interval: Int
             let backfillThrough: Date?
             do {
+                // `value` falls back to the defaults silently when the JSON no longer decodes; R16
+                // wants that named like any other invalid setting.
                 let stored = try store.value(.rules)
-                let errors = stored.validationErrors()
+                let errors = try store.storedSettingDecodes(.rules) ? stored.validationErrors() : [CollectorRun.undecodableRules]
                 if errors.isEmpty {
                     settings = stored
                 } else {
                     settings = .defaults
-                    note("Rule settings are invalid, so this run used the defaults: \(errors.joined(separator: " "))")
+                    note("\(CollectorRun.invalidRulesNote) \(errors.joined(separator: " "))")
                 }
                 watched = try store.value(.watchedComponents)
                 let storedInterval = try store.value(.intervalMinutes)
@@ -219,8 +247,9 @@ public struct CollectorRun: Sendable {
             // Step 3: usage sources.
             let backfillFrom = calendar.date(byAdding: .day, value: -CollectorRun.lookbackDays, to: now)
                 ?? now.addingTimeInterval(-TimeInterval(CollectorRun.lookbackDays) * 86_400)
+            var ingestFailed = false
             for source in run.sources {
-                ingest(source, backfillFrom: backfillFrom, calendar: calendar)
+                if !ingest(source, backfillFrom: backfillFrom, calendar: calendar) { ingestFailed = true }
                 baseline.discardCache()
             }
 
@@ -230,6 +259,32 @@ public struct CollectorRun: Sendable {
                 available.insert(source.id)
             }
 
+            // Steps 5 and 6 are skipped when an ingest threw: evaluated points are history (spec
+            // section 7.3) and must not be written without that source's data. The next run catches
+            // up from the unchanged last evaluated point. A problem a source reports through its
+            // setup state isn't thrown, so evaluation goes on.
+            if ingestFailed {
+                log.write("Evaluation skipped: an ingest failed, so the next run evaluates these points", at: now)
+            } else {
+                await evaluateAndNotify(
+                    run, baseline: baseline, settings: settings, watched: watched, interval: interval,
+                    backfillThrough: backfillThrough, backfillFrom: backfillFrom, available: available)
+            }
+
+            // Step 7: retention.
+            do {
+                if try Retention.prune(store: store, now: now, calendar: calendar) { log.write("Pruned expired rows", at: now) }
+            } catch {
+                fail("Couldn't prune", error)
+            }
+        }
+
+        /// Steps 5 and 6: evaluate one day per transaction, then select and post live notices.
+        private mutating func evaluateAndNotify(
+            _ run: CollectorRun, baseline: BaselineEngine, settings: RuleSettings, watched: [String], interval: Int,
+            backfillThrough: Date?, backfillFrom: Date, available: Set<String>
+        ) async {
+            let calendar = run.calendar
             // Step 5: evaluation, one day per transaction.
             let engine = RuleEngine(
                 store: store, baseline: baseline, calendar: calendar,
@@ -272,13 +327,6 @@ public struct CollectorRun: Sendable {
             } catch {
                 fail("Couldn't select notifications", error)
             }
-
-            // Step 7: retention.
-            do {
-                if try Retention.prune(store: store, now: now, calendar: calendar) { log.write("Pruned expired rows", at: now) }
-            } catch {
-                fail("Couldn't prune", error)
-            }
         }
 
         /// Applies a pending Rebuild or a cold start and returns the end of the backfill.
@@ -297,11 +345,13 @@ public struct CollectorRun: Sendable {
             }
         }
 
-        private mutating func ingest(_ source: any UsageSource, backfillFrom: Date, calendar: Calendar) {
+        /// Stores one source's ingest and returns whether that worked; a throw is recorded as the
+        /// run's error. A problem the source reports through its setup state is stored, not thrown.
+        private mutating func ingest(_ source: any UsageSource, backfillFrom: Date, calendar: Calendar) -> Bool {
             let key = source.provider.rawValue
             do {
                 let cursor = try store.cursor(key)
-                let previous = try? store.sourceState(key)
+                let previous = try store.sourceState(key)
                 let result = source.ingest(cursor: cursor, backfillFrom: backfillFrom, now: now)
                 let batch = result.batch
                 try store.transaction {
@@ -319,8 +369,10 @@ public struct CollectorRun: Sendable {
                     "\(source.displayName): \(batch.responses.count) responses, \(batch.failedTurns.count) failed turns, "
                         + "\(batch.connectionEvents.count) connection events, \(batch.connectionGaps.count) gaps; \(Self.describe(result.state))",
                     at: now)
+                return true
             } catch {
                 fail("\(source.displayName) ingest failed", error)
+                return false
             }
         }
 
@@ -386,6 +438,14 @@ extension Store {
     /// - kept: baseline epochs and their events, shift dismissals, incidents, status components,
     ///   `statusPost` and `connectionHistoryIncomplete` events, failed-turn and connection-event
     ///   rows, usage limits and source state (the next ingest overwrites both), and settings.
+    /// Ends every `running` run record as `failed` with `CollectorRun.interruptedDetail` at `at`.
+    /// Called only by the lock holder, before it records its own start. Returns the rows closed.
+    func closeInterruptedRuns(at: Date) throws -> Int {
+        try run(
+            "UPDATE collector_runs SET outcome = ?, detail = ?, finished_at = ? WHERE outcome = ?",
+            [.text(RunOutcome.failed.rawValue), .text(CollectorRun.interruptedDetail), .date(at), .text(RunOutcome.running.rawValue)])
+    }
+
     func discardForRebuild() throws {
         try transaction {
             let kinds = EventKind.ruleKinds

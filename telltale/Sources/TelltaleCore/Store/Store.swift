@@ -110,9 +110,19 @@ public final class Store {
 
     /// The stored value, or the key's default when it is absent or no longer decodes.
     public func value<V>(_ key: SettingKey<V>) throws -> V {
-        let stored = try query("SELECT value_json FROM settings WHERE key = ?", [.text(key.name)]) { $0.text(0) }.first
-        guard let stored, let decoded = try? StoreJSON.decode(V.self, from: stored) else { return key.defaultValue }
+        guard let stored = try storedJSON(key), let decoded = try? StoreJSON.decode(V.self, from: stored) else { return key.defaultValue }
         return decoded
+    }
+
+    /// False when a value is stored for `key` but no longer decodes, so `value` returns the default
+    /// in its place. True when it decodes or nothing is stored.
+    func storedSettingDecodes<V>(_ key: SettingKey<V>) throws -> Bool {
+        guard let stored = try storedJSON(key) else { return true }
+        return (try? StoreJSON.decode(V.self, from: stored)) != nil
+    }
+
+    private func storedJSON<V>(_ key: SettingKey<V>) throws -> String? {
+        try query("SELECT value_json FROM settings WHERE key = ?", [.text(key.name)]) { $0.text(0) }.first
     }
 
     public func set<V>(_ key: SettingKey<V>, _ value: V) throws {

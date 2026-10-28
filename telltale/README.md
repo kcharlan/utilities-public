@@ -62,7 +62,8 @@ installer in `tools/` are ports of that project's scripts.
 
 `Telltale --collect` is one collector run; launchd runs it every N minutes (spec section 9.3).
 `CollectorRun` in `Sources/TelltaleCore/Collector/CollectorRun.swift` documents the normative run
-order: take the `collector.lock` overlap guard, record the run's start, apply a pending Rebuild or a
+order: take the `collector.lock` overlap guard, close any run a killed process left `running` (as
+`failed`, detail `interrupted`), record the run's start, apply a pending Rebuild or a
 cold start, ingest each usage source from the 30-day lookback, fetch each status source, evaluate
 every missed 5-minute point one day per transaction (points up to `backfillThrough` are backfill and
 never notify), post the live notifications, prune per the retention table and record the run's end.
@@ -75,11 +76,14 @@ It writes only under `~/Library/Application Support/Telltale` (database and lock
 | Exit code | Meaning |
 |---|---|
 | 0 | The run succeeded, or found another run holding the lock and recorded itself as `skipped: previous run still active`. Failed notification posts are logged and counted in the run record's detail but don't fail the run. |
-| 1 | The run failed. The run record holds the first error (when the database could be opened) and the log has every step. |
-| 2 | Usage error: an argument Telltale doesn't recognize. The usage goes to stderr and nothing runs, so a mistyped launchd argument never opens the UI. |
+| 1 | The run failed. The run record holds the first error (when the database could be opened, including a lock failure other than "held") and the log has every step. If any usage source's ingest throws, the run skips evaluation and notification entirely and fails, so the next run evaluates those points with their data; a source that reports a format problem or a missing setup still lets the run evaluate. |
+| 2 | Usage error: an argument Telltale doesn't recognize. The system's own launch arguments (a lone `-psn_…`, or `-NS…`/`-Apple…` flag and value pairs) still open the app. The usage goes to stderr and nothing runs, so a mistyped launchd argument never opens the UI. |
 
 A stored rule setting that fails validation doesn't stop a run: it evaluates with the default
-rules, and the log and run detail name the invalid fields.
+rules, and the log and run detail name the invalid fields (or say the stored rules couldn't be read).
+
+Retention: responses and evaluation points are kept 180 days, run records 30 days; everything else,
+including failed turns and connection events, is kept.
 
 ## Notification spike
 

@@ -508,3 +508,135 @@ final class Locked<Value>: @unchecked Sendable {
     var value: Value { lock.withLock { stored } }
     func set(_ value: Value) { lock.withLock { stored = value } }
 }
+
+// MARK: - Fix round 1 (R19, R20, undecodable rules, source-state reads)
+
+extension CollectorRunTests {
+    /// R19: a source whose ingest throws leaves evaluation, selection and notification for the
+    /// next run, so no point is written without its data. A trigger makes the store refuse that
+    /// source's responses.
+    @Test func ingestFailureSkipsEvaluationAndRetriesNextRun() async throws {
+        try await withCollector { harness throws in
+            let url = harness.paths.database
+            _ = try harness.store()  // create and migrate
+            try RawSQLite.rows(url, """
+                CREATE TRIGGER synthetic_refusal BEFORE INSERT ON responses WHEN NEW.provider = 'example.broken'
+                BEGIN SELECT RAISE(ABORT, 'synthetic write refusal'); END
+                """)
+            let broken = FakeUsageSource(provider: ProviderID(rawValue: "example.broken"), displayName: "Broken")
+            var brokenSynth = Synth(provider: broken.provider, firstNumber: 900)
+            broken.add(brokenSynth.responses(3, throughput: 40, from: harness.at(9, 4, 9)))
+            harness.seedUsual()
+            harness.seedSlowdown()
+            let firstNow = harness.at(9, 4, 10)
+
+            let failed = await harness.run(at: firstNow, sources: [broken, harness.source])
+
+            #expect(failed.outcome == .failed && failed.exitCode == 1)
+            #expect(failed.detail.contains("synthetic write refusal"))
+            let store = try harness.store()
+            #expect(try store.lastEvaluatedPoint() == nil)
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM eval_points") == "0")
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM episodes") == "0")
+            // The other source's ingest still landed; the broken one's cursor didn't advance.
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses WHERE provider = 'codex'") == "90")
+            #expect(try store.cursor("example.broken") == nil)
+            #expect(harness.log.contains("Evaluation skipped"))
+
+            // Fixed: the next run ingests the broken source again and evaluates every point.
+            try RawSQLite.rows(url, "DROP TRIGGER synthetic_refusal")
+            let resumed = await harness.run(at: harness.at(9, 4, 10, 5), sources: [broken, harness.source])
+
+            #expect(resumed.outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint() == harness.at(9, 4, 10, 5))
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses WHERE provider = 'example.broken'") == "3")
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).map(\.firedAt) == [harness.at(9, 4, 9, 20)])
+            // Points through Sep 4 10:00 are still backfill: the run that set it failed, not the replay.
+            #expect(try store.value(.backfillThrough) == firstNow)
+            #expect(await harness.notifier.posted.isEmpty)
+        }
+    }
+
+    /// A source reporting a problem through its state isn't a thrown error: evaluation goes on.
+    @Test func reportedSourceProblemStillEvaluates() async throws {
+        try await withCollector { harness throws in
+            harness.source.setState(.notSetUp("synthetic: not set up"))
+            harness.seedUsual()
+            harness.seedSlowdown()
+            let now = harness.at(9, 4, 10)
+
+            #expect(await harness.run(at: now).outcome == .succeeded)
+            #expect(try harness.store().lastEvaluatedPoint() == now)
+            #expect(try harness.store().episodes(rule: RuleID.slower.rawValue).count == 1)
+        }
+    }
+
+    /// An unreadable stored source state is read with `try`, so it fails the ingest (and the run)
+    /// instead of silently dropping the recorded version and problem start.
+    @Test func unreadableSourceStateFailsTheIngest() async throws {
+        try await withCollector { harness throws in
+            let url = harness.paths.database
+            _ = try harness.store()
+            try RawSQLite.rows(url, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('codex', 'not json', 0)")
+
+            let report = await harness.run(at: harness.at(9, 4, 10))
+
+            #expect(report.outcome == .failed)
+            #expect(report.detail == "Unreadable setup state for source codex")
+            #expect(try harness.store().lastEvaluatedPoint() == nil)
+        }
+    }
+
+    /// R20: a lock failure other than "held" still leaves a failed run record.
+    @Test func lockFailureIsRecorded() async throws {
+        try await withCollector { harness throws in
+            // A directory where the lock file belongs: open(2) fails with EISDIR.
+            try FileManager.default.createDirectory(at: harness.paths.lock, withIntermediateDirectories: true)
+            let now = harness.at(9, 4, 10)
+
+            let report = await harness.run(at: now)
+
+            #expect(report.outcome == .failed && report.exitCode == 1)
+            #expect(report.detail.hasPrefix("Couldn't open the collector lock"))
+            let runs = try harness.store().recentRuns(limit: 5)
+            #expect(runs.map(\.outcome) == [.failed])
+            #expect(runs.first?.detail == report.detail && runs.first?.startedAt == now && runs.first?.finishedAt == now)
+            #expect(harness.source.cursorsSeen.isEmpty)
+        }
+    }
+
+    /// R20: `running` rows a killed process left are closed by the next lock holder.
+    @Test func interruptedRunsAreClosed() async throws {
+        try await withCollector { harness throws in
+            let killed = try harness.store().beginRun(at: harness.at(9, 4, 9, 55))
+            let now = harness.at(9, 4, 10)
+
+            #expect(await harness.run(at: now).outcome == .succeeded)
+
+            let runs = try harness.store().recentRuns(limit: 5)
+            #expect(runs.map(\.outcome) == [.succeeded, .failed])
+            let closed = try #require(runs.first { $0.id == killed })
+            #expect(closed.detail == CollectorRun.interruptedDetail && closed.detail == "interrupted")
+            #expect(closed.finishedAt == now)
+        }
+    }
+
+    /// R16 also covers stored rules that no longer decode (`Store.value` would quietly return the
+    /// defaults).
+    @Test func undecodableStoredRulesAreNoted() async throws {
+        try await withCollector { harness throws in
+            _ = try harness.store()
+            try RawSQLite.rows(harness.paths.database, #"INSERT INTO settings (key, value_json) VALUES ('rules', '{"slower": 1}')"#)
+            harness.seedUsual()
+            harness.seedSlowdown()
+
+            let report = await harness.run(at: harness.at(9, 4, 10))
+
+            let note = "Rule settings are invalid, so this run used the defaults: The stored rules couldn't be read."
+            #expect(report.outcome == .succeeded)
+            #expect(report.detail == note)
+            #expect(harness.log.contains(note))
+            #expect(try harness.store().episodes(rule: RuleID.slower.rawValue).count == 1)  // defaults evaluated
+        }
+    }
+}

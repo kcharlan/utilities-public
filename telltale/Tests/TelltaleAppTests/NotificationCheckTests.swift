@@ -237,6 +237,22 @@ private struct SyntheticFailure: LocalizedError {
         #expect(LaunchCommand.parse(["Telltale", "--notification-check", "--result", "/tmp/r.json", "--mode", "x", "--extra"]) == .usageError)
     }
 
+    // R21: what the system or a debugger adds to an ordinary launch still opens the app.
+    @Test func systemLaunchArgumentsOpenTheApp() {
+        #expect(LaunchCommand.parse(["Telltale", "-psn_0_12345"]) == .app)
+        #expect(LaunchCommand.parse(["Telltale", "-NSDocumentRevisionsDebugMode", "YES"]) == .app)
+        #expect(LaunchCommand.parse(["Telltale", "-AppleLanguages", "(en)", "-NSQuitAlwaysKeepsWindows", "NO"]) == .app)
+    }
+
+    @Test func otherDashArgumentsStayUsageErrors() {
+        #expect(LaunchCommand.parse(["Telltale", "-NSDocumentRevisionsDebugMode"]) == .usageError)  // no value
+        #expect(LaunchCommand.parse(["Telltale", "-psn_0_1", "-psn_0_2"]) == .usageError)  // not lone
+        #expect(LaunchCommand.parse(["Telltale", "-psn_0_1", "-NSFoo", "x"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "-NSFoo", "x", "--collect"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "-Example", "x"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "-collect"]) == .usageError)
+    }
+
     @Test func usageErrorExitsTwoWithEveryForm() {
         #expect(LaunchCommand.usageExitCode == 2)
         #expect(LaunchCommand.usage.contains("Telltale --collect"))

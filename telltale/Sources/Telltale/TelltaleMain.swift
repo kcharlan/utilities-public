@@ -9,7 +9,8 @@ enum LaunchCommand: Equatable {
     case collect
     case notificationCheck(result: URL, mode: String)
     /// Anything else: an unknown or extra argument, or `--notification-check` without both
-    /// `--result` and `--mode`. It never falls through to the UI, so a launchd typo can't open it.
+    /// `--result` and `--mode`. It never falls through to the UI, so a launchd typo can't open it;
+    /// only the system's own launch arguments (`isSystemLaunch`) still mean `.app`.
     case usageError
 
     static let usageExitCode = CollectorRun.ExitCode.usage
@@ -38,8 +39,19 @@ enum LaunchCommand: Equatable {
             guard let result = values["--result"], let mode = values["--mode"] else { return .usageError }
             return .notificationCheck(result: URL(fileURLWithPath: result), mode: mode)
         default:
-            return .usageError
+            return isSystemLaunch(arguments) ? .app : .usageError
         }
+    }
+
+    /// Arguments the system or a debugger adds to an ordinary app launch: a lone `-psn_…` process
+    /// serial number, or `-NS…` and `-Apple…` argument-domain defaults, each a flag plus its value.
+    private static func isSystemLaunch(_ arguments: [String]) -> Bool {
+        if arguments.count == 1, arguments[0].hasPrefix("-psn_") { return true }
+        var rest = arguments[...]
+        while let flag = rest.popFirst() {
+            guard flag.hasPrefix("-NS") || flag.hasPrefix("-Apple"), rest.popFirst() != nil else { return false }
+        }
+        return true
     }
 }
 

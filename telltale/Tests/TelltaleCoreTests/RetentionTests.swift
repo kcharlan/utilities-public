@@ -26,6 +26,16 @@ import TelltaleTestSupport
                 synth.response(throughput: 40, end: Self.daysAgo(181)),  // resp_synthetic_01: gone
                 synth.response(throughput: 40, end: Self.daysAgo(179)),  // resp_synthetic_02: kept
             ])
+            try store.insertEvalPoints([
+                EvalPointRow(provider: .codex, model: Synth.model, at: Self.daysAgo(181), speedIndex: 1, mixUsual: 40, medianTPS: 40, samples: 12, state: .known),
+                EvalPointRow(provider: .codex, model: Synth.model, at: Self.daysAgo(179), speedIndex: 1, mixUsual: 40, medianTPS: 40, samples: 12, state: .known),
+            ])
+            let failure = FailedTurnRecord(
+                provider: .codex, threadID: "thread_synthetic_01", turnID: "turn_synthetic_901", startedAt: Self.daysAgo(400),
+                errorCode: "serverOverloaded", message: "Synthetic failure 1")
+            try store.upsert(failedTurns: [failure])
+            try store.upsert(connectionEvents: [ConnectionEventRecord(
+                provider: .codex, sourceID: "logs_synthetic:1", at: Self.daysAgo(400), kind: .retry, detail: "synthetic")])
             let oldRun = try store.beginRun(at: Self.daysAgo(31))
             try store.finishRun(oldRun, at: Self.daysAgo(31), outcome: .succeeded)
             let keptRun = try store.beginRun(at: Self.daysAgo(29))
@@ -47,6 +57,9 @@ import TelltaleTestSupport
             #expect(try Retention.prune(store: store, now: Self.now, calendar: Self.calendar))
 
             #expect(try RawSQLite.column(url, "SELECT response_id FROM responses") == ["resp_synthetic_02"])
+            #expect(try store.evalPoints(provider: .codex, model: Synth.model, in: Self.daysAgo(400)...Self.now).map(\.at) == [Self.daysAgo(179)])
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM failed_turns") == "1")
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM connection_events") == "1")
             #expect(try store.recentRuns(limit: 10).map(\.id) == [keptRun])
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM episodes") == "1")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM events") == "1")
