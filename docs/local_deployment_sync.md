@@ -330,8 +330,10 @@ Sources, Resources, Tests and tools file under `anker_charge_monitor/`, plus
 imported generic app hash owner `tools/deploy_brew_version.mjs`. It includes the
 actual release/installer/signing scripts. Working bytes and modes must equal
 the stage-zero index; missing, linked, sparse or unmerged inputs fail closed.
-Only those captured bytes are copied to private scratch for `make release`.
-Source identity is checked again after building. No runtime configuration,
+Only those captured bytes are copied to private scratch for `make release`, which
+leaves nothing in either temp dir (see
+[Native Brew Version deployment](#native-brew-version-deployment)). Source
+identity is checked again after building. No runtime configuration,
 vault, session cache or secret-pattern contents are build inputs.
 
 `~/Library/Scripts/.anker-charge-monitor-native.json` is private mode 0600 and
@@ -421,7 +423,9 @@ Makefile, `Resources/Info.plist`, the two Barlow Semi Condensed fonts and
 required. README and `docs/` are not inputs, and neither are the Codex logs, the
 database or the collector's job plist. Working bytes and modes must equal the
 stage-zero index. Only those captured bytes are copied to private scratch for
-`make release`, and source identity is checked again after building.
+`make release`, which leaves nothing in either temp dir (see
+[Native Brew Version deployment](#native-brew-version-deployment)), and source
+identity is checked again after building.
 
 `~/Library/Scripts/.telltale-native.json` is private mode 0600 and has exactly
 `{schema: 1, sourceHash, version, appTreeHash, signingIdentity}`. Audit compares
@@ -484,7 +488,14 @@ The maintained [installer](../tools/deploy_brew_version.mjs) defines
 `buildInput` and `sourceInventory`: Package.swift, Makefile and all regular
 tracked Resources, Sources and Tests files supply the release. Deploy refuses
 unstaged input bytes and builds an isolated admitted snapshot with
-`make -C <scratch>/brew_version release` (900-second limit). The expected
+`make -C <scratch>/brew_version release` (900-second limit). The
+Swift toolchain check and `make release` get a `TMPDIR` inside that scratch, so
+SwiftPM's lock files and `TemporaryDirectory.*` folders go with it. After the
+build, passing or failing, `makeRelease` removes each new `TemporaryDirectory.*`
+in the Darwin user temp dir (`getconf DARWIN_USER_TEMP_DIR`) that holds only an
+empty `.keep-directory`, the marker each compile leaves there whatever `TMPDIR`
+says, and names any other new one on stderr. The Anker and Telltale deployers
+build through the same `makeRelease`. The expected
 version comes from admitted Info.plist bytes; CLI help comes from the admitted
 golden fixture. Built and installed command diagnostics check exact version
 and help stdout, successful exit and empty stderr for `--version`, `--help`

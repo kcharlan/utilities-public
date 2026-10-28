@@ -1,6 +1,11 @@
 .PHONY: build test test-suite clean
 
+# SwiftPM writes package lock files and empty TemporaryDirectory.* folders to TMPDIR, so build and
+# release keep them in the ignored .build/tmp/.
+PROJECT_TMPDIR := $(CURDIR)/.build/tmp/
+build release: export TMPDIR := $(PROJECT_TMPDIR)
 build:
+	@mkdir -p "$(PROJECT_TMPDIR)"
 	swift build
 
 # The leak check wraps the whole suite and fails on anything it leaves in
@@ -17,6 +22,7 @@ clean:
 
 .PHONY: release acceptance
 release:
+	@mkdir -p "$(PROJECT_TMPDIR)"
 	swift build -c release --product brew-version
 	swift build -c release --product BrewVersion
 	if [ -e "build/release/Brew Version.app" ]; then rm -r -- "build/release/Brew Version.app"; fi

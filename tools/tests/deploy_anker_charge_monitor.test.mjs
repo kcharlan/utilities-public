@@ -7,6 +7,7 @@ import {spawnSync,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildInput,sourceInventory} from '../deploy_anker_charge_monitor.mjs';
 import {appTreeHash} from '../deploy_brew_version.mjs';
+import {fakeDarwinTemp,releaseTempMakefile,assertReleaseTempHygiene} from './release-temp-fixture.mjs';
 const script=fileURLToPath(new URL('../deploy_anker_charge_monitor.mjs',import.meta.url));
 const repoRoot=fileURLToPath(new URL('../../',import.meta.url));
 const plist=fs.readFileSync(path.join(repoRoot,'anker_charge_monitor/Resources/Info.plist'));
@@ -16,6 +17,7 @@ function fixture(t) {
   t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
   const repo=path.join(base,'invented repo'),home=path.join(base,'invented home'),project=path.join(repo,'anker_charge_monitor'),apps=path.join(home,'apps'),scripts=path.join(home,'Library/Scripts'),bin=path.join(base,'bin');
   for(const p of [project,apps,scripts,bin])fs.mkdirSync(p,{recursive:true});
+  const darwin=fakeDarwinTemp(base,bin);
   const write=(name,bytes,mode=0o644)=>{const file=path.join(project,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes,{mode});fs.chmodSync(file,mode);};
   fs.mkdirSync(path.join(repo,'tools'));
   for(const name of ['deploy_anker_charge_monitor.mjs','deployment_files.mjs','deploy_brew_version.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
@@ -31,7 +33,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(bin,'pgrep'),'#!/bin/sh\nexit 1\n',{mode:0o755});
   const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH};
   const run=(...args)=>spawnSync(process.execPath,[script,'--repo',repo,'--apps-dir',apps,'--scripts-dir',scripts,...args],{env,encoding:'utf8'});
-  return {base,repo,home,project,apps,scripts,bin,write,git,release,env,run,app:path.join(apps,'Anker Charge Monitor.app'),receipt:path.join(scripts,'.anker-charge-monitor-native.json')};
+  return {base,repo,home,project,apps,scripts,bin,darwin,write,git,release,env,run,app:path.join(apps,'Anker Charge Monitor.app'),receipt:path.join(scripts,'.anker-charge-monitor-native.json')};
 }
 function ok(result){assert.equal(result.status,0,result.stdout+result.stderr);return result;}
 const backup=result=>/rollback backup: (.+)/.exec(result.stdout)[1];
@@ -46,7 +48,7 @@ test('app source inventory includes maintained installer/signing and root depend
 
 test('first install, update, current, rebuild and independent rollback preserve receipts and held readers',t=>{
   const f=fixture(t);const empty=backup(ok(f.run()));const first=state(f);
-  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,'0.4.0');assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
+  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,'0.4.1');assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
   ok(f.run('--audit'));const before=tree(f.home);assert.match(ok(f.run()).stdout,/already current/);assert.deepEqual(tree(f.home),before);
   const exe=path.join(f.app,'Contents/MacOS/PrimeMonitor'),reader=fs.openSync(exe,'r'),old=fs.readFileSync(reader);fs.closeSync(reader);
   const held=fs.openSync(exe,'r');f.release('second');const saved=backup(ok(f.run()));assert.notDeepEqual(state(f),first);assert.deepEqual(fs.readFileSync(held),old);fs.closeSync(held);
@@ -54,6 +56,11 @@ test('first install, update, current, rebuild and independent rollback preserve 
   ok(f.run('--rollback',empty));assert.deepEqual(state(f),[null,null]);
   ok(f.run());assert.match(ok(f.run('--rebuild')).stdout,/rollback backup:/);
   assert.equal(fs.existsSync(path.join(f.scripts,'PrimeMonitor')),false);
+});
+
+for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release build leaves no temporary entries in TMPDIR or the Darwin user temp dir`,t=>{
+  const f=fixture(t);
+  assertReleaseTempHygiene({...f,run:fail=>{f.write('Makefile',releaseTempMakefile(fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),fail));f.git('add','.');return f.run();}},'anker-charge-build-',fail);
 });
 
 test('dry run and audit do not compile, query identities or change any source/deployment state',t=>{
