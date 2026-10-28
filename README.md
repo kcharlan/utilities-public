@@ -90,6 +90,7 @@ Exploratory MLS playoff-race dashboard that pulls standings and branding from ES
 - `routerview` – Self-hosted OpenRouter analytics dashboard for CSV imports, with calendar-aligned comparisons, cumulative cost tracking, saved views, and full export. Replaces the official OpenRouter Activity page without any live integration setup.
 - `storage_monitor` – Local-first macOS disk-usage and cleanup console. Scans APFS volumes, local snapshots, caches, model stores, and large files, then serves a React dashboard with treemap breakdowns, drill-down directory exploration (with file/folder icons, on-demand scanning, Reveal in Finder, and per-directory Rescan), watchlist-based cleanup actions, and snapshot management. A native `getattrlistbulk` walker (C) indexes the volume; building and deploying it requires Xcode Command Line Tools and Node.js.
 - `tax2` – Private built-page tax calculator with offline browser computation, QIF payments, and Markdown/CSV reference downloads.
+- `telltale` – Native macOS [Telltale](telltale/README.md) menu bar app that watches Codex usage metadata and OpenAI status for slowdowns, failures and incidents. Requires macOS 27 and Swift 6; the Node.js deployment CLI installs its signed app at `/Applications/Telltale.app`.
 - `time_machine_snapshot_monitor` – Hourly alert-only macOS monitor for Time Machine local snapshots that remain mounted after backup activity stops, with an explicit safe-repair action, bounded logs, and user-level `launchd` installation.
 - `toggle_wifi` – macOS helper that briefly toggles Wi-Fi when invoked; wake detection or scheduling must be configured separately.
 - `transcription` – Whisper-backed Streamlit console for bulk transcription with meticulous session/lifetime counters and batching helpers.
@@ -113,8 +114,8 @@ page, or local server live in [agents.md](agents.md).
 Standalone delivery takes several forms: uv-managed scripts for small Python
 tools, a packaged executable for multi-file apps such as
 [Model Sentinel](model_sentinel/README.md), native binaries such as
-[Colophon](colophon/README.md), [Brew Version](brew_version/README.md) and
-[Anker Charge Monitor](anker_charge_monitor/README.md), and
+[Colophon](colophon/README.md), [Brew Version](brew_version/README.md),
+[Anker Charge Monitor](anker_charge_monitor/README.md) and [Telltale](telltale/README.md), and
 self-contained HTML for browser-only apps.
 Some utilities deliberately duplicate small helpers so copied commands remain
 independent of this checkout.

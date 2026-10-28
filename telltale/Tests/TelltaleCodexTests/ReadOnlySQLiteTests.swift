@@ -1,0 +1,125 @@
+import Foundation
+import SQLite3
+import Testing
+import TelltaleCodex
+import TelltaleTestSupport
+
+@Suite struct ReadOnlySQLiteTests {
+    private static let origin = RolloutBuilder.defaultOrigin
+
+    @Test func busyStepThrowsBusy() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            // BUSY, LOCKED and an extended BUSY code (BUSY_SNAPSHOT, 517) all mean "skip this run".
+            for code in [SQLITE_BUSY, SQLITE_LOCKED, SQLITE_BUSY | (2 << 8)] {
+                let database = try ReadOnlySQLite.open(writer.url, step: SQLiteStep { _ in code })
+                #expect(throws: ReadOnlySQLite.Busy.self) { try database.query("SELECT id FROM logs") { $0.integer(0) } }
+            }
+            // Any other failing code is a Failure, not Busy.
+            let failing = try ReadOnlySQLite.open(writer.url, step: SQLiteStep { _ in SQLITE_IOERR })
+            #expect(throws: ReadOnlySQLite.Failure.self) { try failing.query("SELECT id FROM logs") { $0.integer(0) } }
+        }
+    }
+
+    @Test func readSucceedsWhileWriterHoldsTransaction() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home)
+            let committed = try writer.addLog(at: Self.origin, body: "committed")
+            try writer.beginImmediate()
+            try writer.addLog(at: Self.origin, body: "uncommitted")
+
+            let database = try ReadOnlySQLite.open(writer.url, busyTimeout: .milliseconds(20))
+            let ids = try database.query("SELECT id FROM logs ORDER BY id") { $0.integer(0) }
+            #expect(ids == [committed])
+            try writer.commit()
+            #expect(try database.query("SELECT COUNT(*) FROM logs") { $0.integer(0) } == [2])
+        }
+    }
+
+    @Test func realLockOnRollbackJournalFileThrowsBusyQuickly() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home, journal: .delete)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            try writer.beginExclusive()
+            let database = try ReadOnlySQLite.open(writer.url, busyTimeout: .milliseconds(20))
+            #expect(throws: ReadOnlySQLite.Busy.self) { try database.query("SELECT id FROM logs") { $0.integer(0) } }
+            try writer.commit()
+            #expect(try database.query("SELECT id FROM logs") { $0.integer(0) }.count == 1)
+        }
+    }
+
+    @Test func connectionIsReadOnly() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            let database = try ReadOnlySQLite.open(writer.url)
+            #expect(throws: ReadOnlySQLite.Failure.self) { try database.query("DELETE FROM logs") { _ in 0 } }
+            #expect(throws: ReadOnlySQLite.Failure.self) { try database.query("CREATE TABLE extra (a)") { _ in 0 } }
+            #expect(try database.query("SELECT COUNT(*) FROM logs") { $0.integer(0) } == [1])
+        }
+    }
+
+    @Test func pathWithSpecialCharactersOpens() throws {
+        try withScratchDirectory { home in
+            let folder = home.appending(path: "a b?c#d%20e", directoryHint: .isDirectory)
+            let writer = try CodexDatabase.logs(codexHome: folder)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            let database = try ReadOnlySQLite.open(writer.url)
+            #expect(try database.query("SELECT COUNT(*) FROM logs") { $0.integer(0) } == [1])
+        }
+    }
+
+    @Test func missingFileIsFailureNotCreated() throws {
+        try withScratchDirectory { home in
+            let url = home.appending(path: "logs_9.sqlite")
+            #expect(throws: ReadOnlySQLite.Failure.self) { try ReadOnlySQLite.open(url) }
+            #expect(!FileManager.default.fileExists(atPath: url.path))
+        }
+    }
+
+    @Test func nonRegularFilesAreRefusedWithoutBlocking() throws {
+        try withScratchDirectory { home in
+            // A FIFO with a database name would block an open past any busy timeout.
+            let fifo = home.appending(path: "thread_history_1.sqlite")
+            #expect(mkfifo(fifo.path, 0o600) == 0)
+            #expect(throws: ReadOnlySQLite.Failure.self) { try ReadOnlySQLite.open(fifo) }
+
+            // The same goes for a sidecar.
+            let writer = try CodexDatabase.logs(codexHome: home)
+            let journal = writer.url.path + "-journal"
+            #expect(mkfifo(journal, 0o600) == 0)
+            #expect(throws: ReadOnlySQLite.Failure.self) { try ReadOnlySQLite.open(writer.url) }
+        }
+    }
+
+    @Test func highestNumberedIsNumericAndStrict() throws {
+        try withScratchDirectory { home in
+            for name in [
+                "logs_2.sqlite", "logs_10.sqlite", "logs_9.sqlite", "logs_11.sqlite-wal", "logs_x.sqlite", "logs_.sqlite",
+                "logs_3.sqlite.bak", "other_99.sqlite"
+            ] {
+                try Data().write(to: home.appending(path: name))
+            }
+            #expect(ReadOnlySQLite.highestNumbered("logs", in: home)?.lastPathComponent == "logs_10.sqlite")
+            #expect(ReadOnlySQLite.highestNumbered("thread_history", in: home) == nil)
+            #expect(ReadOnlySQLite.highestNumbered("logs", in: home.appending(path: "absent")) == nil)
+        }
+    }
+
+    @Test func requireColumnsNamesWhatIsMissing() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home, omitting: ["target", "ts_nanos"])
+            let database = try ReadOnlySQLite.open(writer.url)
+            try database.requireColumns(["id", "ts"], in: "logs")
+            let problem = try #require(throws: ReadOnlySQLite.FormatProblem.self) {
+                try database.requireColumns(["id", "ts_nanos", "target"], in: "logs")
+            }
+            #expect(problem.detail.contains("ts_nanos") && problem.detail.contains("target") && !problem.detail.contains("id,"))
+            let noTable = try #require(throws: ReadOnlySQLite.FormatProblem.self) {
+                try database.requireColumns(["a"], in: "absent")
+            }
+            #expect(noTable.detail.contains("absent"))
+        }
+    }
+}

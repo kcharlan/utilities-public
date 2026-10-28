@@ -288,7 +288,7 @@ until the native version matching current source is deployed again.
 Installer lifecycle and fleet integration fixtures use invented data:
 
 ```sh
-node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_calculator_pages.test.mjs
+node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
@@ -374,6 +374,86 @@ at login registration for the `/Applications` copy require operator checks.
 Synthetic tests establish none of those live outcomes. The separately authorized
 `make -C anker_charge_monitor live-check` contacts the real vault and service;
 its output belongs only in private storage.
+
+## Telltale app deployment
+
+The app-only generated artifact installs at `/Applications/Telltale.app`; there
+is no installed CLI command. `tools/deploy_telltale.mjs` is a port of the Anker
+Charge Monitor deployer above, with the same flags, receipt, backup and recovery
+rules and no legacy app name. Use Node.js, macOS 27 and Swift 6 with the
+macOS 27 SDK. Validate the complete [project suite](../telltale/README.md) and
+the Static deployment/fleet audit tooling suites, review and merge, then deploy
+from validated merged main:
+
+```sh
+node tools/deploy_telltale.mjs --dry-run
+node tools/deploy_telltale.mjs
+node tools/deploy_telltale.mjs --audit
+zsh tools/check_local_deployments.zsh
+node tools/deploy_telltale.mjs --rollback /private/path/to/copy-backup
+```
+
+`make -C telltale install` and `deploy` invoke that same root CLI. Use
+`SIGN_IDENTITY='Exact Identity Name'` (or a complete 40-hex fingerprint) to
+override the default **CodexBar Local** selection. A missing or ambiguous
+identity fails before compilation or deployment mutation, with no ad-hoc
+fallback. Activation checks use strict codesign verification with the literal
+`=identifier "local.utilities.telltale" and certificate leaf = H"FINGERPRINT"`
+requirement, along with the actual plist name/display name/version/build,
+executable `Telltale`, bundle ID, `LSUIElement`/`LSMinimumSystemVersion` 27.0
+fields and the executable's macOS 27 minimum runtime. Ownership checks permit an
+older installed version from that same identity.
+
+`--repo DIR`, `--scripts-dir DIR`, `--apps-dir DIR`, `--rebuild` and audit-only
+`--source-inventory FILE` follow the native installer conventions, as do the
+`UTILITIES_SCRIPTS_DIR`/`UTILITIES_APPS_DIR` overrides. The apps default is
+always `/Applications`. Explicit test destinations stay outside the checkout;
+symlink ancestors are rejected.
+
+The admitted inventory is tracked Package.swift, Makefile and every regular
+Sources, Resources, Tests and tools file under `telltale/`, plus
+`tools/deploy_telltale.mjs`, `tools/deployment_files.mjs` and
+`tools/deploy_brew_version.mjs` (the generic app hash). Package.swift, the
+Makefile, `Resources/Info.plist`, the two Barlow Semi Condensed fonts and
+`Resources/Fonts/OFL.txt` (the release recipe copies all three into
+`Contents/Resources/Fonts`), `tools/install.sh`,
+`tools/resolve_signing_identity.sh`, a Sources file and the three root tools are
+required. README and `docs/` are not inputs, and neither are the Codex logs, the
+database or the collector's job plist. Working bytes and modes must equal the
+stage-zero index. Only those captured bytes are copied to private scratch for
+`make release`, and source identity is checked again after building.
+
+`~/Library/Scripts/.telltale-native.json` is private mode 0600 and has exactly
+`{schema: 1, sourceHash, version, appTreeHash, signingIdentity}`. Audit compares
+that provenance, metadata and artifact identity without building, signing,
+executing the app, querying credentials or writing source or deployment state,
+and prints exactly
+`OK: telltale native deployment`. Dry-run validates the admitted inputs without
+writing or querying signing identities.
+
+`telltale/tools/install.sh` remains the one owner of app activation: it copies
+into a private stage on the apps volume, validates, displaces the previous whole
+bundle and renames the candidate. The root CLI adds private independent backups
+under `~/.utilities-deploy-backups/telltale/copy-*` (0700 containers, 0600
+receipt/metadata, app modes retained) and receipt publication and recovery.
+Activation, receipt publication, rollback and cleanup failures return nonzero
+and restore the previous app and receipt, including an initially absent app.
+Readers of the previous executable remain valid; the deployer never quits or
+launches the app.
+
+The deployer never runs `launchctl` and never writes `~/Library/LaunchAgents`,
+`~/Library/Application Support/Telltale` or `~/Library/Logs/Telltale`. The
+installed app owns its collector job, `local.utilities.telltale.collector`: when
+the copy in `/Applications` launches with the collector on and no job plist, it
+writes the plist and loads the job (spec section 9.3). The job runs the
+installed executable's path, so a replaced bundle keeps the same job; quit and
+reopen Telltale when convenient to run the new release. Then do the
+[post-deployment check](../telltale/docs/telltale_design_spec.md#13-build-test-and-release):
+if the collector is on, the dashboard's Collector view must show Installed lit
+green, and Repair must not be offered (if it is, press it to point the job at
+the installed executable). The README's installed-release checks (launch at
+login, collector and Settings) are separate, owner-run native gates; synthetic
+tests establish none of those live outcomes.
 
 ## Native Brew Version deployment
 

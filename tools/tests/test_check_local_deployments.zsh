@@ -234,6 +234,7 @@ new_fixture() {
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_anker_charge_monitor.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_telltale.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
@@ -261,6 +262,13 @@ new_fixture() {
   mkdir -p "$FIXTURE_REPO/anker_charge_monitor/Resources"
   cp "$REPO_UNDER_TEST/anker_charge_monitor/Resources/Info.plist" "$FIXTURE_REPO/anker_charge_monitor/Resources/Info.plist"
   chmod 644 "$FIXTURE_REPO/anker_charge_monitor/Resources/Info.plist"
+
+  for native_input in Package.swift Makefile Sources/synthetic.swift tools/install.sh tools/resolve_signing_identity.sh Resources/Fonts/BarlowSemiCondensed-Medium.ttf Resources/Fonts/BarlowSemiCondensed-Regular.ttf Resources/Fonts/OFL.txt; do
+    write_synthetic_file "$FIXTURE_REPO/telltale/$native_input" "invented telltale $native_input"
+    chmod 644 "$FIXTURE_REPO/telltale/$native_input"
+  done
+  cp "$REPO_UNDER_TEST/telltale/Resources/Info.plist" "$FIXTURE_REPO/telltale/Resources/Info.plist"
+  chmod 644 "$FIXTURE_REPO/telltale/Resources/Info.plist"
 
   local mapping source_relative deployed_name source_file deployed_file
   for mapping in "${COPY_MAPPINGS[@]}"; do
@@ -338,6 +346,7 @@ new_fixture() {
 
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/brew-version-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
   "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/anker-charge-monitor-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
+  "$FIXTURE_NODE" "$REPO_UNDER_TEST/tools/tests/telltale-deployment-fixture.mjs" "$FIXTURE_REPO" "$FIXTURE_HOME"
 
   local tracked_file
   for project in "${HOME_PROJECTS[@]}"; do
@@ -1739,7 +1748,8 @@ test_native_required_installers() {
     'tools/deploy_colophon.mjs|colophon native' \
     'tools/deploy_storage_monitor.mjs|storage_monitor' \
     'tools/deploy_brew_version.mjs|brew-version native' \
-    'tools/deploy_anker_charge_monitor.mjs|anker-charge-monitor native'; do
+    'tools/deploy_anker_charge_monitor.mjs|anker-charge-monitor native' \
+    'tools/deploy_telltale.mjs|telltale native'; do
     new_fixture
     installer="${mapping%%|*}"
     label="${mapping#*|}"
@@ -1795,5 +1805,50 @@ test_native_anker_charge_monitor_deployment() {
   done
 }
 test_native_anker_charge_monitor_deployment
+
+# Port: test_native_anker_charge_monitor_deployment above, plus a required font input.
+test_native_telltale_deployment() {
+  local target source response
+  new_fixture
+  run_audit
+  assert_status 0 "$AUDIT_STATUS" 'synthetic telltale baseline'
+  assert_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
+  for target in 'Applications/Telltale.app/Contents/MacOS/Telltale' 'Library/Scripts/.telltale-native.json'; do
+    new_fixture
+    print 'synthetic drift' >> "$FIXTURE_HOME/$target"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'telltale artifact drift'
+    assert_contains "$AUDIT_STDERR" 'telltale native deployment unverified'
+  done
+  for source in telltale/Sources/synthetic.swift telltale/tools/install.sh telltale/Resources/Fonts/OFL.txt tools/deploy_telltale.mjs; do
+    new_fixture
+    print 'synthetic working drift' >> "$FIXTURE_REPO/$source"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'telltale source drift'
+    assert_not_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
+    new_fixture
+    git -C "$FIXTURE_REPO" rm -q --cached "$source"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'telltale source deletion'
+    assert_contains "$AUDIT_STDERR" 'telltale native source inventory unverified'
+  done
+  new_fixture
+  print 'synthetic staged drift' >> "$FIXTURE_REPO/telltale/Sources/synthetic.swift"
+  git -C "$FIXTURE_REPO" add telltale/Sources/synthetic.swift
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'telltale staged source drift'
+  assert_contains "$AUDIT_STDERR" 'telltale native deployment unverified'
+  for response in \
+    "process.stdout.write('OK: telltale native deployment')" \
+    "console.log('OK: telltale native deployment'); console.error('synthetic warning')" \
+    "process.stdout.write('OK: telltale native deployment\\n\\n')"; do
+    new_fixture
+    print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_telltale.mjs"
+    run_audit
+    assert_status 1 "$AUDIT_STATUS" 'telltale malformed child success'
+    assert_contains "$AUDIT_STDERR" 'telltale native child protocol unverified'
+  done
+}
+test_native_telltale_deployment
 
 print -- "check_local_deployments tests: PASS"

@@ -1,0 +1,12 @@
+{
+  "summary": {
+    "id": "synthetic-page",
+    "name": "Example Status",
+    "ongoing_incidents": [],
+    "components": {
+      "component-a": "Example Chat",
+      "component-b": "Example API"
+    },
+    "affected_components": []
+  }
+}

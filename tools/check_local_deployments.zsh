@@ -290,6 +290,8 @@ audited_scopes=(
   tools/deploy_brew_version.mjs
   anker_charge_monitor
   tools/deploy_anker_charge_monitor.mjs
+  telltale
+  tools/deploy_telltale.mjs
   colophon
   tools/deploy_colophon.mjs
   storage_monitor
@@ -683,6 +685,15 @@ audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.m
   anker_charge_monitor/Resources/Info.plist anker_charge_monitor/tools/install.sh \
   anker_charge_monitor/tools/resolve_signing_identity.sh \
   tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
+
+audit_native_deployment telltale tools/deploy_telltale.mjs \
+  telltale-source-inventory telltale 'telltale native' \
+  'telltale native deployment unverified (source, app or receipt drift)' \
+  telltale/Package.swift telltale/Makefile telltale/Resources/Info.plist \
+  telltale/Resources/Fonts/BarlowSemiCondensed-Medium.ttf \
+  telltale/Resources/Fonts/BarlowSemiCondensed-Regular.ttf telltale/Resources/Fonts/OFL.txt \
+  telltale/tools/install.sh telltale/tools/resolve_signing_identity.sh \
+  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"
