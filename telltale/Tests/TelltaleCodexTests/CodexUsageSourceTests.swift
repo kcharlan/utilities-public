@@ -40,7 +40,7 @@ import TelltaleTestSupport
         #expect(source.displayName == "Codex")
         #expect(source.statusSourceID == "openai")
         #expect(source.signals == [.speed, .errors, .link, .provider, .load])
-        #expect(source.displayName(model: Self.sol) == "Sol")
+        #expect(source.displayName(model: Self.sol) == "6.1 Sol")
         #expect(source.incidentTitle("GPT-6.1 Sol Codex", names: Self.sol))
         #expect(!source.incidentTitle("GPT-6.1 Terra Codex", names: Self.sol))
     }

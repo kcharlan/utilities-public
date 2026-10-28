@@ -27,7 +27,7 @@ actor QuietStatusTransport: HTTPTransport {
 /// its `token_usage_record` (start = the message, end = the record; spec section 6.1).
 final class CodexWorkload {
     static let model = "gpt-6.1-sol"
-    static let display = "Sol"
+    static let display = "6.1 Sol"
     /// Every response has this many output and input tokens.
     static let outputTokens = 1_000
     static let inputTokens = 10_000

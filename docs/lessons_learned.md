@@ -1,5 +1,18 @@
 # Lessons learned
 
+## 2026-10-28: A SwiftUI alert clears its binding before a confirm task runs
+
+Telltale 0.1.0's Rebuild from Codex logs… did nothing when confirmed. The alert
+was bound to the model's `confirmingRebuild` flag, and its Rebuild button started
+`Task { await model.confirmRebuild() }`, which began with `guard confirmingRebuild`.
+Closing the alert sets the binding false, which cleared the flag before the task
+ran, so the guard returned silently: no write, no error, no run. The unit test
+called `requestRebuild()` then `confirmRebuild()` directly and never saw the
+dismissal. An alert button's action must not read back state that the alert's
+own binding clears: take what it needs from the `presenting:` value its closure
+receives, or treat the button itself as the confirmation. A test of a confirmation
+should dismiss first (call the binding's setter), then confirm.
+
 ## 2026-10-28: A Swift deploy leaks into two temp dirs, including from its preflight
 
 Brew Version's and Anker Charge Monitor's deployers ran `make release` with the
