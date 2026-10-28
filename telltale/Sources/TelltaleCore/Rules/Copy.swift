@@ -1,8 +1,7 @@
 import Foundation
 
 /// User-facing wording (visual design doc, "Copy rules"; the plan's Copy table). Callers use
-/// these functions rather than literals. Times are `HH:mm` in the calendar passed in. Task 10
-/// adds the collector-health rows.
+/// these functions rather than literals. Times are `HH:mm` in the calendar passed in.
 public enum Copy {
     // MARK: Speed rules (spec sections 7.2 and 7.3)
 
@@ -124,6 +123,24 @@ public enum Copy {
     public static let collectorNotBuilt = "Collector not built yet"
     /// Spec section 9.3's footer while the collector is off by choice.
     public static let collectorOff = "Collector off. Turn it on to keep watching."
+
+    // MARK: Collector health (spec sections 6.5, 7.4 and 9.3)
+
+    /// Spec section 6.5's format-problem wording.
+    public static func formatProblem(since: Date, calendar: Calendar) -> String {
+        "Codex changed its log format. Telltale can't read responses since \(clock(since, calendar))."
+    }
+    public static let collectorNotLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
+    /// `reason` is the run record's detail; a closing period is dropped so the sentence ends once.
+    public static func collectorFailing(at: Date, reason: String, next: Date, calendar: Calendar) -> String {
+        var reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if reason.hasSuffix(".") { reason.removeLast() }
+        return "The collector failed at \(clock(at, calendar)): \(reason). Next try \(clock(next, calendar))."
+    }
+    public static func collectorOverdue(since: Date, calendar: Calendar) -> String {
+        "The collector hasn't run since \(clock(since, calendar))."
+    }
+    public static let collectorRecovered = "Telltale's collector is running again."
 
     // MARK: Panel
 

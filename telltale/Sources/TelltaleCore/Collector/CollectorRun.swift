@@ -236,7 +236,7 @@ public struct CollectorRun: Sendable {
                 }
                 watched = try store.value(.watchedComponents)
                 let storedInterval = try store.value(.intervalMinutes)
-                interval = Settings.intervalError(storedInterval) == nil ? storedInterval : SettingKey.intervalMinutes.defaultValue
+                interval = Settings.usableInterval(storedInterval)
                 backfillThrough = try prepareBackfill()
             } catch {
                 fail("Couldn't read settings", error)

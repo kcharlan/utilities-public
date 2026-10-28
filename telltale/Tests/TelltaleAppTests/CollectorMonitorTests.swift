@@ -1,0 +1,271 @@
+import Foundation
+import Testing
+import UserNotifications
+import TelltaleCore
+import TelltaleTestSupport
+@testable import Telltale
+
+/// Records posted requests; authorization is not the monitor's business.
+@MainActor private final class RecordingNotificationService: NotificationService {
+    struct Refused: LocalizedError {
+        var errorDescription: String? { "synthetic notification refusal" }
+    }
+
+    private(set) var posted: [UNNotificationRequest] = []
+    var refuses = false
+    func authorizationStatus() async -> UNAuthorizationStatus { .authorized }
+    func requestAuthorization() async throws -> Bool { true }
+    func post(_ request: UNNotificationRequest) async throws {
+        if refuses { throw Refused() }
+        posted.append(request)
+    }
+    func delivered() async -> [UNNotification] { [] }
+}
+
+/// One monitor's world under a scratch directory: injected paths, a fake `launchctl`, a store,
+/// a controllable clock and a recording notification service. Times are 2026-10-05 in New York.
+@MainActor private final class MonitorHarness {
+    let directory: URL
+    let paths: TelltalePaths
+    let runner = FakeCommandRunner()
+    let service = RecordingNotificationService()
+    let store: Store
+    let currentExecutable = URL(fileURLWithPath: "/nonexistent-synthetic/Applications/Telltale.app/Contents/MacOS/Telltale")
+    var now = MonitorHarness.at(9, 0)
+
+    init(_ directory: URL) throws {
+        self.directory = directory
+        paths = TelltalePaths(home: directory.appending(path: "home", directoryHint: .isDirectory))
+        store = try Store.open(paths.database, mode: .readWrite)
+    }
+
+    static func at(_ hour: Int, _ minute: Int) -> Date { Synth.local(2026, 10, 5, hour, minute) }
+
+    /// A monitor for this harness, or for another home (`paths`) sharing its runner, service and clock.
+    func monitor(paths other: TelltalePaths? = nil) -> CollectorMonitor {
+        let paths = other ?? paths
+        return CollectorMonitor(
+            paths: paths, manager: LaunchAgentManager(paths: paths, uid: 4_242, runner: runner), currentExecutable: currentExecutable,
+            service: service, calendar: Synth.newYork, now: { [unowned self] in self.now })
+    }
+
+    /// `launchctl print` succeeds (loaded) or reports the service missing.
+    func setLoaded(_ loaded: Bool) {
+        runner.respond(to: "print", with: loaded
+            ? CommandResult(status: 0, stdout: "synthetic service\n", stderr: "")
+            : CommandResult(status: 113, stdout: "", stderr: "Could not find service\n"))
+    }
+
+    func recordRun(at start: Date, _ outcome: RunOutcome, detail: String = "") throws {
+        let id = try store.beginRun(at: start)
+        try store.finishRun(id, at: start.addingTimeInterval(4), outcome: outcome, detail: detail)
+    }
+
+    func setRule(_ change: (inout BasicRule) -> Void) throws {
+        var rules = try store.value(.rules)
+        change(&rules.collectorHealth)
+        try store.set(.rules, rules)
+    }
+
+    /// Advances the clock a minute (the health-check cadence) and checks.
+    @discardableResult func tick(_ monitor: CollectorMonitor) async -> CollectorHealthReport? {
+        now = now.addingTimeInterval(CollectorMonitor.checkInterval)
+        return await monitor.check()
+    }
+
+    var bodies: [String] { service.posted.map(\.content.body) }
+}
+
+@MainActor private func withMonitor(_ body: (MonitorHarness) async throws -> Void) async throws {
+    try await withAsyncScratchDirectory { try await body(MonitorHarness($0)) }
+}
+
+private let notLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
+private let recovered = "Telltale's collector is running again."
+
+@MainActor @Suite struct CollectorMonitorTests {
+    @Test func checksEveryMinute() {
+        #expect(CollectorMonitor.checkInterval == 60)
+    }
+
+    @Test func postsOncePerEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+
+            // A problem seen on a single check (for example just after wake, before launchd's
+            // catch-up run) is not yet an episode.
+            h.setLoaded(false)
+            await h.tick(monitor)
+            h.setLoaded(true)
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+
+            // Seen on two checks in a row: one notification.
+            h.setLoaded(false)
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+            let request = try #require(h.service.posted.first)
+            #expect(request.content.title == "Collector health")
+            #expect(request.content.threadIdentifier == "collectorHealth")
+            #expect(try h.store.value(.collectorHealthNotice) == HealthNoticeState(problem: notLoaded, notifiedAt: h.now))
+
+            // The episode goes on, even as its problems change: no more notifications.
+            for _ in 0..<5 { await h.tick(monitor) }
+            try h.recordRun(at: h.now, .failed, detail: "synthetic failure")
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+
+            // A new episode after recovery notifies again, with its own identifier.
+            h.setLoaded(true)
+            try h.recordRun(at: h.now, .succeeded)
+            await h.tick(monitor)
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded, recovered, notLoaded])
+            #expect(Set(h.service.posted.map(\.identifier)).count == 3)
+        }
+    }
+
+    @Test func postsRecoveredWhenGone() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+
+            h.setLoaded(true)
+            let report = await h.tick(monitor)
+            #expect(report?.notify == false)
+            #expect(h.bodies == [notLoaded, recovered])
+            #expect(h.service.posted.last?.content.title == "Collector health")
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            // Healthy checks after that stay quiet.
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded, recovered])
+        }
+    }
+
+    @Test func relaunchDoesNotRepost() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            h.setLoaded(false)
+            let first = h.monitor()
+            await h.tick(first)
+            await h.tick(first)
+            #expect(h.bodies == [notLoaded])
+
+            // A relaunched app reads the stored notice instead of announcing the same episode again.
+            let relaunched = h.monitor()
+            for _ in 0..<3 { await h.tick(relaunched) }
+            #expect(h.bodies == [notLoaded])
+
+            // It still announces the recovery.
+            h.setLoaded(true)
+            await h.tick(relaunched)
+            #expect(h.bodies == [notLoaded, recovered])
+        }
+    }
+
+    @Test func respectsRuleSettings() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+
+            // Rule off: no notifications and no episode.
+            try h.setRule { $0.enabled = false }
+            h.setLoaded(false)
+            for _ in 0..<3 { await h.tick(monitor) }
+            #expect(h.service.posted.isEmpty)
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            // Notify off: the episode is tracked silently; its clear notice still follows
+            // "Notify when it clears", as the collector's rules do.
+            try h.setRule { $0 = BasicRule(enabled: true, notify: false, notifyOnClear: true) }
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+            #expect(try h.store.value(.collectorHealthNotice) != nil)
+            h.setLoaded(true)
+            await h.tick(monitor)
+            #expect(h.bodies == [recovered])
+
+            // Notify when it clears off: the fire notifies, the recovery doesn't.
+            try h.setRule { $0 = BasicRule(enabled: true, notify: true, notifyOnClear: false) }
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [recovered, notLoaded])
+            h.setLoaded(true)
+            await h.tick(monitor)
+            #expect(h.bodies == [recovered, notLoaded])
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            // Turning the rule off mid-episode ends it silently.
+            try h.setRule { $0 = .init(enabled: true, notify: true, notifyOnClear: true) }
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [recovered, notLoaded, notLoaded])
+            try h.setRule { $0.enabled = false }
+            await h.tick(monitor)
+            #expect(h.bodies == [recovered, notLoaded, notLoaded])
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+        }
+    }
+
+    @Test func collectorOffByChoiceNeverNotifies() async throws {
+        try await withMonitor { h in
+            try h.store.set(.collectorEnabled, false)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            for _ in 0..<3 { await h.tick(monitor) }
+            #expect(h.service.posted.isEmpty)
+            let report = await monitor.check()
+            #expect(report?.footer == "Collector off. Turn it on to keep watching.")
+        }
+    }
+
+    @Test func refusedPostIsRetriedAtTheNextCheck() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            h.service.refuses = true
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(monitor.lastError == "synthetic notification refusal")
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            h.service.refuses = false
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+            #expect(monitor.lastError == nil)
+            #expect(try h.store.value(.collectorHealthNotice)?.problem == notLoaded)
+        }
+    }
+
+    /// Before the collector's first run there is no database: the check reads the defaults.
+    @Test func checksBeforeTheDatabaseExists() async throws {
+        try await withMonitor { h in
+            let fresh = TelltalePaths(home: h.directory.appending(path: "fresh", directoryHint: .isDirectory))
+            let monitor = h.monitor(paths: fresh)
+            h.setLoaded(false)
+            let report = try #require(await h.tick(monitor))
+            #expect(report.footer == "Waiting for the collector's first run.")
+            #expect(report.installed == .red)
+            #expect(!FileManager.default.fileExists(atPath: fresh.database.path))
+
+            // Collector on by default and not loaded: the episode is announced and stored.
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+            #expect(try Store.open(fresh.database, mode: .readOnly).value(.collectorHealthNotice)?.problem == notLoaded)
+        }
+    }
+}

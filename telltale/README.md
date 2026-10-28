@@ -85,6 +85,27 @@ rules, and the log and run detail name the invalid fields (or say the stored rul
 Retention: responses and evaluation points are kept 180 days, run records 30 days; everything else,
 including failed turns and connection events, is kept.
 
+## Collector management and health
+
+`LaunchAgentManager` (`Sources/TelltaleCore/Launchd/`) installs the job as
+`~/Library/LaunchAgents/local.utilities.telltale.collector.plist` (spec section 9.3): it runs
+`[Telltale.app's executable, --collect]` every interval (1-60 minutes, default 5), at load, as a
+Background process, with stdout and stderr appended to the collector log. Turn on, Change interval
+and Repair replace the plist atomically, then `launchctl bootout` (a not-loaded result is fine) and
+`launchctl bootstrap gui/$UID`; Turn off boots the job out, then removes the plist. They refuse,
+before writing anything, an executable that isn't the main executable of an app bundle whose
+identifier is `local.utilities.telltale`, so a `swift build` product or the acceptance build never
+becomes the collector. Every `launchctl` call has a 10-second timeout.
+
+`CollectorHealth` judges the collector from its run records (skipped runs count for nothing), the
+plist, `launchctl print` (Loaded only) and the sources' format problems. The app's
+`CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
+job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
+than 3 intervals, or a format problem. An episode starts only when two checks in a row see it, so the
+minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+`collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
+again." follows when the rule's clear notice is on.
+
 ## Notification spike
 
 Spec section 4 builds on one executable posting notifications as Telltale when

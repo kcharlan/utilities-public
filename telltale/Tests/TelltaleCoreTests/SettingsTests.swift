@@ -110,12 +110,33 @@ import TelltaleTestSupport
             SettingKey.collectorEnabled.name, SettingKey.intervalMinutes.name, SettingKey.rules.name,
             SettingKey.watchedComponents.name, SettingKey.appearance.name, SettingKey.openAtLogin.name,
             SettingKey.rebuildRequestedAt.name, SettingKey.backfillThrough.name, SettingKey.lastPrunedDay.name,
+            SettingKey.collectorHealthNotice.name,
         ]
         #expect(Set(names).count == names.count)
         #expect(names == [
             "collectorEnabled", "intervalMinutes", "rules", "watchedComponents", "appearance", "openAtLogin",
-            "rebuildRequestedAt", "backfillThrough", "lastPrunedDay",
+            "rebuildRequestedAt", "backfillThrough", "lastPrunedDay", "collectorHealthNotice",
         ])
+    }
+
+    @Test func collectorHealthNoticeRoundTrips() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            #expect(try store.value(.collectorHealthNotice) == nil)
+            let notice = HealthNoticeState(problem: "A synthetic collector problem.", notifiedAt: Synthetic.at(1_234.5))
+            try store.set(.collectorHealthNotice, notice)
+            #expect(try store.value(.collectorHealthNotice) == notice)
+            try store.set(.collectorHealthNotice, nil)
+            #expect(try store.value(.collectorHealthNotice) == nil)
+        }
+    }
+
+    @Test func usableIntervalFallsBackToTheDefault() {
+        #expect(Settings.usableInterval(15) == 15)
+        #expect(Settings.usableInterval(1) == 1)
+        #expect(Settings.usableInterval(60) == 60)
+        #expect(Settings.usableInterval(0) == 5)
+        #expect(Settings.usableInterval(61) == 5)
     }
 
     @Test func undecodableValueFallsBackToDefault() throws {

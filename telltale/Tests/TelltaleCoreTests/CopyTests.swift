@@ -125,6 +125,17 @@ private enum Fixture {
             CopyCase("failedTurnReason (policy)", Copy.failedTurnReason(code: "cyberPolicy"), "blocked by policy"),
             CopyCase("failedTurnReason (other)", Copy.failedTurnReason(code: "syntheticCode"), "syntheticCode"),
             CopyCase("collectorOff", Copy.collectorOff, "Collector off. Turn it on to keep watching."),
+            CopyCase("formatProblem", Copy.formatProblem(since: since, calendar: calendar),
+                     "Codex changed its log format. Telltale can't read responses since 08:05."),
+            CopyCase("collectorNotLoaded", Copy.collectorNotLoaded,
+                     "Telltale's collector isn't loaded. Open the Collector view to turn it back on."),
+            CopyCase("collectorFailing", Copy.collectorFailing(at: since, reason: "database is locked", next: later, calendar: calendar),
+                     "The collector failed at 08:05: database is locked. Next try 14:40."),
+            CopyCase("collectorFailing (reason ends a sentence)",
+                     Copy.collectorFailing(at: since, reason: "The disk is full. \n", next: later, calendar: calendar),
+                     "The collector failed at 08:05: The disk is full. Next try 14:40."),
+            CopyCase("collectorOverdue", Copy.collectorOverdue(since: since, calendar: calendar), "The collector hasn't run since 08:05."),
+            CopyCase("collectorRecovered", Copy.collectorRecovered, "Telltale's collector is running again."),
         ]
     }()
 

@@ -160,17 +160,30 @@ extension Store {
     }
 
     public func sourceState(_ source: String) throws -> SourceStateRow? {
-        let rows = try query("SELECT state_json, version, unavailable_since, updated_at FROM source_state WHERE source = ?", [.text(source)]) { row in
-            (state: row.text(0), version: row.optionalText(1), unavailableSince: row.optionalDate(2), updatedAt: row.date(3))
+        try sourceStateRows(where: "WHERE source = ?", [.text(source)]).first
+    }
+
+    /// Every source's state, by source name (collector health reads them for format problems).
+    public func sourceStates() throws -> [SourceStateRow] {
+        try sourceStateRows(where: "", [])
+    }
+
+    private func sourceStateRows(where clause: String, _ values: [SQLValue]) throws -> [SourceStateRow] {
+        let rows = try query(
+            "SELECT source, state_json, version, unavailable_since, updated_at FROM source_state \(clause) ORDER BY source", values
+        ) { row in
+            (source: row.text(0), state: row.text(1), version: row.optionalText(2), unavailableSince: row.optionalDate(3), updatedAt: row.date(4))
         }
-        guard let stored = rows.first else { return nil }
-        let state: SetupState
-        do {
-            state = try StoreJSON.decode(SetupState.self, from: stored.state)
-        } catch {
-            throw StoreError.invalidData("Unreadable setup state for source \(source)")
+        return try rows.map { stored in
+            let state: SetupState
+            do {
+                state = try StoreJSON.decode(SetupState.self, from: stored.state)
+            } catch {
+                throw StoreError.invalidData("Unreadable setup state for source \(stored.source)")
+            }
+            return SourceStateRow(
+                source: stored.source, state: state, version: stored.version, unavailableSince: stored.unavailableSince, updatedAt: stored.updatedAt)
         }
-        return SourceStateRow(source: source, state: state, version: stored.version, unavailableSince: stored.unavailableSince, updatedAt: stored.updatedAt)
     }
 
     public func setSourceState(_ row: SourceStateRow) throws {

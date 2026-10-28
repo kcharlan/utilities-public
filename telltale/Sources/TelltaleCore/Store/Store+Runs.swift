@@ -37,12 +37,14 @@ extension Store {
         if changed == 0 { throw StoreError.invalidData("No collector run \(id) to finish") }
     }
 
-    /// The latest runs, newest first.
-    public func recentRuns(limit: Int) throws -> [CollectorRunRecord] {
+    /// The latest runs, newest first. Collector health passes `includingSkipped: false`: skipped runs
+    /// count for nothing there, so they mustn't use up the limit.
+    public func recentRuns(limit: Int, includingSkipped: Bool = true) throws -> [CollectorRunRecord] {
         try query("""
             SELECT id, started_at, finished_at, outcome, detail FROM collector_runs
+            WHERE ? OR outcome <> ?
             ORDER BY started_at DESC, id DESC LIMIT ?
-            """, [.integer(max(0, limit))]) { row in
+            """, [.bool(includingSkipped), .text(RunOutcome.skipped.rawValue), .integer(max(0, limit))]) { row in
             CollectorRunRecord(
                 id: Int64(row.int(0)), startedAt: row.date(1), finishedAt: row.optionalDate(2),
                 outcome: RunOutcome(rawValue: row.text(3)) ?? .failed, detail: row.text(4))

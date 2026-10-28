@@ -27,6 +27,12 @@ public enum Settings {
     public static func intervalError(_ minutes: Int) -> String? {
         intervalRange.contains(minutes) ? nil : Copy.intervalError(min: intervalRange.lowerBound, max: intervalRange.upperBound)
     }
+
+    /// The interval the collector and its health check use: `stored`, or the default when it fails
+    /// validation (`Store.set` doesn't validate).
+    public static func usableInterval(_ stored: Int) -> Int {
+        intervalError(stored) == nil ? stored : SettingKey.intervalMinutes.defaultValue
+    }
 }
 
 // MARK: - Keys (spec sections 3, 7.4, 9.3, 9.4)
@@ -66,6 +72,24 @@ extension SettingKey where Value == Date? {
     public static var rebuildRequestedAt: SettingKey<Date?> { SettingKey(name: "rebuildRequestedAt", defaultValue: nil) }
     /// The end of the last completed backfill (Task 9).
     public static var backfillThrough: SettingKey<Date?> { SettingKey(name: "backfillThrough", defaultValue: nil) }
+}
+
+/// The collector-health episode the UI last announced (Task 10's `CollectorMonitor`): stored so a
+/// relaunched app doesn't announce the same episode again.
+public struct HealthNoticeState: Sendable, Equatable, Hashable, Codable {
+    /// The problem text the episode's notification carried.
+    public var problem: String
+    public var notifiedAt: Date
+
+    public init(problem: String, notifiedAt: Date) {
+        self.problem = problem
+        self.notifiedAt = notifiedAt
+    }
+}
+
+extension SettingKey where Value == HealthNoticeState? {
+    /// Nil while no collector-health episode is open.
+    public static var collectorHealthNotice: SettingKey<HealthNoticeState?> { SettingKey(name: "collectorHealthNotice", defaultValue: nil) }
 }
 
 extension SettingKey where Value == String? {

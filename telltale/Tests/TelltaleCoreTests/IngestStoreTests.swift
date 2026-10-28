@@ -212,6 +212,22 @@ import TelltaleTestSupport
             #expect(runs[3].outcome == .succeeded)
             #expect(try store.recentRuns(limit: 2).map(\.id) == [fourth, third])
             #expect(try store.recentRuns(limit: 0).isEmpty)
+            // Collector health leaves skipped runs out before applying the limit.
+            #expect(try store.recentRuns(limit: 3, includingSkipped: false).map(\.id) == [fourth, third, first])
+        }
+    }
+
+    @Test func sourceStatesListsEveryRowBySource() throws {
+        try withScratchDirectory { directory in
+            let store = try Self.makeStore(directory)
+            #expect(try store.sourceStates().isEmpty)
+            let status = SourceStateRow(source: "openai-status", state: .ready, updatedAt: Synthetic.at(10))
+            let codex = SourceStateRow(
+                source: "codex", state: .formatProblem("Unrecognized rollout line"), version: "1.2.3", unavailableSince: Synthetic.at(5),
+                updatedAt: Synthetic.at(20))
+            try store.setSourceState(status)
+            try store.setSourceState(codex)
+            #expect(try store.sourceStates() == [codex, status])
         }
     }
 }

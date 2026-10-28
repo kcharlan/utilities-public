@@ -8,8 +8,11 @@ public func withScratchDirectory<T>(_ body: (URL) throws -> T) throws -> T {
     return try body(directory)
 }
 
-/// The `async` form of `withScratchDirectory`, for tests that await inside the body.
-public func withAsyncScratchDirectory<T>(_ body: (URL) async throws -> T) async throws -> T {
+/// The `async` form of `withScratchDirectory`, for tests that await inside the body. The body runs
+/// in the caller's isolation, so main-actor tests can use it.
+public func withAsyncScratchDirectory<T>(
+    isolation: isolated (any Actor)? = #isolation, _ body: (URL) async throws -> T
+) async throws -> T {
     let directory = try makeScratchDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     return try await body(directory)
