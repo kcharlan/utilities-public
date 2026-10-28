@@ -5,10 +5,15 @@ import TelltaleCodex
     let names = ModelNames()
 
     @Test func displayName() {
-        // Spec section 6.1: drop the vendor prefix and version, capitalize the rest.
-        #expect(names.displayName(model: "gpt-6.1-sol") == "Sol")
-        #expect(names.displayName(model: "gpt-6-astra") == "Astra")
-        #expect(names.displayName(model: "gpt-5.1-codex-mini") == "Codex Mini")
+        // Spec section 6.1: drop the vendor prefix, put the version first, capitalize the rest.
+        #expect(names.displayName(model: "gpt-6.1-sol") == "6.1 Sol")
+        #expect(names.displayName(model: "gpt-6-astra") == "6 Astra")
+        #expect(names.displayName(model: "gpt-5.1-codex-mini") == "5.1 Codex Mini")
+        // Versions of one family stay apart.
+        #expect(names.displayName(model: "gpt-6-sol") == "6 Sol")
+        #expect(names.displayName(model: "gpt-5.6-sol") == "5.6 Sol")
+        // No version: the family words alone.
+        #expect(names.displayName(model: "codex-mini") == "Codex Mini")
         // Nothing left after dropping prefix and version: show the id itself.
         #expect(names.displayName(model: "gpt-5") == "gpt-5")
     }

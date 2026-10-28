@@ -133,6 +133,33 @@ import TelltaleTestSupport
         }
     }
 
+    /// Closing the alert clears its binding (`cancelUndo`) before or after the Undo button's
+    /// action runs, so the confirmed event comes from the alert, not from `pendingUndo`.
+    @Test func confirmedUndoSurvivesTheAlertClosingFirst() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory, now: Self.now)
+            try seed(world.paths, shift: true)
+            world.live.reload()
+            let model = world.model
+            model.select(.model(.codex, Synth.model))
+            model.beginAccept()
+            model.accept()
+            world.clock.now = Self.now.addingTimeInterval(60)
+            model.beginAccept()
+            model.acceptingSince = Synth.local(2026, 9, 16)
+            model.accept()
+            let older = try #require(model.feed.last { $0.kind == .baselineAccepted })
+
+            world.clock.now = Self.now.addingTimeInterval(120)
+            model.requestUndo(older)
+            let presented = try #require(model.pendingUndo)
+            model.cancelUndo()
+            model.confirmUndo(presented)
+            #expect(model.pendingUndo == nil && model.panel.actionError == nil)
+            #expect(try currentEpoch(world.paths) == nil)
+        }
+    }
+
     /// R31 and incident scoping: the dashboard's shift prompt links to the incidents in its period,
     /// and the chart's bands come only from the model's own status source.
     @Test func shiftPromptLinksIncidentsAndBandsAreScoped() throws {

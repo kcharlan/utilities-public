@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.1.0 is a native macOS menu bar app that watches Codex usage metadata
+Telltale 0.1.1 is a native macOS menu bar app that watches Codex usage metadata
 and OpenAI service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -383,7 +383,10 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Menu bar, panel, notifications, Light and Dark (acceptance bundle) | Passed |
 | Dashboard, Settings and Open dashboard checks (acceptance bundle) | Passed after one fix: Match system rendered Light under a Dark system and ignored system changes, because the harness's Light/Dark buttons pinned `NSApp.appearance`. Fixed in a604a1f; Match system then passed before and after pressing those buttons |
 | Settings (acceptance bundle) | Passed |
-| Launch at login, collector and Settings in the installed release | Not yet run (checked after the first install) |
+| Installed 0.1.0, first launch: status item, notification prompt, collector on with the installed executable, Collector view Installed green with no Repair, Login Items listing | Passed (2026-10-28). The "before the first run" Settings message wasn't observed: the first run finished in about 45 s, before Settings was opened |
+| Installed 0.1.0, Rebuild from Codex logs… | Failed: confirming stored no request and started no run, because closing the alert cleared the confirmation flag before the Rebuild task checked it. Fixed in 0.1.1, along with the same pattern in the Undo confirmation |
+| Installed 0.1.0, dashboard sidebar | Failed: `gpt-6.1-sol`, `gpt-6-sol` and `gpt-5.6-sol` were all named "Sol". From 0.1.1, names keep the version ("6.1 Sol") |
+| Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 
 The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin

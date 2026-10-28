@@ -277,7 +277,9 @@ import TelltaleTestSupport
             settings.cancelRebuild()
             #expect(try !settings.confirmingRebuild && stored(world, .rebuildRequestedAt) == nil)
 
+            // Closing the alert clears its binding before the Rebuild button's task runs.
             settings.requestRebuild()
+            settings.cancelRebuild()
             await settings.confirmRebuild()
             #expect(!settings.confirmingRebuild && settings.errors[.data] == nil)
             #expect(try stored(world, .rebuildRequestedAt) == world.clock.now)
