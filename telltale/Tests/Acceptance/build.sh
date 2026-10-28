@@ -22,7 +22,7 @@ for source in "$project_dir"/Sources/Telltale/*.swift; do
   case "${source:t}" in TelltaleMain.swift|AppDelegate.swift|CollectorEntry.swift|Registry.swift|NotificationCheck.swift) continue ;; esac
   cp "$source" "$package_dir/Sources/Acceptance/"
 done
-if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Charts|Observation|Darwin|Synchronization|SQLite3|UserNotifications|TelltaleCore)$'; then
+if rg -n '^import ' "$package_dir/Sources" | rg -v 'import (Foundation|AppKit|SwiftUI|Charts|Observation|Darwin|Synchronization|SQLite3|UserNotifications|ServiceManagement|TelltaleCore)$'; then
   print -u2 'Unsupported import in maintained acceptance sources'; exit 1
 fi
 cp "$project_dir/Tests/Acceptance/AcceptanceApp.swift" "$project_dir/Tests/Acceptance/SyntheticEnvironment.swift" "$package_dir/Sources/Acceptance/"

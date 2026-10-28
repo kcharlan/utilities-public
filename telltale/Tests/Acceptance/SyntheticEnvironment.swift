@@ -57,6 +57,9 @@ enum SyntheticEnvironment {
         case dashboard
         /// The collector view's problem state: loaded and on schedule, but the last run failed.
         case collectorProblem
+        /// Settings: the quiet scene plus the status page's component list, which lacks some of the
+        /// saved watched names; the snapshot adds an invalid Rules entry.
+        case settings
     }
 
     static func paths(home: URL) -> TelltalePaths {
@@ -99,6 +102,7 @@ enum SyntheticEnvironment {
     ///   incident on the middle day that the prompt links to;
     /// - dashboard: two 300k+ prompts a day and 4 in 10 in the last hour, with cached input and
     ///   reasoning tokens throughout.
+    /// - settings and acceptance: a status-page component list for the watched-components checklist.
     @discardableResult
     static func seed(_ scene: Scene, home: URL, now: Date, calendar: Calendar) throws -> TelltalePaths {
         let paths = paths(home: home)
@@ -173,6 +177,14 @@ enum SyntheticEnvironment {
                       body: Copy.largePromptsFired(count: 4, of: 10, tokens: 300_000))
         }
         if scene == .acceptance { try store.set(.collectorEnabled, false) }
+        if scene == .settings || scene == .acceptance {
+            // The checklist's page: two of the default watched names, one other, and none of the rest.
+            try store.replace(
+                components: [
+                    StatusComponent(id: "comp_synthetic_01", name: "CLI"), StatusComponent(id: "comp_synthetic_02", name: "Codex API"),
+                    StatusComponent(id: "comp_synthetic_03", name: "Example Chat"),
+                ], source: statusSourceID)
+        }
         let run = try store.beginRun(at: now.addingTimeInterval(-64))
         try store.finishRun(run, at: now.addingTimeInterval(-60), outcome: .succeeded)
         if scene == .dashboard { try dashboardHistory(store, now: now, calendar: calendar) }

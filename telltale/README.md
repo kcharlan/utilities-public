@@ -1,3 +1,5 @@
+| Settings (acceptance bundle) | Not yet run |
+| Launch at login and Settings in the installed release | Not yet run |
 # Telltale
 
 ## Purpose
@@ -63,7 +65,7 @@ build packages point `TMPDIR` into that scratch.
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that six panel PNGs and four dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that six panel PNGs and six dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`), which it removes on success
   and failure, so the suite keeps no PNGs; run `make snapshots` to look at them.
@@ -81,7 +83,9 @@ lasting-shift prompt (spec section 13's panel states). It also renders the dashb
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
 provider incident, workload and events), and the collector view's problem state at 760 pt
-(the last run failed). It registers the bundled fonts first and fails if they don't register.
+(the last run failed), and Settings as tall as its content, with an invalid Rules entry (the
+slower rule's clear band equal to its trigger) and the watched-components checklist with names the
+synthetic status page no longer lists. It registers the bundled fonts first and fails if they don't register.
 It checks each panel layout's width, whole-point height and painted pixels, prints every PNG path, the executable and the
 directory, followed by the `rm -r` command that removes it. Look at every PNG; the checks
 don't judge the design. A manual run keeps its directory (SwiftPM's lock files included)
@@ -95,7 +99,10 @@ a new 0700 temporary home recorded in its Info.plist as `SyntheticAcceptanceHome
 launch the app seeds that home with an alerting model, a lasting-shift prompt and the
 collector off. Open dashboard and Settings open the dashboard window (its collector view is
 read-only here, since only the installed copy may change launchd state), and Light and Dark
-apply to it too. `launchctl` goes through a recording double, and Check now records a
+apply to it too. Its Settings store rules, watched components (from a synthetic status page) and
+the appearance in the synthetic home; the interval, Rebuild and Open at login are unavailable,
+and its login item is a double that never reaches `SMAppService`.
+`launchctl` goes through a recording double, and Check now records a
 synthetic run instead of kickstarting launchd. The builder prints the bundle path and the
 `rm -r` command that removes its home; it never launches the app.
 
@@ -223,12 +230,38 @@ read-only. Turn off appears only once the collector's first run has created the 
 the off choice is stored there; before then the view says it can be turned off after its first
 run. A failed read of the database shows as its own line, apart from an action's failure.
 
+Settings (spec section 9.4) has five parts:
+
+- **Rules**: one row per rule with its switch, its parameters (fractions of usual as percentages,
+  durations in minutes, prompt sizes in thousands of tokens), Notify, Notify when it clears and
+  Reset to default. An entry is saved on Return or when focus leaves it, and only when the edited
+  rules pass validation; otherwise it stays in its field, outlined in red, with the validation
+  message beneath, and nothing is stored. When the stored rules can't be used, the defaults the
+  collector falls back to are shown with a note.
+- **Collector**: the interval (1-60 minutes) and the on/off switch. While the collector is on, a
+  new interval rewrites the plist and reloads the job before it is stored; a launchctl failure or
+  a refused executable shows in the same words as the collector view.
+- **Watched status components**: a checklist of each status page's components, followed by saved
+  names the page no longer lists, marked "(not on the status page now)".
+- **Data**: the retention table (not editable) and Rebuild from Codex logs, which asks first, then
+  stores the request and kicks the job so the collector applies it.
+- **General**: Open at login and the dashboard appearance (Dark, Light or Match system), applied
+  to the window at once.
+
+Every change is stored through the same read-write-existing path as Accept, so until the
+collector's first run creates the database Settings shows the defaults read-only and says so. The
+interval, the collector switch, Rebuild and Open at login change launchd or login-item state, so
+only the installed copy offers them; another copy says so. Open at login is on by default: at each
+launch the installed copy registers the app as a login item (`SMAppService.mainApp`) while the
+setting is on and nothing is registered, and leaves an existing registration, enabled or waiting
+for approval, alone. Login-item approval is reread whenever the dashboard window becomes key.
+
 ## Native acceptance
 
 Automated tests, offscreen snapshots and signatures establish no native input result. Run
 these checks by hand on `make acceptance`'s bundle (and the installed release where noted)
 and record each one separately, with the date and macOS build. One missed press fails the
-check. The launch-at-login check joins this list with the Settings task.
+check.
 
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
@@ -252,6 +285,17 @@ check. The launch-at-login check joins this list with the Settings task.
   windows brings the same window forward. Close it: the Dock icon goes away. Open it from
   another Space: it moves to that Space.
 - The gear (Settings) in the panel opens the same window on its Settings section.
+- Settings, in the acceptance bundle: edit the Slower than usual threshold and press Return, then
+  Tab out of another field after editing it; both are saved (reopen Settings to check). Enter a
+  clear band equal to the threshold: the field turns red with "The clear band must be stricter
+  than the trigger", and leaving the field doesn't save it. Reset to default restores the row.
+  Toggle a rule's switch, Notify and Notify when it clears. Check "Example Chat" and uncheck a
+  "(not on the status page now)" name. Switch Dashboard appearance through Dark, Light and Match
+  system (with the system in each appearance): the window follows at once, and after **Light** or
+  **Dark** the next Settings choice wins. The interval, Collector on, Rebuild from Codex logs… and
+  Open at login are unavailable, with "Only Telltale in Applications can change this." VoiceOver
+  reads each rule parameter by its name (such as "Slower than usual clear band"). The switches
+  show their on state in the accent color in both appearances (offscreen snapshots don't).
 - In the dashboard, select Sample, Collector and Settings in the sidebar; switch Speed against
   usual through 6h, 24h, 7d and 14d; Accept as usual… with a date, then Undo from Events.
   **Light** and **Dark** apply to the dashboard, and the readouts use Barlow Semi Condensed.
@@ -261,6 +305,18 @@ check. The launch-at-login check joins this list with the Settings task.
 - In the installed release only: the collector turns on at first launch, and no launchd job
   exists for the acceptance bundle (`launchctl print gui/$UID/local.utilities.telltale.collector`
   names the installed executable).
+- In the installed release only, launch at login: after the first launch, System Settings >
+  General > Login Items lists Telltale (allowed, or asking for approval; if it asks, Settings shows
+  "Approval required in System Settings" with Open Login Items Settings, and approving it there
+  turns the description to "Enabled" when the dashboard window is next focused). Log out and in:
+  Telltale's status item appears. Turn Open at login off in Settings: Telltale leaves Login Items,
+  and a relaunch doesn't add it back. Turn it on again. Then turn Telltale off in System Settings'
+  Login Items instead and relaunch: Telltale must not re-register itself.
+- In the installed release only, Settings after the first run: change the interval to 2 minutes;
+  the plist's `StartInterval` is 120 and `launchctl print` still finds the job. Rebuild from Codex
+  logs… asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
+  and keeps accepted baselines. Before the first run (a fresh install), Settings says "You can
+  change settings after the collector's first run." and changes nothing.
 
 ### Results
 

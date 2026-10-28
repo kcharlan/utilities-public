@@ -23,6 +23,9 @@ import TelltaleTestSupport
     let actions: UserActions
     let panel: PanelModel
     let collector: CollectorViewModel
+    let settings: SettingsModel
+    /// The login-item service behind Settings' Open at login (never `SMAppService`).
+    let login: LoginServiceStub
     let model: DashboardModel
     let executable: URL
     let clock: WorldClock
@@ -41,12 +44,18 @@ import TelltaleTestSupport
             paths: paths, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now }, health: { clock.health }, pollInterval: .seconds(3_600),
             watchFiles: false)
         self.live = live
-        actions = UserActions(paths: paths, calendar: Synth.newYork, now: { clock.now }, kickstart: {}, changed: { live.reload() })
+        // Check now and Rebuild kick the job as the app does, through the fake `launchctl`.
+        let manager = LaunchAgentManager(paths: paths, uid: 4_242, runner: runner)
+        actions = UserActions(paths: paths, calendar: Synth.newYork, now: { clock.now }, kickstart: { try manager.kickstart() }, changed: { live.reload() })
         panel = PanelModel(store: live, actions: actions, notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
         collector = CollectorViewModel(
-            live: live, actions: actions, manager: LaunchAgentManager(paths: paths, uid: 4_242, runner: runner), currentExecutable: executable,
+            live: live, actions: actions, manager: manager, currentExecutable: executable,
             canManage: canManage, paths: paths, calendar: Synth.newYork, now: { clock.now }, reveal: { _ in })
-        model = DashboardModel(live: live, panel: panel, collector: collector, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now })
+        let login = LoginServiceStub()
+        self.login = login
+        settings = SettingsModel(live: live, collector: collector, sources: PanelWorld.sources, login: LoginItem(service: login))
+        model = DashboardModel(
+            live: live, panel: panel, collector: collector, settings: settings, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now })
         collector.reveal = { [unowned self] in revealed.append($0) }
     }
 

@@ -43,7 +43,7 @@ import TelltaleCore
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
                 #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
-            case .acceptance, .dashboard, .collectorProblem:
+            case .acceptance, .dashboard, .collectorProblem, .settings:
                 Issue.record("not a panel snapshot scene")
             }
         }
@@ -59,6 +59,9 @@ import TelltaleCore
         #expect(snapshot.shift?.model == SyntheticEnvironment.example)
         #expect(snapshot.collector == .unlit && snapshot.footer == Copy.collectorOff)
         #expect(try Store.open(harness.paths.database, mode: .readOnly).value(.collectorEnabled) == false)
+        // Settings' watched-components checklist has a page to show.
+        #expect(try Store.open(harness.paths.database, mode: .readOnly).components(source: SyntheticEnvironment.statusSourceID).map(\.name)
+            == ["CLI", "Codex API", "Example Chat"])
 
         // A relaunch keeps the session's changes instead of seeding again.
         try harness.addRedAlert()

@@ -224,16 +224,9 @@ public struct CollectorRun: Sendable {
             let interval: Int
             let backfillThrough: Date?
             do {
-                // `value` falls back to the defaults silently when the JSON no longer decodes; R16
-                // wants that named like any other invalid setting.
-                let stored = try store.value(.rules)
-                let errors = try store.storedSettingDecodes(.rules) ? stored.validationErrors() : [CollectorRun.undecodableRules]
-                if errors.isEmpty {
-                    settings = stored
-                } else {
-                    settings = .defaults
-                    note("\(CollectorRun.invalidRulesNote) \(errors.joined(separator: " "))")
-                }
+                let usable = try store.usableRules()
+                settings = usable.rules
+                if !usable.problems.isEmpty { note("\(CollectorRun.invalidRulesNote) \(usable.problems.joined(separator: " "))") }
                 watched = try store.value(.watchedComponents)
                 let storedInterval = try store.value(.intervalMinutes)
                 interval = Settings.usableInterval(storedInterval)

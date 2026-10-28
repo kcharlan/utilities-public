@@ -132,6 +132,17 @@ public final class Store {
         return (try? StoreJSON.decode(V.self, from: stored)) != nil
     }
 
+    /// Ruling R16: the stored rules when they decode and pass validation; otherwise the defaults,
+    /// with the reasons the stored rules can't be used. The collector evaluates with these rules
+    /// and Settings shows them.
+    public func usableRules() throws -> (rules: RuleSettings, problems: [String]) {
+        let stored = try value(.rules)
+        // `value` falls back to the defaults silently when the JSON no longer decodes; R16 wants
+        // that named like any other invalid setting.
+        let problems = try storedSettingDecodes(.rules) ? stored.validationErrors() : [CollectorRun.undecodableRules]
+        return problems.isEmpty ? (stored, []) : (.defaults, problems)
+    }
+
     private func storedJSON<V>(_ key: SettingKey<V>) throws -> String? {
         try query("SELECT value_json FROM settings WHERE key = ?", [.text(key.name)]) { $0.text(0) }.first
     }

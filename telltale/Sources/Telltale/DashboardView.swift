@@ -37,6 +37,7 @@ import TelltaleCore
     @ObservationIgnored let live: LiveStore
     @ObservationIgnored let panel: PanelModel
     @ObservationIgnored let collector: CollectorViewModel
+    @ObservationIgnored let settings: SettingsModel
     @ObservationIgnored let sources: [SourceSummary]
     @ObservationIgnored let calendar: Calendar
     @ObservationIgnored let now: @MainActor () -> Date
@@ -58,12 +59,13 @@ import TelltaleCore
     var isVisible = false
 
     init(
-        live: LiveStore, panel: PanelModel, collector: CollectorViewModel, sources: [SourceSummary], calendar: Calendar = .current,
-        now: @escaping @MainActor () -> Date = Date.init
+        live: LiveStore, panel: PanelModel, collector: CollectorViewModel, settings: SettingsModel, sources: [SourceSummary],
+        calendar: Calendar = .current, now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.live = live
         self.panel = panel
         self.collector = collector
+        self.settings = settings
         self.sources = sources
         self.calendar = calendar
         self.now = now
@@ -135,6 +137,7 @@ import TelltaleCore
             pendingUndo = nil
         }
         collector.load()
+        if selection == .settings { settings.load() }
     }
 
     /// Spec section 9.4's dashboard appearance; Dark until the collector's first run stores settings.
@@ -243,10 +246,7 @@ struct DashboardView: View {
         case .collector?, nil:
             CollectorView(model: model.collector, openSettings: { model.select(.settings) })
         case .settings?:
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Settings").font(.system(size: 15, weight: .medium))
-                Text("Settings aren't available in this build yet.").foregroundStyle(Theme.swiftUI(Theme.dim))
-            }
+            SettingsView(model: model.settings)
         }
     }
 }

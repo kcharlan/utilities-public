@@ -18,12 +18,14 @@ import TelltaleTestSupport
 /// A scratch world with injected paths, a fake `launchctl`, a notification stub and two synthetic
 /// bundles that both carry Telltale's real identifier: one where `installedAppURL` points (standing
 /// in for /Applications) and one in a build folder.
-@MainActor private final class DelegateHarness {
+@MainActor final class DelegateHarness {
     let directory: URL
     let paths: TelltalePaths
     let runner = FakeCommandRunner()
     let service = NotificationServiceStub()
     let presenter = PopoverPresenterStub()
+    /// The login-item service every delegate shares, so a relaunch sees the last registration.
+    let login = LoginServiceStub()
     let installedApp: URL
     let installedExecutable: URL
     let buildExecutable: URL
@@ -52,7 +54,7 @@ import TelltaleTestSupport
     func delegate(current: URL? = nil) -> AppDelegate {
         AppDelegate(
             paths: paths, currentExecutable: current ?? installedExecutable, installedAppURL: installedApp, runner: runner,
-            sources: PanelWorld.sources, notificationService: service, uid: 4_242, calendar: Synth.newYork,
+            sources: PanelWorld.sources, notificationService: service, login: LoginItem(service: login), uid: 4_242, calendar: Synth.newYork,
             eventSources: [], watchFiles: false,
             makeStatus: { [presenter] _, _ in presenter },
             quit: { [unowned self] in quits += 1 },
@@ -73,7 +75,7 @@ import TelltaleTestSupport
     var databaseExists: Bool { FileManager.default.fileExists(atPath: paths.database.path) }
 }
 
-@MainActor private func withDelegate(_ body: (DelegateHarness) async throws -> Void) async throws {
+@MainActor func withDelegate(_ body: (DelegateHarness) async throws -> Void) async throws {
     try await withAsyncScratchDirectory { try await body(try DelegateHarness($0)) }
 }
 

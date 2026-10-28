@@ -137,6 +137,10 @@ private enum Fixture {
             CopyCase("collectorOverdue", Copy.collectorOverdue(since: since, calendar: calendar), "The collector hasn't run since 08:05."),
             CopyCase("collectorRecovered", Copy.collectorRecovered, "Telltale's collector is running again."),
             CopyCase("collectorTurnOffAfterFirstRun", Copy.collectorTurnOffAfterFirstRun, "You can turn the collector off after its first run."),
+            CopyCase("settingsAfterFirstRun", Copy.settingsAfterFirstRun, "You can change settings after the collector's first run."),
+            CopyCase("settingsInstalledCopyOnly", Copy.settingsInstalledCopyOnly, "Only Telltale in Applications can change this."),
+            CopyCase("storedRulesUnusable", Copy.storedRulesUnusable, "The saved rules couldn't be used, so Telltale is using the defaults shown here."),
+            CopyCase("componentsNotLoaded", Copy.componentsNotLoaded, "The status page's components appear here after the collector reads it."),
         ]
     }()
 

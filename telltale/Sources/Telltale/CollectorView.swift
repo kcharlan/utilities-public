@@ -131,17 +131,42 @@ import TelltaleCore
     }
 
     func turnOn() async {
-        await manage(setting: true) { manager, executable, interval in try manager.turnOn(executable: executable, intervalMinutes: interval) }
+        await manage(change: { manager, executable, interval in try manager.turnOn(executable: executable, intervalMinutes: interval) }) {
+            // Before the collector's first run there is no database to store it in (ruling R27):
+            // on matches the default, so nothing is lost.
+            do {
+                try self.actions.set(.collectorEnabled, true)
+            } catch StoreError.notInitialized {
+            }
+        }
     }
 
+    /// Not offered until the first run has created the database the off choice is stored in (R30).
     func turnOff() async {
         guard offersTurnOff else { return }
-        await manage(setting: false) { manager, _, _ in try manager.turnOff() }
+        await manage(change: { manager, _, _ in try manager.turnOff() }) { try self.actions.set(.collectorEnabled, false) }
     }
 
     func repair() async {
         guard showsRepair else { return }
-        await manage(setting: nil) { manager, executable, interval in try manager.repair(executable: executable, intervalMinutes: interval) }
+        await manage(change: { manager, executable, interval in try manager.repair(executable: executable, intervalMinutes: interval) })
+    }
+
+    /// Spec section 9.3's Change interval, from Settings: while the collector is on, rewrite the
+    /// plist and reload the job, then store the interval; while it is off, only store it. Like Turn
+    /// off, it waits for the first run, which creates the database the interval is stored in
+    /// (rulings R27 and R30). An out-of-range value fails with `Settings.intervalError`'s message.
+    func changeInterval(_ minutes: Int) async {
+        guard canManage, databaseReady else { return }
+        if let message = Settings.intervalError(minutes) {
+            error = message
+            return
+        }
+        var reload: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?
+        if enabled {
+            reload = { manager, executable, _ in try manager.changeInterval(executable: executable, intervalMinutes: minutes) }
+        }
+        await manage(change: reload) { try self.actions.set(.intervalMinutes, minutes) }
     }
 
     /// "Run now": one collector run outside its schedule.
@@ -153,21 +178,16 @@ import TelltaleCore
 
     // MARK: Internals
 
-    /// Runs a launchd change off the main actor, then stores the on/off setting. A failed change
-    /// leaves the setting as it was. Before the collector's first run there is no database to
-    /// store it in (ruling R27): turning on matches the default, so nothing is lost, and Turn off
-    /// is not offered until then (ruling R30).
-    private func manage(setting: Bool?, _ change: @escaping @Sendable (LaunchAgentManager, URL, Int) throws -> Void) async {
+    /// Runs a launchd change (when there is one) off the main actor, then `save` stores the setting
+    /// it implies. A failed change leaves the setting as it was.
+    private func manage(
+        change: (@Sendable (LaunchAgentManager, URL, Int) throws -> Void)?, save: (() throws -> Void)? = nil
+    ) async {
         guard canManage, !busy else { return }
         let manager = manager, executable = currentExecutable, interval = intervalMinutes
         await perform {
-            try await Task.detached { try change(manager, executable, interval) }.value
-            if let setting {
-                do {
-                    try self.actions.set(.collectorEnabled, setting)
-                } catch StoreError.notInitialized where setting == SettingKey.collectorEnabled.defaultValue {
-                }
-            }
+            if let change { try await Task.detached { try change(manager, executable, interval) }.value }
+            try save?()
         }
         await live.refresh()
         load()

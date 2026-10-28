@@ -1,7 +1,8 @@
 // Port: brew_version/Sources/BrewVersion/AppDelegate.swift, AppDelegate, eb960f3.
 // Adaptation: Telltale's composition (spec sections 9.1 and 9.3): the instance gate, the live
-// store, the collector monitor and wake events, wired to the status item. Every path, runner and
-// service is injected; the composition root (TelltaleMain) supplies the live ones.
+// store, the collector monitor and wake events, wired to the status item; the installed copy also
+// applies the Open at login setting (spec section 3). Every path, runner and service, the login
+// item's included, is injected; the composition root (TelltaleMain) supplies the live ones.
 import AppKit
 import TelltaleCore
 
@@ -21,6 +22,8 @@ import TelltaleCore
 
     private(set) var liveStore: LiveStore?
     let notifier: UserNotifier
+    /// Open at login (spec section 3), shown in Settings.
+    let login: LoginItem
     private(set) var monitor: CollectorMonitor?
     /// The dashboard window (spec section 9.2), which Open dashboard and Settings show.
     private(set) var dashboard: DashboardWindowController?
@@ -38,7 +41,7 @@ import TelltaleCore
     ///   collector problems reach the panel footer through collector health).
     init(
         paths: TelltalePaths, currentExecutable: URL, installedAppURL: URL, runner: any CommandRunner, sources: [SourceSummary],
-        notificationService: any NotificationService, uid: uid_t = getuid(), calendar: Calendar = .current,
+        notificationService: any NotificationService, login: LoginItem, uid: uid_t = getuid(), calendar: Calendar = .current,
         eventSources: [any SystemEventSource]? = nil, watchFiles: Bool = true,
         makeStatus: @escaping @MainActor (PanelModel, any DashboardOpening) -> any PopoverPresenting = { model, dashboard in
             StatusItemController(model: model, dashboard: dashboard)
@@ -59,6 +62,7 @@ import TelltaleCore
         self.quit = quit
         self.reportFailure = reportFailure
         notifier = UserNotifier(service: notificationService)
+        self.login = login
         super.init()
         // Before launch finishes, so a click that launched the app reaches the notifier.
         (notificationService as? NativeNotificationService)?.center.delegate = notifier
@@ -88,7 +92,7 @@ import TelltaleCore
             return
         }
         let installed = isInstalledCopy
-        if installed { restoreCollector() }
+        if installed { applyLaunchSettings() }
 
         let monitor = CollectorMonitor(paths: paths, manager: manager, currentExecutable: currentExecutable, service: notificationService, calendar: calendar)
         let live = LiveStore(paths: paths, sources: sources, calendar: calendar, health: { [weak monitor] in await monitor?.evaluate() }, watchFiles: watchFiles)
@@ -98,7 +102,9 @@ import TelltaleCore
         // Turn on, Turn off and Repair change launchd state, so only the installed copy may (R24).
         let collector = CollectorViewModel(
             live: live, actions: actions, manager: manager, currentExecutable: currentExecutable, canManage: installed, paths: paths, calendar: calendar)
-        let dashboard = DashboardWindowController(model: DashboardModel(live: live, panel: panel, collector: collector, sources: sources, calendar: calendar))
+        let settings = SettingsModel(live: live, collector: collector, sources: sources, login: login)
+        let dashboard = DashboardWindowController(
+            model: DashboardModel(live: live, panel: panel, collector: collector, settings: settings, sources: sources, calendar: calendar))
         let status = makeStatus(panel, dashboard)
         notifier.showPopover = { [weak status] in status?.showPopover() }
         let events = eventSources.map { SystemEvents(sources: $0) { [weak live] in await live?.refresh() } }
@@ -118,21 +124,26 @@ import TelltaleCore
         }
     }
 
-    /// At launch, an installed copy turns the collector on when it should be on and its plist is
-    /// missing (spec section 9.3). Settings are read read-only: before the first run they are the
-    /// defaults, and the app never creates the database.
-    private func restoreCollector() {
+    /// At launch, an installed copy registers the login item while Open at login is on (spec
+    /// section 3) and turns the collector on when it should be on and its plist is missing (spec
+    /// section 9.3). Settings are read read-only: before the first run they are the defaults, and
+    /// the app never creates the database.
+    private func applyLaunchSettings() {
         var enabled = SettingKey.collectorEnabled.defaultValue
         var interval = SettingKey.intervalMinutes.defaultValue
+        var openAtLogin = SettingKey.openAtLogin.defaultValue
         do {
             let store = try Store.open(paths.database, mode: .readOnly)
             enabled = try store.value(.collectorEnabled)
             interval = Settings.usableInterval(try store.value(.intervalMinutes))
+            openAtLogin = try store.value(.openAtLogin)
         } catch StoreError.notInitialized {
         } catch {
             reportFailure(Copy.databaseUnavailable(reason: error.localizedDescription))
             return
         }
+        login.applyAtLaunch(openAtLogin: openAtLogin)
+        if let error = login.error { reportFailure(error) }
         guard enabled, !FileManager.default.fileExists(atPath: manager.plistURL.path) else { return }
         do {
             try manager.turnOn(executable: currentExecutable, intervalMinutes: interval)

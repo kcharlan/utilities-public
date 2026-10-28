@@ -5,7 +5,10 @@
 // launchctl goes through SyntheticCommandRunner, so CollectorMonitor's read-only health never
 // reaches launchd, and Check now's kickstart is a double that records a synthetic run. The
 // Homebrew transport controls become Telltale's: an added red alert and a posting failure.
+// Settings gets a login-item double that never reaches SMAppService; this bundle isn't the
+// installed copy, so its interval, Rebuild and Open at login stay unavailable (R24).
 import AppKit
+import ServiceManagement
 import SwiftUI
 import TelltaleCore
 import UserNotifications
@@ -110,7 +113,9 @@ import UserNotifications
         let collector = CollectorViewModel(
             live: harness.live, actions: harness.actions, manager: LaunchAgentManager(paths: harness.paths, uid: getuid(), runner: harness.runner),
             currentExecutable: Bundle.main.executableURL ?? URL(fileURLWithPath: "/nonexistent/Telltale Synthetic Acceptance.app/Contents/MacOS/Acceptance"), canManage: false, paths: harness.paths)
-        let dashboard = DashboardWindowController(model: DashboardModel(live: harness.live, panel: panel, collector: collector, sources: SyntheticEnvironment.sources))
+        let settings = SettingsModel(live: harness.live, collector: collector, sources: SyntheticEnvironment.sources, login: LoginItem(service: SyntheticLoginService()))
+        let dashboard = DashboardWindowController(
+            model: DashboardModel(live: harness.live, panel: panel, collector: collector, settings: settings, sources: SyntheticEnvironment.sources))
         let status = StatusItemController(model: panel, dashboard: dashboard, accessory: controls)
         self.status = status
         self.dashboard = dashboard
@@ -125,6 +130,14 @@ import UserNotifications
     func applicationWillTerminate(_ notification: Notification) {
         harness.live.stop()
     }
+}
+
+/// The acceptance bundle's login item: never registered, and it never calls `SMAppService`.
+@MainActor final class SyntheticLoginService: LoginService {
+    private(set) var status: SMAppService.Status = .notRegistered
+    func register() throws { status = .requiresApproval }
+    func unregister() throws { status = .notRegistered }
+    func openSettings() {}
 }
 
 // A harness-only fault at the maintained notifier's system-service boundary. Without a native

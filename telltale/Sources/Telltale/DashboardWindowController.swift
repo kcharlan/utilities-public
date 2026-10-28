@@ -1,9 +1,10 @@
 // Port: brew_version/Sources/BrewVersion/SettingsWindowController.swift, SettingsWindowController, 41ed183.
 // Adaptation: owns the dashboard window (spec section 3: resizable, about 1100 × 760) instead of
 // Settings; conforms to the panel's DashboardOpening, with Settings as one of the dashboard's
-// sections (Task 13 fills it); switches the activation policy so the Dock icon shows only while
-// the window is open; applies the stored dashboard appearance (spec section 9.4) unless a harness
-// sets one; no login item or custom-interval focus.
+// sections; switches the activation policy so the Dock icon shows only while the window is open;
+// applies the stored dashboard appearance (spec section 9.4) unless a harness sets one, and a choice
+// made in Settings at once; refreshes the login item when the window becomes key; no custom-interval
+// focus.
 import AppKit
 import SwiftUI
 import TelltaleCore
@@ -42,6 +43,8 @@ extension NSApplication: ActivationPolicyApplying {}
          present: @escaping (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }) {
         self.model = model; self.activation = activation
         self.activate = activate; self.present = present
+        super.init()
+        model.settings.appearanceChanged = { [weak self] in self?.applySettingsAppearance($0) }
     }
 
     func show(section: DashboardSection) {
@@ -79,6 +82,16 @@ extension NSApplication: ActivationPolicyApplying {}
         self.appearance = appearance
         ownedWindow?.appearance = appearance
     }
+
+    /// A choice made in Settings applies at once and replaces a harness's explicit appearance.
+    private func applySettingsAppearance(_ setting: Appearance) {
+        appearance = nil
+        ownedWindow?.appearance = Theme.dashboardAppearance(setting)
+    }
+
+    /// Login-item approval can change in System Settings while the app stays open
+    /// (lessons_learned, 2026-10-17: "Refresh login approval when Settings becomes key").
+    func windowDidBecomeKey(_ notification: Notification) { model.settings.login.refresh() }
 
     func windowWillClose(_ notification: Notification) {
         model.isVisible = false

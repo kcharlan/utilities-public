@@ -2,9 +2,11 @@
 // Adaptation: Telltale's maintained-view inventory is spec section 13's panel states (quiet,
 // alerting, lasting-shift prompt), rendered from seeded synthetic databases through the real
 // LiveStore and PanelView, plus the dashboard's model view and collector problem state at the
-// window's default width (Task 12); Settings joins it with Task 13.
-// The Homebrew fixture, transport and login doubles are replaced by SyntheticEnvironment.
+// window's default width (Task 12), and Settings with an invalid Rules entry (Task 13).
+// The Homebrew fixture and transport are replaced by SyntheticEnvironment; the login double is
+// SnapshotLoginService.
 import AppKit
+import ServiceManagement
 import SwiftUI
 import UserNotifications
 import TelltaleCore
@@ -13,7 +15,7 @@ import TelltaleCore
 // notifications, windows on screen or native input.
 @main struct Snapshots {
     static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .shift]
-    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem]
+    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem, .settings]
 
     @MainActor static func main() async throws {
         _ = NSApplication.shared
@@ -43,9 +45,9 @@ import TelltaleCore
         }
         try await renderDashboards(home: home)
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 10 else { fatalError("Expected ten PNGs") }
+        guard pngs.count == 12 else { fatalError("Expected twelve PNGs") }
         print("Validated six maintained panel PNGs (quiet, alerting, lasting-shift prompt), both appearances, content-hugging quiet state.")
-        print("Validated four maintained dashboard PNGs (model view, collector problem), both appearances, Barlow Semi Condensed registered.")
+        print("Validated six maintained dashboard PNGs (model view, collector problem, settings with an invalid rule), both appearances, Barlow Semi Condensed registered.")
     }
 
     /// The seeded scene's snapshot carries what its PNG is meant to show.
@@ -65,6 +67,8 @@ import TelltaleCore
             guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber else { fatalError("dashboard: expected the alerting panel's alerts") }
         case .collectorProblem:
             guard snapshot.collector == .red, snapshot.alerts.isEmpty else { fatalError("collector problem: expected a red Collector lamp and no alerts") }
+        case .settings:
+            guard snapshot.alerts.isEmpty else { fatalError("settings: expected the quiet scene") }
         }
     }
 
@@ -116,12 +120,18 @@ import TelltaleCore
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeDashboard(state, home: directory)
                 expectDashboard(state, model)
-                let label = "\(state == .dashboard ? "dashboard" : "collector-problem")-\(dark ? "dark" : "light")"
-                // The model view scrolls inside the window; render the window tall enough to show all
-                // of it, so the PNG can be compared with the mockup's full page.
+                let name = switch state { case .dashboard: "dashboard"; case .settings: "settings"; default: "collector-problem" }
+                let label = "\(name)-\(dark ? "dark" : "light")"
+                // The model view and Settings scroll inside the window; render the window tall enough to
+                // show all of it, so the PNG can be compared with the mockup's full page.
                 var height = DashboardWindowController.defaultSize.height
-                if state == .dashboard {
-                    let content = NSHostingView(rootView: ModelView(model: model)
+                let section: AnyView? = switch state {
+                case .dashboard: AnyView(ModelView(model: model))
+                case .settings: AnyView(SettingsView(model: model.settings))
+                default: nil
+                }
+                if let section {
+                    let content = NSHostingView(rootView: section
                         .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 24)
                         .frame(width: DashboardWindowController.defaultSize.width - 201))
                     height = max(height, content.fittingSize.height.rounded(.up))
@@ -146,13 +156,20 @@ import TelltaleCore
                   collector.logLines.count == 6, collector.logLines.filter(\.isError).count == 1,
                   collector.facts.map(\.label) == ["Runs", "Last run", "Next run", "Last success", "Job label"]
             else { fatalError("collector problem: expected Last run red, one problem, six log lines and the run facts") }
+        case .settings:
+            let settings = model.settings
+            let rows = settings.componentGroups.first?.rows ?? []
+            guard settings.databaseReady, settings.canManage, settings.parameterErrors == [.slowerClearBand: [Copy.clearBandError]],
+                  settings.text(.slowerClearBand) == "15", rows.count == 7, rows.filter(\.missing).count == 4, settings.login.enabled
+            else { fatalError("settings: expected an invalid clear band, the component checklist with four missing names and Open at login on") }
         default:
             fatalError("\(state) is not a dashboard scene")
         }
     }
 
     /// A seeded scene's dashboard, read through the maintained LiveStore with synthetic health. The
-    /// collector view gets a recording launchctl double; nothing is pressed.
+    /// collector view gets a recording launchctl double and Settings a login-item double; the only
+    /// input is Settings' invalid clear-band entry, which stores nothing.
     @MainActor private static func makeDashboard(_ state: SyntheticEnvironment.Scene, home: URL) async throws -> DashboardModel {
         let panel = try await makeModel(state, home: home)
         let paths = SyntheticEnvironment.paths(home: home)
@@ -162,8 +179,17 @@ import TelltaleCore
             live: panel.store, actions: panel.actions, manager: LaunchAgentManager(paths: paths, uid: 501, runner: SyntheticCommandRunner()),
             currentExecutable: home.appendingPathComponent("Telltale"), canManage: true, paths: paths, calendar: calendar, now: { now },
             reveal: { _ in })
-        let model = DashboardModel(live: panel.store, panel: panel, collector: collector, sources: SyntheticEnvironment.sources, calendar: calendar, now: { now })
-        model.select(state == .dashboard ? .model(.codex, SyntheticEnvironment.example) : .collector)
+        let settings = SettingsModel(live: panel.store, collector: collector, sources: SyntheticEnvironment.sources, login: LoginItem(service: SnapshotLoginService()))
+        let model = DashboardModel(
+            live: panel.store, panel: panel, collector: collector, settings: settings, sources: SyntheticEnvironment.sources, calendar: calendar, now: { now })
+        switch state {
+        case .dashboard: model.select(.model(.codex, SyntheticEnvironment.example))
+        case .settings:
+            model.select(.settings)
+            // The slower rule's clear band equal to its trigger: shown with its message, not saved.
+            settings.edit(.slowerClearBand, "15")
+        default: model.select(.collector)
+        }
         return model
     }
 
@@ -228,6 +254,14 @@ import TelltaleCore
         let actions = UserActions(paths: paths, calendar: calendar, now: { now }, kickstart: {})
         return PanelModel(store: live, actions: actions, notifier: UserNotifier(service: SnapshotNotifications()), calendar: calendar)
     }
+}
+
+/// Open at login, registered: Settings shows the switch on. Nothing reaches `SMAppService`.
+@MainActor private struct SnapshotLoginService: LoginService {
+    var status: SMAppService.Status { .enabled }
+    func register() throws {}
+    func unregister() throws {}
+    func openSettings() {}
 }
 
 @MainActor private struct SnapshotNotifications: NotificationService {

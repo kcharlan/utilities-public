@@ -178,6 +178,14 @@ public enum Copy {
     public static let collectorManagedByInstalledCopy = "Only Telltale in Applications can turn the collector on or off, or repair it."
     /// Ruling R30: before the first run there is no database to store the off choice in.
     public static let collectorTurnOffAfterFirstRun = "You can turn the collector off after its first run."
+    /// Settings before the first run: there is no database to store a change in yet (ruling R27).
+    public static let settingsAfterFirstRun = "You can change settings after the collector's first run."
+    /// Settings that change launchd or login-item state, in a copy that isn't the installed app (R24).
+    public static let settingsInstalledCopyOnly = "Only Telltale in Applications can change this."
+    /// Ruling R16 in Settings: the stored rules don't decode or validate, so the defaults apply.
+    public static let storedRulesUnusable = "The saved rules couldn't be used, so Telltale is using the defaults shown here."
+    /// The watched-components checklist before the collector has stored the status page's list.
+    public static let componentsNotLoaded = "The status page's components appear here after the collector reads it."
     /// The collector view's schedule line (the mockup's "Every 5 minutes, also at login").
     public static func collectorSchedule(minutes: Int) -> String {
         minutes == 1 ? "Every minute, also at login" : "Every \(minutes) minutes, also at login"
