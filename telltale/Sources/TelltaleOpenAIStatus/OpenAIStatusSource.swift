@@ -113,42 +113,12 @@ public struct OpenAIStatusSource: StatusSource {
 
     // MARK: Applying a result
 
-    /// Stores a fetch result and returns whether incident data is available. RSS items give no
-    /// reliable open or resolved state, so they appear in Events but never light or clear a lamp.
-    ///
-    /// - `.full`: stores the components and incidents, clears `unavailableSince`, returns true.
-    /// - `.rssOnly`: records the posts, sets `unavailableSince` if unset, returns false.
-    /// - A failure: sets `unavailableSince` if unset, returns false. Incidents are untouched.
+    /// Stores a fetch result and returns whether incident data is available (`Store.applyStatus`,
+    /// with this source's name on RSS posts).
     @discardableResult
     public static func apply(
         _ result: Result<StatusFetch, any Error>, sourceID: String, store: Store, now: Date
     ) throws -> Bool {
-        try store.transaction {
-            switch result {
-            case .success(.full(let components, let incidents)):
-                try store.replace(components: components, source: sourceID)
-                try store.upsert(incidents: incidents)
-                try setUnavailable(false, sourceID: sourceID, store: store, now: now)
-                return true
-            case .success(.rssOnly(let items)):
-                try store.recordRSSItems(items, source: sourceID, displayName: Self.name)
-                try setUnavailable(true, sourceID: sourceID, store: store, now: now)
-                return false
-            case .failure:
-                try setUnavailable(true, sourceID: sourceID, store: store, now: now)
-                return false
-            }
-        }
-    }
-
-    private static func setUnavailable(_ unavailable: Bool, sourceID: String, store: Store, now: Date) throws {
-        var row = try store.sourceState(sourceID) ?? SourceStateRow(source: sourceID, state: .ready, updatedAt: now)
-        if unavailable {
-            row.unavailableSince = row.unavailableSince ?? now
-        } else {
-            row.unavailableSince = nil
-        }
-        row.updatedAt = now
-        try store.setSourceState(row)
+        try store.applyStatus(result, source: sourceID, displayName: Self.name, now: now)
     }
 }

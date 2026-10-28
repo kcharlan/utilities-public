@@ -10,11 +10,11 @@ sequence in [`docs/telltale_implementation_plan.md`](docs/telltale_implementatio
 
 Current state: the SwiftPM package, the vendored zstd decoder and the streaming `ZstdReader`
 for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources, the usual-speed
-baseline, the rule engine with its notification policy (library code with tests; nothing runs
-them yet), the release identifiers and runtime paths, and the notification check used for the
-spec's section 4 spike. The collector and real UI arrive in later tasks. Running the app with
-no arguments shows a placeholder window that asks for notification permission and reports the
-answer.
+baseline, the rule engine with its notification policy, the collector run
+(`Telltale --collect`, see "How the collector runs"), the release identifiers and runtime paths,
+and the notification check used for the spec's section 4 spike. Installing the collector's
+launchd job and the real UI arrive in later tasks. Running the app with no arguments shows a
+placeholder window that asks for notification permission and reports the answer.
 
 ## Requirements
 
@@ -57,6 +57,29 @@ Release builds require an existing usable code-signing identity, selected with
 Monitor. See the "Signing and installation" section of the
 [Anker Charge Monitor README](../anker_charge_monitor/README.md). The resolver and
 installer in `tools/` are ports of that project's scripts.
+
+## How the collector runs
+
+`Telltale --collect` is one collector run; launchd runs it every N minutes (spec section 9.3).
+`CollectorRun` in `Sources/TelltaleCore/Collector/CollectorRun.swift` documents the normative run
+order: take the `collector.lock` overlap guard, record the run's start, apply a pending Rebuild or a
+cold start, ingest each usage source from the 30-day lookback, fetch each status source, evaluate
+every missed 5-minute point one day per transaction (points up to `backfillThrough` are backfill and
+never notify), post the live notifications, prune per the retention table and record the run's end.
+The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
+
+It writes only under `~/Library/Application Support/Telltale` (database and lock) and
+`~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`
+(or `CODEX_HOME`) read-only. Its only network requests go to the OpenAI status page.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The run succeeded, or found another run holding the lock and recorded itself as `skipped: previous run still active`. Failed notification posts are logged and counted in the run record's detail but don't fail the run. |
+| 1 | The run failed. The run record holds the first error (when the database could be opened) and the log has every step. |
+| 2 | Usage error: an argument Telltale doesn't recognize. The usage goes to stderr and nothing runs, so a mistyped launchd argument never opens the UI. |
+
+A stored rule setting that fails validation doesn't stop a run: it evaluates with the default
+rules, and the log and run detail name the invalid fields.
 
 ## Notification spike
 

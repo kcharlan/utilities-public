@@ -89,6 +89,36 @@ extension Store {
         }
     }
 
+    /// Stores a status source's fetch result and returns whether its incident data is available.
+    /// RSS items give no reliable open or resolved state, so they appear in Events but never light
+    /// or clear a lamp. `displayName` words the `statusPost` events.
+    ///
+    /// - `.full`: stores the components and incidents, clears `unavailableSince`, returns true.
+    /// - `.rssOnly`: records the posts, sets `unavailableSince` if unset, returns false.
+    /// - A failure: sets `unavailableSince` if unset, returns false. Incidents are untouched.
+    @discardableResult
+    public func applyStatus(_ result: Result<StatusFetch, any Error>, source: String, displayName: String, now: Date) throws -> Bool {
+        try transaction {
+            let available: Bool
+            switch result {
+            case .success(.full(let components, let incidents)):
+                try replace(components: components, source: source)
+                try upsert(incidents: incidents)
+                available = true
+            case .success(.rssOnly(let items)):
+                try recordRSSItems(items, source: source, displayName: displayName)
+                available = false
+            case .failure:
+                available = false
+            }
+            var row = try sourceState(source) ?? SourceStateRow(source: source, state: .ready, updatedAt: now)
+            row.unavailableSince = available ? nil : row.unavailableSince ?? now
+            row.updatedAt = now
+            try setSourceState(row)
+            return available
+        }
+    }
+
     /// Stores each item whose link has no `statusPost` event yet (duplicates within `items`
     /// count once) and returns those new items, in the order given. RSS items carry no reliable
     /// open or resolved state, so they appear in Events but never light or clear a lamp.

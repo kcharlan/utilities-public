@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Testing
 import TelltaleCodex
@@ -422,30 +421,14 @@ import TelltaleTestSupport
             let logs = try CodexDatabase.logs(codexHome: home)
             try logs.addLog(at: Self.at(300), body: Self.disconnect)
 
-            let before = try Self.snapshot(home)
+            let before = try FileSnapshot.take(home)
             let source = Self.source(home)
             let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(3_600))
             _ = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(3_700))
             #expect(first.batch.responses.count == 3)
             #expect(first.batch.failedTurns.count == 1 && first.batch.connectionEvents.count == 1)
-            #expect(try Self.snapshot(home) == before)
+            #expect(try FileSnapshot.take(home) == before)
             #expect(before.count == 5)
         }
-    }
-
-    /// Every file under `home` except SQLite's `-wal` and `-shm` side files: size, modification
-    /// date and a content digest.
-    private static func snapshot(_ home: URL) throws -> [String: String] {
-        var result: [String: String] = [:]
-        let enumerator = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
-        for case let url as URL in enumerator {
-            guard (try url.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else { continue }
-            if url.lastPathComponent.hasSuffix("-wal") || url.lastPathComponent.hasSuffix("-shm") { continue }
-            let data = try Data(contentsOf: url)
-            let modified = try #require(try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            result[String(url.path.dropFirst(home.path.count))] = "\(data.count) \(modified.timeIntervalSinceReferenceDate) \(digest)"
-        }
-        return result
     }
 }

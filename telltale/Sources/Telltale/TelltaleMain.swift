@@ -8,20 +8,38 @@ enum LaunchCommand: Equatable {
     case app
     case collect
     case notificationCheck(result: URL, mode: String)
-    /// `--notification-check` without both `--result` and `--mode`.
+    /// Anything else: an unknown or extra argument, or `--notification-check` without both
+    /// `--result` and `--mode`. It never falls through to the UI, so a launchd typo can't open it.
     case usageError
+
+    static let usageExitCode = CollectorRun.ExitCode.usage
+    static let usage = """
+        Usage: Telltale                 (menu bar app)
+               Telltale --collect       (one collector run)
+               Telltale --notification-check --result <path> --mode <name>
+
+        """
 
     static func parse(_ arguments: [String]) -> LaunchCommand {
         let arguments = Array(arguments.dropFirst())
-        func value(after flag: String) -> String? {
-            guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
-            return arguments[index + 1]
-        }
-        if arguments.contains("--notification-check") {
-            guard let result = value(after: "--result"), let mode = value(after: "--mode") else { return .usageError }
+        switch arguments.first {
+        case nil:
+            return .app
+        case "--collect":
+            return arguments.count == 1 ? .collect : .usageError
+        case "--notification-check":
+            // `--result <path>` and `--mode <name>`, once each, in either order.
+            var values: [String: String] = [:]
+            var rest = arguments.dropFirst()
+            while let flag = rest.popFirst() {
+                guard flag == "--result" || flag == "--mode", values[flag] == nil, let value = rest.popFirst() else { return .usageError }
+                values[flag] = value
+            }
+            guard let result = values["--result"], let mode = values["--mode"] else { return .usageError }
             return .notificationCheck(result: URL(fileURLWithPath: result), mode: mode)
+        default:
+            return .usageError
         }
-        return arguments.contains("--collect") ? .collect : .app
     }
 }
 
@@ -31,12 +49,11 @@ enum LaunchCommand: Equatable {
         case .notificationCheck(let result, let mode):
             exit(await NotificationCheck.run(service: NativeNotificationService(), resultURL: result, mode: mode))
         case .collect:
-            // Task 9 replaces this with the real collector run.
-            print(Copy.collectorNotBuilt)
-            exit(0)
+            // No UI instance gate (Task 11): the collector runs beside the app.
+            exit(await CollectorEntry.run())
         case .usageError:
-            FileHandle.standardError.write(Data("Usage: Telltale --notification-check --result <path> --mode <name>\n".utf8))
-            exit(64)
+            FileHandle.standardError.write(Data(LaunchCommand.usage.utf8))
+            exit(LaunchCommand.usageExitCode)
         case .app:
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)

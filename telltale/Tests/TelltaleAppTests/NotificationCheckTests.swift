@@ -227,4 +227,19 @@ private struct SyntheticFailure: LocalizedError {
         #expect(LaunchCommand.parse(["Telltale", "--collect"]) == .collect)
         #expect(LaunchCommand.parse(["Telltale"]) == .app)
     }
+
+    // A launchd typo must never open the UI.
+    @Test func unrecognizedArgumentsAreAUsageError() {
+        #expect(LaunchCommand.parse(["Telltale", "--colect"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "--collect", "--extra"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "--collect", "--collect"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "stray"]) == .usageError)
+        #expect(LaunchCommand.parse(["Telltale", "--notification-check", "--result", "/tmp/r.json", "--mode", "x", "--extra"]) == .usageError)
+    }
+
+    @Test func usageErrorExitsTwoWithEveryForm() {
+        #expect(LaunchCommand.usageExitCode == 2)
+        #expect(LaunchCommand.usage.contains("Telltale --collect"))
+        #expect(LaunchCommand.usage.contains("Telltale --notification-check --result <path> --mode <name>"))
+    }
 }
