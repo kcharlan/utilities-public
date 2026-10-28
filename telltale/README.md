@@ -56,7 +56,8 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   whose homes stay in `TMPDIR` on purpose, get only this sweep (`--sweep-only`).
 - Every test and script cleans up its own scratch, and scripts that build packages point
   `TMPDIR` into that scratch. The deploy tool gives `make release` a `TMPDIR` inside its own build
-  scratch, which it removes.
+  scratch, which it removes, and then sweeps the build's new marker-only `TemporaryDirectory.*`
+  from the Darwin user temp dir.
 
 - `check_test_isolation.sh` fails if a Swift test reaches the real home, `~/Library`,
   `~/.codex`, the real login item (`SMAppService`, or `LoginItem()` with its default service) or

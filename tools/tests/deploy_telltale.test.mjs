@@ -19,6 +19,7 @@ import {spawnSync,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildInput,sourceInventory,contract,requiredInputs} from '../deploy_telltale.mjs';
 import {appTreeHash} from '../deploy_brew_version.mjs';
+import {fakeDarwinTemp,releaseTempMakefile,assertReleaseTempHygiene} from './release-temp-fixture.mjs';
 const script=fileURLToPath(new URL('../deploy_telltale.mjs',import.meta.url));
 const repoRoot=fileURLToPath(new URL('../../',import.meta.url));
 const plist=fs.readFileSync(path.join(repoRoot,'telltale/Resources/Info.plist'));
@@ -30,6 +31,7 @@ function fixture(t) {
   t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
   const repo=path.join(base,'invented repo'),home=path.join(base,'invented home'),project=path.join(repo,'telltale'),apps=path.join(home,'apps'),scripts=path.join(home,'Library/Scripts'),bin=path.join(base,'bin');
   for(const p of [project,apps,scripts,bin])fs.mkdirSync(p,{recursive:true});
+  const darwin=fakeDarwinTemp(base,bin);
   const write=(name,bytes,mode=0o644)=>{const file=path.join(project,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes,{mode});fs.chmodSync(file,mode);};
   fs.mkdirSync(path.join(repo,'tools'));
   for(const name of ['deploy_telltale.mjs','deployment_files.mjs','deploy_brew_version.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
@@ -48,7 +50,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(bin,'launchctl'),`#!/bin/sh\necho "$@" >> ${JSON.stringify(launchctlCalls)}\nexit 97\n`,{mode:0o755});
   const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH};
   const run=(...args)=>spawnSync(process.execPath,[script,'--repo',repo,'--apps-dir',apps,'--scripts-dir',scripts,...args],{env,encoding:'utf8'});
-  return {base,repo,home,project,apps,scripts,bin,write,git,release,env,run,launchctlCalls,app:path.join(apps,'Telltale.app'),receipt:path.join(scripts,'.telltale-native.json')};
+  return {base,repo,home,project,apps,scripts,bin,darwin,write,git,release,env,run,launchctlCalls,app:path.join(apps,'Telltale.app'),receipt:path.join(scripts,'.telltale-native.json')};
 }
 function ok(result){assert.equal(result.status,0,result.stdout+result.stderr);return result;}
 const backup=result=>/rollback backup: (.+)/.exec(result.stdout)[1];
@@ -185,14 +187,8 @@ test('canonical make install delegates to the root CLI without a separate releas
   for(const file of ['../../telltale/Makefile','../../telltale/tools/install.sh','../deploy_telltale.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(file,import.meta.url),'utf8'),/\blaunchctl\b/,file);
 });
 
-test('the release build gets a TMPDIR inside the removed scratch, so the caller TMPDIR gets no Telltale entries',t=>{
-  // Stands in for SwiftPM, which writes path-named lock files and TemporaryDirectory.* to TMPDIR
-  // (always inside TMPDIR, so even a failing run leaves them in the removed fixture).
-  const f=fixture(t),make=fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),log=path.join(f.base,'synthetic-tmpdir.log');
-  f.write('Makefile',make.replace('release:\n',()=>"release:\n\tprintf '%s\\n' \"$$TMPDIR\" > \"$$SYNTHETIC_TMPDIR_LOG\"\n\t: > \"$${TMPDIR%/}/_synthetic_telltale_.build.lock\"\n\tmkdir \"$${TMPDIR%/}/TemporaryDirectory.synthetic\"\n"));f.git('add','.');
-  f.env.SYNTHETIC_TMPDIR_LOG=log;ok(f.run());
-  const child=fs.readFileSync(log,'utf8').trim();
-  assert.match(child,new RegExp('^'+f.base.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'/telltale-build-[^/]+/tmp/$'),child);
-  assert.equal(fs.existsSync(child),false,'the scratch TMPDIR must be removed with the scratch');
-  assert.deepEqual(fs.readdirSync(f.base).filter(name=>/telltale|TemporaryDirectory/i.test(name)),[]);
+for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release build gets a TMPDIR inside the removed scratch and leaves no temporary entries in TMPDIR or the Darwin user temp dir`,t=>{
+  const f=fixture(t);
+  assertReleaseTempHygiene({...f,run:fail=>{f.write('Makefile',releaseTempMakefile(fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),fail));f.git('add','.');return f.run();}},'telltale-build-',fail);
+  assert.deepEqual(fs.readdirSync(f.base).filter(name=>/telltale/i.test(name)),[]);
 });

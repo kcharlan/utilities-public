@@ -7,6 +7,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildInput, sourceInventory, appTreeHash} from '../deploy_brew_version.mjs';
 import {sha} from '../deployment_files.mjs';
+import {fakeDarwinTemp,releaseTempMakefile,assertReleaseTempHygiene} from './release-temp-fixture.mjs';
 const script = fileURLToPath(new URL('../deploy_brew_version.mjs', import.meta.url));
 const plist = fs.readFileSync(new URL('../../brew_version/Resources/Info.plist', import.meta.url));
 const help = fs.readFileSync(new URL('../../brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt', import.meta.url));
@@ -34,8 +35,9 @@ function fixture(t) {
   const base=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'synthetic-brew-deploy-')));
   t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
   const repo=path.join(base,'invented repo'),home=path.join(base,'invented home'),project=path.join(repo,'brew_version');
-  const scripts=path.join(home,'Library/Scripts'),apps=path.join(home,'Applications');
-  fs.mkdirSync(project,{recursive:true}); fs.mkdirSync(scripts,{recursive:true}); fs.mkdirSync(apps);
+  const scripts=path.join(home,'Library/Scripts'),apps=path.join(home,'Applications'),bin=path.join(base,'bin');
+  fs.mkdirSync(project,{recursive:true}); fs.mkdirSync(scripts,{recursive:true}); fs.mkdirSync(apps); fs.mkdirSync(bin);
+  const darwin=fakeDarwinTemp(base,bin);
   const write=(n,b)=>{const p=path.join(project,n);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,b);};
   const git=(...a)=>execFileSync('git',['-C',repo,...a],{stdio:'pipe'});
   git('init','-q');git('config','user.name','Synthetic Tester');git('config','user.email','tester@example.invalid');
@@ -47,9 +49,9 @@ function fixture(t) {
   }
   release('first');
   const expected=path.join(base,'independent-release');fs.mkdirSync(expected);
-  const env={...process.env,HOME:home,TMPDIR:base,BREW_VERSION_DEPLOY_TEST_ONLY_PGREP:"/usr/bin/false",SYNTHETIC_EXPECTED_RELEASE:expected};
+  const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH,BREW_VERSION_DEPLOY_TEST_ONLY_PGREP:"/usr/bin/false",SYNTHETIC_EXPECTED_RELEASE:expected};
   const run=(...args)=>spawnSync(process.execPath,[script,'--repo',repo,'--scripts-dir',scripts,'--apps-dir',apps,...args],{encoding:'utf8',env});
-  return {base,repo,home,project,scripts,apps,expected,git,write,release,run,env,target:path.join(scripts,'brew-version'),receipt:path.join(scripts,'.brew-version-native.json'),app:path.join(apps,'Brew Version.app')};
+  return {base,repo,home,project,scripts,apps,bin,darwin,expected,git,write,release,run,env,target:path.join(scripts,'brew-version'),receipt:path.join(scripts,'.brew-version-native.json'),app:path.join(apps,'Brew Version.app')};
 }
 const backupPath=r=>r.stdout.trim().split('rollback backup: ')[1].split('\n')[0];
 for (const flag of ['--version','--help','-h']) {
@@ -79,6 +81,10 @@ test('buildInputs',()=>{
   for(const n of ['Package.swift','Makefile','Sources/a.swift','Tests/a.txt','Resources/a']) assert.equal(buildInput('brew_version/'+n),true,n);
   for(const n of ['README.md','build/release/a','.build/a']) assert.equal(buildInput('brew_version/'+n),false,n);
   assert.equal(buildInput('other/Makefile'),false);
+});
+for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release build leaves no temporary entries in TMPDIR or the Darwin user temp dir`,t=>{
+  const f=fixture(t);
+  assertReleaseTempHygiene({...f,run:fail=>{f.write('Makefile',releaseTempMakefile(fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),fail));f.git('add','.');f.git('commit','-qm','Synthetic temp writes');return f.run();}},'brew-version-build-',fail);
 });
 test('rejects the retired runtime contract before activation',t=>{
   const f=fixture(t);

@@ -55,6 +55,9 @@ home inside their own scratch directory, which they remove: through `TMPDIR`,
 or through `BREW_VERSION_HARNESS_HOME`, a new path where a builder keeps its
 whole build for the caller to inspect and remove. Run one suite at a
 time: a concurrent run of this project's suite can trip the check.
+`make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
+`.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders
+stay out of the caller's temporary directory.
 Tests use synthetic responses; a live lookup is a separate acceptance check.
 
 Render the maintained native views without reading owner state or showing windows:

@@ -10,7 +10,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
   parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup} from './deployment_files.mjs';
-import {appTreeHash} from './deploy_brew_version.mjs';
+import {appTreeHash,makeRelease} from './deploy_brew_version.mjs';
 
 const project='telltale', appName='Telltale.app', executable='Telltale';
 // Separately maintained statement of spec section 3; deploy_telltale.test.mjs compares it to
@@ -146,10 +146,7 @@ export function main(argv=process.argv.slice(2)) {
   try {
     if(!rollback) {
       for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});fs.chmodSync(file,entry.permissions);}
-      // SwiftPM writes path-named lock files and TemporaryDirectory.* folders to TMPDIR; keep them in
-      // the scratch so its removal takes them too (ruling R28).
-      const tmp=path.join(scratch,'tmp');fs.mkdirSync(tmp,{mode:0o700});
-      execFileSync('make',['-C',path.join(scratch,project),'release'],{env:{...process.env,TMPDIR:tmp+'/',SIGN_IDENTITY:identity,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''},stdio:'pipe',timeout:900000});
+      makeRelease(scratch,project,{SIGN_IDENTITY:identity});
       validate(path.join(scratch,project,'build/release',appName),expectation,identity);
       if(sourceInventory(repo).sourceHash!==inputs.sourceHash)throw Error('App inputs changed during build');
     }

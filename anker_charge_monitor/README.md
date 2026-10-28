@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.4.0 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.4.1 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -28,6 +28,9 @@ passing or failing, leaves a new `prime-` entry in `$TMPDIR` or Foundation's
 per-user temporary directory. Every test and harness temporary name uses that
 prefix. Run one suite at a time: a concurrent run of this project's suite can
 trip the check.
+`make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
+`.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders
+stay out of the caller's temporary directory.
 
 To review the rendered views, run `make snapshots`. It builds in a fresh mode-0700
 `$TMPDIR/prime-snapshots.*` directory and prints its path and the command that

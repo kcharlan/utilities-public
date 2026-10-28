@@ -35,6 +35,35 @@ export function appTreeHash(bundleDirectory) {
   for(const entry of entries) hash.update(entry.relative+'\0'+entry.type+'\0'+entry.mode.toString(8)+'\0'+entry.content+'\0');
   return hash.digest('hex');
 }
+// Shared by the native app deployers. SwiftPM writes path-named lock files and TemporaryDirectory.*
+// folders to TMPDIR, so the toolchain gets a TMPDIR inside the scratch, removed with it. Each
+// compile also leaves a TemporaryDirectory.* holding only an empty .keep-directory in the Darwin
+// user temp dir whatever TMPDIR says; after `make release`, even a failed one, new ones holding
+// nothing else are removed, as telltale/tools/check_no_temp_leaks.sh does.
+export function scratchTmpdir(scratch) {
+  const tmp=path.join(scratch,'tmp');
+  if(!exists(tmp)) fs.mkdirSync(tmp,{mode:0o700});
+  return tmp+'/';
+}
+export function makeRelease(scratch,project,env={}) {
+  const tmp=scratchTmpdir(scratch);
+  const darwin=execFileSync('getconf',['DARWIN_USER_TEMP_DIR'],{encoding:'utf8',stdio:'pipe',timeout:10000}).trim();
+  const markers=()=>fs.readdirSync(darwin).filter(name=>name.startsWith('TemporaryDirectory.'));
+  const before=new Set(markers());
+  try {execFileSync('make',['-C',path.join(scratch,project),'release'],{env:{...process.env,...env,TMPDIR:tmp,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''},stdio:'pipe',timeout:900000});}
+  finally {
+    const kept=[];
+    for(const name of markers().filter(name=>!before.has(name))) {
+      const directory=path.join(darwin,name),keep=path.join(directory,'.keep-directory');
+      try {
+        const stat=fs.lstatSync(directory),marker=fs.lstatSync(keep);
+        if(!stat.isDirectory() || !marker.isFile() || marker.size || fs.readdirSync(directory).join('/')!=='.keep-directory') {kept.push(name);continue;}
+        fs.unlinkSync(keep);fs.rmdirSync(directory);
+      } catch {kept.push(name);}
+    }
+    if(kept.length) console.error('Left '+kept.length+' new TemporaryDirectory.* with other content in '+darwin+': '+kept.join(', '));
+  }
+}
 function copyTree(source,destination) {
   const stat=fs.lstatSync(source);
   if(stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Error('App bundle contains symlink or unsupported entry');
@@ -188,18 +217,19 @@ export function main(argv=process.argv.slice(2)) {
   let current=false;
   if(!rebuild) try {verify(inputs,expected,command,app,receipt);diagnostic(command,expected);appDiagnostic(app,expected);current=true;} catch {}
   if(current) {console.log('Brew Version already current; nothing changed');return;}
-  try {
-    execFileSync('xcrun',['--find','swift'],{stdio:'pipe',timeout:10000});
-    const swift=execFileSync('xcrun',['swift','--version'],{encoding:'utf8',stdio:'pipe',timeout:10000});
-    if(!/Swift version ([6-9]|[1-9]\d+)\./.test(swift)) throw new Error('Swift 6 required');
-    execFileSync('make',['--version'],{stdio:'pipe',timeout:10000});
-  } catch {throw new Error('Swift 6 and Xcode Command Line Tools plus make are required; see brew_version/README.md Requirements');}
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'brew-version-build-'));
   const cleanupErrors=[];let staged,saved,primary;
   try {
+    // `swift --version` also leaves a TemporaryDirectory.* in TMPDIR.
+    const env={...process.env,TMPDIR:scratchTmpdir(scratch)};
+    try {
+      execFileSync('xcrun',['--find','swift'],{env,stdio:'pipe',timeout:10000});
+      const swift=execFileSync('xcrun',['swift','--version'],{env,encoding:'utf8',stdio:'pipe',timeout:10000});
+      if(!/Swift version ([6-9]|[1-9]\d+)\./.test(swift)) throw new Error('Swift 6 required');
+      execFileSync('make',['--version'],{env,stdio:'pipe',timeout:10000});
+    } catch {throw new Error('Swift 6 and Xcode Command Line Tools plus make are required; see brew_version/README.md Requirements');}
     for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});}
-    const env={...process.env,MAKEFLAGS:'',MFLAGS:'',CFLAGS:'',CPPFLAGS:'',LDFLAGS:''};
-    execFileSync('make',['-C',path.join(scratch,'brew_version'),'release'],{env,stdio:'pipe',timeout:900000});
+    makeRelease(scratch,'brew_version');
     const built=path.join(scratch,'brew_version/build/release'),builtCommand=path.join(built,'brew-version'),builtApp=path.join(built,'Brew Version.app');
     regular(builtCommand);diagnostic(builtCommand,expected);appDiagnostic(builtApp,expected);
     const bytes=fs.readFileSync(builtCommand),treeHash=appTreeHash(builtApp);

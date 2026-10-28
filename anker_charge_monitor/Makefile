@@ -2,7 +2,13 @@
 SIGN_IDENTITY ?= CodexBar Local
 export SIGN_IDENTITY
 .PHONY: build test test-suite snapshots clean release install deploy live-check signing-preflight
+# SwiftPM writes package lock files and empty TemporaryDirectory.* folders to TMPDIR, so build and
+# release keep them in the ignored .build/tmp/. release creates it only after the
+# identity resolves, so a missing one leaves no .build behind.
+PROJECT_TMPDIR := $(CURDIR)/.build/tmp/
+build release: export TMPDIR := $(PROJECT_TMPDIR)
 build:
+	@mkdir -p "$(PROJECT_TMPDIR)"
 	swift build -Xswiftc -warnings-as-errors
 # The leak check wraps the whole suite and fails on anything it leaves in
 # temporary space.
@@ -20,7 +26,7 @@ snapshots:
 signing-preflight:
 	@tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"
 release:
-	@set -e; identity=$$(tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"); \
+	@set -e; identity=$$(tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"); mkdir -p "$(PROJECT_TMPDIR)"; \
 		swift build -c release --product PrimeMonitor -Xswiftc -warnings-as-errors; \
 		if [ -e "build/release/Anker Charge Monitor.app" ]; then rm -r -- "build/release/Anker Charge Monitor.app"; fi; \
 		mkdir -p "build/release/Anker Charge Monitor.app/Contents/MacOS" "build/release/Anker Charge Monitor.app/Contents/Resources"; \

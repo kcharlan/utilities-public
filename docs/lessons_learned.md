@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-28: A Swift deploy leaks into two temp dirs, including from its preflight
+
+Brew Version's and Anker Charge Monitor's deployers ran `make release` with the
+caller's `TMPDIR`. A unique scratch path means a new set of leftovers on every
+deploy: about 22 empty `TemporaryDirectory.*` folders and lock files named after
+the scratch path. Pointing `TMPDIR` into the removed scratch does not cover
+everything. Each compile still drops a `TemporaryDirectory.*` holding only an
+empty `.keep-directory` into `getconf DARWIN_USER_TEMP_DIR` whatever `TMPDIR`
+says, and even `xcrun swift --version` leaves a `TemporaryDirectory.*` in
+`TMPDIR`. Give every toolchain call the scratch `TMPDIR`, including version
+checks. After the build, passing or failing, remove only new marker-only
+directories from the Darwin dir. Test it with a fake Darwin dir, through a
+`getconf` double on the fixture `PATH`, so the suite never sweeps the real one.
+
 ## 2026-10-28: Never pin NSApp.appearance, and make "follow the system" nil all the way up
 
 A native acceptance harness pinned light or dark with its own buttons. They
