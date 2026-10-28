@@ -528,9 +528,11 @@ enum RuleParameter: String, CaseIterable, Identifiable {
 
     func cancelRebuild() { confirmingRebuild = false }
 
-    /// Stores the rebuild request, then kicks the job so the collector applies it now.
+    /// The alert's Rebuild button: stores the rebuild request, then kicks the job so the collector
+    /// applies it now. Closing the alert clears `confirmingRebuild` before the button's task runs,
+    /// so the alert itself is the confirmation and only `canRebuild` is checked here.
     func confirmRebuild() async {
-        guard confirmingRebuild, canRebuild else { return }
+        guard canRebuild else { return }
         confirmingRebuild = false
         do {
             try actions.requestRebuild()

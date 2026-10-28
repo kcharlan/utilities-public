@@ -8,7 +8,7 @@ import TelltaleTestSupport
     /// the spec are three separately maintained statements of one contract.
     @Test func infoPlistMatchesRelease() throws {
         let plist = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "Resources/Info.plist"))
-        #expect(TelltaleRelease.version == "0.1.0")
+        #expect(TelltaleRelease.version == "0.1.1")
         #expect(TelltaleRelease.displayName == "Telltale")
         #expect(TelltaleRelease.bundleIdentifier == "local.utilities.telltale")
         #expect(TelltaleRelease.collectorLabel == "local.utilities.telltale.collector")

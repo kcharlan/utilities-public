@@ -336,8 +336,8 @@ private struct EventList: View {
             "Undo this acceptance?",
             isPresented: Binding(get: { model.pendingUndo != nil }, set: { if !$0 { model.cancelUndo() } }),
             presenting: model.pendingUndo
-        ) { _ in
-            Button("Undo", role: .destructive) { model.confirmUndo() }
+        ) { event in
+            Button("Undo", role: .destructive) { model.confirmUndo(event) }
             Button("Cancel", role: .cancel) { model.cancelUndo() }
         } message: { event in
             Text(event.undoConfirmation ?? "")

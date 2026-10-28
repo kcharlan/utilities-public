@@ -6,12 +6,13 @@ import TelltaleCore
 public struct ModelNames: ModelNaming {
     public init() {}
 
-    /// The id without its vendor word and version, each remaining word capitalized:
-    /// `gpt-6.1-sol` is "Sol". When nothing would remain, the id itself.
+    /// The version, then the family words capitalized, without the vendor word: `gpt-6.1-sol` is
+    /// "6.1 Sol", so `gpt-6-sol` stays apart from it. With no family word, the id itself.
     public func displayName(model: String) -> String {
         let parts = Parts(model)
         guard !parts.family.isEmpty else { return model }
-        return parts.family.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        let family = parts.family.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        return ([parts.version].compactMap { $0 } + family).joined(separator: " ")
     }
 
     /// True when the title holds every family word and the version, case-insensitive, each as a

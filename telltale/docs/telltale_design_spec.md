@@ -243,8 +243,11 @@ next run (it never blocks Codex).
 
 - Speed and baselines key on the literal `turn_context.payload.model`, for
   example `gpt-6.1-sol`.
-- Display name: drop the vendor prefix and version and capitalize the rest
-  ("Sol"). Show the full id in tooltips.
+- Display name: drop the vendor prefix, put the version first and capitalize
+  the rest ("6.1 Sol"). The version stays because Codex logs hold several
+  versions of one family at once (`gpt-6.1-sol`, `gpt-6-sol`, `gpt-5.6-sol`),
+  and without it they all read "Sol" (changed in 0.1.1). Show the full id in
+  tooltips.
 - Incident titles match a model when they contain both its family word ("Sol")
   and its version ("6.1"), case-insensitive. For example: "6.1 Sol Degraded
   Model Performance", "GPT-6.1 Sol Codex".

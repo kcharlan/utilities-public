@@ -177,10 +177,11 @@ import TelltaleCore
         }
     }
 
-    func confirmUndo() {
-        guard let pending = pendingUndo else { return }
+    /// The alert's Undo button, given the event the alert presented. Closing the alert may clear
+    /// `pendingUndo` before the button's action runs, so the event can't be read back from it.
+    func confirmUndo(_ event: FeedEvent) {
         pendingUndo = nil
-        undo(pending)
+        undo(event)
     }
 
     func cancelUndo() { pendingUndo = nil }
@@ -264,6 +265,7 @@ private struct DashboardSidebar: View {
                 case .models(let models):
                     ForEach(models) { item in
                         row(item.name, color: item.color, section: .model(item.provider, item.model))
+                            .help(item.model)
                     }
                 case .notSetUp:
                     dimmed(Copy.notSetUp)
