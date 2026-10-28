@@ -7,7 +7,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const project=fileURLToPath(new URL('../..',import.meta.url));
-let scratch,app,command,held=[];
+let scratch,snapshotScratch,app,command,held=[];
 const run=(name,args)=>execFileSync(name,args,{stdio:'pipe',timeout:900000});
 function assertMinimumRuntime(executable) {
   const metadata=run('vtool',['-show-build',executable]).toString();
@@ -35,6 +35,7 @@ before(()=>{
 after(()=>{
   for(const old of held)fs.closeSync(old.fd);
   if(scratch)fs.rmSync(scratch,{recursive:true});
+  if(snapshotScratch)fs.rmSync(snapshotScratch,{recursive:true});
 });
 test('release removes stale signed resources before sealing the new bundle',()=>{
   assert.equal(fs.existsSync(path.join(app,'Contents/Resources/synthetic-stale.txt')),false);
@@ -70,16 +71,28 @@ test('acceptance and prototype builders keep only signed bundles in fresh privat
     const bundle=builder==='build.sh'?path.join(directory,'Brew Version Synthetic Acceptance.app'):value;
     assertMinimumRuntime(path.join(bundle,'Contents/MacOS/Acceptance'));
   }
+  // SwiftPM's lock files and TemporaryDirectory.* folders stay in each home, removed with it.
+  const left=fs.readdirSync(temporary);
+  assert.equal(left.length,2,left.join('\n'));
+  for(const name of left) assert.match(name,/^brew-version-acceptance\.[^.]+$/,'builder left '+name+' in TMPDIR');
 });
 test('maintained snapshot builder uses the same supported runtime',()=>{
-  // A caller-owned home keeps the build for inspection; scratch removal owns it.
-  const home=path.join(scratch,'snapshots');
+  // A caller-owned home keeps the build for inspection; scratch removal owns it. The renderer
+  // requires its home in Foundation's temporary directory, the Darwin user temp dir whatever
+  // TMPDIR says (`make test` points TMPDIR into .build/tmp), so this scratch is made there.
+  snapshotScratch=fs.mkdtempSync(path.join(execFileSync('getconf',['DARWIN_USER_TEMP_DIR'],{encoding:'utf8'}).trim(),'brew-version-snapshot-test-'));
+  fs.chmodSync(snapshotScratch,0o700);
+  const home=path.join(snapshotScratch,'snapshots'),temporary=path.join(scratch,'snapshots-tmp');
+  fs.mkdirSync(temporary,{mode:0o700});
   const output=execFileSync('zsh',[path.join(scratch,'Tests/Snapshots/build.sh')],{
-    encoding:'utf8',env:{...process.env,BREW_VERSION_HARNESS_HOME:home},stdio:'pipe',timeout:900000});
+    encoding:'utf8',env:{...process.env,BREW_VERSION_HARNESS_HOME:home,TMPDIR:temporary},stdio:'pipe',timeout:900000});
+  // SwiftPM's lock files and TemporaryDirectory.* folders stay in the caller-owned home.
+  assert.deepEqual(fs.readdirSync(temporary),[]);
   assert.ok(output.split('\n').includes('Private snapshots: '+home),output);
   assert.equal(output.includes('Remove when finished'),false,output);
   assert.equal(fs.statSync(home).mode & 0o7777,0o700);
-  const binaries=run('swift',['build','--package-path',path.join(home,'package'),'-c','release','--show-bin-path']).toString().trim();
+  const binaries=execFileSync('swift',['build','--package-path',path.join(home,'package'),'-c','release','--show-bin-path'],
+    {env:{...process.env,TMPDIR:path.join(home,'tmp')+'/'},stdio:'pipe',timeout:900000}).toString().trim();
   assertMinimumRuntime(path.join(binaries,'Snapshots'));
 });
 test('failed harness builds remove their whole home',()=>{
@@ -92,18 +105,4 @@ test('failed harness builds remove their whole home',()=>{
     assert.equal(result.status,7,builder+'\n'+result.stderr);
     assert.deepEqual(fs.readdirSync(temporary),[],builder);
   }
-});
-test('temporary-space check fails on leftovers and keeps the suite status',()=>{
-  const temporary=path.join(scratch,'guard-tmp');fs.mkdirSync(temporary,{mode:0o700});
-  fs.mkdirSync(path.join(temporary,'brew-version-synthetic-existing'));
-  const guard=(script)=>spawnSync(path.join(project,'Tests/ReleaseChecks/check_tmpdir.sh'),['/bin/sh','-c',script],{
-    encoding:'utf8',env:{...process.env,TMPDIR:temporary},timeout:60000});
-  assert.equal(guard('mkdir "$TMPDIR/brew-version-synthetic-a"; rmdir "$TMPDIR/brew-version-synthetic-a"').status,0);
-  assert.equal(guard('mkdir "$TMPDIR/synthetic-other-project"').status,0);
-  const leaked=guard('mkdir "$TMPDIR/brew-version-synthetic-leak"');
-  assert.equal(leaked.status,1);assert.match(leaked.stderr,/brew-version-synthetic-leak/);
-  assert.doesNotMatch(leaked.stderr,/existing/);
-  const failed=guard('mkdir "$TMPDIR/brew-version-synthetic-failed"; exit 3');
-  assert.equal(failed.status,3);assert.match(failed.stderr,/brew-version-synthetic-failed/);
-  assert.equal(guard('exit 4').status,4);
 });

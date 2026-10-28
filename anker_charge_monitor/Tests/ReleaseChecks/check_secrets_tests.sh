@@ -5,6 +5,9 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-tests.XXXXXX")
 work=$(cd "$work" && pwd -P)
 trap 'chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
 chmod 700 "$work"
+# TMPDIR may sit inside a checkout (`make test` points it into .build/tmp); stop Git's repository
+# discovery above $work, so the case without a repository finds none.
+export GIT_CEILING_DIRECTORIES="${work%/*}"
 cd "$work"
 git init -q
 printf '.secrets-patterns\nignored/\n' > .gitignore

@@ -123,7 +123,9 @@ independent of this checkout.
 Shared repository tooling lives in `tools/`: the native and calculator-page
 installers (`deploy_*.mjs`), the read-only fleet deployment audit
 (`check_local_deployments.zsh`), the uv launcher header guard
-(`check_uv_headers.py`), and the `testkit.py` browser and launcher test helpers.
+(`check_uv_headers.py`), the `testkit.py` browser and launcher test helpers, and
+the temp-leak checker the Brew Version and Anker Makefiles run their suites
+and harness builders under (`check_no_temp_leaks.sh`).
 Their tests are in `tools/tests/`.
 
 Repository updates do not update installed copies. See the

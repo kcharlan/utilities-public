@@ -23,19 +23,35 @@ scanner regressions and release/install structure checks. The bundle gate builds
 the maintained synthetic snapshot renderer once, including its macOS 27 runtime
 checks, in a `PRIME_MONITOR_HARNESS_HOME` inside its own scratch directory, and
 checks that a failed renderer build removes its whole home. `make test` runs the
-suite under `Tests/ReleaseChecks/check_tmpdir.sh`, which fails if the suite,
-passing or failing, leaves a new `prime-` entry in `$TMPDIR` or Foundation's
-per-user temporary directory. Every test and harness temporary name uses that
-prefix. Run one suite at a time: a concurrent run of this project's suite can
-trip the check.
+suite under the repository's shared
+[`tools/check_no_temp_leaks.sh`](../tools/check_no_temp_leaks.sh), with `TMPDIR`
+in a private run directory inside the ignored `.build/tmp/` that the check
+removes afterwards, SwiftPM's package lock files and `TemporaryDirectory.*`
+folders included. The check fails if the suite, passing or failing, leaves an
+Anker entry (a `prime-` name, or a lock file named after an
+`anker_charge_monitor` or `prime-*` package path) in that directory, in
+`$TMPDIR` or in Foundation's per-user temporary directory
+(`getconf DARWIN_USER_TEMP_DIR`). Every compile also leaves a
+`TemporaryDirectory.*` holding only an empty `.keep-directory` in that per-user
+directory whatever `TMPDIR` says; the check removes the run's new ones and
+names any other new one it leaves. Every test and harness temporary name uses
+the `prime-` prefix. The suite also runs the check's own self-test,
+`tools/tests/test_check_no_temp_leaks.sh`. Run one suite at a time: a
+concurrent run of this project's suite can trip the check.
 `make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
 `.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders
-stay out of the caller's temporary directory.
+stay out of the caller's temporary directory; they do not sweep the per-user
+markers.
 
 To review the rendered views, run `make snapshots`. It builds in a fresh mode-0700
 `$TMPDIR/prime-snapshots.*` directory and prints its path and the command that
 removes it. It keeps only the PNGs: it removes its scratch package and fixtures
 when it finishes, and the whole directory if the build fails or is interrupted.
+SwiftPM's lock files and `TemporaryDirectory.*` folders stay in that directory;
+the bundle gate checks that nothing lands beside it. The target runs the builder
+under `tools/check_no_temp_leaks.sh --sweep-only`, which removes the build's
+empty per-user markers and fails if it leaves any Anker entry other than a
+directory in either temporary directory.
 Remove the directory once you have reviewed the images.
 Signing commands are synthetic only inside isolated release tests; these tests
 cannot establish real certificate trust, vault access, physical input delivery,

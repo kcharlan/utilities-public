@@ -47,17 +47,30 @@ The integration category also runs the acceptance and Settings prototype
 builders with an invented HOME, requiring their printed private homes to be
 mode-0700 children of their `TMPDIR` that keep only the signed bundle, and
 checks that a failed builder removes its whole home.
-`make test` runs the suite under `Tests/ReleaseChecks/check_tmpdir.sh`, which
-fails if the suite, passing or failing, leaves a new `brew-version-` entry in
-`$TMPDIR` or Foundation's per-user temporary directory. Every test and harness
-temporary name uses that prefix, and the integration tests put each builder
+`make test` runs the suite under the repository's shared
+[`tools/check_no_temp_leaks.sh`](../tools/check_no_temp_leaks.sh), with `TMPDIR`
+in a private run directory inside the ignored `.build/tmp/` that the check
+removes afterwards, SwiftPM's package lock files and `TemporaryDirectory.*`
+folders included. The check fails if the suite, passing or failing, leaves a
+Brew Version entry (a `brew-version-` name, or a lock file named after a
+`brew_version` or `brew-version-*` package path) in that directory, in
+`$TMPDIR` or in Foundation's per-user temporary directory
+(`getconf DARWIN_USER_TEMP_DIR`). Every compile also leaves a
+`TemporaryDirectory.*` holding only an empty `.keep-directory` in that per-user
+directory whatever `TMPDIR` says; the check removes the run's new ones and
+names any other new one it leaves. Every test and harness temporary name uses
+the `brew-version-` prefix, and the integration tests put each builder
 home inside their own scratch directory, which they remove: through `TMPDIR`,
 or through `BREW_VERSION_HARNESS_HOME`, a new path where a builder keeps its
-whole build for the caller to inspect and remove. Run one suite at a
+whole build for the caller to inspect and remove. The builders point SwiftPM's
+`TMPDIR` inside that home, and the integration tests check that nothing else
+lands beside it. The suite also runs the check's own self-test,
+`tools/tests/test_check_no_temp_leaks.sh`. Run one suite at a
 time: a concurrent run of this project's suite can trip the check.
 `make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
 `.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders
-stay out of the caller's temporary directory.
+stay out of the caller's temporary directory; they do not sweep the per-user
+markers.
 Tests use synthetic responses; a live lookup is a separate acceptance check.
 
 Render the maintained native views without reading owner state or showing windows:
@@ -78,7 +91,12 @@ appearances; offscreen rendering does not establish native input or activation.
 Keep the printed images outside the repository for review. The builder keeps
 only the PNGs: it removes its scratch package and fixtures when it finishes, and
 its whole directory if the build fails or is interrupted. Remove the directory
-once you have reviewed the images.
+once you have reviewed the images. SwiftPM's lock files and `TemporaryDirectory.*`
+folders stay in that directory, and the target runs the builder under
+`tools/check_no_temp_leaks.sh --sweep-only`, which removes the build's empty
+per-user markers and fails if it leaves any Brew Version entry other than a
+directory in either temporary directory. `make acceptance` and
+`make settings-prototype` run their builders the same way.
 
 To run the debug command from the repository root, resolve SwiftPM's binary
 directory (its layout varies by toolchain):
