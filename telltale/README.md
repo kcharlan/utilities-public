@@ -171,7 +171,8 @@ in the most severe lamp color when a lamp lights. Its accessibility label names 
 The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
-the lasting-shift prompt with Accept as usual… and Keep as abnormal, and the collector footer.
+the lasting-shift prompt with links to the provider's status-page incidents in its period,
+Accept as usual… and Keep as abnormal, and the collector footer.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
@@ -201,12 +202,15 @@ The sidebar lists each provider's models (a provider whose source isn't set up s
 "Not set up", dimmed), then Collector and Settings. A model's view shows the lamp strip with
 Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
 response time against usual, hourly speed-index dots colored by the episode in effect,
-the dashed usual line, provider incident bands and failed-turn markers, drawn with Swift
-Charts), Accept as usual… with its date picker, drift, learning and missing-history notes,
-Prompt sizes (the last 3 hours against usual) beside Workload (median prompt, responses an
+the dashed usual line, the provider's own status-page incidents as dashed amber bands, and
+failed-turn markers, drawn with Swift Charts), the lasting-shift prompt with links to its
+period's incidents, Accept as usual… with its date picker, drift, learning and missing-history notes,
+Prompt sizes (the last 3 hours against usual; the 300k+ bar takes the Load lamp's color while
+it is lit) beside Workload (median prompt, responses an
 hour, active sessions, cached input, reasoning and subagent shares, effort mix and the usage
 limit), and Events, newest first, with Undo on each live acceptance (undoing an older one
-asks first, since later acceptances are undone too). Readout numbers use Barlow Semi
+asks first, since later acceptances are undone too). While the window is closed, store changes
+reread nothing; opening it reads everything again. Readout numbers use Barlow Semi
 Condensed, registered for the process at launch; if it can't be registered, the system font
 stands in and one line is logged.
 
@@ -215,7 +219,9 @@ next run, the last success and the job label, Run now, Turn on or Turn off, Repa
 the job's plist doesn't match this app), Change interval (opens Settings), Show log file, and
 the last lines of `collector.log`, failures in red. Turn on, Turn off and Repair change launchd
 state, so only the installed copy offers them; any other copy says so and shows the rest
-read-only.
+read-only. Turn off appears only once the collector's first run has created the database, since
+the off choice is stored there; before then the view says it can be turned off after its first
+run. A failed read of the database shows as its own line, apart from an action's failure.
 
 ## Native acceptance
 
@@ -235,6 +241,8 @@ check. The launch-at-login check joins this list with the Settings task.
 - Check now: the checked time moves (the acceptance double records a synthetic run).
 - **Add red alert** lights Errors red and turns the glyph's dot red; VoiceOver reads the lit
   lamps from the status item and the lamp strip.
+- The lasting-shift prompt links to "Synthetic slow responses", which opens its synthetic
+  status-page address in the browser.
 - Accept as usual… with its date, then Undo; Keep as abnormal hides the prompt.
 - **Test notification** shows a visible notification, and clicking it opens the panel.
   **Test posting failure** shows the warning with Retry, and Retry clears it.

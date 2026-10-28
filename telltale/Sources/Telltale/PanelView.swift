@@ -37,6 +37,8 @@ import TelltaleCore
     /// Spec section 9.1's quiet panel.
     var emptyMessage: String? { store.snapshot.alerts.isEmpty ? Copy.nothingToReport : nil }
     var checkedText: String? { store.snapshot.checkedAt.map { Copy.checked(at: $0, calendar: calendar) } }
+    /// The status-page incidents the shift prompt links to (spec section 8, ruling R31).
+    var shiftIncidents: [IncidentLink] { store.snapshot.shift?.incidents ?? [] }
 
     func checkNow() async {
         guard !checking else { return }
@@ -187,6 +189,7 @@ struct PanelView: View {
     private func shiftPrompt(_ shift: ShiftPrompt, text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(text).fixedSize(horizontal: false, vertical: true)
+            IncidentLinks(incidents: model.shiftIncidents, size: 11)
             if let since = acceptingSince {
                 HStack {
                     DatePicker("Since", selection: Binding(get: { since }, set: { acceptingSince = $0 }), in: ...Date(), displayedComponents: .date)
@@ -353,5 +356,26 @@ struct Sparkline: Shape {
             if drawing { path.addLine(to: point) } else { path.move(to: point); drawing = true }
         }
         return path
+    }
+}
+
+/// The status-page incidents in a shift prompt's period, each a link to its page (spec section 8,
+/// ruling R31). Shared by the panel's and the dashboard's prompts.
+struct IncidentLinks: View {
+    let incidents: [IncidentLink]
+    var size: CGFloat = 12
+
+    var body: some View {
+        if !incidents.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(incidents) { incident in
+                    Link(destination: incident.link) {
+                        Label(incident.name, systemImage: "arrow.up.right.square").labelStyle(.titleAndIcon)
+                    }
+                    .font(.system(size: size))
+                    .help(incident.link.absoluteString)
+                }
+            }
+        }
     }
 }

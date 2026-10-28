@@ -35,8 +35,9 @@ public enum ChartRange: String, Sendable, Hashable, CaseIterable, Identifiable {
 /// - `dots`: one per clock hour, the median speed index of the stored known evaluation points in
 ///   it, colored by the most severe speed episode in effect during that hour (slower episodes take
 ///   their severity, faster ones blue); nil is usual.
-/// - `incidents`: every stored status-page incident, from publication to resolution (or now while
-///   open), clipped to the range. `failures`: the model's failed turns (completion, else start).
+/// - `incidents`: the provider's status page's incidents (`statusSourceID`; none when nil), from
+///   publication to resolution (or now while open), clipped to the range.
+/// - `failures`: the model's failed turns (completion, else start).
 /// - `bucketGaps`: input-size buckets with responses in the last 3 hours that have no usual yet
 ///   ("Not enough history yet for 300k+ prompts"), once the model is past cold start.
 public struct ModelDetail: Sendable, Equatable {
@@ -85,7 +86,8 @@ public struct ModelDetail: Sendable, Equatable {
     public var bucketGaps: [InputBucket]
 
     public static func load(
-        store: Store, baseline: BaselineEngine, provider: ProviderID, model: String, range: ChartRange, now: Date, calendar: Calendar
+        store: Store, baseline: BaselineEngine, provider: ProviderID, model: String, statusSourceID: String?, range: ChartRange, now: Date,
+        calendar: Calendar
     ) throws -> ModelDetail {
         try store.transaction {
             let interval = DateInterval(start: now.addingTimeInterval(-range.duration), end: now)
@@ -110,10 +112,10 @@ public struct ModelDetail: Sendable, Equatable {
             return ModelDetail(
                 range: range, interval: interval, lastHour: readout,
                 dots: try dots(store: store, provider: provider, model: model, interval: interval, calendar: calendar),
-                incidents: try incidentBands(store: store, interval: interval),
+                incidents: try statusSourceID.map { try incidentBands(store: store, source: $0, interval: interval) } ?? [],
                 failures: try store.failureTimes(provider: provider, model: model, in: interval),
                 learning: learning, drift: try baseline.drift(provider: provider, model: model, at: now),
-                shift: try ShiftDetector.prompt(provider: provider, model: model, at: now, store: store, calendar: calendar),
+                shift: try ShiftDetector.prompt(provider: provider, model: model, statusSourceID: statusSourceID, at: now, store: store, calendar: calendar),
                 bucketGaps: gaps)
         }
     }
@@ -142,17 +144,15 @@ public struct ModelDetail: Sendable, Equatable {
         }
     }
 
-    private static func incidentBands(store: Store, interval: DateInterval) throws -> [DateInterval] {
-        var bands: [DateInterval] = []
-        for source in try store.incidentSources() {
-            for incident in try store.incidents(source: source, overlapping: interval) {
-                let start = max(incident.publishedAt, interval.start)
-                let end = min(incident.isResolved ? incident.updatedAt : interval.end, interval.end)
-                guard start < end else { continue }
-                bands.append(DateInterval(start: start, end: end))
-            }
+    /// The provider's own status page's incidents, clipped to the range: another provider's
+    /// incident says nothing about this model.
+    private static func incidentBands(store: Store, source: String, interval: DateInterval) throws -> [DateInterval] {
+        try store.incidents(source: source, overlapping: interval).compactMap { incident in
+            let start = max(incident.publishedAt, interval.start)
+            let end = min(incident.isResolved ? incident.updatedAt : interval.end, interval.end)
+            return start < end ? DateInterval(start: start, end: end) : nil
         }
-        return bands.sorted { $0.start < $1.start }
+        .sorted { $0.start < $1.start }
     }
 }
 

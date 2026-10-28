@@ -106,9 +106,10 @@ import UserNotifications
         }.padding(10))
         let panel = PanelModel(store: harness.live, actions: harness.actions, notifier: harness.notifier)
         // The synthetic bundle may not manage launchd (R24); its collector view is read-only.
+        // Without a bundle executable, a path that cannot exist stands in: nothing installs it.
         let collector = CollectorViewModel(
             live: harness.live, actions: harness.actions, manager: LaunchAgentManager(paths: harness.paths, uid: getuid(), runner: harness.runner),
-            currentExecutable: Bundle.main.executableURL ?? harness.paths.database, canManage: false, paths: harness.paths)
+            currentExecutable: Bundle.main.executableURL ?? URL(fileURLWithPath: "/nonexistent/Telltale Synthetic Acceptance.app/Contents/MacOS/Acceptance"), canManage: false, paths: harness.paths)
         let dashboard = DashboardWindowController(model: DashboardModel(live: harness.live, panel: panel, collector: collector, sources: SyntheticEnvironment.sources))
         let status = StatusItemController(model: panel, dashboard: dashboard, accessory: controls)
         self.status = status

@@ -41,6 +41,11 @@ enum Theme {
     static let unlitCaption = dynamic("TelltaleUnlitCaption", dark: 0x6E7A85, light: 0x7A8087)
     /// Usual-speed dots and neutral event marks (the mockup's `#5A6670`).
     static let usual = dynamic("TelltaleUsual", dark: 0x5A6670, light: 0x8D99A3)
+    /// A provider incident's band on the speed chart and its legend swatch: the mockup's amber at
+    /// 9% fill with a 45% dashed edge. Light appearance needs more of both to show on the light
+    /// cluster **(plan call)**.
+    static let incidentFill = dynamic("TelltaleIncidentFill", dark: (0xF0A800, 0.09), light: (0xB87A00, 0.16))
+    static let incidentEdge = dynamic("TelltaleIncidentEdge", dark: (0xF0A800, 0.45), light: (0xB87A00, 0.75))
 
     static func swiftUI(_ color: NSColor) -> Color { Color(nsColor: color) }
 
@@ -53,11 +58,19 @@ enum Theme {
         }
     }
 
-    private static func dynamic(_ name: String, dark: Int, light: Int) -> NSColor {
+    private static func dynamic(_ name: String, dark: (Int, CGFloat), light: (Int, CGFloat)) -> NSColor {
         NSColor(name: name) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark]).map { [.darkAqua, .vibrantDark].contains($0) } == true
-                ? rgb(dark) : rgb(light)
+            let (value, alpha) = isDark(appearance) ? dark : light
+            return rgb(value).withAlphaComponent(alpha)
         }
+    }
+
+    private static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark]).map { [.darkAqua, .vibrantDark].contains($0) } == true
+    }
+
+    private static func dynamic(_ name: String, dark: Int, light: Int) -> NSColor {
+        NSColor(name: name) { isDark($0) ? rgb(dark) : rgb(light) }
     }
 
     private static func rgb(_ value: Int) -> NSColor {

@@ -41,8 +41,10 @@ enum SyntheticEnvironment {
         return calendar
     }()
     static let snapshotNow = calendar.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 9, minute: 30))!
+    /// The synthetic status page the scenes' incidents come from.
+    static let statusSourceID = "status.example.com"
     static let sources = [SourceSummary(
-        provider: .codex, name: "Codex", statusName: "Demo", signals: [.speed, .errors, .link, .provider, .load],
+        provider: .codex, name: "Codex", statusName: "Demo", statusSourceID: statusSourceID, signals: [.speed, .errors, .link, .provider, .load],
         naming: SyntheticNaming())]
 
     /// The panel states the harnesses seed (spec section 13's snapshot list, plus the acceptance mix).
@@ -93,21 +95,30 @@ enum SyntheticEnvironment {
     /// - the last hour's responses and 3 hours of evaluation points for both models;
     /// - a succeeded collector run a minute before `now`;
     /// - alerting: Example 26% slower plus a large-prompt alert, both amber;
-    /// - shift: three consecutive days of slower episodes ending before today.
+    /// - shift: three consecutive days of slower episodes ending before today, with a provider
+    ///   incident on the middle day that the prompt links to;
+    /// - dashboard: two 300k+ prompts a day and 4 in 10 in the last hour, with cached input and
+    ///   reasoning tokens throughout.
     @discardableResult
     static func seed(_ scene: Scene, home: URL, now: Date, calendar: Calendar) throws -> TelltalePaths {
         let paths = paths(home: home)
         let store = try Store.open(paths.database, mode: .readWrite)
         let today = calendar.startOfDay(for: now)
         var number = 0
-        func responses(_ model: String, count: Int, tps: Double, from first: Date, spacing: TimeInterval = 60, input: Int = 10_000) throws {
+        // The dashboard scene fills the Workload grid: cached input and reasoning on every response.
+        let dashboard = scene == .dashboard
+        func responses(
+            _ model: String, count: Int, tps: Double, from first: Date, spacing: TimeInterval = 60, input: (Int) -> Int = { _ in 10_000 }
+        ) throws {
             try store.upsert(responses: (0..<count).map { index in
                 number += 1
                 let end = first.addingTimeInterval(Double(index) * spacing)
+                let tokens = input(index)
                 return ResponseRecord(
                     provider: .codex, model: model, effort: "medium", serviceTier: nil, sessionID: sessionID, isSubagent: false,
                     turnID: String(format: "turn_synthetic_%02ld", number), responseID: String(format: "resp_synthetic_%02ld", number),
-                    start: end.addingTimeInterval(-1_000 / tps), end: end, inputTokens: input, cachedInputTokens: 0, outputTokens: 1_000)
+                    start: end.addingTimeInterval(-1_000 / tps), end: end, inputTokens: tokens, cachedInputTokens: dashboard ? tokens * 3 / 5 : 0,
+                    outputTokens: 1_000, reasoningTokens: dashboard ? 250 : nil)
             })
         }
         let shifting = scene == .shift || scene == .acceptance
@@ -116,6 +127,19 @@ enum SyntheticEnvironment {
             let slowDay = shifting && daysBack <= 3
             try responses(example, count: 20, tps: slowDay ? 31 : 42, from: day)
             try responses(sample, count: 20, tps: 74, from: day.addingTimeInterval(1_800))
+            if dashboard && daysBack <= 14 {
+                // Two large prompts a day, in the same hour as the rest: the 300k+ bucket's usual share
+                // and speed, while the usual median prompt stays small.
+                try responses(example, count: 2, tps: 42, from: day.addingTimeInterval(25 * 60)) { _ in 320_000 }
+            }
+            if shifting && daysBack == 2 {
+                // A provider incident inside the lasting shift: its prompt links to it (ruling R31).
+                try store.upsert(incidents: [IncidentRecord(
+                    source: statusSourceID, id: "inc_synthetic_02", name: "Synthetic slow responses", status: "resolved",
+                    publishedAt: day, updatedAt: day.addingTimeInterval(2 * 3_600),
+                    link: URL(string: "https://status.example.com/incidents/inc_synthetic_02")!,
+                    history: [StatusChange(at: day, status: "investigating")], impacts: [])])
+            }
             if slowDay {
                 try store.insertEpisode(EpisodeRow(
                     rule: RuleID.slower.rawValue, provider: ProviderID.codex.rawValue, scope: example, direction: .slower,
@@ -125,7 +149,8 @@ enum SyntheticEnvironment {
         }
         let alerting = scene == .alerting || scene == .acceptance || scene == .dashboard
         let exampleNow: Double = alerting ? 31 : 41
-        try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118)
+        // The dashboard's large-prompt alert: 4 in 10 of the last hour's prompts are 300k or more.
+        try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118) { dashboard && $0 % 5 < 2 ? 320_000 : 10_000 }
         try responses(sample, count: 20, tps: 70, from: now.addingTimeInterval(-3_600 + 90), spacing: 170)
 
         // Three hours of 5-minute points: the slowdown shows as a step in Example's sparkline.

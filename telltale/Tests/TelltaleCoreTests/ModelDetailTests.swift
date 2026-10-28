@@ -6,9 +6,10 @@ import TelltaleTestSupport
 /// Spec section 9.2's model view data, read from a seeded store (`RuleHarness`: Sep 2026 in New
 /// York, the synthetic model "Example" and the status source "Example Status").
 private enum Detail {
-    static func load(_ h: RuleHarness, range: ChartRange = .day, at now: Date) throws -> ModelDetail {
+    static func load(_ h: RuleHarness, range: ChartRange = .day, at now: Date, statusSourceID: String? = RuleHarness.sourceID) throws -> ModelDetail {
         try ModelDetail.load(
-            store: h.store, baseline: h.base.engine, provider: .codex, model: h.model, range: range, now: now, calendar: h.calendar)
+            store: h.store, baseline: h.base.engine, provider: .codex, model: h.model, statusSourceID: statusSourceID, range: range, now: now,
+            calendar: h.calendar)
     }
 
     static func point(_ h: RuleHarness, _ at: Date, _ index: Double?, state: EvalPointState = .known, model: String = Synth.model) -> EvalPointRow {
@@ -94,6 +95,18 @@ private enum Detail {
                 DateInterval(start: h.sep4(10, 30), end: h.sep4(11)),
             ])
             #expect(detail.failures == [h.sep4(9, 52), h.sep4(10, 10)])
+        }
+    }
+
+    /// Bands come only from the selected model's provider's status source.
+    @Test func incidentBandsAreScopedToTheProvidersStatusSource() throws {
+        try withRules { h in
+            var other = h.incident("inc_synthetic_09", published: h.sep4(9), resolved: h.sep4(10), impacts: [])
+            other.source = "example-other-status"
+            try h.store.upsert(incidents: [h.incident("inc_synthetic_01", published: h.sep4(8), resolved: h.sep4(9), impacts: []), other])
+            #expect(try Detail.load(h, at: h.sep4(11)).incidents == [DateInterval(start: h.sep4(8), end: h.sep4(9))])
+            #expect(try Detail.load(h, at: h.sep4(11), statusSourceID: "example-other-status").incidents == [DateInterval(start: h.sep4(9), end: h.sep4(10))])
+            #expect(try Detail.load(h, at: h.sep4(11), statusSourceID: nil).incidents.isEmpty)
         }
     }
 

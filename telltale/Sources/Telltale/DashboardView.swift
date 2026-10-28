@@ -54,6 +54,8 @@ import TelltaleCore
     var acceptingSince: Date?
     /// An older acceptance whose Undo waits for confirmation.
     private(set) var pendingUndo: FeedEvent?
+    /// Whether the dashboard window is open. While it is closed, store changes reread nothing.
+    var isVisible = false
 
     init(
         live: LiveStore, panel: PanelModel, collector: CollectorViewModel, sources: [SourceSummary], calendar: Calendar = .current,
@@ -68,14 +70,17 @@ import TelltaleCore
     }
 
     /// Open dashboard's landing section before anything was chosen: the first model, or the
-    /// collector before the first run has stored one.
-    var defaultSection: DashboardSection {
+    /// collector before the first run has stored one. Rereads the sidebar to find it.
+    func defaultSection() -> DashboardSection {
         loadSidebar()
         for group in sidebar {
             if case .models(let models) = group.state, let first = models.first { return .model(first.provider, first.model) }
         }
         return .collector
     }
+
+    /// The status-page incidents the selected model's shift prompt links to (ruling R31).
+    var shiftIncidents: [IncidentLink] { detail?.shift?.incidents ?? [] }
 
     var selectedModel: SidebarModel? {
         guard case .model(let provider, let model) = selection else { return nil }
@@ -96,6 +101,13 @@ import TelltaleCore
         load()
     }
 
+    /// A store change: rereads the open dashboard, and nothing while it is closed (opening it
+    /// selects a section, which reads everything again).
+    func liveChanged() {
+        guard isVisible else { return }
+        load()
+    }
+
     /// Rereads everything the selected section shows.
     func load() {
         loadSidebar()
@@ -106,7 +118,8 @@ import TelltaleCore
                 if case .model(let provider, let model) = selection {
                     let at = now()
                     detail = try ModelDetail.load(
-                        store: store, baseline: baseline, provider: provider, model: model, range: range, now: at, calendar: calendar)
+                        store: store, baseline: baseline, provider: provider, model: model,
+                        statusSourceID: sources.first { $0.provider == provider }?.statusSourceID, range: range, now: at, calendar: calendar)
                     workload = try Workload.load(store: store, provider: provider, model: model, now: at, calendar: calendar)
                 }
                 let feed = try EventFeed.load(
@@ -220,7 +233,7 @@ struct DashboardView: View {
         .font(.system(size: 13))
         .environment(\.timeZone, model.calendar.timeZone)
         .environment(\.calendar, model.calendar)
-        .onChange(of: model.live.generation) { model.load() }
+        .onChange(of: model.live.generation) { model.liveChanged() }
     }
 
     @ViewBuilder private var content: some View {

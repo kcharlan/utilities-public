@@ -7,14 +7,17 @@ public struct SourceSummary: Sendable {
     public var name: String
     /// Its status source's display name ("OpenAI"), the Provider lamp's caption.
     public var statusName: String
+    /// Its status source's id (`UsageSource.statusSourceID`): whose incidents its models' charts show.
+    public var statusSourceID: String
     /// The lamps it can feed; the UI shows only these (spec section 5).
     public var signals: Set<Signal>
     public var naming: any ModelNaming
 
-    public init(provider: ProviderID, name: String, statusName: String, signals: Set<Signal>, naming: any ModelNaming) {
+    public init(provider: ProviderID, name: String, statusName: String, statusSourceID: String, signals: Set<Signal>, naming: any ModelNaming) {
         self.provider = provider
         self.name = name
         self.statusName = statusName
+        self.statusSourceID = statusSourceID
         self.signals = signals
         self.naming = naming
     }
@@ -189,7 +192,7 @@ public struct PanelSnapshot: Sendable, Equatable {
                 let shiftSince = now.addingTimeInterval(-TimeInterval(shiftLookbackDays) * 86_400)
                 for model in models {
                     guard try store.hasResponse(provider: source.provider, model: model, after: shiftSince, through: now) else { continue }
-                    if let prompt = try ShiftDetector.prompt(provider: source.provider, model: model, at: now, store: store, calendar: calendar) {
+                    if let prompt = try ShiftDetector.prompt(provider: source.provider, model: model, statusSourceID: source.statusSourceID, at: now, store: store, calendar: calendar) {
                         shift = prompt
                         shiftText = Copy.shiftPrompt(
                             model: source.naming.displayName(model: model), percent: prompt.typicalPercent, days: prompt.days,

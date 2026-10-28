@@ -45,6 +45,7 @@ extension NSApplication: ActivationPolicyApplying {}
     }
 
     func show(section: DashboardSection) {
+        model.isVisible = true
         model.select(section)
         if ownedWindow == nil {
             let hosting = NSHostingController(rootView: DashboardView(model: model))
@@ -71,7 +72,7 @@ extension NSApplication: ActivationPolicyApplying {}
         if let ownedWindow { present(ownedWindow) }
     }
 
-    func openDashboard() { show(section: model.selection ?? model.defaultSection) }
+    func openDashboard() { show(section: model.selection ?? model.defaultSection()) }
     func openSettings() { show(section: .settings) }
 
     func setAppearance(_ appearance: NSAppearance?) {
@@ -80,6 +81,7 @@ extension NSApplication: ActivationPolicyApplying {}
     }
 
     func windowWillClose(_ notification: Notification) {
+        model.isVisible = false
         activation.setActivationPolicy(.accessory)
     }
 }

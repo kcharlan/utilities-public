@@ -7,7 +7,7 @@ import TelltaleTestSupport
 /// synthetic model "Example" and the status source "Example Status").
 private enum Panel {
     static let signals: Set<Signal> = [.speed, .errors, .link, .provider, .load]
-    static let codex = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", signals: signals, naming: SyntheticNaming())
+    static let codex = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: signals, naming: SyntheticNaming())
     static let healthy = CollectorHealthReport(
         installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false)
 
@@ -206,6 +206,21 @@ private enum Panel {
         }
     }
 
+    /// R31: the lasting-shift prompt links to the status-page incidents in its period.
+    @Test func shiftPromptLinksIncidentsInItsPeriod() throws {
+        try withRules { h in
+            try h.seedUsual()
+            for day in 1...3 {
+                try h.base.episode(
+                    onset: h.at(9, day, 9, 45), fired: h.at(9, day, 10), ended: h.at(9, day, 11), endReason: EpisodeRow.EndReason.cleared, worst: 0.75)
+            }
+            try h.store.upsert(incidents: [h.incident("inc_synthetic_07", name: "Synthetic slow responses", published: h.at(9, 2, 9), resolved: h.at(9, 2, 12), impacts: [])])
+            let shift = try #require(try Panel.load(h, at: h.at(9, 3, 12)).shift)
+            #expect(shift.incidents == [IncidentLink(
+                id: "inc_synthetic_07", name: "Synthetic slow responses", link: URL(string: "https://status.example.com/incidents/inc_synthetic_07")!)])
+        }
+    }
+
     @Test func collectorOffFooter() throws {
         try withRules { h in
             let off = CollectorHealth.evaluate(
@@ -227,7 +242,7 @@ private enum Panel {
 
     @Test func lampsLimitedToDeclaredSignals() throws {
         try withRules { h in
-            let speedOnly = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", signals: [.speed], naming: SyntheticNaming())
+            let speedOnly = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: [.speed], naming: SyntheticNaming())
             try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(9), body: "1 turn failed: model at capacity")
             try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9), body: "Example Status: Elevated errors.")
             try Panel.episode(h, rule: .slower, provider: "example-unregistered", severity: .amber, fired: h.sep4(9), body: "Unregistered provider.")
@@ -243,7 +258,7 @@ private enum Panel {
     @Test func alertsNameProviderWhenSeveral() throws {
         try withRules { h in
             let other = ProviderID(rawValue: "example-other")
-            let second = SourceSummary(provider: other, name: "Example Other", statusName: "Example Status", signals: Panel.signals, naming: SyntheticNaming())
+            let second = SourceSummary(provider: other, name: "Example Other", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: SyntheticNaming())
             try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "Example is slower.")
             try Panel.episode(h, rule: .disconnects, provider: other.rawValue, scope: "*", severity: .amber, fired: h.sep4(9, 5), body: "3 disconnect or retry events in the last 60 minutes.")
             try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9, 1), body: "Example Status: Elevated errors.")

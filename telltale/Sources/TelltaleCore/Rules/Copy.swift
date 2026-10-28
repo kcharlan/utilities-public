@@ -176,6 +176,8 @@ public enum Copy {
     }
     /// Ruling R24: a copy that isn't the installed app shows the collector but doesn't manage it.
     public static let collectorManagedByInstalledCopy = "Only Telltale in Applications can turn the collector on or off, or repair it."
+    /// Ruling R30: before the first run there is no database to store the off choice in.
+    public static let collectorTurnOffAfterFirstRun = "You can turn the collector off after its first run."
     /// The collector view's schedule line (the mockup's "Every 5 minutes, also at login").
     public static func collectorSchedule(minutes: Int) -> String {
         minutes == 1 ? "Every minute, also at login" : "Every \(minutes) minutes, also at login"

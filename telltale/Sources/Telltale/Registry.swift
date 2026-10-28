@@ -20,7 +20,7 @@ enum Registry {
         let statusNames = Dictionary(statusSources().map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
         return usageSources(paths: paths).map { source in
             SourceSummary(
-                provider: source.provider, name: source.displayName, statusName: statusNames[source.statusSourceID] ?? source.displayName,
+                provider: source.provider, name: source.displayName, statusName: statusNames[source.statusSourceID] ?? source.displayName, statusSourceID: source.statusSourceID,
                 signals: source.signals, naming: source)
         }
     }

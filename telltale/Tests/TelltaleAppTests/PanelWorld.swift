@@ -13,9 +13,10 @@ struct AppSyntheticNaming: ModelNaming {
 /// objects that read it. Sep 4 2026 in New York.
 enum PanelWorld {
     static let sources = [SourceSummary(
-        provider: .codex, name: "Codex", statusName: "Example Status", signals: [.speed, .errors, .link, .provider, .load],
+        provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: statusSourceID, signals: [.speed, .errors, .link, .provider, .load],
         naming: AppSyntheticNaming())]
     static let now = Synth.local(2026, 9, 4, 9, 30)
+    static let statusSourceID = "example-status"
     static let alertText = "Example is 25% slower than usual for prompts this size. Since 08:55."
 
     static func paths(_ directory: URL) -> TelltalePaths {
@@ -33,6 +34,14 @@ enum PanelWorld {
         try store.finishRun(run, at: Synth.local(2026, 9, 4, 9, 29).addingTimeInterval(4), outcome: .succeeded)
         if alerting { try addAlert(store) }
         return store
+    }
+
+    /// A resolved one-hour incident on the sources' status page.
+    static func incident(published: Date, id: String = "inc_synthetic_07") -> IncidentRecord {
+        IncidentRecord(
+            source: statusSourceID, id: id, name: "Synthetic slow responses", status: "resolved", publishedAt: published,
+            updatedAt: published.addingTimeInterval(3_600), link: URL(string: "https://status.example.com/incidents/\(id)")!,
+            history: [StatusChange(at: published, status: "investigating")], impacts: [])
     }
 
     /// An open amber slower episode for Example with its fired event.

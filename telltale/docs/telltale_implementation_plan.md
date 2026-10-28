@@ -814,6 +814,7 @@ Expected: all pass.
 | `collectorFailing(at:reason:next:)` | "The collector failed at {at}: {reason}. Next try {next}." |
 | `collectorOverdue(since:)` | "The collector hasn't run since {since}." |
 | `collectorRecovered` | "Telltale's collector is running again." |
+| `collectorTurnOffAfterFirstRun` | "You can turn the collector off after its first run." (ruling R30: before the first run there is no database to store the off choice in.) |
 
 Collectors and UI callers use these functions; tests for configurable windows exercise non-default settings. Task 10 implements the collector-health rows.
 

@@ -125,6 +125,20 @@ private struct SyntheticKickstartFailure: LocalizedError {
         }
     }
 
+    /// R31: the panel's lasting-shift prompt links to the status-page incidents in its period.
+    @Test func shiftPromptLinksItsIncidents() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            try seedShift(paths)
+            try Store.open(paths.database, mode: .readWrite).upsert(incidents: [PanelWorld.incident(published: Synth.local(2026, 9, 16, 10))])
+            let live = LiveStore(paths: paths, sources: PanelWorld.sources, calendar: Synth.newYork, now: { Synth.local(2026, 9, 17, 12) }, health: { nil })
+            let actions = UserActions(paths: paths, calendar: Synth.newYork, now: { Synth.local(2026, 9, 17, 12) }, kickstart: {}, changed: { live.reload() })
+            let model = PanelModel(store: live, actions: actions, notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
+            #expect(model.shiftIncidents.map(\.name) == ["Synthetic slow responses"])
+            #expect(model.shiftIncidents.map(\.link) == [URL(string: "https://status.example.com/incidents/inc_synthetic_07")!])
+        }
+    }
+
     /// The snapshot harness showed a 2 tok/s wobble around usual 42 drawn as a full-height wave:
     /// the scale has a floor of a quarter of usual, so noise stays small and a 26% drop still fills it.
     @Test func sparklineKeepsSmallWobblesSmall() {

@@ -136,6 +136,7 @@ private enum Fixture {
                      "The collector failed at 08:05: The disk is full. Next try 14:40."),
             CopyCase("collectorOverdue", Copy.collectorOverdue(since: since, calendar: calendar), "The collector hasn't run since 08:05."),
             CopyCase("collectorRecovered", Copy.collectorRecovered, "Telltale's collector is running again."),
+            CopyCase("collectorTurnOffAfterFirstRun", Copy.collectorTurnOffAfterFirstRun, "You can turn the collector off after its first run."),
         ]
     }()
 

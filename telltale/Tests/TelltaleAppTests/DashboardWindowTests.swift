@@ -83,6 +83,33 @@ import TelltaleTestSupport
         }
     }
 
+    /// The closed window's views stay in memory; a database change then rereads nothing until the
+    /// window opens again.
+    @Test func closedDashboardSkipsReloads() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths, alerting: true)
+            world.live.reload()
+            let dashboard = world.controller(activation: ActivationRecorder(), presented: { _ in })
+            dashboard.show(section: .model(.codex, Synth.model))
+            #expect(world.model.isVisible)
+            let shown = world.model.feed.count
+            dashboard.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: nil))
+            #expect(!world.model.isVisible)
+
+            try PanelWorld.addAlert(Store.open(world.paths.database, mode: .readWrite), body: "Synthetic second alert.")
+            world.live.reload()
+            world.model.liveChanged()
+            #expect(world.model.feed.count == shown)
+
+            dashboard.openDashboard()
+            #expect(world.model.feed.count == shown + 1)
+            world.live.reload()
+            world.model.liveChanged()
+            #expect(world.model.feed.count == shown + 1)
+        }
+    }
+
     /// Spec section 9.4: Dark by default, Light, or Match system (nil follows the system).
     @Test func dashboardAppearanceFollowsTheSetting() {
         #expect(Theme.dashboardAppearance(.dark)?.name == .darkAqua)

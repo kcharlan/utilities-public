@@ -61,7 +61,7 @@ public enum EventFeed {
                     title: RuleID(rawValue: episode.rule)?.title ?? episode.rule,
                     body: episode.endReason == EpisodeRow.EndReason.ruleDisabled ? Copy.episodeEndedRuleOff : Copy.episodeEndedIdle)
             }
-            entries += try collectorFailures(store: store, calendar: calendar)
+            entries += try collectorFailures(store: store, limit: limit, calendar: calendar)
             return Array(entries.sorted { ($0.at, $0.id) > ($1.at, $1.id) }.prefix(limit))
         }
     }
@@ -120,21 +120,37 @@ public enum EventFeed {
         }
     }
 
-    private static func collectorFailures(store: Store, calendar: Calendar) throws -> [FeedEvent] {
-        let runs = try store.recentRuns(limit: .max, includingSkipped: false).reversed().filter { $0.outcome != .running }
+    /// Runs read per page while looking for failure streaks.
+    static let runPage = 200
+
+    /// Failure streaks, newest first, read a page at a time back from the newest run and only until
+    /// `limit` whole streaks are found: an older streak would fall past the list's end anyway.
+    private static func collectorFailures(store: Store, limit: Int, calendar: Calendar) throws -> [FeedEvent] {
         var entries: [FeedEvent] = []
+        // Newest first: the streak's newest run is its first element.
         var streak: [CollectorRunRecord] = []
         func close() {
-            guard let first = streak.first, let last = streak.last else { return }
-            let from = first.finishedAt ?? first.startedAt
-            let to = last.finishedAt ?? last.startedAt
+            guard let newest = streak.first, let oldest = streak.last else { return }
+            let from = oldest.finishedAt ?? oldest.startedAt
+            let to = newest.finishedAt ?? newest.startedAt
             entries.append(FeedEvent(
-                id: "runs-\(first.id)", at: to, kind: .collectorFailed, color: .red, title: CollectorHealth.title,
-                body: Copy.collectorRunsFailed(count: streak.count, from: from, to: to, reason: last.detail, calendar: calendar)))
+                id: "runs-\(oldest.id)", at: to, kind: .collectorFailed, color: .red, title: CollectorHealth.title,
+                body: Copy.collectorRunsFailed(count: streak.count, from: from, to: to, reason: newest.detail, calendar: calendar)))
             streak = []
         }
-        for run in runs {
-            if run.outcome == .failed { streak.append(run) } else { close() }
+        var cursor: CollectorRunRecord?
+        pages: while true {
+            let page = try store.finishedRuns(before: cursor, limit: runPage)
+            for run in page {
+                if run.outcome == .failed {
+                    streak.append(run)
+                } else {
+                    close()
+                    if entries.count >= limit { break pages }
+                }
+            }
+            guard page.count == runPage, let last = page.last else { break }
+            cursor = last
         }
         close()
         return entries
@@ -165,6 +181,23 @@ extension Store {
                     episodeID: row.optionalInt(7).map(Int64.init), epochID: row.optionalInt(8).map(Int64.init),
                     link: row.optionalText(9).flatMap(URL.init(string:)), undoneAt: row.optionalDate(10), endsAt: row.optionalDate(11)),
                 rule: row.optionalText(12), severity: row.optionalText(13))
+        }
+    }
+
+    /// Finished and failed runs (no skipped or running ones), newest first, older than `cursor`.
+    func finishedRuns(before cursor: CollectorRunRecord?, limit: Int) throws -> [CollectorRunRecord] {
+        try query("""
+            SELECT id, started_at, finished_at, outcome, detail FROM collector_runs
+            WHERE outcome NOT IN (?, ?) AND (? IS NULL OR started_at < ? OR (started_at = ? AND id < ?))
+            ORDER BY started_at DESC, id DESC LIMIT ?
+            """, [
+                .text(RunOutcome.skipped.rawValue), .text(RunOutcome.running.rawValue), cursor.map { .date($0.startedAt) } ?? .null,
+                cursor.map { .date($0.startedAt) } ?? .null, cursor.map { .date($0.startedAt) } ?? .null, cursor.map { .int($0.id) } ?? .null,
+                .integer(limit),
+            ]) { row in
+            CollectorRunRecord(
+                id: Int64(row.int(0)), startedAt: row.date(1), finishedAt: row.optionalDate(2),
+                outcome: RunOutcome(rawValue: row.text(3)) ?? .failed, detail: row.text(4))
         }
     }
 

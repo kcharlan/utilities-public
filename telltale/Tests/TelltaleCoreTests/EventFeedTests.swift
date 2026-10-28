@@ -106,6 +106,53 @@ private enum Feed {
         }
     }
 
+    /// Confirming an older acceptance's Undo also undoes the newer one (spec section 8): both
+    /// entries then show their undone state and neither offers Undo.
+    @Test func cascadeUndoMarksTheNewerAcceptanceUndone() throws {
+        try withBaseline { h in
+            try h.seedLastingSlowdown()
+            let older = try h.engine.accept(provider: .codex, model: h.model, since: h.localDay(9, 15), at: h.at(9, 18, 10, 0))
+            let newer = try h.engine.accept(provider: .codex, model: h.model, since: h.localDay(9, 16), at: h.at(9, 18, 10, 10))
+            let before = try Feed.load(h).filter { $0.kind == .baselineAccepted }
+            #expect(before.map(\.undoableEpochID) == [newer.epochID, older.epochID])
+            #expect(before[1].undoConfirmation != nil)
+
+            try h.engine.undo(epochID: older.epochID, at: h.at(9, 18, 11))
+            let after = try Feed.load(h).filter { $0.kind == .baselineAccepted }
+            #expect(after.map(\.undoableEpochID) == [nil, nil])
+            #expect(after.map(\.undoneAt) == [h.at(9, 18, 11), h.at(9, 18, 11)])
+            #expect(after.allSatisfy { $0.undoConfirmation == nil })
+        }
+    }
+
+    /// Collector failure streaks are read only as far back as the feed shows: with a limit of 2,
+    /// the two newest streaks come back whole, however many runs are kept.
+    @Test func collectorStreaksAreReadOnlyAsFarAsTheLimit() throws {
+        try withBaseline { h in
+            // 60 streaks of 5 failures, each ended by a success, five minutes apart: 360 runs, so the
+            // feed reads more than one page and a streak straddles the page boundary.
+            var minute = 0
+            for _ in 0..<60 {
+                for outcome in [RunOutcome.failed, .failed, .failed, .failed, .failed, .succeeded] {
+                    let start = h.at(9, 4, 0).addingTimeInterval(Double(minute) * 60)
+                    let run = try h.store.beginRun(at: start)
+                    try h.store.finishRun(run, at: start.addingTimeInterval(2), outcome: outcome, detail: outcome == .failed ? "synthetic failure" : "")
+                    minute += 5
+                }
+            }
+            let feed = try Feed.load(h, limit: 2)
+            #expect(feed.map(\.kind) == [.collectorFailed, .collectorFailed])
+            let last = h.at(9, 4, 0).addingTimeInterval(Double(minute - 10) * 60 + 2)
+            #expect(feed.first?.at == last)
+            #expect(feed.first?.body == Copy.collectorRunsFailed(
+                count: 5, from: last.addingTimeInterval(-20 * 60), to: last, reason: "synthetic failure", calendar: h.calendar))
+            #expect(feed.last?.at == last.addingTimeInterval(-30 * 60))
+            // Past the first page, every streak still comes back whole.
+            let long = try Feed.load(h, limit: 50)
+            #expect(long.count == 50 && long.allSatisfy { $0.body.hasPrefix("5 collector runs failed from ") })
+        }
+    }
+
     @Test func statusPostsCarryLinks() throws {
         try withBaseline { h in
             let post = URL(string: "https://status.example.com/incidents/rss_01")!

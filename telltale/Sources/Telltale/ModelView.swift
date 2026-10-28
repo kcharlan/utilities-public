@@ -33,7 +33,7 @@ struct ModelView: View {
             }
             if let workload = model.workload {
                 HStack(alignment: .top, spacing: 22) {
-                    PromptSizes(workload: workload).frame(minWidth: 360, maxWidth: .infinity, alignment: .topLeading)
+                    PromptSizes(workload: workload, loadLamp: snapshot.lamps[.load].flatMap { $0 }).frame(minWidth: 360, maxWidth: .infinity, alignment: .topLeading)
                     WorkloadGrid(workload: workload, loadLamp: snapshot.lamps[.load].flatMap { $0 }, calendar: model.calendar)
                         .frame(minWidth: 340, maxWidth: .infinity, alignment: .topLeading)
                 }
@@ -100,6 +100,7 @@ private struct SpeedSection: View {
                     Spacer(minLength: 8)
                     Button("Keep as abnormal") { model.keepAsAbnormal() }.buttonStyle(DashboardButtonStyle(quiet: true))
                 }
+                IncidentLinks(incidents: model.shiftIncidents)
             }
             if let confirmation = model.panel.confirmation {
                 Text(confirmation.text).foregroundStyle(Theme.swiftUI(Theme.dim))
@@ -127,6 +128,7 @@ private struct SpeedSection: View {
 /// Hourly speed-index dots around the dashed usual line, incident bands and failed-turn markers.
 private struct SpeedChart: View {
     let detail: ModelDetail
+    static let incidentStroke = StrokeStyle(lineWidth: 1, dash: [2, 3])
 
     var body: some View {
         let indices = detail.dots.map(\.index)
@@ -134,9 +136,20 @@ private struct SpeedChart: View {
         let high = max(1.5, (indices.max() ?? 1) + 0.1)
         let markerY = low + (high - low) * 0.04
         Chart {
+            // The mockup's band: a faint amber fill inside a dashed amber outline, as its legend swatch.
             ForEach(Array(detail.incidents.enumerated()), id: \.offset) { _, incident in
                 RectangleMark(xStart: .value("Start", incident.start), xEnd: .value("End", incident.end), yStart: .value("Low", low), yEnd: .value("High", high))
-                    .foregroundStyle(Theme.color(.amber).opacity(0.1))
+                    .foregroundStyle(Theme.swiftUI(Theme.incidentFill))
+                ForEach([incident.start, incident.end], id: \.self) { edge in
+                    RuleMark(x: .value("Incident edge", edge), yStart: .value("Low", low), yEnd: .value("High", high))
+                        .foregroundStyle(Theme.swiftUI(Theme.incidentEdge))
+                        .lineStyle(Self.incidentStroke)
+                }
+                ForEach([low, high], id: \.self) { y in
+                    RuleMark(xStart: .value("Start", incident.start), xEnd: .value("End", incident.end), y: .value("Incident edge", y))
+                        .foregroundStyle(Theme.swiftUI(Theme.incidentEdge))
+                        .lineStyle(Self.incidentStroke)
+                }
             }
             RuleMark(y: .value("Usual", 1.0))
                 .foregroundStyle(Theme.swiftUI(Theme.dim))
@@ -158,14 +171,16 @@ private struct SpeedChart: View {
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: detail.range == .twoWeeks ? 7 : 6)) { _ in
                 AxisGridLine().foregroundStyle(Theme.swiftUI(Theme.housing))
-                AxisValueLabel(format: detail.range.duration > 86_400 ? .dateTime.month(.abbreviated).day() : .dateTime.hour(.twoDigits(amPM: .omitted)).minute())
+                AxisValueLabel(
+                    format: detail.range.duration > 86_400 ? .dateTime.month(.abbreviated).day() : .dateTime.hour(.twoDigits(amPM: .omitted)).minute(),
+                    anchor: .top)
                     .font(Fonts.gauge(11, medium: false)).foregroundStyle(Theme.swiftUI(Theme.dim))
             }
         }
         .chartYAxis {
             AxisMarks(position: .leading, values: [0.5, 1.0, 1.5].filter { $0 >= low && $0 <= high }) { value in
                 AxisGridLine().foregroundStyle(Theme.swiftUI(Theme.housing))
-                AxisValueLabel { if let index = value.as(Double.self) { Text(String(format: "%.1f×", index)) } }
+                AxisValueLabel(anchor: .trailing) { if let index = value.as(Double.self) { Text(String(format: "%.1f×", index)) } }
                     .font(Fonts.gauge(11, medium: false)).foregroundStyle(Theme.swiftUI(Theme.dim))
             }
         }
@@ -177,6 +192,9 @@ private struct SpeedChart: View {
 
 private struct PromptSizes: View {
     let workload: Workload
+    /// The Load lamp: while it is lit, the 300k+ bar for the last 3 hours takes its color, as the
+    /// mockup does for the Large prompts alert.
+    let loadLamp: LampColor?
 
     private struct Bar: Identifiable {
         var bucket: InputBucket
@@ -191,21 +209,20 @@ private struct PromptSizes: View {
             SectionHeader(title: "Prompt sizes", aside: "Last 3 hours against usual")
             Chart(bars) { bar in
                 BarMark(x: .value("Prompt size", bar.bucket.label), y: .value("Share", bar.share))
-                    .foregroundStyle(by: .value("Series", bar.series))
+                    .foregroundStyle(color(bar))
                     .position(by: .value("Series", bar.series))
             }
-            .chartForegroundStyleScale(["Last 3 hours": Theme.swiftUI(Theme.readout), "Usual": Theme.swiftUI(Theme.unlitIcon)])
             .chartLegend(.hidden)
             .chartYAxis {
                 AxisMarks(position: .leading, values: [0, 0.25, 0.5, 0.75, 1]) { value in
                     AxisGridLine().foregroundStyle(Theme.swiftUI(Theme.housing))
-                    AxisValueLabel { if let share = value.as(Double.self) { Text(DashboardFormat.percent(share)) } }
+                    AxisValueLabel(anchor: .trailing) { if let share = value.as(Double.self) { Text(DashboardFormat.percent(share)) } }
                         .font(Fonts.gauge(11, medium: false)).foregroundStyle(Theme.swiftUI(Theme.dim))
                 }
             }
             .chartXAxis {
                 AxisMarks { _ in
-                    AxisValueLabel().font(Fonts.gauge(11, medium: false)).foregroundStyle(Theme.swiftUI(Theme.dim))
+                    AxisValueLabel(anchor: .top).font(Fonts.gauge(11, medium: false)).foregroundStyle(Theme.swiftUI(Theme.dim))
                 }
             }
             .chartYScale(domain: 0...1)
@@ -213,6 +230,12 @@ private struct PromptSizes: View {
             .accessibilityLabel("Prompt-size histogram, last 3 hours against usual")
             Legend(items: [.swatch(Theme.swiftUI(Theme.readout), "Last 3 hours"), .swatch(Theme.swiftUI(Theme.unlitIcon), "Usual")])
         }
+    }
+
+    private func color(_ bar: Bar) -> Color {
+        guard bar.series == "Last 3 hours" else { return Theme.swiftUI(Theme.unlitIcon) }
+        if bar.bucket == .from300k, let loadLamp { return Theme.color(loadLamp) }
+        return Theme.swiftUI(Theme.readout)
     }
 }
 
@@ -403,8 +426,8 @@ private struct Legend: View {
                     case .swatch(let color, _):
                         RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 10, height: 10)
                     case .band:
-                        RoundedRectangle(cornerRadius: 2).fill(Theme.color(.amber).opacity(0.1))
-                            .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.color(.amber).opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [2, 2])) }
+                        RoundedRectangle(cornerRadius: 2).fill(Theme.swiftUI(Theme.incidentFill))
+                            .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.swiftUI(Theme.incidentEdge), style: StrokeStyle(lineWidth: 1, dash: [2, 2])) }
                             .frame(width: 10, height: 10)
                     case .triangle:
                         Image(systemName: "triangle.fill").font(.system(size: 8)).foregroundStyle(Theme.color(.red))

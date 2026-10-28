@@ -57,6 +57,11 @@ import TelltaleCore
     private(set) var busy = false
     /// The last action's failure; nil after a clean action.
     private(set) var error: String?
+    /// Why the last load could not read the database; nil after a clean load.
+    private(set) var loadError: String?
+    /// Whether the collector's database exists, which it does from the first run on. Before
+    /// then there is nowhere to store an off choice (rulings R27, R30).
+    private(set) var databaseReady = false
 
     init(
         live: LiveStore, actions: UserActions, manager: LaunchAgentManager, currentExecutable: URL, canManage: Bool, paths: TelltalePaths,
@@ -95,7 +100,9 @@ import TelltaleCore
     }
     var showsRepair: Bool { canManage && report?.needsRepair == true }
     var offersTurnOn: Bool { !enabled || report?.loaded == .red }
-    var offersTurnOff: Bool { enabled }
+    var offersTurnOff: Bool { enabled && databaseReady }
+    /// Shown in place of Turn off before the first run (ruling R30).
+    var firstRunNote: String? { canManage && enabled && !databaseReady ? Copy.collectorTurnOffAfterFirstRun : nil }
     var managementNote: String? { canManage ? nil : Copy.collectorManagedByInstalledCopy }
     var logExists: Bool { FileManager.default.fileExists(atPath: paths.log.path) }
 
@@ -106,6 +113,7 @@ import TelltaleCore
                 (try store.value(.collectorEnabled), Settings.usableInterval(try store.value(.intervalMinutes)),
                  try store.recentRuns(limit: Self.runWindow, includingSkipped: false))
             }
+            databaseReady = loaded != nil
             if let (enabled, interval, runs) = loaded {
                 self.enabled = enabled
                 intervalMinutes = interval
@@ -115,8 +123,9 @@ import TelltaleCore
                 intervalMinutes = SettingKey.intervalMinutes.defaultValue
                 facts = facts(runs: [], interval: intervalMinutes)
             }
+            loadError = nil
         } catch {
-            self.error = error.localizedDescription
+            loadError = error.localizedDescription
         }
         logLines = readLog()
     }
@@ -126,6 +135,7 @@ import TelltaleCore
     }
 
     func turnOff() async {
+        guard offersTurnOff else { return }
         await manage(setting: false) { manager, _, _ in try manager.turnOff() }
     }
 
@@ -145,7 +155,8 @@ import TelltaleCore
 
     /// Runs a launchd change off the main actor, then stores the on/off setting. A failed change
     /// leaves the setting as it was. Before the collector's first run there is no database to
-    /// store it in (ruling R27): turning on matches the default, so nothing is lost.
+    /// store it in (ruling R27): turning on matches the default, so nothing is lost, and Turn off
+    /// is not offered until then (ruling R30).
     private func manage(setting: Bool?, _ change: @escaping @Sendable (LaunchAgentManager, URL, Int) throws -> Void) async {
         guard canManage, !busy else { return }
         let manager = manager, executable = currentExecutable, interval = intervalMinutes
@@ -154,7 +165,7 @@ import TelltaleCore
             if let setting {
                 do {
                     try self.actions.set(.collectorEnabled, setting)
-                } catch StoreError.notInitialized {
+                } catch StoreError.notInitialized where setting == SettingKey.collectorEnabled.defaultValue {
                 }
             }
         }
@@ -267,6 +278,12 @@ struct CollectorView: View {
             .buttonStyle(DashboardButtonStyle(quiet: true))
             if let note = model.managementNote {
                 Text(note).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+            }
+            if let note = model.firstRunNote {
+                Text(note).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+            }
+            if let error = model.loadError {
+                AlertLine(color: Theme.red, text: error)
             }
             if let error = model.error {
                 AlertLine(color: Theme.red, text: error)

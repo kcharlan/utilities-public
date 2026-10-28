@@ -63,11 +63,6 @@ extension Store {
         }
     }
 
-    /// Every status source with stored incidents, sorted.
-    func incidentSources() throws -> [String] {
-        try query("SELECT DISTINCT source FROM incidents ORDER BY source") { $0.text(0) }
-    }
-
     private func incidentRows(source: String, whereClause: String) throws -> [IncidentRecord] {
         try query("""
             SELECT incident_id, name, status, published_at, updated_at, link, history_json, impacts_json

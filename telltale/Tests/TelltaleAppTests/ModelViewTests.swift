@@ -133,6 +133,22 @@ import TelltaleTestSupport
         }
     }
 
+    /// R31 and incident scoping: the dashboard's shift prompt links to the incidents in its period,
+    /// and the chart's bands come only from the model's own status source.
+    @Test func shiftPromptLinksIncidentsAndBandsAreScoped() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory, now: Self.now)
+            try seed(world.paths, shift: true)
+            var other = PanelWorld.incident(published: Synth.local(2026, 9, 16, 14), id: "inc_synthetic_08")
+            other.source = "example-other-status"
+            try Store.open(world.paths.database, mode: .readWrite).upsert(incidents: [PanelWorld.incident(published: Synth.local(2026, 9, 16, 10)), other])
+            world.live.reload()
+            world.model.select(.model(.codex, Synth.model))
+            #expect(world.model.shiftIncidents.map(\.id) == ["inc_synthetic_07"])
+            #expect(world.model.detail?.incidents == [DateInterval(start: Synth.local(2026, 9, 16, 10), end: Synth.local(2026, 9, 16, 11))])
+        }
+    }
+
     @Test func modelViewLaysOutAtTheWindowWidth() throws {
         try withScratchDirectory { directory in
             let world = try DashboardWorld(directory, now: Self.now)

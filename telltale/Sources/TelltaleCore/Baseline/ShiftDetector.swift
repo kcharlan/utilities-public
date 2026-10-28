@@ -10,8 +10,24 @@ public struct ShiftPrompt: Sendable, Equatable {
     public var days: Int
     /// The median of the run's episodes' worst deviations from usual, in percent.
     public var typicalPercent: Int
-    /// Status-page incidents that overlap the run, oldest first.
+    /// The provider's status-page incidents that overlap the run, oldest first.
     public var incidentIDs: [String]
+    /// The same incidents with their names and status-page links: the prompt links to them
+    /// (spec section 8, ruling R31).
+    public var incidents: [IncidentLink]
+}
+
+/// A status-page incident a prompt links to.
+public struct IncidentLink: Sendable, Equatable, Hashable, Identifiable {
+    public var id: String
+    public var name: String
+    public var link: URL
+
+    public init(id: String, name: String, link: URL) {
+        self.id = id
+        self.name = name
+        self.link = link
+    }
 }
 
 /// Spec section 8: same-direction speed episodes that fired on `runDays` consecutive active
@@ -29,7 +45,7 @@ public enum ShiftDetector {
     public static let runDays = 3
 
     public static func prompt(
-        provider: ProviderID, model: String, at instant: Date, store: Store, calendar: Calendar
+        provider: ProviderID, model: String, statusSourceID: String?, at instant: Date, store: Store, calendar: Calendar
     ) throws -> ShiftPrompt? {
         let acceptedAt = try store.epochMarks(provider: provider, model: model).last { $0.isLive(at: instant) }?.createdAt
         let episodes = try store.speedEpisodes(provider: provider, model: model).filter { $0.firedAt <= instant }
@@ -76,13 +92,13 @@ public enum ShiftDetector {
             // The run spans its first day's start to its last day's end, never past the evaluation.
             let runStart = firstDay.start(in: calendar)
             let interval = DateInterval(start: runStart, end: max(runStart, min(instant, run[0].end(in: calendar))))
-            var incidents: [String] = []
-            for source in try store.incidentSources() {
-                incidents += try store.incidents(source: source, overlapping: interval).map(\.id)
-            }
+            // Only the provider's own status page (nil: none configured, so none).
+            let incidents = try statusSourceID.map { source in
+                try store.incidents(source: source, overlapping: interval).map { IncidentLink(id: $0.id, name: $0.name, link: $0.link) }
+            } ?? []
             return ShiftPrompt(
                 provider: provider, model: model, direction: direction, firstDay: firstDay, days: run.count,
-                typicalPercent: median(deviations).map { Int(($0 * 100).rounded()) } ?? 0, incidentIDs: incidents)
+                typicalPercent: median(deviations).map { Int(($0 * 100).rounded()) } ?? 0, incidentIDs: incidents.map(\.id), incidents: incidents)
         }
         return nil
     }

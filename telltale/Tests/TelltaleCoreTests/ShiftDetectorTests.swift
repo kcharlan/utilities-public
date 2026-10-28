@@ -18,7 +18,7 @@ import TelltaleTestSupport
     }
 
     private static func prompt(_ h: BaselineHarness, _ at: Date) throws -> ShiftPrompt? {
-        try ShiftDetector.prompt(provider: .codex, model: h.model, at: at, store: h.store, calendar: h.calendar)
+        try ShiftDetector.prompt(provider: .codex, model: h.model, statusSourceID: "example.status", at: at, store: h.store, calendar: h.calendar)
     }
 
     @Test func consecutiveActiveDaysPrompt() throws {
@@ -116,9 +116,9 @@ import TelltaleTestSupport
     @Test func promptListsOverlappingIncidents() throws {
         try withBaseline { h in
             for day in 5...7 { try Self.day(h, day, .slower) }
-            func incident(_ id: String, published: Date, resolved: Date?) -> IncidentRecord {
+            func incident(_ id: String, published: Date, resolved: Date?, source: String = "example.status") -> IncidentRecord {
                 IncidentRecord(
-                    source: "example.status", id: id, name: "Synthetic incident \(id)",
+                    source: source, id: id, name: "Synthetic incident \(id)",
                     status: resolved == nil ? "investigating" : "resolved", publishedAt: published,
                     updatedAt: resolved ?? published, link: URL(string: "https://status.example.com/incidents/\(id)")!,
                     history: [StatusChange(at: published, status: "investigating")],
@@ -130,9 +130,16 @@ import TelltaleTestSupport
                 incident("synthetic-open", published: h.at(10, 7, 8), resolved: nil),
                 incident("synthetic-late-evening", published: h.at(10, 7, 22), resolved: h.at(10, 7, 23)),
                 incident("synthetic-after", published: h.at(10, 8, 9), resolved: h.at(10, 8, 10)),
+                // Another provider's status page: never part of this model's prompt.
+                incident("synthetic-elsewhere", published: h.at(10, 6, 10), resolved: h.at(10, 6, 12), source: "example-other.status"),
             ])
             let prompt = try #require(try Self.prompt(h, h.at(10, 7, 20)))
             #expect(prompt.incidentIDs == ["synthetic-during", "synthetic-open"])
+            // R31: the prompt links to those incidents on the status page.
+            #expect(prompt.incidents.map(\.name) == ["Synthetic incident synthetic-during", "Synthetic incident synthetic-open"])
+            #expect(prompt.incidents.map(\.link) == [
+                URL(string: "https://status.example.com/incidents/synthetic-during")!, URL(string: "https://status.example.com/incidents/synthetic-open")!,
+            ])
 
             // Oct 8 has no responses, so the run (Oct 5–7) still stands on Oct 8. Its window ends
             // with Oct 7: the late-evening incident overlaps it, Oct 8's incident doesn't.

@@ -1,4 +1,5 @@
 import AppKit
+import SQLite3
 import SwiftUI
 import Testing
 import TelltaleCore
@@ -109,6 +110,53 @@ import TelltaleTestSupport
             #expect(world.collector.facts.first { $0.label == "Last run" }?.value == "09:29, succeeded in 4.0 s")
             #expect(world.collector.facts.first { $0.label == "Job label" }?.value == TelltaleRelease.collectorLabel)
         }
+    }
+
+    /// Ruling R30: before the collector's first run there is no database to store an off choice in
+    /// (R27 forbids creating it), so the next launch would turn the collector back on. Turn off
+    /// waits for the first run, and the view says so; nothing reaches launchctl.
+    @Test func turnOffWaitsForTheFirstRun() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory, health: DashboardWorld.running)
+            await world.live.refresh()
+            world.collector.load()
+            #expect(!world.collector.offersTurnOff && !world.collector.offersTurnOn)
+            #expect(world.collector.firstRunNote == Copy.collectorTurnOffAfterFirstRun)
+            await world.collector.turnOff()
+            #expect(world.runner.calls.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: world.paths.database.path))
+
+            try PanelWorld.seed(world.paths)
+            await world.live.refresh()
+            world.collector.load()
+            #expect(world.collector.offersTurnOff && world.collector.firstRunNote == nil)
+        }
+    }
+
+    /// A failed read shows as a load problem, never as an action's failure, and the next good
+    /// read clears it.
+    @Test func loadErrorsStaySeparateFromActionErrors() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths)
+            await world.live.refresh()
+            // Hide the run records behind the open read-only connection, then read again.
+            try Self.exec(world.paths.database, "ALTER TABLE collector_runs RENAME TO collector_runs_hidden")
+            world.collector.load()
+            #expect(world.collector.loadError != nil)
+            #expect(world.collector.error == nil)
+            try Self.exec(world.paths.database, "ALTER TABLE collector_runs_hidden RENAME TO collector_runs")
+            world.collector.load()
+            #expect(world.collector.loadError == nil && world.collector.error == nil)
+        }
+    }
+
+    /// Changes the scratch database's schema directly, as a test fault only.
+    private static func exec(_ database: URL, _ sql: String) throws {
+        var handle: OpaquePointer?
+        guard sqlite3_open(database.path, &handle) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
+        defer { sqlite3_close(handle) }
+        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw CocoaError(.fileWriteUnknown) }
     }
 
     @Test func logTailAndShowLogFile() async throws {
