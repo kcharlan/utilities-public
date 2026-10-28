@@ -95,16 +95,18 @@ and Repair replace the plist atomically, then `launchctl bootout` (a not-loaded 
 `launchctl bootstrap gui/$UID`; Turn off boots the job out, then removes the plist. They refuse,
 before writing anything, an executable that isn't the main executable of an app bundle whose
 identifier is `local.utilities.telltale`, so a `swift build` product or the acceptance build never
-becomes the collector. Every `launchctl` call has a 10-second timeout.
+becomes the collector. The plist records the validated, symlink-resolved executable. Every
+`launchctl` call has a 10-second timeout.
 
 `CollectorHealth` judges the collector from its run records (skipped runs count for nothing), the
 plist, `launchctl print` (Loaded only) and the sources' format problems. The app's
 `CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
-than 3 intervals, or a format problem. An episode starts only when two checks in a row see it, so the
-minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
+format problem. An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
-again." follows when the rule's clear notice is on.
+again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
+episode silently.
 
 ## Notification spike
 

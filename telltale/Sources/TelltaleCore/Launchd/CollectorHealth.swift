@@ -55,7 +55,8 @@ public struct CollectorHealthReport: Sendable, Equatable {
 /// - On schedule: the newest run (including one still running) started within 2 × the interval
 ///   + 1 minute.
 /// - Notify when on and: not loaded; the two newest finished runs failed; no run succeeded for
-///   more than 3 × the interval (counted from the newest success's start, else the oldest run's);
+///   more than 3 × the interval (counted from the newest success's start, else the oldest run's,
+///   else `installedAt`, the plist's last write, when no run is on record);
 ///   or a source reports a format problem. A run still in progress that started on schedule
 ///   holds back the no-success verdict until it ends.
 public enum CollectorHealth {
@@ -63,7 +64,7 @@ public enum CollectorHealth {
     public static let title = "Collector health"
 
     public static func evaluate(
-        enabled: Bool, installedExecutable: URL?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
+        enabled: Bool, installedExecutable: URL?, installedAt: Date?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
         intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar
     ) -> CollectorHealthReport {
         guard enabled else {
@@ -99,7 +100,7 @@ public enum CollectorHealth {
 
         let twoFailures = finished.count >= 2 && finished.prefix(2).allSatisfy { $0.outcome == .failed }
         var noSuccess = false
-        if let reference = finished.first(where: { $0.outcome == .succeeded })?.startedAt ?? counted.last?.startedAt {
+        if let reference = finished.first(where: { $0.outcome == .succeeded })?.startedAt ?? counted.last?.startedAt ?? installedAt {
             let pending = counted.first.map { $0.outcome == .running && now.timeIntervalSince($0.startedAt) <= scheduleLimit } ?? false
             noSuccess = !pending && now.timeIntervalSince(reference) > 3 * interval
             if noSuccess, problems.isEmpty { problems.append(Copy.collectorOverdue(since: reference, calendar: calendar)) }

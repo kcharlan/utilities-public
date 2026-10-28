@@ -268,4 +268,75 @@ private let recovered = "Telltale's collector is running again."
             #expect(try Store.open(fresh.database, mode: .readOnly).value(.collectorHealthNotice)?.problem == notLoaded)
         }
     }
+
+    @Test func turningTheCollectorOffEndsTheEpisodeSilently() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+
+            // Off by choice is not a recovery: no "running again", and the episode is gone.
+            try h.store.set(.collectorEnabled, false)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+
+            // Turning it back on with the job still unloaded is a new episode.
+            try h.store.set(.collectorEnabled, true)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded, notLoaded])
+        }
+    }
+
+    @Test func refusedRecoveryIsRetriedAtTheNextCheck() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            let notice = try h.store.value(.collectorHealthNotice)
+            #expect(notice != nil)
+
+            h.setLoaded(true)
+            h.service.refuses = true
+            await h.tick(monitor)
+            #expect(monitor.lastError == "synthetic notification refusal")
+            // The episode is kept, so the recovery is announced later rather than lost.
+            #expect(try h.store.value(.collectorHealthNotice) == notice)
+
+            h.service.refuses = false
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded, recovered])
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+        }
+    }
+
+    /// No run ever recorded (for example, the first run crashes before opening the database):
+    /// the job's turn-on time, the plist's modification date, stands in for the last success.
+    @Test func firstRunThatNeverArrivesNotifiesFromTurnOn() async throws {
+        try await withMonitor { h in
+            let plist = h.paths.launchAgents.appending(path: "local.utilities.telltale.collector.plist")
+            try FileManager.default.createDirectory(at: h.paths.launchAgents, withIntermediateDirectories: true)
+            let contents: [String: Any] = ["ProgramArguments": [h.currentExecutable.path, "--collect"]]
+            try PropertyListSerialization.data(fromPropertyList: contents, format: .xml, options: 0).write(to: plist)
+            try FileManager.default.setAttributes([.modificationDate: MonitorHarness.at(9, 0)], ofItemAtPath: plist.path)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+
+            // Three 5-minute intervals after 09:00 is 09:15:00: still waiting.
+            h.now = MonitorHarness.at(9, 14)
+            let waiting = try #require(await h.tick(monitor))
+            #expect(!waiting.notify)
+            #expect(waiting.footer == "Waiting for the collector's first run.")
+
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+        }
+    }
 }

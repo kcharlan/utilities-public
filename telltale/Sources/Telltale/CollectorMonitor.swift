@@ -73,15 +73,17 @@ import UserNotifications
             return nil
         }
         let manager = manager
-        let (installed, loaded) = await Task.detached { (manager.installedExecutable(), manager.isLoaded()) }.value
+        let (installed, installedAt, loaded) = await Task.detached {
+            (manager.installedExecutable(), manager.installedAt(), manager.isLoaded())
+        }.value
         let at = now()
         let report = CollectorHealth.evaluate(
-            enabled: inputs.enabled, installedExecutable: installed, currentExecutable: currentExecutable, loaded: loaded,
+            enabled: inputs.enabled, installedExecutable: installed, installedAt: installedAt, currentExecutable: currentExecutable, loaded: loaded,
             runs: inputs.runs, intervalMinutes: inputs.intervalMinutes, sourceStates: inputs.sourceStates, now: at, calendar: calendar)
         lastReport = report
         lastError = nil
         do {
-            try await advanceEpisode(report, rule: inputs.rule, notice: inputs.notice, at: at)
+            try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {
             lastError = error.localizedDescription
         }
@@ -90,8 +92,13 @@ import UserNotifications
 
     // MARK: Episodes
 
-    private func advanceEpisode(_ report: CollectorHealthReport, rule: BasicRule, notice: HealthNoticeState?, at: Date) async throws {
-        guard rule.enabled else {
+    /// The notice is saved before its notification posts and restored if the post fails, so a
+    /// failed save never leads to the same notification twice, and a refused post is retried.
+    private func advanceEpisode(
+        _ report: CollectorHealthReport, enabled: Bool, rule: BasicRule, notice: HealthNoticeState?, at: Date
+    ) async throws {
+        // The collector off by choice, or the rule off, ends an open episode silently: neither is a recovery.
+        guard enabled, rule.enabled else {
             unconfirmed = false
             if notice != nil { try save(nil) }
             return
@@ -99,10 +106,10 @@ import UserNotifications
         guard report.notify else {
             unconfirmed = false
             guard let notice else { return }
-            if rule.notifyOnClear {
-                try await post(id: Self.identifier(notice, "cleared"), body: Copy.collectorRecovered)
-            }
             try save(nil)
+            if rule.notifyOnClear {
+                try await post(id: Self.identifier(notice, "cleared"), body: Copy.collectorRecovered, restoring: notice)
+            }
             return
         }
         guard notice == nil else { return }
@@ -112,10 +119,10 @@ import UserNotifications
         }
         // `problems` is never empty while `notify` holds; the fallback only keeps this total.
         let opened = HealthNoticeState(problem: report.problems.first ?? Copy.collectorNotLoaded, notifiedAt: at)
-        if rule.notify {
-            try await post(id: Self.identifier(opened, "fired"), body: opened.problem)
-        }
         try save(opened)
+        if rule.notify {
+            try await post(id: Self.identifier(opened, "fired"), body: opened.problem, restoring: nil)
+        }
         unconfirmed = false
     }
 
@@ -123,9 +130,15 @@ import UserNotifications
         "\(threadID)-\(Int(notice.notifiedAt.timeIntervalSince1970))-\(kind)"
     }
 
-    private func post(id: String, body: String) async throws {
+    /// Posts, putting `restoring` back as the stored notice when the post fails.
+    private func post(id: String, body: String, restoring previous: HealthNoticeState?) async throws {
         let notification = PendingNotification(id: id, title: CollectorHealth.title, body: body, threadID: Self.threadID)
-        try await service.post(NativeNotificationPoster.request(for: notification))
+        do {
+            try await service.post(NativeNotificationPoster.request(for: notification))
+        } catch {
+            try? save(previous)
+            throw error
+        }
     }
 
     // MARK: Store

@@ -18,11 +18,11 @@ private enum Health {
     }
 
     static func evaluate(
-        enabled: Bool = true, installed: URL? = app, loaded: Bool = true, runs: [CollectorRunRecord], interval: Int = 5,
+        enabled: Bool = true, installed: URL? = app, installedAt: Date? = nil, loaded: Bool = true, runs: [CollectorRunRecord], interval: Int = 5,
         states: [SourceStateRow] = [], now: Date
     ) -> CollectorHealthReport {
         CollectorHealth.evaluate(
-            enabled: enabled, installedExecutable: installed, currentExecutable: app, loaded: loaded, runs: runs,
+            enabled: enabled, installedExecutable: installed, installedAt: installedAt, currentExecutable: app, loaded: loaded, runs: runs,
             intervalMinutes: interval, sourceStates: states, now: now, calendar: Synth.newYork)
     }
 
@@ -178,12 +178,31 @@ private enum Health {
     }
 
     @Test func noRunsYetWaitsForTheFirstRun() {
-        let report = Health.evaluate(runs: [], now: Health.at(9, 0))
-        #expect([report.installed, report.loaded, report.lastRun, report.onSchedule] == [.green, .green, .unlit, .unlit])
-        #expect(report.footer == "Waiting for the collector's first run.")
-        #expect(report.problems.isEmpty)
-        #expect(!report.notify)
-        #expect(report.lamp == .green)
+        // Turned on (the plist written) at 09:00; three 5-minute intervals end at 09:15:00.
+        let turnedOn = Health.at(9, 0)
+        for now in [Health.at(9, 0), Health.at(9, 15, 0)] {
+            let report = Health.evaluate(installedAt: turnedOn, runs: [], now: now)
+            #expect([report.installed, report.loaded, report.lastRun, report.onSchedule] == [.green, .green, .unlit, .unlit])
+            #expect(report.footer == "Waiting for the collector's first run.")
+            #expect(report.problems.isEmpty)
+            #expect(!report.notify)
+            #expect(report.lamp == .green)
+        }
+
+        // The first run never arrived: measured from turn-on, as if it were the last success.
+        let late = Health.evaluate(installedAt: turnedOn, runs: [], now: Health.at(9, 15, 1))
+        #expect(late.notify)
+        #expect(late.problems == ["The collector hasn't run since 09:00."])
+        #expect([late.lastRun, late.onSchedule] == [.unlit, .unlit])
+        #expect(late.lamp == .red)
+
+        // No plist, no reference: nothing to measure from.
+        #expect(!Health.evaluate(installed: nil, installedAt: nil, runs: [], now: Health.at(12, 0)).notify)
+        // Skipped runs don't count, so turn-on is still the reference; a counted run replaces it.
+        let skippedOnly = [Health.run(1, Health.at(9, 0), .skipped, detail: CollectorRun.skippedDetail)]
+        #expect(Health.evaluate(installedAt: Health.at(8, 0), runs: skippedOnly, now: Health.at(9, 15, 1)).notify)
+        let counted = [Health.run(1, Health.at(9, 10), .failed, detail: "synthetic failure")]
+        #expect(!Health.evaluate(installedAt: turnedOn, runs: counted, now: Health.at(9, 15, 1)).notify)
     }
 
     @Test func formatProblemLightsRed() {

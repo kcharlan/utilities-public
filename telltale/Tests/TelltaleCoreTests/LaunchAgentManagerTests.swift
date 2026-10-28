@@ -10,6 +10,9 @@ private let launchctl = "/bin/launchctl"
 private let domain = "gui/4242"
 private let service = "gui/4242/local.utilities.telltale.collector"
 
+/// A path as the plist records it: standardized and symlink-resolved.
+private func resolvedPath(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
+
 /// One test's world: injected paths under a scratch directory, a fake runner, and a synthetic
 /// `Telltale.app` whose Info.plist carries Telltale's bundle identifier.
 private struct AgentHarness {
@@ -92,7 +95,7 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
                 "Label", "ProgramArguments", "StartInterval", "RunAtLoad", "ProcessType", "StandardOutPath", "StandardErrorPath",
             ])
             #expect(plist["Label"] as? String == "local.utilities.telltale.collector")
-            #expect(plist["ProgramArguments"] as? [String] == [h.app.path, "--collect"])
+            #expect(plist["ProgramArguments"] as? [String] == [resolvedPath(h.app), "--collect"])
             #expect(plist["StartInterval"] as? Int == 420)
             #expect(plist["RunAtLoad"] as? Bool == true)
             #expect(plist["ProcessType"] as? String == "Background")
@@ -112,11 +115,39 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
             #expect(h.runner.calls == [h.call("bootout", service), h.call("bootstrap", domain, plistPath)])
             #expect(plistExisted.withLock { $0 } == [true, true])
             let written = try h.installedPlist()
-            #expect(written["ProgramArguments"] as? [String] == [h.app.path, "--collect"])
+            #expect(written["ProgramArguments"] as? [String] == [resolvedPath(h.app), "--collect"])
             #expect(written["StartInterval"] as? Int == 300)
             // launchd opens the log at spawn and doesn't create its directory.
             #expect(FileManager.default.fileExists(atPath: h.paths.logDirectory.path))
-            #expect(h.manager.installedExecutable()?.path == h.app.path)
+            #expect(h.manager.installedExecutable()?.path == resolvedPath(h.app))
+        }
+    }
+
+    /// The plist records the validated file, not the symlink it was reached through, so a link that
+    /// later moves can't point the job at another binary.
+    @Test func plistRecordsTheResolvedExecutable() throws {
+        try withAgent { h in
+            let link = h.directory.appending(path: "LinkedApplications", directoryHint: .isDirectory)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: h.app.deletingLastPathComponent())
+            let throughLink = link.appending(path: "Telltale", directoryHint: .notDirectory)
+
+            try h.manager.turnOn(executable: throughLink, intervalMinutes: 5)
+            let recorded = try #require((try h.installedPlist()["ProgramArguments"] as? [String])?.first)
+            #expect(recorded == resolvedPath(h.app))
+            #expect(recorded != throughLink.path)
+            #expect(h.manager.plist(executable: throughLink, intervalMinutes: 5)["ProgramArguments"] as? [String] == [recorded, "--collect"])
+        }
+    }
+
+    @Test func installedAtIsThePlistModificationDate() throws {
+        try withAgent { h in
+            #expect(h.manager.installedAt() == nil)
+            try h.manager.turnOn(executable: h.app, intervalMinutes: 5)
+            let turnedOn = Date(timeIntervalSince1970: 1_767_225_600)
+            try FileManager.default.setAttributes([.modificationDate: turnedOn], ofItemAtPath: h.plistURL.path)
+            #expect(h.manager.installedAt() == turnedOn)
+            try h.manager.turnOff()
+            #expect(h.manager.installedAt() == nil)
         }
     }
 
@@ -248,31 +279,31 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
         try withAgent { h in
             // Off: nothing to repair.
             #expect(h.manager.installedExecutable() == nil)
-            #expect(!h.manager.needsRepair(currentExecutable: h.app))
+            #expect(!h.manager.plistMismatch(currentExecutable: h.app))
 
             try h.manager.turnOn(executable: h.app, intervalMinutes: 5)
-            #expect(!h.manager.needsRepair(currentExecutable: h.app))
+            #expect(!h.manager.plistMismatch(currentExecutable: h.app))
 
             // The same file through a symlinked directory and an unstandardized path still matches.
             let link = h.directory.appending(path: "Linked", directoryHint: .isDirectory)
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: h.app.deletingLastPathComponent())
-            #expect(!h.manager.needsRepair(currentExecutable: link.appending(path: "Telltale")))
+            #expect(!h.manager.plistMismatch(currentExecutable: link.appending(path: "Telltale")))
             let unstandardized = URL(fileURLWithPath: h.app.deletingLastPathComponent().path + "/../MacOS/Telltale")
-            #expect(!h.manager.needsRepair(currentExecutable: unstandardized))
+            #expect(!h.manager.plistMismatch(currentExecutable: unstandardized))
 
             // The app moved: the plist points elsewhere until Repair rewrites it.
             let moved = try AgentHarness.makeApp(in: h.directory.appending(path: "Moved", directoryHint: .isDirectory))
-            #expect(h.manager.needsRepair(currentExecutable: moved))
+            #expect(h.manager.plistMismatch(currentExecutable: moved))
             let before = h.runner.calls.count
             try h.manager.repair(executable: moved, intervalMinutes: 5)
-            #expect(!h.manager.needsRepair(currentExecutable: moved))
-            #expect(h.manager.installedExecutable()?.path == moved.path)
+            #expect(!h.manager.plistMismatch(currentExecutable: moved))
+            #expect(h.manager.installedExecutable()?.path == resolvedPath(moved))
             #expect(Array(h.runner.calls.dropFirst(before)) == [h.call("bootout", service), h.call("bootstrap", domain, h.plistURL.path)])
 
             // An unreadable plist needs repair too.
             try Data("not a plist".utf8).write(to: h.plistURL)
             #expect(h.manager.installedExecutable() == nil)
-            #expect(h.manager.needsRepair(currentExecutable: moved))
+            #expect(h.manager.plistMismatch(currentExecutable: moved))
         }
     }
 

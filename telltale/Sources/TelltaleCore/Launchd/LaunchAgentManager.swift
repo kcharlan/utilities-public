@@ -57,11 +57,12 @@ public struct LaunchAgentManager: Sendable {
     private var domain: String { "gui/\(uid)" }
     private var service: String { "gui/\(uid)/\(label)" }
 
-    /// The job's property list (spec section 9.3).
+    /// The job's property list (spec section 9.3). The executable is recorded standardized and
+    /// symlink-resolved: the same file `install` validated, not a link that could later move.
     public func plist(executable: URL, intervalMinutes: Int) -> [String: Any] {
         [
             "Label": label,
-            "ProgramArguments": [executable.standardizedFileURL.path, "--collect"],
+            "ProgramArguments": [Self.resolved(executable).path, "--collect"],
             "StartInterval": intervalMinutes * 60,
             "RunAtLoad": true,
             "ProcessType": "Background",
@@ -101,6 +102,12 @@ public struct LaunchAgentManager: Sendable {
         return URL(fileURLWithPath: path)
     }
 
+    /// When the plist was last written (turn on, interval change or repair); nil without one.
+    /// Collector health measures from it until the first run is on record.
+    public func installedAt() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: plistURL.path))?[.modificationDate] as? Date
+    }
+
     /// Whether `launchctl print` finds the job. Spec section 9.3 uses it only for the Loaded lamp,
     /// because its output format isn't stable, so only the exit status is read.
     public func isLoaded() -> Bool {
@@ -108,8 +115,10 @@ public struct LaunchAgentManager: Sendable {
     }
 
     /// True when a plist exists but doesn't run `currentExecutable` (the app moved or was
-    /// replaced), or can't be read. No plist is "off", not "needs repair".
-    public func needsRepair(currentExecutable: URL) -> Bool {
+    /// replaced), or can't be read. No plist is false: the manager doesn't know whether the
+    /// collector should be on. The panel's Repair button follows `CollectorHealthReport.needsRepair`,
+    /// which also counts a missing plist while the collector is on.
+    public func plistMismatch(currentExecutable: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: plistURL.path) else { return false }
         guard let installed = installedExecutable() else { return true }
         return !Self.sameExecutable(installed, currentExecutable)
