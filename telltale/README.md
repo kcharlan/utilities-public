@@ -329,12 +329,17 @@ check.
 
 Native results are recorded separately from automated ones.
 
+Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle.
+
 | Check | Result |
 | --- | --- |
-| All of the above | Not yet run |
-| Dashboard, Settings and Open dashboard checks | Not yet run |
-| Settings (acceptance bundle) | Not yet run |
-| Launch at login and Settings in the installed release | Not yet run |
+| Menu bar, panel, notifications, Light and Dark (acceptance bundle) | Passed |
+| Dashboard, Settings and Open dashboard checks (acceptance bundle) | Passed after one fix: Match system rendered Light under a Dark system and ignored system changes, because the harness's Light/Dark buttons pinned `NSApp.appearance`. Fixed in a604a1f; Match system then passed before and after pressing those buttons |
+| Settings (acceptance bundle) | Passed |
+| Launch at login, collector and Settings in the installed release | Not yet run (checked after the first install) |
+
+The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin
+confirmed that is the intended behavior (spec section 9.4).
 
 ## Notification spike
 
