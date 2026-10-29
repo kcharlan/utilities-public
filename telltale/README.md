@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.3.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -79,7 +79,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that twelve panel PNGs and eighteen dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that fourteen panel PNGs and eighteen dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
@@ -93,7 +93,7 @@ the production lifecycle (`TelltaleMain`, `AppDelegate`), the collector entry, t
 registry or the notification check, into a separate synthetic renderer in a new 0700
 directory under the OS temporary directory. It seeds a database per scene from
 `Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
-renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting, acknowledged and the
+renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting, faster alerting, acknowledged and the
 lasting-shift prompt (spec section 13's panel states), two providers with colliding Claude names, and the arrival note. It also renders the dashboard window at
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
@@ -244,7 +244,14 @@ The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with links to the provider's status-page incidents in its period,
-Accept as usual… and Keep as abnormal, and the collector footer.
+Accept as usual… and Keep as abnormal, and the collector footer. Each open speed alert shows
+its worst deviation since onset when usable, falling back to its latest event otherwise. Fired
+events and notifications retain their own wording. The row uses the
+current stored speed evaluation for tok/s and mix-matched usual. Numbers
+are dashes when the point is stale or has no matched responses, including a new
+model or an unfamiliar prompt mix. Thin matched data retains its numbers and
+thin-data note; learning notes remain when appropriate, while a ready idle model
+has no note. The dashboard's last-hour readout is independent.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
 Use Acknowledge on an alert, or Acknowledge all for the new alerts shown, to reset the attention
 dot while leaving the lamp lit. Acknowledged rows show a hollow diamond and their acknowledgement
@@ -355,6 +362,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
+- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.1, with build 6 in help.
 - VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
@@ -451,6 +459,7 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
 | Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
 | Installed release, closed Codex snapshot read and cleanup | Not yet run |
+| Installed 0.3.1 speed reversal, row and version checks | Not yet run |
 | 0.3.0 acceptance bundle acknowledgement and failed-turn re-arm | Not yet run |
 | Installed 0.3.0 Collector acknowledgement and repair | Not yet run |
 | Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |

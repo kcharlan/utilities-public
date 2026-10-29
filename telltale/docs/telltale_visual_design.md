@@ -81,8 +81,9 @@ dot).
 │ Telltale                 Checked 12:40 ⟳│
 │ ▢ Speed ▢ Errors ▢ Link ▢ OpenAI ▢ Load │   lamp strip: unlit = Housing
 ├─────────────────────────────────────────┤
-│ ▲ Sol is 26% slower than usual          │   alert list, newest severe first
-│   for prompts this size. Since 08:10.   │   (empty: "Nothing to report.")
+│ ▲ Sol has been up to 26% slower than    │   alert list, newest severe first
+│   usual for prompts this size since     │   (empty: "Nothing to report.")
+│   08:10.                                │
 │ ▲ 3 of your last 10 prompts were over   │
 │   300k tokens. A fresh session would    │
 │   speed things up.                      │
@@ -91,13 +92,16 @@ dot).
 │ Terra   70 tok/s  usual 74   ▃▃▄▃▃▃▃    │
 ├─────────────────────────────────────────┤
 │ ● Collector running, every 5 min        │
-│ Telltale 0.3.0          Open dashboard  │
+│ Telltale 0.3.1          Open dashboard  │
 └─────────────────────────────────────────┘
 ```
 
 Everything is left aligned. The alert list is the panel's main content and
 follows the cockpit crew-alerting pattern: one message per condition, new rows
 first, then acknowledged rows; each group is ordered by severity and recency.
+Model row numbers use the current stored speed evaluation point. They are dashes
+when it is stale or has no matched responses; thin matched data can show numbers
+with a note, and learning notes remain visible while the baseline is learning.
 Acknowledged rows use a hollow diamond and secondary text, and remain until
 the condition clears.
 
@@ -175,7 +179,9 @@ Turn on, and the recent log lines.
 
 ## Copy rules
 
-- Name conditions the way the user sees them: "Sol is 26% slower than usual",
+Open speed alerts state the worst deviation since onset, using the latest event as a fallback for an unusable value. Fired events and notifications retain their own wording.
+
+- Name conditions the way the user sees them: "Sol has been up to 26% slower than usual",
   not "throughput index 0.74".
 - Every alert says what to do when there's something to do: "A fresh session
   would speed things up." "Turn on the collector to keep watching."

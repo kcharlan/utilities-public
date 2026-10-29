@@ -256,7 +256,7 @@ extension RuleOutcome {
             #expect(fired.provider == "codex" && fired.scope == h.model)
             #expect(fired.transition == .fired(onset: h.sep4(8, 55), severity: .amber))
             #expect(fired.message == "Example is 25% slower than usual for prompts this size. Since 08:55.")
-            #expect(fired.catchUpMessage == "Example has been 25% slower since 08:55.")
+            #expect(fired.catchUpMessage == "Example has been 25% slower than usual for prompts this size since 08:55.")
 
             let points = try h.store.evalPoints(provider: .codex, model: h.model, in: h.sep4(9)...h.sep4(9, 20))
             #expect(points.map(\.at) == [h.sep4(9), h.sep4(9, 5), h.sep4(9, 10), h.sep4(9, 15), h.sep4(9, 20)])
@@ -286,7 +286,7 @@ extension RuleOutcome {
             let outcomes = try h.evaluate(through: h.sep4(9, 30))
             #expect(outcomes.map(\.rule) == [.faster])
             #expect(outcomes.first?.transition == .fired(onset: h.sep4(8, 55), severity: .blue))
-            #expect(outcomes.first?.message == "Example is 25% faster than usual. Check that output isn't shallower. Since 08:55.")
+            #expect(outcomes.first?.message == "Example is 25% faster than usual for prompts this size. Check that output isn't shallower. Since 08:55.")
             let episode = try #require(try h.episodes(.faster).first)
             #expect(episode.direction == .faster && episode.severity == "blue")
             #expect(approximately(episode.worstValue, 1.25))
@@ -294,31 +294,106 @@ extension RuleOutcome {
         }
     }
 
-    @Test func bothDirectionsAreSeparateEpisodes() throws {
+    @Test func reversalEndsTheOppositeEpisode() throws {
         try withRules { h in
             try h.seedUsual()
             try h.run(30, throughput: 30, hour: 9)
             try h.run(60, throughput: 50, hour: 9, minute: 30)
-            let outcomes = try h.evaluate(through: h.sep4(10, 30))
+            var outcomes: [RuleOutcome] = []
+            for minute in stride(from: 30, through: 90, by: 5) {
+                let time = h.sep4(9).addingTimeInterval(Double(minute * 60))
+                outcomes += try h.evaluate(through: time)
+                if time >= h.sep4(9, 50) {
+                    #expect(try h.episodes(.slower).allSatisfy { $0.endedAt != nil })
+                }
+            }
+            let slower = try #require(try h.episodes(.slower).first)
+            let faster = try #require(try h.episodes(.faster).first)
+            #expect(slower.endedAt == h.sep4(9, 50))
+            #expect(slower.endReason == EpisodeRow.EndReason.reversed)
+            #expect(faster.endedAt == nil && slower.id != faster.id)
+            #expect(outcomes.contains { $0.episodeID == slower.id && $0.transition == .reversed })
+            #expect(outcomes.contains { $0.episodeID == faster.id && $0.message.contains("after running slower") })
+            #expect(try h.events().map { $0[0] } == ["ruleFired", "ruleFired"])
+        }
+    }
 
-            // From 09:40 the window is mostly fast: faster fires at 09:50, slower clears after 30
-            // minutes inside its band (09:40 … 10:05).
-            #expect(outcomes.map(\.rule) == [.slower, .faster, .slower])
-            #expect(outcomes.map(\.at) == [h.sep4(9, 20), h.sep4(9, 50), h.sep4(10, 5)])
-            #expect(outcomes[2].transition == .cleared)
-            #expect(outcomes[2].message == "Example is back to usual speed.")
-            let slower = try h.episodes(.slower)
-            let faster = try h.episodes(.faster)
-            #expect(slower.count == 1 && faster.count == 1)
-            #expect(slower[0].endedAt == h.sep4(10, 5) && slower[0].endReason == EpisodeRow.EndReason.cleared)
-            #expect(faster[0].endedAt == nil && faster[0].onset == h.sep4(9, 25))
-            #expect(slower[0].id != faster[0].id)
-            // Each transition writes its event row with its wording.
-            let events = try h.events()
-            #expect(events.map { $0[0] } == ["ruleFired", "ruleFired", "ruleCleared"])
-            #expect(events.last == [
-                "ruleCleared", "codex", h.model, "Slower than usual", "Example is back to usual speed.", "\(outcomes[2].episodeID)", "NULL",
-            ])
+    @Test func fasterIsReversedBySlower() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.run(30, throughput: 50, hour: 9)
+            try h.run(60, throughput: 30, hour: 9, minute: 30)
+            for minute in stride(from: 30, through: 90, by: 5) {
+                let time = h.sep4(9).addingTimeInterval(Double(minute * 60))
+                _ = try h.evaluate(through: time)
+                let open = try (h.episodes(.slower) + h.episodes(.faster)).filter { $0.endedAt == nil }
+                #expect(open.count <= 1)
+            }
+            let faster = try #require(try h.episodes(.faster).first)
+            #expect(faster.endReason == EpisodeRow.EndReason.reversed)
+            #expect(try h.episodes(.slower).first?.endedAt == nil)
+            #expect(try h.events().last?[4].contains("after running faster") == true)
+        }
+    }
+    @Test func redSlowerEpisodeIsReversed() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.run(30, throughput: 20, hour: 9)
+            try h.run(60, throughput: 50, hour: 9, minute: 30)
+            _ = try h.evaluate(through: h.sep4(10, 30))
+            let slower = try #require(try h.episodes(.slower).first)
+            #expect(slower.severity == "red" && slower.endReason == EpisodeRow.EndReason.reversed)
+        }
+    }
+    @Test func clearAtTheOppositeFireIsAClear() throws {
+        for initial in [Direction.slower, .faster] {
+            try withRules { h in
+                h.settings.slower.clearMinutes = 15
+                h.settings.faster.clearMinutes = 15
+                try h.seedUsual()
+                try h.run(30, throughput: initial == .slower ? 30 : 50, hour: 9)
+                try h.run(60, throughput: initial == .slower ? 50 : 30, hour: 9, minute: 30)
+                let outcomes = try h.evaluate(through: h.sep4(10, 30))
+                let old = try #require(try h.episodes(.speed(initial)).first)
+                let replacement = try #require(try h.episodes(.speed(initial.opposite)).first)
+                #expect(old.endReason == EpisodeRow.EndReason.cleared)
+                #expect(old.endedAt == replacement.firedAt)
+                #expect(outcomes.first { $0.episodeID == replacement.id }?.message.contains("after running") == false)
+            }
+        }
+    }
+    @Test func clearBeforeTheOppositeFireIsAClear() throws {
+        try withRules { h in
+            h.settings.slower.clearMinutes = 5
+            try h.seedUsual()
+            try h.run(30, throughput: 30, hour: 9)
+            try h.run(60, throughput: 50, hour: 9, minute: 30)
+            let outcomes = try h.evaluate(through: h.sep4(10, 30))
+            let old = try #require(try h.episodes(.slower).first)
+            let replacement = try #require(try h.episodes(.faster).first)
+            #expect(old.endReason == EpisodeRow.EndReason.cleared && old.endedAt! < replacement.firedAt)
+            #expect(outcomes.first { $0.episodeID == replacement.id }?.message.contains("after running") == false)
+        }
+    }
+    @Test func legacyOverlappingSpeedEpisodesSettle() throws {
+        try withRules { h in
+            try h.seedUsual()
+            for direction in Direction.allCases {
+                var machine = EpisodeMachine(firePoints: 1, clearPoints: 1, windowMinutes: 15, color: direction == .slower ? .amber : .blue)
+                _ = machine.step(at: h.sep4(8, 55), trigger: .true, clear: .false, red: .false, idle: false)
+                let id = try h.store.insertEpisode(EpisodeRow(rule: RuleID.speed(direction).rawValue, provider: "codex", scope: h.model,
+                    direction: direction, onset: h.sep4(8, 40), firedAt: h.sep4(8, 55), severity: direction == .slower ? "amber" : "blue", worstValue: 1))
+                let machineObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(machine))
+                let json = try JSONSerialization.data(withJSONObject: ["machine": machineObject, "episodeID": id, "extreme": 1])
+                try h.store.setRuleState(rule: RuleID.speed(direction).rawValue, provider: "codex", scope: h.model, json: String(decoding: json, as: UTF8.self))
+            }
+            try h.run(30, throughput: 40, hour: 9)
+            _ = try h.evaluate(through: h.sep4(12))
+            for direction in Direction.allCases {
+                let episode = try #require(try h.episodes(.speed(direction)).first)
+                #expect([EpisodeRow.EndReason.cleared, EpisodeRow.EndReason.idleEnded].contains(episode.endReason ?? ""))
+                #expect(try h.store.ruleState(rule: RuleID.speed(direction).rawValue, provider: "codex", scope: h.model) == nil)
+            }
         }
     }
 

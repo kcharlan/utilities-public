@@ -4,6 +4,18 @@ import TelltaleTestSupport
 @testable import TelltaleCore
 
 @Suite struct SpeedIndexTests {
+    @Test func percentIsTheRoundedDistanceFromUsual() {
+        #expect(SpeedIndex.percent(1) == 0)
+        #expect(SpeedIndex.percent(0.755) == 25)
+        #expect(SpeedIndex.percent(1.26) == 26)
+    }
+    @Test func percentRejectsUnrepresentableValues() {
+        #expect(SpeedIndex.percent(.infinity) == nil)
+        #expect(SpeedIndex.percent(.nan) == nil)
+        #expect(SpeedIndex.percent(Double.greatestFiniteMagnitude) == nil)
+        #expect(SpeedIndex.percent(1e18) == nil)
+    }
+
     let point = Synth.local(2026, 9, 4, 9, 15)
 
     /// Usual 40 tok/s for medium effort and 20 for high; no usual for any other effort.

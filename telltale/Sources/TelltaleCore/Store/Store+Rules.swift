@@ -32,6 +32,8 @@ public struct EpisodeRow: Sendable, Equatable, Hashable {
         /// The rule was turned off while the episode was open; it ended silently at the first point
         /// evaluated with the rule off. Not a clear, so it never lifts a shift dismissal.
         public static let ruleDisabled = "ruleDisabled"
+        /// A speed episode reversed silently; this is not a clear.
+        public static let reversed = "reversed"
     }
 
     public var id: Int64?
@@ -75,7 +77,7 @@ public enum EventKind {
     public static let statusPost = "statusPost"
     public static let baselineAccepted = "baselineAccepted"
     public static let baselineUndone = "baselineUndone"
-    /// Rule transitions (Task 8). An idle end is silent and writes no event.
+    /// Rule transitions (Task 8). Idle ends and reversals are silent and write no event.
     public static let ruleFired = "ruleFired"
     public static let ruleEscalated = "ruleEscalated"
     public static let ruleCleared = "ruleCleared"

@@ -88,7 +88,7 @@ public enum ShiftDetector {
             let runDaySet = Set(run)
             let deviations = counted
                 .filter { $0.direction == direction && runDaySet.contains(LocalDay($0.firedAt, calendar: calendar)) }
-                .map { abs($0.worstValue - 1) }
+                .map(\.worstValue)
             // The run spans its first day's start to its last day's end, never past the evaluation.
             let runStart = firstDay.start(in: calendar)
             let interval = DateInterval(start: runStart, end: max(runStart, min(instant, run[0].end(in: calendar))))
@@ -98,7 +98,7 @@ public enum ShiftDetector {
             } ?? []
             return ShiftPrompt(
                 provider: provider, model: model, direction: direction, firstDay: firstDay, days: run.count,
-                typicalPercent: median(deviations).map { Int(($0 * 100).rounded()) } ?? 0, incidentIDs: incidents.map(\.id), incidents: incidents)
+                typicalPercent: median(deviations).flatMap(SpeedIndex.percent) ?? 0, incidentIDs: incidents.map(\.id), incidents: incidents)
         }
         return nil
     }

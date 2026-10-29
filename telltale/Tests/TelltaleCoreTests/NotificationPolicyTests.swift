@@ -57,6 +57,17 @@ import TelltaleTestSupport
             completedAt: at, errorCode: code, message: "Synthetic failure \(number)")
     }
 
+    @Test func reversedOutcomePostsNothing() {
+        #expect(select([outcome(at: latest, .reversed)]).isEmpty)
+    }
+    @Test func reversalInsideACatchUpPassPostsNoStaleNotice() {
+        let old = outcome(at: minutesBefore(60), fired(minutesBefore(60)), episode: 1, catchUp: "old")
+        let end = outcome(at: minutesBefore(30), .reversed, episode: 1)
+        let replacement = outcome(.faster, at: minutesBefore(30), fired(minutesBefore(30)), episode: 2, message: "reversed", catchUp: "new catch-up")
+        #expect(select([old, end, replacement]).map(\.body) == ["new catch-up"])
+        let fresh = outcome(.faster, at: latest, fired(latest), episode: 2, message: "reversed", catchUp: "new catch-up")
+        #expect(select([outcome(at: latest, .reversed), fresh]).map(\.body) == ["reversed"])
+    }
     @Test func backfillNeverNotifies() {
         var notices = FailureNotices()
         let outcomes = [

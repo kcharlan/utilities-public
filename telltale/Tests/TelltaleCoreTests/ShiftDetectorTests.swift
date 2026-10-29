@@ -21,6 +21,30 @@ import TelltaleTestSupport
         try ShiftDetector.prompt(provider: .codex, model: h.model, statusSourceID: "example.status", at: at, store: h.store, calendar: h.calendar)
     }
 
+    @Test func typicalPercentRoundsAfterTakingTheMedian() throws {
+        try withBaseline { h in
+            try Self.day(h, 5, .slower, worst: 0.896)
+            try Self.day(h, 6, .slower, worst: 0.894)
+            try Self.day(h, 7, .slower, worst: 0.884)
+            try Self.day(h, 8, .slower, worst: 0.882)
+            let prompt = try #require(try Self.prompt(h, h.at(10, 8, 20)))
+            #expect(prompt.typicalPercent == 11)
+        }
+    }
+    @Test func reversalDoesNotLiftAShiftDismissal() throws {
+        try withBaseline { h in
+            for day in 5...7 { try Self.day(h, day, .slower) }
+            let prompt = try #require(try Self.prompt(h, h.at(10, 7, 20)))
+            try ShiftDetector.keepAsAbnormal(prompt, at: h.at(10, 7, 21), store: h.store)
+            try h.add(1, throughput: 40, month: 10, day: 8)
+            try h.episode(rule: EpisodeRow.slowerRule, direction: .slower, onset: h.at(10, 8, 8, 50), fired: h.at(10, 8, 9, 5), ended: h.at(10, 8, 10), endReason: EpisodeRow.EndReason.reversed, worst: 0.75)
+            for day in 9...11 { try Self.day(h, day, .slower) }
+            #expect(try Self.prompt(h, h.at(10, 11, 20)) == nil)
+            try Self.day(h, 12, .slower, cleared: true)
+            for day in 13...15 { try Self.day(h, day, .slower) }
+            #expect(try Self.prompt(h, h.at(10, 15, 20))?.firstDay == h.localDay(10, 13))
+        }
+    }
     @Test func consecutiveActiveDaysPrompt() throws {
         try withBaseline { h in
             try Self.day(h, 5, .slower, worst: 0.75)

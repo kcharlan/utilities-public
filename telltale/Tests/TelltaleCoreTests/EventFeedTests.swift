@@ -28,6 +28,13 @@ private enum Feed {
 }
 
 @Suite struct EventFeedTests {
+    @Test func reversedEpisodeEndIsNotListed() throws {
+        try withBaseline { h in
+            try Feed.fired(h, rule: .slower, severity: .amber, at: h.at(9, 4, 9), ended: h.at(9, 4, 10), endReason: EpisodeRow.EndReason.reversed, body: "synthetic")
+            let feed = try Feed.load(h)
+            #expect(feed.count == 1 && feed.first?.kind == .slowdown)
+        }
+    }
     @Test func compactionEventsHaveAFeedKind() throws {
         try withBaseline { h in
             try Feed.fired(h, rule: .compactions, scope: "*", severity: .amber, at: h.at(9, 4, 9), body: "synthetic")

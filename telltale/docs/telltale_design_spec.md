@@ -400,6 +400,9 @@ Applies to the speed rules and the large-prompt rule:
     "Notify when it clears" is on.
 - **Idle end:** if a model has no qualifying responses for **2 hours**, its
   open episode ends silently. The next activity starts fresh.
+- **Reversal:** step the uniquely open speed direction first. If it remains open when the opposite direction fires, end it at that point as reversed. If it clears at the same point, keep the clear and use ordinary fire wording. Existing overlapping episodes settle through their normal clear or idle end.
+- A reversal writes no event, posts no end notice, and does not appear in Events. The replacement fire records the direction change, with reversal wording for fresh notices and ordinary catch-up wording for stale fires. Already delivered notifications remain unchanged.
+- A reversal is not a clear and does not release a Keep-as-abnormal dismissal.
 - One notification when an episode fires, and one when it clears. Nothing in
   between.
 - A long shift therefore notifies about once per active day. Each morning's
@@ -452,7 +455,7 @@ It then backfills. It never notifies.
 point in order, then notifies only on what's still relevant:
 
 - An episode that fired and is still open at the latest point notifies once:
-  "Sol has been 22% slower since 09:40".
+  "Sol has been 22% slower than usual for prompts this size since 09:40".
 - An episode that fired and cleared entirely inside the gap is recorded only.
 - Clears and escalations more than one interval old are recorded only.
 
@@ -510,12 +513,15 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   left out of the speed index, and the dashboard says "Not enough history yet
   for 300k+ prompts" **(my call)**.
 - Usual is recomputed at least hourly **(my call)**.
-- **The one "usual" number shown per model** (panel row, dashboard readout,
-  sparkline scale) is matched to the recent mix **(my call)**. It's the median,
-  over the same responses as the tok/s beside it, of each response's own
-  usual (using the baseline key defined above). "31 tok/s, usual 42" therefore always means
-  "42 for what you've been running". A slowdown fully explained by prompt size
-  or effort or service tier shows no gap.
+- **The usual number** is matched to the response mix **(my call)**. The panel
+  row uses the current stored speed evaluation point's median tok/s and mix usual;
+  the dashboard readout independently uses the last hour. Each usual is the median
+  of the corresponding responses' own usual (using the baseline key above). A
+  slowdown explained by prompt size, effort or service tier shows no gap.
+  Panel numbers are dashes when the current point is stale or has no matched
+  responses, including a new model or a newly used key. Thin matched data can
+  still show numbers with the thin-data note; learning notes remain visible when
+  appropriate, and a ready idle model has no note.
 - The acceptance confirmation reports the change as a percentage: "Sol's
   usual speed is now 24% lower than before."
 - **Small drift** below the trigger enters the baseline as ordinary variation.
@@ -535,7 +541,7 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
     time passes. Responses from that date that were inside episodes now count
     as normal. Confirmation: "Sol's usual speed is now 24% lower than
     before."
-  - **Keep as abnormal**: dismisses the prompt for this shift. A new prompt
+  - **Keep as abnormal**: dismisses the prompt for this shift. A reversed end does not release the dismissal. A new prompt
     appears only after a clear followed by a new 3-day run.
 
   Kevin can also accept from the dashboard at any time.
@@ -551,6 +557,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 
 ### 9.1 Status item and panel
 
+Open slower and faster alerts show the worst representable deviation since onset; if the stored worst value is unusable or points in the wrong direction, the latest fired or escalated event supplies the wording. Events and notifications keep their own wording.
+
 - **Status item:** port Brew Version's macOS 27 handling exactly:
   `StatusItemController.swift`, `StatusPanel.swift`,
   `SettingsWindowController.swift`, with their tests and the real-click
@@ -565,8 +573,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   - header with "Checked HH:MM" and Check now
   - lamp strip: Speed, Errors, Link, OpenAI, Load
   - alert list, or "Nothing to report."
-  - one row per model active in the last 3 hours: tok/s, usual, 3-hour
-    sparkline
+  - one row per model active in the last 3 hours: current stored speed-point
+    tok/s and usual (or dashes), and a 3-hour sparkline
   - the lasting-shift prompt when present
   - footer with collector state, version with build help, and Open dashboard
 

@@ -165,24 +165,25 @@ private enum Detail {
         }
     }
 
-    @Test func panelRowShowsTheDashboardReadout() throws {
+    @Test func panelRowAndDashboardUseDistinctWindows() throws {
         try withRules { h in
             for day in 1...3 {
                 try h.base.add(20, throughput: 40, month: 9, day: day)
                 try h.base.add(20, throughput: 20, month: 9, day: day, hour: 14, inputTokens: 320_000)
             }
             try h.run(30, throughput: 30, hour: 9)
-            try h.run(30, throughput: 10, hour: 9, inputTokens: 320_000)
+            try h.run(15, throughput: 10, hour: 9, minute: 30, inputTokens: 320_000)
             let now = h.sep4(9, 45)
+            try h.evaluate(through: now)
             let readout = try Detail.load(h, at: now).lastHour
             let codex = SourceSummary(
                 provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID,
                 signals: [.speed], naming: SyntheticNaming())
             let row = try #require(try PanelSnapshot.load(
                 store: h.store, baseline: h.base.engine, health: nil, sources: [codex], now: now, calendar: h.calendar).models.first)
-            // Spec section 8: the panel row and the dashboard readout are the same numbers.
             #expect(readout.tps != nil && readout.usualTPS != nil)
-            #expect(row.tps == readout.tps && row.usual == readout.usualTPS)
+            #expect(approximately(row.tps, 10) && approximately(row.usual, 20))
+            #expect(row.tps != readout.tps && row.usual != readout.usualTPS)
         }
     }
 

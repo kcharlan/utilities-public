@@ -38,7 +38,7 @@ public struct FailureNotices: Sendable, Equatable, Hashable, Codable {
 /// An outcome is fresh when `latestPoint − at ≤ intervalMinutes`. Fresh fires, escalations and
 /// clears notify, subject to the rule's Notify and Notify-when-it-clears settings. An episode
 /// that fired inside the gap and is still open at the end notifies once with its catch-up
-/// wording (the latest it has); anything else stale is recorded only. Idle ends never notify.
+/// wording (the latest it has); anything else stale is recorded only. Idle ends and reversals never notify; reversals also end catch-up eligibility.
 ///
 /// Failed turns notify through coalescing rather than per fire: fresh failures join the waiting
 /// list, which goes out as one notice when no failed-turn notice went out in the last
@@ -73,7 +73,7 @@ public enum NotificationPolicy {
                 }
             case .cleared:
                 if rule.notifyOnClear, isFresh(outcome) { notices.append(notice(outcome, kind: "cleared", body: outcome.message)) }
-            case .idleEnded:
+            case .idleEnded, .reversed:
                 continue
             }
         }
@@ -129,7 +129,7 @@ public enum NotificationPolicy {
         var staleFires: Set<Int64> = []
         for outcome in outcomes {
             switch outcome.transition {
-            case .cleared?, .idleEnded?: ended.insert(outcome.episodeID)
+            case .cleared?, .idleEnded?, .reversed?: ended.insert(outcome.episodeID)
             case .fired?:
                 if !isFresh(outcome) { staleFires.insert(outcome.episodeID) }
                 fallthrough

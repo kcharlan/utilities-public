@@ -40,6 +40,8 @@ public enum Transition: Sendable, Equatable, Hashable {
     case cleared
     /// No qualifying activity for the idle period: the episode ends silently.
     case idleEnded
+    /// Engine-only silent reversal; the machine never returns this.
+    case reversed
 }
 
 /// Spec sections 7.1 and 7.2's episode logic for one rule and scope, stored as JSON in
@@ -116,6 +118,12 @@ public struct EpisodeMachine: Codable, Sendable, Equatable, Hashable {
         self.firstTrue = nil
         clearStreak = 0
         return [.fired(onset: firstTrue.addingTimeInterval(-TimeInterval(windowMinutes * 60)), severity: fired)]
+    }
+
+    public mutating func end() -> Bool {
+        let wasOpen = isOpen
+        reset()
+        return wasOpen
     }
 
     private mutating func reset() {

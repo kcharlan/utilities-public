@@ -121,7 +121,7 @@ public struct RuleOutcome: Sendable, Equatable {
 
 /// Spec section 7's rule engine. It evaluates points in order and writes everything as
 /// evaluated at the time: evaluation points with the usual in effect, episodes, an event per
-/// transition (idle ends excepted: they are silent and have no wording) and each rule's state.
+/// transition (idle ends and reversals are silent and have no wording) and each rule's state.
 /// Notifications are `NotificationPolicy`'s job.
 ///
 /// Plan calls where the spec leaves detail open:
@@ -495,30 +495,44 @@ private final class EvaluationPass {
             medianTPS: reading.medianTPS, samples: reading.samples, state: cold ? .cold : reading.index == nil ? .thin : .known))
 
         let index = cold ? nil : reading.index
-        for direction in directions {
-            try step(
+        let open = directions.filter { states[key(.speed($0), provider, model)]?.machine.isOpen == true }
+        let ordered = open.count == 1 ? open + directions.filter { $0 != open[0] } : directions
+        for (offset, direction) in ordered.enumerated() {
+            let opposite = direction.opposite
+            let oppositeKey = key(.speed(opposite), provider, model)
+            let reversing = offset > 0 && states[oppositeKey]?.machine.isOpen == true ? opposite : nil
+            let context = speedContext(direction, display: display, index: index, after: reversing)
+            let result = try step(
                 key(.speed(direction), provider, model), at: point,
                 conditions: speedRule(direction).conditions(index: index, direction: direction), idle: false, value: index,
-                worst: direction == .slower ? .lowest : .highest, context: speedContext(direction, display: display, index: index))
+                worst: direction == .slower ? .lowest : .highest, context: context)
+            if let reversing, result.transitions.contains(where: { if case .fired = $0 { true } else { false } }),
+               var state = states[oppositeKey], state.machine.end() {
+                try endEpisode(.reversed, key: oppositeKey, at: point, state: &state,
+                               context: speedContext(reversing, display: display, index: index))
+                finishState(state, key: oppositeKey)
+            }
         }
     }
 
-    private func speedContext(_ direction: Direction, display: String, index: Double?) -> StepContext {
-        let percent = index.map { Int((abs($0 - 1) * 100).rounded()) } ?? 0
+    private func speedContext(_ direction: Direction, display: String, index: Double?, after reversed: Direction? = nil) -> StepContext {
+        let percent = index.flatMap(SpeedIndex.percent) ?? 0
         let calendar = calendar
         return StepContext(direction: direction) { transition, onset in
             switch (transition, direction) {
             case (.fired, .slower):
-                (Copy.slowerFired(model: display, percent: percent, since: onset, calendar: calendar),
+                (reversed == nil ? Copy.slowerFired(model: display, percent: percent, since: onset, calendar: calendar)
+                 : Copy.slowerReversed(model: display, percent: percent, since: onset, calendar: calendar),
                  Copy.slowerCatchUp(model: display, percent: percent, since: onset, calendar: calendar))
             case (.fired, .faster):
-                (Copy.fasterFired(model: display, percent: percent, since: onset, calendar: calendar),
+                (reversed == nil ? Copy.fasterFired(model: display, percent: percent, since: onset, calendar: calendar)
+                 : Copy.fasterReversed(model: display, percent: percent, since: onset, calendar: calendar),
                  Copy.fasterCatchUp(model: display, percent: percent, since: onset, calendar: calendar))
             case (.escalated, _):
                 (Copy.slowerEscalated(model: display, percent: percent),
                  Copy.slowerCatchUp(model: display, percent: percent, since: onset, calendar: calendar))
             case (.cleared, _): (Copy.speedCleared(model: display), nil)
-            case (.idleEnded, _): ("", nil)
+            case (.idleEnded, _), (.reversed, _): ("", nil)
             }
         }
     }
@@ -555,7 +569,7 @@ private final class EvaluationPass {
                      switch transition {
                      case .fired, .escalated: (fired, fired)
                      case .cleared: (Copy.largePromptsCleared, nil)
-                     case .idleEnded: ("", nil)
+                     case .idleEnded, .reversed: ("", nil)
                      }
                  }) { state in
             // Once no large prompt from before the idle end is left, the restriction can't matter.
@@ -585,7 +599,7 @@ private final class EvaluationPass {
             switch transition {
             case .fired, .escalated: (message, nil)
             case .cleared: ("No failed \(noun)s for \(rule.quietMinutes) minutes.", nil)
-            case .idleEnded: ("", nil)
+            case .idleEnded, .reversed: ("", nil)
             }
         }
         let (transitions, episodeID) = try step(
@@ -627,7 +641,7 @@ private final class EvaluationPass {
                      switch transition {
                      case .fired, .escalated: (message, message)
                      case .cleared: (Copy.compactionsCleared(windowMinutes: rule.windowMinutes), nil)
-                     case .idleEnded: ("", nil)
+                     case .idleEnded, .reversed: ("", nil)
                      }
                  })
     }
@@ -650,7 +664,7 @@ private final class EvaluationPass {
                          (Copy.disconnectsFired(count: counted.count, windowMinutes: rule.windowMinutes),
                           Copy.disconnectsCatchUp(since: onset, calendar: calendar))
                      case .cleared: (Copy.disconnectsCleared, nil)
-                     case .idleEnded: ("", nil)
+                     case .idleEnded, .reversed: ("", nil)
                      }
                  })
     }
@@ -678,7 +692,7 @@ private final class EvaluationPass {
                      switch transition {
                      case .fired, .escalated: (fired, fired)
                      case .cleared: (Copy.usageLimitCleared, nil)
-                     case .idleEnded: ("", nil)
+                     case .idleEnded, .reversed: ("", nil)
                      }
                  })
     }
@@ -710,7 +724,7 @@ private final class EvaluationPass {
                              return (Copy.incidentEscalated(source: source.displayName, name: name),
                                      Copy.incidentCatchUp(source: source.displayName, name: name, since: onset, calendar: calendar))
                          case .cleared: return (Copy.incidentCleared(source: source.displayName, name: name), nil)
-                         case .idleEnded: return ("", nil)
+                         case .idleEnded, .reversed: return ("", nil)
                          }
                      })
         }
@@ -761,22 +775,38 @@ private final class EvaluationPass {
                 try store.updateEpisode(episode)
                 openEpisodes[id] = episode
                 try record(transition, key: key, at: point, episode: episode, context: context, kind: EventKind.ruleEscalated)
+            case .reversed:
+                preconditionFailure("EpisodeMachine cannot return reversed")
             case .cleared, .idleEnded:
-                guard let id = state.episodeID, var episode = openEpisodes[id] else { continue }
-                episode.endedAt = point
-                episode.endReason = transition == .cleared ? EpisodeRow.EndReason.cleared : EpisodeRow.EndReason.idleEnded
-                episode.worstValue = state.extreme ?? episode.worstValue
-                try store.updateEpisode(episode)
-                openEpisodes[id] = nil
-                worstChanged.remove(id)
-                state.episodeID = nil
-                if transition == .idleEnded, key.rule == .largePrompts { state.idleEndedAt = point }
-                if speed { baseline.discardCache() }
-                try record(transition, key: key, at: point, episode: episode, context: context,
-                           kind: transition == .cleared ? EventKind.ruleCleared : nil)
+                try endEpisode(transition, key: key, at: point, state: &state, context: context)
             }
         }
 
+        finishState(state, key: key)
+        return (transitions, episodeID)
+    }
+
+    private func endEpisode(_ transition: Transition, key: StateKey, at point: Date, state: inout ScopeState, context: StepContext) throws {
+        guard let id = state.episodeID, var episode = openEpisodes[id] else { return }
+        episode.endedAt = point
+        switch transition {
+        case .cleared: episode.endReason = EpisodeRow.EndReason.cleared
+        case .idleEnded: episode.endReason = EpisodeRow.EndReason.idleEnded
+        case .reversed: episode.endReason = EpisodeRow.EndReason.reversed
+        default: preconditionFailure("Expected episode end")
+        }
+        episode.worstValue = state.extreme ?? episode.worstValue
+        try store.updateEpisode(episode)
+        openEpisodes[id] = nil
+        worstChanged.remove(id)
+        state.episodeID = nil
+        if transition == .idleEnded, key.rule == .largePrompts { state.idleEndedAt = point }
+        if key.rule == .slower || key.rule == .faster { baseline.discardCache() }
+        try record(transition, key: key, at: point, episode: episode, context: context,
+                   kind: transition == .cleared ? EventKind.ruleCleared : nil)
+    }
+
+    private func finishState(_ state: ScopeState, key: StateKey) {
         if state.machine.isOpen, let id = state.episodeID, let extreme = state.extreme, openEpisodes[id]?.worstValue != extreme {
             openEpisodes[id]?.worstValue = extreme
             worstChanged.insert(id)
@@ -787,10 +817,9 @@ private final class EvaluationPass {
             states[key] = state
         }
         touchedKeys.insert(key)
-        return (transitions, episodeID)
     }
 
-    /// Appends the outcome and, unless `kind` is nil (an idle end), the event.
+    /// Appends the outcome and, unless `kind` is nil (an idle end or reversal), the event.
     private func record(_ transition: Transition, key: StateKey, at point: Date, episode: EpisodeRow, context: StepContext, kind: String?) throws {
         guard let id = episode.id else { return }
         let (rawMessage, rawCatchUp) = context.messages(transition, episode.onset)
@@ -808,7 +837,7 @@ private final class EvaluationPass {
         }
         outcomes.append(RuleOutcome(
             at: point, rule: key.rule, provider: key.provider, scope: key.scope, transition: transition,
-            failures: transition == .cleared || transition == .idleEnded ? [] : context.failures, episodeID: id,
+            failures: transition == .cleared || transition == .idleEnded || transition == .reversed ? [] : context.failures, episodeID: id,
             title: key.rule.title, message: message, catchUpMessage: catchUp))
     }
 

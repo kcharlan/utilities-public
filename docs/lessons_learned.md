@@ -1645,3 +1645,18 @@ checks the panel's rendered height, and the maintained snapshots expose the layo
 ### 2026-10-29 — Idle arrival wording
 
 A provider with stored models outside the sidebar window is idle, not learning from recent responses. `arrivalForAnIdleProviderSaysItIsIdle` and `versionAndIdleArrivalCopy` guard the arrival wording and its window.
+
+### 2026-10-29 — Silent speed reversals
+
+Telltale speed reversals need a silent ended outcome as well as closing the stored episode; otherwise catch-up can notify for an episode already replaced. Regression coverage: `reversalEndsTheOppositeEpisode`, `fasterIsReversedBySlower`, `reversalInsideACatchUpPassPostsNoStaleNotice`, and `reversalDoesNotLiftAShiftDismissal`.
+
+### 2026-10-29 — Telltale panel speed points
+
+Panel numbers must follow the stored evaluation point, including its freshness and
+matched-response availability, rather than the dashboard's last-hour aggregate.
+`rowMatchesTheSpeedReadingNotTheLastHour`, the thin/cold/idle/stale row tests,
+and `panelScenesUseStoredSpeedReadings` cover both the visible dashes and notes.
+
+### 2026-10-29 — Telltale open speed alerts
+
+Open speed rows need the stored episode extreme, not the last event body: a non-escalating change otherwise leaves the row stale. `speedAlertStatesItsWorstSinceOnset`, `reversedSpeedAlertIsNew`, `speedAlertWithoutAUsableWorstKeepsItsEventWording`, and `worstValueAlertsDisambiguateModels` cover both directions, replacement acknowledgement, fallback boundaries, and naming collisions.

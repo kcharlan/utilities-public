@@ -33,7 +33,7 @@ import TelltaleTestSupport
             try PanelWorld.addAlert(writer)
             #expect(live.snapshot.alerts.isEmpty)
             await source.send(.wake)
-            #expect(live.snapshot.alerts.map(\.text) == ["Codex: " + PanelWorld.alertText])
+            #expect(live.snapshot.alerts.map(\.text) == ["Codex: Example has been up to 25% slower than usual for prompts this size since 08:55."])
             events.stop()
         }
     }

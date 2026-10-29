@@ -6,7 +6,7 @@ public struct FeedEvent: Sendable, Equatable, Identifiable {
         case slowdown, speedup, largePrompts, compactions, failedTurns, disconnects, incident, usageLimit
         /// A rule's condition cleared (`ruleCleared`).
         case cleared
-        /// An episode that ended without a clear: idle, or its rule turned off. These write no event.
+        /// An idle end or disabled rule end. Reversals write no event and are not listed.
         case ended
         case statusPost, baselineAccepted, baselineUndone
         /// A span the provider's connection log no longer covered (`connectionHistoryIncomplete`).
@@ -44,7 +44,7 @@ public struct FeedEvent: Sendable, Equatable, Identifiable {
 /// - Every row of `events`: rule transitions (worded by the collector), status posts, baseline
 ///   acceptances and undos, and connection-history gaps.
 /// - Episode ends that write no event (spec section 7.2's silent idle end, and ruling R13's
-///   `ruleDisabled`), read from `episodes`.
+///   `ruleDisabled`), read from `episodes`. Reversals are excluded.
 /// - Collector problems: each streak of failed runs (skipped runs don't break or count) as one
 ///   entry at its last failure, from the run records still kept (30 days).
 ///
@@ -244,7 +244,7 @@ extension Store {
         }
     }
 
-    /// The newest `limit` episodes that ended without a clear (idle, or their rule turned off),
+    /// The newest `limit` idle or rule-disabled episode ends (not reversals),
     /// newest end first.
     func silentEpisodeEnds(limit: Int) throws -> [EpisodeRow] {
         try query("""
