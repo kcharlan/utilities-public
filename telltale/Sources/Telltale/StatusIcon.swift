@@ -13,9 +13,10 @@ import TelltaleCore
 @MainActor enum StatusIcon {
     /// The mockup's `i-lens` symbol: an 18 × 16 pt rounded rectangle with a filament.
     static let lensSize = NSSize(width: 18, height: 16)
-    static let dotDiameter: CGFloat = 7
+    /// Large enough that the acknowledged ring's hole (7 pt) reads apart from a filled dot at menu-bar size.
+    static let dotDiameter: CGFloat = 10
     /// How far the dot extends past the lens's right edge.
-    static let dotOverhang: CGFloat = 3
+    static let dotOverhang: CGFloat = 5
 
     static func image(for snapshot: PanelSnapshot) -> NSImage? {
         let description = accessibility(for: snapshot)
