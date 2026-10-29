@@ -324,9 +324,11 @@ private struct DashboardSidebar: View {
 struct Diamond: View {
     let color: Color
     var size: CGFloat = 7
+    var hollow = false
 
     var body: some View {
-        Rectangle().fill(color).frame(width: size, height: size).rotationEffect(.degrees(45)).accessibilityHidden(true)
+        Group { if hollow { Rectangle().stroke(color, lineWidth: 1.5) } else { Rectangle().fill(color) } }
+            .frame(width: size, height: size).rotationEffect(.degrees(45)).accessibilityHidden(true)
     }
 }
 
@@ -358,14 +360,17 @@ struct AlertLine: View {
     let color: NSColor
     let text: String
     var detail: String?
+    var hollow = false
+    var accessory: AnyView?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Diamond(color: Theme.swiftUI(color), size: 8)
+            Diamond(color: Theme.swiftUI(color), size: 8, hollow: hollow)
             VStack(alignment: .leading, spacing: 2) {
-                Text(text).fixedSize(horizontal: false, vertical: true)
+                Text(text).foregroundStyle(hollow ? Color.secondary : Color.primary).fixedSize(horizontal: false, vertical: true)
                 if let detail { Text(detail).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim)) }
             }
+            if let accessory { Spacer(minLength: 0); accessory }
         }
         .font(.system(size: 14))
     }

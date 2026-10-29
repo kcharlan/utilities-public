@@ -287,4 +287,5 @@ import TelltaleCore
     func requestAuthorization() async throws -> Bool { true }
     func post(_ request: UNNotificationRequest) async throws {}
     func delivered() async -> [UNNotification] { [] }
+    func removeDelivered(identifiers: [String]) {}
 }

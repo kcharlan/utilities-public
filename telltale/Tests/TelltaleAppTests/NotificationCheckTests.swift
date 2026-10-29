@@ -31,7 +31,7 @@ private final class FakeClock: Sendable {
         coder.encode(Date(), forKey: "date")
     }
 }
-private func deliveredNotification(for request: UNNotificationRequest) throws -> UNNotification {
+func deliveredNotification(for request: UNNotificationRequest) throws -> UNNotification {
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
     archiver.setClassName("UNNotification", for: ArchivedNotification.self)
     archiver.encode(ArchivedNotification(request: request), forKey: NSKeyedArchiveRootObjectKey)
@@ -68,6 +68,7 @@ private struct SyntheticFailure: LocalizedError {
         if let postFailure { throw postFailure }
         posted.append(request)
     }
+    func removeDelivered(identifiers: [String]) {}
     func delivered() async -> [UNNotification] {
         polls += 1
         var result = earlier

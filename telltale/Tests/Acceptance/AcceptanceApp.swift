@@ -156,6 +156,7 @@ import UserNotifications
         try await native?.post(request)
     }
     func delivered() async -> [UNNotification] { await native?.delivered() ?? [] }
+    func removeDelivered(identifiers: [String]) { native?.removeDelivered(identifiers: identifiers) }
 }
 private struct SyntheticPostingError: LocalizedError {
     var errorDescription: String? { "Synthetic posting failure for acceptance" }

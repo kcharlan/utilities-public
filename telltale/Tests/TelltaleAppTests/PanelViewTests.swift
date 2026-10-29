@@ -4,6 +4,7 @@ import SwiftUI
 import Testing
 import TelltaleCore
 import TelltaleTestSupport
+import UserNotifications
 @testable import Telltale
 
 private struct SyntheticKickstartFailure: LocalizedError {
@@ -12,6 +13,69 @@ private struct SyntheticKickstartFailure: LocalizedError {
 
 /// Spec section 9.1's panel and section 4's narrow read-write path (`UserActions`).
 @MainActor @Suite struct PanelViewTests {
+    @Test func failedAcknowledgeDoesNotRemoveNotifications() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let service = NotificationServiceStub()
+            let content = UNMutableNotificationContent()
+            content.threadIdentifier = "synthetic.thread"
+            service.deliveredNotifications = [try deliveredNotification(for: UNNotificationRequest(identifier: "synthetic-notice", content: content, trigger: nil))]
+            let model = PanelModel(store: PanelWorld.live(paths), actions: PanelWorld.actions(paths), notifier: UserNotifier(service: service))
+            model.acknowledge([PanelSnapshot.Alert(color: .amber, text: "Synthetic", key: "synthetic", threadID: "synthetic.thread")])
+            await Task.yield()
+            #expect(model.actionError != nil && service.removedIdentifiers.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: paths.database.path))
+        }
+    }
+    @Test func acknowledgeAndMarkAsNewRoundTrip() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let writer = try PanelWorld.seed(paths)
+            try PanelWorld.addAlert(writer)
+            let live = PanelWorld.live(paths)
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()))
+            model.acknowledge(live.snapshot.alerts)
+            live.reload()
+            let alert = try #require(live.snapshot.alerts.first)
+            #expect(alert.acknowledgedAt != nil && live.snapshot.attention == nil)
+            model.markAsNew(alert)
+            live.reload()
+            #expect(live.snapshot.alerts.first?.acknowledgedAt == nil && live.snapshot.attention == .amber)
+        }
+    }
+    @Test func successfulAcknowledgeRemovesMatchingNotifications() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let writer = try PanelWorld.seed(paths)
+            try PanelWorld.addAlert(writer)
+            let live = PanelWorld.live(paths)
+            let alert = try #require(live.snapshot.alerts.first)
+            let thread = try #require(alert.threadID)
+            let service = NotificationServiceStub()
+            let content = UNMutableNotificationContent(); content.threadIdentifier = thread
+            service.deliveredNotifications = [try deliveredNotification(for: UNNotificationRequest(identifier: "synthetic-notice", content: content, trigger: nil))]
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: service))
+            model.acknowledge([alert])
+            #expect(await eventually { service.removedIdentifiers == ["synthetic-notice"] })
+            #expect(model.actionError == nil)
+        }
+    }
+    @Test func acknowledgeAllCoversOnlyTheAlertsShown() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let writer = try PanelWorld.seed(paths)
+            try PanelWorld.addAlert(writer)
+            let live = PanelWorld.live(paths)
+            let shown = live.snapshot.alerts
+            let onset = Synth.local(2026, 9, 4, 9, 0)
+            try writer.insertEpisode(EpisodeRow(rule: RuleID.slower.rawValue, provider: ProviderID.codex.rawValue, scope: "synthetic-second-model", direction: .slower, onset: onset, firedAt: onset, severity: LampColor.amber.rawValue, worstValue: 0.75))
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()))
+            model.acknowledge(shown)
+            live.reload()
+            #expect(live.snapshot.alerts.count == 2)
+            #expect(live.snapshot.alerts.filter { $0.acknowledgedAt == nil }.count == 1)
+        }
+    }
     @Test func rendersNothingToReportWhenQuiet() throws {
         try withScratchDirectory { directory in
             let paths = PanelWorld.paths(directory)
@@ -83,12 +147,16 @@ private struct SyntheticKickstartFailure: LocalizedError {
             #expect(throws: StoreError.notInitialized) { try actions.requestRebuild() }
             #expect(throws: StoreError.notInitialized) { try actions.requestRebuild(provider: .codex) }
             #expect(throws: StoreError.notInitialized) { try actions.dismissArrival(provider: .codex) }
+            #expect(throws: StoreError.notInitialized) { try actions.acknowledge([PanelSnapshot.Alert(color: .amber, text: "Synthetic", key: "synthetic")]) }
+            #expect(throws: StoreError.notInitialized) { try actions.markAsNew(key: "synthetic") }
             #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))
 
             // A file the collector created but hasn't migrated is left alone too (ruling R27).
             try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
             #expect(FileManager.default.createFile(atPath: paths.database.path, contents: Data()))
             #expect(throws: StoreError.notInitialized) { try actions.set(.collectorEnabled, false) }
+            #expect(throws: StoreError.notInitialized) { try actions.acknowledge([PanelSnapshot.Alert(color: .amber, text: "Synthetic", key: "synthetic")]) }
+            #expect(throws: StoreError.notInitialized) { try actions.markAsNew(key: "synthetic") }
             #expect(try FileManager.default.attributesOfItem(atPath: paths.database.path)[.size] as? Int == 0)
             try FileManager.default.removeItem(at: paths.database)
 

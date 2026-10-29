@@ -93,6 +93,19 @@ import TelltaleCore
         perform { try actions.dismissArrival(provider: provider); store.reload() }
     }
 
+    func acknowledge(_ alerts: [PanelSnapshot.Alert]) {
+        perform {
+            try actions.acknowledge(alerts)
+            store.reload()
+            let threadIDs = Set(alerts.compactMap(\.threadID))
+            Task { await notifier.removeDelivered(threadIDs: threadIDs) }
+        }
+    }
+
+    func markAsNew(_ alert: PanelSnapshot.Alert) {
+        perform { try actions.markAsNew(key: alert.key); store.reload() }
+    }
+
     func providerName(_ provider: ProviderID) -> String { store.providerName(provider) }
 
     private func perform(_ body: () throws -> Void) {
@@ -203,10 +216,21 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(snapshot.alerts.enumerated()), id: \.offset) { _, alert in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Rectangle().fill(Theme.color(alert.color)).frame(width: 7, height: 7).rotationEffect(.degrees(45))
-                            .accessibilityHidden(true)
-                        Text(alert.text).fixedSize(horizontal: false, vertical: true)
+                        Diamond(color: Theme.color(alert.color), hollow: alert.acknowledgedAt != nil)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(alert.text).foregroundStyle(alert.acknowledgedAt == nil ? Color.primary : Color.secondary).fixedSize(horizontal: false, vertical: true)
+                            if let detail = alert.detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                            if let at = alert.acknowledgedAt { Text(Copy.acknowledged(at: at, calendar: model.calendar)).font(.system(size: 11)).foregroundStyle(.secondary) }
+                        }
+                        Spacer(minLength: 0)
+                        AlertAcknowledgeButton(acknowledged: alert.acknowledgedAt != nil) {
+                            if alert.acknowledgedAt == nil { model.acknowledge([alert]) } else { model.markAsNew(alert) }
+                        }
                     }
+                }
+                let newAlerts = snapshot.alerts.filter { $0.acknowledgedAt == nil }
+                if newAlerts.count > 1 {
+                    HStack { Spacer(); Button(Copy.acknowledgeAll) { model.acknowledge(newAlerts) }.buttonStyle(.borderless).font(.system(size: 11)) }
                 }
             }
         }
@@ -271,6 +295,16 @@ struct PanelView: View {
         case .green: Color(nsColor: Theme.green)
         case .red: Theme.color(.red)
         }
+    }
+}
+
+struct AlertAcknowledgeButton: View {
+    let acknowledged: Bool
+    let action: () -> Void
+    var body: some View {
+        let label = acknowledged ? Copy.markAsNew : Copy.acknowledge
+        Button(action: action) { Image(systemName: acknowledged ? "checkmark.circle.fill" : "checkmark.circle").font(.system(size: 13)) }
+            .buttonStyle(.borderless).help(label).accessibilityLabel(label)
     }
 }
 

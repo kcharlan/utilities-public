@@ -21,7 +21,17 @@ struct ModelView: View {
             if !snapshot.alerts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(snapshot.alerts.enumerated()), id: \.offset) { _, alert in
-                        AlertLine(color: Theme.nsColor(alert.color), text: alert.text)
+                        let detail = [alert.detail, alert.acknowledgedAt.map { Copy.acknowledged(at: $0, calendar: model.calendar) }].compactMap { $0 }.joined(separator: "\n")
+                        AlertLine(color: Theme.nsColor(alert.color), text: alert.text,
+                                  detail: detail.isEmpty ? nil : detail,
+                                  hollow: alert.acknowledgedAt != nil,
+                                  accessory: AnyView(AlertAcknowledgeButton(acknowledged: alert.acknowledgedAt != nil) {
+                                      if alert.acknowledgedAt == nil { model.panel.acknowledge([alert]) } else { model.panel.markAsNew(alert) }
+                                  }))
+                    }
+                    let newAlerts = snapshot.alerts.filter { $0.acknowledgedAt == nil }
+                    if newAlerts.count > 1 {
+                        HStack { Spacer(); Button(Copy.acknowledgeAll) { model.panel.acknowledge(newAlerts) }.buttonStyle(.borderless).font(.system(size: 11)) }
                     }
                 }
             }

@@ -237,14 +237,20 @@ expanded-interface session, whose begin shows the panel; a press while it is ope
 a global mouse monitor and closes it. Escape and clicks elsewhere hide it. While the item is
 hidden or not yet placed, the panel opens at the top right of the menu-bar screen.
 
-The glyph is a lamp lens: a template image while nothing is lit, and the lens with a 7 pt dot
-in the most severe lamp color when a lamp lights. Its accessibility label names the lit lamps.
+The glyph is a lamp lens: a template image while nothing is lit, a filled dot in the most severe
+new alert's color, or a ring in the most severe lit color when all alerts are acknowledged. Its
+accessibility label names the lit lamps and marks acknowledged lamps.
 The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with links to the provider's status-page incidents in its period,
 Accept as usual… and Keep as abnormal, and the collector footer.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
+Use Acknowledge on an alert, or Acknowledge all for the new alerts shown, to reset the attention
+dot while leaving the lamp lit. Acknowledged rows show a hollow diamond and their acknowledgement
+time; Mark as new restores their attention. A new episode, higher severity, or another counted
+failure makes the relevant alert new again. Acknowledging also removes delivered notifications
+for the selected alert threads.
 After a newly added provider finishes its first backfill on an existing installation, a
 standing arrival note names the ready models. Open the provider's first model or dismiss the
 note; dismissal persists across relaunches and rebuilds.
@@ -291,6 +297,8 @@ asks first, since later acceptances are undone too). While the window is closed,
 reread nothing; opening it reads everything again. Readout numbers use Barlow Semi
 Condensed, registered for the process at launch; if it can't be registered, the system font
 stands in and one line is logged.
+The dashboard alert list offers the same Acknowledge, Acknowledge all and Mark as new controls
+as the panel, scoped to its displayed rows.
 
 The collector view shows the four collector lamps, any problem, the schedule, the last and
 next run, the last success and the job label, Run now, Turn on or Turn off, Repair (only when

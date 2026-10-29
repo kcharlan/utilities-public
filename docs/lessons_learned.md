@@ -1620,3 +1620,10 @@ Legacy totals can have unknown reasons. `failedTurnAlertCountsEveryFailureInTheE
 `settledFailuresAtTheEpisodeBoundaryAreNotCounted`,
 `legacyFailedTurnEpisodeKeepsItsCountWithoutInventingReasons`, and
 `failedTurnDetailsRecordOnlyCountedBatches` cover the stale wording and its causes.
+
+## 2026-10-29: Keep acknowledgement actions scoped to rendered alerts
+
+Capture the rows the user saw when acknowledging a list, and remove delivered notifications only
+after the guarded database write succeeds. `acknowledgeAllCoversOnlyTheAlertsShown`,
+`failedAcknowledgeDoesNotRemoveNotifications`, and `removeDeliveredMatchesThreadIdentifiers`
+cover concurrent episodes, write failures, and notification thread identity.

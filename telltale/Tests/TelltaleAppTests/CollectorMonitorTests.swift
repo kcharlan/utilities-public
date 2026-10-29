@@ -20,6 +20,7 @@ import TelltaleTestSupport
         posted.append(request)
     }
     func delivered() async -> [UNNotification] { [] }
+    func removeDelivered(identifiers: [String]) {}
 }
 
 /// One monitor's world under a scratch directory: injected paths, a fake `launchctl`, a store,

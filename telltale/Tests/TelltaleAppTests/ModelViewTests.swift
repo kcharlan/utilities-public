@@ -189,6 +189,23 @@ import TelltaleTestSupport
             #expect(host.fittingSize.width == 1100)
         }
     }
+
+    @Test func modelViewLaysOutWithAcknowledgedAlert() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory, now: Self.now)
+            let writer = try PanelWorld.seed(world.paths)
+            try PanelWorld.addAlert(writer)
+            world.live.reload()
+            world.model.panel.acknowledge(world.live.snapshot.alerts)
+            world.live.reload()
+            #expect(world.live.snapshot.alerts.first?.acknowledgedAt != nil)
+            world.model.select(.model(.codex, Synth.model))
+            let host = NSHostingView(rootView: DashboardView(model: world.model).frame(width: 1100, height: 760))
+            host.frame = NSRect(x: 0, y: 0, width: 1100, height: 760)
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.width == 1100)
+        }
+    }
 }
 
 @Test func providerSpecificModelCopy() {
