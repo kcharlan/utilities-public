@@ -209,6 +209,20 @@ All reads are read-only. SQLite files are opened with `mode=ro` and a short
 busy timeout. On `SQLITE_BUSY` or a locked file, the source skips and retries
 next run (it never blocks Codex).
 
+**Closed WAL databases.** When Codex closes a WAL-mode database, upstream
+SQLite deletes its `-wal` and `-shm` files. The system SQLite Telltale links
+then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
+(code 14) instead of reading the main file; that is not a change in Codex's
+format. The reader reports `ReadOnlySQLite.Closed` for that failure when the
+file's header says WAL (bytes 18 and 19 are both 2) and no `-wal` sits beside
+it. Like a busy file, the source skips it quietly, keeps its cursors and reads
+the file again next run, after Codex reopens it; no side files are created for
+the closed database in the meantime. The evidence has limits: a missing `-wal`
+alone does not prove that no process has the database open, and a file whose
+header cannot be read (an unreadable main file, for example) still reports a
+failure. Rows that Codex prunes while its files stay closed are never read, so
+a long closure can leave a gap.
+
 ### 6.1 Rollouts: responses
 
 **Files.** `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]` and

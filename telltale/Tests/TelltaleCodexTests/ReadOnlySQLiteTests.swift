@@ -122,4 +122,70 @@ import TelltaleTestSupport
             #expect(noTable.detail.contains("absent"))
         }
     }
+
+    // MARK: Closed WAL
+
+    @Test func closedWALDatabaseThrowsClosedAndCreatesNothing() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.threadHistory(codexHome: home)
+            try writer.addTurn(turn: 1, status: "inProgress", startedAt: Self.origin)
+            try writer.finishTurn(turn: 1, status: "failed", errorJSON: nil, completedAt: Self.origin.addingTimeInterval(5))
+            try writer.closeLikeCodex()
+            let database = try ReadOnlySQLite.open(writer.url)
+            #expect(throws: ReadOnlySQLite.Closed.self) {
+                try database.requireColumns(ThreadHistorySource.columns, in: "thread_turns")
+            }
+            #expect(!FileManager.default.fileExists(atPath: writer.url.path + "-wal"))
+            #expect(!FileManager.default.fileExists(atPath: writer.url.path + "-shm"))
+        }
+    }
+
+    @Test func isClosedWALNeedsWALHeaderAndNoWALFile() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            #expect(!ReadOnlySQLite.isClosedWAL(writer.url))  // still open: the -wal is there
+            try writer.closeLikeCodex()
+            #expect(ReadOnlySQLite.isClosedWAL(writer.url))
+
+            // An empty -shm alone changes nothing.
+            let shm = writer.url.path + "-shm"
+            #expect(FileManager.default.createFile(atPath: shm, contents: Data()))
+            #expect(ReadOnlySQLite.isClosedWAL(writer.url))
+            try FileManager.default.removeItem(atPath: shm)
+
+            // An empty -wal alone means the file is not closed, and reads succeed.
+            let wal = writer.url.path + "-wal"
+            #expect(FileManager.default.createFile(atPath: wal, contents: Data()))
+            #expect(!ReadOnlySQLite.isClosedWAL(writer.url))
+            let database = try ReadOnlySQLite.open(writer.url)
+            #expect(try database.query("SELECT COUNT(*) FROM logs") { $0.integer(0) } == [1])
+        }
+    }
+
+    @Test func rollbackJournalAndMissingFilesAreNotClosedWAL() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home, journal: .delete)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            #expect(!ReadOnlySQLite.isClosedWAL(writer.url))
+            #expect(!ReadOnlySQLite.isClosedWAL(home.appending(path: "logs_9.sqlite")))
+            let short = home.appending(path: "logs_8.sqlite")
+            try Data(count: 10).write(to: short)
+            #expect(!ReadOnlySQLite.isClosedWAL(short))
+        }
+    }
+
+    @Test func unreadableClosedDatabaseIsStillAFailure() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home)
+            try writer.addLog(at: Self.origin, body: "synthetic")
+            try writer.closeLikeCodex()
+            #expect(chmod(writer.url.path, 0o000) == 0)
+            defer { chmod(writer.url.path, 0o600) }
+            #expect(throws: ReadOnlySQLite.Failure.self) {
+                let database = try ReadOnlySQLite.open(writer.url)
+                _ = try database.query("SELECT id FROM logs") { $0.integer(0) }
+            }
+        }
+    }
 }

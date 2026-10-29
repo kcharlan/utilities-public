@@ -172,6 +172,9 @@ transaction, post live notifications, prune per the retention table and record t
 Each unit keeps its own progress and backfill boundary; historical points never notify. A new
 provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
+A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly and read
+again next run, like a busy one; see the closed-WAL policy in spec section 6
+(`docs/telltale_design_spec.md`).
 
 It writes only under `~/Library/Application Support/Telltale` (database and lock) and
 `~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`

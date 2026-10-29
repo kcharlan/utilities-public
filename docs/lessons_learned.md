@@ -1,5 +1,20 @@
 # Lessons learned
 
+## 2026-10-29: Read-only SQLite can't open a WAL database its writer closed
+
+Telltale reported a "format problem" for Codex's databases whenever Codex was
+closed. Codex's last connection deletes `-wal` and `-shm`; the system SQLite a
+`mode=ro` reader links then opens the file but fails its first statement with
+`SQLITE_CANTOPEN` (14), which looked like a changed schema. The fixtures hid it
+because the system SQLite keeps the WAL on close by default
+(`SQLITE_FCNTL_PERSIST_WAL` is 1), so a test writer's close left both files in
+place. `CodexDatabase.closeLikeCodex()` now turns persistence off before closing,
+and `reopen(_:)` writes again afterwards. The reader recognizes the state by a WAL
+header (bytes 18 and 19 equal 2) with no `-wal` and skips the file quietly like a
+busy one, keeping its cursor. Treat that evidence as a hint, not proof that no one
+has the file open, and keep an unreadable main file a failure. Colophon's lessons
+cover how other readers behave on the same files.
+
 ## 2026-10-28: Distinguish cold start from a still-learning baseline
 
 A model can have enough active days to judge speed while its baseline is still

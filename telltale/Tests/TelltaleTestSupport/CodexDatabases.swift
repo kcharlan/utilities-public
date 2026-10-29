@@ -4,7 +4,8 @@ import SQLite3
 /// A writable connection to a synthetic Codex SQLite file (`thread_history_N.sqlite` or
 /// `logs_N.sqlite`), with Codex's table and column names (spec sections 6.2 and 6.3). Rows are
 /// synthetic. The connection stays open, so a WAL-mode file keeps its `-wal` and `-shm` side files
-/// like Codex's live ones.
+/// like Codex's live ones until `closeLikeCodex()` closes it the way Codex does, after which
+/// `reopen(_:)` gives a writer again.
 public final class CodexDatabase {
     public enum Journal: String, Sendable {
         case wal = "WAL"
@@ -24,17 +25,24 @@ public final class CodexDatabase {
     public static let retryTarget = "codex_core::responses_retry"
 
     public let url: URL
-    private let db: OpaquePointer
+    private var db: OpaquePointer?
     private let columns: Set<String>
     private var nextOrdinal: Int64 = 0
 
-    private init(url: URL, db: OpaquePointer, columns: Set<String>) {
+    private init(url: URL, db: OpaquePointer, columns: Set<String>, nextOrdinal: Int64 = 0) {
         self.url = url
         self.db = db
         self.columns = columns
+        self.nextOrdinal = nextOrdinal
     }
 
     deinit { sqlite3_close_v2(db) }
+
+    /// The open connection; every write after `closeLikeCodex()` fails here.
+    private func connection() throws -> OpaquePointer {
+        guard let db else { throw Failure(description: "closed") }
+        return db
+    }
 
     // MARK: Creation
 
@@ -83,6 +91,63 @@ public final class CodexDatabase {
         return database
     }
 
+    // MARK: Closing and reopening
+
+    /// Closes the connection the way Codex does when it exits. Upstream SQLite deletes `-wal` and
+    /// `-shm` on the last close, but the system SQLite keeps them by default
+    /// (`SQLITE_FCNTL_PERSIST_WAL` is 1), which would hide the closed-WAL state from tests, so this
+    /// turns persistence off first. Every write afterwards throws until the file is reopened.
+    public func closeLikeCodex() throws {
+        guard let handle = db else { return }
+        var persist: Int32 = 0
+        sqlite3_file_control(handle, "main", SQLITE_FCNTL_PERSIST_WAL, &persist)
+        sqlite3_close_v2(handle)
+        db = nil
+        for suffix in ["-wal", "-shm"] where FileManager.default.fileExists(atPath: url.path + suffix) {
+            throw Failure(description: "\(url.lastPathComponent + suffix) survived the close")
+        }
+    }
+
+    /// Opens an existing file read-write, without creating it, so a test can write again after a close.
+    public static func reopen(_ url: URL) throws -> CodexDatabase {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
+            let handle
+        else {
+            sqlite3_close_v2(handle)
+            throw Failure(description: "reopen failed: \(url.lastPathComponent)")
+        }
+        sqlite3_busy_timeout(handle, 5_000)
+        var names = Set<String>()
+        for table in ["thread_turns", "logs"] {
+            names.formUnion(try columnNames(of: table, in: handle))
+        }
+        var ordinal: Int64 = 0
+        if names.contains("rollout_ordinal") {
+            ordinal = try integer("SELECT COALESCE(MAX(rollout_ordinal), 0) FROM thread_turns", in: handle)
+        }
+        return CodexDatabase(url: url, db: handle, columns: names, nextOrdinal: ordinal)
+    }
+
+    private static func columnNames(of table: String, in handle: OpaquePointer) throws -> [String] {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "PRAGMA table_info(\(table))", -1, &statement, nil) == SQLITE_OK else {
+            throw Failure(description: "table_info failed: \(table)")
+        }
+        defer { sqlite3_finalize(statement) }
+        var names: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW { names.append(String(cString: sqlite3_column_text(statement, 1))) }
+        return names
+    }
+
+    private static func integer(_ sql: String, in handle: OpaquePointer) throws -> Int64 {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else { throw Failure(description: "failed: \(sql)") }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw Failure(description: "no row: \(sql)") }
+        return sqlite3_column_int64(statement, 0)
+    }
+
     // MARK: Rows
 
     /// A thread turn. `thread`/`turn` numbers give `thread_synthetic_NN` and `turn_synthetic_NN`.
@@ -120,7 +185,7 @@ public final class CodexDatabase {
             "ts": .integer(Int64(seconds)), "ts_nanos": .integer(Int64(((date.timeIntervalSince1970 - seconds) * 1e9).rounded())),
             "level": .text(level), "target": .text(target), "feedback_log_body": body.map(Value.text) ?? .null
         ])
-        return sqlite3_last_insert_rowid(db)
+        return sqlite3_last_insert_rowid(try connection())
     }
 
     /// Deletes log rows with ids below `id`, as Codex's retention does.
@@ -151,7 +216,7 @@ public final class CodexDatabase {
 
     public func execute(_ sql: String) throws {
         var message: UnsafeMutablePointer<CChar>?
-        guard sqlite3_exec(db, sql, nil, nil, &message) == SQLITE_OK else {
+        guard sqlite3_exec(try connection(), sql, nil, nil, &message) == SQLITE_OK else {
             let text = message.map { String(cString: $0) } ?? "unknown"
             sqlite3_free(message)
             throw Failure(description: "\(text): \(sql)")

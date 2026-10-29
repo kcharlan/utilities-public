@@ -250,6 +250,48 @@ import TelltaleTestSupport
         }
     }
 
+    @Test func closedDatabasesAreSkippedQuietlyAndReadAfterReopening() throws {
+        try withScratchDirectory { home in
+            try Self.session(1).writePlain(codexHome: home)
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.addTurn(turn: 1, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(100))
+            let logs = try CodexDatabase.logs(codexHome: home)
+            let firstID = try logs.addLog(at: Self.at(300), body: Self.disconnect)
+
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            #expect(first.state == .ready)
+            let before = try Self.cursor(first)
+            #expect(before.logsAfterID == firstID && before.threadHistorySince == Self.at(1_000))
+
+            // Codex wrote more rows, then exited: both files are closed WAL databases.
+            try history.addTurn(turn: 2, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(1_100))
+            try logs.addLog(at: Self.at(1_200), body: Self.disconnect)
+            try history.closeLikeCodex()
+            try logs.closeLikeCodex()
+
+            let skipped = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(skipped.state == .ready)  // skipped, not a format problem
+            #expect(skipped.batch.connectionEvents.isEmpty && skipped.batch.failedTurns.isEmpty)
+            let after = try Self.cursor(skipped)
+            #expect(after.logsAfterID == before.logsAfterID)
+            #expect(after.logsLastSeen == before.logsLastSeen)
+            #expect(after.threadHistorySince == before.threadHistorySince)
+            for url in [history.url, logs.url] {
+                #expect(!FileManager.default.fileExists(atPath: url.path + "-wal"))
+            }
+
+            // Once Codex reopens the files, the unread rows are read.
+            _ = try CodexDatabase.reopen(history.url)
+            _ = try CodexDatabase.reopen(logs.url)
+            let later = source.ingest(cursor: skipped.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
+            #expect(later.state == .ready)
+            #expect(later.batch.failedTurns.map(\.turnID).contains("turn_synthetic_02"))
+            #expect(later.batch.connectionEvents.count == 1)
+            #expect(try Self.cursor(later).logsAfterID == firstID + 1)
+        }
+    }
+
     // MARK: Gaps
 
     @Test func gapRecordedWhenLogRetentionPassedCursor() throws {

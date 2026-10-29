@@ -145,11 +145,13 @@ public struct CodexUsageSource: UsageSource {
         case problem(String)
     }
 
-    /// A busy file is skipped quietly; anything else that goes wrong is a problem naming `part`.
+    /// A busy or closed file is skipped quietly; anything else that goes wrong is a problem naming `part`.
     private static func run<T>(_ part: String, _ body: () throws -> T) -> Outcome<T> {
         do {
             return .ok(try body())
         } catch is ReadOnlySQLite.Busy {
+            return .busy
+        } catch is ReadOnlySQLite.Closed {
             return .busy
         } catch let error as ReadOnlySQLite.FormatProblem {
             return .problem("\(part): \(error.detail)")

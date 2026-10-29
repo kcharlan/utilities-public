@@ -14,12 +14,22 @@ public struct SQLiteStep: Sendable {
 ///
 /// The file is opened with `mode=ro` and a short busy timeout. `SQLITE_BUSY` and `SQLITE_LOCKED`,
 /// from any step, become `Busy`, so a caller skips the file and retries next run rather than
-/// blocking Codex. Read-only still joins SQLite's normal coordination: opening a WAL database
-/// can create or update its `-shm` side file, so Telltale does not promise that Codex's files
-/// are untouched at that level (Colophon's read-only SQLite lesson).
+/// blocking Codex. A WAL database whose writer closed it, leaving no `-wal`, becomes `Closed` and
+/// is skipped the same way. Read-only still joins SQLite's normal coordination: opening a WAL
+/// database can create or update its `-shm` side file, so Telltale does not promise that Codex's
+/// files are untouched at that level (Colophon's read-only SQLite lesson).
 public final class ReadOnlySQLite {
     /// Another connection holds the file; skip it this run.
     public struct Busy: Error, Equatable, Sendable {}
+
+    /// A WAL-mode database that has no `-wal` file beside it, so SQLite could not read it.
+    ///
+    /// When a writer closes a WAL database cleanly, upstream SQLite deletes `-wal` and `-shm`. The
+    /// system SQLite then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
+    /// instead of reading the main file. `isClosedWAL` is the evidence: a WAL header and no `-wal`.
+    /// It does not prove that no process has the database open, so a caller skips the file quietly,
+    /// keeps its cursor and reads the file again next run, rather than reporting a format problem.
+    public struct Closed: Error, Equatable, Sendable {}
 
     /// SQLite refused for a reason other than contention, or the file is not a plain file.
     public struct Failure: Error, Equatable, Sendable, CustomStringConvertible {
@@ -66,11 +76,13 @@ public final class ReadOnlySQLite {
     private let db: OpaquePointer
     private let step: SQLiteStep
     private let name: String
+    private let url: URL
 
-    private init(db: OpaquePointer, step: SQLiteStep, name: String) {
+    private init(db: OpaquePointer, step: SQLiteStep, name: String, url: URL) {
         self.db = db
         self.step = step
         self.name = name
+        self.url = url
     }
 
     deinit { sqlite3_close_v2(db) }
@@ -92,11 +104,22 @@ public final class ReadOnlySQLite {
         guard code == SQLITE_OK, let handle else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "out of memory"
             sqlite3_close_v2(handle)
-            throw failure(code, message: message, context: "opening \(name)")
+            throw failure(code, message: message, context: "opening \(name)", url: url)
         }
         let seconds = max(0, busyTimeout.components.seconds)
         sqlite3_busy_timeout(handle, Int32(clamping: seconds * 1_000 + busyTimeout.components.attoseconds / 1_000_000_000_000_000))
-        return ReadOnlySQLite(db: handle, step: step, name: name)
+        return ReadOnlySQLite(db: handle, step: step, name: name, url: url)
+    }
+
+    /// True when `url` starts with a WAL header (bytes 18 and 19 are both 2; a rollback-journal file
+    /// has 1) and has no `-wal` beside it. Failing to read the header is false.
+    public static func isClosedWAL(_ url: URL) -> Bool {
+        guard !FileManager.default.fileExists(atPath: url.path + "-wal"),
+            let handle = try? FileHandle(forReadingFrom: url)
+        else { return false }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 20), header.count == 20 else { return false }
+        return header[header.startIndex + 18] == 2 && header[header.startIndex + 19] == 2
     }
 
     /// The highest-numbered `<prefix>_N.sqlite` in `directory` (spec sections 6.2 and 6.3), if any.
@@ -118,7 +141,7 @@ public final class ReadOnlySQLite {
         var statement: OpaquePointer?
         let prepared = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
         guard prepared == SQLITE_OK, let statement else {
-            throw Self.failure(prepared, message: String(cString: sqlite3_errmsg(db)), context: "preparing a statement on \(name)")
+            throw Self.failure(prepared, message: String(cString: sqlite3_errmsg(db)), context: "preparing a statement on \(name)", url: url)
         }
         defer { sqlite3_finalize(statement) }
         for (index, binding) in bindings.enumerated() {
@@ -129,7 +152,7 @@ public final class ReadOnlySQLite {
             case .text(let value): code = sqlite3_bind_text(statement, position, value, -1, Self.transient)
             }
             guard code == SQLITE_OK else {
-                throw Self.failure(code, message: String(cString: sqlite3_errmsg(db)), context: "binding on \(name)")
+                throw Self.failure(code, message: String(cString: sqlite3_errmsg(db)), context: "binding on \(name)", url: url)
             }
         }
         var rows: [T] = []
@@ -140,7 +163,7 @@ public final class ReadOnlySQLite {
             } else if code == SQLITE_DONE {
                 return rows
             } else {
-                throw Self.failure(code, message: String(cString: sqlite3_errmsg(db)), context: "reading \(name)")
+                throw Self.failure(code, message: String(cString: sqlite3_errmsg(db)), context: "reading \(name)", url: url)
             }
         }
     }
@@ -166,9 +189,10 @@ public final class ReadOnlySQLite {
 
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    private static func failure(_ code: Int32, message: String, context: String) -> any Error {
+    private static func failure(_ code: Int32, message: String, context: String, url: URL) -> any Error {
         let primary = code & 0xFF
         if primary == SQLITE_BUSY || primary == SQLITE_LOCKED { return Busy() }
+        if primary == SQLITE_CANTOPEN && isClosedWAL(url) { return Closed() }
         return Failure(code: code, message: message, context: context)
     }
 
