@@ -71,7 +71,9 @@ make
 ```
 
 The SQLite prefix defaults to `/opt/homebrew/opt/sqlite`. Override it when
-needed, for example `make SQLITE_PREFIX=/usr/local/opt/sqlite`. The release
+needed, for example `make SQLITE_PREFIX=/usr/local/opt/sqlite`. Do not point it
+at macOS's system SQLite: that library cannot read a closed Codex database
+whose WAL file has been deleted. The release
 links SQLite, libcurl, pthreads, CoreFoundation, Foundation and the Objective-C
 runtime. Claude accounting uses the system JSON decoder and number coercion
 through a small C bridge; no external package is added. Building and running it

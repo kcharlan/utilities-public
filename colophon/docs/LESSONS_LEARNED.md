@@ -188,6 +188,12 @@ historical evidence, not available native acceptance commands.
 - Read-only SQLite uses normal coordination and bounded busy timeouts; it
   can create or update WAL shared-memory side files. Do not promise absolute
   source-write exclusion or substitute immutable mode without changing the contract.
+- Codex's SQLite deletes `-wal` and `-shm` when its last connection closes.
+  Homebrew SQLite recreates both for a read-only reader and reads normally;
+  macOS's system SQLite cannot open that database read-only (code 14), which
+  broke Telltale's Codex reads whenever Codex was closed. Keep linking Homebrew
+  SQLite. `test_sqlite_closed_wal.c` closes fixtures with `PERSIST_WAL=0`
+  because the system library otherwise keeps the WAL and hides the case.
 - Unknown token components and clocks remain unknown. Reported durations do
   not prove intervals, and temporal proximity does not prove usage attribution.
   Keep conservation and ownership evidence distinct from display estimates.
