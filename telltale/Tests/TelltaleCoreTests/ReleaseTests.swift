@@ -8,7 +8,7 @@ import TelltaleTestSupport
     /// the spec are three separately maintained statements of one contract.
     @Test func infoPlistMatchesRelease() throws {
         let plist = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "Resources/Info.plist"))
-        #expect(TelltaleRelease.version == "0.3.1")
+        #expect(TelltaleRelease.version == "0.3.2")
         #expect(TelltaleRelease.displayName == "Telltale")
         #expect(TelltaleRelease.bundleIdentifier == "local.utilities.telltale")
         #expect(TelltaleRelease.collectorLabel == "local.utilities.telltale.collector")
@@ -19,7 +19,7 @@ import TelltaleTestSupport
         #expect(plist["CFBundleExecutable"] as? String == "Telltale")
         #expect(plist["CFBundlePackageType"] as? String == "APPL")
         #expect(plist["LSUIElement"] as? Bool == true)
-        #expect(plist["CFBundleVersion"] as? String == "6")
+        #expect(plist["CFBundleVersion"] as? String == "7")
 
         let anker = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "../anker_charge_monitor/Resources/Info.plist"))
         #expect(plist["LSMinimumSystemVersion"] as? String == anker["LSMinimumSystemVersion"] as? String)

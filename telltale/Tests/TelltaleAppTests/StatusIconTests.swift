@@ -29,9 +29,25 @@ private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampC
         for appearance in [NSAppearance.Name.darkAqua, .aqua] {
             let red = try lampRGB(.red, appearance: appearance)
             let pixels = try statusIconPixels(image, appearance: appearance).filter { $0.matches(red) }
-            let dot = NSRect(x: image.size.width - 7, y: image.size.height - 7, width: 7, height: 7)
+            let diameter = StatusIcon.dotDiameter
+            let dot = NSRect(x: image.size.width - diameter, y: image.size.height - diameter, width: diameter, height: diameter)
             #expect(!pixels.isEmpty && pixels.allSatisfy { dot.contains(NSPoint(x: $0.x, y: $0.y)) })
             #expect(!pixels.contains { abs($0.x - dot.midX) < 0.5 && abs($0.y - dot.midY) < 0.5 })
+        }
+    }
+    @Test func acknowledgedRingHoleIsWideEnoughToTellFromAFilledDot() throws {
+        // A 7 pt dot left a 4 pt hole that read as filled in the menu bar. The ring's
+        // hole must stay clear for at least 6 pt across; the filled dot covers it.
+        let diameter = StatusIcon.dotDiameter
+        func inHole(_ pixel: IconPixel, _ size: NSSize) -> Bool {
+            hypot(pixel.x - (size.width - diameter / 2), pixel.y - (size.height - diameter / 2)) < 3
+        }
+        let ring = try #require(StatusIcon.image(for: snapshot([.errors: .red], unacknowledged: [:])))
+        let filled = try #require(StatusIcon.image(for: snapshot([.errors: .red])))
+        for appearance in [NSAppearance.Name.darkAqua, .aqua] {
+            #expect(!(try statusIconPixels(ring, appearance: appearance)).contains { inHole($0, ring.size) })
+            let red = try lampRGB(.red, appearance: appearance)
+            #expect((try statusIconPixels(filled, appearance: appearance)).filter { inHole($0, filled.size) }.allSatisfy { $0.matches(red) })
         }
     }
     @Test func newAlertFillsTheDotInItsColorOverAnAcknowledgedRed() throws {
@@ -69,15 +85,19 @@ private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampC
         #expect(!alert.isTemplate)
         #expect(alert.accessibilityDescription == "Telltale: Speed amber, Load amber.")
         #expect(alert.size.height == idle.size.height && alert.size.width > idle.size.width)
+        let diameter = StatusIcon.dotDiameter
+        let corner = NSRect(x: alert.size.width - diameter, y: alert.size.height - diameter, width: diameter, height: diameter)
+        let lensPixels = try statusIconPixels(idle, appearance: .aqua).count
         for (appearance, outlineIsLight) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
             let pixels = try statusIconPixels(alert, appearance: appearance)
             let expected = try lampRGB(.amber, appearance: appearance)
             let amber = pixels.filter { $0.matches(expected) }, outline = pixels.filter { !$0.matches(expected) }
             #expect(!amber.isEmpty, "no amber dot in \(appearance.rawValue)")
-            // The dot sits in the top-right corner, above and right of the lens's centre.
-            #expect(amber.allSatisfy { $0.x > alert.size.width / 2 && $0.y > alert.size.height / 2 })
+            // The dot sits in the top-right corner.
+            #expect(amber.allSatisfy { corner.contains(NSPoint(x: $0.x, y: $0.y)) })
             let brightness = outline.map(\.brightness).reduce(0, +) / Double(max(outline.count, 1))
-            #expect(outline.count > amber.count, "no lens outline in \(appearance.rawValue)")
+            // The dot's clearance cuts the lens's corner, but most of the lens remains.
+            #expect(outline.count * 2 > lensPixels, "no lens outline in \(appearance.rawValue)")
             #expect(outlineIsLight ? brightness > 0.8 : brightness < 0.3, "outline brightness \(brightness) in \(appearance.rawValue)")
         }
     }

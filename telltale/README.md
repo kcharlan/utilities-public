@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.3.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.2 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -237,8 +237,9 @@ expanded-interface session, whose begin shows the panel; a press while it is ope
 a global mouse monitor and closes it. Escape and clicks elsewhere hide it. While the item is
 hidden or not yet placed, the panel opens at the top right of the menu-bar screen.
 
-The glyph is a lamp lens: a template image while nothing is lit, a filled dot in the most severe
-new alert's color, or a ring in the most severe lit color when all alerts are acknowledged. Its
+The glyph is a lamp lens: a template image while nothing is lit, a filled 10 pt dot in the most
+severe new alert's color, or a ring in the most severe lit color when all alerts are acknowledged
+(its 7 pt hole keeps it distinct from the filled dot at menu-bar size). Its
 accessibility label names the lit lamps and marks acknowledged lamps.
 The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
@@ -362,7 +363,8 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
-- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.1, with build 6 in help.
+- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.2, with build 7 in help.
+- Status item dot, Light and Dark bars: a new alert shows a filled dot and an acknowledged one a ring whose hollow centre is plain at a glance; Mark as new fills it again.
 - VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
@@ -460,6 +462,7 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
 | Installed release, closed Codex snapshot read and cleanup | Not yet run |
 | Installed 0.3.1 speed reversal, row and version checks | Not yet run |
+| Installed 0.3.2 filled and hollow status item dot, Light and Dark | Not yet run |
 | 0.3.0 acceptance bundle acknowledgement and failed-turn re-arm | Not yet run |
 | Installed 0.3.0 Collector acknowledgement and repair | Not yet run |
 | Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
