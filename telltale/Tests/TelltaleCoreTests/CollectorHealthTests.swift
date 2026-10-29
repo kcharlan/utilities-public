@@ -234,6 +234,15 @@ private enum Health {
         #expect(Health.evaluate(runs: runs, states: [states[2]], now: Health.at(9, 21)).lamp == .green)
     }
 
+    @Test func formatProblemFromOneRunShowsButDoesNotNotify() {
+        let state = SourceStateRow(source: "codex", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 20), updatedAt: Health.at(9, 20))
+        let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
+        let report = Health.evaluate(runs: runs, states: [state], now: Health.at(9, 21))
+        #expect(report.problems == ["codex changed its log format. Telltale can't read codex responses since 09:20."])
+        #expect(report.lamp == .red)
+        #expect(!report.notify)
+    }
+
     @Test func invalidStoredIntervalFallsBackToTheDefault() {
         // The collector runs every 5 minutes when the stored interval is invalid; health measures the same.
         let runs = [Health.run(1, Health.at(9, 0), .succeeded)]

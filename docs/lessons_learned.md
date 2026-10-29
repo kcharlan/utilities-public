@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-10-29: "Unavailable since" must restart when the kind of unavailability changes
+
+`CollectorRun` kept a source's `unavailableSince` for as long as it stayed
+unready, so a source that went from "not set up" to "format problem" reported
+the format problem as starting when the earlier, different problem did. That
+also hid whether a format problem had been seen by one run or two. A source now
+keeps its start only while the same kind of state continues (the text may
+change) and restarts it on any other transition. `CollectorHealth` relies on that
+start: a format problem notifies only when a report's `updatedAt` is later than
+its `unavailableSince`, so one run shows on the lamp but does not post. Regression:
+`notSetUpThenFormatProblemRestartsUnavailableSince`, with
+`formatProblemFromOneRunShowsButDoesNotNotify` and `oneRunFormatProblemPostsNothing`
+covering the policy.
+
 ## 2026-10-29: Read-only SQLite can't open a WAL database its writer closed
 
 Telltale reported a "format problem" for Codex's databases whenever Codex was

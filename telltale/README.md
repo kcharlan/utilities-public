@@ -210,7 +210,8 @@ plist, `launchctl print` (Loaded only) and the sources' format problems. The app
 `CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
 than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
-format problem. An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+format problem that two consecutive collector runs report (the lamp and panel message show from the first
+report; see the format-problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.

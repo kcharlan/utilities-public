@@ -57,7 +57,9 @@ public struct CollectorHealthReport: Sendable, Equatable {
 /// - Notify when on and: not loaded; the two newest finished runs failed; no run succeeded for
 ///   more than 3 × the interval (counted from the newest success's start, else the oldest run's,
 ///   else `installedAt`, the plist's last write, when no run is on record);
-///   or a source reports a format problem. A run still in progress that started on schedule
+///   or a source reported a format problem in two consecutive collector runs (spec 6.5's
+///   format-problem policy: the lamp and message show from the first report, the notification
+///   waits for the second). A run still in progress that started on schedule
 ///   holds back the no-success verdict until it ends.
 public enum CollectorHealth {
     /// Section 7.4's rule name, used as the notification title.
@@ -129,6 +131,9 @@ public enum CollectorHealth {
         let formatProblems = sourceStates.filter {
             if case .formatProblem = $0.state { true } else { false }
         }
+        // A report after the one that began the problem shows it persisted across runs; a run that began it
+        // wrote `updatedAt` equal to `unavailableSince`.
+        let confirmedFormatProblem = formatProblems.contains { $0.updatedAt > ($0.unavailableSince ?? $0.updatedAt) }
         for state in formatProblems {
             problems.append(Copy.formatProblem(source: sourceNames[state.source] ?? state.source, since: state.unavailableSince ?? state.updatedAt, calendar: calendar))
         }
@@ -136,6 +141,6 @@ public enum CollectorHealth {
         return CollectorHealthReport(
             installed: installedMatches ? .green : .red, loaded: loaded ? .green : .red, lastRun: lastRun, onSchedule: onSchedule,
             problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty && problems.isEmpty ? Copy.waitingForFirstRun : "",
-            notify: !loaded || twoFailures || noSuccess || !formatProblems.isEmpty)
+            notify: !loaded || twoFailures || noSuccess || confirmedFormatProblem)
     }
 }

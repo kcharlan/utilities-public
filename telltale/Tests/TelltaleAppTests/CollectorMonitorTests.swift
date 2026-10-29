@@ -152,6 +152,30 @@ private let recovered = "Telltale's collector is running again."
         }
     }
 
+    /// A format problem the first run reports shows on the lamp but notifies only once a second
+    /// run reports it (spec 6.5), so a one-run problem never posts, not even a recovery.
+    @Test func oneRunFormatProblemPostsNothing() async throws {
+        try await withMonitor { h in
+            let reportedAt = MonitorHarness.at(9, 0)
+            try h.recordRun(at: reportedAt, .succeeded)
+            try h.store.setSourceState(SourceStateRow(
+                source: "codex", state: .formatProblem("synthetic"), unavailableSince: reportedAt, updatedAt: reportedAt))
+            h.setLoaded(true)
+            let monitor = h.monitor()
+
+            let first = await h.tick(monitor)
+            #expect(first?.problems.count == 1)
+            #expect(first?.notify == false)
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+
+            try h.store.setSourceState(SourceStateRow(source: "codex", state: .ready, updatedAt: h.now))
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+        }
+    }
+
     @Test func relaunchDoesNotRepost() async throws {
         try await withMonitor { h in
             try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
