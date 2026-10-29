@@ -592,9 +592,20 @@ private final class EvaluationPass {
             key, at: point, conditions: conditions, idle: false, value: batch.isEmpty ? nil : Double(batch.count), worst: .total,
             context: context) { $0.lastFailureAt = lastFailure }
         if !batch.isEmpty {
+            guard let episodeID, var episode = openEpisodes[episodeID], let total = Int(exactly: episode.worstValue), total >= batch.count else {
+                throw StoreError.invalidData("Invalid failed-turn episode total")
+            }
+            var detail = try FailedTurnEpisodeDetail.decode(episode.detail) ?? FailedTurnEpisodeDetail(priorCount: total - batch.count, failures: [])
+            detail.failures.append(contentsOf: batch.map { .init(turnID: $0.turnID, errorCode: $0.errorCode) })
+            guard detail.priorCount <= Int.max - detail.failures.count, detail.priorCount + detail.failures.count == total else {
+                throw StoreError.invalidData("Failed-turn detail does not match total")
+            }
+            episode.detail = try detail.encoded()
+            openEpisodes[episodeID] = episode
+            worstChanged.insert(episodeID)
             try store.markEvaluated(batch, at: point)
             // Failures while the episode is already open are outcomes too, for coalesced notices.
-            if !transitions.contains(where: { if case .fired = $0 { true } else { false } }), let episodeID {
+            if !transitions.contains(where: { if case .fired = $0 { true } else { false } }) {
                 outcomes.append(RuleOutcome(
                     at: point, rule: .failedTurns, provider: provider.rawValue, scope: "*", transition: nil, failures: batch,
                     episodeID: episodeID, title: RuleID.failedTurns.title, message: message, catchUpMessage: nil))

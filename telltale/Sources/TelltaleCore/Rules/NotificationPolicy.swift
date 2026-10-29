@@ -92,6 +92,7 @@ public enum NotificationPolicy {
 
     /// The `threadID` of the coalesced failed-turn notice.
     public static func failedTurnsThreadID(provider: ProviderID) -> String { "failedTurns.\(provider.rawValue)" }
+    public static func threadID(rule: RuleID, provider: String, scope: String) -> String { "\(rule.rawValue).\(provider).\(scope)" }
 
     /// The coalescing state to store when the failed-turn notice that `select` chose from these
     /// same inputs couldn't be posted; `failureNotices` is the state from before `select`. The
@@ -191,7 +192,7 @@ public enum NotificationPolicy {
     private static func notice(_ outcome: RuleOutcome, kind: String, body: String) -> PendingNotification {
         PendingNotification(
             id: "\(outcome.rule.rawValue)-\(outcome.episodeID)-\(kind)", title: outcome.title, body: body,
-            threadID: "\(outcome.rule.rawValue).\(outcome.provider).\(outcome.scope)")
+            threadID: threadID(rule: outcome.rule, provider: outcome.provider, scope: outcome.scope))
     }
 }
 

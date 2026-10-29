@@ -410,6 +410,12 @@ Applies to the speed rules and the large-prompt rule:
   example 30% slower, after the same duration **(my call)**. A rise to red
   within an episode sends one extra "now 34% slower" notification.
 
+Failed turns belong to an episode only when the rule engine counts them. Each
+counted batch records its ordered turn IDs and reason codes with the episode's
+canonical total, rule state and evaluation marks in one transaction. Rows settled
+before a lookback cutoff are excluded, including old arrivals on later runs. A turn
+completing at the cutoff is eligible even if it started earlier.
+
 These rules were replayed against Oct 13–27 (§12). Without the stricter clear
 band, a single day produced 7–9 slowdown notifications. Without the idle end,
 the Oct 26 episode masked the Oct 27 slowdown.
@@ -468,6 +474,14 @@ Every value is editable in Settings. Each rule has: on/off, its parameters,
 
 When two lamp colors are possible, the lamp shows the most severe one.
 Severity order: red, amber, blue.
+
+An open failed-turn alert reports the episode's total and onset. After a count
+increase beyond an acknowledgement, it reports the new count and acknowledgement
+time, with the episode total beneath it. Reasons come from counted membership.
+**Legacy failed-turn reasons:** when an older episode has no recorded membership,
+retain its canonical count without inferring reasons from evaluation timestamps;
+omit the reason suffix for any range containing unknown members. Retained events
+are unchanged.
 
 **Watched components**, editable, are matched by the names in the status
 page's component list. Defaults **(my call)**: CLI, VS Code extension, Codex
@@ -543,9 +557,10 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   acceptance gate. See `docs/lessons_learned.md`, the 2026-10-17 status-item
   entries, and PKM knowledge #253. Don't substitute `MenuBarExtra`,
   `NSPopover` or button actions.
-- **Glyph:** the lamp-lens template image, plus a dot in the most severe lit
-  lamp's color. Same drawing approach as Brew Version's `StatusIcon`.
-  Accessibility text names the lit lamps.
+- **Glyph:** the lamp-lens template image, plus a dot in the most severe new
+  lamp's color. If lamps are lit but all acknowledged, draw a 1.5 pt ring in
+  the most severe lit color; otherwise leave the lens plain. Accessibility text
+  names the lit lamps and appends " (acknowledged)" when only acknowledged items light one.
 - **Panel**, as in the mockup:
   - header with "Checked HH:MM" and Check now
   - lamp strip: Speed, Errors, Link, OpenAI, Load
@@ -557,6 +572,27 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 
   With several providers, the strip shows one lamp per signal across all
   providers, and the alert text names the provider.
+
+- **Acknowledging:** each open episode is identified by rule, provider, scope
+  and onset. Acknowledging preserves the lamp and row but resets attention.
+  New rows precede acknowledged rows; within each group sort by severity and
+  recency. A new row offers Acknowledge; an acknowledged row shows a hollow
+  diamond, acknowledgement time and Mark as new. Acknowledge all appears for
+  more than one new rendered row and acts on those rendered rows. Collector
+  health has its own acknowledgement and footer toggle; its acknowledged dot
+  is a ring. Notifications keep their posting policy; acknowledgement removes
+  the corresponding delivered notifications. No acknowledgement event is added.
+
+  | Alert | Acknowledgement holds | Becomes new |
+  |---|---|---|
+  | Failed turns | Count is at most the acknowledged count | Another failure is counted, including between render and click |
+  | Any rule | Severity is at most the acknowledged severity | Severity rises |
+  | A new episode of the same rule and scope | Never, when onset differs | Always |
+  | Collector health | All current problem keys were acknowledged | A new problem key appears |
+
+  A worse value at unchanged severity does not make an alert new. Recreated
+  episodes with the same natural key retain acknowledgement; rebuilds that
+  change the key produce new alerts.
 
 ### 9.2 Dashboard window
 

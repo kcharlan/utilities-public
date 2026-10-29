@@ -59,6 +59,16 @@ private enum Fixture {
         let since = Fixture.since
         let later = Fixture.later
         return [
+            CopyCase("acknowledge", Copy.acknowledge, "Acknowledge"),
+            CopyCase("acknowledgeAll", Copy.acknowledgeAll, "Acknowledge all"),
+            CopyCase("markAsNew", Copy.markAsNew, "Mark as new"),
+            CopyCase("acknowledged", Copy.acknowledged(at: since, calendar: calendar), "Acknowledged 08:05"),
+            CopyCase("failedTurnsOpen one", Copy.failedTurnsOpen(source: "Example", noun: "request", count: 1, reasons: ["model at capacity"], since: since, calendar: calendar), "Example: 1 request failed since 08:05: model at capacity"),
+            CopyCase("failedTurnsOpen many unknown", Copy.failedTurnsOpen(source: "Example", noun: "request", count: 2, reasons: [], since: since, calendar: calendar), "Example: 2 requests failed since 08:05"),
+            CopyCase("failedTurnsBeyondAcknowledged one", Copy.failedTurnsBeyondAcknowledged(source: "Example", noun: "request", count: 1, reasons: ["model at capacity"], acknowledged: since, calendar: calendar), "Example: 1 more request failed than you acknowledged at 08:05: model at capacity"),
+            CopyCase("failedTurnsBeyondAcknowledged many unknown", Copy.failedTurnsBeyondAcknowledged(source: "Example", noun: "request", count: 2, reasons: [], acknowledged: since, calendar: calendar), "Example: 2 more requests failed than you acknowledged at 08:05"),
+            CopyCase("failedTurnsTotal one", Copy.failedTurnsTotal(count: 1, since: since, calendar: calendar), "1 failed since 08:05"),
+            CopyCase("failedTurnsTotal many", Copy.failedTurnsTotal(count: 2, since: since, calendar: calendar), "2 failed since 08:05"),
             CopyCase("slowerFired", Copy.slowerFired(model: "Example", percent: 26, since: since, calendar: calendar),
                      "Example is 26% slower than usual for prompts this size. Since 08:05."),
             CopyCase("slowerCatchUp", Copy.slowerCatchUp(model: "Example", percent: 22, since: since, calendar: calendar),

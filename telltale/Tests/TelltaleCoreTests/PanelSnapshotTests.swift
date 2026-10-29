@@ -18,18 +18,181 @@ private enum Panel {
     /// An open episode with its fired event.
     @discardableResult
     static func episode(
-        _ h: RuleHarness, rule: RuleID, provider: String = "codex", scope: String = Synth.model, severity: LampColor, fired: Date, body: String
+        _ h: RuleHarness, rule: RuleID, provider: String = "codex", scope: String = Synth.model, severity: LampColor, fired: Date, body: String,
+        onset: Date? = nil, worstValue: Double = 0.7, detail: Data? = nil
     ) throws -> Int64 {
         let direction: Direction? = rule == .slower ? .slower : rule == .faster ? .faster : nil
         let id = try h.store.insertEpisode(EpisodeRow(
-            rule: rule.rawValue, provider: provider, scope: scope, direction: direction, onset: fired.addingTimeInterval(-900), firedAt: fired,
-            severity: severity.rawValue, worstValue: 0.7))
+            rule: rule.rawValue, provider: provider, scope: scope, direction: direction, onset: onset ?? fired.addingTimeInterval(-900), firedAt: fired,
+            severity: severity.rawValue, worstValue: worstValue, detail: detail))
         try h.store.insertEvent(EventRow(at: fired, kind: EventKind.ruleFired, provider: provider, scope: scope, title: rule.title, body: body, episodeID: id))
         return id
     }
 }
 
 @Suite struct PanelSnapshotTests {
+    @Test func acknowledgementHoldRulesAndMarkAsNew() throws {
+        let at = Synth.local(2026, 9, 4, 9)
+        let alert = AlertAcknowledgement(at: at, severity: .amber, failedTurns: 2)
+        #expect(Acknowledgements.holds(alert, severity: .amber, failedTurns: 2))
+        #expect(!Acknowledgements.holds(alert, severity: .red, failedTurns: 2))
+        #expect(!Acknowledgements.holds(alert, severity: .amber, failedTurns: 3))
+        let collector = CollectorAcknowledgement(at: at, keys: ["collector", "source.synthetic"])
+        #expect(Acknowledgements.holds(collector, keys: ["collector"]))
+        #expect(!Acknowledgements.holds(collector, keys: []))
+        #expect(!Acknowledgements.holds(collector, keys: ["source.other"]))
+        try withRules { h in
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "slow")
+            let row = try #require(Panel.load(h, at: h.sep4(9)).alerts.first)
+            try h.store.acknowledge([row], at: at)
+            try h.store.markAsNew(key: row.key)
+            #expect(try Panel.load(h, at: h.sep4(9)).alerts.first?.acknowledgedAt == nil)
+        }
+    }
+    @Test func failedTurnAlertCountsEveryFailureInTheEpisode() throws {
+        try withRules { h in
+            let failures = (1...3).map { h.failure($0, started: h.sep4(9, $0 == 3 ? 24 : 10), completed: h.sep4(9, $0 == 3 ? 25 : 10)) }
+            try h.store.upsert(failedTurns: failures)
+            try h.evaluate(through: h.sep4(9, 25))
+            let alert = try #require(Panel.load(h, at: h.sep4(9, 25)).alerts.first)
+            #expect(alert.failedTurns == 3)
+            #expect(alert.threadID == NotificationPolicy.failedTurnsThreadID(provider: .codex))
+            #expect(alert.text == Copy.failedTurnsOpen(source: "Codex", noun: "turn", count: 3, reasons: ["model at capacity"], since: h.sep4(9, 10), calendar: h.calendar))
+        }
+    }
+
+    @Test func acknowledgedAlertStaysListedButLeavesAttention() throws {
+        try withRules { h in
+            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(9, 5), body: "failed")
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9, 10), body: "slower")
+            let before = try Panel.load(h, at: h.sep4(9, 30))
+            try h.store.acknowledge([before.alerts[0]], at: h.sep4(9, 30))
+            let after = try Panel.load(h, at: h.sep4(9, 31))
+            #expect(after.alerts[1].acknowledgedAt == h.sep4(9, 30))
+            #expect(after.alerts[1].detail == Copy.acknowledged(at: h.sep4(9, 30), calendar: h.calendar))
+            #expect(after.lamps[.errors] == .red && after.unacknowledged == [.speed: .amber])
+            #expect(after.attention == .amber && after.isAcknowledged(.errors))
+        }
+    }
+
+    @Test func alertWithoutALampNeverLightsTheGlyph() throws {
+        try withRules { h in
+            try Panel.episode(h, rule: .usageLimit, severity: .red, fired: h.sep4(9), body: "limit")
+            let snapshot = try Panel.load(h, at: h.sep4(9, 30))
+            #expect(snapshot.alerts.count == 1 && snapshot.attention == nil && snapshot.mostSevere == nil)
+        }
+    }
+    @Test func malformedFailedTurnDetailIsNotLegacyWhenTotalIsInvalid() throws {
+        try withRules { h in
+            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(9), body: "synthetic", detail: Data("invalid".utf8))
+            #expect(throws: (any Error).self) { try Panel.load(h, at: h.sep4(9)) }
+        }
+    }
+
+    @Test func settledFailuresAtTheEpisodeBoundaryAreNotCounted() throws {
+        try withRules { h in
+            let cutoff = h.sep4(9, 10)
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(8, 59), completed: h.sep4(9, 5)),
+                h.failure(2, started: h.sep4(9, 1), completed: cutoff), h.failure(3, started: cutoff, completed: cutoff)])
+            _ = try h.store.settleFailedTurns(before: cutoff, provider: .codex)
+            try h.evaluate(from: cutoff, through: cutoff)
+            var snapshot = try Panel.load(h, at: cutoff)
+            #expect(snapshot.alerts.first?.failedTurns == 2)
+            #expect(snapshot.alerts.first?.text == Copy.failedTurnsOpen(source: "Codex", noun: "turn", count: 2, reasons: ["model at capacity"], since: h.sep4(9, 1), calendar: h.calendar))
+            try h.store.acknowledge(snapshot.alerts, at: cutoff)
+            let key = try #require(snapshot.alerts.first?.key)
+            #expect(try h.store.value(.alertAcknowledgements)[key]?.failedTurns == 2)
+            #expect(try h.store.openEpisodes().first?.firedAt == cutoff)
+            let next = h.sep4(9, 15)
+            try h.store.upsert(failedTurns: [h.failure(4, started: h.sep4(9, 2), completed: h.sep4(9, 4)),
+                h.failure(5, started: next, completed: next)])
+            _ = try h.store.settleFailedTurns(before: next, provider: .codex)
+            try h.evaluate(through: next)
+            snapshot = try Panel.load(h, at: next)
+            let alert = try #require(snapshot.alerts.first)
+            #expect(alert.failedTurns == 3 && alert.acknowledgedAt == nil)
+            #expect(alert.text == Copy.failedTurnsBeyondAcknowledged(source: "Codex", noun: "turn", count: 1, reasons: ["model at capacity"], acknowledged: cutoff, calendar: h.calendar))
+            let episode = try #require(try h.store.openEpisodes().first)
+            let detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.failures.map(\.turnID) == ["turn_synthetic_902", "turn_synthetic_903", "turn_synthetic_905"])
+        }
+    }
+
+    @Test func legacyFailedTurnEpisodeKeepsItsCountWithoutInventingReasons() throws {
+        try withRules { h in
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9), completed: h.sep4(9)), h.failure(2, started: h.sep4(9), completed: h.sep4(9))])
+            try h.evaluate(through: h.sep4(9, 5))
+            var episode = try #require(try h.store.openEpisodes().first)
+            episode.detail = nil
+            try h.store.updateEpisode(episode)
+            let alert = try #require(Panel.load(h, at: h.sep4(9, 10)).alerts.first)
+            #expect(alert.text == Copy.failedTurnsOpen(source: "Codex", noun: "turn", count: 2, reasons: [], since: h.sep4(9), calendar: h.calendar))
+            try h.store.acknowledge([alert], at: h.sep4(9, 10))
+            try h.store.upsert(failedTurns: [h.failure(3, started: h.sep4(9, 11), completed: h.sep4(9, 12))])
+            try h.evaluate(through: h.sep4(9, 15))
+            let fresh = try #require(Panel.load(h, at: h.sep4(9, 15)).alerts.first)
+            #expect(fresh.failedTurns == 3)
+            #expect(fresh.text == Copy.failedTurnsBeyondAcknowledged(source: "Codex", noun: "turn", count: 1, reasons: ["model at capacity"], acknowledged: h.sep4(9, 10), calendar: h.calendar))
+        }
+    }
+
+    @Test func failureCountedDuringAcknowledgeComesBackNew() throws {
+        try withRules { h in
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2)), h.failure(2, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
+            try h.evaluate(through: h.sep4(9, 5))
+            let rendered = try #require(Panel.load(h, at: h.sep4(9, 5)).alerts.first)
+            try h.store.upsert(failedTurns: [h.failure(3, started: h.sep4(9, 6), completed: h.sep4(9, 7))])
+            try h.evaluate(through: h.sep4(9, 10))
+            try h.store.acknowledge([rendered], at: h.sep4(9, 15))
+            let snapshot = try Panel.load(h, at: h.sep4(9, 15))
+            let alert = try #require(snapshot.alerts.first)
+            #expect(alert.acknowledgedAt == nil && snapshot.attention == .red)
+            #expect(alert.text == Copy.failedTurnsBeyondAcknowledged(source: "Codex", noun: "turn", count: 1, reasons: ["model at capacity"], acknowledged: h.sep4(9, 15), calendar: h.calendar))
+            #expect(alert.detail == Copy.failedTurnsTotal(count: 3, since: h.sep4(9, 1), calendar: h.calendar))
+        }
+    }
+
+    @Test func escalationBringsAnAcknowledgedAlertBack() throws {
+        try withRules { h in
+            let id = try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "slow")
+            try h.store.acknowledge(Panel.load(h, at: h.sep4(9)).alerts, at: h.sep4(9))
+            var episode = try #require(try h.store.openEpisodes().first { $0.id == id })
+            episode.severity = LampColor.red.rawValue
+            try h.store.updateEpisode(episode)
+            let snapshot = try Panel.load(h, at: h.sep4(9, 5))
+            #expect(snapshot.alerts.first?.acknowledgedAt == nil && snapshot.attention == .red)
+        }
+    }
+
+    @Test func acknowledgementSurvivesANewEpisodeID() throws {
+        try withRules { h in
+            let id = try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "slow")
+            try h.store.acknowledge(Panel.load(h, at: h.sep4(9)).alerts, at: h.sep4(9))
+            var episode = try #require(try h.store.openEpisodes().first { $0.id == id })
+            episode.endedAt = h.sep4(9, 1)
+            try h.store.updateEpisode(episode)
+            episode.id = nil
+            episode.endedAt = nil
+            try h.store.insertEpisode(episode)
+            #expect(try Panel.load(h, at: h.sep4(9, 5)).alerts.first?.acknowledgedAt == h.sep4(9))
+        }
+    }
+
+    @Test func newEpisodeAfterClearIsNew() throws {
+        try withRules { h in
+            let id = try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "slow")
+            let old = try #require(Panel.load(h, at: h.sep4(9)).alerts.first)
+            try h.store.acknowledge([old], at: h.sep4(9))
+            var episode = try #require(try h.store.openEpisodes().first { $0.id == id })
+            episode.endedAt = h.sep4(9, 1)
+            try h.store.updateEpisode(episode)
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9, 5), body: "slow again")
+            let fresh = try #require(Panel.load(h, at: h.sep4(9, 5)).alerts.first)
+            #expect(fresh.acknowledgedAt == nil)
+            try h.store.acknowledge([fresh], at: h.sep4(9, 5))
+            #expect(try h.store.value(.alertAcknowledgements)[old.key] == nil)
+        }
+    }
     @Test func arrivalShowsAfterAnnouncedBackfillFinishes() throws {
         try withRules { h in
             try h.store.set(.pendingArrivals, ["codex"])
@@ -126,7 +289,9 @@ private enum Panel {
             let snapshot = try Panel.load(h, at: h.sep4(9, 22))
             #expect(snapshot.lamps[.speed] == .amber)
             #expect(snapshot.mostSevere == .amber)
-            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example is 25% slower than usual for prompts this size. Since 08:55.")])
+            let episode = try #require(try h.store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
+            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example is 25% slower than usual for prompts this size. Since 08:55.",
+                key: Acknowledgements.key(episode), threadID: NotificationPolicy.threadID(rule: .slower, provider: "codex", scope: Synth.model))])
             #expect([Signal.errors, .link, .provider, .load, .collector].allSatisfy { snapshot.lamps[$0] == .some(nil) })
         }
     }

@@ -1610,3 +1610,13 @@ and settle old failed turns through the existing path. `batchDropsRecordsFromBef
 `linesFromBeforeTheLookbackAreNotStored`, `catchUpAfterTheLookbackKeepsOnlyRecentLines`
 and `coldStartReadsOnlyLinesInsideTheLookback` cover the boundary, preserved fields,
 collector storage and a real synthetic rollout.
+
+## 2026-10-29: Keep failed-turn alert totals tied to counted membership
+
+The most recent event describes one batch, not every failure in an open episode.
+Persist ordered counted IDs and reason codes with the canonical total in the
+evaluation transaction, and never infer membership from settlement timestamps.
+Legacy totals can have unknown reasons. `failedTurnAlertCountsEveryFailureInTheEpisode`,
+`settledFailuresAtTheEpisodeBoundaryAreNotCounted`,
+`legacyFailedTurnEpisodeKeepsItsCountWithoutInventingReasons`, and
+`failedTurnDetailsRecordOnlyCountedBatches` cover the stale wording and its causes.

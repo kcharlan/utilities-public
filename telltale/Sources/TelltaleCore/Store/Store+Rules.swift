@@ -45,6 +45,7 @@ public struct EpisodeRow: Sendable, Equatable, Hashable {
     public var endReason: String?
     public var severity: String
     public var worstValue: Double
+    /// Failed-turn episodes encode `FailedTurnEpisodeDetail`; nil denotes legacy membership.
     public var detail: Data?
 
     public init(

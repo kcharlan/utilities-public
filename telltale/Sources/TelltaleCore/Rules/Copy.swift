@@ -32,6 +32,19 @@ public enum Copy {
 
     // MARK: Failed turns
 
+    public static let acknowledge = "Acknowledge"
+    public static let acknowledgeAll = "Acknowledge all"
+    public static let markAsNew = "Mark as new"
+    public static func acknowledged(at: Date, calendar: Calendar) -> String { "Acknowledged \(clock(at, calendar))" }
+    private static func reasonSuffix(_ reasons: [String]) -> String { reasons.isEmpty ? "" : ": \(list(reasons))" }
+    public static func failedTurnsOpen(source: String, noun: String, count: Int, reasons: [String], since: Date, calendar: Calendar) -> String {
+        "\(source): \(count) \(noun)\(count == 1 ? "" : "s") failed since \(clock(since, calendar))\(reasonSuffix(reasons))"
+    }
+    public static func failedTurnsBeyondAcknowledged(source: String, noun: String, count: Int, reasons: [String], acknowledged: Date, calendar: Calendar) -> String {
+        "\(source): \(count) more \(noun)\(count == 1 ? "" : "s") failed than you acknowledged at \(clock(acknowledged, calendar))\(reasonSuffix(reasons))"
+    }
+    public static func failedTurnsTotal(count: Int, since: Date, calendar: Calendar) -> String { "\(count) failed since \(clock(since, calendar))" }
+
     /// `reasons` are display reasons (`failedTurnReason`); repeats are listed once.
     public static func failedTurns(count: Int, reasons: [String]) -> String {
         "\(count) \(count == 1 ? "turn" : "turns") failed: \(list(reasons))"

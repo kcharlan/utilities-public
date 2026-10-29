@@ -68,7 +68,9 @@ them at 15, in Dim.
 
 A template glyph for a lamp lens (a rounded rectangle with a filament line).
 While healthy it's a plain template image, unlit, like the rest of the bar.
-When a lamp lights, a 7 pt dot in the most severe lamp color appears on it.
+When a new lamp condition lights, a 7 pt dot in the most severe new color appears
+on it. When all lit conditions are acknowledged, a 1.5 pt ring takes the most
+severe lit color. With no lit lamps the lens stays plain.
 This uses the same drawing approach as Brew Version's `StatusIcon` (mug plus
 dot).
 
@@ -94,8 +96,10 @@ dot).
 ```
 
 Everything is left aligned. The alert list is the panel's main content and
-follows the cockpit crew-alerting pattern: one message per condition, ordered
-by severity, removed when the condition clears.
+follows the cockpit crew-alerting pattern: one message per condition, new rows
+first, then acknowledged rows; each group is ordered by severity and recency.
+Acknowledged rows use a hollow diamond and secondary text, and remain until
+the condition clears.
 
 ### Dashboard window (resizable, about 1100 × 760)
 

@@ -395,6 +395,53 @@ extension RuleOutcome {
 
     // MARK: Failed turns
 
+    @Test func failedTurnDetailsRecordOnlyCountedBatches() throws {
+        try withRules { h in
+            let cutoff = h.sep4(9, 5)
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2)), h.failure(2, started: cutoff, completed: cutoff)])
+            _ = try h.store.settleFailedTurns(before: cutoff, provider: .codex)
+            try h.evaluate(from: cutoff, through: cutoff)
+            var episode = try #require(try h.store.openEpisodes().first)
+            var detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.priorCount == 0 && detail.failures.map(\.turnID) == ["turn_synthetic_902"])
+            try h.store.upsert(failedTurns: [h.failure(6, started: h.sep4(9, 1), completed: h.sep4(9, 2)),
+                h.failure(3, started: h.sep4(9, 10), completed: h.sep4(9, 10))])
+            _ = try h.store.settleFailedTurns(before: h.sep4(9, 10), provider: .codex)
+            try h.evaluate(through: h.sep4(9, 10))
+            episode = try #require(try h.store.openEpisodes().first)
+            detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.failures.map(\.turnID) == ["turn_synthetic_902", "turn_synthetic_903"])
+            let reopened = try Store.open(h.url, mode: .readWriteExisting)
+            let resumed = RuleEngine(store: reopened, baseline: BaselineEngine(store: reopened, calendar: h.calendar), calendar: h.calendar, naming: [.codex: SyntheticNaming()])
+            try reopened.upsert(failedTurns: [h.failure(4, started: h.sep4(9, 11), completed: h.sep4(9, 12))])
+            _ = try resumed.evaluate(points: [h.sep4(9, 15)], unit: .provider(.codex), settings: h.settings, watchedComponents: h.watched)
+            episode = try #require(try reopened.openEpisodes().first)
+            detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.failures.map(\.turnID) == ["turn_synthetic_902", "turn_synthetic_903", "turn_synthetic_904"])
+            episode.detail = Data("invalid".utf8)
+            try reopened.updateEpisode(episode)
+            try reopened.upsert(failedTurns: [h.failure(5, started: h.sep4(9, 16), completed: h.sep4(9, 17))])
+            #expect(throws: (any Error).self) {
+                try resumed.evaluate(points: [h.sep4(9, 20)], unit: .provider(.codex), settings: h.settings, watchedComponents: h.watched)
+            }
+            #expect(try reopened.openEpisodes().first?.worstValue == 3)
+            #expect(try reopened.unevaluatedFailedTurns(through: h.sep4(9, 20)).map(\.turnID) == ["turn_synthetic_905"])
+        }
+    }
+    @Test func failedTurnDetailValidatesMembershipAndRanges() throws {
+        let detail = FailedTurnEpisodeDetail(priorCount: 2, failures: [.init(turnID: "turn_synthetic_901", errorCode: "timeout")])
+        #expect(try FailedTurnEpisodeDetail.decode(detail.encoded()) == detail)
+        #expect(detail.reasons(in: 0..<3) == nil)
+        #expect(detail.reasons(in: 0..<0) == [])
+        #expect(detail.reasons(in: 2..<3) == ["timeout"])
+        #expect(detail.reasons(in: 2..<4) == nil)
+        #expect(try FailedTurnEpisodeDetail.decode(nil) == nil)
+        #expect(throws: (any Error).self) { try FailedTurnEpisodeDetail.decode(Data("invalid".utf8)) }
+        #expect(throws: (any Error).self) { try FailedTurnEpisodeDetail(priorCount: -1, failures: []).encoded() }
+        #expect(throws: (any Error).self) {
+            try FailedTurnEpisodeDetail(priorCount: 0, failures: [.init(turnID: "synthetic", errorCode: "a"), .init(turnID: "synthetic", errorCode: "b")]).encoded()
+        }
+    }
     @Test func failedTurnLampHoldsForQuietWindow() throws {
         try withRules { h in
             try h.store.upsert(failedTurns: [

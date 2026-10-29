@@ -917,6 +917,29 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             try RawSQLite.rows(url, "SELECT CAST(at AS INTEGER), body FROM events WHERE kind = 'ruleFired' AND title = 'Failed turns' ORDER BY id"))
     }
 
+    @Test func rebuildRecreatesFailedTurnDetails() async throws {
+        try await withCollector { harness throws in
+            let second = FailedTurnRecord(provider: .codex, threadID: "thread_synthetic_03", turnID: "turn_synthetic_903",
+                startedAt: harness.at(9, 4, 9, 7), completedAt: harness.at(9, 4, 9, 8), errorCode: "timeout", message: "Synthetic failure 3")
+            let failures = [recentFailure(harness), second]
+            harness.source.setNextBatch(IngestBatch(failedTurns: failures))
+            #expect(await harness.run(at: harness.at(9, 4, 9, 10)).outcome == .succeeded)
+            let store = try harness.store()
+            let original = try #require(try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
+            let key = Acknowledgements.key(original)
+            let ackAt = harness.at(9, 4, 9, 11)
+            try store.acknowledge([PanelSnapshot.Alert(color: .red, text: "synthetic", key: key, failedTurns: 2)], at: ackAt)
+            try store.set(.rebuildRequestedAt, harness.at(9, 4, 9, 12))
+            harness.source.setNextBatch(IngestBatch(failedTurns: failures))
+            #expect(await harness.run(at: harness.at(9, 4, 9, 15)).outcome == .succeeded)
+            let episode = try #require(try harness.store().openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
+            let detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.priorCount == 0 && detail.failures.map(\.turnID) == ["turn_synthetic_902", "turn_synthetic_903"])
+            #expect(Acknowledgements.key(episode) == key)
+            let saved = try #require(try harness.store().value(.alertAcknowledgements)[Acknowledgements.key(episode)])
+            #expect(saved.at == ackAt && Acknowledgements.holds(saved, severity: .red, failedTurns: 2))
+        }
+    }
     @Test func rebuildCountsOnlyFailedTurnsInsideTheLookback() async throws {
         try await withCollector { harness throws in
             let old = harness.at(7, 1, 12)
