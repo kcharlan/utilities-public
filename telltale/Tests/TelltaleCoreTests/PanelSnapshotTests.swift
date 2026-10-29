@@ -19,12 +19,12 @@ private enum Panel {
     @discardableResult
     static func episode(
         _ h: RuleHarness, rule: RuleID, provider: String = "codex", scope: String = Synth.model, severity: LampColor, fired: Date, body: String,
-        onset: Date? = nil, worstValue: Double = 0.7, detail: Data? = nil
+        onset: Date? = nil, worstValue: Double? = nil, detail: Data? = nil
     ) throws -> Int64 {
         let direction: Direction? = rule == .slower ? .slower : rule == .faster ? .faster : nil
         let id = try h.store.insertEpisode(EpisodeRow(
             rule: rule.rawValue, provider: provider, scope: scope, direction: direction, onset: onset ?? fired.addingTimeInterval(-900), firedAt: fired,
-            severity: severity.rawValue, worstValue: worstValue, detail: detail))
+            severity: severity.rawValue, worstValue: worstValue ?? (direction == .faster ? 1.3 : 0.7), detail: detail))
         try h.store.insertEvent(EventRow(at: fired, kind: EventKind.ruleFired, provider: provider, scope: scope, title: rule.title, body: body, episodeID: id))
         return id
     }
@@ -335,6 +335,62 @@ private enum Panel {
         }
     }
 
+    @Test func speedAlertStatesItsWorstSinceOnset() throws {
+        for direction in Direction.allCases {
+            try withRules { h in
+                try h.seedUsual()
+                try h.run(30, throughput: direction == .slower ? 30 : 50, hour: 9)
+                let fired = try h.evaluate(through: h.sep4(9, 20))
+                try h.run(30, throughput: direction == .slower ? 29 : 55, hour: 9, minute: 30)
+                _ = try h.evaluate(through: h.sep4(9, 55))
+                let episode = try #require(try h.episodes(.speed(direction)).first)
+                let percent = try #require(SpeedIndex.percent(episode.worstValue))
+                #expect(percent > 25)
+                let expected = direction == .slower
+                    ? Copy.slowerOpen(model: "Example", percent: percent, since: episode.onset, calendar: h.calendar)
+                    : Copy.fasterOpen(model: "Example", percent: percent, since: episode.onset, calendar: h.calendar)
+                let snapshot = try Panel.load(h, at: h.sep4(9, 55))
+                #expect(snapshot.alerts.first?.text == "Codex: " + expected)
+                #expect(snapshot.alerts.first?.color == (direction == .slower ? .amber : .blue))
+                #expect(try h.events().first?[4] == fired.first?.message)
+            }
+        }
+    }
+
+    @Test func reversedSpeedAlertIsNew() throws {
+        for initial in Direction.allCases {
+            try withRules { h in
+                try h.seedUsual()
+                try h.run(30, throughput: initial == .slower ? 30 : 50, hour: 9)
+                try h.run(60, throughput: initial == .slower ? 50 : 30, hour: 9, minute: 30)
+                _ = try h.evaluate(through: h.sep4(9, 25))
+                let old = try #require(try Panel.load(h, at: h.sep4(9, 25)).alerts.first)
+                try h.store.acknowledge([old], at: h.sep4(9, 25))
+                _ = try h.evaluate(through: h.sep4(10, 30))
+                let episode = try #require(try h.episodes(.speed(initial.opposite)).first)
+                let percent = try #require(SpeedIndex.percent(episode.worstValue))
+                let expected = initial == .slower
+                    ? Copy.fasterOpen(model: "Example", percent: percent, since: episode.onset, calendar: h.calendar)
+                    : Copy.slowerOpen(model: "Example", percent: percent, since: episode.onset, calendar: h.calendar)
+                let replacement = try #require(try Panel.load(h, at: h.sep4(10, 30)).alerts.first)
+                #expect(replacement.acknowledgedAt == nil)
+                #expect(replacement.text == "Codex: " + expected)
+                #expect(replacement.color == (initial == .slower ? .blue : .amber))
+            }
+        }
+    }
+
+    @Test func speedAlertWithoutAUsableWorstKeepsItsEventWording() throws {
+        for direction in Direction.allCases {
+            for value in [1.0, direction == .slower ? 1.25 : 0.75, direction == .slower ? -Double.greatestFiniteMagnitude : Double.greatestFiniteMagnitude] {
+                try withRules { h in
+                    try Panel.episode(h, rule: .speed(direction), severity: .amber, fired: h.sep4(9), body: "Fallback wording.", worstValue: value)
+                    #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.first?.text == "Codex: Fallback wording.")
+                }
+            }
+        }
+    }
+
     @Test func slowEpisodeLightsSpeedAmber() throws {
         try withRules { h in
             try h.seedUsual()
@@ -344,7 +400,7 @@ private enum Panel {
             #expect(snapshot.lamps[.speed] == .amber)
             #expect(snapshot.mostSevere == .amber)
             let episode = try #require(try h.store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
-            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example is 25% slower than usual for prompts this size. Since 08:55.",
+            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example has been up to 25% slower than usual for prompts this size since 08:55.",
                 key: Acknowledgements.key(episode), threadID: NotificationPolicy.threadID(rule: .slower, provider: "codex", scope: Synth.model))])
             #expect([Signal.errors, .link, .provider, .load, .collector].allSatisfy { snapshot.lamps[$0] == .some(nil) })
         }
@@ -357,12 +413,12 @@ private enum Panel {
             try Panel.episode(h, rule: .largePrompts, severity: .amber, fired: h.sep4(9, 10), body: "Large prompts.")
             try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(8, 0), body: "1 turn failed: model at capacity")
             let snapshot = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(snapshot.alerts.map(\.text) == ["Codex: 1 turn failed: model at capacity", "Codex: Large prompts.", "Codex: Example is slower.", "Codex: Sample is faster."])
+            #expect(snapshot.alerts.map(\.text) == ["Codex: 1 turn failed: model at capacity", "Codex: Large prompts.", "Codex: Example has been up to 30% slower than usual for prompts this size since 08:45.", "Codex: Sample has been up to 30% faster than usual for prompts this size since 09:05. Check that output isn't shallower."])
             #expect(snapshot.alerts.map(\.color) == [.red, .amber, .amber, .blue])
             #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.errors] == .red && snapshot.lamps[.load] == .amber)
             #expect(snapshot.mostSevere == .red)
 
-            // An escalation rewords the alert and turns it red.
+            // An escalation turns the alert red while its row retains the worst-value wording.
             let escalated = try Panel.episode(h, rule: .slower, scope: "example-model-3.0", severity: .amber, fired: h.sep4(9, 25), body: "Fired wording.")
             var episode = try #require(try h.store.openEpisodes().first { $0.id == escalated })
             episode.severity = LampColor.red.rawValue
@@ -371,7 +427,7 @@ private enum Panel {
                 at: h.sep4(9, 28), kind: EventKind.ruleEscalated, provider: "codex", scope: "example-model-3.0", title: "Slower than usual",
                 body: "Escalated wording.", episodeID: escalated))
             let later = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(later.alerts.prefix(2).map(\.text) == ["Codex: Escalated wording.", "Codex: 1 turn failed: model at capacity"])
+            #expect(later.alerts.prefix(2).map(\.text) == ["Codex: example-model-3.0 has been up to 30% slower than usual for prompts this size since 09:10.", "Codex: 1 turn failed: model at capacity"])
             #expect(later.lamps[.speed] == .red)
         }
     }
@@ -628,7 +684,7 @@ private enum Panel {
             let snapshot = try Panel.load(h, at: h.sep4(9, 10), sources: [speedOnly])
             #expect(snapshot.signals == [.speed, .collector])
             #expect(snapshot.lamps[.errors] == nil && snapshot.lamps[.provider] == nil)
-            #expect(snapshot.alerts.map(\.text) == ["Codex: Example is slower."])
+            #expect(snapshot.alerts.map(\.text) == ["Codex: Example has been up to 30% slower than usual for prompts this size since 08:50."])
             #expect(snapshot.lamps[.speed] == .amber)
         }
     }
@@ -642,7 +698,7 @@ private enum Panel {
             try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9, 1), body: "Example Status: Elevated errors.")
             let snapshot = try Panel.load(h, at: h.sep4(9, 10), sources: [Panel.codex, second])
             #expect(snapshot.alerts.map(\.text) == [
-                "Example Other: 3 disconnect or retry events in the last 60 minutes.", "Example Status: Elevated errors.", "Codex: Example is slower.",
+                "Example Other: 3 disconnect or retry events in the last 60 minutes.", "Example Status: Elevated errors.", "Codex: Example has been up to 30% slower than usual for prompts this size since 08:45.",
             ])
             // One lamp per signal across providers.
             #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.link] == .amber && snapshot.lamps[.provider] == .amber)
@@ -651,13 +707,13 @@ private enum Panel {
             var elsewhere = second
             elsewhere.statusName = "Other Status"
             #expect(try Panel.load(h, at: h.sep4(9, 10), sources: [Panel.codex, elsewhere]).labels[.provider] == "Status")
-            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Codex: Example is slower."))
+            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Codex: Example has been up to 30% slower than usual for prompts this size since 08:45."))
         }
     }
 
     @Test func alertNamesItsProviderOnce() throws {
         try withRules { h in
-            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "Codex: Example is slower.")
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "Codex: Example is slower.", worstValue: 1)
             #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text) == ["Codex: Example is slower."])
         }
     }
@@ -686,11 +742,23 @@ private struct PanelCollisionNaming: ModelNaming {
 @Test func openLegacyAlertsDisambiguateModels() throws {
     try withRules { h in
         for (model, minute) in [(Synth.model, 1), (Synth.otherModel, 2)] {
-            try Panel.episode(h, rule: .slower, scope: model, severity: .amber, fired: h.sep4(9, minute), body: "Example is 20% slower than usual.")
+            try Panel.episode(h, rule: .slower, scope: model, severity: .amber, fired: h.sep4(9, minute), body: "Example is 20% slower than usual.", worstValue: 1)
         }
         let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: PanelCollisionNaming())
         let alerts = try Panel.load(h, at: h.sep4(9, 30), sources: [source]).alerts.map(\.text)
         #expect(alerts.contains("Codex: Example (1.0) is 20% slower than usual."))
         #expect(alerts.contains("Codex: Example (2.0) is 20% slower than usual."))
+    }
+}
+
+@Test func worstValueAlertsDisambiguateModels() throws {
+    try withRules { h in
+        for (model, minute) in [(Synth.model, 1), (Synth.otherModel, 2)] {
+            try Panel.episode(h, rule: .slower, scope: model, severity: .amber, fired: h.sep4(9, minute), body: "Legacy wording.", worstValue: 0.75)
+        }
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: PanelCollisionNaming())
+        let alerts = try Panel.load(h, at: h.sep4(9, 30), sources: [source]).alerts.map(\.text)
+        #expect(alerts.contains("Codex: Example (1.0) has been up to 25% slower than usual for prompts this size since 08:46."))
+        #expect(alerts.contains("Codex: Example (2.0) has been up to 25% slower than usual for prompts this size since 08:47."))
     }
 }

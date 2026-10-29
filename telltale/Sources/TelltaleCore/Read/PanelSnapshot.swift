@@ -36,7 +36,7 @@ public struct SourceSummary: Sendable {
 ///   color of the open episodes behind it (spec sections 5 and 7.4). Collector health lights
 ///   Collector red; the panel's strip leaves Collector out and shows it in the footer.
 /// - Alerts: one per open episode, new before acknowledged, then by severity and recency.
-///   Failed turns use the episode's counted membership; other alerts use their latest event.
+///   Failed turns use counted membership; speed alerts use their worst value when usable, otherwise the latest event.
 /// - Model rows: models with a response in the last `activeWindow`; tok/s and mix-matched usual
 ///   come from the current stored speed evaluation point; the sparkline is the stored points' median
 ///   tok/s over `activeWindow`, one value per 5-minute point.
@@ -203,6 +203,14 @@ public struct PanelSnapshot: Sendable, Equatable {
                 }
                 let latest = try store.latestAlertEvent(episodeID: id)
                 var text = latest?.body ?? rule.title
+                if let source = byProvider[episode.provider],
+                   (rule == .slower && episode.worstValue < 1 || rule == .faster && episode.worstValue > 1),
+                   let percent = SpeedIndex.percent(episode.worstValue) {
+                    let model = source.naming.displayName(model: episode.scope)
+                    text = rule == .slower
+                        ? Copy.slowerOpen(model: model, percent: percent, since: episode.onset, calendar: calendar)
+                        : Copy.fasterOpen(model: model, percent: percent, since: episode.onset, calendar: calendar)
+                }
                 let key = Acknowledgements.key(episode)
                 let ack = acknowledgements[key]
                 var count: Int?
@@ -363,7 +371,7 @@ public struct PanelSnapshot: Sendable, Equatable {
 }
 
 extension Store {
-    /// The newest `ruleFired` or `ruleEscalated` event of an episode: an open episode's alert wording.
+    /// The newest `ruleFired` or `ruleEscalated` event of an episode: the fallback wording for an open episode.
     /// Other kinds (status posts, baseline events, `connectionHistoryIncomplete` gaps) carry no
     /// episode and never match.
     func latestAlertEvent(episodeID: Int64) throws -> (at: Date, body: String)? {

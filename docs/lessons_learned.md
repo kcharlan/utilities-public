@@ -1656,3 +1656,7 @@ Panel numbers must follow the stored evaluation point, including its freshness a
 matched-response availability, rather than the dashboard's last-hour aggregate.
 `rowMatchesTheSpeedReadingNotTheLastHour`, the thin/cold/idle/stale row tests,
 and `panelScenesUseStoredSpeedReadings` cover both the visible dashes and notes.
+
+### 2026-10-29 — Telltale open speed alerts
+
+Open speed rows need the stored episode extreme, not the last event body: a non-escalating change otherwise leaves the row stale. `speedAlertStatesItsWorstSinceOnset`, `reversedSpeedAlertIsNew`, `speedAlertWithoutAUsableWorstKeepsItsEventWording`, and `worstValueAlertsDisambiguateModels` cover both directions, replacement acknowledgement, fallback boundaries, and naming collisions.

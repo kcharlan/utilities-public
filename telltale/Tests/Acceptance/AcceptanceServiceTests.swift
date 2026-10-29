@@ -19,7 +19,7 @@ import TelltaleCore
     }
 
     @Test func seededScenesBuildTheirPanels() async throws {
-        for scene in [SyntheticEnvironment.Scene.quiet, .alerting, .acknowledged, .shift] {
+        for scene in [SyntheticEnvironment.Scene.quiet, .alerting, .fasterAlerting, .acknowledged, .shift] {
             let home = try temporaryHome(scene.rawValue)
             defer { try? FileManager.default.removeItem(at: home) }
             let now = SyntheticEnvironment.snapshotNow
@@ -39,7 +39,11 @@ import TelltaleCore
             case .alerting:
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
                 #expect(snapshot.models.map(\.color) == [.amber, nil])
-                #expect(snapshot.alerts.map(\.text).contains("Codex: Example is 26% slower than usual for prompts this size. Since 08:40."))
+                #expect(snapshot.alerts.map(\.text).contains("Codex: Example has been up to 26% slower than usual for prompts this size since 08:40."))
+            case .fasterAlerting:
+                #expect(snapshot.lamps[.speed] == .blue)
+                #expect(snapshot.models.map(\.color) == [.blue, nil])
+                #expect(snapshot.alerts.map(\.text) == ["Codex: Example has been up to 30% faster than usual for prompts this size since 08:40. Check that output isn't shallower."])
             case .acknowledged:
                 let store = try Store.open(paths.database, mode: .readOnly)
                 let episode = try #require(try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })

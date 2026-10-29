@@ -148,7 +148,7 @@ In `Tests/Acceptance/AcceptanceServiceTests.swift`, add `panelScenesUseStoredSpe
 
 Consumes the helpers and copy from **Speed episodes**.
 
-- [ ] **Write the failing tests** in `PanelSnapshotTests`:
+- [x] **Write the failing tests** in `PanelSnapshotTests`:
 
 | Test | Required assertion |
 |---|---|
@@ -158,14 +158,14 @@ Consumes the helpers and copy from **Speed episodes**.
 
 Keep `openLegacyAlertsDisambiguateModels` on its fallback path; add a worst-value-rendered alert with a colliding display name and require correct disambiguation. Preserve fallback and provider-prefix coverage.
 
-- [ ] **Confirm failure.** Run the filtered command with `PanelSnapshotTests` and demonstrate event-body versus worst-value wording failures before implementing **Alert rows**.
-- [ ] **Implement** the Files list, including **Release**.
-- [ ] **Run release gates.** Apply the Telltale entries in repository-root `agents.md` **Validation Matrix**:
+- [x] **Confirm failure.** Run the filtered command with `PanelSnapshotTests` and demonstrate event-body versus worst-value wording failures before implementing **Alert rows**.
+- [x] **Implement** the Files list, including **Release**.
+- [x] **Run release gates.** Apply the Telltale entries in repository-root `agents.md` **Validation Matrix**:
   - Complete **Tests** and **Build-input validation**.
   - `make release`: require a signed bundle satisfying **Release**.
   - `make snapshots`: inspect the rendered states for wrapping of **Copy**'s open-alert templates, **Panel numbers**' scene assertions and `fasterAlerting`. Follow `Tests/Snapshots/build.sh` for output and cleanup.
   - `make acceptance`: require PASS. Follow `Tests/Acceptance/build.sh` for output and cleanup.
-- [ ] **Update docs.** Amend spec §9.1, visual doc **Panel** and **Copy rules**, `docs/mockups/telltale_mockups.html` panel alerts, and README **Menu bar and panel** for **Alert rows**. Add the native check below under README **Native acceptance** and mark it **Not yet run** under **Results**. Apply **Lessons**, **Expectations** and **Commit boundaries**.
+- [x] **Update docs.** Amend spec §9.1, visual doc **Panel** and **Copy rules**, `docs/mockups/telltale_mockups.html` panel alerts, and README **Menu bar and panel** for **Alert rows**. Add the native check below under README **Native acceptance** and mark it **Not yet run** under **Results**. Apply **Lessons**, **Expectations** and **Commit boundaries**.
 
 ## Native check after authorized deployment
 

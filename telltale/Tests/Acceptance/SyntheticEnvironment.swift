@@ -59,7 +59,7 @@ enum SyntheticEnvironment {
 
     /// The panel states the harnesses seed (spec section 13's snapshot list, plus the acceptance mix).
     enum Scene: String, CaseIterable {
-        case quiet, alerting, acknowledged, shift, twoProviders, arrival, claudeDashboard, sidebarIdle
+        case quiet, alerting, fasterAlerting, acknowledged, shift, twoProviders, arrival, claudeDashboard, sidebarIdle
         case providersNormal, providersNotSetUp, providersFormatProblem, providersBackfilling
         /// The acceptance app: an alerting model, a shift prompt and the collector off.
         case acceptance
@@ -109,6 +109,7 @@ enum SyntheticEnvironment {
     /// - the last hour's responses and 3 hours of evaluation points for both models;
     /// - a succeeded collector run a minute before `now`;
     /// - alerting: Example 26% slower plus a large-prompt alert, both amber;
+    /// - fasterAlerting: Example 30% faster, blue;
     /// - shift: three consecutive days of slower episodes ending before today, with a provider
     ///   incident on the middle day that the prompt links to;
     /// - dashboard: two 300k+ prompts a day and 4 in 10 in the last hour, with cached input and
@@ -163,7 +164,7 @@ enum SyntheticEnvironment {
             }
         }
         let alerting = scene == .alerting || scene == .acknowledged || scene == .acceptance || dashboard
-        let exampleNow: Double = alerting ? 31 : 41
+        let exampleNow: Double = scene == .fasterAlerting ? 55 : alerting ? 31 : 41
         // The dashboard's large-prompt alert: 4 in 10 of the last hour's prompts are 300k or more.
         try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118) { dashboard && $0 % 5 < 2 ? 320_000 : 10_000 }
         try responses(sample, count: 20, tps: 70, from: now.addingTimeInterval(-3_600 + 90), spacing: 170)
@@ -192,7 +193,7 @@ enum SyntheticEnvironment {
         for step in 0..<PanelSnapshot.sparklinePoints {
             let at = lastPoint.addingTimeInterval(-EvaluationPoints.cadence * Double(PanelSnapshot.sparklinePoints - 1 - step))
             let wave = sin(Double(step) / 3)
-            let examplePoint = alerting && step > 20 ? 31 + wave : 41 + wave
+            let examplePoint = scene == .fasterAlerting && step > 20 ? 55 + wave : alerting && step > 20 ? 31 + wave : 41 + wave
             points.append(EvalPointRow(provider: .codex, model: example, at: at, speedIndex: examplePoint / 42, mixUsual: 42, medianTPS: examplePoint, samples: 12, state: .known))
             points.append(EvalPointRow(provider: .codex, model: sample, at: at, speedIndex: (71 + wave) / 74, mixUsual: 74, medianTPS: 71 + wave, samples: 12, state: .known))
         }
@@ -204,6 +205,11 @@ enum SyntheticEnvironment {
                       body: Copy.slowerFired(model: "Example", percent: 26, since: onset, calendar: calendar))
             try alert(store, rule: .largePrompts, scope: "*", direction: nil, onset: now.addingTimeInterval(-20 * 60), at: now.addingTimeInterval(-15 * 60),
                       body: Copy.largePromptsFired(count: 4, of: 10, tokens: 300_000))
+        }
+        if scene == .fasterAlerting {
+            let onset = now.addingTimeInterval(-50 * 60)
+            try alert(store, rule: .faster, scope: example, direction: .faster, onset: onset, at: onset.addingTimeInterval(900),
+                      body: Copy.fasterFired(model: "Example", percent: 30, since: onset, calendar: calendar), severity: .blue, worstValue: 1.3)
         }
         if scene == .acceptance { try store.set(.collectorEnabled, false) }
         if scene == .settings || scene == .acceptance {
@@ -367,11 +373,11 @@ enum SyntheticEnvironment {
         try Data(lines.map { "\(stamp.format($0.0)) \($0.1)\n" }.joined().utf8).write(to: paths.log)
     }
 
-    /// An open amber episode with its fired event.
-    static func alert(_ store: Store, rule: RuleID, scope: String, direction: Direction?, onset: Date, at: Date, body: String, severity: LampColor = .amber) throws {
+    /// An open episode with its fired event.
+    static func alert(_ store: Store, rule: RuleID, scope: String, direction: Direction?, onset: Date, at: Date, body: String, severity: LampColor = .amber, worstValue: Double = 0.74) throws {
         let id = try store.insertEpisode(EpisodeRow(
             rule: rule.rawValue, provider: ProviderID.codex.rawValue, scope: scope, direction: direction, onset: onset, firedAt: at,
-            severity: severity.rawValue, worstValue: 0.74))
+            severity: severity.rawValue, worstValue: worstValue))
         try store.insertEvent(EventRow(at: at, kind: EventKind.ruleFired, provider: ProviderID.codex.rawValue, scope: scope, title: rule.title, body: body, episodeID: id))
     }
 

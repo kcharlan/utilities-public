@@ -6,8 +6,8 @@
 <key>CFBundleIdentifier</key><string>local.utilities.telltale</string>
 <key>CFBundleExecutable</key><string>Telltale</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>5</string>
+<key>CFBundleShortVersionString</key><string>0.3.1</string>
+<key>CFBundleVersion</key><string>6</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>27.0</string>
 </dict></plist>

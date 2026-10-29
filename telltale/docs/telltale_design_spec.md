@@ -557,6 +557,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 
 ### 9.1 Status item and panel
 
+Open slower and faster alerts show the worst representable deviation since onset; if the stored worst value is unusable or points in the wrong direction, the latest fired or escalated event supplies the wording. Events and notifications keep their own wording.
+
 - **Status item:** port Brew Version's macOS 27 handling exactly:
   `StatusItemController.swift`, `StatusPanel.swift`,
   `SettingsWindowController.swift`, with their tests and the real-click
