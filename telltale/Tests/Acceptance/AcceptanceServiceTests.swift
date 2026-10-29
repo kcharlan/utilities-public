@@ -19,7 +19,7 @@ import TelltaleCore
     }
 
     @Test func seededScenesBuildTheirPanels() async throws {
-        for scene in [SyntheticEnvironment.Scene.quiet, .alerting, .shift] {
+        for scene in [SyntheticEnvironment.Scene.quiet, .alerting, .acknowledged, .shift] {
             let home = try temporaryHome(scene.rawValue)
             defer { try? FileManager.default.removeItem(at: home) }
             let now = SyntheticEnvironment.snapshotNow
@@ -40,6 +40,15 @@ import TelltaleCore
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
                 #expect(snapshot.models.map(\.color) == [.amber, nil])
                 #expect(snapshot.alerts.map(\.text).contains("Codex: Example is 26% slower than usual for prompts this size. Since 08:40."))
+            case .acknowledged:
+                let store = try Store.open(paths.database, mode: .readOnly)
+                let episode = try #require(try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
+                let detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+                let saved = try #require(try store.value(.alertAcknowledgements)[Acknowledgements.key(episode)])
+                #expect(snapshot.alerts.count == 3 && snapshot.alerts.dropFirst().allSatisfy { $0.acknowledgedAt != nil })
+                #expect(snapshot.alerts.first?.failedTurns == detail.priorCount + detail.failures.count)
+                #expect(snapshot.alerts.first?.failedTurns ?? 0 > saved.failedTurns ?? 0)
+                #expect(snapshot.alerts.first?.acknowledgedAt == nil && snapshot.attention == .red)
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
                 #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
@@ -64,10 +73,28 @@ import TelltaleCore
             == ["CLI", "Codex API", "Example Chat"])
 
         // A relaunch keeps the session's changes instead of seeding again.
-        try harness.addRedAlert()
+        let fired = Date()
+        try harness.addRedAlert(at: fired)
         let relaunched = try AcceptanceHarness(home: home, notificationService: SyntheticNotificationService(native: nil))
         #expect(relaunched.live.snapshot.lamps[.errors] == .red)
-        #expect(relaunched.live.snapshot.alerts.first?.text == "Codex: 3 turns failed: synthetic failure")
+        #expect(relaunched.live.snapshot.alerts.first?.text == Copy.failedTurnsOpen(source: "Codex", noun: "turn", count: SyntheticEnvironment.acknowledgedFailureCount, reasons: ["synthetic failure"], since: fired, calendar: .current))
+    }
+
+    @Test func addedFailureRearmsAcknowledgedEpisode() throws {
+        let home = try temporaryHome("rearm")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let harness = try AcceptanceHarness(home: home, notificationService: SyntheticNotificationService(native: nil))
+        let at = SyntheticEnvironment.snapshotNow
+        try harness.addRedAlert(at: at)
+        let initial = try #require(harness.live.snapshot.alerts.first { $0.failedTurns != nil })
+        try harness.actions.acknowledge([initial])
+        harness.live.reload()
+        let acknowledgedAt = try #require(harness.live.snapshot.alerts.first { $0.failedTurns != nil }?.acknowledgedAt)
+        try harness.addFailedTurn(at: at.addingTimeInterval(60))
+        let fresh = try #require(harness.live.snapshot.alerts.first { $0.failedTurns != nil })
+        #expect(fresh.failedTurns == (initial.failedTurns ?? 0) + 1 && fresh.acknowledgedAt == nil)
+        #expect(fresh.text == Copy.failedTurnsBeyondAcknowledged(source: "Codex", noun: "turn", count: 1, reasons: ["synthetic failure"], acknowledged: acknowledgedAt, calendar: .current))
+        #expect(harness.live.snapshot.attention == .red)
     }
 
     @Test func commandDoubleNeverReachesLaunchd() async throws {

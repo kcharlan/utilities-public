@@ -127,13 +127,14 @@ public struct PanelSnapshot: Sendable, Equatable {
     public var shiftName: String?
     /// The collector's own lamp (green while running), for the footer's dot.
     public var collector: LampState
+    public var collectorAcknowledgedAt: Date?
     /// The collector-state line.
     public var footer: String
 
     public init(
         checkedAt: Date?, lamps: [Signal: LampColor?], labels: [Signal: String], alerts: [Alert], models: [ModelRow],
         shift: ShiftPrompt?, shiftText: String?, collector: LampState, footer: String, shiftName: String? = nil, arrivals: [ArrivalNote] = [],
-        unacknowledged: [Signal: LampColor]? = nil
+        unacknowledged: [Signal: LampColor]? = nil, collectorAcknowledgedAt: Date? = nil
     ) {
         self.checkedAt = checkedAt
         self.lamps = lamps
@@ -146,6 +147,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         self.shiftText = shiftText
         self.shiftName = shiftName
         self.collector = collector
+        self.collectorAcknowledgedAt = collectorAcknowledgedAt
         self.footer = footer
     }
 
@@ -237,7 +239,11 @@ public struct PanelSnapshot: Sendable, Equatable {
                 if ($0.alert.acknowledgedAt == nil) != ($1.alert.acknowledgedAt == nil) { return $0.alert.acknowledgedAt == nil }
                 return ($0.alert.color, $0.at) > ($1.alert.color, $1.at)
             }
-            if health?.lamp == .red { lamps[.collector] = .red; unacknowledged[.collector] = .red }
+            let collectorAcknowledgement = try store.value(.collectorAcknowledgement)
+            let collectorHeld = health.map { report in
+                report.lamp == .red && collectorAcknowledgement.map { Acknowledgements.holds($0, keys: report.problemKeys) } == true
+            } ?? false
+            if health?.lamp == .red { lamps[.collector] = .red; if !collectorHeld { unacknowledged[.collector] = .red } }
 
             var rows: [ModelRow] = []
             var shift: ShiftPrompt?
@@ -296,7 +302,8 @@ public struct PanelSnapshot: Sendable, Equatable {
             return PanelSnapshot(
                 checkedAt: checkedAt, lamps: lamps, labels: labels(admitted, sources: sources), alerts: alerts.map(\.alert),
                 models: rows, shift: shift, shiftText: shiftText, collector: health?.lamp ?? .unlit,
-                footer: try footer(health: health, store: store), shiftName: shiftName, arrivals: arrivals, unacknowledged: unacknowledged)
+                footer: try footer(health: health, store: store), shiftName: shiftName, arrivals: arrivals, unacknowledged: unacknowledged,
+                collectorAcknowledgedAt: collectorHeld ? collectorAcknowledgement?.at : nil)
         }
     }
 

@@ -31,6 +31,19 @@ private enum Health {
 }
 
 @Suite struct CollectorHealthTests {
+    @Test func problemKeysNameTheCollectorAndEachSource() {
+        let state = SourceStateRow(source: "example", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 0), updatedAt: Health.at(9, 5))
+        #expect(Health.evaluate(loaded: false, runs: Health.healthyRuns, now: Health.at(9, 7)).problemKeys == ["collector"])
+        #expect(Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 7)).problemKeys == ["source.example"])
+        #expect(Health.evaluate(loaded: false, runs: Health.healthyRuns, states: [state], now: Health.at(9, 7)).problemKeys == ["collector", "source.example"])
+    }
+    @Test func repairOnlyRedCollectorHasAProblemKey() {
+        for installed in [nil, Health.elsewhere] {
+            let report = Health.evaluate(installed: installed, runs: Health.healthyRuns, now: Health.at(9, 7))
+            #expect(report.problems.isEmpty && !report.notify && report.lamp == .red)
+            #expect(report.problemKeys == ["collector"])
+        }
+    }
     @Test func readProblemLightsRedWithItsOwnWording() {
         let at = Health.at(9, 0)
         let state = SourceStateRow(source: "example", state: .readProblem("synthetic"), unavailableSince: at, updatedAt: Health.at(9, 5))

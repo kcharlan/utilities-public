@@ -31,6 +31,50 @@ private enum Panel {
 }
 
 @Suite struct PanelSnapshotTests {
+    @Test func collectorAcknowledgementFollowsProblemKeys() throws {
+        try withRules { h in
+            let at = h.sep4(9)
+            try h.store.set(.collectorAcknowledgement, CollectorAcknowledgement(at: at, keys: ["collector"]))
+            let executable = URL(fileURLWithPath: "/nonexistent-synthetic/Telltale")
+            let runs = [CollectorRunRecord(id: 1, startedAt: at, finishedAt: at.addingTimeInterval(4), outcome: .failed, detail: "synthetic failure")]
+            func health(_ now: Date, states: [SourceStateRow] = []) -> CollectorHealthReport {
+                CollectorHealth.evaluate(enabled: true, installedExecutable: executable, installedAt: nil, currentExecutable: executable, loaded: true, runs: runs, intervalMinutes: 5, sourceStates: states, now: now, calendar: h.calendar)
+            }
+            let first = health(h.sep4(9, 1))
+            let later = health(h.sep4(9, 6))
+            #expect(first.problems != later.problems)
+            for report in [first, later] {
+                let snapshot = try Panel.load(h, at: h.sep4(9, 6), health: report)
+                #expect(snapshot.collectorAcknowledgedAt == at && snapshot.attention == nil)
+            }
+            let state = SourceStateRow(source: "example", state: .formatProblem("synthetic"), unavailableSince: at, updatedAt: at)
+            let snapshot = try Panel.load(h, at: h.sep4(9, 6), health: health(h.sep4(9, 6), states: [state]))
+            #expect(snapshot.collectorAcknowledgedAt == nil && snapshot.attention == .red)
+        }
+    }
+    @Test func collectorProblemKindsShareAcknowledgement() throws {
+        try withRules { h in
+            let at = h.sep4(9)
+            try h.store.set(.collectorAcknowledgement, CollectorAcknowledgement(at: at, keys: ["collector"]))
+            let app = URL(fileURLWithPath: "/nonexistent-synthetic/Telltale")
+            let failed = CollectorRunRecord(id: 1, startedAt: at, finishedAt: at.addingTimeInterval(4), outcome: .failed, detail: "synthetic failure")
+            let success = CollectorRunRecord(id: 2, startedAt: at, finishedAt: at.addingTimeInterval(4), outcome: .succeeded, detail: "")
+            for (loaded, runs, now) in [(false, [success], h.sep4(9, 1)), (true, [failed], h.sep4(9, 1)), (true, [success], h.sep4(9, 12))] {
+                let report = CollectorHealth.evaluate(enabled: true, installedExecutable: app, installedAt: nil, currentExecutable: app, loaded: loaded, runs: runs, intervalMinutes: 5, sourceStates: [], now: now, calendar: h.calendar)
+                #expect(try Panel.load(h, at: now, health: report).collectorAcknowledgedAt == at)
+            }
+        }
+    }
+    @Test func repairOnlyRedCollectorCanStayAcknowledged() throws {
+        try withRules { h in
+            let at = h.sep4(9)
+            try h.store.set(.collectorAcknowledgement, CollectorAcknowledgement(at: at, keys: ["collector"]))
+            var report = Panel.healthy
+            report.installed = .red; report.needsRepair = true; report.problemKeys = ["collector"]
+            let snapshot = try Panel.load(h, at: at, health: report)
+            #expect(snapshot.collectorAcknowledgedAt == at && snapshot.unacknowledged[.collector] == nil)
+        }
+    }
     @Test func acknowledgementHoldRulesAndMarkAsNew() throws {
         let at = Synth.local(2026, 9, 4, 9)
         let alert = AlertAcknowledgement(at: at, severity: .amber, failedTurns: 2)

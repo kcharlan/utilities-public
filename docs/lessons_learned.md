@@ -1627,3 +1627,17 @@ Capture the rows the user saw when acknowledging a list, and remove delivered no
 after the guarded database write succeeds. `acknowledgeAllCoversOnlyTheAlertsShown`,
 `failedAcknowledgeDoesNotRemoveNotifications`, and `removeDeliveredMatchesThreadIdentifiers`
 cover concurrent episodes, write failures, and notification thread identity.
+
+## 2026-10-29: Collector acknowledgement must follow readable health
+
+Collector problem identity must include repair-only red states, and a failed
+assessment must not clear stored acknowledgement. A retained stale panel must
+not enable writes. Regressions: `repairOnlyRedCollectorHasAProblemKey`,
+`collectorAcknowledgementClearsWhenHealthy`, and
+`collectorAcknowledgementNeedsTheInstalledCopyAndADatabase`.
+
+## 2026-10-29: Render acknowledgement detail once
+
+The snapshot already supplies the acknowledgement line as alert detail. Appending
+it again in either alert view duplicates it; `acknowledgedRowShowsOneAcknowledgementLine`
+checks the panel's rendered height, and the maintained snapshots expose the layout.

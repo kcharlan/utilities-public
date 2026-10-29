@@ -14,7 +14,7 @@ import TelltaleCore
 // This entry exists only in the isolated renderer. No real database, collector, launchctl,
 // notifications, windows on screen or native input.
 @main struct Snapshots {
-    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .shift, .twoProviders, .arrival]
+    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .acknowledged, .shift, .twoProviders, .arrival]
     static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem, .settings, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling]
 
     @MainActor static func main() async throws {
@@ -33,7 +33,7 @@ import TelltaleCore
             for state in states {
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeModel(state, home: directory)
-                expect(state, model.store.snapshot)
+                try expect(state, model.store)
                 let label = "\(state.rawValue)-\(dark ? "dark" : "light")"
                 let size = try render(AnyView(PanelView(model: model, openSettings: {}, openDashboard: {}, openProvider: { _, _ in })), dark: dark, to: home.appendingPathComponent(label + ".png"))
                 heights[label] = size.height
@@ -45,13 +45,14 @@ import TelltaleCore
         }
         try await renderDashboards(home: home)
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 26 else { fatalError("Expected twenty-six PNGs") }
-        print("Validated ten maintained panel PNGs (quiet, alerting, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
+        guard pngs.count == 28 else { fatalError("Expected twenty-eight PNGs") }
+        print("Validated twelve maintained panel PNGs (quiet, alerting, acknowledged, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
         print("Validated sixteen maintained dashboard PNGs (model views, collector, settings and four provider states), both appearances, Barlow Semi Condensed registered.")
     }
 
     /// The seeded scene's snapshot carries what its PNG is meant to show.
-    @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ snapshot: PanelSnapshot) {
+    @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ live: LiveStore) throws {
+        let snapshot = live.snapshot
         guard snapshot.checkedAt != nil, snapshot.models.count == ((state == .twoProviders || state == .arrival) ? 4 : 2) else { fatalError("\(state): unexpected model rows") }
         switch state {
         case .quiet:
@@ -59,6 +60,15 @@ import TelltaleCore
         case .alerting:
             guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber, snapshot.lamps[.load] == .amber,
                   snapshot.models.map(\.color) == [.amber, nil] else { fatalError("alerting: expected Speed and Load amber and an amber Example row") }
+        case .acknowledged:
+            let episode = try live.read { store, _ in try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue } }!!
+            let detail = try FailedTurnEpisodeDetail.decode(episode.detail)!
+            let saved = try live.read { store, _ in try store.value(.alertAcknowledgements)[Acknowledgements.key(episode)] }!!
+            let first = snapshot.alerts.first!
+            guard snapshot.alerts.count == 3, snapshot.alerts.dropFirst().allSatisfy({ $0.acknowledgedAt != nil }),
+                  first.acknowledgedAt == nil, first.failedTurns == detail.failures.count + detail.priorCount,
+                  first.failedTurns! > saved.failedTurns!, first.detail == Copy.failedTurnsTotal(count: first.failedTurns!, since: episode.onset, calendar: SyntheticEnvironment.calendar),
+                  snapshot.attention == .red else { fatalError("acknowledged: expected acknowledged seed alerts and re-armed failed turn") }
         case .shift:
             guard snapshot.alerts.isEmpty, snapshot.shift?.days == 3, snapshot.shiftText != nil else { fatalError("shift: expected a 3-day lasting-shift prompt") }
         case .acceptance:

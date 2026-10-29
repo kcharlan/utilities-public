@@ -79,7 +79,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that ten panel PNGs and sixteen dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that twelve panel PNGs and sixteen dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
@@ -93,7 +93,7 @@ the production lifecycle (`TelltaleMain`, `AppDelegate`), the collector entry, t
 registry or the notification check, into a separate synthetic renderer in a new 0700
 directory under the OS temporary directory. It seeds a database per scene from
 `Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
-renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
+renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting, acknowledged and the
 lasting-shift prompt (spec section 13's panel states), two providers with colliding Claude names, and the arrival note. It also renders the dashboard window at
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
@@ -366,6 +366,10 @@ check.
 - Check now: the checked time moves (the acceptance double records a synthetic run).
 - **Add red alert** lights Errors red and turns the glyph's dot red; VoiceOver reads the lit
   lamps from the status item and the lamp strip.
+- First acknowledge the existing alerts, then **Add red alert** and acknowledge it. Check the
+  glyph, row and VoiceOver against the acknowledgement contracts in spec §9.1. **Add failed
+  turn** fills the dot red again and shows the count beyond the acknowledgement. Exercise
+  Acknowledge all and Mark as new; quit and reopen to check that acknowledgements persist.
 - The lasting-shift prompt links to "Synthetic slow responses", which opens its synthetic
   status-page address in the browser.
 - Accept as usual… with its date, then Undo; Keep as abnormal hides the prompt.
@@ -397,6 +401,10 @@ check.
 - In the installed release only: the collector turns on at first launch, and no launchd job
   exists for the acceptance bundle (`launchctl print gui/$UID/local.utilities.telltale.collector`
   names the installed executable).
+- In the installed release only, acknowledge existing rule alerts, boot out the collector job,
+  and acknowledge its problem. Check the footer and glyph against spec §9.1. Wait past a collector
+  interval: the not-loaded problem stays acknowledged. Repair the job and verify the next check
+  clears the acknowledgement. Changing next-try text is covered by `collectorAcknowledgementFollowsProblemKeys`.
 - In the installed release only, launch at login: after the first launch, System Settings >
   General > Login Items lists Telltale (allowed, or asking for approval; if it asks, Settings shows
   "Approval required in System Settings" with Open Login Items Settings, and approving it there
@@ -442,6 +450,8 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
 | Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
 | Installed release, closed Codex snapshot read and cleanup | Not yet run |
+| 0.3.0 acceptance bundle acknowledgement and failed-turn re-arm | Not yet run |
+| Installed 0.3.0 Collector acknowledgement and repair | Not yet run |
 | Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 

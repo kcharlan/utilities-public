@@ -13,6 +13,63 @@ private struct SyntheticKickstartFailure: LocalizedError {
 
 /// Spec section 9.1's panel and section 4's narrow read-write path (`UserActions`).
 @MainActor @Suite struct PanelViewTests {
+    @Test func acknowledgedRowShowsOneAcknowledgementLine() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let writer = try PanelWorld.seed(paths)
+            try PanelWorld.addAlert(writer)
+            let live = PanelWorld.live(paths)
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()))
+            let before = NSHostingView(rootView: PanelView(model: model, openSettings: {}, openDashboard: nil)).fittingSize.height
+            model.acknowledge(live.snapshot.alerts)
+            let after = NSHostingView(rootView: PanelView(model: model, openSettings: {}, openDashboard: nil)).fittingSize.height
+            #expect(after > before && after - before < 22)
+        }
+    }
+    @Test func collectorAcknowledgementNeedsTheInstalledCopyAndADatabase() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let health = CollectorHealthReport(installed: .green, loaded: .red, lastRun: .unlit, onSchedule: .unlit, problems: [Copy.collectorNotLoaded], needsRepair: false, footer: "", notice: nil, problemKeys: ["collector"])
+            let live = PanelWorld.live(paths, health: { health })
+            let installed = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()), canAcknowledgeCollector: true)
+            let other = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()), canAcknowledgeCollector: false)
+            await live.refresh()
+            #expect(!installed.offersCollectorAcknowledgement)
+            try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+            #expect(FileManager.default.createFile(atPath: paths.database.path, contents: Data()))
+            await live.refresh()
+            #expect(!installed.offersCollectorAcknowledgement)
+            try FileManager.default.removeItem(at: paths.database)
+            let writer = try Store.open(paths.database, mode: .readWrite)
+            let run = try writer.beginRun(at: PanelWorld.now)
+            try writer.finishRun(run, at: PanelWorld.now, outcome: .failed, detail: "synthetic failure")
+            await live.refresh()
+            #expect(live.snapshot.checkedAt == nil && installed.offersCollectorAcknowledgement && !other.offersCollectorAcknowledgement)
+            for suffix in ["", "-wal", "-shm"] {
+                let path = paths.database.path + suffix
+                if FileManager.default.fileExists(atPath: path) { try FileManager.default.removeItem(atPath: path) }
+            }
+            try Data("synthetic invalid database".utf8).write(to: paths.database)
+            await live.refresh()
+            #expect(live.snapshot.collector == .red && !installed.offersCollectorAcknowledgement)
+        }
+    }
+    @Test func acknowledgingTheCollectorRemovesItsNotifications() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            try PanelWorld.seed(paths)
+            let health = CollectorHealthReport(installed: .green, loaded: .red, lastRun: .green, onSchedule: .green, problems: [Copy.collectorNotLoaded], needsRepair: false, footer: "", notice: nil, problemKeys: ["collector"])
+            let live = PanelWorld.live(paths, health: { health })
+            await live.refresh()
+            let service = NotificationServiceStub()
+            let content = UNMutableNotificationContent(); content.threadIdentifier = CollectorMonitor.threadID
+            service.deliveredNotifications = [try deliveredNotification(for: UNNotificationRequest(identifier: "synthetic-collector", content: content, trigger: nil))]
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: service), canAcknowledgeCollector: true)
+            model.acknowledgeCollector()
+            #expect(await eventually { service.removedIdentifiers == ["synthetic-collector"] })
+            #expect(model.actionError == nil)
+        }
+    }
     @Test func failedAcknowledgeDoesNotRemoveNotifications() async throws {
         try await withAsyncScratchDirectory { directory in
             let paths = PanelWorld.paths(directory)
@@ -149,6 +206,8 @@ private struct SyntheticKickstartFailure: LocalizedError {
             #expect(throws: StoreError.notInitialized) { try actions.dismissArrival(provider: .codex) }
             #expect(throws: StoreError.notInitialized) { try actions.acknowledge([PanelSnapshot.Alert(color: .amber, text: "Synthetic", key: "synthetic")]) }
             #expect(throws: StoreError.notInitialized) { try actions.markAsNew(key: "synthetic") }
+            #expect(throws: StoreError.notInitialized) { try actions.acknowledgeCollector(keys: ["collector"]) }
+            #expect(throws: StoreError.notInitialized) { try actions.markCollectorAsNew() }
             #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))
 
             // A file the collector created but hasn't migrated is left alone too (ruling R27).
@@ -157,6 +216,8 @@ private struct SyntheticKickstartFailure: LocalizedError {
             #expect(throws: StoreError.notInitialized) { try actions.set(.collectorEnabled, false) }
             #expect(throws: StoreError.notInitialized) { try actions.acknowledge([PanelSnapshot.Alert(color: .amber, text: "Synthetic", key: "synthetic")]) }
             #expect(throws: StoreError.notInitialized) { try actions.markAsNew(key: "synthetic") }
+            #expect(throws: StoreError.notInitialized) { try actions.acknowledgeCollector(keys: ["collector"]) }
+            #expect(throws: StoreError.notInitialized) { try actions.markCollectorAsNew() }
             #expect(try FileManager.default.attributesOfItem(atPath: paths.database.path)[.size] as? Int == 0)
             try FileManager.default.removeItem(at: paths.database)
 

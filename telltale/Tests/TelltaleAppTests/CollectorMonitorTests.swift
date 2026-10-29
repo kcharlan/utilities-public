@@ -85,6 +85,32 @@ private let notLoaded = "Telltale's collector isn't loaded. Open the Collector v
 private let recovered = "Telltale's collector is running again."
 
 @MainActor @Suite struct CollectorMonitorTests {
+    @Test func collectorAcknowledgementClearsWhenHealthy() async throws {
+        try await withMonitor { h in
+            let acknowledgement = CollectorAcknowledgement(at: h.now, keys: ["collector"])
+            try h.store.set(.collectorAcknowledgement, acknowledgement)
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            // Missing plist is repair-only red and must not clear even without problem text.
+            let repair = try #require(await h.tick(monitor))
+            #expect(repair.lamp == .red && repair.problems.isEmpty)
+            #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            #expect(await h.tick(monitor) == nil)
+            #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
+            try DashboardWorld.exec(h.paths.database, "DELETE FROM source_state WHERE source = 'synthetic'")
+            let plist = h.paths.launchAgents.appending(path: "local.utilities.telltale.collector.plist")
+            try FileManager.default.createDirectory(at: h.paths.launchAgents, withIntermediateDirectories: true)
+            try PropertyListSerialization.data(fromPropertyList: ["ProgramArguments": [h.currentExecutable.path, "--collect"]], format: .xml, options: 0).write(to: plist)
+            #expect(await h.tick(monitor)?.lamp == .green)
+            #expect(try h.store.value(.collectorAcknowledgement) == nil)
+            try h.store.set(.collectorAcknowledgement, acknowledgement)
+            try h.store.set(.collectorEnabled, false)
+            #expect(await h.tick(monitor)?.lamp == .unlit)
+            #expect(try h.store.value(.collectorAcknowledgement) == nil)
+        }
+    }
     @Test func checksEveryMinute() {
         #expect(CollectorMonitor.checkInterval == 60)
     }

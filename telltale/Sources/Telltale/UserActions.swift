@@ -112,6 +112,14 @@ private struct DataUpdating: LocalizedError {
         try write { try $0.markAsNew(key: key) }
     }
 
+    func acknowledgeCollector(keys: [String]) throws {
+        try write { try $0.set(.collectorAcknowledgement, CollectorAcknowledgement(at: now(), keys: keys)) }
+    }
+
+    func markCollectorAsNew() throws {
+        try write { try $0.set(.collectorAcknowledgement, nil) }
+    }
+
     /// Writes only into the database the collector created (ruling R27): a missing or uninitialized
     /// database throws `StoreError.notInitialized` and nothing is created.
     private func write<T>(_ body: (Store) throws -> T) throws -> T {

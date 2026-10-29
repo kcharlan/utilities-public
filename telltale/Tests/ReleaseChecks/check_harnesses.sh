@@ -23,7 +23,7 @@ snapshot_binary=$(sed -n 's/^Snapshot executable: //p' "$scratch/snapshots.log")
 [ -x "$snapshot_binary" ]
 vtool -show-build "$snapshot_binary" | grep -Eq '\bminos 27\.0\b'
 vtool -show-build "$snapshot_binary" | grep -Eq '\bsdk 27\.0\b'
-[ "$(grep -c '\.png (340 × ' "$scratch/snapshots.log")" = 10 ]
+[ "$(grep -c '\.png (340 × ' "$scratch/snapshots.log")" = 12 ]
 [ "$(grep -c '\.png (1100 × ' "$scratch/snapshots.log")" = 16 ]
 
 make acceptance > "$scratch/acceptance.log" 2>&1

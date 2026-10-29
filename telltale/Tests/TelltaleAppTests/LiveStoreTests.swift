@@ -7,6 +7,28 @@ import TelltaleTestSupport
 /// Spec section 4's database-read contract for the panel: read-only, refreshed by filesystem
 /// changes and a poll, never creating or initializing the database.
 @MainActor @Suite struct LiveStoreTests {
+    @Test func readableDatabaseTracksFailureAndRecoveryWithoutSuccessfulRuns() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let live = PanelWorld.live(paths)
+            #expect(!live.hasReadableDatabase)
+            let writer = try Store.open(paths.database, mode: .readWrite)
+            let run = try writer.beginRun(at: PanelWorld.now)
+            try writer.finishRun(run, at: PanelWorld.now, outcome: .failed, detail: "synthetic failure")
+            await live.refresh()
+            #expect(live.hasReadableDatabase && live.snapshot.checkedAt == nil)
+            try removeDatabase(paths)
+            try Data("synthetic invalid database".utf8).write(to: paths.database)
+            await live.refresh()
+            #expect(!live.hasReadableDatabase && live.lastError != nil)
+            try removeDatabase(paths)
+            await live.refresh()
+            #expect(!live.hasReadableDatabase && live.lastError == nil)
+            try PanelWorld.seed(paths)
+            await live.refresh()
+            #expect(live.hasReadableDatabase)
+        }
+    }
     @Test func refreshesWhenDatabaseChanges() async throws {
         try await withAsyncScratchDirectory { directory in
             let paths = PanelWorld.paths(directory)

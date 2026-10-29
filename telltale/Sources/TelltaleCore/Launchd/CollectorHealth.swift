@@ -23,10 +23,11 @@ public struct CollectorHealthReport: Sendable, Equatable {
     /// first confirmed source problem (one a later run reported again), which need not be the first
     /// the panel lists. Nil while the condition doesn't hold.
     public var notice: String?
+    public var problemKeys: Set<String>
 
     public init(
         installed: LampState, loaded: LampState, lastRun: LampState, onSchedule: LampState, problems: [String], needsRepair: Bool,
-        footer: String, notice: String?
+        footer: String, notice: String?, problemKeys: Set<String> = []
     ) {
         self.installed = installed
         self.loaded = loaded
@@ -36,6 +37,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
         self.needsRepair = needsRepair
         self.footer = footer
         self.notice = notice
+        self.problemKeys = problemKeys
     }
 
     /// Section 7.4's Collector health condition holds: post (or keep) a health notification.
@@ -155,9 +157,11 @@ public enum CollectorHealth {
             if notice == nil, state.updatedAt > (state.unavailableSince ?? state.updatedAt) { notice = message }
         }
 
+        var keys = Set(sourceProblems.map { "source.\($0.source)" })
+        if !installedMatches || !loaded || lastRun == .red || onSchedule == .red || noSuccess { keys.insert("collector") }
         return CollectorHealthReport(
             installed: installedMatches ? .green : .red, loaded: loaded ? .green : .red, lastRun: lastRun, onSchedule: onSchedule,
             problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty && problems.isEmpty ? Copy.waitingForFirstRun : "",
-            notice: notice)
+            notice: notice, problemKeys: keys)
     }
 }

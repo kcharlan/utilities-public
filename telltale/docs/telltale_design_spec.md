@@ -594,6 +594,10 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   episodes with the same natural key retain acknowledgement; rebuilds that
   change the key produce new alerts.
 
+  The Collector footer toggle is offered only by the installed copy with a
+  readable initialized database and a red Collector lamp, even before a
+  successful run. A retained stale snapshot never enables writes.
+
 ### 9.2 Dashboard window
 
 Sidebar: providers and their models (unconfigured providers dimmed, "Not set
@@ -676,6 +680,12 @@ Collector lamps:
   Collector health notification. The collector can't report its own absence.
   If both the app and the job are down, nothing alerts; the panel says so on
   next open.
+- **Collector acknowledgement:** a red job/run lamp or a repair requirement
+  uses the key `collector`; each format or read problem uses `source.<id>`.
+  Changes among job problems or among problem kinds for one source retain the
+  acknowledgement. A successful non-red check clears it; a failed assessment
+  does not. A problem that clears and returns with the same key while the app
+  is quit remains acknowledged (the Collector acknowledgement limit).
 
 ### 9.4 Settings
 
@@ -792,7 +802,7 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
   - Tests must never touch the real `~/Library` or `~/.codex`. Inject every
     path; don't rely on `HOME` alone (see the CodexBar isolation lesson:
     Foundation caches ignore `HOME`).
-- **Snapshots:** panel quiet, panel alerting, lasting-shift prompt, dashboard
+- **Snapshots:** panel quiet, panel alerting, acknowledged, lasting-shift prompt, dashboard
   model view, collector view in its problem state, and settings. Light and
   dark, inspected like Brew Version's.
 - **Acceptance:** the ported real-click status-item gate. A live check that

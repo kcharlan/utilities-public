@@ -63,9 +63,13 @@ import UserNotifications
     /// "Add red alert": a red failed-turns alert beside the seeded amber ones.
     func addRedAlert(at now: Date = Date()) throws {
         let store = try Store.open(paths.database, mode: .readWrite)
-        try SyntheticEnvironment.alert(
-            store, rule: .failedTurns, scope: "*", direction: nil, onset: now.addingTimeInterval(-120), at: now,
-            body: Copy.failedTurns(count: 3, reasons: ["synthetic failure"]), severity: .red)
+        try SyntheticEnvironment.addRedAlert(store, at: now)
+        live.reload()
+    }
+
+    func addFailedTurn(at now: Date = Date()) throws {
+        let store = try Store.open(paths.database, mode: .readWrite)
+        try SyntheticEnvironment.addFailedTurn(store, at: now)
         live.reload()
     }
 }
@@ -99,6 +103,7 @@ import UserNotifications
                     self.dashboard?.setAppearance(NSAppearance(named: .darkAqua))
                 }
                 Button("Add red alert") { try? harness.addRedAlert() }
+                Button("Add failed turn") { try? harness.addFailedTurn() }
             }
             HStack {
                 Button("Test notification") { Task { await harness.notifier.sendTestNotification() } }
