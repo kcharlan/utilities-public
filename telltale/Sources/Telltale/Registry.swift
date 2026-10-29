@@ -9,7 +9,7 @@ import TelltaleOpenAIStatus
 /// means adding it here. Each usage source's `statusSourceID` names a status source below.
 enum Registry {
     static func usageSources(paths: TelltalePaths) -> [any UsageSource] {
-        [CodexUsageSource(codexHome: paths.codexHome), ClaudeUsageSource(roots: [paths.claudeHome] + (FileManager.default.fileExists(atPath: paths.claudeConfigRoot.path) ? [paths.claudeConfigRoot] : []))]
+        [CodexUsageSource(codexHome: paths.codexHome, snapshotDirectory: paths.codexSnapshots), ClaudeUsageSource(roots: [paths.claudeHome] + (FileManager.default.fileExists(atPath: paths.claudeConfigRoot.path) ? [paths.claudeConfigRoot] : []))]
     }
 
     static func statusSources() -> [any StatusSource] {

@@ -25,28 +25,35 @@ public enum ThreadHistorySource {
     /// WAL database has no `-wal` to read, `ReadOnlySQLite.FormatProblem` when the table or a column
     /// is missing, and `ReadOnlySQLite.Failure` for any other SQLite error.
     public static func read(
-        codexHome: URL, since: Date, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live
+        codexHome: URL, since: Date, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live, snapshot: SnapshotRequest? = nil, selectedURL: URL? = nil
     ) throws -> [FailedTurnRecord] {
-        guard let url = database(codexHome: codexHome) else { return [] }
-        let database = try ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step)
-        try database.requireColumns(columns, in: "thread_turns")
-        let rows = try database.query(
-            """
-            SELECT thread_id, turn_id, error_json, started_at, completed_at FROM thread_turns
-            WHERE status = 'failed' AND COALESCE(started_at, completed_at) >= ?
-            ORDER BY COALESCE(started_at, completed_at), thread_id, turn_id
-            """, [.integer(Int64(since.timeIntervalSince1970.rounded(.down)))]
-        ) { row -> FailedTurnRecord? in
-            guard let thread = try row.text(0), let turn = try row.text(1) else { return nil }
-            let started = row.integer(3) ?? row.integer(4)
-            guard let started else { return nil }
-            let error = errorFields(try row.text(2))
-            return FailedTurnRecord(
-                provider: .codex, threadID: thread, turnID: turn, startedAt: Date(timeIntervalSince1970: TimeInterval(started)),
-                completedAt: row.integer(4).map { Date(timeIntervalSince1970: TimeInterval($0)) }, model: nil,
-                errorCode: error.code, message: error.message)
+        guard let url = selectedURL ?? database(codexHome: codexHome) else { return [] }
+        func query(_ database: ReadOnlySQLite) throws -> [FailedTurnRecord] {
+            try database.requireColumns(columns, in: "thread_turns")
+            let rows = try database.query(
+                """
+                SELECT thread_id, turn_id, error_json, started_at, completed_at FROM thread_turns
+                WHERE status = 'failed' AND COALESCE(started_at, completed_at) >= ?
+                ORDER BY COALESCE(started_at, completed_at), thread_id, turn_id
+                """, [.integer(Int64(since.timeIntervalSince1970.rounded(.down)))]
+            ) { row -> FailedTurnRecord? in
+                guard let thread = try row.text(0), let turn = try row.text(1) else { return nil }
+                let started = row.integer(3) ?? row.integer(4)
+                guard let started else { return nil }
+                let error = errorFields(try row.text(2))
+                return FailedTurnRecord(
+                    provider: .codex, threadID: thread, turnID: turn, startedAt: Date(timeIntervalSince1970: TimeInterval(started)),
+                    completedAt: row.integer(4).map { Date(timeIntervalSince1970: TimeInterval($0)) }, model: nil,
+                    errorCode: error.code, message: error.message)
+            }
+            return rows.compactMap { $0 }
         }
-        return rows.compactMap { $0 }
+        do {
+            return try query(ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step))
+        } catch is ReadOnlySQLite.Closed {
+            guard let snapshot, snapshot.needsRead(url) else { throw ReadOnlySQLite.Closed() }
+            return try ReadOnlySQLite.withSnapshot(of: url, in: snapshot.directory, busyTimeout: busyTimeout, clone: snapshot.clone, query)
+        }
     }
 
     static let unknownCode = "unknown"

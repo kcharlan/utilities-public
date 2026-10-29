@@ -17,11 +17,15 @@ public struct CodexCursor: Codable, Equatable, Sendable {
     public var logsProblem: String?
     public var threadHistoryProblemFile: String?
     public var logsProblemFile: String?
+    public var threadHistoryModification: Date?
+    public var logsModification: Date?
+    public var threadHistoryReadFile: String?
+    public var logsReadFile: String?
 
     public init(
         sessions: [String: SessionCursor] = [:], threadHistorySince: Date? = nil, logsAfterID: Int64? = nil,
         logsLastSeen: Date? = nil, threadHistoryProblem: String? = nil, logsProblem: String? = nil,
-        threadHistoryProblemFile: String? = nil, logsProblemFile: String? = nil
+        threadHistoryProblemFile: String? = nil, logsProblemFile: String? = nil, threadHistoryModification: Date? = nil, logsModification: Date? = nil, threadHistoryReadFile: String? = nil, logsReadFile: String? = nil
     ) {
         self.sessions = sessions
         self.threadHistorySince = threadHistorySince
@@ -31,6 +35,10 @@ public struct CodexCursor: Codable, Equatable, Sendable {
         self.logsProblem = logsProblem
         self.threadHistoryProblemFile = threadHistoryProblemFile
         self.logsProblemFile = logsProblemFile
+        self.threadHistoryModification = threadHistoryModification
+        self.logsModification = logsModification
+        self.threadHistoryReadFile = threadHistoryReadFile
+        self.logsReadFile = logsReadFile
     }
 
     /// Dates use `JSONEncoder`'s default, a Double that round-trips exactly. `needsRead` compares a
@@ -55,10 +63,14 @@ public struct CodexUsageSource: UsageSource {
     public let codexHome: URL
     private let busyTimeout: Duration
     private let names = ModelNames()
+    private let snapshotDirectory: URL?
+    private let snapshotClone: SnapshotClone
 
-    public init(codexHome: URL, busyTimeout: Duration = .milliseconds(250)) {
+    public init(codexHome: URL, busyTimeout: Duration = .milliseconds(250), snapshotDirectory: URL? = nil, snapshotClone: SnapshotClone = .live) {
         self.codexHome = codexHome
         self.busyTimeout = busyTimeout
+        self.snapshotDirectory = snapshotDirectory
+        self.snapshotClone = snapshotClone
     }
 
     public var provider: ProviderID { .codex }
@@ -82,35 +94,59 @@ public struct CodexUsageSource: UsageSource {
         var batch = IngestBatch()
         var problems: [String] = []
 
+        let cleanupError: (any Error)?
+        do {
+            if let snapshotDirectory { try ReadOnlySQLite.cleanSnapshots(snapshotDirectory) }
+            cleanupError = nil
+        } catch { cleanupError = error }
         readRollouts(previous: previous, backfillFrom: backfillFrom, next: &next, batch: &batch, problems: &problems)
 
-        let historyOutcome = Self.run("Codex failed turns", {
-            try ThreadHistorySource.read(
-                codexHome: codexHome, since: previous?.threadHistorySince.map(ThreadHistorySource.rescanStart(after:)) ?? backfillFrom,
-                busyTimeout: busyTimeout)
-        })
+        let historyURL = ThreadHistorySource.database(codexHome: codexHome)
+        let historyDate = historyURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        let historyRequest = snapshotDirectory.map { SnapshotRequest(directory: $0, lastReadModification: previous?.threadHistoryModification, lastReadFile: previous?.threadHistoryReadFile, clone: snapshotClone) }
+        let historyOutcome = Self.run("Codex failed turns") {
+            if let cleanupError { throw cleanupError }
+            guard let historyURL else { return [FailedTurnRecord]() }
+            return try ThreadHistorySource.read(codexHome: codexHome,
+                since: previous?.threadHistorySince.map(ThreadHistorySource.rescanStart(after:)) ?? backfillFrom,
+                busyTimeout: busyTimeout, snapshot: historyRequest, selectedURL: historyURL)
+        }
         switch historyOutcome {
         case .ok(let turns):
             batch.failedTurns = turns
             next.threadHistorySince = now
             next.threadHistoryProblem = nil
             next.threadHistoryProblemFile = nil
+            next.threadHistoryModification = historyDate
+            next.threadHistoryReadFile = historyURL?.lastPathComponent
         case .busy, .failure:
-            if let file = next.threadHistoryProblemFile, file != ThreadHistorySource.database(codexHome: codexHome)?.lastPathComponent {
+            if let file = next.threadHistoryProblemFile, file != historyURL?.lastPathComponent {
                 next.threadHistoryProblem = nil
                 next.threadHistoryProblemFile = nil
             }
             if let kept = next.threadHistoryProblem { problems.append(kept) }
-            if case .failure(let text) = historyOutcome { problems.append(text) }
+            if case .failure(let text) = historyOutcome {
+                next.threadHistoryModification = nil
+                next.threadHistoryReadFile = nil
+                problems.append(text)
+            }
         case .problem(let text):
             problems.append(text)
             next.threadHistoryProblem = text
-            next.threadHistoryProblemFile = ThreadHistorySource.database(codexHome: codexHome)?.lastPathComponent
+            next.threadHistoryProblemFile = historyURL?.lastPathComponent
+            next.threadHistoryModification = historyDate
+            next.threadHistoryReadFile = historyURL?.lastPathComponent
         }
 
-        let logsOutcome = Self.run("Codex connection log", {
-            try RetryLogSource.read(codexHome: codexHome, afterID: previous?.logsAfterID ?? 0, busyTimeout: busyTimeout)
-        })
+        let logsURL = RetryLogSource.database(codexHome: codexHome)
+        let logsDate = logsURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        let logsRequest = snapshotDirectory.map { SnapshotRequest(directory: $0, lastReadModification: previous?.logsModification, lastReadFile: previous?.logsReadFile, clone: snapshotClone) }
+        let logsOutcome = Self.run("Codex connection log") {
+            if let cleanupError { throw cleanupError }
+            guard let logsURL else { return (events: [ConnectionEventRecord](), maxID: previous?.logsAfterID ?? 0, oldestRetained: Optional<Date>.none) }
+            return try RetryLogSource.read(codexHome: codexHome, afterID: previous?.logsAfterID ?? 0,
+                busyTimeout: busyTimeout, snapshot: logsRequest, selectedURL: logsURL)
+        }
         switch logsOutcome {
         case .ok(let read):
             batch.connectionEvents = read.events
@@ -121,19 +157,26 @@ public struct CodexUsageSource: UsageSource {
             next.logsLastSeen = now
             next.logsProblem = nil
             next.logsProblemFile = nil
+            next.logsModification = logsDate
+            next.logsReadFile = logsURL?.lastPathComponent
         case .busy, .failure:
-            if let file = next.logsProblemFile, file != RetryLogSource.database(codexHome: codexHome)?.lastPathComponent {
+            if let file = next.logsProblemFile, file != logsURL?.lastPathComponent {
                 next.logsProblem = nil
                 next.logsProblemFile = nil
             }
             if let kept = next.logsProblem { problems.append(kept) }
-            if case .failure(let text) = logsOutcome { problems.append(text) }
+            if case .failure(let text) = logsOutcome {
+                next.logsModification = nil
+                next.logsReadFile = nil
+                problems.append(text)
+            }
         case .problem(let text):
             problems.append(text)
             next.logsProblem = text
-            next.logsProblemFile = RetryLogSource.database(codexHome: codexHome)?.lastPathComponent
+            next.logsProblemFile = logsURL?.lastPathComponent
+            next.logsModification = logsDate
+            next.logsReadFile = logsURL?.lastPathComponent
         }
-
         return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? .ready)
     }
 

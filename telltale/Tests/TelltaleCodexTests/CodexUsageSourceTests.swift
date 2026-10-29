@@ -634,3 +634,130 @@ import TelltaleTestSupport
         }
     }
 }
+
+extension CodexUsageSourceTests {
+    @Test func changedClosedDatabasesAreReadFromSnapshots() throws {
+        try withScratchDirectory { scratch in
+            let home = scratch.appending(path: "source")
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.addTurn(turn: 1, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(100))
+            let logs = try CodexDatabase.logs(codexHome: home)
+            try logs.addLog(at: Self.at(300), body: Self.disconnect)
+            let root = scratch.appending(path: "snapshots")
+            let source = CodexUsageSource(codexHome: home, snapshotDirectory: root)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            try history.addTurn(turn: 2, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(1_100))
+            try logs.addLog(at: Self.at(1_200), body: Self.disconnect)
+            try history.closeLikeCodex()
+            try logs.closeLikeCodex()
+            let before = try FileSnapshot.take(home)
+            let next = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(next.state == .ready)
+            #expect(next.batch.failedTurns.map(\.turnID).contains("turn_synthetic_02"))
+            #expect(next.batch.connectionEvents.count == 1)
+            #expect(try FileSnapshot.take(home) == before)
+            for url in [history.url, logs.url] {
+                #expect(!FileManager.default.fileExists(atPath: url.path + "-wal"))
+                #expect(!FileManager.default.fileExists(atPath: url.path + "-shm"))
+            }
+            let counter = CloneCounter()
+            let noClone = CodexUsageSource(codexHome: home, snapshotDirectory: root, snapshotClone: SnapshotClone { _, _ in counter.increment(); throw SnapshotUnexpectedClone() })
+            let unchanged = noClone.ingest(cursor: next.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
+            #expect(counter.count == 0)
+            #expect(unchanged.state == .ready)
+            #expect(unchanged.batch.connectionEvents.isEmpty)
+        }
+    }
+    private struct SnapshotUnexpectedClone: Error {}
+}
+
+private final class CloneCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func increment() { lock.lock(); defer { lock.unlock() }; value += 1 }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+}
+
+extension CodexUsageSourceTests {
+    @Test func unchangedClosedProblemIsNotClonedAgain() throws {
+        try withScratchDirectory { scratch in
+            let home = scratch.appending(path: "source")
+            let history = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            try history.closeLikeCodex()
+            let counter = CloneCounter()
+            let source = CodexUsageSource(codexHome: home, snapshotDirectory: scratch.appending(path: "snapshots"), snapshotClone: SnapshotClone { source, target in
+                counter.increment(); try SnapshotClone.live.run(source, target)
+            })
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            let second = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(counter.count == 1)
+            #expect(first.state == second.state)
+            #expect(first.state != .ready)
+        }
+    }
+
+    @Test func leftoversAreRemovedAndCleanupFailurePreventsCloning() throws {
+        try withScratchDirectory { scratch in
+            let home = scratch.appending(path: "source")
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.closeLikeCodex()
+            let root = scratch.appending(path: "snapshots")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let leftover = root.appending(path: "leftover")
+            try FileManager.default.createDirectory(at: leftover, withIntermediateDirectories: false)
+            let counter = CloneCounter()
+            let source = CodexUsageSource(codexHome: home, snapshotDirectory: root, snapshotClone: SnapshotClone { source, target in
+                counter.increment(); try SnapshotClone.live.run(source, target)
+            })
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            #expect(first.state == .ready)
+            #expect(!FileManager.default.fileExists(atPath: leftover.path))
+            try FileManager.default.createDirectory(at: leftover, withIntermediateDirectories: false)
+            #expect(chmod(root.path, 0o500) == 0)
+            defer { chmod(root.path, 0o700) }
+            let failed = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(failed.state != .ready)
+            #expect(counter.count == 1)
+            #expect(try Self.cursor(failed).threadHistorySince == Self.cursor(first).threadHistorySince)
+        }
+    }
+
+    @Test func rotatedClosedDatabaseWithSameDateIsRead() throws {
+        try withScratchDirectory { scratch in
+            let home = scratch.appending(path: "source")
+            let firstDB = try CodexDatabase.threadHistory(codexHome: home)
+            try firstDB.addTurn(turn: 1, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(100))
+            try firstDB.closeLikeCodex()
+            let root = scratch.appending(path: "snapshots")
+            let source = CodexUsageSource(codexHome: home, snapshotDirectory: root)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            let date = try #require(Self.cursor(first).threadHistoryModification)
+            let secondDB = try CodexDatabase.threadHistory(codexHome: home, number: 2)
+            try secondDB.addTurn(turn: 2, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(1_100))
+            try secondDB.closeLikeCodex()
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: secondDB.url.path)
+            let second = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(second.batch.failedTurns.map(\.turnID).contains("turn_synthetic_02"))
+        }
+    }
+
+    @Test func failedSnapshotReadIsRetriedWithoutFileChange() throws {
+        try withScratchDirectory { scratch in
+            let home = scratch.appending(path: "source")
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.addTurn(turn: 1, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(100))
+            try history.closeLikeCodex()
+            let source = CodexUsageSource(codexHome: home, snapshotDirectory: scratch.appending(path: "snapshots"))
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            #expect(chmod(history.url.path, 0o000) == 0)
+            defer { chmod(history.url.path, 0o600) }
+            let failed = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(failed.state != .ready)
+            #expect(try Self.cursor(failed).threadHistoryModification == nil)
+            #expect(chmod(history.url.path, 0o600) == 0)
+            let retry = source.ingest(cursor: failed.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
+            #expect(retry.state == .ready)
+            #expect(!retry.batch.failedTurns.isEmpty)
+        }
+    }
+}

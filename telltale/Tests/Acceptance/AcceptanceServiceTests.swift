@@ -129,7 +129,7 @@ import TelltaleCore
         let home = try temporaryHome("paths")
         defer { try? FileManager.default.removeItem(at: home) }
         let paths = SyntheticEnvironment.paths(home: home)
-        for url in [paths.appSupport, paths.database, paths.lock, paths.appLock, paths.logDirectory, paths.launchAgents, paths.codexHome] {
+        for url in [paths.appSupport, paths.codexSnapshots, paths.database, paths.lock, paths.appLock, paths.logDirectory, paths.launchAgents, paths.codexHome] {
             #expect(url.standardizedFileURL.path.hasPrefix(home.standardizedFileURL.path + "/"))
         }
         #expect(SyntheticEnvironment.requireHome(home.path) == URL(fileURLWithPath: home.path, isDirectory: true))

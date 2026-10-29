@@ -30,6 +30,7 @@ import TelltaleTestSupport
         let home = URL(fileURLWithPath: "/tmp/telltale-synthetic-home", isDirectory: true)
         let paths = TelltalePaths(home: home)
         #expect(paths.appSupport.path == "/tmp/telltale-synthetic-home/Library/Application Support/Telltale")
+        #expect(paths.codexSnapshots.path == "/tmp/telltale-synthetic-home/Library/Application Support/Telltale/codex-snapshots")
         #expect(paths.database.path == "/tmp/telltale-synthetic-home/Library/Application Support/Telltale/telltale.sqlite")
         #expect(paths.lock.path == "/tmp/telltale-synthetic-home/Library/Application Support/Telltale/collector.lock")
         #expect(paths.appLock.path == "/tmp/telltale-synthetic-home/Library/Application Support/Telltale/app.lock")

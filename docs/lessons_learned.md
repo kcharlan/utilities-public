@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-29: Snapshot closed Codex databases without changing their source
+
+A closed WAL database can be read through a private APFS clone only after validating
+the source, clone and header, and checking for writer races. Preserve the filename
+and modification stamp together so rotation and failed reads retry correctly.
+`SQLiteSnapshotTests` covers cleanup, alias rejection and writer races;
+`changedClosedDatabasesAreReadFromSnapshots`, `rotatedClosedDatabaseWithSameDateIsRead`
+and `failedSnapshotReadIsRetriedWithoutFileChange` cover the cursor behavior.
+
 ## 2026-10-29: A skip that reports ready ends a real problem's episode
 
 Telltale skips a Codex database that is busy or that Codex has closed, and a

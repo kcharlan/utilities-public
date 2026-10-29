@@ -172,12 +172,11 @@ transaction, post live notifications, prune per the retention table and record t
 Each unit keeps its own progress and backfill boundary; historical points never notify. A new
 provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
-A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly, like a busy
-one: it is tried again each run and read once Codex reopens it. A format problem that database last
-reported stays reported while it is skipped. See the closed-WAL policy in spec section 6
+A changed Codex database that Codex has closed is read from a private APFS clone;
+an unchanged closed file is skipped. See the closed-WAL policy in spec sections 6 and 11
 (`docs/telltale_design_spec.md`).
 
-It writes only under `~/Library/Application Support/Telltale` (database and lock) and
+It writes only under `~/Library/Application Support/Telltale` (database, locks and temporary `codex-snapshots`) and
 `~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`
 (or `CODEX_HOME`), `~/.claude` (or `CLAUDE_CONFIG_DIR`) and, when present, `~/.config/claude` read-only. Its only network requests go to the OpenAI and Claude status pages.
 
@@ -397,6 +396,10 @@ check.
   run must log no format problem, and no Collector health notification may follow. Record it
   apart from the sidebar check; it does not establish the cause of an earlier incident. Keep the
   evidence (log lines, times) outside the repository.
+- In the installed release only, after Codex quits with recent activity: the next collector run
+  logs no format problem, `~/Library/Application Support/Telltale/codex-snapshots` is empty,
+  and neither closed Codex database has a `-wal` or `-shm` beside it. Record this separately
+  from the 0.2.1 check above.
 - In the installed release only, sidebar window: a model whose last response is more than 14 days
   old is absent from the dashboard sidebar (the Codex group shows "No responses in the last 14
   days" if every model is that old). Keep the evidence outside the repository.
@@ -418,6 +421,7 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
 | Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
+| Installed release, closed Codex snapshot read and cleanup | Not yet run |
 | Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 

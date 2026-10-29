@@ -209,27 +209,20 @@ All reads are read-only. SQLite files are opened with `mode=ro` and a short
 busy timeout. On `SQLITE_BUSY` or a locked file, the source skips and retries
 next run (it never blocks Codex).
 
-**Closed WAL databases.** When Codex closes a WAL-mode database, upstream
-SQLite deletes its `-wal` and `-shm` files. The system SQLite Telltale links
-then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
-(code 14) instead of reading the main file; that is not a change in Codex's
-format. The reader reports `ReadOnlySQLite.Closed` for that failure when the
-file's header says WAL (bytes 18 and 19 are both 2) and no `-wal` sits beside
-it. Like a busy file, the source skips it quietly, keeps its cursors and reads
-the file again next run, after Codex reopens it; no side files are created for
-the closed database in the meantime. A skip, busy or closed, is not a read, so
-it carries the file's previous verdict forward: a format problem the file last
-reported is reported again on every skipped run until a read of the file
-succeeds, so its "since" and its notification are not reset each time Codex
-closes the file. The verdict is dropped when Codex selects a different database;
-older cursors without a file name keep their verdict for the current file. Only
-format problems are kept: a read failure is reported for that run, while a
-matching earlier format problem takes precedence and remains kept. The evidence
-has limits: a missing `-wal` alone does not prove
-that no process has the database open, and a file whose header cannot be read
-(an unreadable main file, for example) still reports a failure. Rows that Codex
-prunes while its files stay closed are never read, so a long closure can leave a
-gap.
+**Closed WAL databases.** When Codex closes a WAL-mode database, system SQLite can
+fail a read-only statement with `SQLITE_CANTOPEN`. A WAL header and absent `-wal`
+are evidence for `ReadOnlySQLite.Closed`, not proof that no process has the file
+open; a writer can reopen after the post-clone check. An unreadable header still
+produces a read failure. For a changed or never
+read selected file, the reader uses a private APFS clone as described in §11;
+an unchanged file with the same name and modification date is skipped. A busy or
+closed skip preserves the previous read stamp and verdict. A successful read or
+format problem records the selected filename and pre-read modification date; a
+read failure clears that stamp so the next run retries. A new filename requires a
+read even if its date matches. A kept format problem is dropped when a different
+file is selected; older cursors without a problem filename retain it for the
+current file. A read failure is reported for that run, while a matching earlier
+format problem takes precedence and remains kept.
 
 ### 6.1 Rollouts: responses
 
@@ -672,6 +665,19 @@ the start of each run.
   error codes and messages, status-page incidents.
 - The only network calls are to the status pages. There's no telemetry.
 - Provider access follows §6 and the read-only SQLite contract cited in §2.
+  For a closed WAL database, Telltale checks that the selected source is a regular
+  file and records its size and modification date, then uses `clonefile` with
+  `CLONE_NOFOLLOW` into a private mode-0700 `codex-snapshots` root and per-read
+  directory on the same volume as its database. It rejects an existing insecure
+  or symlink root. If the source changes or a WAL appears during cloning, it
+  discards the clone as busy. It opens the clone without following links and
+  verifies a regular file with a different device/inode pair and a complete WAL
+  SQLite header before changing its journal bytes through the open descriptor.
+  The clone is read through a normal read-only SQLite connection, then removed.
+  Cleanup failures are read failures; leftover entries are removed before another
+  clone is made, without following symlinks. A clone failure, including an
+  unsupported or cross-volume filesystem, takes the closed-file skip path. No
+  full-copy or immutable-mode fallback is used.
 - **This repository is public.** Tests and fixtures use synthetic data with
   conspicuously fake ids. Real logs may be read for manual checks, but are
   never committed, and screenshots must not show real session ids.
