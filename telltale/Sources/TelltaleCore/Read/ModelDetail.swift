@@ -127,9 +127,21 @@ public struct ModelDetail: Sendable, Equatable {
         }
     }
 
-    /// Every model with stored responses for `provider`, sorted: the dashboard sidebar.
+    /// How far back a response keeps its model in the dashboard sidebar (spec section 9.2): the
+    /// longest chart range.
+    public static let sidebarWindow: TimeInterval = ChartRange.twoWeeks.duration
+
+    /// Every model with stored responses for `provider`, sorted: the full list that display names
+    /// are made unique over and that rules and events read. The sidebar lists `recentModels`.
     public static func models(store: Store, provider: ProviderID) throws -> [String] {
         try store.models(provider: provider)
+    }
+
+    /// The models with a response ending in the `sidebarWindow` before `now`, sorted: the dashboard
+    /// sidebar and the arrival note's first model. A subset of `models`.
+    public static func recentModels(store: Store, provider: ProviderID, now: Date) throws -> [String] {
+        let since = now.addingTimeInterval(-sidebarWindow)
+        return try store.models(provider: provider).filter { try store.hasResponse(provider: provider, model: $0, after: since, through: now) }
     }
 
     private static func dots(store: Store, provider: ProviderID, model: String, interval: DateInterval, calendar: Calendar) throws -> [SpeedDot] {

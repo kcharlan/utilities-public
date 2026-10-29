@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.2.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.2.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -260,8 +260,10 @@ window to the current Space; closing it returns the app to a menu-bar-only acces
 dashboard shows the last section shown, or the first model; Settings shows the Settings
 section. It is dark by default and follows the stored appearance setting (spec section 9.4).
 
-The sidebar lists each provider's models (a provider whose source isn't set up shows
-"Not set up", dimmed), then Collector and Settings. A model's view shows the lamp strip with
+The sidebar lists each provider's models with a response in the last 14 days (a provider whose
+source isn't set up shows "Not set up", dimmed; one whose models are all older shows "No
+responses in the last 14 days"; names stay unique over every stored model, spec section
+[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. A model's view shows the lamp strip with
 Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
 response time against usual, hourly speed-index dots colored by the episode in effect,
 the dashed usual line, the provider's own status-page incidents as dashed amber bands, and
@@ -388,6 +390,14 @@ check.
   logs… asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
   and keeps accepted baselines. Before the first run (a fresh install), Settings says "You can
   change settings after the collector's first run." and changes nothing.
+- In the installed release only, closed Codex database: avoid a Colophon scan during the check,
+  and leave Codex idle until `~/.codex/thread_history_1.sqlite-wal` is absent. The next collector
+  run must log no format problem, and no Collector health notification may follow. Record it
+  apart from the sidebar check; it does not establish the cause of an earlier incident. Keep the
+  evidence (log lines, times) outside the repository.
+- In the installed release only, sidebar window: a model whose last response is more than 14 days
+  old is absent from the dashboard sidebar (the Codex group shows "No responses in the last 14
+  days" if every model is that old). Keep the evidence outside the repository.
 
 ### Results
 
@@ -405,6 +415,8 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.1.0, dashboard sidebar | Failed: `gpt-6.1-sol`, `gpt-6-sol` and `gpt-5.6-sol` were all named "Sol". From 0.1.1, names keep the version ("6.1 Sol") |
 | Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
+| Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
+| Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 
 The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin

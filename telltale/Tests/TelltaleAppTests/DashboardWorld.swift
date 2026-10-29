@@ -35,14 +35,17 @@ import TelltaleTestSupport
     static let running = CollectorHealthReport(
         installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false)
 
-    init(_ directory: URL, now: Date = PanelWorld.now, canManage: Bool = true, health: CollectorHealthReport? = DashboardWorld.running) throws {
+    init(
+        _ directory: URL, now: Date = PanelWorld.now, canManage: Bool = true, health: CollectorHealthReport? = DashboardWorld.running,
+        sources: [SourceSummary] = PanelWorld.sources
+    ) throws {
         self.directory = directory
         let clock = WorldClock(now: now, health: health)
         self.clock = clock
         paths = PanelWorld.paths(directory)
         executable = try Self.makeApp(directory.appending(path: "Applications/Telltale.app", directoryHint: .isDirectory))
         let live = LiveStore(
-            paths: paths, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now }, health: { clock.health }, pollInterval: .seconds(3_600),
+            paths: paths, sources: sources, calendar: Synth.newYork, now: { clock.now }, health: { clock.health }, pollInterval: .seconds(3_600),
             watchFiles: false)
         self.live = live
         // Check now and Rebuild kick the job as the app does, through the fake `launchctl`.
@@ -54,9 +57,9 @@ import TelltaleTestSupport
             canManage: canManage, paths: paths, calendar: Synth.newYork, now: { clock.now }, reveal: { _ in })
         let login = LoginServiceStub()
         self.login = login
-        settings = SettingsModel(live: live, collector: collector, sources: PanelWorld.sources, statusSummaries: PanelWorld.statusSummaries, login: LoginItem(service: login))
+        settings = SettingsModel(live: live, collector: collector, sources: sources, statusSummaries: PanelWorld.statusSummaries, login: LoginItem(service: login))
         model = DashboardModel(
-            live: live, panel: panel, collector: collector, settings: settings, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now })
+            live: live, panel: panel, collector: collector, settings: settings, sources: sources, calendar: Synth.newYork, now: { clock.now })
         collector.reveal = { [unowned self] in revealed.append($0) }
     }
 

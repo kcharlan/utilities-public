@@ -546,7 +546,14 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 ### 9.2 Dashboard window
 
 Sidebar: providers and their models (unconfigured providers dimmed, "Not set
-up"), then Collector and Settings. Model view, as in the mockup:
+up"), then Collector and Settings. A provider lists only the models with a response
+in the last 14 days (`ModelDetail.sidebarWindow`, the longest chart range).
+Display names are still made unique over every stored model, so a model
+keeps its name when it leaves the sidebar and returns, and a stale model that is opened still
+shows that name. A provider whose models are all older than the window shows "No responses in
+the last 14 days" (`Copy.noRecentModels`), dimmed; one with no stored response shows "No
+responses yet". The arrival note's first model and the models it names come from the same
+recent list. Model view, as in the mockup:
 
 - Lamp strip, including Collector.
 - Alert list.

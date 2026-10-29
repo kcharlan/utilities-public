@@ -245,8 +245,9 @@ public struct PanelSnapshot: Sendable, Equatable {
                 if let backfill = try store.backfill(unit: source.provider.rawValue), backfill.reason == .new && backfill.finishedAt == nil { continue }
                 let models = try store.models(provider: source.provider)
                 let names = DisplayNames.disambiguated(models, naming: source.naming)
-                let ready = try models.filter { if case .cold = try baseline.learning(provider: source.provider, model: $0, at: now) { return false }; return true }
-                arrivals.append(ArrivalNote(provider: source.provider, text: Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 }), firstModel: models.first))
+                let recent = try ModelDetail.recentModels(store: store, provider: source.provider, now: now)
+                let ready = try recent.filter { if case .cold = try baseline.learning(provider: source.provider, model: $0, at: now) { return false }; return true }
+                arrivals.append(ArrivalNote(provider: source.provider, text: Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 }), firstModel: recent.first))
             }
             let checkedAt = try store.lastSucceededRunFinish()
             return PanelSnapshot(
