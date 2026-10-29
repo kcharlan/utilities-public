@@ -40,6 +40,18 @@ public struct IngestBatch: Sendable {
     }
 }
 
+extension IngestBatch {
+    public func droppingBefore(_ cutoff: Date) -> (batch: IngestBatch, dropped: Int) {
+        var batch = self
+        batch.responses = responses.filter { $0.end >= cutoff }
+        batch.compactions = compactions.filter { $0.at >= cutoff }
+        batch.connectionEvents = connectionEvents.filter { $0.at >= cutoff }
+        let dropped = responses.count - batch.responses.count + compactions.count - batch.compactions.count
+            + connectionEvents.count - batch.connectionEvents.count
+        return (batch, dropped)
+    }
+}
+
 public struct IngestResult: Sendable {
     public var batch: IngestBatch
     public var cursor: Data

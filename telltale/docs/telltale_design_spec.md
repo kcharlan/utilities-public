@@ -428,7 +428,11 @@ the Oct 26 episode masked the Oct 27 slowdown.
 
 **Backfill** (cold start) replays the 30 days chronologically, using only
 earlier data for usual at each hour. That's the same engine as live
-evaluation. It **never notifies**.
+evaluation. It **never notifies**. On every ingest, including catch-up, the collector keeps responses
+ending at or after the 30-day cutoff and compactions and connection events at or
+after it. It preserves failed turns, connection gaps, usage limits, source version
+and exclusion counts; older failed turns follow the existing settlement path.
+Already stored rows are governed by retention, not this ingest filter.
 
 **Rebuild from Codex logs** discards derived data:
 
@@ -524,7 +528,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 - Every acceptance is an event with **Undo**. Epochs are kept, and undo
   restores the previous one.
 - **Cold start.** The first collector run backfills the last 30 days from
-  rollouts (including `.zst`) and `thread_history`. Speed rules stay quiet
+  rollouts (including `.zst`) and `thread_history`. The collector applies the same
+  cutoff and preserved-field contract described in §7.3. Speed rules stay quiet
   until a model has 3 active days. Until 14 days, the dashboard shows
   "Learning usual: 5 of 14 days".
 

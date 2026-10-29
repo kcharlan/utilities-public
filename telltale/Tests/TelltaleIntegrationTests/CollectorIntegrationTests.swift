@@ -120,6 +120,24 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
 }
 
 @Suite struct CollectorIntegrationTests {
+    @Test func coldStartReadsOnlyLinesInsideTheLookback() async throws {
+        try await withIntegration { h throws in
+            let now = h.at(9, 4, 10)
+            let first = now.addingTimeInterval(-40 * 86_400)
+            let recent = now.addingTimeInterval(-86_400)
+            let start = first.addingTimeInterval(-3_600)
+            var session = h.workload.session(start: start, firstEnd: first, runs: [(1, 40)])
+            let offset = recent.timeIntervalSince(start)
+            session.userMessage(at: offset - 25)
+            session.usage(at: offset, response: 2, input: 10_000, cached: 0, output: 1_000, reasoning: nil)
+            try h.workload.write(session)
+            #expect(await h.run(at: now).outcome == .succeeded)
+            let responses = try h.store().responses(provider: .codex, model: CodexWorkload.model, endingIn: first...now)
+            #expect(responses.map(\.end) == [recent])
+        }
+    }
+
+
     /// Sep 4 runs every 5 minutes. Responses at 30 tok/s end 09:00–09:29: each lasts
     /// 1000 / 30 = 33.333 s (millisecond timestamps), a throughput of 30.0003, so the speed index
     /// is 30.0003 / 40 = 0.75 and the slowdown is round(|0.75 − 1| × 100) = 25%, above the 15%

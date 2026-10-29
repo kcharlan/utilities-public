@@ -421,7 +421,7 @@ public struct CollectorRun: Sendable {
                 let cursor = try store.cursor(key)
                 let previous = try store.sourceState(key)
                 let result = source.ingest(cursor: cursor, backfillFrom: backfillFrom, now: now)
-                let batch = result.batch
+                let (batch, dropped) = result.batch.droppingBefore(backfillFrom)
                 try store.transaction {
                     try store.upsert(responses: batch.responses)
                     try store.upsert(compactions: batch.compactions)
@@ -433,6 +433,9 @@ public struct CollectorRun: Sendable {
                     try store.setSourceState(SourceStateRow(
                         source: key, state: result.state, version: batch.sourceVersion ?? previous?.version,
                         unavailableSince: Self.unavailableSince(previous: previous, new: result.state, now: now), updatedAt: now))
+                }
+                if dropped > 0 {
+                    log.write("\(source.displayName): skipped \(dropped) record(s) from before the lookback", at: now)
                 }
                 log.write(
                     "\(source.displayName): \(batch.responses.count) responses, \(batch.failedTurns.count) failed turns, "

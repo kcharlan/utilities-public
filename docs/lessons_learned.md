@@ -1600,3 +1600,13 @@ kind; apply the same delayed notification policy to both. `formatProblemOutranks
 `unreadableTranscriptIsAReadProblem`, `readProblemKeepsItsSinceAcrossRuns`,
 `movingFromFormatToReadProblemRestartsSince`, and the Collector health and
 provider summary regressions cover classification, presentation and transitions.
+
+## 2026-10-29: Enforce the ingest lookback at the collector boundary
+
+A source may read an entire rollout that spans the lookback boundary, or return
+old lines during catch-up. Filter response ends, compaction times and connection
+event times in the collector on every ingest; preserve the remaining batch fields
+and settle old failed turns through the existing path. `batchDropsRecordsFromBeforeTheCutoff`,
+`linesFromBeforeTheLookbackAreNotStored`, `catchUpAfterTheLookbackKeepsOnlyRecentLines`
+and `coldStartReadsOnlyLinesInsideTheLookback` cover the boundary, preserved fields,
+collector storage and a real synthetic rollout.

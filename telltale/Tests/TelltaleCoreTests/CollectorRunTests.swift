@@ -52,7 +52,7 @@ final class FakeUsageSource: UsageSource, @unchecked Sendable {
             var batch = nextBatch
             nextBatch = IngestBatch()
             batch.responses = pending.filter { response in
-                response.end <= now && response.end >= backfillFrom && (after.map { response.end > $0 } ?? true)
+                response.end <= now && (after.map { response.end > $0 } ?? true)
             }
             return (batch, nextState, onIngest)
         }
@@ -747,6 +747,47 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(await harness.run(at: harness.at(9, 4, 9, 35)).notificationsPosted == 1)
             #expect(await harness.notifier.posted.map(\.body) == [Copy.incidentCleared(source: "Example Status", name: "Elevated errors")])
             #expect(try harness.store().sourceState(RuleHarness.sourceID)?.unavailableSince == nil)
+        }
+    }
+
+    @Test func linesFromBeforeTheLookbackAreNotStored() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 10)
+            let old = now.addingTimeInterval(-31 * 86_400)
+            let recent = now.addingTimeInterval(-3_600)
+            let responses = [h.synth.response(throughput: 40, end: old), h.synth.response(throughput: 40, end: recent)]
+            h.source.add(responses)
+            let compactions = [old, recent].enumerated().map { index, at in
+                CompactionRecord(provider: .codex, lineID: "synthetic-\(index)", sessionID: "synthetic", agentID: nil,
+                                 at: at, trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+            }
+            let events = [old, recent].enumerated().map { index, at in
+                ConnectionEventRecord(provider: .codex, sourceID: "synthetic-\(index)", at: at, kind: .retry, detail: "synthetic")
+            }
+            h.source.setNextBatch(IngestBatch(compactions: compactions, connectionEvents: events))
+            #expect(await h.run(at: now).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.responses(provider: .codex, model: Synth.model, endingIn: old...now) == [responses[1]])
+            #expect(try store.compactions(provider: .codex, in: old...now) == [compactions[1]])
+            #expect(try store.connectionEvents(provider: .codex, in: old...now) == [events[1]])
+            let summary = SourceSummary(provider: .codex, name: "Example", statusName: "Example", statusSourceID: h.source.statusSourceID,
+                                        signals: h.source.signals, naming: h.source)
+            #expect(try ProviderSummary.load(store: store, sources: [summary]).first?.oldestResponse == recent)
+            #expect(h.log.contains("Example: skipped 3 record(s) from before the lookback"))
+        }
+    }
+
+    @Test func catchUpAfterTheLookbackKeepsOnlyRecentLines() async throws {
+        try await withCollector { h throws in
+            let first = h.at(9, 4, 10)
+            #expect(await h.run(at: first).outcome == .succeeded)
+            let now = first.addingTimeInterval(35 * 86_400)
+            let old = now.addingTimeInterval(-33 * 86_400)
+            let recent = now.addingTimeInterval(-86_400)
+            let responses = [h.synth.response(throughput: 40, end: old), h.synth.response(throughput: 40, end: recent)]
+            h.source.add(responses)
+            #expect(await h.run(at: now).outcome == .succeeded)
+            #expect(try h.store().responses(provider: .codex, model: Synth.model, endingIn: old...now) == [responses[1]])
         }
     }
 
