@@ -407,6 +407,11 @@ tracing uses 250 ms. This is not
 immutable mode: SQLite may create or update
 coordination side files such as WAL shared-memory files when permitted.
 An absolute no-source-writes guarantee would misdescribe this behavior.
+A WAL-mode database whose writer closed and deleted `-wal` and `-shm` (Codex
+does) still reads: the linked Homebrew SQLite creates an empty `-wal` and a
+`-shm` beside it, which remain after the run. Without write access to that
+directory the read fails with a diagnostic. macOS's system SQLite cannot read
+such a database read-only at all, so the build links Homebrew SQLite.
 Missing trace data is silent; SQLite errors retain sticky priority evidence
 with diagnostics. Detected turns remain remembered after trace pruning.
 

@@ -147,6 +147,12 @@ SQLite's normal coordination allowance. Cancellation and partial-read failures
 use the existing test-only fault infrastructure; descriptor counts and map
 teardown are checked across repeated successful and failed reads.
 
+`test_sqlite_closed_wal.c` closes a WAL-mode synthetic database with
+`PERSIST_WAL=0`, leaving no `-wal` or `-shm` as Codex does, and requires the
+metadata, priority trace, OpenCode and Antigravity conversation/summary readers
+to read it. These cases fail when the unit binary is relinked to macOS's
+system SQLite.
+
 `test_opencode.py` adds native CLI integration for primary/sorted-sibling and
 explicit path precedence, normalized duplicates, preview skips, environment
 semantics, source-only/mixed/disabled/absent/error-only builds, structured
