@@ -1,5 +1,47 @@
 # Lessons learned
 
+## 2026-10-29: A skip that reports ready ends a real problem's episode
+
+Telltale skips a Codex database that is busy or that Codex has closed, and a
+skip contributed no problem, so the source reported ready whenever Codex was
+idle. With a genuine schema change, each Codex session reported the format
+problem afresh and each idle spell cleared it: "unavailable since" restarted, the
+Collector health notification fired again and a false "running again" recovery
+posted in between. A skip is not a read, so it must keep the last verdict: the
+Codex cursor now holds each database's last format problem (`threadHistoryProblem`,
+`logsProblem`, optional so 0.2.0 cursors still decode), set by a read that finds
+one, cleared by a good read and reported again on a skip. Regression:
+`closedDatabaseKeepsItsFormatProblem`, with `cursorWithoutKeptProblemsDecodes`.
+
+## 2026-10-29: "Unavailable since" must restart when the kind of unavailability changes
+
+`CollectorRun` kept a source's `unavailableSince` for as long as it stayed
+unready, so a source that went from "not set up" to "format problem" reported
+the format problem as starting when the earlier, different problem did. That
+also hid whether a format problem had been seen by one run or two. A source now
+keeps its start only while the same kind of state continues (the text may
+change) and restarts it on any other transition. `CollectorHealth` relies on that
+start: a format problem notifies only when a report's `updatedAt` is later than
+its `unavailableSince`, so one run shows on the lamp but does not post. Regression:
+`notSetUpThenFormatProblemRestartsUnavailableSince`, with
+`formatProblemFromOneRunShowsButDoesNotNotify` and `oneRunFormatProblemPostsNothing`
+covering the policy.
+
+## 2026-10-29: Read-only SQLite can't open a WAL database its writer closed
+
+Telltale reported a "format problem" for Codex's databases whenever Codex was
+closed. Codex's last connection deletes `-wal` and `-shm`; the system SQLite a
+`mode=ro` reader links then opens the file but fails its first statement with
+`SQLITE_CANTOPEN` (14), which looked like a changed schema. The fixtures hid it
+because the system SQLite keeps the WAL on close by default
+(`SQLITE_FCNTL_PERSIST_WAL` is 1), so a test writer's close left both files in
+place. `CodexDatabase.closeLikeCodex()` now turns persistence off before closing,
+and `reopen(_:)` writes again afterwards. The reader recognizes the state by a WAL
+header (bytes 18 and 19 equal 2) with no `-wal` and skips the file quietly like a
+busy one, keeping its cursor. Treat that evidence as a hint, not proof that no one
+has the file open, and keep an unreadable main file a failure. Colophon's lessons
+cover how other readers behave on the same files.
+
 ## 2026-10-28: Distinguish cold start from a still-learning baseline
 
 A model can have enough active days to judge speed while its baseline is still

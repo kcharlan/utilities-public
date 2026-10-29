@@ -635,6 +635,30 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
         }
     }
 
+    /// The start of unavailability restarts when a source changes from one unavailable state to the
+    /// other (a format problem is a different problem from not being set up), and keeps through
+    /// repeats of the same state, whatever the text.
+    @Test func notSetUpThenFormatProblemRestartsUnavailableSince() async throws {
+        try await withCollector { harness throws in
+            let (t1, t2, t3, t4) = (harness.at(9, 4, 10), harness.at(9, 4, 10, 5), harness.at(9, 4, 10, 10), harness.at(9, 4, 10, 15))
+            harness.source.setState(.notSetUp("synthetic: not set up"))
+            _ = await harness.run(at: t1)
+            #expect(try harness.store().sourceState("codex")?.unavailableSince == t1)
+
+            harness.source.setState(.formatProblem("synthetic format problem"))
+            _ = await harness.run(at: t2)
+            #expect(try harness.store().sourceState("codex")?.unavailableSince == t2)
+
+            harness.source.setState(.formatProblem("synthetic different text"))
+            _ = await harness.run(at: t3)
+            #expect(try harness.store().sourceState("codex")?.unavailableSince == t2)
+
+            harness.source.setState(.ready)
+            _ = await harness.run(at: t4)
+            #expect(try harness.store().sourceState("codex")?.unavailableSince == nil)
+        }
+    }
+
     @Test func ingestStoresBatchGapsCursorAndVersion() async throws {
         try await withCollector { harness throws in
             let gap = DateInterval(start: harness.at(9, 3, 18), end: harness.at(9, 4, 9))

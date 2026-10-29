@@ -432,7 +432,7 @@ public struct CollectorRun: Sendable {
                     try store.setCursor(key, result.cursor)
                     try store.setSourceState(SourceStateRow(
                         source: key, state: result.state, version: batch.sourceVersion ?? previous?.version,
-                        unavailableSince: result.state == .ready ? nil : previous?.unavailableSince ?? now, updatedAt: now))
+                        unavailableSince: Self.unavailableSince(previous: previous, new: result.state, now: now), updatedAt: now))
                 }
                 log.write(
                     "\(source.displayName): \(batch.responses.count) responses, \(batch.failedTurns.count) failed turns, "
@@ -490,6 +490,17 @@ public struct CollectorRun: Sendable {
                 notes.append("\(failures.count) \(noun) couldn't be posted: \(CollectorRun.describe(first))")
             }
             return unposted
+        }
+
+        /// When the source became unavailable in its current way (spec 6.5): nil while ready; kept while the same
+        /// kind of problem continues, whatever its text; `now` when the source changes from ready or from the
+        /// other kind of problem.
+        private static func unavailableSince(previous: SourceStateRow?, new: SetupState, now: Date) -> Date? {
+            switch (previous?.state, new) {
+            case (_, .ready): nil
+            case (.notSetUp?, .notSetUp), (.formatProblem?, .formatProblem): previous?.unavailableSince ?? now
+            default: now
+            }
         }
 
         private static func describe(_ state: SetupState) -> String {

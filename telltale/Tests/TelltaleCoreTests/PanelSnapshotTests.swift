@@ -9,7 +9,7 @@ private enum Panel {
     static let signals: Set<Signal> = [.speed, .errors, .link, .provider, .load]
     static let codex = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: signals, naming: SyntheticNaming())
     static let healthy = CollectorHealthReport(
-        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false)
+        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notice: nil)
 
     static func load(_ h: RuleHarness, at now: Date, health: CollectorHealthReport? = healthy, sources: [SourceSummary] = [codex]) throws -> PanelSnapshot {
         try PanelSnapshot.load(store: h.store, baseline: h.base.engine, health: health, sources: sources, now: now, calendar: h.calendar)
@@ -53,6 +53,26 @@ private enum Panel {
             try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: true), unit: "codex")
             let arrival = try #require(Panel.load(h, at: h.sep4(9, 30)).arrivals.first)
             #expect(arrival.text.contains("usual speeds are ready for Example"))
+        }
+    }
+    @Test func arrivalOpensTheFirstRecentModel() throws {
+        try withRules { h in
+            // A model that sorts first but was last used long before the sidebar window, with enough
+            // history to be past cold start, beside the recent model.
+            let stale = "example-model-0.5-stale"
+            for day in 1...3 { try h.base.add(20, throughput: 40, month: 7, day: day, model: stale) }
+            try h.seedUsual()
+            try h.store.set(.pendingArrivals, ["codex"])
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: true), unit: "codex")
+            let now = h.sep4(9, 30)
+            if case .cold = try h.base.engine.learning(provider: .codex, model: stale, at: now) {
+                Issue.record("the stale model must be past cold start so the note could name it")
+                return
+            }
+            let arrival = try #require(Panel.load(h, at: now).arrivals.first)
+            #expect(arrival.firstModel == Synth.model)
+            #expect(arrival.text.contains("usual speeds are ready for Example."))
+            #expect(!arrival.text.contains(stale))
         }
     }
     @Test func undismissedArrivalSurvivesRebuild() throws {

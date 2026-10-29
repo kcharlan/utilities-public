@@ -16,8 +16,9 @@ public enum ThreadHistorySource {
     /// No database is no turns. `model` stays nil; the model is attributed later from the
     /// ingested responses.
     ///
-    /// Throws `ReadOnlySQLite.Busy` when Codex holds the file, `ReadOnlySQLite.FormatProblem` when
-    /// the table or a column is missing, and `ReadOnlySQLite.Failure` for any other SQLite error.
+    /// Throws `ReadOnlySQLite.Busy` when Codex holds the file, `ReadOnlySQLite.Closed` when a closed
+    /// WAL database has no `-wal` to read, `ReadOnlySQLite.FormatProblem` when the table or a column
+    /// is missing, and `ReadOnlySQLite.Failure` for any other SQLite error.
     public static func read(
         codexHome: URL, since: Date, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live
     ) throws -> [FailedTurnRecord] {

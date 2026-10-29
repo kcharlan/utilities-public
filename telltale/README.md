@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.2.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.2.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -172,6 +172,10 @@ transaction, post live notifications, prune per the retention table and record t
 Each unit keeps its own progress and backfill boundary; historical points never notify. A new
 provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
+A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly, like a busy
+one: it is tried again each run and read once Codex reopens it. A format problem that database last
+reported stays reported while it is skipped. See the closed-WAL policy in spec section 6
+(`docs/telltale_design_spec.md`).
 
 It writes only under `~/Library/Application Support/Telltale` (database and lock) and
 `~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`
@@ -207,7 +211,8 @@ plist, `launchctl print` (Loaded only) and the sources' format problems. The app
 `CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
 than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
-format problem. An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+format problem that two consecutive collector runs report (the lamp and panel message show from the first
+report; see the format-problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.
@@ -256,8 +261,10 @@ window to the current Space; closing it returns the app to a menu-bar-only acces
 dashboard shows the last section shown, or the first model; Settings shows the Settings
 section. It is dark by default and follows the stored appearance setting (spec section 9.4).
 
-The sidebar lists each provider's models (a provider whose source isn't set up shows
-"Not set up", dimmed), then Collector and Settings. A model's view shows the lamp strip with
+The sidebar lists each provider's models with a response in the last 14 days (a provider whose
+source isn't set up shows "Not set up", dimmed; one whose models are all older shows "No
+responses in the last 14 days"; names stay unique over every stored model, spec section
+[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. A model's view shows the lamp strip with
 Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
 response time against usual, hourly speed-index dots colored by the episode in effect,
 the dashed usual line, the provider's own status-page incidents as dashed amber bands, and
@@ -384,6 +391,15 @@ check.
   logs… asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
   and keeps accepted baselines. Before the first run (a fresh install), Settings says "You can
   change settings after the collector's first run." and changes nothing.
+- In the installed release only, closed Codex database: avoid a Colophon scan during the check,
+  and leave Codex idle until neither the highest-numbered `~/.codex/thread_history_N.sqlite` nor the
+  highest-numbered `~/.codex/logs_N.sqlite` has a `-wal` beside it. The next collector
+  run must log no format problem, and no Collector health notification may follow. Record it
+  apart from the sidebar check; it does not establish the cause of an earlier incident. Keep the
+  evidence (log lines, times) outside the repository.
+- In the installed release only, sidebar window: a model whose last response is more than 14 days
+  old is absent from the dashboard sidebar (the Codex group shows "No responses in the last 14
+  days" if every model is that old). Keep the evidence outside the repository.
 
 ### Results
 
@@ -401,6 +417,8 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.1.0, dashboard sidebar | Failed: `gpt-6.1-sol`, `gpt-6-sol` and `gpt-5.6-sol` were all named "Sol". From 0.1.1, names keep the version ("6.1 Sol") |
 | Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
+| Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
+| Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 
 The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin

@@ -18,12 +18,15 @@ public struct CollectorHealthReport: Sendable, Equatable {
     public var needsRepair: Bool
     /// The collector-state line: the off footer, the first-run wait, or empty.
     public var footer: String
-    /// Section 7.4's Collector health condition holds: post (or keep) a health notification.
-    public var notify: Bool
+    /// While section 7.4's Collector health condition holds, the notification's text: the first
+    /// problem when the collector isn't loaded, failed twice or has no recent success; otherwise the
+    /// first confirmed format problem (one a later run reported again), which need not be the first
+    /// the panel lists. Nil while the condition doesn't hold.
+    public var notice: String?
 
     public init(
         installed: LampState, loaded: LampState, lastRun: LampState, onSchedule: LampState, problems: [String], needsRepair: Bool,
-        footer: String, notify: Bool
+        footer: String, notice: String?
     ) {
         self.installed = installed
         self.loaded = loaded
@@ -32,8 +35,11 @@ public struct CollectorHealthReport: Sendable, Equatable {
         self.problems = problems
         self.needsRepair = needsRepair
         self.footer = footer
-        self.notify = notify
+        self.notice = notice
     }
+
+    /// Section 7.4's Collector health condition holds: post (or keep) a health notification.
+    public var notify: Bool { notice != nil }
 
     /// The Collector signal's lamp: unlit when off (Installed and Loaded are lit whenever it's on),
     /// red when a lamp is red or there is a problem (a format problem lights it without lighting
@@ -57,7 +63,9 @@ public struct CollectorHealthReport: Sendable, Equatable {
 /// - Notify when on and: not loaded; the two newest finished runs failed; no run succeeded for
 ///   more than 3 × the interval (counted from the newest success's start, else the oldest run's,
 ///   else `installedAt`, the plist's last write, when no run is on record);
-///   or a source reports a format problem. A run still in progress that started on schedule
+///   or a source reported a format problem in two consecutive collector runs (spec 6.5's
+///   format-problem policy: the lamp and message show from the first report, the notification
+///   waits for the second). A run still in progress that started on schedule
 ///   holds back the no-success verdict until it ends.
 public enum CollectorHealth {
     /// Section 7.4's rule name, used as the notification title.
@@ -91,7 +99,7 @@ public enum CollectorHealth {
         guard enabled else {
             return CollectorHealthReport(
                 installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-                footer: Copy.collectorOff, notify: false)
+                footer: Copy.collectorOff, notice: nil)
         }
         let interval = TimeInterval(Settings.usableInterval(intervalMinutes) * 60)
         let counted = runs.filter { $0.outcome != .skipped }
@@ -129,13 +137,20 @@ public enum CollectorHealth {
         let formatProblems = sourceStates.filter {
             if case .formatProblem = $0.state { true } else { false }
         }
+        // The other notify conditions each add their message above, so the first problem so far names
+        // them. Otherwise the notice is the first confirmed format problem: a report after the one that
+        // began the problem shows it persisted across runs (a run that began it wrote `updatedAt` equal
+        // to `unavailableSince`).
+        var notice = !loaded || twoFailures || noSuccess ? problems.first : nil
         for state in formatProblems {
-            problems.append(Copy.formatProblem(source: sourceNames[state.source] ?? state.source, since: state.unavailableSince ?? state.updatedAt, calendar: calendar))
+            let message = Copy.formatProblem(source: sourceNames[state.source] ?? state.source, since: state.unavailableSince ?? state.updatedAt, calendar: calendar)
+            problems.append(message)
+            if notice == nil, state.updatedAt > (state.unavailableSince ?? state.updatedAt) { notice = message }
         }
 
         return CollectorHealthReport(
             installed: installedMatches ? .green : .red, loaded: loaded ? .green : .red, lastRun: lastRun, onSchedule: onSchedule,
             problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty && problems.isEmpty ? Copy.waitingForFirstRun : "",
-            notify: !loaded || twoFailures || noSuccess || !formatProblems.isEmpty)
+            notice: notice)
     }
 }

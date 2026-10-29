@@ -273,6 +273,8 @@ public enum Copy {
     public static let notSetUp = "Not set up"
     /// The sidebar entry of a set-up provider with no stored responses yet.
     public static let noResponsesYet = "No responses yet"
+    /// The sidebar entry of a provider whose models all last responded before the sidebar window.
+    public static let noRecentModels = "No responses in the last \(Int(ModelDetail.sidebarWindow / 86_400)) days"
 
     // MARK: Notifications
 

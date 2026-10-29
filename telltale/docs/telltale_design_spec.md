@@ -209,6 +209,24 @@ All reads are read-only. SQLite files are opened with `mode=ro` and a short
 busy timeout. On `SQLITE_BUSY` or a locked file, the source skips and retries
 next run (it never blocks Codex).
 
+**Closed WAL databases.** When Codex closes a WAL-mode database, upstream
+SQLite deletes its `-wal` and `-shm` files. The system SQLite Telltale links
+then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
+(code 14) instead of reading the main file; that is not a change in Codex's
+format. The reader reports `ReadOnlySQLite.Closed` for that failure when the
+file's header says WAL (bytes 18 and 19 are both 2) and no `-wal` sits beside
+it. Like a busy file, the source skips it quietly, keeps its cursors and reads
+the file again next run, after Codex reopens it; no side files are created for
+the closed database in the meantime. A skip, busy or closed, is not a read, so
+it carries the file's previous verdict forward: a format problem the file last
+reported is reported again on every skipped run until a read of the file
+succeeds, so its "since" and its notification are not reset each time Codex
+closes the file. The evidence has limits: a missing `-wal` alone does not prove
+that no process has the database open, and a file whose header cannot be read
+(an unreadable main file, for example) still reports a failure. Rows that Codex
+prunes while its files stay closed are never read, so a long closure can leave a
+gap.
+
 ### 6.1 Rollouts: responses
 
 **Files.** `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]` and
@@ -337,6 +355,19 @@ for example `0.164.0-alpha.11.1`). The source must:
 A format problem lights the Collector lamp red with a plain message: "Codex
 changed its log format. Telltale can't read responses since 09:12."
 
+**Format-problem policy.** The lamp and the panel message appear from the first
+collector run that reports a format problem, but the Collector health
+notification (§7.4) waits until a second consecutive run reports it, so a
+problem that clears on the next run (a transient one) never posts, and so never
+posts a recovery either. "Since" is when the source entered its current kind of
+unavailable state: it is kept while the same kind of state continues, whatever
+its text, and restarts when a source moves between "not set up" and "format
+problem" (or from ready). Telltale judges "second consecutive report" from the
+stored source state: a report after the one that began the problem has an
+`updatedAt` later than `unavailableSince`. With two sources reporting format
+problems, the notification names a confirmed one, even when the panel lists a
+newer one first.
+
 ## 7. Rule engine
 
 ### 7.1 Evaluation
@@ -424,7 +455,7 @@ Every value is editable in Settings. Each rule has: on/off, its parameters,
 | Failed turns | Errors, red | Any failed turn | 30 min with no failure **(my call)** | On, coalesced: at most one per 15 min, "2 turns failed: model at capacity" **(my call)** |
 | Disconnects | Link, amber | ≥ 3 disconnect or retry events in the last 60 min | < 3 in the last 60 min | Off |
 | Provider incident | OpenAI, amber; red for partial or full outage status | An open incident affects a watched component, or its title names a model used in the last 24 h | Incident resolved | On, clear notice on |
-| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format problem | Condition gone | On (posted by the UI, §9.3) |
+| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format problem reported by two consecutive collector runs (§6.5) | Condition gone | On (posted by the UI, §9.3) |
 | Usage limit | none (readout only) | Primary window ≥ 90% used | < 90% | Off, rule off by default **(my call)** |
 
 When two lamp colors are possible, the lamp shows the most severe one.
@@ -521,7 +552,14 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 ### 9.2 Dashboard window
 
 Sidebar: providers and their models (unconfigured providers dimmed, "Not set
-up"), then Collector and Settings. Model view, as in the mockup:
+up"), then Collector and Settings. A provider lists only the models with a response
+in the last 14 days (`ModelDetail.sidebarWindow`, the longest chart range).
+Display names are still made unique over every stored model, so a model
+keeps its name when it leaves the sidebar and returns, and a stale model that is opened still
+shows that name. A provider whose models are all older than the window shows "No responses in
+the last 14 days" (`Copy.noRecentModels`), dimmed; one with no stored response shows "No
+responses yet". The arrival note's first model and the models it names come from the same
+recent list. Model view, as in the mockup:
 
 - Lamp strip, including Collector.
 - Alert list.

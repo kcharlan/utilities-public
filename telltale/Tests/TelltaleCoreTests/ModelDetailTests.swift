@@ -66,6 +66,22 @@ private enum Detail {
         }
     }
 
+    @Test func recentModelsUseTheSidebarWindow() throws {
+        try withRules { h in
+            let now = h.sep4(9, 30)
+            var synth = Synth(firstNumber: 500)
+            try h.store.upsert(responses: [
+                // Ends exactly on the window's lower edge, which is outside it (the edge is exclusive).
+                synth.response(model: Synth.model, throughput: 40, end: now.addingTimeInterval(-ModelDetail.sidebarWindow)),
+                // Ends one second inside the window.
+                synth.response(model: Synth.otherModel, throughput: 40, end: now.addingTimeInterval(1 - ModelDetail.sidebarWindow)),
+            ])
+            #expect(ModelDetail.sidebarWindow == ChartRange.twoWeeks.duration)
+            #expect(try ModelDetail.recentModels(store: h.store, provider: .codex, now: now) == [Synth.otherModel])
+            #expect(try ModelDetail.models(store: h.store, provider: .codex) == [Synth.model, Synth.otherModel])
+        }
+    }
+
     @Test func incidentBandsAndFailureMarkers() throws {
         try withRules { h in
             try h.store.upsert(incidents: [

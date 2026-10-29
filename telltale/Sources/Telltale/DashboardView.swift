@@ -15,6 +15,8 @@ import TelltaleCore
             case notSetUp
             /// Set up, with no stored response yet.
             case empty
+            /// Stored models, none with a response in the sidebar window (`ModelDetail.sidebarWindow`).
+            case idle
         }
         var provider: ProviderID
         var name: String
@@ -92,7 +94,7 @@ import TelltaleCore
                 return found
             }
         }
-        return SidebarModel(provider: provider, model: model, name: live.displayName(provider: provider, model: model))
+        return SidebarModel(provider: provider, model: model, name: live.disambiguatedName(provider: provider, model: model))
     }
 
     func select(_ section: DashboardSection) {
@@ -197,6 +199,7 @@ import TelltaleCore
         let groups = try? live.read { store, _ in
             try sources.map { source -> SidebarGroup in
                 let models = try ModelDetail.models(store: store, provider: source.provider)
+                let recent = try ModelDetail.recentModels(store: store, provider: source.provider, now: now())
                 let backfilling = try store.backfill(unit: source.provider.rawValue).map { $0.finishedAt == nil } ?? false
                 if models.isEmpty {
                     if case .notSetUp = try store.sourceState(source.provider.rawValue)?.state {
@@ -204,9 +207,11 @@ import TelltaleCore
                     }
                     return SidebarGroup(provider: source.provider, name: source.name, state: .empty, isBackfilling: backfilling)
                 }
+                if recent.isEmpty { return SidebarGroup(provider: source.provider, name: source.name, state: .idle, isBackfilling: backfilling) }
                 let colors = live.snapshot.models.filter { $0.provider == source.provider }
+                // Names are made unique over every stored model, so a model keeps its name as it leaves and returns.
                 let names = DisplayNames.disambiguated(models, naming: source.naming)
-                return SidebarGroup(provider: source.provider, name: source.name, state: .models(models.map { model in
+                return SidebarGroup(provider: source.provider, name: source.name, state: .models(recent.map { model in
                     SidebarModel(
                         provider: source.provider, model: model, name: names[model] ?? model,
                         color: colors.first { $0.model == model }?.color)
@@ -276,6 +281,8 @@ private struct DashboardSidebar: View {
                     dimmed(Copy.notSetUp)
                 case .empty:
                     if !group.isBackfilling { dimmed(Copy.noResponsesYet) }
+                case .idle:
+                    if !group.isBackfilling { dimmed(Copy.noRecentModels) }
                 }
             }
             Rectangle().fill(Theme.swiftUI(Theme.housing)).frame(height: 1).padding(.top, 24).padding(.bottom, 10)
