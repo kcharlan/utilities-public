@@ -29,6 +29,12 @@ private enum Fixture {
 }
 
 @Suite struct CopyTests {
+    @Test func readProblemCopyAndProviderState() {
+        let expected = "Telltale can't read Example's logs since 08:05. Open the Collector view to see the error."
+        #expect(Copy.readProblem(source: "Example", since: Fixture.since, calendar: Fixture.calendar) == expected)
+        #expect(Copy.providerState(.readProblem(since: Fixture.since), name: "Example", calendar: Fixture.calendar) == expected)
+    }
+
     @Test func arrivalText() {
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: []) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are still being learned.")
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: ["Example", "Sample"]) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are ready for Example, Sample.")
@@ -148,6 +154,8 @@ private enum Fixture {
             CopyCase("failedTurnReason (policy)", Copy.failedTurnReason(code: "cyberPolicy"), "blocked by policy"),
             CopyCase("failedTurnReason (other)", Copy.failedTurnReason(code: "syntheticCode"), "syntheticCode"),
             CopyCase("collectorOff", Copy.collectorOff, "Collector off. Turn it on to keep watching."),
+            CopyCase("readProblem", Copy.readProblem(source: "Example", since: since, calendar: calendar),
+                     "Telltale can't read Example's logs since 08:05. Open the Collector view to see the error."),
             CopyCase("formatProblem", Copy.formatProblem(since: since, calendar: calendar),
                      "Codex changed its log format. Telltale can't read responses since 08:05."),
             CopyCase("collectorNotLoaded", Copy.collectorNotLoaded,

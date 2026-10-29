@@ -498,7 +498,7 @@ public struct CollectorRun: Sendable {
         private static func unavailableSince(previous: SourceStateRow?, new: SetupState, now: Date) -> Date? {
             switch (previous?.state, new) {
             case (_, .ready): nil
-            case (.notSetUp?, .notSetUp), (.formatProblem?, .formatProblem): previous?.unavailableSince ?? now
+            case (.notSetUp?, .notSetUp), (.formatProblem?, .formatProblem), (.readProblem?, .readProblem): previous?.unavailableSince ?? now
             default: now
             }
         }
@@ -508,6 +508,7 @@ public struct CollectorRun: Sendable {
             case .ready: "ready"
             case .notSetUp(let reason): "not set up: \(reason)"
             case .formatProblem(let detail): "format problem: \(detail)"
+            case .readProblem(let detail): "read problem: \(detail)"
             }
         }
     }

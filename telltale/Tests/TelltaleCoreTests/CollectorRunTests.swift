@@ -134,6 +134,27 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
 // MARK: - Tests
 
 @Suite struct CollectorRunTests {
+    @Test func readProblemKeepsItsSinceAcrossRuns() async throws {
+        try await withCollector { h throws in
+            let first = h.at(9, 4, 10)
+            h.source.setState(.readProblem("synthetic one"))
+            _ = await h.run(at: first)
+            h.source.setState(.readProblem("synthetic two"))
+            _ = await h.run(at: h.at(9, 4, 10, 5))
+            #expect(try h.store().sourceState("codex")?.unavailableSince == first)
+        }
+    }
+    @Test func movingFromFormatToReadProblemRestartsSince() async throws {
+        try await withCollector { h throws in
+            h.source.setState(.formatProblem("synthetic"))
+            _ = await h.run(at: h.at(9, 4, 10))
+            let changed = h.at(9, 4, 10, 5)
+            h.source.setState(.readProblem("synthetic"))
+            _ = await h.run(at: changed)
+            #expect(try h.store().sourceState("codex")?.unavailableSince == changed)
+        }
+    }
+
     @Test func notificationLogCountsEachProviderSeparately() async throws {
         try await withCollector { h in
             let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")

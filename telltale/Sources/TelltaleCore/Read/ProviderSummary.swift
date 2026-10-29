@@ -3,7 +3,7 @@ import Foundation
 /// A usage provider's stored state and history, read together from one snapshot.
 public struct ProviderSummary: Sendable, Equatable, Identifiable {
     public enum State: Sendable, Equatable {
-        case normal, notSetUp(String), formatProblem(since: Date), backfilling(started: Date), rebuildRequested(at: Date)
+        case normal, notSetUp(String), formatProblem(since: Date), readProblem(since: Date), backfilling(started: Date), rebuildRequested(at: Date)
     }
     public var provider: ProviderID
     public var name: String
@@ -27,6 +27,7 @@ public struct ProviderSummary: Sendable, Equatable, Identifiable {
                 if let at = requests[key] ?? global { state = .rebuildRequested(at: at) }
                 else if let backfill, backfill.finishedAt == nil { state = .backfilling(started: backfill.startedAt) }
                 else if let row, case .formatProblem = row.state { state = .formatProblem(since: row.unavailableSince ?? row.updatedAt) }
+                else if let row, case .readProblem = row.state { state = .readProblem(since: row.unavailableSince ?? row.updatedAt) }
                 else if let row, case .notSetUp(let reason) = row.state { state = .notSetUp(reason) }
                 else { state = .normal }
                 let oldest = try store.query("SELECT MIN(end_at) FROM responses WHERE provider = ?", [.text(key)]) { $0.optionalDate(0) }.first ?? nil

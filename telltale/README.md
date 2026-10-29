@@ -152,6 +152,18 @@ private backup under `~/.utilities-deploy-backups/telltale/`; `--rollback BACKUP
 one, and any failure restores the previous app. `--audit` checks the installed app against
 current source without building or running anything.
 
+An older release cannot decode a `readProblem` stored by this release. After
+rollback, that row can block the affected provider's ingest, Collector health,
+and the Settings provider list. Stop Telltale and its collector, then delete
+only the affected source row (replace `example` with the affected source ID):
+
+```sh
+sqlite3 "$HOME/Library/Application Support/Telltale/telltale.sqlite" "DELETE FROM source_state WHERE source = 'example';"
+```
+
+The next collector run recreates the row. Other source rows and collected data
+are preserved.
+
 The deployer never runs `launchctl` and leaves the database, the log and the collector's
 job plist alone. A running Telltale keeps running the old release: quit and reopen it. The
 installed copy turns the collector on at launch when it should be on and its plist is
@@ -206,12 +218,12 @@ becomes the collector. The plist records the validated, symlink-resolved executa
 `launchctl` call has a 10-second timeout.
 
 `CollectorHealth` judges the collector from its run records (skipped runs count for nothing), the
-plist, `launchctl print` (Loaded only) and the sources' format problems. The app's
+plist, `launchctl print` (Loaded only) and the sources' format and read problems. The app's
 `CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
 than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
-format problem that two consecutive collector runs report (the lamp and panel message show from the first
-report; see the format-problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+format or read problem that two consecutive collector runs report (the lamp and panel message show from the first
+report; see the shared problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.

@@ -1590,3 +1590,13 @@ databases. `busyDatabaseKeepsItsFormatProblem`, `transientReadFailureIsNotKept`,
 `readFailureLeavesAnEarlierFormatProblemKept`,
 `keptProblemIsDroppedWhenCodexMovesToANewFile`, and
 `readFailureAfterFileChangeDropsTheOldFormatProblem` guard those transitions.
+
+## 2026-10-29: Distinguish source read failures from format drift
+
+A failed file read does not establish that a provider changed its format. Keep
+read and format verdicts separate and give format verdicts precedence when both
+occur in one ingest. Preserve the start time only across reports of the same
+kind; apply the same delayed notification policy to both. `formatProblemOutranksAReadProblem`,
+`unreadableTranscriptIsAReadProblem`, `readProblemKeepsItsSinceAcrossRuns`,
+`movingFromFormatToReadProblemRestartsSince`, and the Collector health and
+provider summary regressions cover classification, presentation and transitions.

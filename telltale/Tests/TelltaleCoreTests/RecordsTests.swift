@@ -3,6 +3,11 @@ import Testing
 @testable import TelltaleCore
 
 @Suite struct RecordsTests {
+    @Test func readProblemRoundTrips() throws {
+        let state = SetupState.readProblem("Synthetic read failure")
+        #expect(try JSONDecoder().decode(SetupState.self, from: JSONEncoder().encode(state)) == state)
+    }
+
     /// Spec section 6.1: throughput = output tokens / duration, only from 300 output tokens up.
     @Test func throughputNeedsAtLeast300OutputTokens() {
         let long = Synthetic.response(1, endingAt: 100, duration: 10, outputTokens: 300)

@@ -5,6 +5,17 @@ import TelltaleCore
 import TelltaleTestSupport
 
 @Suite struct CodexUsageSourceTests {
+    @Test func formatProblemOutranksAReadProblem() throws {
+        try withScratchDirectory { home in
+            let broken = try Self.session(1).writeCompressed(codexHome: home)
+            try Data("synthetic invalid zstd".utf8).write(to: broken)
+            _ = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            let result = Self.source(home).ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            guard case .formatProblem(let detail) = result.state else { Issue.record("expected format problem"); return }
+            #expect(detail.contains("error_json"))
+        }
+    }
+
     private static let origin = RolloutBuilder.defaultOrigin
     private static func at(_ seconds: TimeInterval) -> Date { origin.addingTimeInterval(seconds) }
     private static let sol = "gpt-6.1-sol"
@@ -108,8 +119,8 @@ import TelltaleTestSupport
             try logs.addLog(at: Self.at(300), body: Self.disconnect)
 
             let result = Self.source(home).ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(3_600))
-            guard case .formatProblem(let detail) = result.state else {
-                Issue.record("expected a format problem, got \(result.state)")
+            guard case .readProblem(let detail) = result.state else {
+                Issue.record("expected a read problem, got \(result.state)")
                 return
             }
             #expect(detail.contains("rollout") && detail.contains(RolloutBuilder.sessionID(1)))
@@ -179,8 +190,8 @@ import TelltaleTestSupport
 
             let source = Self.source(home)
             let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
-            guard case .formatProblem = first.state else {
-                Issue.record("expected a format problem, got \(first.state)")
+            guard case .readProblem = first.state else {
+                Issue.record("expected a read problem, got \(first.state)")
                 return
             }
             try builder.writeCompressed(codexHome: home)
@@ -379,7 +390,7 @@ import TelltaleTestSupport
             defer { chmod(history.url.path, 0o600) }
             let source = Self.source(home)
             let failed = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
-            guard case .formatProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
+            guard case .readProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
             #expect(detail.contains("couldn't be read"))
             #expect(try Self.cursor(failed).threadHistoryProblem == nil)
             #expect(chmod(history.url.path, 0o600) == 0)
@@ -425,7 +436,7 @@ import TelltaleTestSupport
             #expect(chmod(newer.url.path, 0o000) == 0)
             defer { chmod(newer.url.path, 0o600) }
             let failed = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
-            guard case .formatProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
+            guard case .readProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
             #expect(detail.contains("couldn't be read"))
             #expect(try Self.cursor(failed).threadHistoryProblem == nil)
             #expect(try Self.cursor(failed).threadHistoryProblemFile == nil)
@@ -564,7 +575,7 @@ import TelltaleTestSupport
 
             // A changed file is read again, and the broken contents are reported.
             try FileManager.default.setAttributes([.modificationDate: file.modified.addingTimeInterval(1)], ofItemAtPath: url.path)
-            guard case .formatProblem = source.ingest(cursor: second.cursor, backfillFrom: .distantPast, now: Self.at(300)).state else {
+            guard case .readProblem = source.ingest(cursor: second.cursor, backfillFrom: .distantPast, now: Self.at(300)).state else {
                 Issue.record("a changed file should be read again")
                 return
             }

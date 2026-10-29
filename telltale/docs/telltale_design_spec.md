@@ -188,7 +188,7 @@ dynamic loading **(my call)**. There are two kinds:
   - **Failed turn:** time, model (optional), error code, message.
   - **Connection event:** time, kind (disconnect, retry, reconnect), detail.
   - **Usage-limit snapshot** (optional): percent used, window, reset time.
-  - Plus a setup state (`ready`, `notSetUp(reason)`, `formatProblem(detail)`)
+  - Plus a setup state (`ready`, `notSetUp(reason)`, `formatProblem(detail)`, `readProblem(detail)`)
     and an incremental cursor the core persists.
 - **Status source.** Reads a provider's public status page and emits incidents
   with id, title, status and its history, component impacts with start and
@@ -365,6 +365,13 @@ stored source state: a report after the one that began the problem has an
 problems, the notification names a confirmed one, even when the panel lists a
 newer one first.
 
+**Read problems.** A failure to read a provider's file is a read problem, not
+format drift. It shares the format-problem lamp, message and two-consecutive-run
+notification policy. If one ingest reports both kinds, the first format problem
+wins; otherwise the first read problem wins. The since time persists while the
+same kind continues, regardless of detail, and restarts on a transition between
+format and read problems or any other state.
+
 ## 7. Rule engine
 
 ### 7.1 Evaluation
@@ -452,7 +459,7 @@ Every value is editable in Settings. Each rule has: on/off, its parameters,
 | Failed turns | Errors, red | Any failed turn | 30 min with no failure **(my call)** | On, coalesced: at most one per 15 min, "2 turns failed: model at capacity" **(my call)** |
 | Disconnects | Link, amber | ≥ 3 disconnect or retry events in the last 60 min | < 3 in the last 60 min | Off |
 | Provider incident | OpenAI, amber; red for partial or full outage status | An open incident affects a watched component, or its title names a model used in the last 24 h | Incident resolved | On, clear notice on |
-| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format problem reported by two consecutive collector runs (§6.5) | Condition gone | On (posted by the UI, §9.3) |
+| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format or read problem reported by two consecutive collector runs (§6.5) | Condition gone | On (posted by the UI, §9.3) |
 | Usage limit | none (readout only) | Primary window ≥ 90% used | < 90% | Off, rule off by default **(my call)** |
 
 When two lamp colors are possible, the lamp shows the most severe one.
@@ -638,6 +645,8 @@ Collector lamps:
 | Watched status components | Checklist from the status page's component list |
 | Data | Retention, plus "Rebuild from Codex logs", which re-ingests the last 30 days |
 | General | Open at login; Dashboard appearance: Dark (default), Light or Match system **(my call)**. The panel always follows the system. |
+
+The provider state line can show `Copy.readProblem` for a read failure.
 
 The app writes settings to the `settings` table. The collector reads them at
 the start of each run.

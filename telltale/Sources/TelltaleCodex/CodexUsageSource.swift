@@ -93,13 +93,14 @@ public struct CodexUsageSource: UsageSource {
         var next = previous ?? CodexCursor()
         var batch = IngestBatch()
         var problems: [String] = []
+        var readProblems: [String] = []
 
         let cleanupError: (any Error)?
         do {
             if let snapshotDirectory { try ReadOnlySQLite.cleanSnapshots(snapshotDirectory) }
             cleanupError = nil
         } catch { cleanupError = error }
-        readRollouts(previous: previous, backfillFrom: backfillFrom, next: &next, batch: &batch, problems: &problems)
+        readRollouts(previous: previous, backfillFrom: backfillFrom, next: &next, batch: &batch, problems: &problems, readProblems: &readProblems)
 
         let historyURL = ThreadHistorySource.database(codexHome: codexHome)
         let historyDate = historyURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
@@ -128,7 +129,7 @@ public struct CodexUsageSource: UsageSource {
             if case .failure(let text) = historyOutcome {
                 next.threadHistoryModification = nil
                 next.threadHistoryReadFile = nil
-                problems.append(text)
+                readProblems.append(text)
             }
         case .problem(let text):
             problems.append(text)
@@ -168,7 +169,7 @@ public struct CodexUsageSource: UsageSource {
             if case .failure(let text) = logsOutcome {
                 next.logsModification = nil
                 next.logsReadFile = nil
-                problems.append(text)
+                readProblems.append(text)
             }
         case .problem(let text):
             problems.append(text)
@@ -177,13 +178,13 @@ public struct CodexUsageSource: UsageSource {
             next.logsModification = logsDate
             next.logsReadFile = logsURL?.lastPathComponent
         }
-        return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? .ready)
+        return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? readProblems.first.map(SetupState.readProblem) ?? .ready)
     }
 
     // MARK: Rollouts
 
     private func readRollouts(
-        previous: CodexCursor?, backfillFrom: Date, next: inout CodexCursor, batch: inout IngestBatch, problems: inout [String]
+        previous: CodexCursor?, backfillFrom: Date, next: inout CodexCursor, batch: inout IngestBatch, problems: inout [String], readProblems: inout [String]
     ) {
         var sessions: [String: SessionCursor] = [:]
         var newestLimit: UsageLimitSnapshot?
@@ -198,7 +199,7 @@ public struct CodexUsageSource: UsageSource {
             do {
                 parse = try RolloutParser.parse(file: file, cursor: known)
             } catch {
-                problems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read")
+                readProblems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read")
                 continue
             }
             sessions[file.sessionID] = parse.cursor

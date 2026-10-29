@@ -4,6 +4,15 @@ import TelltaleTestSupport
 @testable import TelltaleCore
 
 @Suite struct ProviderSummaryTests {
+    @Test func readProblemRowGivesAReadProblemState() throws {
+        try withRules { h in
+            let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: "example", signals: [], naming: SyntheticNaming())
+            let at = h.sep4(9)
+            try h.store.setSourceState(SourceStateRow(source: "codex", state: .readProblem("synthetic"), unavailableSince: at, updatedAt: at))
+            #expect(try ProviderSummary.load(store: h.store, sources: [source])[0].state == .readProblem(since: at))
+        }
+    }
+
     @Test func stateLinesAndConfirmation() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

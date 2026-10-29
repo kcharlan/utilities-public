@@ -12,7 +12,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
     public var lastRun: LampState
     public var onSchedule: LampState
     /// Plain messages for what's wrong, most urgent first: not loaded, the last run's failure,
-    /// overdue, format problems.
+    /// overdue, format and read problems.
     public var problems: [String]
     /// The collector is on but its plist is missing, unreadable or runs another executable.
     public var needsRepair: Bool
@@ -20,7 +20,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
     public var footer: String
     /// While section 7.4's Collector health condition holds, the notification's text: the first
     /// problem when the collector isn't loaded, failed twice or has no recent success; otherwise the
-    /// first confirmed format problem (one a later run reported again), which need not be the first
+    /// first confirmed source problem (one a later run reported again), which need not be the first
     /// the panel lists. Nil while the condition doesn't hold.
     public var notice: String?
 
@@ -42,7 +42,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
     public var notify: Bool { notice != nil }
 
     /// The Collector signal's lamp: unlit when off (Installed and Loaded are lit whenever it's on),
-    /// red when a lamp is red or there is a problem (a format problem lights it without lighting
+    /// red when a lamp is red or there is a problem (a source problem lights it without lighting
     /// one of the four), else green.
     public var lamp: LampState {
         let lamps = [installed, loaded, lastRun, onSchedule]
@@ -63,7 +63,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
 /// - Notify when on and: not loaded; the two newest finished runs failed; no run succeeded for
 ///   more than 3 × the interval (counted from the newest success's start, else the oldest run's,
 ///   else `installedAt`, the plist's last write, when no run is on record);
-///   or a source reported a format problem in two consecutive collector runs (spec 6.5's
+///   or a source reported a format or read problem in two consecutive collector runs (spec 6.5's
 ///   format-problem policy: the lamp and message show from the first report, the notification
 ///   waits for the second). A run still in progress that started on schedule
 ///   holds back the no-success verdict until it ends.
@@ -134,16 +134,23 @@ public enum CollectorHealth {
             if noSuccess, problems.isEmpty { problems.append(Copy.collectorOverdue(since: reference, calendar: calendar)) }
         }
 
-        let formatProblems = sourceStates.filter {
-            if case .formatProblem = $0.state { true } else { false }
+        let sourceProblems = sourceStates.filter {
+            switch $0.state {
+            case .formatProblem, .readProblem: true
+            default: false
+            }
         }
         // The other notify conditions each add their message above, so the first problem so far names
-        // them. Otherwise the notice is the first confirmed format problem: a report after the one that
+        // them. Otherwise the notice is the first confirmed source problem: a report after the one that
         // began the problem shows it persisted across runs (a run that began it wrote `updatedAt` equal
         // to `unavailableSince`).
         var notice = !loaded || twoFailures || noSuccess ? problems.first : nil
-        for state in formatProblems {
-            let message = Copy.formatProblem(source: sourceNames[state.source] ?? state.source, since: state.unavailableSince ?? state.updatedAt, calendar: calendar)
+        for state in sourceProblems {
+            let source = sourceNames[state.source] ?? state.source
+            let since = state.unavailableSince ?? state.updatedAt
+            let message: String
+            if case .readProblem = state.state { message = Copy.readProblem(source: source, since: since, calendar: calendar) }
+            else { message = Copy.formatProblem(source: source, since: since, calendar: calendar) }
             problems.append(message)
             if notice == nil, state.updatedAt > (state.unavailableSince ?? state.updatedAt) { notice = message }
         }

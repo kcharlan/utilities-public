@@ -31,6 +31,27 @@ private enum Health {
 }
 
 @Suite struct CollectorHealthTests {
+    @Test func readProblemLightsRedWithItsOwnWording() {
+        let at = Health.at(9, 0)
+        let state = SourceStateRow(source: "example", state: .readProblem("synthetic"), unavailableSince: at, updatedAt: Health.at(9, 5))
+        let report = Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 7))
+        #expect(report.lamp == .red)
+        #expect(report.problems.contains(Copy.readProblem(source: "example", since: at, calendar: Synth.newYork)))
+    }
+    @Test func readProblemFromOneRunShowsButDoesNotNotify() {
+        let at = Health.at(9, 5)
+        let state = SourceStateRow(source: "example", state: .readProblem("synthetic"), unavailableSince: at, updatedAt: at)
+        let report = Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 7))
+        #expect(report.lamp == .red)
+        #expect(!report.notify)
+    }
+    @Test func noticeNamesTheConfirmedReadProblem() {
+        let at = Health.at(9, 0)
+        let state = SourceStateRow(source: "example", state: .readProblem("synthetic"), unavailableSince: at, updatedAt: Health.at(9, 5))
+        let report = Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 7))
+        #expect(report.notice == Copy.readProblem(source: "example", since: at, calendar: Synth.newYork))
+    }
+
     @Test func formatProblemUsesTheSourcesName() {
         let state = SourceStateRow(source: "synthetic-provider", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 12), updatedAt: Health.at(9, 20))
         let report = CollectorHealth.evaluate(enabled: true, installedExecutable: Health.app, installedAt: nil, currentExecutable: Health.app,

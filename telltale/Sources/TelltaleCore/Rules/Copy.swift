@@ -132,6 +132,7 @@ public enum Copy {
         case .normal: "Reading normally."
         case .notSetUp(let reason): reason
         case .formatProblem(let since): formatProblem(source: name, since: since, calendar: calendar)
+        case .readProblem(let since): readProblem(source: name, since: since, calendar: calendar)
         case .backfilling(let started): "Reading \(CollectorRun.lookbackDays) days of history, started \(clock(started, calendar)). No notifications are sent for it."
         case .rebuildRequested(let at): "Rebuild requested at \(clock(at, calendar)). Waiting for the collector."
         }
@@ -169,6 +170,9 @@ public enum Copy {
     }
     public static func formatProblem(source: String, since: Date, calendar: Calendar) -> String {
         "\(source) changed its log format. Telltale can't read \(source) responses since \(clock(since, calendar))."
+    }
+    public static func readProblem(source: String, since: Date, calendar: Calendar) -> String {
+        "Telltale can't read \(source)'s logs since \(clock(since, calendar)). Open the Collector view to see the error."
     }
     public static let collectorNotLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
     /// `reason` is the run record's detail; a closing period is dropped so the sentence ends once.
