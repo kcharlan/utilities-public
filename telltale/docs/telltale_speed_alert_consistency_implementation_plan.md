@@ -133,9 +133,9 @@ In `Tests/TelltaleCoreTests/ModelDetailTests.swift`, replace `panelRowShowsTheDa
 
 In `Tests/Acceptance/AcceptanceServiceTests.swift`, add `panelScenesUseStoredSpeedReadings`: load the affected scenes and compare Codex row values with their stored points; require Claude row numbers nil and a learning note. Also inspect each row-expectation match from `rg -n '\.tps|\.usual|models\.' Tests`; change expected values when the readout contract changes, and add evaluation only where the fixture's purpose requires a judged window.
 
-- [ ] **Confirm failure.** Run the filtered command with `PanelSnapshotTests|ModelDetailTests`. Demonstrate failures caused by the old last-hour row source; existing note behavior may already pass.
-- [ ] **Implement** the Files list, then verify under **Tests** and **Build-input validation**, including the acceptance service assertions.
-- [ ] **Update docs.** Amend spec §8's usual-number bullet for **Panel row source** and **Dashboard readout**, retaining mix matching; §9.1's panel-row line; the visual doc's **Panel** row annotation; README **Menu bar and panel**. Document the dash behavior using **Panel row states**. Apply **Lessons**, **Expectations** and **Commit boundaries**.
+- [x] **Confirm failure.** Run the filtered command with `PanelSnapshotTests|ModelDetailTests`. Demonstrate failures caused by the old last-hour row source; existing note behavior may already pass.
+- [x] **Implement** the Files list, then verify under **Tests** and **Build-input validation**, including the acceptance service assertions.
+- [x] **Update docs.** Amend spec §8's usual-number bullet for **Panel row source** and **Dashboard readout**, retaining mix matching; §9.1's panel-row line; the visual doc's **Panel** row annotation; README **Menu bar and panel**. Document the dash behavior using **Panel row states**. Apply **Lessons**, **Expectations** and **Commit boundaries**.
 
 ## Alert rows and release
 

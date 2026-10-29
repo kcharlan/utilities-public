@@ -54,6 +54,12 @@ import TelltaleCore
     @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ live: LiveStore) throws {
         let snapshot = live.snapshot
         guard snapshot.checkedAt != nil, snapshot.models.count == ((state == .twoProviders || state == .arrival) ? 4 : 2) else { fatalError("\(state): unexpected model rows") }
+        if state == .twoProviders || state == .arrival {
+            let claude = snapshot.models.filter { $0.provider == .claude }
+            guard claude.count == 2, claude.allSatisfy({ $0.tps == nil && $0.usual == nil && $0.note == Copy.learning(days: 0, of: BaselineEngine.activeDayCount) }) else {
+                fatalError("\(state): expected new Claude models to show dashes and learning notes")
+            }
+        }
         switch state {
         case .quiet:
             guard snapshot.alerts.isEmpty, snapshot.shift == nil, snapshot.models.allSatisfy({ $0.color == nil }) else { fatalError("quiet: expected no alerts, rows or shift prompt in color") }

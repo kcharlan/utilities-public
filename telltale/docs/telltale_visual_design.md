@@ -98,6 +98,9 @@ dot).
 Everything is left aligned. The alert list is the panel's main content and
 follows the cockpit crew-alerting pattern: one message per condition, new rows
 first, then acknowledged rows; each group is ordered by severity and recency.
+Model row numbers use the current stored speed evaluation point. They are dashes
+when it is stale or has no matched responses; thin matched data can show numbers
+with a note, and learning notes remain visible while the baseline is learning.
 Acknowledged rows use a hollow diamond and secondary text, and remain until
 the condition clears.
 

@@ -37,9 +37,8 @@ public struct SourceSummary: Sendable {
 ///   Collector red; the panel's strip leaves Collector out and shows it in the footer.
 /// - Alerts: one per open episode, new before acknowledged, then by severity and recency.
 ///   Failed turns use the episode's counted membership; other alerts use their latest event.
-/// - Model rows: models with a response in the last `activeWindow`; tok/s is the median
-///   throughput over the last `rateWindow` (plan call: the dashboard's last-hour readout) and usual
-///   is `mixUsual` over the same responses; the sparkline is the stored evaluation points' median
+/// - Model rows: models with a response in the last `activeWindow`; tok/s and mix-matched usual
+///   come from the current stored speed evaluation point; the sparkline is the stored points' median
 ///   tok/s over `activeWindow`, one value per 5-minute point.
 public struct ArrivalNote: Sendable, Equatable {
     public var provider: ProviderID
@@ -105,8 +104,7 @@ public struct PanelSnapshot: Sendable, Equatable {
 
     /// Spec section 9.1: one row per model active in the last 3 hours, with a 3-hour sparkline.
     public static let activeWindow: TimeInterval = 3 * 3_600
-    /// The window the row's tok/s and usual are computed over (plan call).
-    public static let rateWindow: TimeInterval = 3_600
+    /// Number of stored five-minute points shown in the sparkline.
     public static let sparklinePoints = Int(activeWindow / EvaluationPoints.cadence)
     /// A model is offered a lasting-shift prompt while it was active within this many days.
     public static let shiftLookbackDays = ShiftDetector.runDays
@@ -332,8 +330,6 @@ public struct PanelSnapshot: Sendable, Equatable {
     }
 
     private static func row(store: Store, baseline: BaselineEngine, source: SourceSummary, model: String, now: Date) throws -> ModelRow {
-        let readout = try ModelDetail.Readout.lastHour(store: store, baseline: baseline, provider: source.provider, model: model, now: now)
-
         let last = EvaluationPoints.after(nil, through: now, earliest: now.addingTimeInterval(-EvaluationPoints.cadence)).last ?? now
         let first = last.addingTimeInterval(-EvaluationPoints.cadence * Double(sparklinePoints - 1))
         let points = try store.evalPoints(provider: source.provider, model: model, in: first...last)
@@ -354,7 +350,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         }
         return ModelRow(
             provider: source.provider, model: model, name: source.naming.displayName(model: model),
-            tps: readout.tps, usual: readout.usualTPS, sparkline: sparkline, note: note, providerName: source.name)
+            tps: current?.medianTPS, usual: current?.medianTPS == nil ? nil : current?.mixUsual, sparkline: sparkline, note: note, providerName: source.name)
     }
 
     /// A problem first, then the off or first-run line, else the running line.

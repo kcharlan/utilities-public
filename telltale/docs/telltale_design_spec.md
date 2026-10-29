@@ -513,12 +513,15 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   left out of the speed index, and the dashboard says "Not enough history yet
   for 300k+ prompts" **(my call)**.
 - Usual is recomputed at least hourly **(my call)**.
-- **The one "usual" number shown per model** (panel row, dashboard readout,
-  sparkline scale) is matched to the recent mix **(my call)**. It's the median,
-  over the same responses as the tok/s beside it, of each response's own
-  usual (using the baseline key defined above). "31 tok/s, usual 42" therefore always means
-  "42 for what you've been running". A slowdown fully explained by prompt size
-  or effort or service tier shows no gap.
+- **The usual number** is matched to the response mix **(my call)**. The panel
+  row uses the current stored speed evaluation point's median tok/s and mix usual;
+  the dashboard readout independently uses the last hour. Each usual is the median
+  of the corresponding responses' own usual (using the baseline key above). A
+  slowdown explained by prompt size, effort or service tier shows no gap.
+  Panel numbers are dashes when the current point is stale or has no matched
+  responses, including a new model or a newly used key. Thin matched data can
+  still show numbers with the thin-data note; learning notes remain visible when
+  appropriate, and a ready idle model has no note.
 - The acceptance confirmation reports the change as a percentage: "Sol's
   usual speed is now 24% lower than before."
 - **Small drift** below the trigger enters the baseline as ordinary variation.
@@ -568,8 +571,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   - header with "Checked HH:MM" and Check now
   - lamp strip: Speed, Errors, Link, OpenAI, Load
   - alert list, or "Nothing to report."
-  - one row per model active in the last 3 hours: tok/s, usual, 3-hour
-    sparkline
+  - one row per model active in the last 3 hours: current stored speed-point
+    tok/s and usual (or dashes), and a 3-hour sparkline
   - the lasting-shift prompt when present
   - footer with collector state, version with build help, and Open dashboard
 

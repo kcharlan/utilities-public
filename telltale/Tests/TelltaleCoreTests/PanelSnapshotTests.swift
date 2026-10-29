@@ -442,12 +442,108 @@ private enum Panel {
                 try h.base.add(20, throughput: 40, month: 9, day: day, hour: 9)
                 try h.base.add(20, throughput: 20, month: 9, day: day, hour: 12, inputTokens: 150_000)
             }
-            // The last hour: 9 small prompts at their usual and 12 large ones at theirs.
-            try h.run(9, throughput: 40, hour: 9)
-            try h.run(12, throughput: 20, hour: 9, minute: 10, inputTokens: 150_000)
+            // The latest speed window: 3 small and 11 large prompts at their usual.
+            try h.run(3, throughput: 40, hour: 9, minute: 16)
+            try h.run(11, throughput: 20, hour: 9, minute: 19, inputTokens: 150_000)
+            try h.evaluate(through: h.sep4(9, 30))
             let row = try #require(try Panel.load(h, at: h.sep4(9, 30)).models.first)
             // Running at usual for this mix: no gap, though the mix is slower than small prompts alone.
             #expect(approximately(row.tps, 20) && approximately(row.usual, 20))
+        }
+    }
+
+    @Test func rowMatchesTheSpeedReadingNotTheLastHour() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.run(30, throughput: 40, hour: 9)
+            try h.run(15, throughput: 10, hour: 9, minute: 30)
+            let now = h.sep4(9, 45)
+            try h.evaluate(through: now)
+            let point = try #require(try h.store.evalPoints(provider: .codex, model: h.model, in: now...now).first)
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            let dashboard = try ModelDetail.Readout.lastHour(store: h.store, baseline: h.base.engine, provider: .codex, model: h.model, now: now)
+            #expect(point.medianTPS != nil && point.mixUsual != nil)
+            #expect(row.tps == point.medianTPS && row.usual == point.mixUsual)
+            #expect(row.sparkline.last == .some(point.medianTPS))
+            #expect(dashboard.tps != nil && dashboard.tps != row.tps)
+        }
+    }
+
+    @Test func rowKeepsNumbersWithThinButUsualMatchedResponses() throws {
+        try withRules { h in
+            try h.seedUsual(); try h.run(5, throughput: 40, hour: 9)
+            let now = h.sep4(9, 5); try h.evaluate(through: now)
+            let point = try #require(try h.store.evalPoints(provider: .codex, model: h.model, in: now...now).first)
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            #expect(point.state == .thin && point.samples > 0 && point.samples < SpeedIndex.minimumSamples)
+            #expect(row.tps == 40 && row.usual == 40 && row.note == Copy.thinData)
+        }
+    }
+
+    @Test func rowShowsADashWhenRecentResponsesHaveNoUsual() throws {
+        try withRules { h in
+            try h.seedUsual(); try h.run(10, throughput: 20, hour: 9, inputTokens: 320_000)
+            let now = h.sep4(9, 10); try h.evaluate(through: now)
+            let point = try #require(try h.store.evalPoints(provider: .codex, model: h.model, in: now...now).first)
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            #expect(point.state == .thin && point.medianTPS == nil)
+            #expect(row.tps == nil && row.usual == nil && row.note == Copy.thinData)
+        }
+    }
+
+    @Test func rowShowsADashAfterTheResponseWindowEmpties() throws {
+        try withRules { h in
+            try h.seedUsual(); try h.run(5, throughput: 40, hour: 9)
+            let now = h.sep4(9, 20); try h.evaluate(through: now)
+            let point = try #require(try h.store.evalPoints(provider: .codex, model: h.model, in: now...now).first)
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            #expect(point.state == .thin && point.medianTPS == nil)
+            #expect(row.tps == nil && row.usual == nil && row.note == Copy.thinData)
+        }
+    }
+
+    @Test func newModelShowsADashAndLearningNote() throws {
+        try withRules { h in
+            try h.run(10, throughput: 40, hour: 9)
+            let now = h.sep4(9, 10); try h.evaluate(through: now)
+            let point = try #require(try h.store.evalPoints(provider: .codex, model: h.model, in: now...now).first)
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            #expect(point.state == .cold && point.medianTPS == nil)
+            #expect(row.tps == nil && row.usual == nil && row.note == Copy.learning(days: 0, of: BaselineEngine.activeDayCount))
+        }
+    }
+
+    @Test func idleReadyModelShowsADashWithoutNote() throws {
+        try withRules { h in
+            try h.seedUsual(days: 1...14)
+            try h.base.add(5, throughput: 40, month: 9, day: 15, hour: 9)
+            let start = h.at(9, 15, 9); let now = h.at(9, 15, 11, 25)
+            try h.evaluate(from: start, through: now)
+            let points = try h.store.evalPoints(provider: .codex, model: h.model, in: start...now)
+            let last = try #require(points.last)
+            #expect(now.timeIntervalSince(last.at) > Double(SpeedIndex.windowMinutes * 60))
+            #expect(last.at < h.at(9, 15, 11, 5))
+            let row = try #require(try Panel.load(h, at: now).models.first)
+            #expect(row.tps == nil && row.usual == nil && row.note == nil)
+        }
+    }
+
+    @Test func stalePointKeepsTheBaselineLearningNote() throws {
+        try withRules { h in
+            try h.seedUsual(); try h.run(10, throughput: 40, hour: 9)
+            try h.evaluate(through: h.sep4(9, 10))
+            let row = try #require(try Panel.load(h, at: h.sep4(9, 30)).models.first)
+            #expect(row.tps == nil && row.usual == nil && row.note == Copy.learning(days: 3, of: BaselineEngine.activeDayCount))
+        }
+    }
+
+    @Test func stalePointWithReadyBaselineHasNoNote() throws {
+        try withRules { h in
+            try h.seedUsual(days: 1...14)
+            try h.base.add(10, throughput: 40, month: 9, day: 15, hour: 9)
+            try h.evaluate(from: h.at(9, 15, 9), through: h.at(9, 15, 9, 10))
+            let row = try #require(try Panel.load(h, at: h.at(9, 15, 9, 30)).models.first)
+            #expect(row.tps == nil && row.usual == nil && row.note == nil)
         }
     }
 

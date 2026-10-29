@@ -58,6 +58,36 @@ import TelltaleCore
         }
     }
 
+    @Test func panelScenesUseStoredSpeedReadings() async throws {
+        for scene in [SyntheticEnvironment.Scene.twoProviders, .arrival, .claudeDashboard] {
+            let home = try temporaryHome(scene.rawValue)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let now = SyntheticEnvironment.snapshotNow
+            let paths = try SyntheticEnvironment.seed(scene, home: home, now: now, calendar: SyntheticEnvironment.calendar)
+            let live = LiveStore(paths: paths, sources: SyntheticEnvironment.twoSources, calendar: SyntheticEnvironment.calendar,
+                                 now: { now }, health: { SyntheticEnvironment.health(scene) }, watchFiles: false)
+            await live.refresh()
+            if scene == .claudeDashboard {
+                #expect(live.snapshot.models.allSatisfy { $0.provider != .claude })
+                let writable = try Store.open(paths.database, mode: .readWriteExisting)
+                try writable.setBackfill(ProviderBackfill(reason: .new, startedAt: now, through: now, finishedAt: now, announce: false), unit: ProviderID.claude.rawValue)
+                await live.refresh()
+            }
+            let store = try Store.open(paths.database, mode: .readOnly)
+            let codex = live.snapshot.models.filter { $0.provider == .codex }
+            let claude = live.snapshot.models.filter { $0.provider == .claude }
+            #expect(codex.count == 2 && claude.count == 2)
+            for row in codex {
+                let points = try store.evalPoints(provider: .codex, model: row.model, in: now.addingTimeInterval(-900)...now)
+                let point = try #require(points.last)
+                #expect(point.medianTPS != nil && row.tps == point.medianTPS && row.usual == point.mixUsual)
+            }
+            for row in claude {
+                #expect(row.tps == nil && row.usual == nil && row.note == Copy.learning(days: 0, of: BaselineEngine.activeDayCount))
+            }
+        }
+    }
+
     @Test func acceptanceSceneMatchesTheBrief() async throws {
         let home = try temporaryHome("brief")
         defer { try? FileManager.default.removeItem(at: home) }

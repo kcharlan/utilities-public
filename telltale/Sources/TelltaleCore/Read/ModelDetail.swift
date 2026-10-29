@@ -27,8 +27,8 @@ public enum ChartRange: String, Sendable, Hashable, CaseIterable, Identifiable {
 
 /// One model's "Speed against usual" section (spec section 9.2), read in one read transaction.
 ///
-/// - `lastHour`: the readouts. tok/s is the median throughput of the responses that ended in the
-///   last hour and usual is their mix-matched usual (spec section 8), as in the panel row. The
+/// - `lastHour`: the dashboard readouts. tok/s is the median throughput of the responses that ended in the
+///   last hour and usual is their mix-matched usual (spec section 8). The
 ///   median response time is over the same responses; its usual is the median of the time each
 ///   would have taken at its own usual speed (output tokens over usual tok/s), so it is
 ///   mix-matched too **(plan call)**.
@@ -54,9 +54,8 @@ public struct ModelDetail: Sendable, Equatable {
             self.usualMedianSeconds = usualMedianSeconds
         }
 
-        /// The readout over the responses that ended in the `readoutWindow` before `now`: the one
-        /// implementation behind the dashboard's readout and the panel row, which spec section 8
-        /// requires to be the same number.
+        /// The dashboard readout over responses that ended in the `readoutWindow` before `now`.
+        /// The panel row instead uses the current stored speed evaluation point.
         public static func lastHour(store: Store, baseline: BaselineEngine, provider: ProviderID, model: String, now: Date) throws -> Readout {
             let table = try baseline.usual(provider: provider, model: model, at: now)
             let recent = try store.responses(provider: provider, model: model, endingIn: now.addingTimeInterval(-readoutWindow)...now)
@@ -82,7 +81,7 @@ public struct ModelDetail: Sendable, Equatable {
     }
 
     /// The readout window.
-    public static let readoutWindow: TimeInterval = PanelSnapshot.rateWindow
+    public static let readoutWindow: TimeInterval = 3_600
     /// The window bucket gaps are judged over (the workload window).
     public static let gapWindow: TimeInterval = PanelSnapshot.activeWindow
 

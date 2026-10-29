@@ -1649,3 +1649,10 @@ A provider with stored models outside the sidebar window is idle, not learning f
 ### 2026-10-29 — Silent speed reversals
 
 Telltale speed reversals need a silent ended outcome as well as closing the stored episode; otherwise catch-up can notify for an episode already replaced. Regression coverage: `reversalEndsTheOppositeEpisode`, `fasterIsReversedBySlower`, `reversalInsideACatchUpPassPostsNoStaleNotice`, and `reversalDoesNotLiftAShiftDismissal`.
+
+### 2026-10-29 — Telltale panel speed points
+
+Panel numbers must follow the stored evaluation point, including its freshness and
+matched-response availability, rather than the dashboard's last-hour aggregate.
+`rowMatchesTheSpeedReadingNotTheLastHour`, the thin/cold/idle/stale row tests,
+and `panelScenesUseStoredSpeedReadings` cover both the visible dashes and notes.

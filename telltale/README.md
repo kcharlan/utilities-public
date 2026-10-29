@@ -244,7 +244,12 @@ The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with links to the provider's status-page incidents in its period,
-Accept as usual… and Keep as abnormal, and the collector footer.
+Accept as usual… and Keep as abnormal, and the collector footer. The row uses the
+current stored speed evaluation for tok/s and mix-matched usual. Numbers
+are dashes when the point is stale or has no matched responses, including a new
+model or an unfamiliar prompt mix. Thin matched data retains its numbers and
+thin-data note; learning notes remain when appropriate, while a ready idle model
+has no note. The dashboard's last-hour readout is independent.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
 Use Acknowledge on an alert, or Acknowledge all for the new alerts shown, to reset the attention
 dot while leaving the lamp lit. Acknowledged rows show a hollow diamond and their acknowledgement
