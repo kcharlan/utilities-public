@@ -572,6 +572,9 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 
   With several providers, the strip shows one lamp per signal across all
   providers, and the alert text names the provider.
+  When a newly watched provider has stored models but none responded within
+  the 14-day sidebar window defined in §9.2, its arrival note says so and
+  offers no first model to open.
 
 - **Acknowledging:** each open episode is identified by rule, provider, scope
   and onset. Acknowledging preserves the lamp and row but resets attention.

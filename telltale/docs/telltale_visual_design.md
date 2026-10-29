@@ -91,7 +91,7 @@ dot).
 │ Terra   70 tok/s  usual 74   ▃▃▄▃▃▃▃    │
 ├─────────────────────────────────────────┤
 │ ● Collector running, every 5 min        │
-│                         Open dashboard  │
+│ Telltale 0.3.0          Open dashboard  │
 └─────────────────────────────────────────┘
 ```
 
@@ -100,6 +100,8 @@ follows the cockpit crew-alerting pattern: one message per condition, new rows
 first, then acknowledged rows; each group is ordered by severity and recency.
 Acknowledged rows use a hollow diamond and secondary text, and remain until
 the condition clears.
+
+The panel bottom row shows the version at left and its build number in help.
 
 ### Dashboard window (resizable, about 1100 × 760)
 
@@ -122,8 +124,6 @@ the condition clears.
 │               │  incidents, baseline changes                     │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
-
-The panel bottom row shows the version at left and its build number in help.
 
 The sidebar lists providers, each as a plugin, with Collector and Settings
 below. Unconfigured providers appear dimmed, as "Not set up". The sidebar foot shows the version with its build number in help.
