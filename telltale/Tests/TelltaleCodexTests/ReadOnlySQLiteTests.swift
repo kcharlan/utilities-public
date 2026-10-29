@@ -189,3 +189,154 @@ import TelltaleTestSupport
         }
     }
 }
+
+@Suite struct SQLiteSnapshotTests {
+    @Test func snapshotReadsAClosedDatabaseAndLeavesNothing() throws {
+        try withScratchDirectory { home in
+            let source = home.appending(path: "source")
+            let root = home.appending(path: "snapshots")
+            let writer = try CodexDatabase.logs(codexHome: source)
+            try writer.addLog(at: RolloutBuilder.defaultOrigin, body: "synthetic")
+            try writer.closeLikeCodex()
+            let before = try FileSnapshot.take(source)
+            let rows = try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .milliseconds(250), clone: .live) {
+                try $0.query("SELECT COUNT(*) FROM logs") { $0.integer(0) }
+            }
+            #expect(rows == [1])
+            #expect(try FileSnapshot.take(source) == before)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+            let mode = try #require(FileManager.default.attributesOfItem(atPath: root.path)[.posixPermissions] as? Int)
+            #expect(mode == 0o700)
+            #expect(!FileManager.default.fileExists(atPath: writer.url.path + "-wal"))
+            #expect(!FileManager.default.fileExists(atPath: writer.url.path + "-shm"))
+        }
+    }
+}
+
+extension SQLiteSnapshotTests {
+    private struct SyntheticError: Error {}
+
+    @Test func snapshotNeedsACloneAndCleansUpAfterErrors() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"))
+            try writer.closeLikeCodex()
+            let root = home.appending(path: "snapshots")
+            #expect(throws: ReadOnlySQLite.Closed.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: SnapshotClone { _, _ in throw SyntheticError() }) { _ in 0 }
+            }
+            #expect(throws: SyntheticError.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: .live) { _ -> Int in throw SyntheticError() }
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+        }
+    }
+
+    @Test func snapshotDiscardsAChangedOriginal() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"))
+            try writer.closeLikeCodex()
+            let root = home.appending(path: "snapshots")
+            let clone = SnapshotClone { source, target in
+                try SnapshotClone.live.run(source, target)
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 42)], ofItemAtPath: source.path)
+            }
+            #expect(throws: ReadOnlySQLite.Busy.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: clone) { _ in 0 }
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+        }
+    }
+
+    @Test func snapshotRejectsAliasesAndInsecureRoots() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"))
+            try writer.closeLikeCodex()
+            let root = home.appending(path: "snapshots")
+            let before = try Data(contentsOf: writer.url)
+            let other = try CodexDatabase.logs(codexHome: home.appending(path: "other"))
+            try other.closeLikeCodex()
+            let otherURL = other.url
+            let otherBefore = try Data(contentsOf: otherURL)
+            for clone in [SnapshotClone({ _, target in try FileManager.default.linkItem(at: otherURL, to: target) }),
+                          SnapshotClone({ source, target in try FileManager.default.linkItem(at: source, to: target) }),
+                          SnapshotClone({ source, target in try FileManager.default.createSymbolicLink(at: target, withDestinationURL: source) })] {
+                #expect(throws: ReadOnlySQLite.Failure.self) {
+                    try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: clone) { _ in 0 }
+                }
+                #expect(try Data(contentsOf: writer.url) == before)
+                #expect(try Data(contentsOf: other.url) == otherBefore)
+            }
+            #expect(chmod(root.path, 0o755) == 0)
+            defer { chmod(root.path, 0o700) }
+            #expect(throws: ReadOnlySQLite.Failure.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: .live) { _ in 0 }
+            }
+        }
+    }
+}
+
+private final class ReopenedWriter: @unchecked Sendable {
+    var writer: CodexDatabase?
+}
+
+extension SQLiteSnapshotTests {
+    @Test func snapshotIsDiscardedWhenTheWriterReopens() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"))
+            try writer.closeLikeCodex()
+            let root = home.appending(path: "snapshots")
+            let reopened = ReopenedWriter()
+            let clone = SnapshotClone { source, target in
+                try SnapshotClone.live.run(source, target)
+                reopened.writer = try CodexDatabase.reopen(source)
+                try reopened.writer?.addLog(at: RolloutBuilder.defaultOrigin, body: "synthetic")
+            }
+            #expect(throws: ReadOnlySQLite.Busy.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: clone) { _ in 0 }
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+            withExtendedLifetime(reopened) {}
+        }
+    }
+
+    @Test func snapshotUsesOriginalFileName() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"), omitting: ["target"])
+            let direct = try #require(throws: ReadOnlySQLite.FormatProblem.self) {
+                try ReadOnlySQLite.open(writer.url).requireColumns(RetryLogSource.columns, in: "logs")
+            }
+            try writer.closeLikeCodex()
+            let problem = try #require(throws: ReadOnlySQLite.FormatProblem.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: home.appending(path: "snapshots"), busyTimeout: .zero, clone: .live) {
+                    try $0.requireColumns(RetryLogSource.columns, in: "logs")
+                }
+            }
+            #expect(problem == direct)
+        }
+    }
+
+    @Test func snapshotRejectsSymlinkSourceAndRoot() throws {
+        try withScratchDirectory { home in
+            let writer = try CodexDatabase.logs(codexHome: home.appending(path: "source"))
+            try writer.closeLikeCodex()
+            let before = try Data(contentsOf: writer.url)
+            let sourceLink = home.appending(path: "source-link")
+            try FileManager.default.createSymbolicLink(at: sourceLink, withDestinationURL: writer.url)
+            let root = home.appending(path: "snapshots")
+            #expect(throws: ReadOnlySQLite.Failure.self) {
+                try ReadOnlySQLite.withSnapshot(of: sourceLink, in: root, busyTimeout: .zero, clone: .live) { _ in 0 }
+            }
+            let outside = home.appending(path: "outside")
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+            let sentinel = outside.appending(path: "sentinel")
+            try Data("synthetic".utf8).write(to: sentinel)
+            try FileManager.default.removeItem(at: root)
+            try FileManager.default.createSymbolicLink(at: root, withDestinationURL: outside)
+            #expect(throws: ReadOnlySQLite.Failure.self) {
+                try ReadOnlySQLite.withSnapshot(of: writer.url, in: root, busyTimeout: .zero, clone: .live) { _ in 0 }
+            }
+            #expect(try Data(contentsOf: writer.url) == before)
+            #expect(FileManager.default.fileExists(atPath: sentinel.path))
+        }
+    }
+}

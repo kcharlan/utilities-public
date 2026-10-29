@@ -6,6 +6,27 @@ import TelltaleTestSupport
 @testable import TelltaleClaude
 
 @Suite struct ClaudeUsageSourceTests {
+    @Test func formatProblemOutranksUnreadableTranscript() throws {
+        try withScratchDirectory { root in
+            let unreadable = try TranscriptBuilder.file(root: root, text: TranscriptBuilder.user("2026-01-01T00:00:00Z"))
+            #expect(chmod(unreadable.path, 0o000) == 0)
+            defer { chmod(unreadable.path, 0o600) }
+            let line = try TranscriptBuilder.line(["type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": ["id": "msg_synthetic_02", "model": "example", "usage": ["output_tokens": "invalid"]]])
+            _ = try TranscriptBuilder.file(root: root, name: "00000000-0000-4000-8000-000000000002.jsonl", text: line)
+            let result = ClaudeUsageSource(roots: [root]).ingest(cursor: nil, backfillFrom: .distantPast, now: Date().addingTimeInterval(180))
+            guard case .formatProblem = result.state else { Issue.record("expected format problem, got \(result.state)"); return }
+        }
+    }
+    @Test func unreadableTranscriptIsAReadProblem() throws {
+        try withScratchDirectory { root in
+            let file = try TranscriptBuilder.file(root: root, text: TranscriptBuilder.user("2026-01-01T00:00:00Z"))
+            #expect(chmod(file.path, 0o000) == 0)
+            defer { chmod(file.path, 0o600) }
+            let result = ClaudeUsageSource(roots: [root]).ingest(cursor: nil, backfillFrom: .distantPast, now: Date())
+            guard case .readProblem = result.state else { Issue.record("expected read problem, got \(result.state)"); return }
+        }
+    }
+
     @Test func malformedUsageRemainsFormatProblemAfterReplay() throws {
         try withScratchDirectory { root in
             let line = try TranscriptBuilder.line(["type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": ["id": "msg_synthetic_01", "model": "claude-opus-5-5", "usage": ["output_tokens": "not-a-number"]]])

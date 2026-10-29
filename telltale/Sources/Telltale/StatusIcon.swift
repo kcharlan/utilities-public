@@ -39,8 +39,15 @@ import TelltaleCore
             NSGraphicsContext.current?.compositingOperation = .clear
             NSBezierPath(ovalIn: dot.insetBy(dx: -1, dy: -1)).fill()
             NSGraphicsContext.restoreGraphicsState()
-            Theme.nsColor(lit).setFill()
-            NSBezierPath(ovalIn: dot).fill()
+            if let attention = snapshot.attention {
+                Theme.nsColor(attention).setFill()
+                NSBezierPath(ovalIn: dot).fill()
+            } else {
+                Theme.nsColor(lit).setStroke()
+                let ring = NSBezierPath(ovalIn: dot.insetBy(dx: 0.75, dy: 0.75))
+                ring.lineWidth = 1.5
+                ring.stroke()
+            }
             return true
         }
         image.isTemplate = false
@@ -52,7 +59,7 @@ import TelltaleCore
     /// Collector last; a quiet panel says `Copy.nothingToReport`.
     static func accessibility(for snapshot: PanelSnapshot) -> String {
         let lit = snapshot.signals.compactMap { signal in
-            snapshot.lamps[signal].flatMap { $0 }.map { "\(snapshot.labels[signal] ?? signal.rawValue.capitalized) \($0.rawValue)" }
+            snapshot.lamps[signal].flatMap { $0 }.map { "\(snapshot.labels[signal] ?? signal.rawValue.capitalized) \($0.rawValue)\(snapshot.isAcknowledged(signal) ? " (acknowledged)" : "")" }
         }
         let body = lit.isEmpty ? Copy.nothingToReport : lit.joined(separator: ", ") + "."
         return "\(TelltaleRelease.displayName): \(body)"

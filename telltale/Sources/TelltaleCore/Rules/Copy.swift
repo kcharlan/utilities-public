@@ -32,6 +32,19 @@ public enum Copy {
 
     // MARK: Failed turns
 
+    public static let acknowledge = "Acknowledge"
+    public static let acknowledgeAll = "Acknowledge all"
+    public static let markAsNew = "Mark as new"
+    public static func acknowledged(at: Date, calendar: Calendar) -> String { "Acknowledged \(clock(at, calendar))" }
+    private static func reasonSuffix(_ reasons: [String]) -> String { reasons.isEmpty ? "" : ": \(list(reasons))" }
+    public static func failedTurnsOpen(source: String, noun: String, count: Int, reasons: [String], since: Date, calendar: Calendar) -> String {
+        "\(source): \(count) \(noun)\(count == 1 ? "" : "s") failed since \(clock(since, calendar))\(reasonSuffix(reasons))"
+    }
+    public static func failedTurnsBeyondAcknowledged(source: String, noun: String, count: Int, reasons: [String], acknowledged: Date, calendar: Calendar) -> String {
+        "\(source): \(count) more \(noun)\(count == 1 ? "" : "s") failed than you acknowledged at \(clock(acknowledged, calendar))\(reasonSuffix(reasons))"
+    }
+    public static func failedTurnsTotal(count: Int, since: Date, calendar: Calendar) -> String { "\(count) failed since \(clock(since, calendar))" }
+
     /// `reasons` are display reasons (`failedTurnReason`); repeats are listed once.
     public static func failedTurns(count: Int, reasons: [String]) -> String {
         "\(count) \(count == 1 ? "turn" : "turns") failed: \(list(reasons))"
@@ -132,6 +145,7 @@ public enum Copy {
         case .normal: "Reading normally."
         case .notSetUp(let reason): reason
         case .formatProblem(let since): formatProblem(source: name, since: since, calendar: calendar)
+        case .readProblem(let since): readProblem(source: name, since: since, calendar: calendar)
         case .backfilling(let started): "Reading \(CollectorRun.lookbackDays) days of history, started \(clock(started, calendar)). No notifications are sent for it."
         case .rebuildRequested(let at): "Rebuild requested at \(clock(at, calendar)). Waiting for the collector."
         }
@@ -169,6 +183,9 @@ public enum Copy {
     }
     public static func formatProblem(source: String, since: Date, calendar: Calendar) -> String {
         "\(source) changed its log format. Telltale can't read \(source) responses since \(clock(since, calendar))."
+    }
+    public static func readProblem(source: String, since: Date, calendar: Calendar) -> String {
+        "Telltale can't read \(source)'s logs since \(clock(since, calendar)). Open the Collector view to see the error."
     }
     public static let collectorNotLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
     /// `reason` is the run record's detail; a closing period is dropped so the sentence ends once.
@@ -328,6 +345,11 @@ public enum Copy {
     public static func arrival(name: String, days: Int, readyModels: [String]) -> String {
         let usual = readyModels.isEmpty ? "usual speeds are still being learned" : "usual speeds are ready for \(list(readyModels))"
         return "Telltale now watches \(name). It read \(days) days of history; \(usual)."
+    }
+    public static let versionLine = "\(TelltaleRelease.displayName) \(TelltaleRelease.version)"
+    public static func arrivalIdle(name: String, days: Int) -> String {
+        let window = Int(ModelDetail.sidebarWindow / 86_400)
+        return "Telltale now watches \(name). It read \(days) days of history; none of its models responded in the last \(window) days."
     }
 
     // Port: brew_version/Sources/BrewVersion/UserNotifier.swift, failureMessage, fbd3e03.

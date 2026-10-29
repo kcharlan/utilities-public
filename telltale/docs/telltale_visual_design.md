@@ -68,7 +68,9 @@ them at 15, in Dim.
 
 A template glyph for a lamp lens (a rounded rectangle with a filament line).
 While healthy it's a plain template image, unlit, like the rest of the bar.
-When a lamp lights, a 7 pt dot in the most severe lamp color appears on it.
+When a new lamp condition lights, a 7 pt dot in the most severe new color appears
+on it. When all lit conditions are acknowledged, a 1.5 pt ring takes the most
+severe lit color. With no lit lamps the lens stays plain.
 This uses the same drawing approach as Brew Version's `StatusIcon` (mug plus
 dot).
 
@@ -89,13 +91,17 @@ dot).
 │ Terra   70 tok/s  usual 74   ▃▃▄▃▃▃▃    │
 ├─────────────────────────────────────────┤
 │ ● Collector running, every 5 min        │
-│                         Open dashboard  │
+│ Telltale 0.3.0          Open dashboard  │
 └─────────────────────────────────────────┘
 ```
 
 Everything is left aligned. The alert list is the panel's main content and
-follows the cockpit crew-alerting pattern: one message per condition, ordered
-by severity, removed when the condition clears.
+follows the cockpit crew-alerting pattern: one message per condition, new rows
+first, then acknowledged rows; each group is ordered by severity and recency.
+Acknowledged rows use a hollow diamond and secondary text, and remain until
+the condition clears.
+
+The panel bottom row shows the version at left and its build number in help.
 
 ### Dashboard window (resizable, about 1100 × 760)
 
@@ -120,7 +126,7 @@ by severity, removed when the condition clears.
 ```
 
 The sidebar lists providers, each as a plugin, with Collector and Settings
-below. Unconfigured providers appear dimmed, as "Not set up".
+below. Unconfigured providers appear dimmed, as "Not set up". The sidebar foot shows the version with its build number in help.
 
 ### Collector view
 

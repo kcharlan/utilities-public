@@ -18,6 +18,7 @@ import TelltaleCore
     private(set) var snapshot: PanelSnapshot
     /// The latest open or read failure; nil after a clean read.
     private(set) var lastError: String?
+    private(set) var hasReadableDatabase = false
     /// The latest collector health report (the dashboard's collector view shows its four lamps).
     private(set) var health: CollectorHealthReport?
     /// Counts rereads, so views that read more than the snapshot (the dashboard) know to reload.
@@ -108,13 +109,16 @@ import TelltaleCore
             snapshot = try PanelSnapshot.load(
                 store: store, baseline: BaselineEngine(store: store, calendar: calendar), health: health, sources: sources, now: now(),
                 calendar: calendar)
+            hasReadableDatabase = true
             lastError = nil
         } catch StoreError.notInitialized {
+            hasReadableDatabase = false
             store = nil
             opened = nil
             snapshot = .waiting(sources: sources, health: health)
             lastError = nil
         } catch {
+            hasReadableDatabase = false
             store = nil
             opened = nil
             let message = Copy.databaseUnavailable(reason: error.localizedDescription)

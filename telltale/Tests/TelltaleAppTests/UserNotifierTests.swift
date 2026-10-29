@@ -32,6 +32,8 @@ import TelltaleTestSupport
     var postingFailure: String?
     var deliveredTitles: [String] = []
     var requests: [UNNotificationRequest] = []
+    var deliveredNotifications: [UNNotification] = []
+    var removedIdentifiers: [String] = []
     var authorizationRequests = 0
     var postingGate: (@MainActor () async -> Void)?
     func authorizationStatus() async -> UNAuthorizationStatus { status }
@@ -49,7 +51,8 @@ import TelltaleTestSupport
         if fail { throw CocoaError(.fileWriteUnknown) }
         deliveredTitles.append(request.content.title)
     }
-    func delivered() async -> [UNNotification] { [] }
+    func delivered() async -> [UNNotification] { deliveredNotifications }
+    func removeDelivered(identifiers: [String]) { removedIdentifiers += identifiers }
 }
 private struct SyntheticAuthorizationFailure: LocalizedError {
     let message: String
@@ -62,6 +65,16 @@ private func alert(_ number: Int, title: String, body: String) -> PendingNotific
 }
 
 @MainActor struct UserNotifierTests {
+    @Test func removeDeliveredMatchesThreadIdentifiers() async throws {
+        let service = NotificationServiceStub()
+        for (id, thread) in [("synthetic-first", "failedTurns.codex"), ("synthetic-second", "slower.codex.example"), ("synthetic-third", "collectorHealth")] {
+            let content = UNMutableNotificationContent()
+            content.threadIdentifier = thread
+            service.deliveredNotifications.append(try deliveredNotification(for: UNNotificationRequest(identifier: id, content: content, trigger: nil)))
+        }
+        await UserNotifier(service: service).removeDelivered(threadIDs: ["failedTurns.codex"])
+        #expect(service.removedIdentifiers == ["synthetic-first"])
+    }
     @Test func successfulTestKeepsAuthorizationBlockedAlertRetryVisible() async {
         let service = NotificationServiceStub(); service.status = .denied
         let notifier = UserNotifier(service: service)

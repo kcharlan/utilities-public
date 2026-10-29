@@ -22,15 +22,17 @@ import TelltaleCore
     let actions: UserActions
     let notifier: UserNotifier
     let calendar: Calendar
+    let canAcknowledgeCollector: Bool
     private(set) var checking = false
     private(set) var actionError: String?
     private(set) var confirmation: Confirmation?
 
-    init(store: LiveStore, actions: UserActions, notifier: UserNotifier, calendar: Calendar = .current) {
+    init(store: LiveStore, actions: UserActions, notifier: UserNotifier, calendar: Calendar = .current, canAcknowledgeCollector: Bool = false) {
         self.store = store
         self.actions = actions
         self.notifier = notifier
         self.calendar = calendar
+        self.canAcknowledgeCollector = canAcknowledgeCollector
     }
 
     /// The strip's lamps: Collector is shown in the footer instead (visual doc's panel).
@@ -38,6 +40,7 @@ import TelltaleCore
     /// Spec section 9.1's quiet panel.
     var emptyMessage: String? { store.snapshot.alerts.isEmpty ? Copy.nothingToReport : nil }
     var checkedText: String? { store.snapshot.checkedAt.map { Copy.checked(at: $0, calendar: calendar) } }
+    var offersCollectorAcknowledgement: Bool { canAcknowledgeCollector && store.hasReadableDatabase && store.snapshot.collector == .red }
     /// The status-page incidents the shift prompt links to (spec section 8, ruling R31).
     var shiftIncidents: [IncidentLink] { store.snapshot.shift?.incidents ?? [] }
 
@@ -91,6 +94,33 @@ import TelltaleCore
 
     func dismissArrival(_ provider: ProviderID) {
         perform { try actions.dismissArrival(provider: provider); store.reload() }
+    }
+
+    func acknowledge(_ alerts: [PanelSnapshot.Alert]) {
+        perform {
+            try actions.acknowledge(alerts)
+            store.reload()
+            let threadIDs = Set(alerts.compactMap(\.threadID))
+            Task { await notifier.removeDelivered(threadIDs: threadIDs) }
+        }
+    }
+
+    func markAsNew(_ alert: PanelSnapshot.Alert) {
+        perform { try actions.markAsNew(key: alert.key); store.reload() }
+    }
+
+    func acknowledgeCollector() {
+        guard offersCollectorAcknowledgement, let health = store.health else { return }
+        perform {
+            try actions.acknowledgeCollector(keys: Array(health.problemKeys).sorted())
+            store.reload()
+            Task { await notifier.removeDelivered(threadIDs: [CollectorMonitor.threadID]) }
+        }
+    }
+
+    func markCollectorAsNew() {
+        guard offersCollectorAcknowledgement else { return }
+        perform { try actions.markCollectorAsNew(); store.reload() }
     }
 
     func providerName(_ provider: ProviderID) -> String { store.providerName(provider) }
@@ -203,10 +233,20 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(snapshot.alerts.enumerated()), id: \.offset) { _, alert in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Rectangle().fill(Theme.color(alert.color)).frame(width: 7, height: 7).rotationEffect(.degrees(45))
-                            .accessibilityHidden(true)
-                        Text(alert.text).fixedSize(horizontal: false, vertical: true)
+                        Diamond(color: Theme.color(alert.color), hollow: alert.acknowledgedAt != nil)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(alert.text).foregroundStyle(alert.acknowledgedAt == nil ? Color.primary : Color.secondary).fixedSize(horizontal: false, vertical: true)
+                            if let detail = alert.detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                        }
+                        Spacer(minLength: 0)
+                        AlertAcknowledgeButton(acknowledged: alert.acknowledgedAt != nil) {
+                            if alert.acknowledgedAt == nil { model.acknowledge([alert]) } else { model.markAsNew(alert) }
+                        }
                     }
+                }
+                let newAlerts = snapshot.alerts.filter { $0.acknowledgedAt == nil }
+                if newAlerts.count > 1 {
+                    HStack { Spacer(); Button(Copy.acknowledgeAll) { model.acknowledge(newAlerts) }.buttonStyle(.borderless).font(.system(size: 11)) }
                 }
             }
         }
@@ -251,12 +291,27 @@ struct PanelView: View {
             if Self.collectorDot(snapshot.collector) != nil || !snapshot.footer.isEmpty {
                 HStack(alignment: .center, spacing: 6) {
                     if let dot = Self.collectorDot(snapshot.collector) {
-                        Circle().fill(dot).frame(width: 7, height: 7).accessibilityHidden(true)
+                        if snapshot.collectorAcknowledgedAt != nil {
+                            Circle().stroke(dot, lineWidth: 1.5).frame(width: 7, height: 7).accessibilityHidden(true)
+                        } else {
+                            Circle().fill(dot).frame(width: 7, height: 7).accessibilityHidden(true)
+                        }
                     }
-                    Text(snapshot.footer).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(snapshot.footer).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if let at = snapshot.collectorAcknowledgedAt { Text(Copy.acknowledged(at: at, calendar: model.calendar)).font(.system(size: 11)).foregroundStyle(.secondary) }
+                    }
+                    if model.offersCollectorAcknowledgement {
+                        Spacer(minLength: 0)
+                        AlertAcknowledgeButton(acknowledged: snapshot.collectorAcknowledgedAt != nil) {
+                            if snapshot.collectorAcknowledgedAt == nil { model.acknowledgeCollector() } else { model.markCollectorAsNew() }
+                        }
+                    }
                 }
             }
             HStack(alignment: .center, spacing: 6) {
+                Text(Copy.versionLine).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .help(AppBundle.buildHelp(info: Bundle.main.infoDictionary) ?? "").accessibilityIdentifier("version")
                 Spacer(minLength: 0)
                 Button { openSettings?() } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.borderless).disabled(openSettings == nil).help("Settings").accessibilityLabel("Settings")
@@ -271,6 +326,16 @@ struct PanelView: View {
         case .green: Color(nsColor: Theme.green)
         case .red: Theme.color(.red)
         }
+    }
+}
+
+struct AlertAcknowledgeButton: View {
+    let acknowledged: Bool
+    let action: () -> Void
+    var body: some View {
+        let label = acknowledged ? Copy.markAsNew : Copy.acknowledge
+        Button(action: action) { Image(systemName: acknowledged ? "checkmark.circle.fill" : "checkmark.circle").font(.system(size: 13)) }
+            .buttonStyle(.borderless).help(label).accessibilityLabel(label)
     }
 }
 

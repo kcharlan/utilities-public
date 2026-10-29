@@ -59,7 +59,7 @@ enum SyntheticEnvironment {
 
     /// The panel states the harnesses seed (spec section 13's snapshot list, plus the acceptance mix).
     enum Scene: String, CaseIterable {
-        case quiet, alerting, shift, twoProviders, arrival, claudeDashboard
+        case quiet, alerting, acknowledged, shift, twoProviders, arrival, claudeDashboard, sidebarIdle
         case providersNormal, providersNotSetUp, providersFormatProblem, providersBackfilling
         /// The acceptance app: an alerting model, a shift prompt and the collector off.
         case acceptance
@@ -121,7 +121,7 @@ enum SyntheticEnvironment {
         let today = calendar.startOfDay(for: now)
         var number = 0
         // The dashboard scene fills the Workload grid: cached input and reasoning on every response.
-        let dashboard = scene == .dashboard
+        let dashboard = scene == .dashboard || scene == .sidebarIdle
         func responses(
             _ model: String, count: Int, tps: Double, from first: Date, spacing: TimeInterval = 60, input: (Int) -> Int = { _ in 10_000 }
         ) throws {
@@ -162,7 +162,7 @@ enum SyntheticEnvironment {
                     endReason: EpisodeRow.EndReason.cleared, severity: LampColor.amber.rawValue, worstValue: 0.74))
             }
         }
-        let alerting = scene == .alerting || scene == .acceptance || scene == .dashboard
+        let alerting = scene == .alerting || scene == .acknowledged || scene == .acceptance || dashboard
         let exampleNow: Double = alerting ? 31 : 41
         // The dashboard's large-prompt alert: 4 in 10 of the last hour's prompts are 300k or more.
         try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118) { dashboard && $0 % 5 < 2 ? 320_000 : 10_000 }
@@ -174,6 +174,12 @@ enum SyntheticEnvironment {
                     isSubagent: false, turnID: "synthetic-claude-turn-\(index)", responseID: "synthetic-claude-response-\(index)",
                     start: end.addingTimeInterval(-20), end: end, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 1000, reasoningTokens: nil)])
             }
+        }
+        if scene == .sidebarIdle {
+            let end = now.addingTimeInterval(-ModelDetail.sidebarWindow - 3_600)
+            try store.upsert(responses: [ResponseRecord(provider: .claude, model: claude, effort: nil, serviceTier: "fast", sessionID: sessionID,
+                isSubagent: false, turnID: "synthetic-idle-turn", responseID: "synthetic-idle-response",
+                start: end.addingTimeInterval(-20), end: end, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 1000, reasoningTokens: nil)])
         }
         if scene == .arrival {
             try store.set(.pendingArrivals, [ProviderID.claude.rawValue])
@@ -210,7 +216,16 @@ enum SyntheticEnvironment {
         }
         let run = try store.beginRun(at: now.addingTimeInterval(-64))
         try store.finishRun(run, at: now.addingTimeInterval(-60), outcome: .succeeded)
-        if scene == .dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
+        if scene == .acknowledged {
+            let baseline = BaselineEngine(store: store, calendar: calendar)
+            let initial = try PanelSnapshot.load(store: store, baseline: baseline, health: health(scene), sources: sources, now: now, calendar: calendar)
+            try store.acknowledge(initial.alerts, at: now.addingTimeInterval(-60))
+            try addRedAlert(store, at: now.addingTimeInterval(-30), count: acknowledgedFailureCount)
+            let before = try PanelSnapshot.load(store: store, baseline: baseline, health: health(scene), sources: sources, now: now, calendar: calendar)
+            try store.acknowledge(before.alerts.filter { $0.failedTurns != nil }, at: now.addingTimeInterval(-20))
+            try addFailedTurn(store, at: now.addingTimeInterval(-10))
+        }
+        if dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
         if scene == .collectorProblem { try collectorProblem(store, paths: paths, now: now) }
         if scene == .providersNormal || scene == .providersNotSetUp || scene == .providersFormatProblem || scene == .providersBackfilling {
             let state: SetupState = switch scene {
@@ -240,6 +255,40 @@ enum SyntheticEnvironment {
 
     /// The collector problem scene's failed run: why it failed, as the run record and log say.
     static let failedRunDetail = "the synthetic history database was locked"
+    static let acknowledgedFailureCount = 3
+
+    static func failure(_ index: Int, at: Date) -> FailedTurnRecord {
+        FailedTurnRecord(provider: .codex, threadID: sessionID, turnID: "turn_synthetic_failure_\(index)", startedAt: at,
+            completedAt: at, model: example, errorCode: "synthetic failure", message: "synthetic failure")
+    }
+
+    static func addRedAlert(_ store: Store, at: Date, count: Int = acknowledgedFailureCount) throws {
+        try store.transaction {
+            let records = (1...count).map { failure($0, at: at) }
+            try store.upsert(failedTurns: records)
+            let detail = FailedTurnEpisodeDetail(priorCount: 0, failures: records.map { .init(turnID: $0.turnID, errorCode: $0.errorCode) })
+            let id = try store.insertEpisode(EpisodeRow(rule: RuleID.failedTurns.rawValue, provider: ProviderID.codex.rawValue, scope: "*", direction: nil,
+                onset: at, firedAt: at, severity: LampColor.red.rawValue, worstValue: Double(count), detail: try detail.encoded()))
+            try store.insertEvent(EventRow(at: at, kind: EventKind.ruleFired, provider: ProviderID.codex.rawValue, scope: "*", title: RuleID.failedTurns.title,
+                body: Copy.failedTurns(count: count, reasons: ["synthetic failure"]), episodeID: id))
+        }
+    }
+
+    static func addFailedTurn(_ store: Store, at: Date) throws {
+        guard try store.openEpisodes().contains(where: { $0.rule == RuleID.failedTurns.rawValue && $0.provider == ProviderID.codex.rawValue }) else {
+            try addRedAlert(store, at: at); return
+        }
+        try store.transaction {
+            guard var episode = try store.openEpisodes().first(where: { $0.rule == RuleID.failedTurns.rawValue && $0.provider == ProviderID.codex.rawValue }) else { throw StoreError.invalidData("Missing synthetic episode") }
+            var detail = try FailedTurnEpisodeDetail.decode(episode.detail) ?? FailedTurnEpisodeDetail(priorCount: Int(episode.worstValue), failures: [])
+            let record = failure(detail.priorCount + detail.failures.count + 1, at: at)
+            try store.upsert(failedTurns: [record])
+            detail.failures.append(.init(turnID: record.turnID, errorCode: record.errorCode))
+            episode.worstValue = Double(detail.priorCount + detail.failures.count)
+            episode.detail = try detail.encoded()
+            try store.updateEpisode(episode)
+        }
+    }
 
     /// 14 days of hourly speed points (09:00–16:00), with a fast spell 10 days back and a slow,
     /// failing morning yesterday under a provider incident; each with its event. A status post and

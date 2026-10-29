@@ -14,6 +14,7 @@ import TelltaleCore
     func requestAuthorization() async throws -> Bool
     func post(_ request: UNNotificationRequest) async throws
     func delivered() async -> [UNNotification]
+    func removeDelivered(identifiers: [String])
 }
 @MainActor final class NativeNotificationService: NotificationService {
     let center = UNUserNotificationCenter.current()
@@ -21,6 +22,7 @@ import TelltaleCore
     func requestAuthorization() async throws -> Bool { try await center.requestAuthorization(options: [.alert, .sound]) }
     func post(_ request: UNNotificationRequest) async throws { try await center.add(request) }
     func delivered() async -> [UNNotification] { await center.deliveredNotifications() }
+    func removeDelivered(identifiers: [String]) { center.removeDeliveredNotifications(withIdentifiers: identifiers) }
 }
 
 /// The UI's notifications: it owns authorization, sends the Settings test notification, keeps a
@@ -66,6 +68,10 @@ import TelltaleCore
     }
     func post(_ notification: PendingNotification) async {
         await post(notification, kind: .alert)
+    }
+    func removeDelivered(threadIDs: Set<String>) async {
+        let identifiers = await service.delivered().filter { threadIDs.contains($0.request.content.threadIdentifier) }.map(\.request.identifier)
+        service.removeDelivered(identifiers: identifiers)
     }
     private func post(_ notification: PendingNotification, kind: NoticeKind) async {
         // A late completion must not resolve a newer failure of the same kind.

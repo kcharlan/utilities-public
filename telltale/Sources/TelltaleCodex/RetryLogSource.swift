@@ -12,6 +12,11 @@ public enum RetryLogSource {
     /// Longest `detail` kept, in characters.
     public static let maximumDetail = 300
 
+    /// The currently selected database, if one exists.
+    public static func database(codexHome: URL) -> URL? {
+        ReadOnlySQLite.highestNumbered("logs", in: codexHome)
+    }
+
     /// WARN retry rows after `afterID`, from the highest-numbered database. `maxID` is the highest
     /// id in the table, to pass back as `afterID`; `oldestRetained` is the time of its oldest row
     /// of any kind.
@@ -22,28 +27,35 @@ public enum RetryLogSource {
     ///
     /// Throws as `ThreadHistorySource.read` does.
     public static func read(
-        codexHome: URL, afterID: Int64, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live
+        codexHome: URL, afterID: Int64, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live, snapshot: SnapshotRequest? = nil, selectedURL: URL? = nil
     ) throws -> (events: [ConnectionEventRecord], maxID: Int64, oldestRetained: Date?) {
-        guard let url = ReadOnlySQLite.highestNumbered("logs", in: codexHome) else { return ([], afterID, nil) }
+        guard let url = selectedURL ?? database(codexHome: codexHome) else { return ([], afterID, nil) }
         let name = url.deletingPathExtension().lastPathComponent
-        let database = try ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step)
-        try database.requireColumns(columns, in: "logs")
-        // One snapshot, so the maximum id and the rows read agree.
-        return try database.readTransaction {
-            let newest = try database.query("SELECT MAX(id) FROM logs") { $0.integer(0) }.first ?? nil
-            guard let newest else { return ([], afterID, nil) }  // an empty table
-            let start = afterID > newest ? 0 : afterID
-            let events = try database.query(
-                """
-                SELECT id, ts, ts_nanos, feedback_log_body FROM logs
-                WHERE id > ? AND target = ? AND level = 'WARN' ORDER BY id
-                """, [.integer(start), .text(target)]
-            ) { row -> ConnectionEventRecord? in
-                guard let id = row.integer(0), let at = time(row, 1) else { return nil }
-                return event(id: id, source: name, at: at, body: try row.text(3) ?? "")
-            }.compactMap { $0 }
-            let oldest = try database.query("SELECT ts, ts_nanos FROM logs ORDER BY id LIMIT 1") { time($0, 0) }.first ?? nil
-            return (events, newest, oldest)
+        func query(_ database: ReadOnlySQLite) throws -> (events: [ConnectionEventRecord], maxID: Int64, oldestRetained: Date?) {
+            try database.requireColumns(columns, in: "logs")
+            // One snapshot, so the maximum id and the rows read agree.
+            return try database.readTransaction {
+                let newest = try database.query("SELECT MAX(id) FROM logs") { $0.integer(0) }.first ?? nil
+                guard let newest else { return ([], afterID, nil) }  // an empty table
+                let start = afterID > newest ? 0 : afterID
+                let events = try database.query(
+                    """
+                    SELECT id, ts, ts_nanos, feedback_log_body FROM logs
+                    WHERE id > ? AND target = ? AND level = 'WARN' ORDER BY id
+                    """, [.integer(start), .text(target)]
+                ) { row -> ConnectionEventRecord? in
+                    guard let id = row.integer(0), let at = time(row, 1) else { return nil }
+                    return event(id: id, source: name, at: at, body: try row.text(3) ?? "")
+                }.compactMap { $0 }
+                let oldest = try database.query("SELECT ts, ts_nanos FROM logs ORDER BY id LIMIT 1") { time($0, 0) }.first ?? nil
+                return (events, newest, oldest)
+            }
+        }
+        do {
+            return try query(ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step))
+        } catch is ReadOnlySQLite.Closed {
+            guard let snapshot, snapshot.needsRead(url) else { throw ReadOnlySQLite.Closed() }
+            return try ReadOnlySQLite.withSnapshot(of: url, in: snapshot.directory, busyTimeout: busyTimeout, clone: snapshot.clone, query)
         }
     }
 

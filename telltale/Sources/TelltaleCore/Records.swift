@@ -173,6 +173,7 @@ public enum SetupState: Sendable, Equatable, Hashable, Codable {
     case ready
     case notSetUp(String)
     case formatProblem(String)
+    case readProblem(String)
 }
 
 /// The lamps. The UI labels `provider` with the status source's name.

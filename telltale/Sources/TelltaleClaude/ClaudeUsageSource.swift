@@ -27,6 +27,7 @@ public struct ClaudeUsageSource: UsageSource {
         var next = ClaudeCursor()
         var batch = IngestBatch()
         var problem: String?
+        var readProblem: String?
         let files = TranscriptDiscovery.files(roots: roots)
         for file in files {
             var previous = old.files[file.key]
@@ -50,11 +51,11 @@ public struct ClaudeUsageSource: UsageSource {
                     (now.timeIntervalSince(file.modified) < 86400 && parsed.cursor.sawUser == true && parsed.cursor.sawAssistant == true && parsed.cursor.sawTimestamp != true) {
                     problem = "Claude Code changed its log format."
                 }
-            } catch { problem = "Claude Code transcript couldn't be read." }
+            } catch { readProblem = "Claude Code transcript couldn't be read." }
         }
         batch.failedTurns = Array(Dictionary(batch.failedTurns.map { ($0.turnID, $0) }, uniquingKeysWith: { first, _ in first }).values)
         if !files.contains(where: { now.timeIntervalSince($0.modified) < 86400 }) && TranscriptDiscovery.hasRecentFilesOutsideLayout(roots: roots, now: now) { problem = "Claude Code changed its log format." }
         let encoded = (try? JSONEncoder().encode(next)) ?? Data("{\"files\":{}}".utf8)
-        return IngestResult(batch: batch, cursor: encoded, state: problem.map(SetupState.formatProblem) ?? .ready)
+        return IngestResult(batch: batch, cursor: encoded, state: problem.map(SetupState.formatProblem) ?? readProblem.map(SetupState.readProblem) ?? .ready)
     }
 }

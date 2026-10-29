@@ -14,8 +14,8 @@ import TelltaleCore
 // This entry exists only in the isolated renderer. No real database, collector, launchctl,
 // notifications, windows on screen or native input.
 @main struct Snapshots {
-    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .shift, .twoProviders, .arrival]
-    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem, .settings, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling]
+    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .acknowledged, .shift, .twoProviders, .arrival]
+    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .sidebarIdle, .collectorProblem, .settings, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling]
 
     @MainActor static func main() async throws {
         _ = NSApplication.shared
@@ -33,7 +33,7 @@ import TelltaleCore
             for state in states {
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeModel(state, home: directory)
-                expect(state, model.store.snapshot)
+                try expect(state, model.store)
                 let label = "\(state.rawValue)-\(dark ? "dark" : "light")"
                 let size = try render(AnyView(PanelView(model: model, openSettings: {}, openDashboard: {}, openProvider: { _, _ in })), dark: dark, to: home.appendingPathComponent(label + ".png"))
                 heights[label] = size.height
@@ -45,13 +45,14 @@ import TelltaleCore
         }
         try await renderDashboards(home: home)
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 26 else { fatalError("Expected twenty-six PNGs") }
-        print("Validated ten maintained panel PNGs (quiet, alerting, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
-        print("Validated sixteen maintained dashboard PNGs (model views, collector, settings and four provider states), both appearances, Barlow Semi Condensed registered.")
+        guard pngs.count == 30 else { fatalError("Expected thirty PNGs") }
+        print("Validated twelve maintained panel PNGs (quiet, alerting, acknowledged, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
+        print("Validated eighteen maintained dashboard PNGs (model views, idle sidebar, collector, settings and four provider states), both appearances, Barlow Semi Condensed registered.")
     }
 
     /// The seeded scene's snapshot carries what its PNG is meant to show.
-    @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ snapshot: PanelSnapshot) {
+    @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ live: LiveStore) throws {
+        let snapshot = live.snapshot
         guard snapshot.checkedAt != nil, snapshot.models.count == ((state == .twoProviders || state == .arrival) ? 4 : 2) else { fatalError("\(state): unexpected model rows") }
         switch state {
         case .quiet:
@@ -59,6 +60,15 @@ import TelltaleCore
         case .alerting:
             guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber, snapshot.lamps[.load] == .amber,
                   snapshot.models.map(\.color) == [.amber, nil] else { fatalError("alerting: expected Speed and Load amber and an amber Example row") }
+        case .acknowledged:
+            let episode = try live.read { store, _ in try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue } }!!
+            let detail = try FailedTurnEpisodeDetail.decode(episode.detail)!
+            let saved = try live.read { store, _ in try store.value(.alertAcknowledgements)[Acknowledgements.key(episode)] }!!
+            let first = snapshot.alerts.first!
+            guard snapshot.alerts.count == 3, snapshot.alerts.dropFirst().allSatisfy({ $0.acknowledgedAt != nil }),
+                  first.acknowledgedAt == nil, first.failedTurns == detail.failures.count + detail.priorCount,
+                  first.failedTurns! > saved.failedTurns!, first.detail == Copy.failedTurnsTotal(count: first.failedTurns!, since: episode.onset, calendar: SyntheticEnvironment.calendar),
+                  snapshot.attention == .red else { fatalError("acknowledged: expected acknowledged seed alerts and re-armed failed turn") }
         case .shift:
             guard snapshot.alerts.isEmpty, snapshot.shift?.days == 3, snapshot.shiftText != nil else { fatalError("shift: expected a 3-day lasting-shift prompt") }
         case .acceptance:
@@ -73,7 +83,7 @@ import TelltaleCore
             guard Set(snapshot.models.map(\.provider)).count == 2, Set(snapshot.models.map(\.name)).count == 4 else { fatalError("two providers: expected distinct names") }
         case .arrival:
             guard snapshot.arrivals.count == 1, snapshot.arrivals[0].provider == .claude else { fatalError("arrival: expected Claude note") }
-        case .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
+        case .sidebarIdle, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
             fatalError("dashboard scene is not a panel scene")
         }
     }
@@ -126,13 +136,13 @@ import TelltaleCore
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeDashboard(state, home: directory)
                 expectDashboard(state, model)
-                let name = switch state { case .dashboard: "dashboard"; case .claudeDashboard: "claude-dashboard"; case .settings: "settings"; case .collectorProblem: "collector-problem"; default: state.rawValue }
+                let name = switch state { case .dashboard: "dashboard"; case .sidebarIdle: "sidebar-idle"; case .claudeDashboard: "claude-dashboard"; case .settings: "settings"; case .collectorProblem: "collector-problem"; default: state.rawValue }
                 let label = "\(name)-\(dark ? "dark" : "light")"
                 // The model view and Settings scroll inside the window; render the window tall enough to
                 // show all of it, so the PNG can be compared with the mockup's full page.
                 var height = DashboardWindowController.defaultSize.height
                 let section: AnyView? = switch state {
-                case .dashboard, .claudeDashboard: AnyView(ModelView(model: model))
+                case .dashboard, .sidebarIdle, .claudeDashboard: AnyView(ModelView(model: model))
                 case .settings, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling: AnyView(SettingsView(model: model.settings))
                 default: nil
                 }
@@ -151,6 +161,8 @@ import TelltaleCore
     /// The seeded scene's dashboard carries what its PNG is meant to show.
     @MainActor private static func expectDashboard(_ state: SyntheticEnvironment.Scene, _ model: DashboardModel) {
         switch state {
+        case .sidebarIdle:
+            guard model.sidebar.first(where: { $0.provider == .claude })?.state == .idle else { fatalError("sidebar idle: expected idle Claude") }
         case .dashboard:
             guard let detail = model.detail, model.workload != nil, detail.dots.count >= 100, detail.failures.count == 3, detail.incidents.count == 1,
                   detail.dots.contains(where: { $0.color == .blue }), detail.dots.contains(where: { $0.color == .red }),
@@ -194,12 +206,12 @@ import TelltaleCore
             live: panel.store, actions: panel.actions, manager: LaunchAgentManager(paths: paths, uid: 501, runner: SyntheticCommandRunner()),
             currentExecutable: home.appendingPathComponent("Telltale"), canManage: true, paths: paths, calendar: calendar, now: { now },
             reveal: { _ in })
-        let sources = [.claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling].contains(state) ? SyntheticEnvironment.twoSources : SyntheticEnvironment.sources
+        let sources = [.sidebarIdle, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling].contains(state) ? SyntheticEnvironment.twoSources : SyntheticEnvironment.sources
         let settings = SettingsModel(live: panel.store, collector: collector, sources: sources, statusSummaries: SyntheticEnvironment.statusSummaries, login: LoginItem(service: SnapshotLoginService()))
         let model = DashboardModel(
             live: panel.store, panel: panel, collector: collector, settings: settings, sources: sources, calendar: calendar, now: { now })
         switch state {
-        case .dashboard: model.select(.model(.codex, SyntheticEnvironment.example))
+        case .dashboard, .sidebarIdle: model.select(.model(.codex, SyntheticEnvironment.example))
         case .claudeDashboard: model.select(.model(.claude, SyntheticEnvironment.claude))
         case .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling: model.select(.settings)
         case .settings:
@@ -287,4 +299,5 @@ import TelltaleCore
     func requestAuthorization() async throws -> Bool { true }
     func post(_ request: UNNotificationRequest) async throws {}
     func delivered() async -> [UNNotification] { [] }
+    func removeDelivered(identifiers: [String]) {}
 }

@@ -73,6 +73,10 @@ import UserNotifications
     @discardableResult func check() async -> CollectorHealthReport? {
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
+            if report.lamp != .red {
+                do { try Store.open(paths.database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }
+                catch StoreError.notInitialized { }
+            }
             if let held = heldNotice { try save(held) }
             try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {

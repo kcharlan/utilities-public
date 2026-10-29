@@ -7,6 +7,7 @@ public struct TelltalePaths: Sendable, Equatable {
     public let appSupport: URL
     /// The SQLite database (WAL mode).
     public let database: URL
+    public let codexSnapshots: URL
     /// The collector's overlap-guard `flock` file.
     public let lock: URL
     /// The app's single-instance gate (plan call, used by Task 11).
@@ -26,6 +27,7 @@ public struct TelltalePaths: Sendable, Equatable {
             components.reduce(base) { $0.appending(path: $1, directoryHint: .isDirectory) }
         }
         appSupport = directory(home, "Library", "Application Support", "Telltale")
+        codexSnapshots = directory(appSupport, "codex-snapshots")
         database = appSupport.appending(path: "telltale.sqlite", directoryHint: .notDirectory)
         lock = appSupport.appending(path: "collector.lock", directoryHint: .notDirectory)
         appLock = appSupport.appending(path: "app.lock", directoryHint: .notDirectory)

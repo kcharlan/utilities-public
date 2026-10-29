@@ -188,7 +188,7 @@ dynamic loading **(my call)**. There are two kinds:
   - **Failed turn:** time, model (optional), error code, message.
   - **Connection event:** time, kind (disconnect, retry, reconnect), detail.
   - **Usage-limit snapshot** (optional): percent used, window, reset time.
-  - Plus a setup state (`ready`, `notSetUp(reason)`, `formatProblem(detail)`)
+  - Plus a setup state (`ready`, `notSetUp(reason)`, `formatProblem(detail)`, `readProblem(detail)`)
     and an incremental cursor the core persists.
 - **Status source.** Reads a provider's public status page and emits incidents
   with id, title, status and its history, component impacts with start and
@@ -209,23 +209,20 @@ All reads are read-only. SQLite files are opened with `mode=ro` and a short
 busy timeout. On `SQLITE_BUSY` or a locked file, the source skips and retries
 next run (it never blocks Codex).
 
-**Closed WAL databases.** When Codex closes a WAL-mode database, upstream
-SQLite deletes its `-wal` and `-shm` files. The system SQLite Telltale links
-then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
-(code 14) instead of reading the main file; that is not a change in Codex's
-format. The reader reports `ReadOnlySQLite.Closed` for that failure when the
-file's header says WAL (bytes 18 and 19 are both 2) and no `-wal` sits beside
-it. Like a busy file, the source skips it quietly, keeps its cursors and reads
-the file again next run, after Codex reopens it; no side files are created for
-the closed database in the meantime. A skip, busy or closed, is not a read, so
-it carries the file's previous verdict forward: a format problem the file last
-reported is reported again on every skipped run until a read of the file
-succeeds, so its "since" and its notification are not reset each time Codex
-closes the file. The evidence has limits: a missing `-wal` alone does not prove
-that no process has the database open, and a file whose header cannot be read
-(an unreadable main file, for example) still reports a failure. Rows that Codex
-prunes while its files stay closed are never read, so a long closure can leave a
-gap.
+**Closed WAL databases.** When Codex closes a WAL-mode database, system SQLite can
+fail a read-only statement with `SQLITE_CANTOPEN`. A WAL header and absent `-wal`
+are evidence for `ReadOnlySQLite.Closed`, not proof that no process has the file
+open; a writer can reopen after the post-clone check. An unreadable header still
+produces a read failure. For a changed or never
+read selected file, the reader uses a private APFS clone as described in §11;
+an unchanged file with the same name and modification date is skipped. A busy or
+closed skip preserves the previous read stamp and verdict. A successful read or
+format problem records the selected filename and pre-read modification date; a
+read failure clears that stamp so the next run retries. A new filename requires a
+read even if its date matches. A kept format problem is dropped when a different
+file is selected; older cursors without a problem filename retain it for the
+current file. A read failure is reported for that run, while a matching earlier
+format problem takes precedence and remains kept.
 
 ### 6.1 Rollouts: responses
 
@@ -368,6 +365,13 @@ stored source state: a report after the one that began the problem has an
 problems, the notification names a confirmed one, even when the panel lists a
 newer one first.
 
+**Read problems.** A failure to read a provider's file is a read problem, not
+format drift. It shares the format-problem lamp, message and two-consecutive-run
+notification policy. If one ingest reports both kinds, the first format problem
+wins; otherwise the first read problem wins. The since time persists while the
+same kind continues, regardless of detail, and restarts on a transition between
+format and read problems or any other state.
+
 ## 7. Rule engine
 
 ### 7.1 Evaluation
@@ -406,6 +410,12 @@ Applies to the speed rules and the large-prompt rule:
   example 30% slower, after the same duration **(my call)**. A rise to red
   within an episode sends one extra "now 34% slower" notification.
 
+Failed turns belong to an episode only when the rule engine counts them. Each
+counted batch records its ordered turn IDs and reason codes with the episode's
+canonical total, rule state and evaluation marks in one transaction. Rows settled
+before a lookback cutoff are excluded, including old arrivals on later runs. A turn
+completing at the cutoff is eligible even if it started earlier.
+
 These rules were replayed against Oct 13–27 (§12). Without the stricter clear
 band, a single day produced 7–9 slowdown notifications. Without the idle end,
 the Oct 26 episode masked the Oct 27 slowdown.
@@ -424,7 +434,11 @@ the Oct 26 episode masked the Oct 27 slowdown.
 
 **Backfill** (cold start) replays the 30 days chronologically, using only
 earlier data for usual at each hour. That's the same engine as live
-evaluation. It **never notifies**.
+evaluation. It **never notifies**. On every ingest, including catch-up, the collector keeps responses
+ending at or after the 30-day cutoff and compactions and connection events at or
+after it. It preserves failed turns, connection gaps, usage limits, source version
+and exclusion counts; older failed turns follow the existing settlement path.
+Already stored rows are governed by retention, not this ingest filter.
 
 **Rebuild from Codex logs** discards derived data:
 
@@ -455,11 +469,19 @@ Every value is editable in Settings. Each rule has: on/off, its parameters,
 | Failed turns | Errors, red | Any failed turn | 30 min with no failure **(my call)** | On, coalesced: at most one per 15 min, "2 turns failed: model at capacity" **(my call)** |
 | Disconnects | Link, amber | ≥ 3 disconnect or retry events in the last 60 min | < 3 in the last 60 min | Off |
 | Provider incident | OpenAI, amber; red for partial or full outage status | An open incident affects a watched component, or its title names a model used in the last 24 h | Incident resolved | On, clear notice on |
-| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format problem reported by two consecutive collector runs (§6.5) | Condition gone | On (posted by the UI, §9.3) |
+| Collector health | Collector, red | Job should be on but isn't loaded, 2 failed runs in a row, no successful run for 3× the interval, or a format or read problem reported by two consecutive collector runs (§6.5) | Condition gone | On (posted by the UI, §9.3) |
 | Usage limit | none (readout only) | Primary window ≥ 90% used | < 90% | Off, rule off by default **(my call)** |
 
 When two lamp colors are possible, the lamp shows the most severe one.
 Severity order: red, amber, blue.
+
+An open failed-turn alert reports the episode's total and onset. After a count
+increase beyond an acknowledgement, it reports the new count and acknowledgement
+time, with the episode total beneath it. Reasons come from counted membership.
+**Legacy failed-turn reasons:** when an older episode has no recorded membership,
+retain its canonical count without inferring reasons from evaluation timestamps;
+omit the reason suffix for any range containing unknown members. Retained events
+are unchanged.
 
 **Watched components**, editable, are matched by the names in the status
 page's component list. Defaults **(my call)**: CLI, VS Code extension, Codex
@@ -520,7 +542,8 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
 - Every acceptance is an event with **Undo**. Epochs are kept, and undo
   restores the previous one.
 - **Cold start.** The first collector run backfills the last 30 days from
-  rollouts (including `.zst`) and `thread_history`. Speed rules stay quiet
+  rollouts (including `.zst`) and `thread_history`. The collector applies the same
+  cutoff and preserved-field contract described in §7.3. Speed rules stay quiet
   until a model has 3 active days. Until 14 days, the dashboard shows
   "Learning usual: 5 of 14 days".
 
@@ -534,9 +557,10 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   acceptance gate. See `docs/lessons_learned.md`, the 2026-10-17 status-item
   entries, and PKM knowledge #253. Don't substitute `MenuBarExtra`,
   `NSPopover` or button actions.
-- **Glyph:** the lamp-lens template image, plus a dot in the most severe lit
-  lamp's color. Same drawing approach as Brew Version's `StatusIcon`.
-  Accessibility text names the lit lamps.
+- **Glyph:** the lamp-lens template image, plus a dot in the most severe new
+  lamp's color. If lamps are lit but all acknowledged, draw a 1.5 pt ring in
+  the most severe lit color; otherwise leave the lens plain. Accessibility text
+  names the lit lamps and appends " (acknowledged)" when only acknowledged items light one.
 - **Panel**, as in the mockup:
   - header with "Checked HH:MM" and Check now
   - lamp strip: Speed, Errors, Link, OpenAI, Load
@@ -544,10 +568,38 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   - one row per model active in the last 3 hours: tok/s, usual, 3-hour
     sparkline
   - the lasting-shift prompt when present
-  - footer with collector state and Open dashboard
+  - footer with collector state, version with build help, and Open dashboard
 
   With several providers, the strip shows one lamp per signal across all
   providers, and the alert text names the provider.
+  When a newly watched provider has stored models but none responded within
+  the 14-day sidebar window defined in §9.2, its arrival note says so and
+  offers no first model to open.
+
+- **Acknowledging:** each open episode is identified by rule, provider, scope
+  and onset. Acknowledging preserves the lamp and row but resets attention.
+  New rows precede acknowledged rows; within each group sort by severity and
+  recency. A new row offers Acknowledge; an acknowledged row shows a hollow
+  diamond, acknowledgement time and Mark as new. Acknowledge all appears for
+  more than one new rendered row and acts on those rendered rows. Collector
+  health has its own acknowledgement and footer toggle; its acknowledged dot
+  is a ring. Notifications keep their posting policy; acknowledgement removes
+  the corresponding delivered notifications. No acknowledgement event is added.
+
+  | Alert | Acknowledgement holds | Becomes new |
+  |---|---|---|
+  | Failed turns | Count is at most the acknowledged count | Another failure is counted, including between render and click |
+  | Any rule | Severity is at most the acknowledged severity | Severity rises |
+  | A new episode of the same rule and scope | Never, when onset differs | Always |
+  | Collector health | All current problem keys were acknowledged | A new problem key appears |
+
+  A worse value at unchanged severity does not make an alert new. Recreated
+  episodes with the same natural key retain acknowledgement; rebuilds that
+  change the key produce new alerts.
+
+  The Collector footer toggle is offered only by the installed copy with a
+  readable initialized database and a red Collector lamp, even before a
+  successful run. A retained stale snapshot never enables writes.
 
 ### 9.2 Dashboard window
 
@@ -559,7 +611,7 @@ keeps its name when it leaves the sidebar and returns, and a stale model that is
 shows that name. A provider whose models are all older than the window shows "No responses in
 the last 14 days" (`Copy.noRecentModels`), dimmed; one with no stored response shows "No
 responses yet". The arrival note's first model and the models it names come from the same
-recent list. Model view, as in the mockup:
+recent list. If stored models are all idle, the arrival note states that none responded within the window. The sidebar foot shows the version with build help. Model view, as in the mockup:
 
 - Lamp strip, including Collector.
 - Alert list.
@@ -631,6 +683,12 @@ Collector lamps:
   Collector health notification. The collector can't report its own absence.
   If both the app and the job are down, nothing alerts; the panel says so on
   next open.
+- **Collector acknowledgement:** a red job/run lamp or a repair requirement
+  uses the key `collector`; each format or read problem uses `source.<id>`.
+  Changes among job problems or among problem kinds for one source retain the
+  acknowledgement. A successful non-red check clears it; a failed assessment
+  does not. A problem that clears and returns with the same key while the app
+  is quit remains acknowledged (the Collector acknowledgement limit).
 
 ### 9.4 Settings
 
@@ -641,6 +699,8 @@ Collector lamps:
 | Watched status components | Checklist from the status page's component list |
 | Data | Retention, plus "Rebuild from Codex logs", which re-ingests the last 30 days |
 | General | Open at login; Dashboard appearance: Dark (default), Light or Match system **(my call)**. The panel always follows the system. |
+
+The provider state line can show `Copy.readProblem` for a read failure.
 
 The app writes settings to the `settings` table. The collector reads them at
 the start of each run.
@@ -668,6 +728,19 @@ the start of each run.
   error codes and messages, status-page incidents.
 - The only network calls are to the status pages. There's no telemetry.
 - Provider access follows §6 and the read-only SQLite contract cited in §2.
+  For a closed WAL database, Telltale checks that the selected source is a regular
+  file and records its size and modification date, then uses `clonefile` with
+  `CLONE_NOFOLLOW` into a private mode-0700 `codex-snapshots` root and per-read
+  directory on the same volume as its database. It rejects an existing insecure
+  or symlink root. If the source changes or a WAL appears during cloning, it
+  discards the clone as busy. It opens the clone without following links and
+  verifies a regular file with a different device/inode pair and a complete WAL
+  SQLite header before changing its journal bytes through the open descriptor.
+  The clone is read through a normal read-only SQLite connection, then removed.
+  Cleanup failures are read failures; leftover entries are removed before another
+  clone is made, without following symlinks. A clone failure, including an
+  unsupported or cross-volume filesystem, takes the closed-file skip path. No
+  full-copy or immutable-mode fallback is used.
 - **This repository is public.** Tests and fixtures use synthetic data with
   conspicuously fake ids. Real logs may be read for manual checks, but are
   never committed, and screenshots must not show real session ids.
@@ -712,7 +785,9 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
   `CodexBar Local` by default, never ad-hoc: an approved deviation, as in `anker_charge_monitor`),
   `snapshots`, `acceptance`.
 
-**Tests (all required, per the repo's Testing Scope):**
+**Tests (all required, per the repo’s Testing Scope):**
+
+The maintained dashboard snapshots include an idle sidebar in light and dark appearances.
 
 - **Unit**
   - Rollout parsing: plain and `.zst`, truncated zstd frames, the
@@ -732,7 +807,7 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
   - Tests must never touch the real `~/Library` or `~/.codex`. Inject every
     path; don't rely on `HOME` alone (see the CodexBar isolation lesson:
     Foundation caches ignore `HOME`).
-- **Snapshots:** panel quiet, panel alerting, lasting-shift prompt, dashboard
+- **Snapshots:** panel quiet, panel alerting, acknowledged, lasting-shift prompt, dashboard
   model view, collector view in its problem state, and settings. Light and
   dark, inspected like Brew Version's.
 - **Acceptance:** the ported real-click status-item gate. A live check that

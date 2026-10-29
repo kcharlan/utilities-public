@@ -104,7 +104,7 @@ import TelltaleCore
         let live = LiveStore(paths: paths, sources: sources, calendar: calendar, health: { [weak monitor] in await monitor?.evaluate() }, watchFiles: watchFiles)
         let manager = manager
         let actions = UserActions(paths: paths, calendar: calendar, kickstart: { try manager.kickstart() }, changed: { [weak live] in live?.reload() }, sourceNames: sourceNames)
-        let panel = PanelModel(store: live, actions: actions, notifier: notifier, calendar: calendar)
+        let panel = PanelModel(store: live, actions: actions, notifier: notifier, calendar: calendar, canAcknowledgeCollector: isInstalledCopy)
         // Turn on, Turn off and Repair change launchd state, so only the installed copy may (R24).
         let collector = CollectorViewModel(
             live: live, actions: actions, manager: manager, currentExecutable: currentExecutable, canManage: installed, paths: paths, calendar: calendar)

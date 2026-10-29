@@ -10,6 +10,21 @@ import TelltaleTestSupport
 @testable import Telltale
 
 @MainActor @Suite struct DashboardWindowTests {
+    @Test func dashboardSidebarFitsWithVersion() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths)
+            world.live.reload()
+            var windows: [NSWindow] = []
+            let dashboard = world.controller(activation: ActivationRecorder(), presented: { windows.append($0) })
+            dashboard.openDashboard()
+            let window = try #require(windows.first)
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(window.contentLayoutRect.size == NSSize(width: 1100, height: 760))
+            #expect(window.contentMinSize.width >= 800 && window.contentMinSize.height >= 560)
+            #expect(world.model.sidebar.first?.state == .models([DashboardModel.SidebarModel(provider: .codex, model: Synth.model, name: "Example")]))
+        }
+    }
     @Test func openProviderSelectsItsFirstModel() throws {
         try withScratchDirectory { directory in
             let world = try DashboardWorld(directory)

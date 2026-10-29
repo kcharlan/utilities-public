@@ -15,7 +15,7 @@ public struct SQLiteStep: Sendable {
 /// The file is opened with `mode=ro` and a short busy timeout. `SQLITE_BUSY` and `SQLITE_LOCKED`,
 /// from any step, become `Busy`, so a caller skips the file and retries next run rather than
 /// blocking Codex. A WAL database whose writer closed it, leaving no `-wal`, becomes `Closed` and
-/// is skipped the same way. Read-only still joins SQLite's normal coordination: opening a WAL
+/// can be read from a private clone. Read-only still joins SQLite's normal coordination: opening a WAL
 /// database can create or update its `-shm` side file, so Telltale does not promise that Codex's
 /// files are untouched at that level (Colophon's read-only SQLite lesson).
 public final class ReadOnlySQLite {
@@ -27,9 +27,8 @@ public final class ReadOnlySQLite {
     /// When a writer closes a WAL database cleanly, upstream SQLite deletes `-wal` and `-shm`. The
     /// system SQLite then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
     /// instead of reading the main file. `isClosedWAL` is the evidence: a WAL header and no `-wal`.
-    /// It does not prove that no process has the database open, so a caller skips the file quietly and
-    /// keeps its cursor, rather than reporting a format problem; it tries the file again each run and
-    /// reads it once a writer has reopened it.
+    /// It does not prove that no process has the database open; snapshot reads recheck for writer
+    /// activity before using the clone, while a caller without snapshots skips the file quietly.
     public struct Closed: Error, Equatable, Sendable {}
 
     /// SQLite refused for a reason other than contention, or the file is not a plain file.

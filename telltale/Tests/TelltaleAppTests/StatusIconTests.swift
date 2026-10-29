@@ -15,14 +15,37 @@ import TelltaleCore
 import TelltaleTestSupport
 @testable import Telltale
 
-private func snapshot(_ lit: [Signal: LampColor]) -> PanelSnapshot {
+private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampColor]? = nil) -> PanelSnapshot {
     var snapshot = PanelSnapshot.waiting(sources: PanelWorld.sources, footer: "")
     for (signal, color) in lit { snapshot.lamps[signal] = color }
+    snapshot.unacknowledged = unacknowledged ?? lit
     snapshot.labels[.provider] = "Example Status"
     return snapshot
 }
 
 @MainActor struct StatusIconTests {
+    @Test func acknowledgedLampsDrawARing() throws {
+        let image = try #require(StatusIcon.image(for: snapshot([.errors: .red], unacknowledged: [:])))
+        for appearance in [NSAppearance.Name.darkAqua, .aqua] {
+            let red = try lampRGB(.red, appearance: appearance)
+            let pixels = try statusIconPixels(image, appearance: appearance).filter { $0.matches(red) }
+            let dot = NSRect(x: image.size.width - 7, y: image.size.height - 7, width: 7, height: 7)
+            #expect(!pixels.isEmpty && pixels.allSatisfy { dot.contains(NSPoint(x: $0.x, y: $0.y)) })
+            #expect(!pixels.contains { abs($0.x - dot.midX) < 0.5 && abs($0.y - dot.midY) < 0.5 })
+        }
+    }
+    @Test func newAlertFillsTheDotInItsColorOverAnAcknowledgedRed() throws {
+        let image = try #require(StatusIcon.image(for: snapshot([.errors: .red, .speed: .amber], unacknowledged: [.speed: .amber])))
+        for appearance in [NSAppearance.Name.darkAqua, .aqua] {
+            let pixels = try statusIconPixels(image, appearance: appearance)
+            let amber = try lampRGB(.amber, appearance: appearance), red = try lampRGB(.red, appearance: appearance)
+            #expect(pixels.contains { $0.matches(amber) })
+            #expect(!pixels.contains { $0.matches(red) })
+        }
+    }
+    @Test func accessibilityMarksAcknowledgedLamps() {
+        #expect(StatusIcon.accessibility(for: snapshot([.errors: .red, .speed: .amber], unacknowledged: [.speed: .amber])) == "Telltale: Speed amber, Errors red (acknowledged).")
+    }
     @Test func idleStatusIconIsTemplateLens() throws {
         let idle = try #require(StatusIcon.image(for: snapshot([:])))
         #expect(idle.isTemplate)

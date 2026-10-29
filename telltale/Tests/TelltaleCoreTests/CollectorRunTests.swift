@@ -52,7 +52,7 @@ final class FakeUsageSource: UsageSource, @unchecked Sendable {
             var batch = nextBatch
             nextBatch = IngestBatch()
             batch.responses = pending.filter { response in
-                response.end <= now && response.end >= backfillFrom && (after.map { response.end > $0 } ?? true)
+                response.end <= now && (after.map { response.end > $0 } ?? true)
             }
             return (batch, nextState, onIngest)
         }
@@ -134,6 +134,27 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
 // MARK: - Tests
 
 @Suite struct CollectorRunTests {
+    @Test func readProblemKeepsItsSinceAcrossRuns() async throws {
+        try await withCollector { h throws in
+            let first = h.at(9, 4, 10)
+            h.source.setState(.readProblem("synthetic one"))
+            _ = await h.run(at: first)
+            h.source.setState(.readProblem("synthetic two"))
+            _ = await h.run(at: h.at(9, 4, 10, 5))
+            #expect(try h.store().sourceState("codex")?.unavailableSince == first)
+        }
+    }
+    @Test func movingFromFormatToReadProblemRestartsSince() async throws {
+        try await withCollector { h throws in
+            h.source.setState(.formatProblem("synthetic"))
+            _ = await h.run(at: h.at(9, 4, 10))
+            let changed = h.at(9, 4, 10, 5)
+            h.source.setState(.readProblem("synthetic"))
+            _ = await h.run(at: changed)
+            #expect(try h.store().sourceState("codex")?.unavailableSince == changed)
+        }
+    }
+
     @Test func notificationLogCountsEachProviderSeparately() async throws {
         try await withCollector { h in
             let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
@@ -729,6 +750,47 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
         }
     }
 
+    @Test func linesFromBeforeTheLookbackAreNotStored() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 10)
+            let old = now.addingTimeInterval(-31 * 86_400)
+            let recent = now.addingTimeInterval(-3_600)
+            let responses = [h.synth.response(throughput: 40, end: old), h.synth.response(throughput: 40, end: recent)]
+            h.source.add(responses)
+            let compactions = [old, recent].enumerated().map { index, at in
+                CompactionRecord(provider: .codex, lineID: "synthetic-\(index)", sessionID: "synthetic", agentID: nil,
+                                 at: at, trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+            }
+            let events = [old, recent].enumerated().map { index, at in
+                ConnectionEventRecord(provider: .codex, sourceID: "synthetic-\(index)", at: at, kind: .retry, detail: "synthetic")
+            }
+            h.source.setNextBatch(IngestBatch(compactions: compactions, connectionEvents: events))
+            #expect(await h.run(at: now).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.responses(provider: .codex, model: Synth.model, endingIn: old...now) == [responses[1]])
+            #expect(try store.compactions(provider: .codex, in: old...now) == [compactions[1]])
+            #expect(try store.connectionEvents(provider: .codex, in: old...now) == [events[1]])
+            let summary = SourceSummary(provider: .codex, name: "Example", statusName: "Example", statusSourceID: h.source.statusSourceID,
+                                        signals: h.source.signals, naming: h.source)
+            #expect(try ProviderSummary.load(store: store, sources: [summary]).first?.oldestResponse == recent)
+            #expect(h.log.contains("Example: skipped 3 record(s) from before the lookback"))
+        }
+    }
+
+    @Test func catchUpAfterTheLookbackKeepsOnlyRecentLines() async throws {
+        try await withCollector { h throws in
+            let first = h.at(9, 4, 10)
+            #expect(await h.run(at: first).outcome == .succeeded)
+            let now = first.addingTimeInterval(35 * 86_400)
+            let old = now.addingTimeInterval(-33 * 86_400)
+            let recent = now.addingTimeInterval(-86_400)
+            let responses = [h.synth.response(throughput: 40, end: old), h.synth.response(throughput: 40, end: recent)]
+            h.source.add(responses)
+            #expect(await h.run(at: now).outcome == .succeeded)
+            #expect(try h.store().responses(provider: .codex, model: Synth.model, endingIn: old...now) == [responses[1]])
+        }
+    }
+
     @Test func rssOnlyPostsOutsideTheLookbackAreNotRecorded() async throws {
         try await withCollector { harness throws in
             let status = FakeStatusSource()
@@ -855,6 +917,29 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             try RawSQLite.rows(url, "SELECT CAST(at AS INTEGER), body FROM events WHERE kind = 'ruleFired' AND title = 'Failed turns' ORDER BY id"))
     }
 
+    @Test func rebuildRecreatesFailedTurnDetails() async throws {
+        try await withCollector { harness throws in
+            let second = FailedTurnRecord(provider: .codex, threadID: "thread_synthetic_03", turnID: "turn_synthetic_903",
+                startedAt: harness.at(9, 4, 9, 7), completedAt: harness.at(9, 4, 9, 8), errorCode: "timeout", message: "Synthetic failure 3")
+            let failures = [recentFailure(harness), second]
+            harness.source.setNextBatch(IngestBatch(failedTurns: failures))
+            #expect(await harness.run(at: harness.at(9, 4, 9, 10)).outcome == .succeeded)
+            let store = try harness.store()
+            let original = try #require(try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
+            let key = Acknowledgements.key(original)
+            let ackAt = harness.at(9, 4, 9, 11)
+            try store.acknowledge([PanelSnapshot.Alert(color: .red, text: "synthetic", key: key, failedTurns: 2)], at: ackAt)
+            try store.set(.rebuildRequestedAt, harness.at(9, 4, 9, 12))
+            harness.source.setNextBatch(IngestBatch(failedTurns: failures))
+            #expect(await harness.run(at: harness.at(9, 4, 9, 15)).outcome == .succeeded)
+            let episode = try #require(try harness.store().openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
+            let detail = try #require(try FailedTurnEpisodeDetail.decode(episode.detail))
+            #expect(detail.priorCount == 0 && detail.failures.map(\.turnID) == ["turn_synthetic_902", "turn_synthetic_903"])
+            #expect(Acknowledgements.key(episode) == key)
+            let saved = try #require(try harness.store().value(.alertAcknowledgements)[Acknowledgements.key(episode)])
+            #expect(saved.at == ackAt && Acknowledgements.holds(saved, severity: .red, failedTurns: 2))
+        }
+    }
     @Test func rebuildCountsOnlyFailedTurnsInsideTheLookback() async throws {
         try await withCollector { harness throws in
             let old = harness.at(7, 1, 12)

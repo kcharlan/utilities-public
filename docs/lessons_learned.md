@@ -1,5 +1,14 @@
 # Lessons learned
 
+## 2026-10-29: Snapshot closed Codex databases without changing their source
+
+A closed WAL database can be read through a private APFS clone only after validating
+the source, clone and header, and checking for writer races. Preserve the filename
+and modification stamp together so rotation and failed reads retry correctly.
+`SQLiteSnapshotTests` covers cleanup, alias rejection and writer races;
+`changedClosedDatabasesAreReadFromSnapshots`, `rotatedClosedDatabaseWithSameDateIsRead`
+and `failedSnapshotReadIsRetriedWithoutFileChange` cover the cursor behavior.
+
 ## 2026-10-29: A skip that reports ready ends a real problem's episode
 
 Telltale skips a Codex database that is busy or that Codex has closed, and a
@@ -1569,3 +1578,70 @@ historical events that stored display text instead of IDs, derive the visible mo
 update only the recognizable name position in known event copy, including an older generated
 suffix; preserve the remaining wording. The visible set includes every model named by rows,
 alerts and prompts, even when their activity windows differ.
+
+## 2026-10-29: Tie retained database verdicts to their source file
+
+A skipped SQLite read is not evidence of recovery, but a format verdict from a
+previously selected database must not survive a switch to a newer file. Record
+the file alongside the verdict and preserve legacy cursors without a file name.
+A transient read failure must not replace or become a retained format verdict;
+regress busy and closed files, unreadable files, and file changes with synthetic
+databases. `busyDatabaseKeepsItsFormatProblem`, `transientReadFailureIsNotKept`,
+`readFailureLeavesAnEarlierFormatProblemKept`,
+`keptProblemIsDroppedWhenCodexMovesToANewFile`, and
+`readFailureAfterFileChangeDropsTheOldFormatProblem` guard those transitions.
+
+## 2026-10-29: Distinguish source read failures from format drift
+
+A failed file read does not establish that a provider changed its format. Keep
+read and format verdicts separate and give format verdicts precedence when both
+occur in one ingest. Preserve the start time only across reports of the same
+kind; apply the same delayed notification policy to both. `formatProblemOutranksAReadProblem`,
+`unreadableTranscriptIsAReadProblem`, `readProblemKeepsItsSinceAcrossRuns`,
+`movingFromFormatToReadProblemRestartsSince`, and the Collector health and
+provider summary regressions cover classification, presentation and transitions.
+
+## 2026-10-29: Enforce the ingest lookback at the collector boundary
+
+A source may read an entire rollout that spans the lookback boundary, or return
+old lines during catch-up. Filter response ends, compaction times and connection
+event times in the collector on every ingest; preserve the remaining batch fields
+and settle old failed turns through the existing path. `batchDropsRecordsFromBeforeTheCutoff`,
+`linesFromBeforeTheLookbackAreNotStored`, `catchUpAfterTheLookbackKeepsOnlyRecentLines`
+and `coldStartReadsOnlyLinesInsideTheLookback` cover the boundary, preserved fields,
+collector storage and a real synthetic rollout.
+
+## 2026-10-29: Keep failed-turn alert totals tied to counted membership
+
+The most recent event describes one batch, not every failure in an open episode.
+Persist ordered counted IDs and reason codes with the canonical total in the
+evaluation transaction, and never infer membership from settlement timestamps.
+Legacy totals can have unknown reasons. `failedTurnAlertCountsEveryFailureInTheEpisode`,
+`settledFailuresAtTheEpisodeBoundaryAreNotCounted`,
+`legacyFailedTurnEpisodeKeepsItsCountWithoutInventingReasons`, and
+`failedTurnDetailsRecordOnlyCountedBatches` cover the stale wording and its causes.
+
+## 2026-10-29: Keep acknowledgement actions scoped to rendered alerts
+
+Capture the rows the user saw when acknowledging a list, and remove delivered notifications only
+after the guarded database write succeeds. `acknowledgeAllCoversOnlyTheAlertsShown`,
+`failedAcknowledgeDoesNotRemoveNotifications`, and `removeDeliveredMatchesThreadIdentifiers`
+cover concurrent episodes, write failures, and notification thread identity.
+
+## 2026-10-29: Collector acknowledgement must follow readable health
+
+Collector problem identity must include repair-only red states, and a failed
+assessment must not clear stored acknowledgement. A retained stale panel must
+not enable writes. Regressions: `repairOnlyRedCollectorHasAProblemKey`,
+`collectorAcknowledgementClearsWhenHealthy`, and
+`collectorAcknowledgementNeedsTheInstalledCopyAndADatabase`.
+
+## 2026-10-29: Render acknowledgement detail once
+
+The snapshot already supplies the acknowledgement line as alert detail. Appending
+it again in either alert view duplicates it; `acknowledgedRowShowsOneAcknowledgementLine`
+checks the panel's rendered height, and the maintained snapshots expose the layout.
+
+### 2026-10-29 — Idle arrival wording
+
+A provider with stored models outside the sidebar window is idle, not learning from recent responses. `arrivalForAnIdleProviderSaysItIsIdle` and `versionAndIdleArrivalCopy` guard the arrival wording and its window.

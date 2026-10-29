@@ -11,15 +11,21 @@ public struct CodexCursor: Codable, Equatable, Sendable {
     public var logsAfterID: Int64?
     /// When the retry log was last read: anything pruned after that is a gap.
     public var logsLastSeen: Date?
-    /// Each database's last format problem, set by a read that found one and cleared by a good read.
-    /// A skipped (busy or closed) file reports it again, so a skip never reads as a recovery. Absent
-    /// from cursors stored before 0.2.1, which decode as no problem.
+    /// Each database's last format problem and its file. A skip or read failure preserves it only
+    /// for that file; a nil file in an older cursor preserves the verdict for the current file.
     public var threadHistoryProblem: String?
     public var logsProblem: String?
+    public var threadHistoryProblemFile: String?
+    public var logsProblemFile: String?
+    public var threadHistoryModification: Date?
+    public var logsModification: Date?
+    public var threadHistoryReadFile: String?
+    public var logsReadFile: String?
 
     public init(
         sessions: [String: SessionCursor] = [:], threadHistorySince: Date? = nil, logsAfterID: Int64? = nil,
-        logsLastSeen: Date? = nil, threadHistoryProblem: String? = nil, logsProblem: String? = nil
+        logsLastSeen: Date? = nil, threadHistoryProblem: String? = nil, logsProblem: String? = nil,
+        threadHistoryProblemFile: String? = nil, logsProblemFile: String? = nil, threadHistoryModification: Date? = nil, logsModification: Date? = nil, threadHistoryReadFile: String? = nil, logsReadFile: String? = nil
     ) {
         self.sessions = sessions
         self.threadHistorySince = threadHistorySince
@@ -27,6 +33,12 @@ public struct CodexCursor: Codable, Equatable, Sendable {
         self.logsLastSeen = logsLastSeen
         self.threadHistoryProblem = threadHistoryProblem
         self.logsProblem = logsProblem
+        self.threadHistoryProblemFile = threadHistoryProblemFile
+        self.logsProblemFile = logsProblemFile
+        self.threadHistoryModification = threadHistoryModification
+        self.logsModification = logsModification
+        self.threadHistoryReadFile = threadHistoryReadFile
+        self.logsReadFile = logsReadFile
     }
 
     /// Dates use `JSONEncoder`'s default, a Double that round-trips exactly. `needsRead` compares a
@@ -51,10 +63,14 @@ public struct CodexUsageSource: UsageSource {
     public let codexHome: URL
     private let busyTimeout: Duration
     private let names = ModelNames()
+    private let snapshotDirectory: URL?
+    private let snapshotClone: SnapshotClone
 
-    public init(codexHome: URL, busyTimeout: Duration = .milliseconds(250)) {
+    public init(codexHome: URL, busyTimeout: Duration = .milliseconds(250), snapshotDirectory: URL? = nil, snapshotClone: SnapshotClone = .live) {
         self.codexHome = codexHome
         self.busyTimeout = busyTimeout
+        self.snapshotDirectory = snapshotDirectory
+        self.snapshotClone = snapshotClone
     }
 
     public var provider: ProviderID { .codex }
@@ -77,28 +93,62 @@ public struct CodexUsageSource: UsageSource {
         var next = previous ?? CodexCursor()
         var batch = IngestBatch()
         var problems: [String] = []
+        var readProblems: [String] = []
 
-        readRollouts(previous: previous, backfillFrom: backfillFrom, next: &next, batch: &batch, problems: &problems)
+        let cleanupError: (any Error)?
+        do {
+            if let snapshotDirectory { try ReadOnlySQLite.cleanSnapshots(snapshotDirectory) }
+            cleanupError = nil
+        } catch { cleanupError = error }
+        readRollouts(previous: previous, backfillFrom: backfillFrom, next: &next, batch: &batch, problems: &problems, readProblems: &readProblems)
 
-        switch Self.run("Codex failed turns", {
-            try ThreadHistorySource.read(
-                codexHome: codexHome, since: previous?.threadHistorySince.map(ThreadHistorySource.rescanStart(after:)) ?? backfillFrom,
-                busyTimeout: busyTimeout)
-        }) {
+        let historyURL = ThreadHistorySource.database(codexHome: codexHome)
+        let historyDate = historyURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        let historyRequest = snapshotDirectory.map { SnapshotRequest(directory: $0, lastReadModification: previous?.threadHistoryModification, lastReadFile: previous?.threadHistoryReadFile, clone: snapshotClone) }
+        let historyOutcome = Self.run("Codex failed turns") {
+            if let cleanupError { throw cleanupError }
+            guard let historyURL else { return [FailedTurnRecord]() }
+            return try ThreadHistorySource.read(codexHome: codexHome,
+                since: previous?.threadHistorySince.map(ThreadHistorySource.rescanStart(after:)) ?? backfillFrom,
+                busyTimeout: busyTimeout, snapshot: historyRequest, selectedURL: historyURL)
+        }
+        switch historyOutcome {
         case .ok(let turns):
             batch.failedTurns = turns
             next.threadHistorySince = now
             next.threadHistoryProblem = nil
-        case .busy:
-            if let kept = previous?.threadHistoryProblem { problems.append(kept) }
+            next.threadHistoryProblemFile = nil
+            next.threadHistoryModification = historyDate
+            next.threadHistoryReadFile = historyURL?.lastPathComponent
+        case .busy, .failure:
+            if let file = next.threadHistoryProblemFile, file != historyURL?.lastPathComponent {
+                next.threadHistoryProblem = nil
+                next.threadHistoryProblemFile = nil
+            }
+            if let kept = next.threadHistoryProblem { problems.append(kept) }
+            if case .failure(let text) = historyOutcome {
+                next.threadHistoryModification = nil
+                next.threadHistoryReadFile = nil
+                readProblems.append(text)
+            }
         case .problem(let text):
             problems.append(text)
             next.threadHistoryProblem = text
+            next.threadHistoryProblemFile = historyURL?.lastPathComponent
+            next.threadHistoryModification = historyDate
+            next.threadHistoryReadFile = historyURL?.lastPathComponent
         }
 
-        switch Self.run("Codex connection log", {
-            try RetryLogSource.read(codexHome: codexHome, afterID: previous?.logsAfterID ?? 0, busyTimeout: busyTimeout)
-        }) {
+        let logsURL = RetryLogSource.database(codexHome: codexHome)
+        let logsDate = logsURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        let logsRequest = snapshotDirectory.map { SnapshotRequest(directory: $0, lastReadModification: previous?.logsModification, lastReadFile: previous?.logsReadFile, clone: snapshotClone) }
+        let logsOutcome = Self.run("Codex connection log") {
+            if let cleanupError { throw cleanupError }
+            guard let logsURL else { return (events: [ConnectionEventRecord](), maxID: previous?.logsAfterID ?? 0, oldestRetained: Optional<Date>.none) }
+            return try RetryLogSource.read(codexHome: codexHome, afterID: previous?.logsAfterID ?? 0,
+                busyTimeout: busyTimeout, snapshot: logsRequest, selectedURL: logsURL)
+        }
+        switch logsOutcome {
         case .ok(let read):
             batch.connectionEvents = read.events
             if let seen = previous?.logsLastSeen, let oldest = read.oldestRetained, oldest > seen {
@@ -107,20 +157,34 @@ public struct CodexUsageSource: UsageSource {
             next.logsAfterID = read.maxID
             next.logsLastSeen = now
             next.logsProblem = nil
-        case .busy:
-            if let kept = previous?.logsProblem { problems.append(kept) }
+            next.logsProblemFile = nil
+            next.logsModification = logsDate
+            next.logsReadFile = logsURL?.lastPathComponent
+        case .busy, .failure:
+            if let file = next.logsProblemFile, file != logsURL?.lastPathComponent {
+                next.logsProblem = nil
+                next.logsProblemFile = nil
+            }
+            if let kept = next.logsProblem { problems.append(kept) }
+            if case .failure(let text) = logsOutcome {
+                next.logsModification = nil
+                next.logsReadFile = nil
+                readProblems.append(text)
+            }
         case .problem(let text):
             problems.append(text)
             next.logsProblem = text
+            next.logsProblemFile = logsURL?.lastPathComponent
+            next.logsModification = logsDate
+            next.logsReadFile = logsURL?.lastPathComponent
         }
-
-        return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? .ready)
+        return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? readProblems.first.map(SetupState.readProblem) ?? .ready)
     }
 
     // MARK: Rollouts
 
     private func readRollouts(
-        previous: CodexCursor?, backfillFrom: Date, next: inout CodexCursor, batch: inout IngestBatch, problems: inout [String]
+        previous: CodexCursor?, backfillFrom: Date, next: inout CodexCursor, batch: inout IngestBatch, problems: inout [String], readProblems: inout [String]
     ) {
         var sessions: [String: SessionCursor] = [:]
         var newestLimit: UsageLimitSnapshot?
@@ -135,7 +199,7 @@ public struct CodexUsageSource: UsageSource {
             do {
                 parse = try RolloutParser.parse(file: file, cursor: known)
             } catch {
-                problems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read")
+                readProblems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read")
                 continue
             }
             sessions[file.sessionID] = parse.cursor
@@ -158,6 +222,7 @@ public struct CodexUsageSource: UsageSource {
         case ok(T)
         case busy
         case problem(String)
+        case failure(String)
     }
 
     /// A busy or closed file is skipped quietly (the caller reports the file's kept problem, if any);
@@ -172,9 +237,9 @@ public struct CodexUsageSource: UsageSource {
         } catch let error as ReadOnlySQLite.FormatProblem {
             return .problem("\(part): \(error.detail)")
         } catch let error as ReadOnlySQLite.Failure {
-            return .problem("\(part): couldn't be read (\(error))")
+            return .failure("\(part): couldn't be read (\(error))")
         } catch {
-            return .problem("\(part): couldn't be read")
+            return .failure("\(part): couldn't be read")
         }
     }
 }

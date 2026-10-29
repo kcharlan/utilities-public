@@ -35,9 +35,8 @@ public struct SourceSummary: Sendable {
 /// - Lamps: one per signal any registered source declares, plus Collector, lit in the most severe
 ///   color of the open episodes behind it (spec sections 5 and 7.4). Collector health lights
 ///   Collector red; the panel's strip leaves Collector out and shows it in the footer.
-/// - Alerts: one per open episode, worded by its latest fired or escalated event, red before amber
-///   before blue and newest first within a color. With several sources the text names the source
-///   (incident wording already names its status page).
+/// - Alerts: one per open episode, new before acknowledged, then by severity and recency.
+///   Failed turns use the episode's counted membership; other alerts use their latest event.
 /// - Model rows: models with a response in the last `activeWindow`; tok/s is the median
 ///   throughput over the last `rateWindow` (plan call: the dashboard's last-hour readout) and usual
 ///   is `mixUsual` over the same responses; the sparkline is the stored evaluation points' median
@@ -52,10 +51,20 @@ public struct PanelSnapshot: Sendable, Equatable {
     public struct Alert: Sendable, Equatable, Hashable {
         public var color: LampColor
         public var text: String
+        public var key: String
+        public var detail: String?
+        public var acknowledgedAt: Date?
+        public var failedTurns: Int?
+        public var threadID: String?
 
-        public init(color: LampColor, text: String) {
+        public init(color: LampColor, text: String, key: String = "", detail: String? = nil, acknowledgedAt: Date? = nil, failedTurns: Int? = nil, threadID: String? = nil) {
             self.color = color
             self.text = text
+            self.key = key
+            self.detail = detail
+            self.acknowledgedAt = acknowledgedAt
+            self.failedTurns = failedTurns
+            self.threadID = threadID
         }
     }
 
@@ -106,6 +115,7 @@ public struct PanelSnapshot: Sendable, Equatable {
     public var checkedAt: Date?
     /// Admitted signals only; nil is unlit.
     public var lamps: [Signal: LampColor?]
+    public var unacknowledged: [Signal: LampColor]
     /// Captions for the admitted signals; Provider uses the status source's name.
     public var labels: [Signal: String]
     public var alerts: [Alert]
@@ -117,15 +127,18 @@ public struct PanelSnapshot: Sendable, Equatable {
     public var shiftName: String?
     /// The collector's own lamp (green while running), for the footer's dot.
     public var collector: LampState
+    public var collectorAcknowledgedAt: Date?
     /// The collector-state line.
     public var footer: String
 
     public init(
         checkedAt: Date?, lamps: [Signal: LampColor?], labels: [Signal: String], alerts: [Alert], models: [ModelRow],
-        shift: ShiftPrompt?, shiftText: String?, collector: LampState, footer: String, shiftName: String? = nil, arrivals: [ArrivalNote] = []
+        shift: ShiftPrompt?, shiftText: String?, collector: LampState, footer: String, shiftName: String? = nil, arrivals: [ArrivalNote] = [],
+        unacknowledged: [Signal: LampColor]? = nil, collectorAcknowledgedAt: Date? = nil
     ) {
         self.checkedAt = checkedAt
         self.lamps = lamps
+        self.unacknowledged = unacknowledged ?? lamps.compactMapValues { $0 }
         self.labels = labels
         self.alerts = alerts
         self.models = models
@@ -134,6 +147,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         self.shiftText = shiftText
         self.shiftName = shiftName
         self.collector = collector
+        self.collectorAcknowledgedAt = collectorAcknowledgedAt
         self.footer = footer
     }
 
@@ -142,6 +156,8 @@ public struct PanelSnapshot: Sendable, Equatable {
 
     /// The most severe lit lamp: the glyph's dot.
     public var mostSevere: LampColor? { lamps.values.compactMap { $0 }.max() }
+    public var attention: LampColor? { unacknowledged.values.max() }
+    public func isAcknowledged(_ signal: Signal) -> Bool { (lamps[signal] ?? nil) != nil && unacknowledged[signal] == nil }
 
     /// Before the collector has created the database: no rows and no checked time. Collector health
     /// still shows: a problem lights the Collector lamp red and becomes the footer, and the off
@@ -167,6 +183,8 @@ public struct PanelSnapshot: Sendable, Equatable {
             let byProvider = Dictionary(sources.map { ($0.provider.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
 
             var alerts: [(alert: Alert, at: Date, provider: String, model: String?)] = []
+            var unacknowledged: [Signal: LampColor] = [:]
+            let acknowledgements = try store.value(.alertAcknowledgements)
             // Open speed episodes by `provider/model`: the row's numeral and sparkline color.
             var speedColors: [String: LampColor] = [:]
             for episode in try store.openEpisodes() {
@@ -187,14 +205,45 @@ public struct PanelSnapshot: Sendable, Equatable {
                 }
                 let latest = try store.latestAlertEvent(episodeID: id)
                 var text = latest?.body ?? rule.title
+                let key = Acknowledgements.key(episode)
+                let ack = acknowledgements[key]
+                var count: Int?
+                var detailText: String?
+                let membership = rule == .failedTurns ? try FailedTurnEpisodeDetail.decode(episode.detail) : nil
+                if rule == .failedTurns, let total = Int(exactly: episode.worstValue), total >= 0, let source = byProvider[episode.provider] {
+                    count = total
+                    if let membership, membership.priorCount + membership.failures.count != total {
+                        throw StoreError.invalidData("Failed-turn detail does not match total")
+                    }
+                    func reasons(_ range: Range<Int>) -> [String] {
+                        (membership?.reasons(in: range) ?? []).map { Copy.failedTurnReason(code: $0) }
+                    }
+                    if let ack, let saved = ack.failedTurns, saved >= 0, total > saved {
+                        text = Copy.failedTurnsBeyondAcknowledged(source: source.name, noun: source.failureNoun, count: total - saved, reasons: reasons(saved..<total), acknowledged: ack.at, calendar: calendar)
+                        detailText = Copy.failedTurnsTotal(count: total, since: episode.onset, calendar: calendar)
+                    } else {
+                        text = Copy.failedTurnsOpen(source: source.name, noun: source.failureNoun, count: total, reasons: reasons(0..<total), since: episode.onset, calendar: calendar)
+                    }
+                }
                 if rule != .incident, let source = byProvider[episode.provider], !text.hasPrefix("\(source.name): ") {
                     text = "\(source.name): \(text)"
                 }
-                alerts.append((Alert(color: color, text: text), latest?.at ?? episode.firedAt, episode.provider,
+                let held = ack.map { Acknowledgements.holds($0, severity: color, failedTurns: count) } ?? false
+                if held, let ack { detailText = Copy.acknowledged(at: ack.at, calendar: calendar) }
+                if !held, let signal { unacknowledged[signal] = max(unacknowledged[signal] ?? color, color) }
+                let thread = rule == .failedTurns ? NotificationPolicy.failedTurnsThreadID(provider: ProviderID(rawValue: episode.provider)) : NotificationPolicy.threadID(rule: rule, provider: episode.provider, scope: episode.scope)
+                alerts.append((Alert(color: color, text: text, key: key, detail: detailText, acknowledgedAt: held ? ack?.at : nil, failedTurns: count, threadID: thread), latest?.at ?? episode.firedAt, episode.provider,
                                (rule == .slower || rule == .faster) ? episode.scope : nil))
             }
-            alerts.sort { ($0.alert.color, $0.at) > ($1.alert.color, $1.at) }
-            if health?.lamp == .red { lamps[.collector] = .red }
+            alerts.sort {
+                if ($0.alert.acknowledgedAt == nil) != ($1.alert.acknowledgedAt == nil) { return $0.alert.acknowledgedAt == nil }
+                return ($0.alert.color, $0.at) > ($1.alert.color, $1.at)
+            }
+            let collectorAcknowledgement = try store.value(.collectorAcknowledgement)
+            let collectorHeld = health.map { report in
+                report.lamp == .red && collectorAcknowledgement.map { Acknowledgements.holds($0, keys: report.problemKeys) } == true
+            } ?? false
+            if health?.lamp == .red { lamps[.collector] = .red; if !collectorHeld { unacknowledged[.collector] = .red } }
 
             var rows: [ModelRow] = []
             var shift: ShiftPrompt?
@@ -247,13 +296,17 @@ public struct PanelSnapshot: Sendable, Equatable {
                 let names = DisplayNames.disambiguated(models, naming: source.naming)
                 let recent = try ModelDetail.recentModels(store: store, provider: source.provider, now: now)
                 let ready = try recent.filter { if case .cold = try baseline.learning(provider: source.provider, model: $0, at: now) { return false }; return true }
-                arrivals.append(ArrivalNote(provider: source.provider, text: Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 }), firstModel: recent.first))
+                let text = recent.isEmpty && !models.isEmpty
+                    ? Copy.arrivalIdle(name: source.name, days: CollectorRun.lookbackDays)
+                    : Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 })
+                arrivals.append(ArrivalNote(provider: source.provider, text: text, firstModel: recent.first))
             }
             let checkedAt = try store.lastSucceededRunFinish()
             return PanelSnapshot(
                 checkedAt: checkedAt, lamps: lamps, labels: labels(admitted, sources: sources), alerts: alerts.map(\.alert),
                 models: rows, shift: shift, shiftText: shiftText, collector: health?.lamp ?? .unlit,
-                footer: try footer(health: health, store: store), shiftName: shiftName, arrivals: arrivals)
+                footer: try footer(health: health, store: store), shiftName: shiftName, arrivals: arrivals, unacknowledged: unacknowledged,
+                collectorAcknowledgedAt: collectorHeld ? collectorAcknowledgement?.at : nil)
         }
     }
 

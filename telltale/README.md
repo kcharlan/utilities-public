@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.2.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -79,7 +79,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that ten panel PNGs and sixteen dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that twelve panel PNGs and eighteen dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
@@ -93,11 +93,11 @@ the production lifecycle (`TelltaleMain`, `AppDelegate`), the collector entry, t
 registry or the notification check, into a separate synthetic renderer in a new 0700
 directory under the OS temporary directory. It seeds a database per scene from
 `Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
-renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
+renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting, acknowledged and the
 lasting-shift prompt (spec section 13's panel states), two providers with colliding Claude names, and the arrival note. It also renders the dashboard window at
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
-provider incident, workload and events), a Claude model with fast mode, and the collector view's problem state at 760 pt
+provider incident, workload and events), an idle Claude sidebar, a Claude model with fast mode, and the collector view's problem state at 760 pt
 (the last run failed), and Settings as tall as its content, with an invalid Rules entry (the
 slower rule's clear band equal to its trigger) and the watched-components checklist with names the
 synthetic status page no longer lists. Four more Settings scenes show normal, not-set-up, format-problem and backfilling providers in both appearances. It registers the bundled fonts first and fails if they don't register.
@@ -152,6 +152,18 @@ private backup under `~/.utilities-deploy-backups/telltale/`; `--rollback BACKUP
 one, and any failure restores the previous app. `--audit` checks the installed app against
 current source without building or running anything.
 
+An older release cannot decode a `readProblem` stored by this release. After
+rollback, that row can block the affected provider's ingest, Collector health,
+and the Settings provider list. Stop Telltale and its collector, then delete
+only the affected source row (replace `example` with the affected source ID):
+
+```sh
+sqlite3 "$HOME/Library/Application Support/Telltale/telltale.sqlite" "DELETE FROM source_state WHERE source = 'example';"
+```
+
+The next collector run recreates the row. Other source rows and collected data
+are preserved.
+
 The deployer never runs `launchctl` and leaves the database, the log and the collector's
 job plist alone. A running Telltale keeps running the old release: quit and reopen it. The
 installed copy turns the collector on at launch when it should be on and its plist is
@@ -172,12 +184,11 @@ transaction, post live notifications, prune per the retention table and record t
 Each unit keeps its own progress and backfill boundary; historical points never notify. A new
 provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
-A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly, like a busy
-one: it is tried again each run and read once Codex reopens it. A format problem that database last
-reported stays reported while it is skipped. See the closed-WAL policy in spec section 6
+A changed Codex database that Codex has closed is read from a private APFS clone;
+an unchanged closed file is skipped. See the closed-WAL policy in spec sections 6 and 11
 (`docs/telltale_design_spec.md`).
 
-It writes only under `~/Library/Application Support/Telltale` (database and lock) and
+It writes only under `~/Library/Application Support/Telltale` (database, locks and temporary `codex-snapshots`) and
 `~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`
 (or `CODEX_HOME`), `~/.claude` (or `CLAUDE_CONFIG_DIR`) and, when present, `~/.config/claude` read-only. Its only network requests go to the OpenAI and Claude status pages.
 
@@ -207,12 +218,12 @@ becomes the collector. The plist records the validated, symlink-resolved executa
 `launchctl` call has a 10-second timeout.
 
 `CollectorHealth` judges the collector from its run records (skipped runs count for nothing), the
-plist, `launchctl print` (Loaded only) and the sources' format problems. The app's
+plist, `launchctl print` (Loaded only) and the sources' format and read problems. The app's
 `CollectorMonitor` checks every minute and posts one Collector health notification per episode: the
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
 than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
-format problem that two consecutive collector runs report (the lamp and panel message show from the first
-report; see the format-problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+format or read problem that two consecutive collector runs report (the lamp and panel message show from the first
+report; see the shared problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.
@@ -226,17 +237,23 @@ expanded-interface session, whose begin shows the panel; a press while it is ope
 a global mouse monitor and closes it. Escape and clicks elsewhere hide it. While the item is
 hidden or not yet placed, the panel opens at the top right of the menu-bar screen.
 
-The glyph is a lamp lens: a template image while nothing is lit, and the lens with a 7 pt dot
-in the most severe lamp color when a lamp lights. Its accessibility label names the lit lamps.
+The glyph is a lamp lens: a template image while nothing is lit, a filled dot in the most severe
+new alert's color, or a ring in the most severe lit color when all alerts are acknowledged. Its
+accessibility label names the lit lamps and marks acknowledged lamps.
 The panel (340 pt) shows Checked HH:MM with Check now, the lamp strip, the alert list or
 "Nothing to report.", a row per model active in the last 3 hours (tok/s, usual, sparkline;
 a model in a slower or faster episode shows its tok/s and sparkline in the lamp color),
 the lasting-shift prompt with links to the provider's status-page incidents in its period,
 Accept as usual… and Keep as abnormal, and the collector footer.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
+Use Acknowledge on an alert, or Acknowledge all for the new alerts shown, to reset the attention
+dot while leaving the lamp lit. Acknowledged rows show a hollow diamond and their acknowledgement
+time; Mark as new restores their attention. A new episode, higher severity, or another counted
+failure makes the relevant alert new again. Acknowledging also removes delivered notifications
+for the selected alert threads.
 After a newly added provider finishes its first backfill on an existing installation, a
-standing arrival note names the ready models. Open the provider's first model or dismiss the
-note; dismissal persists across relaunches and rebuilds.
+standing arrival note names the ready models. If its stored models are all idle, the note says none responded in the sidebar window. Open the provider's first model or dismiss the
+note; dismissal persists across relaunches and rebuilds. The footer shows the app version; its help gives the build number.
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
 database, its `-wal` file and, while they don't exist yet, the nearest existing parent
@@ -264,7 +281,7 @@ section. It is dark by default and follows the stored appearance setting (spec s
 The sidebar lists each provider's models with a response in the last 14 days (a provider whose
 source isn't set up shows "Not set up", dimmed; one whose models are all older shows "No
 responses in the last 14 days"; names stay unique over every stored model, spec section
-[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. A model's view shows the lamp strip with
+[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. The sidebar foot shows the app version with the build number in help. A model’s view shows the lamp strip with
 Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
 response time against usual, hourly speed-index dots colored by the episode in effect,
 the dashed usual line, the provider's own status-page incidents as dashed amber bands, and
@@ -280,6 +297,8 @@ asks first, since later acceptances are undone too). While the window is closed,
 reread nothing; opening it reads everything again. Readout numbers use Barlow Semi
 Condensed, registered for the process at launch; if it can't be registered, the system font
 stands in and one line is logged.
+The dashboard alert list offers the same Acknowledge, Acknowledge all and Mark as new controls
+as the panel, scoped to its displayed rows.
 
 The collector view shows the four collector lamps, any problem, the schedule, the last and
 next run, the last success and the job label, Run now, Turn on or Turn off, Repair (only when
@@ -336,6 +355,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
+- VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
   header and footer included, on-screen. Reopen the app from Finder, or click a notification,
@@ -347,6 +367,10 @@ check.
 - Check now: the checked time moves (the acceptance double records a synthetic run).
 - **Add red alert** lights Errors red and turns the glyph's dot red; VoiceOver reads the lit
   lamps from the status item and the lamp strip.
+- First acknowledge the existing alerts, then **Add red alert** and acknowledge it. Check the
+  glyph, row and VoiceOver against the acknowledgement contracts in spec §9.1. **Add failed
+  turn** fills the dot red again and shows the count beyond the acknowledgement. Exercise
+  Acknowledge all and Mark as new; quit and reopen to check that acknowledgements persist.
 - The lasting-shift prompt links to "Synthetic slow responses", which opens its synthetic
   status-page address in the browser.
 - Accept as usual… with its date, then Undo; Keep as abnormal hides the prompt.
@@ -378,6 +402,10 @@ check.
 - In the installed release only: the collector turns on at first launch, and no launchd job
   exists for the acceptance bundle (`launchctl print gui/$UID/local.utilities.telltale.collector`
   names the installed executable).
+- In the installed release only, acknowledge existing rule alerts, boot out the collector job,
+  and acknowledge its problem. Check the footer and glyph against spec §9.1. Wait past a collector
+  interval: the not-loaded problem stays acknowledged. Repair the job and verify the next check
+  clears the acknowledgement. Changing next-try text is covered by `collectorAcknowledgementFollowsProblemKeys`.
 - In the installed release only, launch at login: after the first launch, System Settings >
   General > Login Items lists Telltale (allowed, or asking for approval; if it asks, Settings shows
   "Approval required in System Settings" with Open Login Items Settings, and approving it there
@@ -397,6 +425,10 @@ check.
   run must log no format problem, and no Collector health notification may follow. Record it
   apart from the sidebar check; it does not establish the cause of an earlier incident. Keep the
   evidence (log lines, times) outside the repository.
+- In the installed release only, after Codex quits with recent activity: the next collector run
+  logs no format problem, `~/Library/Application Support/Telltale/codex-snapshots` is empty,
+  and neither closed Codex database has a `-wal` or `-shm` beside it. Record this separately
+  from the 0.2.1 check above.
 - In the installed release only, sidebar window: a model whose last response is more than 14 days
   old is absent from the dashboard sidebar (the Codex group shows "No responses in the last 14
   days" if every model is that old). Keep the evidence outside the repository.
@@ -418,6 +450,9 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
 | 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
 | Installed 0.2.1, closed Codex database: no format problem logged and no Collector health notification | Not yet run |
+| Installed release, closed Codex snapshot read and cleanup | Not yet run |
+| 0.3.0 acceptance bundle acknowledgement and failed-turn re-arm | Not yet run |
+| Installed 0.3.0 Collector acknowledgement and repair | Not yet run |
 | Installed 0.2.1, sidebar window: a model unused for 14 days is absent from the sidebar | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 

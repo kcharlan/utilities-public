@@ -4,6 +4,11 @@ import TelltaleTestSupport
 @testable import TelltaleCore
 
 @Suite struct NotificationPolicyTests {
+    @Test func episodeThreadIDMatchesNotice() {
+        let result = select([outcome(at: latest, fired(latest))])
+        #expect(result.first?.threadID == NotificationPolicy.threadID(rule: .slower, provider: "codex", scope: Synth.model))
+        #expect(result.first?.threadID == "slower.codex.\(Synth.model)")
+    }
     @Test func clearedAndCatchUpBodiesArePrefixed() {
         let info = RuleProviderInfo(name: "Synthetic Provider", failureNoun: "request", signals: [.speed], rules: [.slower], naming: SyntheticNaming())
         var notices = FailureNotices()

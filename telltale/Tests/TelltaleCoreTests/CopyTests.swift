@@ -29,9 +29,19 @@ private enum Fixture {
 }
 
 @Suite struct CopyTests {
+    @Test func readProblemCopyAndProviderState() {
+        let expected = "Telltale can't read Example's logs since 08:05. Open the Collector view to see the error."
+        #expect(Copy.readProblem(source: "Example", since: Fixture.since, calendar: Fixture.calendar) == expected)
+        #expect(Copy.providerState(.readProblem(since: Fixture.since), name: "Example", calendar: Fixture.calendar) == expected)
+    }
+
     @Test func arrivalText() {
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: []) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are still being learned.")
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: ["Example", "Sample"]) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are ready for Example, Sample.")
+    }
+    @Test func versionAndIdleArrivalCopy() {
+        #expect(Copy.versionLine == "Telltale \(TelltaleRelease.version)")
+        #expect(Copy.arrivalIdle(name: "Synthetic", days: 30) == "Telltale now watches Synthetic. It read 30 days of history; none of its models responded in the last 14 days.")
     }
     @Test func compactionsCopy() {
         #expect(Copy.compactionsFired(count: 3, windowMinutes: 60, blocked: 220) == "3 automatic compactions in the last 60 minutes. Fresh sessions or subagents would keep more context. They held sessions for 3 min 40 s.")
@@ -53,6 +63,16 @@ private enum Fixture {
         let since = Fixture.since
         let later = Fixture.later
         return [
+            CopyCase("acknowledge", Copy.acknowledge, "Acknowledge"),
+            CopyCase("acknowledgeAll", Copy.acknowledgeAll, "Acknowledge all"),
+            CopyCase("markAsNew", Copy.markAsNew, "Mark as new"),
+            CopyCase("acknowledged", Copy.acknowledged(at: since, calendar: calendar), "Acknowledged 08:05"),
+            CopyCase("failedTurnsOpen one", Copy.failedTurnsOpen(source: "Example", noun: "request", count: 1, reasons: ["model at capacity"], since: since, calendar: calendar), "Example: 1 request failed since 08:05: model at capacity"),
+            CopyCase("failedTurnsOpen many unknown", Copy.failedTurnsOpen(source: "Example", noun: "request", count: 2, reasons: [], since: since, calendar: calendar), "Example: 2 requests failed since 08:05"),
+            CopyCase("failedTurnsBeyondAcknowledged one", Copy.failedTurnsBeyondAcknowledged(source: "Example", noun: "request", count: 1, reasons: ["model at capacity"], acknowledged: since, calendar: calendar), "Example: 1 more request failed than you acknowledged at 08:05: model at capacity"),
+            CopyCase("failedTurnsBeyondAcknowledged many unknown", Copy.failedTurnsBeyondAcknowledged(source: "Example", noun: "request", count: 2, reasons: [], acknowledged: since, calendar: calendar), "Example: 2 more requests failed than you acknowledged at 08:05"),
+            CopyCase("failedTurnsTotal one", Copy.failedTurnsTotal(count: 1, since: since, calendar: calendar), "1 failed since 08:05"),
+            CopyCase("failedTurnsTotal many", Copy.failedTurnsTotal(count: 2, since: since, calendar: calendar), "2 failed since 08:05"),
             CopyCase("slowerFired", Copy.slowerFired(model: "Example", percent: 26, since: since, calendar: calendar),
                      "Example is 26% slower than usual for prompts this size. Since 08:05."),
             CopyCase("slowerCatchUp", Copy.slowerCatchUp(model: "Example", percent: 22, since: since, calendar: calendar),
@@ -148,6 +168,8 @@ private enum Fixture {
             CopyCase("failedTurnReason (policy)", Copy.failedTurnReason(code: "cyberPolicy"), "blocked by policy"),
             CopyCase("failedTurnReason (other)", Copy.failedTurnReason(code: "syntheticCode"), "syntheticCode"),
             CopyCase("collectorOff", Copy.collectorOff, "Collector off. Turn it on to keep watching."),
+            CopyCase("readProblem", Copy.readProblem(source: "Example", since: since, calendar: calendar),
+                     "Telltale can't read Example's logs since 08:05. Open the Collector view to see the error."),
             CopyCase("formatProblem", Copy.formatProblem(since: since, calendar: calendar),
                      "Codex changed its log format. Telltale can't read responses since 08:05."),
             CopyCase("collectorNotLoaded", Copy.collectorNotLoaded,
