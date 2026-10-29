@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.2.1 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
@@ -79,7 +79,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that twelve panel PNGs and sixteen dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that twelve panel PNGs and eighteen dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
@@ -97,7 +97,7 @@ renders the panel offscreen at 340 pt in light and dark appearances: quiet, aler
 lasting-shift prompt (spec section 13's panel states), two providers with colliding Claude names, and the arrival note. It also renders the dashboard window at
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
-provider incident, workload and events), a Claude model with fast mode, and the collector view's problem state at 760 pt
+provider incident, workload and events), an idle Claude sidebar, a Claude model with fast mode, and the collector view's problem state at 760 pt
 (the last run failed), and Settings as tall as its content, with an invalid Rules entry (the
 slower rule's clear band equal to its trigger) and the watched-components checklist with names the
 synthetic status page no longer lists. Four more Settings scenes show normal, not-set-up, format-problem and backfilling providers in both appearances. It registers the bundled fonts first and fails if they don't register.
@@ -252,8 +252,8 @@ time; Mark as new restores their attention. A new episode, higher severity, or a
 failure makes the relevant alert new again. Acknowledging also removes delivered notifications
 for the selected alert threads.
 After a newly added provider finishes its first backfill on an existing installation, a
-standing arrival note names the ready models. Open the provider's first model or dismiss the
-note; dismissal persists across relaunches and rebuilds.
+standing arrival note names the ready models. If its stored models are all idle, the note says none responded in the sidebar window. Open the provider's first model or dismiss the
+note; dismissal persists across relaunches and rebuilds. The footer shows the app version; its help gives the build number.
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
 database, its `-wal` file and, while they don't exist yet, the nearest existing parent
@@ -281,7 +281,7 @@ section. It is dark by default and follows the stored appearance setting (spec s
 The sidebar lists each provider's models with a response in the last 14 days (a provider whose
 source isn't set up shows "Not set up", dimmed; one whose models are all older shows "No
 responses in the last 14 days"; names stay unique over every stored model, spec section
-[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. A model's view shows the lamp strip with
+[9.2](docs/telltale_design_spec.md#92-dashboard-window)), then Collector and Settings. The sidebar foot shows the app version with the build number in help. A model’s view shows the lamp strip with
 Collector, the alerts, Speed against usual (6h, 24h, 7d or 14d: last-hour tok/s and median
 response time against usual, hourly speed-index dots colored by the episode in effect,
 the dashed usual line, the provider's own status-page incidents as dashed amber bands, and
@@ -355,6 +355,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
+- VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
   and quickly; every press must open or close the panel exactly once, with the whole panel,
   header and footer included, on-screen. Reopen the app from Finder, or click a notification,

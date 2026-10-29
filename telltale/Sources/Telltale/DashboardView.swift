@@ -289,6 +289,8 @@ private struct DashboardSidebar: View {
             row("Collector", color: model.live.health?.lamp == .red ? .red : nil, section: .collector)
             row("Settings", color: nil, section: .settings)
             Spacer(minLength: 0)
+            Text(Copy.versionLine).font(.system(size: 11)).foregroundStyle(Theme.swiftUI(Theme.dim))
+                .padding(.horizontal, 8).help(AppBundle.buildHelp(info: Bundle.main.infoDictionary) ?? "").accessibilityIdentifier("version")
         }
         .padding(.horizontal, 10).padding(.vertical, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

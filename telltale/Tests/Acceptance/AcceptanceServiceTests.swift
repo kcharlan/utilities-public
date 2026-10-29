@@ -52,7 +52,7 @@ import TelltaleCore
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
                 #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
-            case .acceptance, .dashboard, .collectorProblem, .settings, .twoProviders, .arrival, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
+            case .acceptance, .dashboard, .sidebarIdle, .collectorProblem, .settings, .twoProviders, .arrival, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
                 Issue.record("not a panel snapshot scene")
             }
         }

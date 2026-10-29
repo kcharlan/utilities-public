@@ -123,8 +123,10 @@ the condition clears.
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+The panel bottom row shows the version at left and its build number in help.
+
 The sidebar lists providers, each as a plugin, with Collector and Settings
-below. Unconfigured providers appear dimmed, as "Not set up".
+below. Unconfigured providers appear dimmed, as "Not set up". The sidebar foot shows the version with its build number in help.
 
 ### Collector view
 

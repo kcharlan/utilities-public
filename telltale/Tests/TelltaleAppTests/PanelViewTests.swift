@@ -133,6 +133,21 @@ private struct SyntheticKickstartFailure: LocalizedError {
             #expect(live.snapshot.alerts.filter { $0.acknowledgedAt == nil }.count == 1)
         }
     }
+    @Test func panelFooterFitsWithVersion() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            try PanelWorld.seed(paths)
+            let model = PanelModel(store: PanelWorld.live(paths), actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
+            let host = NSHostingView(rootView: PanelView(model: model, openSettings: {}, openDashboard: nil))
+            #expect(host.fittingSize.width == 340)
+            #expect(host.fittingSize.height > 0)
+            let quietHeight = host.fittingSize.height
+            try PanelWorld.addAlert(try Store.open(paths.database, mode: .readWrite))
+            model.store.reload()
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.height > quietHeight)
+        }
+    }
     @Test func rendersNothingToReportWhenQuiet() throws {
         try withScratchDirectory { directory in
             let paths = PanelWorld.paths(directory)

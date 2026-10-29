@@ -59,7 +59,7 @@ enum SyntheticEnvironment {
 
     /// The panel states the harnesses seed (spec section 13's snapshot list, plus the acceptance mix).
     enum Scene: String, CaseIterable {
-        case quiet, alerting, acknowledged, shift, twoProviders, arrival, claudeDashboard
+        case quiet, alerting, acknowledged, shift, twoProviders, arrival, claudeDashboard, sidebarIdle
         case providersNormal, providersNotSetUp, providersFormatProblem, providersBackfilling
         /// The acceptance app: an alerting model, a shift prompt and the collector off.
         case acceptance
@@ -121,7 +121,7 @@ enum SyntheticEnvironment {
         let today = calendar.startOfDay(for: now)
         var number = 0
         // The dashboard scene fills the Workload grid: cached input and reasoning on every response.
-        let dashboard = scene == .dashboard
+        let dashboard = scene == .dashboard || scene == .sidebarIdle
         func responses(
             _ model: String, count: Int, tps: Double, from first: Date, spacing: TimeInterval = 60, input: (Int) -> Int = { _ in 10_000 }
         ) throws {
@@ -162,7 +162,7 @@ enum SyntheticEnvironment {
                     endReason: EpisodeRow.EndReason.cleared, severity: LampColor.amber.rawValue, worstValue: 0.74))
             }
         }
-        let alerting = scene == .alerting || scene == .acknowledged || scene == .acceptance || scene == .dashboard
+        let alerting = scene == .alerting || scene == .acknowledged || scene == .acceptance || dashboard
         let exampleNow: Double = alerting ? 31 : 41
         // The dashboard's large-prompt alert: 4 in 10 of the last hour's prompts are 300k or more.
         try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118) { dashboard && $0 % 5 < 2 ? 320_000 : 10_000 }
@@ -174,6 +174,12 @@ enum SyntheticEnvironment {
                     isSubagent: false, turnID: "synthetic-claude-turn-\(index)", responseID: "synthetic-claude-response-\(index)",
                     start: end.addingTimeInterval(-20), end: end, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 1000, reasoningTokens: nil)])
             }
+        }
+        if scene == .sidebarIdle {
+            let end = now.addingTimeInterval(-ModelDetail.sidebarWindow - 3_600)
+            try store.upsert(responses: [ResponseRecord(provider: .claude, model: claude, effort: nil, serviceTier: "fast", sessionID: sessionID,
+                isSubagent: false, turnID: "synthetic-idle-turn", responseID: "synthetic-idle-response",
+                start: end.addingTimeInterval(-20), end: end, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 1000, reasoningTokens: nil)])
         }
         if scene == .arrival {
             try store.set(.pendingArrivals, [ProviderID.claude.rawValue])
@@ -219,7 +225,7 @@ enum SyntheticEnvironment {
             try store.acknowledge(before.alerts.filter { $0.failedTurns != nil }, at: now.addingTimeInterval(-20))
             try addFailedTurn(store, at: now.addingTimeInterval(-10))
         }
-        if scene == .dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
+        if dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
         if scene == .collectorProblem { try collectorProblem(store, paths: paths, now: now) }
         if scene == .providersNormal || scene == .providersNotSetUp || scene == .providersFormatProblem || scene == .providersBackfilling {
             let state: SetupState = switch scene {

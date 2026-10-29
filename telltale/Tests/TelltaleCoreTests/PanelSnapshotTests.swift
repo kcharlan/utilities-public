@@ -262,6 +262,16 @@ private enum Panel {
             #expect(arrival.text.contains("usual speeds are ready for Example"))
         }
     }
+    @Test func arrivalForAnIdleProviderSaysItIsIdle() throws {
+        try withRules { h in
+            try h.base.add(2, throughput: 40, month: 7, day: 1, model: "example-stale")
+            try h.store.set(.pendingArrivals, ["codex"])
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: true), unit: "codex")
+            let arrival = try #require(Panel.load(h, at: h.sep4(9, 30)).arrivals.first)
+            #expect(arrival.text == Copy.arrivalIdle(name: "Codex", days: CollectorRun.lookbackDays))
+            #expect(arrival.firstModel == nil)
+        }
+    }
     @Test func arrivalOpensTheFirstRecentModel() throws {
         try withRules { h in
             // A model that sorts first but was last used long before the sidebar window, with enough

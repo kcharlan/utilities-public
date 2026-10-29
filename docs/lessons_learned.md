@@ -1641,3 +1641,7 @@ not enable writes. Regressions: `repairOnlyRedCollectorHasAProblemKey`,
 The snapshot already supplies the acknowledgement line as alert detail. Appending
 it again in either alert view duplicates it; `acknowledgedRowShowsOneAcknowledgementLine`
 checks the panel's rendered height, and the maintained snapshots expose the layout.
+
+### 2026-10-29 — Idle arrival wording
+
+A provider with stored models outside the sidebar window is idle, not learning from recent responses. `arrivalForAnIdleProviderSaysItIsIdle` and `versionAndIdleArrivalCopy` guard the arrival wording and its window.

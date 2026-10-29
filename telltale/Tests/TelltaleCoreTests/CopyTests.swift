@@ -39,6 +39,10 @@ private enum Fixture {
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: []) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are still being learned.")
         #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: ["Example", "Sample"]) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are ready for Example, Sample.")
     }
+    @Test func versionAndIdleArrivalCopy() {
+        #expect(Copy.versionLine == "Telltale \(TelltaleRelease.version)")
+        #expect(Copy.arrivalIdle(name: "Synthetic", days: 30) == "Telltale now watches Synthetic. It read 30 days of history; none of its models responded in the last 14 days.")
+    }
     @Test func compactionsCopy() {
         #expect(Copy.compactionsFired(count: 3, windowMinutes: 60, blocked: 220) == "3 automatic compactions in the last 60 minutes. Fresh sessions or subagents would keep more context. They held sessions for 3 min 40 s.")
         #expect(Copy.compactionsFired(count: 2, windowMinutes: 30, blocked: nil) == "2 automatic compactions in the last 30 minutes. Fresh sessions or subagents would keep more context.")

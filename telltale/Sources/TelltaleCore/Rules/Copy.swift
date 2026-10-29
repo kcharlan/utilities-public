@@ -346,6 +346,11 @@ public enum Copy {
         let usual = readyModels.isEmpty ? "usual speeds are still being learned" : "usual speeds are ready for \(list(readyModels))"
         return "Telltale now watches \(name). It read \(days) days of history; \(usual)."
     }
+    public static let versionLine = "\(TelltaleRelease.displayName) \(TelltaleRelease.version)"
+    public static func arrivalIdle(name: String, days: Int) -> String {
+        let window = Int(ModelDetail.sidebarWindow / 86_400)
+        return "Telltale now watches \(name). It read \(days) days of history; none of its models responded in the last \(window) days."
+    }
 
     // Port: brew_version/Sources/BrewVersion/UserNotifier.swift, failureMessage, fbd3e03.
     private static func failureMessage(_ context: String, error: any Error) -> String {

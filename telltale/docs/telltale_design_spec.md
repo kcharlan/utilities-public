@@ -568,7 +568,7 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
   - one row per model active in the last 3 hours: tok/s, usual, 3-hour
     sparkline
   - the lasting-shift prompt when present
-  - footer with collector state and Open dashboard
+  - footer with collector state, version with build help, and Open dashboard
 
   With several providers, the strip shows one lamp per signal across all
   providers, and the alert text names the provider.
@@ -608,7 +608,7 @@ keeps its name when it leaves the sidebar and returns, and a stale model that is
 shows that name. A provider whose models are all older than the window shows "No responses in
 the last 14 days" (`Copy.noRecentModels`), dimmed; one with no stored response shows "No
 responses yet". The arrival note's first model and the models it names come from the same
-recent list. Model view, as in the mockup:
+recent list. If stored models are all idle, the arrival note states that none responded within the window. The sidebar foot shows the version with build help. Model view, as in the mockup:
 
 - Lamp strip, including Collector.
 - Alert list.
@@ -782,7 +782,9 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
   `CodexBar Local` by default, never ad-hoc: an approved deviation, as in `anker_charge_monitor`),
   `snapshots`, `acceptance`.
 
-**Tests (all required, per the repo's Testing Scope):**
+**Tests (all required, per the repo’s Testing Scope):**
+
+The maintained dashboard snapshots include an idle sidebar in light and dark appearances.
 
 - **Unit**
   - Rollout parsing: plain and `.zst`, truncated zstd frames, the

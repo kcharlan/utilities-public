@@ -296,7 +296,10 @@ public struct PanelSnapshot: Sendable, Equatable {
                 let names = DisplayNames.disambiguated(models, naming: source.naming)
                 let recent = try ModelDetail.recentModels(store: store, provider: source.provider, now: now)
                 let ready = try recent.filter { if case .cold = try baseline.learning(provider: source.provider, model: $0, at: now) { return false }; return true }
-                arrivals.append(ArrivalNote(provider: source.provider, text: Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 }), firstModel: recent.first))
+                let text = recent.isEmpty && !models.isEmpty
+                    ? Copy.arrivalIdle(name: source.name, days: CollectorRun.lookbackDays)
+                    : Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 })
+                arrivals.append(ArrivalNote(provider: source.provider, text: text, firstModel: recent.first))
             }
             let checkedAt = try store.lastSucceededRunFinish()
             return PanelSnapshot(

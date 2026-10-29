@@ -310,6 +310,8 @@ struct PanelView: View {
                 }
             }
             HStack(alignment: .center, spacing: 6) {
+                Text(Copy.versionLine).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .help(AppBundle.buildHelp(info: Bundle.main.infoDictionary) ?? "").accessibilityIdentifier("version")
                 Spacer(minLength: 0)
                 Button { openSettings?() } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.borderless).disabled(openSettings == nil).help("Settings").accessibilityLabel("Settings")
