@@ -19,6 +19,11 @@ public struct SpeedReading: Sendable, Equatable, Hashable {
 }
 
 public enum SpeedIndex {
+    public static func percent(_ index: Double) -> Int? {
+        guard index.isFinite else { return nil }
+        return Int(exactly: (abs(index - 1) * 100).rounded())
+    }
+
     /// The trailing window, in minutes.
     public static let windowMinutes = 15
     /// Fewer qualifying responses than this make the point unknown ("thin data").

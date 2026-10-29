@@ -400,6 +400,9 @@ Applies to the speed rules and the large-prompt rule:
     "Notify when it clears" is on.
 - **Idle end:** if a model has no qualifying responses for **2 hours**, its
   open episode ends silently. The next activity starts fresh.
+- **Reversal:** step the uniquely open speed direction first. If it remains open when the opposite direction fires, end it at that point as reversed. If it clears at the same point, keep the clear and use ordinary fire wording. Existing overlapping episodes settle through their normal clear or idle end.
+- A reversal writes no event, posts no end notice, and does not appear in Events. The replacement fire records the direction change, with reversal wording for fresh notices and ordinary catch-up wording for stale fires. Already delivered notifications remain unchanged.
+- A reversal is not a clear and does not release a Keep-as-abnormal dismissal.
 - One notification when an episode fires, and one when it clears. Nothing in
   between.
 - A long shift therefore notifies about once per active day. Each morning's
@@ -452,7 +455,7 @@ It then backfills. It never notifies.
 point in order, then notifies only on what's still relevant:
 
 - An episode that fired and is still open at the latest point notifies once:
-  "Sol has been 22% slower since 09:40".
+  "Sol has been 22% slower than usual for prompts this size since 09:40".
 - An episode that fired and cleared entirely inside the gap is recorded only.
 - Clears and escalations more than one interval old are recorded only.
 
@@ -535,7 +538,7 @@ Kevin decided: **a lasting change never becomes usual without his OK.**
     time passes. Responses from that date that were inside episodes now count
     as normal. Confirmation: "Sol's usual speed is now 24% lower than
     before."
-  - **Keep as abnormal**: dismisses the prompt for this shift. A new prompt
+  - **Keep as abnormal**: dismisses the prompt for this shift. A reversed end does not release the dismissal. A new prompt
     appears only after a clear followed by a new 3-day run.
 
   Kevin can also accept from the dashboard at any time.

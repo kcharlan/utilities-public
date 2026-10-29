@@ -10,16 +10,29 @@ public enum Copy {
     }
     /// Spec section 7.3's catch-up notice for an episode still open after a gap.
     public static func slowerCatchUp(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
-        "\(model) has been \(percent)% slower since \(clock(since, calendar))."
+        "\(model) has been \(percent)% slower than usual for prompts this size since \(clock(since, calendar))."
     }
-    public static func slowerEscalated(model: String, percent: Int) -> String { "\(model) is now \(percent)% slower than usual." }
+    public static func slowerEscalated(model: String, percent: Int) -> String { "\(model) is now \(percent)% slower than usual for prompts this size." }
     /// Spec section 7.2's clear notice.
     public static func speedCleared(model: String) -> String { "\(model) is back to usual speed." }
     public static func fasterFired(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
-        "\(model) is \(percent)% faster than usual. Check that output isn't shallower. Since \(clock(since, calendar))."
+        "\(model) is \(percent)% faster than usual for prompts this size. Check that output isn't shallower. Since \(clock(since, calendar))."
     }
     public static func fasterCatchUp(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
-        "\(model) has been \(percent)% faster than usual since \(clock(since, calendar))."
+        "\(model) has been \(percent)% faster than usual for prompts this size since \(clock(since, calendar))."
+    }
+
+    public static func slowerReversed(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
+        "\(model) is \(percent)% slower than usual for prompts this size, after running faster. Since \(clock(since, calendar))."
+    }
+    public static func fasterReversed(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
+        "\(model) is \(percent)% faster than usual for prompts this size, after running slower. Check that output isn't shallower. Since \(clock(since, calendar))."
+    }
+    public static func slowerOpen(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
+        "\(model) has been up to \(percent)% slower than usual for prompts this size since \(clock(since, calendar))."
+    }
+    public static func fasterOpen(model: String, percent: Int, since: Date, calendar: Calendar) -> String {
+        "\(model) has been up to \(percent)% faster than usual for prompts this size since \(clock(since, calendar)). Check that output isn't shallower."
     }
 
     // MARK: Large prompts

@@ -56,6 +56,20 @@ func transitions(_ log: [(point: Int, transition: Transition)]) -> [Transition] 
 func points(_ log: [(point: Int, transition: Transition)]) -> [Int] { log.map(\.point) }
 
 @Suite struct EpisodeMachineTests {
+    @Test func endResetsAndReportsWhetherItWasOpen() {
+        var d = MachineDriver()
+        d.feed([0.8, 0.8])
+        let closed = d.machine.end()
+        #expect(!closed)
+        #expect(d.feed([0.8, 0.8]).isEmpty)
+        d.feed([0.8])
+        let open = d.machine.end()
+        #expect(open)
+        let repeated = d.machine.end()
+        #expect(!repeated)
+        #expect(d.machine.isAtRest)
+    }
+
     @Test func firesAfterFirePoints() {
         var driver = MachineDriver()
         #expect(driver.feed([0.80, 0.80]).isEmpty)

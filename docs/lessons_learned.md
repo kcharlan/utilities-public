@@ -1645,3 +1645,7 @@ checks the panel's rendered height, and the maintained snapshots expose the layo
 ### 2026-10-29 — Idle arrival wording
 
 A provider with stored models outside the sidebar window is idle, not learning from recent responses. `arrivalForAnIdleProviderSaysItIsIdle` and `versionAndIdleArrivalCopy` guard the arrival wording and its window.
+
+### 2026-10-29 — Silent speed reversals
+
+Telltale speed reversals need a silent ended outcome as well as closing the stored episode; otherwise catch-up can notify for an episode already replaced. Regression coverage: `reversalEndsTheOppositeEpisode`, `fasterIsReversedBySlower`, `reversalInsideACatchUpPassPostsNoStaleNotice`, and `reversalDoesNotLiftAShiftDismissal`.
