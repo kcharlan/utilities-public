@@ -345,6 +345,96 @@ import TelltaleTestSupport
         }
     }
 
+    @Test func keptProblemIsDroppedWhenCodexMovesToANewFile() throws {
+        try withScratchDirectory { home in
+            let old = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            #expect(try Self.cursor(first).threadHistoryProblemFile == "thread_history_1.sqlite")
+            let newer = try CodexDatabase.threadHistory(codexHome: home, number: 2)
+            try newer.closeLikeCodex()
+            let result = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(result.state == .ready)
+            #expect(try Self.cursor(result).threadHistoryProblem == nil)
+            #expect(try Self.cursor(result).threadHistoryProblemFile == nil)
+            _ = old
+        }
+    }
+
+    @Test func keptProblemWithoutAFileStaysWithTheCurrentFile() throws {
+        try withScratchDirectory { home in
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.closeLikeCodex()
+            let cursor = CodexCursor(threadHistoryProblem: "Codex failed turns: synthetic")
+            let result = Self.source(home).ingest(cursor: cursor.encoded(), backfillFrom: .distantPast, now: Self.at(100))
+            #expect(result.state == .formatProblem("Codex failed turns: synthetic"))
+        }
+    }
+
+    @Test func transientReadFailureIsNotKept() throws {
+        try withScratchDirectory { home in
+            let history = try CodexDatabase.threadHistory(codexHome: home)
+            try history.closeLikeCodex()
+            #expect(chmod(history.url.path, 0o000) == 0)
+            defer { chmod(history.url.path, 0o600) }
+            let source = Self.source(home)
+            let failed = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            guard case .formatProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
+            #expect(detail.contains("couldn't be read"))
+            #expect(try Self.cursor(failed).threadHistoryProblem == nil)
+            #expect(chmod(history.url.path, 0o600) == 0)
+            #expect(source.ingest(cursor: failed.cursor, backfillFrom: .distantPast, now: Self.at(200)).state == .ready)
+        }
+    }
+
+    @Test func readFailureLeavesAnEarlierFormatProblemKept() throws {
+        try withScratchDirectory { home in
+            let history = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            try history.closeLikeCodex()
+            #expect(chmod(history.url.path, 0o000) == 0)
+            defer { chmod(history.url.path, 0o600) }
+            let failed = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(failed.state == first.state)
+            #expect(try Self.cursor(failed).threadHistoryProblem == Self.cursor(first).threadHistoryProblem)
+            #expect(try Self.cursor(failed).threadHistoryProblemFile == "thread_history_1.sqlite")
+        }
+    }
+
+    @Test func busyDatabaseKeepsItsFormatProblem() throws {
+        try withScratchDirectory { home in
+            let history = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"], journal: .delete)
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            try history.beginExclusive()
+            let busy = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(busy.state == first.state)
+            #expect(try Self.cursor(busy).threadHistoryProblemFile == "thread_history_1.sqlite")
+            try history.commit()
+        }
+    }
+
+    @Test func readFailureAfterFileChangeDropsTheOldFormatProblem() throws {
+        try withScratchDirectory { home in
+            let old = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            let newer = try CodexDatabase.threadHistory(codexHome: home, number: 2)
+            try newer.closeLikeCodex()
+            #expect(chmod(newer.url.path, 0o000) == 0)
+            defer { chmod(newer.url.path, 0o600) }
+            let failed = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            guard case .formatProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
+            #expect(detail.contains("couldn't be read"))
+            #expect(try Self.cursor(failed).threadHistoryProblem == nil)
+            #expect(try Self.cursor(failed).threadHistoryProblemFile == nil)
+            #expect(chmod(newer.url.path, 0o600) == 0)
+            #expect(source.ingest(cursor: failed.cursor, backfillFrom: .distantPast, now: Self.at(300)).state == .ready)
+            _ = old
+        }
+    }
+
     // MARK: Gaps
 
     @Test func gapRecordedWhenLogRetentionPassedCursor() throws {

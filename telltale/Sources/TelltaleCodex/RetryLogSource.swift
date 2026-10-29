@@ -12,6 +12,11 @@ public enum RetryLogSource {
     /// Longest `detail` kept, in characters.
     public static let maximumDetail = 300
 
+    /// The currently selected database, if one exists.
+    public static func database(codexHome: URL) -> URL? {
+        ReadOnlySQLite.highestNumbered("logs", in: codexHome)
+    }
+
     /// WARN retry rows after `afterID`, from the highest-numbered database. `maxID` is the highest
     /// id in the table, to pass back as `afterID`; `oldestRetained` is the time of its oldest row
     /// of any kind.
@@ -24,7 +29,7 @@ public enum RetryLogSource {
     public static func read(
         codexHome: URL, afterID: Int64, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live
     ) throws -> (events: [ConnectionEventRecord], maxID: Int64, oldestRetained: Date?) {
-        guard let url = ReadOnlySQLite.highestNumbered("logs", in: codexHome) else { return ([], afterID, nil) }
+        guard let url = database(codexHome: codexHome) else { return ([], afterID, nil) }
         let name = url.deletingPathExtension().lastPathComponent
         let database = try ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step)
         try database.requireColumns(columns, in: "logs")

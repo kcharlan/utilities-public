@@ -12,6 +12,11 @@ public enum ThreadHistorySource {
     /// Where the next scan starts, given the time the last one finished.
     public static func rescanStart(after lastScan: Date) -> Date { lastScan.addingTimeInterval(-rescanWindow) }
 
+    /// The currently selected database, if one exists.
+    public static func database(codexHome: URL) -> URL? {
+        ReadOnlySQLite.highestNumbered("thread_history", in: codexHome)
+    }
+
     /// The failed turns that started at or after `since`, from the highest-numbered database.
     /// No database is no turns. `model` stays nil; the model is attributed later from the
     /// ingested responses.
@@ -22,7 +27,7 @@ public enum ThreadHistorySource {
     public static func read(
         codexHome: URL, since: Date, busyTimeout: Duration = .milliseconds(250), step: SQLiteStep = .live
     ) throws -> [FailedTurnRecord] {
-        guard let url = ReadOnlySQLite.highestNumbered("thread_history", in: codexHome) else { return [] }
+        guard let url = database(codexHome: codexHome) else { return [] }
         let database = try ReadOnlySQLite.open(url, busyTimeout: busyTimeout, step: step)
         try database.requireColumns(columns, in: "thread_turns")
         let rows = try database.query(

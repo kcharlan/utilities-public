@@ -1569,3 +1569,15 @@ historical events that stored display text instead of IDs, derive the visible mo
 update only the recognizable name position in known event copy, including an older generated
 suffix; preserve the remaining wording. The visible set includes every model named by rows,
 alerts and prompts, even when their activity windows differ.
+
+## 2026-10-29: Tie retained database verdicts to their source file
+
+A skipped SQLite read is not evidence of recovery, but a format verdict from a
+previously selected database must not survive a switch to a newer file. Record
+the file alongside the verdict and preserve legacy cursors without a file name.
+A transient read failure must not replace or become a retained format verdict;
+regress busy and closed files, unreadable files, and file changes with synthetic
+databases. `busyDatabaseKeepsItsFormatProblem`, `transientReadFailureIsNotKept`,
+`readFailureLeavesAnEarlierFormatProblemKept`,
+`keptProblemIsDroppedWhenCodexMovesToANewFile`, and
+`readFailureAfterFileChangeDropsTheOldFormatProblem` guard those transitions.

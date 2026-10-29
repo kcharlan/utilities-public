@@ -221,7 +221,11 @@ the closed database in the meantime. A skip, busy or closed, is not a read, so
 it carries the file's previous verdict forward: a format problem the file last
 reported is reported again on every skipped run until a read of the file
 succeeds, so its "since" and its notification are not reset each time Codex
-closes the file. The evidence has limits: a missing `-wal` alone does not prove
+closes the file. The verdict is dropped when Codex selects a different database;
+older cursors without a file name keep their verdict for the current file. Only
+format problems are kept: a read failure is reported for that run, while a
+matching earlier format problem takes precedence and remains kept. The evidence
+has limits: a missing `-wal` alone does not prove
 that no process has the database open, and a file whose header cannot be read
 (an unreadable main file, for example) still reports a failure. Rows that Codex
 prunes while its files stay closed are never read, so a long closure can leave a
