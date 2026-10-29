@@ -11,9 +11,9 @@ import TelltaleTestSupport
 @MainActor @Suite(.serialized) struct CollectorViewTests {
     static let off = CollectorHealthReport(
         installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-        footer: Copy.collectorOff, notify: false)
+        footer: Copy.collectorOff, notice: nil)
     static let moved = CollectorHealthReport(
-        installed: .red, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: true, footer: "", notify: false)
+        installed: .red, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: true, footer: "", notice: nil)
 
     @Test func repairShownOnlyWhenNeeded() async throws {
         try await withAsyncScratchDirectory { directory in

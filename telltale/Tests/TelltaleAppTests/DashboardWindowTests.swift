@@ -167,6 +167,8 @@ import TelltaleTestSupport
             #expect(rows.map(\.name) == ["Example (1.0)"])
             world.model.select(.model(.codex, Self.staleModel))
             #expect(world.model.selectedModel?.name == "Example (0.5)")
+            #expect(world.model.loadError == nil)
+            #expect(world.model.detail != nil)
         }
     }
 

@@ -124,7 +124,7 @@ import UserNotifications
             if notice != nil { try save(nil) }
             return
         }
-        guard report.notify else {
+        guard let text = report.notice else {
             unconfirmed = false
             guard let notice else { return }
             try save(nil)
@@ -138,8 +138,7 @@ import UserNotifications
             unconfirmed = true
             return
         }
-        // `problems` is never empty while `notify` holds; the fallback only keeps this total.
-        let opened = HealthNoticeState(problem: report.problems.first ?? Copy.collectorNotLoaded, notifiedAt: at)
+        let opened = HealthNoticeState(problem: text, notifiedAt: at)
         try save(opened)
         if rule.notify {
             try await post(id: Self.identifier(opened, "fired"), body: opened.problem, restoring: nil)

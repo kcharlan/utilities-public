@@ -33,7 +33,7 @@ import TelltaleTestSupport
     var revealed: [URL] = []
 
     static let running = CollectorHealthReport(
-        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false)
+        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notice: nil)
 
     init(
         _ directory: URL, now: Date = PanelWorld.now, canManage: Bool = true, health: CollectorHealthReport? = DashboardWorld.running,

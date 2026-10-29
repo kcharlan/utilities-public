@@ -41,7 +41,7 @@ private enum Health {
     @Test func allGreenWhenHealthy() {
         let report = Health.evaluate(runs: Health.healthyRuns, now: Health.at(9, 7))
         #expect(report == CollectorHealthReport(
-            installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false))
+            installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notice: nil))
         #expect(report.lamp == .green)
     }
 
@@ -54,7 +54,7 @@ private enum Health {
             now: Health.at(12, 0))
         #expect(report == CollectorHealthReport(
             installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-            footer: "Collector off. Turn it on to keep watching.", notify: false))
+            footer: "Collector off. Turn it on to keep watching.", notice: nil))
         #expect(report.lamp == .unlit)
     }
 
@@ -241,6 +241,28 @@ private enum Health {
         #expect(report.problems == ["codex changed its log format. Telltale can't read codex responses since 09:20."])
         #expect(report.lamp == .red)
         #expect(!report.notify)
+    }
+
+    @Test func noticeNamesTheConfirmedFormatProblem() {
+        // Claude's problem began this run; Codex's was reported again. The panel lists both, by source.
+        let states = [
+            SourceStateRow(source: "claude", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 20), updatedAt: Health.at(9, 20)),
+            SourceStateRow(source: "codex", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 12), updatedAt: Health.at(9, 20)),
+        ]
+        let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
+        let report = Health.evaluate(runs: runs, states: states, now: Health.at(9, 21))
+        #expect(report.problems == [
+            "claude changed its log format. Telltale can't read claude responses since 09:20.",
+            "codex changed its log format. Telltale can't read codex responses since 09:12.",
+        ])
+        #expect(report.notice == "codex changed its log format. Telltale can't read codex responses since 09:12.")
+        #expect(report.notify)
+
+        // Another notify condition names itself, ahead of any format problem.
+        let unloaded = Health.evaluate(loaded: false, runs: runs, states: states, now: Health.at(9, 21))
+        #expect(unloaded.notice == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+        // Unconfirmed problems alone don't notify.
+        #expect(Health.evaluate(runs: runs, states: [states[0]], now: Health.at(9, 21)).notice == nil)
     }
 
     @Test func invalidStoredIntervalFallsBackToTheDefault() {

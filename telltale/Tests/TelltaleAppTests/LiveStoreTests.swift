@@ -61,7 +61,7 @@ import TelltaleTestSupport
             let paths = PanelWorld.paths(directory)
             let notLoaded = CollectorHealthReport(
                 installed: .green, loaded: .red, lastRun: .unlit, onSchedule: .unlit, problems: [Copy.collectorNotLoaded], needsRepair: false,
-                footer: "", notify: true)
+                footer: "", notice: Copy.collectorNotLoaded)
             let live = PanelWorld.live(paths, health: { notLoaded })
             await live.refresh()
             #expect(live.snapshot.collector == .red && live.snapshot.lamps[.collector] == .red)
@@ -72,7 +72,7 @@ import TelltaleTestSupport
             // Health's own waiting line stays the waiting line.
             let waiting = CollectorHealthReport(
                 installed: .green, loaded: .green, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-                footer: Copy.waitingForFirstRun, notify: false)
+                footer: Copy.waitingForFirstRun, notice: nil)
             let quiet = PanelWorld.live(paths, health: { waiting })
             await quiet.refresh()
             #expect(quiet.snapshot.collector == .green && quiet.snapshot.footer == Copy.waitingForFirstRun)

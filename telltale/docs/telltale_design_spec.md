@@ -217,11 +217,15 @@ format. The reader reports `ReadOnlySQLite.Closed` for that failure when the
 file's header says WAL (bytes 18 and 19 are both 2) and no `-wal` sits beside
 it. Like a busy file, the source skips it quietly, keeps its cursors and reads
 the file again next run, after Codex reopens it; no side files are created for
-the closed database in the meantime. The evidence has limits: a missing `-wal`
-alone does not prove that no process has the database open, and a file whose
-header cannot be read (an unreadable main file, for example) still reports a
-failure. Rows that Codex prunes while its files stay closed are never read, so
-a long closure can leave a gap.
+the closed database in the meantime. A skip, busy or closed, is not a read, so
+it carries the file's previous verdict forward: a format problem the file last
+reported is reported again on every skipped run until a read of the file
+succeeds, so its "since" and its notification are not reset each time Codex
+closes the file. The evidence has limits: a missing `-wal` alone does not prove
+that no process has the database open, and a file whose header cannot be read
+(an unreadable main file, for example) still reports a failure. Rows that Codex
+prunes while its files stay closed are never read, so a long closure can leave a
+gap.
 
 ### 6.1 Rollouts: responses
 
@@ -360,7 +364,9 @@ unavailable state: it is kept while the same kind of state continues, whatever
 its text, and restarts when a source moves between "not set up" and "format
 problem" (or from ready). Telltale judges "second consecutive report" from the
 stored source state: a report after the one that began the problem has an
-`updatedAt` later than `unavailableSince`.
+`updatedAt` later than `unavailableSince`. With two sources reporting format
+problems, the notification names a confirmed one, even when the panel lists a
+newer one first.
 
 ## 7. Rule engine
 

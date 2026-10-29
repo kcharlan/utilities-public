@@ -176,6 +176,26 @@ private let recovered = "Telltale's collector is running again."
         }
     }
 
+    /// The notification names the confirmed format problem, not a one-run problem from a source the
+    /// panel lists first.
+    @Test func notificationNamesTheConfirmedFormatProblem() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: MonitorHarness.at(8, 55), .succeeded)
+            try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)
+            try h.store.setSourceState(SourceStateRow(
+                source: "claude", state: .formatProblem("synthetic"), unavailableSince: MonitorHarness.at(9, 0), updatedAt: MonitorHarness.at(9, 0)))
+            try h.store.setSourceState(SourceStateRow(
+                source: "codex", state: .formatProblem("synthetic"), unavailableSince: MonitorHarness.at(8, 55), updatedAt: MonitorHarness.at(9, 0)))
+            h.setLoaded(true)
+            let monitor = h.monitor()
+
+            let first = await h.tick(monitor)
+            #expect(first?.problems.first?.hasPrefix("claude") == true)
+            await h.tick(monitor)
+            #expect(h.bodies == ["codex changed its log format. Telltale can't read codex responses since 08:55."])
+        }
+    }
+
     @Test func relaunchDoesNotRepost() async throws {
         try await withMonitor { h in
             try h.recordRun(at: MonitorHarness.at(9, 0), .succeeded)

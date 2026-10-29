@@ -11,15 +11,22 @@ public struct CodexCursor: Codable, Equatable, Sendable {
     public var logsAfterID: Int64?
     /// When the retry log was last read: anything pruned after that is a gap.
     public var logsLastSeen: Date?
+    /// Each database's last format problem, set by a read that found one and cleared by a good read.
+    /// A skipped (busy or closed) file reports it again, so a skip never reads as a recovery. Absent
+    /// from cursors stored before 0.2.1, which decode as no problem.
+    public var threadHistoryProblem: String?
+    public var logsProblem: String?
 
     public init(
         sessions: [String: SessionCursor] = [:], threadHistorySince: Date? = nil, logsAfterID: Int64? = nil,
-        logsLastSeen: Date? = nil
+        logsLastSeen: Date? = nil, threadHistoryProblem: String? = nil, logsProblem: String? = nil
     ) {
         self.sessions = sessions
         self.threadHistorySince = threadHistorySince
         self.logsAfterID = logsAfterID
         self.logsLastSeen = logsLastSeen
+        self.threadHistoryProblem = threadHistoryProblem
+        self.logsProblem = logsProblem
     }
 
     /// Dates use `JSONEncoder`'s default, a Double that round-trips exactly. `needsRead` compares a
@@ -81,8 +88,12 @@ public struct CodexUsageSource: UsageSource {
         case .ok(let turns):
             batch.failedTurns = turns
             next.threadHistorySince = now
-        case .busy: break
-        case .problem(let text): problems.append(text)
+            next.threadHistoryProblem = nil
+        case .busy:
+            if let kept = previous?.threadHistoryProblem { problems.append(kept) }
+        case .problem(let text):
+            problems.append(text)
+            next.threadHistoryProblem = text
         }
 
         switch Self.run("Codex connection log", {
@@ -95,8 +106,12 @@ public struct CodexUsageSource: UsageSource {
             }
             next.logsAfterID = read.maxID
             next.logsLastSeen = now
-        case .busy: break
-        case .problem(let text): problems.append(text)
+            next.logsProblem = nil
+        case .busy:
+            if let kept = previous?.logsProblem { problems.append(kept) }
+        case .problem(let text):
+            problems.append(text)
+            next.logsProblem = text
         }
 
         return IngestResult(batch: batch, cursor: next.encoded(), state: problems.first.map(SetupState.formatProblem) ?? .ready)
@@ -145,7 +160,8 @@ public struct CodexUsageSource: UsageSource {
         case problem(String)
     }
 
-    /// A busy or closed file is skipped quietly; anything else that goes wrong is a problem naming `part`.
+    /// A busy or closed file is skipped quietly (the caller reports the file's kept problem, if any);
+    /// anything else that goes wrong is a problem naming `part`.
     private static func run<T>(_ part: String, _ body: () throws -> T) -> Outcome<T> {
         do {
             return .ok(try body())

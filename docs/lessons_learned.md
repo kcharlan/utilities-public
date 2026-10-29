@@ -1,5 +1,18 @@
 # Lessons learned
 
+## 2026-10-29: A skip that reports ready ends a real problem's episode
+
+Telltale skips a Codex database that is busy or that Codex has closed, and a
+skip contributed no problem, so the source reported ready whenever Codex was
+idle. With a genuine schema change, each Codex session reported the format
+problem afresh and each idle spell cleared it: "unavailable since" restarted, the
+Collector health notification fired again and a false "running again" recovery
+posted in between. A skip is not a read, so it must keep the last verdict: the
+Codex cursor now holds each database's last format problem (`threadHistoryProblem`,
+`logsProblem`, optional so 0.2.0 cursors still decode), set by a read that finds
+one, cleared by a good read and reported again on a skip. Regression:
+`closedDatabaseKeepsItsFormatProblem`, with `cursorWithoutKeptProblemsDecodes`.
+
 ## 2026-10-29: "Unavailable since" must restart when the kind of unavailability changes
 
 `CollectorRun` kept a source's `unavailableSince` for as long as it stayed

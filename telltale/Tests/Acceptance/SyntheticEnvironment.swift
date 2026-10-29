@@ -89,19 +89,19 @@ enum SyntheticEnvironment {
     /// scene's failed last run (as `seed` records it at `snapshotNow`).
     static func health(_ scene: Scene) -> CollectorHealthReport {
         if scene == .collectorProblem {
+            let failing = Copy.collectorFailing(
+                at: snapshotNow.addingTimeInterval(-30), reason: failedRunDetail, next: snapshotNow.addingTimeInterval(270), calendar: calendar)
             return CollectorHealthReport(
-                installed: .green, loaded: .green, lastRun: .red, onSchedule: .green,
-                problems: [Copy.collectorFailing(
-                    at: snapshotNow.addingTimeInterval(-30), reason: failedRunDetail, next: snapshotNow.addingTimeInterval(270), calendar: calendar)],
-                needsRepair: false, footer: "", notify: true)
+                installed: .green, loaded: .green, lastRun: .red, onSchedule: .green, problems: [failing], needsRepair: false, footer: "",
+                notice: failing)
         }
         return scene == .acceptance
             ? CollectorHealthReport(
                 installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-                footer: Copy.collectorOff, notify: false)
+                footer: Copy.collectorOff, notice: nil)
             : CollectorHealthReport(
                 installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "",
-                notify: false)
+                notice: nil)
     }
 
     /// Creates the scene's database under `home`, relative to `now`:

@@ -281,14 +281,67 @@ import TelltaleTestSupport
                 #expect(!FileManager.default.fileExists(atPath: url.path + "-wal"))
             }
 
-            // Once Codex reopens the files, the unread rows are read.
-            _ = try CodexDatabase.reopen(history.url)
-            _ = try CodexDatabase.reopen(logs.url)
-            let later = source.ingest(cursor: skipped.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
-            #expect(later.state == .ready)
-            #expect(later.batch.failedTurns.map(\.turnID).contains("turn_synthetic_02"))
-            #expect(later.batch.connectionEvents.count == 1)
-            #expect(try Self.cursor(later).logsAfterID == firstID + 1)
+            // Once Codex reopens the files, the unread rows are read. The writers stay open across
+            // the read, as Codex's do while it runs.
+            let reopened = (try CodexDatabase.reopen(history.url), try CodexDatabase.reopen(logs.url))
+            try withExtendedLifetime(reopened) {
+                for url in [history.url, logs.url] {
+                    #expect(FileManager.default.fileExists(atPath: url.path + "-wal"))
+                }
+                let later = source.ingest(cursor: skipped.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
+                #expect(later.state == .ready)
+                #expect(later.batch.failedTurns.map(\.turnID).contains("turn_synthetic_02"))
+                #expect(later.batch.connectionEvents.count == 1)
+                let stored = try Self.cursor(later)
+                #expect(stored.logsAfterID == firstID + 1)
+            }
+        }
+    }
+
+    /// A skip is not a good read: a file's format problem stays reported while Codex has it closed,
+    /// so the problem's episode doesn't end and restart with every Codex session.
+    @Test func closedDatabaseKeepsItsFormatProblem() throws {
+        try withScratchDirectory { home in
+            try Self.session(1).writePlain(codexHome: home)
+            let history = try CodexDatabase.threadHistory(codexHome: home, omitting: ["error_json"])
+            try history.addTurn(turn: 1, status: "failed", startedAt: Self.at(100))
+            let logs = try CodexDatabase.logs(codexHome: home, omitting: ["target"])
+            try logs.addLog(at: Self.at(300), body: Self.disconnect)
+
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(1_000))
+            guard case .formatProblem(let detail) = first.state else {
+                Issue.record("expected a format problem, got \(first.state)")
+                return
+            }
+            #expect(detail.contains("failed turns") && detail.contains("error_json"))
+
+            // Codex exits: both files are closed and skipped, and the problem is still reported.
+            try history.closeLikeCodex()
+            try logs.closeLikeCodex()
+            let skipped = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(2_000))
+            #expect(skipped.state == first.state)
+            #expect(skipped.batch.failedTurns.isEmpty && skipped.batch.connectionEvents.isEmpty)
+            let second = source.ingest(cursor: skipped.cursor, backfillFrom: .distantPast, now: Self.at(3_000))
+            #expect(second.state == first.state)
+            let kept = try Self.cursor(second)
+            #expect(kept.threadHistoryProblem == detail)
+            #expect(kept.logsProblem?.contains("connection log") == true && kept.logsProblem?.contains("target") == true)
+            #expect(kept.threadHistorySince == nil && kept.logsAfterID == nil)
+
+            // Codex reopens the files with the columns back: a good read clears each problem.
+            let fixedHistory = try CodexDatabase.reopen(history.url)
+            try fixedHistory.execute("ALTER TABLE thread_turns ADD COLUMN error_json TEXT")
+            let fixedLogs = try CodexDatabase.reopen(logs.url)
+            try fixedLogs.execute("ALTER TABLE logs ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+            try withExtendedLifetime((fixedHistory, fixedLogs)) {
+                let later = source.ingest(cursor: second.cursor, backfillFrom: .distantPast, now: Self.at(4_000))
+                #expect(later.state == .ready)
+                #expect(later.batch.failedTurns.count == 1)
+                let stored = try Self.cursor(later)
+                #expect(stored.threadHistorySince == Self.at(4_000) && stored.logsLastSeen == Self.at(4_000))
+                #expect(stored.threadHistoryProblem == nil && stored.logsProblem == nil)
+            }
         }
     }
 
@@ -373,6 +426,23 @@ import TelltaleTestSupport
         #expect(decoded.sessions["s"]?.compressedModified?.timeIntervalSinceReferenceDate == modified.timeIntervalSinceReferenceDate)
         #expect(CodexCursor.decode(Data("not json".utf8)) == nil)
         #expect(CodexCursor.decode(nil) == nil)
+    }
+
+    /// A cursor stored by 0.2.0, before files' format problems were kept, still decodes, and a cursor
+    /// with no kept problems encodes without their keys.
+    @Test func cursorWithoutKeptProblemsDecodes() throws {
+        let stored = Data(#"{"logsAfterID":9,"logsLastSeen":700000060.5,"sessions":{},"threadHistorySince":700000000.25}"#.utf8)
+        let decoded = try #require(CodexCursor.decode(stored))
+        #expect(decoded == CodexCursor(
+            threadHistorySince: Date(timeIntervalSinceReferenceDate: 700_000_000.25), logsAfterID: 9,
+            logsLastSeen: Date(timeIntervalSinceReferenceDate: 700_000_060.5)))
+        #expect(decoded.threadHistoryProblem == nil && decoded.logsProblem == nil)
+        #expect(decoded.encoded() == stored)
+
+        var kept = decoded
+        kept.threadHistoryProblem = "synthetic failed-turns problem"
+        kept.logsProblem = "synthetic connection-log problem"
+        #expect(CodexCursor.decode(kept.encoded()) == kept)
     }
 
     @Test func unchangedCompressedFilesAreSkipped() throws {

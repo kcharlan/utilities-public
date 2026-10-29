@@ -172,8 +172,9 @@ transaction, post live notifications, prune per the retention table and record t
 Each unit keeps its own progress and backfill boundary; historical points never notify. A new
 provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
-A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly and read
-again next run, like a busy one; see the closed-WAL policy in spec section 6
+A Codex database that Codex has closed (no `-wal` beside a WAL file) is skipped quietly, like a busy
+one: it is tried again each run and read once Codex reopens it. A format problem that database last
+reported stays reported while it is skipped. See the closed-WAL policy in spec section 6
 (`docs/telltale_design_spec.md`).
 
 It writes only under `~/Library/Application Support/Telltale` (database and lock) and
@@ -391,7 +392,8 @@ check.
   and keeps accepted baselines. Before the first run (a fresh install), Settings says "You can
   change settings after the collector's first run." and changes nothing.
 - In the installed release only, closed Codex database: avoid a Colophon scan during the check,
-  and leave Codex idle until `~/.codex/thread_history_1.sqlite-wal` is absent. The next collector
+  and leave Codex idle until neither the highest-numbered `~/.codex/thread_history_N.sqlite` nor the
+  highest-numbered `~/.codex/logs_N.sqlite` has a `-wal` beside it. The next collector
   run must log no format problem, and no Collector health notification may follow. Record it
   apart from the sidebar check; it does not establish the cause of an earlier incident. Keep the
   evidence (log lines, times) outside the repository.

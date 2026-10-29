@@ -9,7 +9,7 @@ private enum Panel {
     static let signals: Set<Signal> = [.speed, .errors, .link, .provider, .load]
     static let codex = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: signals, naming: SyntheticNaming())
     static let healthy = CollectorHealthReport(
-        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notify: false)
+        installed: .green, loaded: .green, lastRun: .green, onSchedule: .green, problems: [], needsRepair: false, footer: "", notice: nil)
 
     static func load(_ h: RuleHarness, at now: Date, health: CollectorHealthReport? = healthy, sources: [SourceSummary] = [codex]) throws -> PanelSnapshot {
         try PanelSnapshot.load(store: h.store, baseline: h.base.engine, health: health, sources: sources, now: now, calendar: h.calendar)

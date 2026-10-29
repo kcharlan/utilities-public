@@ -27,8 +27,9 @@ public final class ReadOnlySQLite {
     /// When a writer closes a WAL database cleanly, upstream SQLite deletes `-wal` and `-shm`. The
     /// system SQLite then fails a `mode=ro` connection's first statement with `SQLITE_CANTOPEN`
     /// instead of reading the main file. `isClosedWAL` is the evidence: a WAL header and no `-wal`.
-    /// It does not prove that no process has the database open, so a caller skips the file quietly,
-    /// keeps its cursor and reads the file again next run, rather than reporting a format problem.
+    /// It does not prove that no process has the database open, so a caller skips the file quietly and
+    /// keeps its cursor, rather than reporting a format problem; it tries the file again each run and
+    /// reads it once a writer has reopened it.
     public struct Closed: Error, Equatable, Sendable {}
 
     /// SQLite refused for a reason other than contention, or the file is not a plain file.
