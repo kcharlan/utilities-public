@@ -9,7 +9,8 @@ private enum Feed {
     static let naming = SyntheticNaming()
 
     static func load(_ h: BaselineHarness, limit: Int = 50) throws -> [FeedEvent] {
-        try EventFeed.load(store: h.store, limit: limit, naming: { naming.displayName(model: $1) }, calendar: h.calendar)
+        try EventFeed.load(store: h.store, limit: limit, naming: { naming.displayName(model: $1) }, calendar: h.calendar,
+            sources: [SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: "example-status", signals: [.speed, .provider], naming: naming)])
     }
 
     @discardableResult
@@ -27,6 +28,42 @@ private enum Feed {
 }
 
 @Suite struct EventFeedTests {
+    @Test func compactionEventsHaveAFeedKind() throws {
+        try withBaseline { h in
+            try Feed.fired(h, rule: .compactions, scope: "*", severity: .amber, at: h.at(9, 4, 9), body: "synthetic")
+            #expect(try Feed.load(h).first?.kind == .compactions)
+        }
+    }
+    @Test func silentEndsNameUsageAndStatusSourcesOnce() throws {
+        try withBaseline { h in
+            let sources = [
+                SourceSummary(provider: .codex, name: "Codex", statusName: "Synthetic Status", statusSourceID: "synthetic-status", signals: [.speed, .provider], naming: SyntheticNaming()),
+                SourceSummary(provider: ProviderID(rawValue: "synthetic-other"), name: "Synthetic Other", statusName: "Synthetic Status", statusSourceID: "synthetic-status", signals: [.speed, .provider], naming: SyntheticNaming()),
+            ]
+            for (provider, rule, reason) in [("codex", RuleID.slower, EpisodeRow.EndReason.idleEnded),
+                                             ("synthetic-other", .slower, EpisodeRow.EndReason.ruleDisabled),
+                                             ("synthetic-status", .incident, EpisodeRow.EndReason.ruleDisabled)] {
+                try h.store.insertEpisode(EpisodeRow(rule: rule.rawValue, provider: provider, scope: "synthetic", direction: nil,
+                    onset: h.at(9, 4, 8), firedAt: h.at(9, 4, 9), endedAt: h.at(9, 4, 10), endReason: reason,
+                    severity: LampColor.amber.rawValue, worstValue: 0.7))
+            }
+            let bodies = try EventFeed.load(store: h.store, limit: 10, sources: sources).filter { $0.kind == .ended }.map(\.body)
+            #expect(Set(bodies) == ["Codex: Ended with no recent responses to judge.",
+                                    "Synthetic Other: Ended because the rule was turned off.",
+                                    "Synthetic Status: Ended because the rule was turned off."])
+        }
+    }
+    @Test func connectionGapAndBaselineEventsArePrefixed() throws {
+        try withBaseline { h in
+            try h.seedLastingSlowdown()
+            try h.store.recordConnectionGap(provider: .codex, providerName: "Synthetic Provider", gap: DateInterval(start: h.at(9, 4, 6), end: h.at(9, 4, 7)), calendar: h.calendar)
+            let accepted = try h.engine.accept(provider: .codex, providerName: "Synthetic Provider", model: h.model, since: h.localDay(9, 15), at: h.at(9, 18, 10))
+            try h.engine.undo(epochID: accepted.epochID, providerName: "Synthetic Provider", at: h.at(9, 18, 11))
+            let events = try Feed.load(h).filter { [.historyGap, .baselineAccepted, .baselineUndone].contains($0.kind) }
+            #expect(events.count == 3)
+            #expect(events.allSatisfy { $0.body.hasPrefix("Synthetic Provider: ") })
+        }
+    }
     @Test func newestFirst() throws {
         try withBaseline { h in
             try h.store.recordConnectionGap(provider: .codex, gap: DateInterval(start: h.at(9, 4, 6), end: h.at(9, 4, 7)), calendar: h.calendar)
@@ -54,8 +91,8 @@ private enum Feed {
                 count: 2, from: h.at(9, 4, 10, 5).addingTimeInterval(2), to: h.at(9, 4, 10, 15).addingTimeInterval(2),
                 reason: "synthetic history locked", calendar: h.calendar))
             #expect(feed[0].color == .red)
-            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == Copy.episodeEndedRuleOff)
-            #expect(feed[2].title == RuleID.slower.title && feed[2].body == Copy.episodeEndedIdle)
+            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == "Codex: Ended because the rule was turned off.")
+            #expect(feed[2].title == RuleID.slower.title && feed[2].body == "Codex: Ended with no recent responses to judge.")
             #expect(feed[4].color == .amber)
             #expect(feed[6].endsAt == h.at(9, 4, 7))
             #expect(Set(feed.map(\.id)).count == feed.count)
@@ -169,6 +206,48 @@ private enum Feed {
             #expect(feed.map(\.link) == [nil, incident, post])
             #expect(feed[2].body == "Example Status posted: Synthetic maintenance.")
             #expect(feed.map(\.color) == [.red, .amber, nil])
+        }
+    }
+}
+
+private struct FeedCollisionNaming: ModelNaming {
+    func displayName(model: String) -> String { "Example" }
+    func incidentTitle(_ title: String, names model: String) -> Bool { false }
+}
+
+@Test func historicalSpeedEventsDisambiguateVisibleModels() throws {
+    try withBaseline { h in
+        try Feed.fired(h, rule: .slower, scope: "synthetic-a", severity: .amber, at: h.at(9, 4, 9), body: "Codex: Example is 20% slower than usual.")
+        try Feed.fired(h, rule: .slower, scope: "synthetic-b", severity: .amber, at: h.at(9, 4, 10), body: "Codex: Example is 30% slower than usual.")
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: "synthetic", signals: [.speed], naming: FeedCollisionNaming())
+        let events = try EventFeed.load(store: h.store, limit: 10, sources: [source])
+        #expect(events.contains { $0.body.contains("Example (a) is 20%") })
+        #expect(events.contains { $0.body.contains("Example (b) is 30%") })
+    }
+}
+
+@Test func historicalRuleEventNamesProvider() throws {
+    try withBaseline { h in
+        try Feed.fired(h, rule: .disconnects, scope: "*", severity: .amber, at: h.at(9, 4, 9), body: "3 synthetic disconnects.")
+        #expect(try Feed.load(h).first?.body == "Codex: 3 synthetic disconnects.")
+    }
+}
+
+@Test func oldSuffixesAreReplacedUsingVisibleModels() throws {
+    try withBaseline { h in
+        let ids = ["synthetic-a-shared", "synthetic-b-shared", "synthetic-a-other", "synthetic-b-other"]
+        for (index, id) in ids.enumerated() {
+            let suffix = index.isMultiple(of: 2) ? "a" : "b"
+            try Feed.fired(h, rule: .slower, scope: id, severity: .amber, at: h.at(9, 4, 9, index), body: "Codex: Example (\(suffix)) is 20% slower than usual.")
+        }
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: "synthetic", signals: [.speed], naming: FeedCollisionNaming())
+        let events = try EventFeed.load(store: h.store, limit: 10, sources: [source])
+        #expect(Set(events.map(\.body)).count == 4)
+        #expect(Set(events.compactMap(\.modelID)) == Set(ids))
+        for event in events {
+            let id = try #require(event.modelID)
+            let expected = id.replacingOccurrences(of: "synthetic-", with: "")
+            #expect(event.body == "Codex: Example (\(expected)) is 20% slower than usual.")
         }
     }
 }

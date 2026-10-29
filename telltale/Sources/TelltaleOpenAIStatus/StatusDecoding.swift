@@ -93,16 +93,6 @@ public enum StatusDecoding {
             history: history, impacts: impacts)
     }
 
-    /// RSS 2.0 items with a title, link and `pubDate`; items missing any of them are skipped.
-    public static func rss(_ data: Data) throws -> [RSSItem] {
-        let reader = RSSReader()
-        let parser = XMLParser(data: data)
-        parser.delegate = reader
-        parser.shouldResolveExternalEntities = false
-        guard parser.parse(), reader.sawRSSRoot else { throw StatusError.unexpectedPayload("not an RSS feed") }
-        return reader.items
-    }
-
     // MARK: Helpers
 
     /// The `published_at` of each entry of `updates`.
@@ -146,11 +136,6 @@ public enum StatusDecoding {
     /// ISO 8601 with or without fractional seconds.
     static func date(_ value: Any?) -> Date? {
         guard let string = value as? String else { return nil }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let parsed = plain.date(from: string) { return parsed }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: string)
+        return ISO8601Time.date(string)
     }
 }

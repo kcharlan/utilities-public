@@ -181,7 +181,7 @@ public final class BaselineEngine {
     /// Starts a baseline epoch from `since`, records its before and after tables and a
     /// `baselineAccepted` event, all in one transaction.
     @discardableResult
-    public func accept(provider: ProviderID, model: String, since: LocalDay, at instant: Date) throws -> Acceptance {
+    public func accept(provider: ProviderID, providerName: String? = nil, model: String, since: LocalDay, at instant: Date) throws -> Acceptance {
         guard since <= LocalDay(instant, calendar: calendar) else {
             throw StoreError.invalidData("A baseline can't start after the day it is accepted (\(since))")
         }
@@ -200,7 +200,7 @@ public final class BaselineEngine {
                     return new / old - 1
                 }
                 let percent = median(ratios).map { Int(($0 * 100).rounded()) } ?? 0
-                let text = Copy.acceptance(model: model, percent: percent)
+                let text = (providerName.map { "\($0): " } ?? "") + Copy.acceptance(model: model, percent: percent)
                 try store.insertEvent(EventRow(
                     at: instant, kind: EventKind.baselineAccepted, provider: provider.rawValue, scope: model,
                     title: text, body: text, epochID: epochID))
@@ -216,7 +216,7 @@ public final class BaselineEngine {
     /// Undoes an acceptance, restoring the epoch that preceded it. Later live acceptances for
     /// the same model are undone too (plan call); other models are untouched. History stays:
     /// rows are marked undone at `instant`, and a `baselineUndone` event is appended.
-    public func undo(epochID: Int64, at instant: Date) throws {
+    public func undo(epochID: Int64, providerName: String? = nil, at instant: Date) throws {
         try store.transaction {
             guard let selected = try store.baselineEpoch(id: epochID) else {
                 throw StoreError.invalidData("No baseline acceptance \(epochID)")
@@ -232,7 +232,7 @@ public final class BaselineEngine {
             }
             let undone = marks[position...].filter { $0.undoneAt == nil }.map(\.id)
             try store.markAcceptancesUndone(undone, at: instant)
-            let text = Copy.baselineRestored(model: selected.model)
+            let text = (providerName.map { "\($0): " } ?? "") + Copy.baselineRestored(model: selected.model)
             try store.insertEvent(EventRow(
                 at: instant, kind: EventKind.baselineUndone, provider: selected.provider.rawValue, scope: selected.model,
                 title: text, body: text, epochID: epochID))

@@ -38,6 +38,88 @@ private final class Outcomes: @unchecked Sendable {
 private struct Abort: Error {}
 
 @Suite struct StoreTests {
+    @Test func version1DatabaseMigratesToVersion2() throws {
+        try withScratchDirectory { directory in
+            let url = directory.appending(path: "v1.sqlite")
+            for sql in Schema.version1 { try RawSQLite.rows(url, sql) }
+            try RawSQLite.rows(url, "PRAGMA user_version = 1")
+            try RawSQLite.rows(url, "INSERT INTO settings (key, value_json) VALUES ('intervalMinutes', '12')")
+            _ = try Store.open(url, mode: .readWrite)
+            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "2")
+            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM compactions") == "0")
+            #expect(try Store.open(url, mode: .readWrite).value(.intervalMinutes) == 12)
+            #expect(try RawSQLite.column(url, "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'compactions'").contains("idx_compactions_provider_at"))
+        }
+    }
+
+    @Test func readOnlyVersion1ReadsNoCompactions() throws {
+        try withScratchDirectory { directory in
+            let url = directory.appending(path: "v1.sqlite")
+            for sql in Schema.version1 { try RawSQLite.rows(url, sql) }
+            try RawSQLite.rows(url, "PRAGMA user_version = 1")
+            let store = try Store.open(url, mode: .readOnly)
+            #expect(try store.compactions(provider: .codex, in: Date.distantPast...Date.distantFuture).isEmpty)
+            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "1")
+            #expect(throws: StoreError.unsupportedSchemaVersion(1)) { try Store.open(url, mode: .readWriteExisting) }
+        }
+    }
+
+    @Test func compactionsDeduplicateByLineID() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "db.sqlite"), mode: .readWrite)
+            let record = CompactionRecord(provider: .codex, lineID: "synthetic-line", sessionID: "synthetic-session", agentID: nil, at: Date(timeIntervalSince1970: 100), trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+            #expect(try store.upsert(compactions: [record, record]) == 1)
+            #expect(try store.compactions(provider: .codex, in: Date(timeIntervalSince1970: 0)...Date(timeIntervalSince1970: 200)) == [record])
+        }
+    }
+    @Test func progressIsPerUnit() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            let first = Date(timeIntervalSince1970: 300)
+            let second = Date(timeIntervalSince1970: 600)
+            try store.setLastEvaluatedPoint(first, unit: "synthetic-one")
+            try store.setLastEvaluatedPoint(second, unit: "synthetic-two")
+            #expect(try store.lastEvaluatedPoint(unit: "synthetic-one") == first)
+            #expect(try store.lastEvaluatedPoint(unit: "synthetic-two") == second)
+            #expect(try store.lastEvaluatedPoint(unit: "synthetic-three") == nil)
+        }
+    }
+
+    @Test func adoptGlobalProgressMovesStarRows() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            let point = Date(timeIntervalSince1970: 600)
+            let through = Date(timeIntervalSince1970: 300)
+            try store.setLastEvaluatedPoint(point)
+            try store.setCursor("codex", Data("synthetic".utf8))
+            try store.set(.backfillThrough, through)
+            try store.setFailureNotices(FailureNotices(lastNoticeAt: point))
+            try store.setRuleState(rule: "failedTurns", provider: "codex", scope: "*", json: "synthetic")
+            #expect(try store.adoptGlobalProgress(providers: [.codex], legacyStatusSourceIDs: ["openai"]))
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == point)
+            #expect(try store.lastEvaluatedPoint(unit: "openai") == point)
+            #expect(try store.backfill(unit: "codex")?.finishedAt == through)
+            #expect(try store.failureNotices(provider: .codex).lastNoticeAt == point)
+            #expect(try store.ruleState(rule: "failedTurns", provider: "codex", scope: "*") == "synthetic")
+            #expect(try store.value(.backfillThrough) == nil)
+            #expect(try RawSQLite.scalar(directory.appending(path: "telltale.sqlite"), "SELECT COUNT(*) FROM settings WHERE key = 'backfillThrough'") == "0")
+            #expect(try !store.adoptGlobalProgress(providers: [.codex], legacyStatusSourceIDs: ["openai"]))
+        }
+    }
+
+    @Test func adoptMidBackfillLeavesItUnfinished() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            let point = Date(timeIntervalSince1970: 300)
+            let through = Date(timeIntervalSince1970: 600)
+            try store.setLastEvaluatedPoint(point)
+            try store.setCursor("codex", Data("synthetic".utf8))
+            try store.set(.backfillThrough, through)
+            #expect(try store.adoptGlobalProgress(providers: [.codex], legacyStatusSourceIDs: []))
+            #expect(try store.backfill(unit: "codex")?.finishedAt == nil)
+            #expect(try store.backfill(unit: "codex")?.announce == false)
+        }
+    }
     /// Every table Schema v1 holds (spec section 4 plus the task brief's table list).
     static let schemaV1Tables = [
         "baseline_epochs", "collector_runs", "connection_events", "cursors", "episodes", "eval_points",
@@ -45,14 +127,14 @@ private struct Abort: Error {}
         "source_state", "status_components", "usage_limits",
     ]
 
-    @Test func readWriteOpenCreatesWALDatabaseAtVersion1() throws {
+    @Test func readWriteOpenCreatesWALDatabaseAtCurrentVersion() throws {
         try withScratchDirectory { directory in
             let url = directory.appending(path: "nested/deeper/telltale.sqlite")
             let store = try Store.open(url, mode: .readWrite)
             withExtendedLifetime(store) {}
             let tables = try RawSQLite.column(url, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-            #expect(tables == Self.schemaV1Tables)
-            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "1")
+            #expect(tables == (Self.schemaV1Tables + ["compactions"]).sorted())
+            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "2")
             #expect(try RawSQLite.scalar(url, "PRAGMA journal_mode") == "wal")
             let indexes = try RawSQLite.column(url, "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'responses'")
             #expect(indexes.contains("idx_responses_provider_model_end"))
@@ -81,9 +163,10 @@ private struct Abort: Error {}
         try withScratchDirectory { directory in
             let url = directory.appending(path: "telltale.sqlite")
             try Store.open(url, mode: .readWrite).set(SettingKey.intervalMinutes, 9)
-            try RawSQLite.rows(url, "PRAGMA user_version = 2")
-            #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readWrite) }
-            #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readOnly) }
+            let newer = Schema.currentVersion + 1
+            try RawSQLite.rows(url, "PRAGMA user_version = \(newer)")
+            #expect(throws: StoreError.unsupportedSchemaVersion(newer)) { try Store.open(url, mode: .readWrite) }
+            #expect(throws: StoreError.unsupportedSchemaVersion(newer)) { try Store.open(url, mode: .readOnly) }
         }
     }
 
@@ -128,8 +211,9 @@ private struct Abort: Error {}
             let writer = try Store.open(url, mode: .readWriteExisting)
             try writer.transaction { try writer.set(SettingKey.intervalMinutes, 12) }
             #expect(try Store.open(url, mode: .readOnly).value(SettingKey.intervalMinutes) == 12)
-            try RawSQLite.rows(url, "PRAGMA user_version = 2")
-            #expect(throws: StoreError.unsupportedSchemaVersion(2)) { try Store.open(url, mode: .readWriteExisting) }
+            let newer = Schema.currentVersion + 1
+            try RawSQLite.rows(url, "PRAGMA user_version = \(newer)")
+            #expect(throws: StoreError.unsupportedSchemaVersion(newer)) { try Store.open(url, mode: .readWriteExisting) }
         }
     }
 
@@ -206,8 +290,8 @@ private struct Abort: Error {}
             let result = outcomes.snapshot
             #expect(result.finished == count)
             #expect(result.errors.isEmpty, "\(result.errors)")
-            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "1")
-            #expect(try RawSQLite.column(url, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name") == Self.schemaV1Tables)
+            #expect(try RawSQLite.scalar(url, "PRAGMA user_version") == "2")
+            #expect(try RawSQLite.column(url, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name") == (Self.schemaV1Tables + ["compactions"]).sorted())
         }
     }
 

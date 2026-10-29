@@ -19,6 +19,7 @@ import TelltaleCore
         var provider: ProviderID
         var name: String
         var state: State
+        var isBackfilling = false
         var id: ProviderID { provider }
     }
 
@@ -122,10 +123,10 @@ import TelltaleCore
                     detail = try ModelDetail.load(
                         store: store, baseline: baseline, provider: provider, model: model,
                         statusSourceID: sources.first { $0.provider == provider }?.statusSourceID, range: range, now: at, calendar: calendar)
-                    workload = try Workload.load(store: store, provider: provider, model: model, now: at, calendar: calendar)
+                    workload = try Workload.load(store: store, provider: provider, model: model, now: at, calendar: calendar, supportedRules: sources.first { $0.provider == provider }?.supportedRules ?? [])
                 }
                 let feed = try EventFeed.load(
-                    store: store, limit: Self.feedLimit, naming: { live.displayName(provider: $0, model: $1) }, calendar: calendar)
+                    store: store, limit: Self.feedLimit, naming: { live.displayName(provider: $0, model: $1) }, calendar: calendar, sources: sources)
                 return (detail, workload, feed)
             }
             (detail, workload, feed) = loaded ?? (nil, nil, [])
@@ -156,7 +157,7 @@ import TelltaleCore
 
     func accept() {
         guard case .model(let provider, let model) = selection, let since = acceptingSince else { return }
-        panel.accept(provider: provider, model: model, since: since)
+        panel.accept(provider: provider, model: model, since: since, displayName: selectedModel?.name)
         acceptingSince = nil
         load()
     }
@@ -196,18 +197,20 @@ import TelltaleCore
         let groups = try? live.read { store, _ in
             try sources.map { source -> SidebarGroup in
                 let models = try ModelDetail.models(store: store, provider: source.provider)
+                let backfilling = try store.backfill(unit: source.provider.rawValue).map { $0.finishedAt == nil } ?? false
                 if models.isEmpty {
                     if case .notSetUp = try store.sourceState(source.provider.rawValue)?.state {
-                        return SidebarGroup(provider: source.provider, name: source.name, state: .notSetUp)
+                        return SidebarGroup(provider: source.provider, name: source.name, state: .notSetUp, isBackfilling: backfilling)
                     }
-                    return SidebarGroup(provider: source.provider, name: source.name, state: .empty)
+                    return SidebarGroup(provider: source.provider, name: source.name, state: .empty, isBackfilling: backfilling)
                 }
                 let colors = live.snapshot.models.filter { $0.provider == source.provider }
+                let names = DisplayNames.disambiguated(models, naming: source.naming)
                 return SidebarGroup(provider: source.provider, name: source.name, state: .models(models.map { model in
                     SidebarModel(
-                        provider: source.provider, model: model, name: source.naming.displayName(model: model),
+                        provider: source.provider, model: model, name: names[model] ?? model,
                         color: colors.first { $0.model == model }?.color)
-                }))
+                }), isBackfilling: backfilling)
             }
         }
         sidebar = (groups ?? nil) ?? sources.map { SidebarGroup(provider: $0.provider, name: $0.name, state: .empty) }
@@ -261,16 +264,18 @@ private struct DashboardSidebar: View {
             ForEach(model.sidebar) { group in
                 Text(group.name).font(.system(size: 11)).foregroundStyle(Theme.swiftUI(Theme.dim))
                     .padding(.horizontal, 8).padding(.top, group.id == model.sidebar.first?.id ? 0 : 12).padding(.bottom, 4)
+                if group.isBackfilling { dimmed("Reading history…") }
                 switch group.state {
                 case .models(let models):
                     ForEach(models) { item in
                         row(item.name, color: item.color, section: .model(item.provider, item.model))
+                            .opacity(group.isBackfilling ? 0.5 : 1)
                             .help(item.model)
                     }
                 case .notSetUp:
                     dimmed(Copy.notSetUp)
                 case .empty:
-                    dimmed(Copy.noResponsesYet)
+                    if !group.isBackfilling { dimmed(Copy.noResponsesYet) }
                 }
             }
             Rectangle().fill(Theme.swiftUI(Theme.housing)).frame(height: 1).padding(.top, 24).padding(.bottom, 10)

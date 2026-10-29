@@ -81,6 +81,8 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let actions = PanelWorld.actions(paths)
             #expect(throws: StoreError.notInitialized) { try actions.set(.collectorEnabled, false) }
             #expect(throws: StoreError.notInitialized) { try actions.requestRebuild() }
+            #expect(throws: StoreError.notInitialized) { try actions.requestRebuild(provider: .codex) }
+            #expect(throws: StoreError.notInitialized) { try actions.dismissArrival(provider: .codex) }
             #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))
 
             // A file the collector created but hasn't migrated is left alone too (ruling R27).
@@ -93,9 +95,39 @@ private struct SyntheticKickstartFailure: LocalizedError {
             try PanelWorld.seed(paths)
             try actions.set(.collectorEnabled, false)
             try actions.requestRebuild()
+            try actions.requestRebuild(provider: .codex)
             let store = try Store.open(paths.database, mode: .readOnly)
             #expect(try store.value(.collectorEnabled) == false)
             #expect(try store.value(.rebuildRequestedAt) == PanelWorld.now)
+            #expect(try store.value(.providerRebuildRequests) == ["codex": PanelWorld.now])
+        }
+    }
+
+    @Test func dismissArrivalPersistsAtomically() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            try PanelWorld.seed(paths)
+            let store = try Store.open(paths.database, mode: .readWriteExisting)
+            try store.set(.pendingArrivals, ["codex", "synthetic-other"])
+            try PanelWorld.actions(paths).dismissArrival(provider: .codex)
+            let reader = try Store.open(paths.database, mode: .readOnly)
+            #expect(try reader.value(.pendingArrivals) == ["synthetic-other"])
+            #expect(try reader.value(.dismissedArrivals) == ["codex"])
+        }
+    }
+
+    @Test func dismissedArrivalStaysHiddenAfterReload() throws {
+        try withScratchDirectory { directory in
+            let paths = PanelWorld.paths(directory)
+            let store = try PanelWorld.seed(paths)
+            try store.set(.pendingArrivals, ["codex"])
+            try store.setBackfill(ProviderBackfill(reason: .new, startedAt: PanelWorld.now, through: PanelWorld.now, finishedAt: PanelWorld.now, announce: true), unit: "codex")
+            let live = PanelWorld.live(paths)
+            #expect(live.snapshot.arrivals.first?.firstModel == Synth.model)
+            let model = PanelModel(store: live, actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()))
+            model.dismissArrival(.codex)
+            #expect(live.snapshot.arrivals.isEmpty)
+            #expect(PanelWorld.live(paths).snapshot.arrivals.isEmpty)
         }
     }
 

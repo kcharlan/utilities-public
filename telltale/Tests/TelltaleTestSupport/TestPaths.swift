@@ -1,4 +1,5 @@
 import Foundation
+import TelltaleCore
 
 /// Locations and plist helpers shared by Telltale's test targets.
 public enum TestPaths {
@@ -8,6 +9,10 @@ public enum TestPaths {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+
+    public static func synthetic(home: URL) -> TelltalePaths {
+        TelltalePaths(home: home, codexHome: home.appending(path: "synthetic-codex"), claudeHome: home.appending(path: "synthetic-claude"))
+    }
 
     public struct PlistError: Error, CustomStringConvertible {
         public let description: String

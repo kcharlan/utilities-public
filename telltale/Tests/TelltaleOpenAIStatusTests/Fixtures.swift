@@ -1,5 +1,5 @@
 import Foundation
-import TelltaleOpenAIStatus
+import TelltaleCore
 
 /// Loads the hand-written synthetic fixtures and fakes the network.
 enum Fixtures {

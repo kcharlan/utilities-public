@@ -33,7 +33,7 @@ import TelltaleTestSupport
             try PanelWorld.addAlert(writer)
             #expect(live.snapshot.alerts.isEmpty)
             await source.send(.wake)
-            #expect(live.snapshot.alerts.map(\.text) == [PanelWorld.alertText])
+            #expect(live.snapshot.alerts.map(\.text) == ["Codex: " + PanelWorld.alertText])
             events.stop()
         }
     }

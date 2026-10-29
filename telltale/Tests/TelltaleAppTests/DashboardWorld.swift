@@ -47,14 +47,14 @@ import TelltaleTestSupport
         self.live = live
         // Check now and Rebuild kick the job as the app does, through the fake `launchctl`.
         let manager = LaunchAgentManager(paths: paths, uid: 4_242, runner: runner)
-        actions = UserActions(paths: paths, calendar: Synth.newYork, now: { clock.now }, kickstart: { try manager.kickstart() }, changed: { live.reload() })
+        actions = UserActions(paths: paths, calendar: Synth.newYork, now: { clock.now }, kickstart: { try manager.kickstart() }, changed: { live.reload() }, sourceNames: [.codex: "Codex"])
         panel = PanelModel(store: live, actions: actions, notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
         collector = CollectorViewModel(
             live: live, actions: actions, manager: manager, currentExecutable: executable,
             canManage: canManage, paths: paths, calendar: Synth.newYork, now: { clock.now }, reveal: { _ in })
         let login = LoginServiceStub()
         self.login = login
-        settings = SettingsModel(live: live, collector: collector, sources: PanelWorld.sources, login: LoginItem(service: login))
+        settings = SettingsModel(live: live, collector: collector, sources: PanelWorld.sources, statusSummaries: PanelWorld.statusSummaries, login: LoginItem(service: login))
         model = DashboardModel(
             live: live, panel: panel, collector: collector, settings: settings, sources: PanelWorld.sources, calendar: Synth.newYork, now: { clock.now })
         collector.reveal = { [unowned self] in revealed.append($0) }

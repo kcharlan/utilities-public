@@ -7,6 +7,7 @@ import TelltaleCore
 @MainActor protocol DashboardOpening: AnyObject {
     func openDashboard()
     func openSettings()
+    func openProvider(_ provider: ProviderID, model: String?)
 }
 
 /// The panel's state beyond the snapshot: Check now, the shift prompt's actions and their
@@ -56,15 +57,16 @@ import TelltaleCore
     func acceptSince(for prompt: ShiftPrompt) -> Date { prompt.firstDay.start(in: calendar) }
 
     func accept(_ prompt: ShiftPrompt, since date: Date) {
-        accept(provider: prompt.provider, model: prompt.model, since: date)
+        accept(provider: prompt.provider, model: prompt.model, since: date, displayName: store.snapshot.shiftName)
     }
 
     /// "Accept as usual…" for any model, from the panel's prompt or the dashboard (spec section 8).
-    func accept(provider: ProviderID, model: String, since date: Date) {
+    func accept(provider: ProviderID, model: String, since date: Date, displayName: String? = nil) {
+        let name = displayName ?? store.disambiguatedName(provider: provider, model: model)
         perform {
             let acceptance = try actions.accept(provider: provider, model: model, since: LocalDay(date, calendar: calendar))
             confirmation = Confirmation(
-                text: Copy.acceptance(model: store.displayName(provider: provider, model: model), percent: acceptance.percentChange),
+                text: Copy.acceptance(model: name, percent: acceptance.percentChange),
                 epochID: acceptance.epochID)
         }
     }
@@ -87,6 +89,12 @@ import TelltaleCore
         perform { try actions.keepAsAbnormal(prompt) }
     }
 
+    func dismissArrival(_ provider: ProviderID) {
+        perform { try actions.dismissArrival(provider: provider); store.reload() }
+    }
+
+    func providerName(_ provider: ProviderID) -> String { store.providerName(provider) }
+
     private func perform(_ body: () throws -> Void) {
         do {
             try body()
@@ -103,6 +111,7 @@ struct PanelView: View {
     let model: PanelModel
     var openSettings: (() -> Void)?
     var openDashboard: (() -> Void)?
+    var openProvider: ((ProviderID, String?) -> Void)?
     var focusGeneration = UUID()
     @State private var acceptingSince: Date?
 
@@ -124,12 +133,29 @@ struct PanelView: View {
             if !snapshot.models.isEmpty {
                 Divider()
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(snapshot.models) { ModelRowView(row: $0) }
+                    let providers = Array(Set(snapshot.models.map(\.provider)))
+                    let width = min(96, max(60, snapshot.models.map { ($0.name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width }.max() ?? 60))
+                    ForEach(Array(snapshot.models.enumerated()), id: \.element.id) { index, row in
+                        if providers.count > 1 && (index == 0 || snapshot.models[index - 1].provider != row.provider) {
+                            Text(row.providerName).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        ModelRowView(row: row, nameWidth: width)
+                    }
                 }
             }
             if let shift = snapshot.shift, let text = snapshot.shiftText {
                 Divider()
                 shiftPrompt(shift, text: text)
+            }
+            ForEach(snapshot.arrivals, id: \.provider) { arrival in
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(arrival.text).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Open \(model.providerName(arrival.provider))") { openProvider?(arrival.provider, arrival.firstModel) }.disabled(openProvider == nil || arrival.firstModel == nil)
+                        Button("Dismiss") { model.dismissArrival(arrival.provider) }
+                    }
+                }
             }
             if let confirmation = model.confirmation {
                 HStack(alignment: .firstTextBaseline) {
@@ -306,11 +332,12 @@ struct LampStrip: View {
 /// One active model: tok/s with usual beside it, a 3-hour sparkline, and a thin-data or learning note.
 private struct ModelRowView: View {
     let row: PanelSnapshot.ModelRow
+    let nameWidth: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(row.name).lineLimit(1).frame(width: 60, alignment: .leading)
+                Text(row.name).fixedSize(horizontal: false, vertical: true).frame(width: nameWidth, alignment: .leading).help(row.model)
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     // A model in a speed episode shows its numeral and sparkline in the lamp color (mockup).
                     Text(row.tps.map { String(Int($0.rounded())) } ?? "–").font(.system(size: 17, weight: .medium).monospacedDigit())

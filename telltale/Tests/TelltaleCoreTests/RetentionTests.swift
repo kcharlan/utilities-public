@@ -26,6 +26,10 @@ import TelltaleTestSupport
                 synth.response(throughput: 40, end: Self.daysAgo(181)),  // resp_synthetic_01: gone
                 synth.response(throughput: 40, end: Self.daysAgo(179)),  // resp_synthetic_02: kept
             ])
+            try store.upsert(compactions: [181, 179].map { days in
+                CompactionRecord(provider: .codex, lineID: "synthetic-\(days)", sessionID: "synthetic", agentID: nil,
+                    at: Self.daysAgo(days), trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+            })
             try store.insertEvalPoints([
                 EvalPointRow(provider: .codex, model: Synth.model, at: Self.daysAgo(181), speedIndex: 1, mixUsual: 40, medianTPS: 40, samples: 12, state: .known),
                 EvalPointRow(provider: .codex, model: Synth.model, at: Self.daysAgo(179), speedIndex: 1, mixUsual: 40, medianTPS: 40, samples: 12, state: .known),
@@ -57,6 +61,7 @@ import TelltaleTestSupport
             #expect(try Retention.prune(store: store, now: Self.now, calendar: Self.calendar))
 
             #expect(try RawSQLite.column(url, "SELECT response_id FROM responses") == ["resp_synthetic_02"])
+            #expect(try store.compactions(provider: .codex, in: Self.daysAgo(400)...Self.now).map(\.lineID) == ["synthetic-179"])
             #expect(try store.evalPoints(provider: .codex, model: Synth.model, in: Self.daysAgo(400)...Self.now).map(\.at) == [Self.daysAgo(179)])
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM failed_turns") == "1")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM connection_events") == "1")

@@ -18,6 +18,35 @@ public struct SourceStateRow: Sendable, Equatable, Hashable, Codable {
 }
 
 extension Store {
+    @discardableResult
+    public func upsert(compactions: [CompactionRecord]) throws -> Int {
+        try transaction {
+            let statement = try prepare("""
+                INSERT INTO compactions (provider, line_id, session_id, agent_id, at, trigger, tokens_before, tokens_after, duration, precomputed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (provider, line_id) DO NOTHING
+                """)
+            var changed = 0
+            for item in compactions {
+                changed += try statement.run([.text(item.provider.rawValue), .text(item.lineID), .text(item.sessionID),
+                    .string(item.agentID), .date(item.at), .text(item.trigger.rawValue), .integer(item.tokensBefore),
+                    .integer(item.tokensAfter), item.duration.map { .double($0) } ?? .null, .bool(item.precomputed)])
+            }
+            return changed
+        }
+    }
+
+    public func compactions(provider: ProviderID, in range: ClosedRange<Date>) throws -> [CompactionRecord] {
+        guard schemaVersion >= 2 else { return [] }
+        return try query("""
+            SELECT line_id, session_id, agent_id, at, trigger, tokens_before, tokens_after, duration, precomputed
+            FROM compactions WHERE provider = ? AND at BETWEEN ? AND ? ORDER BY at, line_id
+            """, [.text(provider.rawValue), .date(range.lowerBound), .date(range.upperBound)]) { row in
+                guard let trigger = CompactionTrigger(rawValue: row.text(4)) else { throw StoreError.invalidData("Invalid compaction trigger") }
+                return CompactionRecord(provider: provider, lineID: row.text(0), sessionID: row.text(1), agentID: row.optionalText(2),
+                    at: row.date(3), trigger: trigger, tokensBefore: row.int(5), tokensAfter: row.optionalInt(6),
+                    duration: row.optionalDouble(7), precomputed: row.bool(8))
+            }
+    }
     static let responseColumns = """
         provider, response_id, model, effort, service_tier, session_id, is_subagent, turn_id, \
         start_at, end_at, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens
@@ -133,6 +162,7 @@ extension Store {
             INSERT INTO usage_limits (provider, at, used_percent, window_minutes, resets_at) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (provider) DO UPDATE SET at = excluded.at, used_percent = excluded.used_percent,
                 window_minutes = excluded.window_minutes, resets_at = excluded.resets_at
+            WHERE excluded.at >= usage_limits.at
             """, [
             .text(snapshot.provider.rawValue), .date(snapshot.at), .double(snapshot.usedPercent),
             .integer(snapshot.windowMinutes), .date(snapshot.resetsAt),

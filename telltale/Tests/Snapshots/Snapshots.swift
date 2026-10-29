@@ -14,8 +14,8 @@ import TelltaleCore
 // This entry exists only in the isolated renderer. No real database, collector, launchctl,
 // notifications, windows on screen or native input.
 @main struct Snapshots {
-    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .shift]
-    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem, .settings]
+    static let states: [SyntheticEnvironment.Scene] = [.quiet, .alerting, .shift, .twoProviders, .arrival]
+    static let dashboardStates: [SyntheticEnvironment.Scene] = [.dashboard, .collectorProblem, .settings, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling]
 
     @MainActor static func main() async throws {
         _ = NSApplication.shared
@@ -35,7 +35,7 @@ import TelltaleCore
                 let model = try await makeModel(state, home: directory)
                 expect(state, model.store.snapshot)
                 let label = "\(state.rawValue)-\(dark ? "dark" : "light")"
-                let size = try render(AnyView(PanelView(model: model, openSettings: {}, openDashboard: {})), dark: dark, to: home.appendingPathComponent(label + ".png"))
+                let size = try render(AnyView(PanelView(model: model, openSettings: {}, openDashboard: {}, openProvider: { _, _ in })), dark: dark, to: home.appendingPathComponent(label + ".png"))
                 heights[label] = size.height
             }
             let palette = dark ? "dark" : "light"
@@ -45,14 +45,14 @@ import TelltaleCore
         }
         try await renderDashboards(home: home)
         let pngs = try FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil).filter { $0.pathExtension == "png" }
-        guard pngs.count == 12 else { fatalError("Expected twelve PNGs") }
-        print("Validated six maintained panel PNGs (quiet, alerting, lasting-shift prompt), both appearances, content-hugging quiet state.")
-        print("Validated six maintained dashboard PNGs (model view, collector problem, settings with an invalid rule), both appearances, Barlow Semi Condensed registered.")
+        guard pngs.count == 26 else { fatalError("Expected twenty-six PNGs") }
+        print("Validated ten maintained panel PNGs (quiet, alerting, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
+        print("Validated sixteen maintained dashboard PNGs (model views, collector, settings and four provider states), both appearances, Barlow Semi Condensed registered.")
     }
 
     /// The seeded scene's snapshot carries what its PNG is meant to show.
     @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ snapshot: PanelSnapshot) {
-        guard snapshot.checkedAt != nil, snapshot.models.count == 2 else { fatalError("\(state): expected a checked time and two model rows") }
+        guard snapshot.checkedAt != nil, snapshot.models.count == ((state == .twoProviders || state == .arrival) ? 4 : 2) else { fatalError("\(state): unexpected model rows") }
         switch state {
         case .quiet:
             guard snapshot.alerts.isEmpty, snapshot.shift == nil, snapshot.models.allSatisfy({ $0.color == nil }) else { fatalError("quiet: expected no alerts, rows or shift prompt in color") }
@@ -69,6 +69,12 @@ import TelltaleCore
             guard snapshot.collector == .red, snapshot.alerts.isEmpty else { fatalError("collector problem: expected a red Collector lamp and no alerts") }
         case .settings:
             guard snapshot.alerts.isEmpty else { fatalError("settings: expected the quiet scene") }
+        case .twoProviders:
+            guard Set(snapshot.models.map(\.provider)).count == 2, Set(snapshot.models.map(\.name)).count == 4 else { fatalError("two providers: expected distinct names") }
+        case .arrival:
+            guard snapshot.arrivals.count == 1, snapshot.arrivals[0].provider == .claude else { fatalError("arrival: expected Claude note") }
+        case .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
+            fatalError("dashboard scene is not a panel scene")
         }
     }
 
@@ -120,14 +126,14 @@ import TelltaleCore
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeDashboard(state, home: directory)
                 expectDashboard(state, model)
-                let name = switch state { case .dashboard: "dashboard"; case .settings: "settings"; default: "collector-problem" }
+                let name = switch state { case .dashboard: "dashboard"; case .claudeDashboard: "claude-dashboard"; case .settings: "settings"; case .collectorProblem: "collector-problem"; default: state.rawValue }
                 let label = "\(name)-\(dark ? "dark" : "light")"
                 // The model view and Settings scroll inside the window; render the window tall enough to
                 // show all of it, so the PNG can be compared with the mockup's full page.
                 var height = DashboardWindowController.defaultSize.height
                 let section: AnyView? = switch state {
-                case .dashboard: AnyView(ModelView(model: model))
-                case .settings: AnyView(SettingsView(model: model.settings))
+                case .dashboard, .claudeDashboard: AnyView(ModelView(model: model))
+                case .settings, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling: AnyView(SettingsView(model: model.settings))
                 default: nil
                 }
                 if let section {
@@ -162,6 +168,15 @@ import TelltaleCore
             guard settings.databaseReady, settings.canManage, settings.parameterErrors == [.slowerClearBand: [Copy.clearBandError]],
                   settings.text(.slowerClearBand) == "15", rows.count == 7, rows.filter(\.missing).count == 4, settings.login.enabled
             else { fatalError("settings: expected an invalid clear band, the component checklist with four missing names and Open at login on") }
+        case .claudeDashboard:
+            guard model.selectedModel?.provider == .claude, model.workload?.hasFastMode == true,
+                  model.sidebar.first(where: { $0.provider == .claude })?.isBackfilling == true else { fatalError("Claude dashboard: expected fast mode and backfill") }
+        case .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
+            guard let provider = model.settings.providers.first(where: { $0.provider == .claude }) else { fatalError("missing Claude provider") }
+            switch (state, provider.state) {
+            case (.providersNormal, .normal), (.providersNotSetUp, .notSetUp), (.providersFormatProblem, .formatProblem), (.providersBackfilling, .backfilling): break
+            default: fatalError("unexpected provider state: \(provider.state)")
+            }
         default:
             fatalError("\(state) is not a dashboard scene")
         }
@@ -179,11 +194,14 @@ import TelltaleCore
             live: panel.store, actions: panel.actions, manager: LaunchAgentManager(paths: paths, uid: 501, runner: SyntheticCommandRunner()),
             currentExecutable: home.appendingPathComponent("Telltale"), canManage: true, paths: paths, calendar: calendar, now: { now },
             reveal: { _ in })
-        let settings = SettingsModel(live: panel.store, collector: collector, sources: SyntheticEnvironment.sources, login: LoginItem(service: SnapshotLoginService()))
+        let sources = [.claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling].contains(state) ? SyntheticEnvironment.twoSources : SyntheticEnvironment.sources
+        let settings = SettingsModel(live: panel.store, collector: collector, sources: sources, statusSummaries: SyntheticEnvironment.statusSummaries, login: LoginItem(service: SnapshotLoginService()))
         let model = DashboardModel(
-            live: panel.store, panel: panel, collector: collector, settings: settings, sources: SyntheticEnvironment.sources, calendar: calendar, now: { now })
+            live: panel.store, panel: panel, collector: collector, settings: settings, sources: sources, calendar: calendar, now: { now })
         switch state {
         case .dashboard: model.select(.model(.codex, SyntheticEnvironment.example))
+        case .claudeDashboard: model.select(.model(.claude, SyntheticEnvironment.claude))
+        case .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling: model.select(.settings)
         case .settings:
             model.select(.settings)
             // The slower rule's clear band equal to its trigger: shown with its message, not saved.
@@ -248,7 +266,7 @@ import TelltaleCore
         let paths = try SyntheticEnvironment.seed(state, home: home, now: now, calendar: calendar)
         let health = SyntheticEnvironment.health(state)
         let live = LiveStore(
-            paths: paths, sources: SyntheticEnvironment.sources, calendar: calendar, now: { now }, health: { health }, pollInterval: .seconds(3_600),
+            paths: paths, sources: (state == .twoProviders || state == .arrival || state == .claudeDashboard) ? SyntheticEnvironment.twoSources : SyntheticEnvironment.sources, calendar: calendar, now: { now }, health: { health }, pollInterval: .seconds(3_600),
             watchFiles: false)
         await live.refresh()
         let actions = UserActions(paths: paths, calendar: calendar, now: { now }, kickstart: {})

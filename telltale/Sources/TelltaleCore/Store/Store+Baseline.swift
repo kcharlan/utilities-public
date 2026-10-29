@@ -83,7 +83,7 @@ extension Store {
                    [.text(provider.rawValue), .text(model)]).first
     }
 
-    func baselineEpoch(id: Int64) throws -> BaselineEpoch? {
+    public func baselineEpoch(id: Int64) throws -> BaselineEpoch? {
         try epochs(where: "id = ?", [.int(id)]).first
     }
 

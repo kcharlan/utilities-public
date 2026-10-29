@@ -49,14 +49,15 @@ import UserNotifications
         let monitor = CollectorMonitor(
             paths: paths, manager: LaunchAgentManager(paths: paths, uid: getuid(), runner: runner),
             currentExecutable: Bundle.main.executableURL ?? home.appending(path: "Acceptance", directoryHint: .notDirectory),
-            service: notificationService, calendar: calendar, now: now)
+            service: notificationService, calendar: calendar, now: now,
+            sourceNames: Dictionary(SyntheticEnvironment.sources.map { ($0.provider.rawValue, $0.name) }, uniquingKeysWith: { first, _ in first }))
         self.monitor = monitor
         let live = LiveStore(
             paths: paths, sources: SyntheticEnvironment.sources, calendar: calendar, now: now, health: { await monitor.evaluate() })
         self.live = live
         actions = UserActions(
             paths: paths, calendar: calendar, now: now, kickstart: { try SyntheticEnvironment.recordCheck(paths: paths, at: Date()) },
-            changed: { live.reload() })
+            changed: { live.reload() }, sourceNames: Dictionary(SyntheticEnvironment.sources.map { ($0.provider, $0.name) }, uniquingKeysWith: { first, _ in first }))
     }
 
     /// "Add red alert": a red failed-turns alert beside the seeded amber ones.
@@ -113,7 +114,7 @@ import UserNotifications
         let collector = CollectorViewModel(
             live: harness.live, actions: harness.actions, manager: LaunchAgentManager(paths: harness.paths, uid: getuid(), runner: harness.runner),
             currentExecutable: Bundle.main.executableURL ?? URL(fileURLWithPath: "/nonexistent/Telltale Synthetic Acceptance.app/Contents/MacOS/Acceptance"), canManage: false, paths: harness.paths)
-        let settings = SettingsModel(live: harness.live, collector: collector, sources: SyntheticEnvironment.sources, login: LoginItem(service: SyntheticLoginService()))
+        let settings = SettingsModel(live: harness.live, collector: collector, sources: SyntheticEnvironment.sources, statusSummaries: SyntheticEnvironment.statusSummaries, login: LoginItem(service: SyntheticLoginService()))
         let dashboard = DashboardWindowController(
             model: DashboardModel(live: harness.live, panel: panel, collector: collector, settings: settings, sources: SyntheticEnvironment.sources))
         let status = StatusItemController(model: panel, dashboard: dashboard, accessory: controls)

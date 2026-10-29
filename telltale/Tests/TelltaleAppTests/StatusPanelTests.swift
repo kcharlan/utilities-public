@@ -162,6 +162,7 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
 }
 /// Records the panel's Settings and Open dashboard requests (Task 12's dashboard controller).
 @MainActor final class DashboardStub: DashboardOpening {
+    func openProvider(_ provider: ProviderID, model: String?) { presentations.append("provider") }
     var presentations: [String] = []
     var visibleAtPresentation: [Bool] = []
     var panelVisible: () -> Bool = { false }

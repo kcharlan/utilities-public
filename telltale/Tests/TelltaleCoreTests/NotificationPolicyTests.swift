@@ -4,6 +4,18 @@ import TelltaleTestSupport
 @testable import TelltaleCore
 
 @Suite struct NotificationPolicyTests {
+    @Test func clearedAndCatchUpBodiesArePrefixed() {
+        let info = RuleProviderInfo(name: "Synthetic Provider", failureNoun: "request", signals: [.speed], rules: [.slower], naming: SyntheticNaming())
+        var notices = FailureNotices()
+        let caughtUp = outcome(at: minutesBefore(30), fired(minutesBefore(30)), catchUp: "Synthetic Provider: slower")
+        let selected = NotificationPolicy.select([caughtUp], latestPoint: latest, intervalMinutes: 5, settings: .defaults, mode: .live,
+            failureNotices: &notices, calendar: calendar, provider: info)
+        #expect(selected.map(\.body) == ["Synthetic Provider: slower"])
+        let clear = outcome(at: latest, .cleared, message: "back")
+        let cleared = NotificationPolicy.select([clear], latestPoint: latest, intervalMinutes: 5, settings: .defaults, mode: .live,
+            failureNotices: &notices, calendar: calendar, provider: info)
+        #expect(cleared.map(\.body) == ["Synthetic Provider: back"])
+    }
     let calendar = Synth.newYork
     let latest = Synth.local(2026, 9, 4, 12, 0)
 
@@ -204,10 +216,37 @@ import TelltaleTestSupport
 
     @Test func failureNoticesPersistInRuleState() throws {
         try withRules { h in
-            #expect(try h.store.failureNotices() == FailureNotices())
+            #expect(try h.store.failureNotices(provider: .codex) == FailureNotices())
             let notices = FailureNotices(lastNoticeAt: h.sep4(9, 5), waiting: [failure(1, at: h.sep4(9, 3))])
-            try h.store.setFailureNotices(notices)
-            #expect(try h.store.failureNotices() == notices)
+            try h.store.setFailureNotices(notices, provider: .codex)
+            #expect(try h.store.failureNotices(provider: .codex) == notices)
+        }
+    }
+
+    @Test func failedTurnNoticesCoalescePerProvider() throws {
+        try withRules { h in
+            let other = ProviderID(rawValue: "synthetic-other")
+            var otherFailure = failure(2, at: latest)
+            otherFailure.provider = other
+            var first = FailureNotices()
+            var second = FailureNotices()
+            let codex = outcome(.failedTurns, at: latest, fired(latest, severity: .red), failures: [failure(1, at: latest)])
+            var otherOutcome = outcome(.failedTurns, at: latest, fired(latest, severity: .red), failures: [otherFailure])
+            otherOutcome.provider = other.rawValue
+            let firstNotice = try #require(select([codex], notices: &first).first)
+            let secondNotice = try #require(select([otherOutcome], notices: &second).first)
+            #expect(firstNotice.id != secondNotice.id)
+            #expect(firstNotice.threadID == NotificationPolicy.failedTurnsThreadID(provider: .codex))
+            #expect(secondNotice.threadID == NotificationPolicy.failedTurnsThreadID(provider: other))
+            let soon = latest.addingTimeInterval(300)
+            let another = outcome(.failedTurns, at: soon, nil, failures: [failure(3, at: soon)])
+            #expect(select([another], latest: soon, notices: &first).isEmpty)
+            #expect(first.waiting.count == 1)
+            #expect(second.waiting.isEmpty)
+            try h.store.setFailureNotices(first, provider: .codex)
+            try h.store.setFailureNotices(second, provider: other)
+            #expect(try h.store.failureNotices(provider: .codex) == first)
+            #expect(try h.store.failureNotices(provider: other) == second)
         }
     }
 }

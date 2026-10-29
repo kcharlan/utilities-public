@@ -19,6 +19,7 @@ public enum Retention {
             if try store.value(.lastPrunedDay) == today { return false }
             let responseCutoff = cutoff(days: responseDays, before: now, calendar: calendar)
             try store.run("DELETE FROM responses WHERE end_at < ?", [.date(responseCutoff)])
+            try store.run("DELETE FROM compactions WHERE at < ?", [.date(responseCutoff)])
             try store.run("DELETE FROM eval_points WHERE at < ?", [.date(responseCutoff)])
             try store.run("DELETE FROM collector_runs WHERE started_at < ?", [.date(cutoff(days: runDays, before: now, calendar: calendar))])
             try store.set(.lastPrunedDay, today)

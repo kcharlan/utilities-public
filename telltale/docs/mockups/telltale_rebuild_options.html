@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telltale rebuild options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Tokens are telltale_visual_design.md's; nothing new is introduced. */
+:root {
+  --cluster: #151B21; --housing: #262F37; --readout: #E9EDF0; --dim: #8D99A3;
+  --red: #E5484D; --amber: #F0A800; --blue: #4C8DFF; --green: #3DB879;
+  --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --gauge: "Barlow Semi Condensed", "DIN Alternate", var(--sf);
+  --page: #3A4148;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--readout); font: 13px/1.45 var(--sf); padding: 32px 24px 64px; }
+.board { max-width: 1180px; margin: 0 auto; display: grid; gap: 44px; }
+h1 { font: 500 20px/1.3 var(--sf); margin: 0; color: #fff; }
+h2.part { font: 500 15px/1.3 var(--sf); color: #fff; margin: 0 0 6px; }
+.note { color: #C3CBD2; font-size: 13px; max-width: 72ch; margin: 0 0 12px; }
+.note b { color: #fff; font-weight: 500; }
+.num { font-family: var(--gauge); font-variant-numeric: tabular-nums lining-nums; }
+.row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.window { border-radius: 12px; overflow: hidden; background: var(--cluster); box-shadow: 0 0 0 .5px rgba(255,255,255,.12), 0 20px 50px rgba(0,0,0,.35); }
+.titlebar { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: #1B2229; border-bottom: 1px solid #0F1418; }
+.titlebar i { width: 12px; height: 12px; border-radius: 50%; background: #4A525A; }
+.titlebar .t { margin-left: 12px; color: var(--dim); font-size: 13px; }
+.wbody { display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+.side { background: #11171C; padding: 14px 10px; display: grid; align-content: start; gap: 2px; border-right: 1px solid #0D1216; }
+.side .grp { color: var(--dim); font-size: 11px; margin: 12px 8px 4px; display: flex; justify-content: space-between; }
+.side .grp:first-child { margin-top: 0; }
+.side a { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 6px; color: var(--readout); text-decoration: none; font-size: 13px; }
+.side a.on { background: var(--housing); }
+.side a.off { color: #5D6872; }
+.side a small { color: var(--dim); font-size: 11px; }
+.side .bottom { margin-top: 18px; border-top: 1px solid var(--housing); padding-top: 10px; display: grid; gap: 2px; }
+.main { padding: 18px 22px 22px; display: grid; gap: 18px; align-content: start; }
+.sect { display: grid; gap: 8px; }
+.sect h3 { font: 500 15px/1.2 var(--sf); margin: 0; }
+.dim { color: var(--dim); }
+.small { font-size: 12px; }
+.btn { font: 13px var(--sf); color: var(--readout); background: var(--housing); border: 0; border-radius: 6px; padding: 4px 12px; }
+.btn.quiet { background: none; border: 1px solid var(--housing); }
+.btn.primary { background: var(--blue); color: #fff; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 5px 16px; font-size: 13px; }
+.kv dt { color: var(--dim); } .kv dd { margin: 0; }
+.diamond { display: inline-block; width: 7px; height: 7px; border-radius: 2px; transform: rotate(45deg); margin: 0 8px 1px 1px; vertical-align: middle; }
+
+/* Provider rows (option B) */
+.prov { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--housing); }
+.prov:first-of-type { border-top: 0; padding-top: 2px; }
+.prov .name { font-weight: 500; }
+.prov .facts { grid-column: 1; color: var(--dim); font-size: 12px; display: grid; gap: 1px; }
+.prov .acts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 8px; align-items: start; }
+.switch { width: 26px; height: 15px; border-radius: 8px; background: var(--blue); position: relative; display: inline-block; vertical-align: middle; margin-right: 6px; }
+.switch::after { content: ""; position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.switch.off { background: var(--housing); }
+.switch.off::after { right: auto; left: 2px; background: #8D99A3; }
+.progress { height: 3px; border-radius: 2px; background: var(--housing); overflow: hidden; max-width: 260px; margin-top: 4px; }
+.progress i { display: block; height: 100%; width: 40%; background: var(--dim); }
+
+/* Sheet (confirmation) */
+.sheet { width: 440px; border-radius: 12px; background: #262C33; box-shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 44px rgba(0,0,0,.45); padding: 18px 18px 14px; display: grid; gap: 12px; }
+.sheet h4 { margin: 0; font: 600 13px/1.3 var(--sf); }
+.sheet p { margin: 0; font-size: 12px; color: #C3CBD2; }
+.choice { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: 13px; }
+.choice .dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #66707A; margin-top: 2px; }
+.choice .dot.on { border: 4px solid var(--blue); }
+.choice small { display: block; color: var(--dim); font-size: 12px; }
+.sheet .acts { display: flex; justify-content: flex-end; gap: 8px; }
+.tradeoffs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 22px; max-width: 760px; font-size: 13px; color: #C3CBD2; }
+.tradeoffs b { display: block; color: #fff; font-weight: 500; margin-bottom: 2px; }
+.tradeoffs ul { margin: 0; padding-left: 18px; }
+
+/* Panel (native, dark) */
+.panel { width: 340px; border-radius: 12px; padding: 12px; display: grid; gap: 10px; background: rgba(38,41,46,.97); color: #F2F3F5; --sec: #9AA2AA; --sep: rgba(255,255,255,.09); }
+.phead { display: flex; justify-content: space-between; }
+.phead b { font-weight: 600; }
+.sec { color: var(--sec); font-size: 11px; }
+.sep { height: 1px; background: var(--sep); }
+.prompt { display: grid; gap: 6px; font-size: 13px; }
+.prompt .acts { display: flex; gap: 8px; }
+.pbtn { font: 12px var(--sf); color: inherit; background: rgba(127,127,127,.18); border: 0; border-radius: 6px; padding: 3px 10px; }
+.models { display: grid; gap: 4px; }
+.mrow { display: grid; grid-template-columns: var(--namecol, 60px) 76px 1fr 56px; align-items: baseline; gap: 6px; }
+.mrow .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mrow .v { font: 500 17px/1 var(--gauge); font-variant-numeric: tabular-nums; }
+.mrow .v small { font-size: 11px; color: var(--sec); font-weight: 400; font-family: var(--sf); }
+.mrow .u { color: var(--sec); font-size: 11px; }
+.mrow svg { width: 56px; height: 14px; }
+.pgrp { color: var(--sec); font-size: 11px; margin-top: 4px; }
+
+@media (max-width: 900px) { .wbody { grid-template-columns: 1fr; } .side { display: none; } .tradeoffs { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<p><strong>All dates, times, model activity and speed values in this mockup are invented synthetic examples.</strong></p>
+<main class="board">
+
+<section>
+  <h1>Rebuilding history, one provider or all</h1>
+  <p class="note">For discussion, 2026-10-28. Synthetic values. All three options share one mechanism: each provider
+  keeps its own evaluation progress, so rebuilding Claude Code, or adding it for the first time, re-reads only Claude
+  Code's logs and replays them without notifying, while Codex keeps watching live. The options differ in where the
+  control lives and how much it tells you.</p>
+</section>
+
+<!-- ============ OPTION A ============ -->
+<section>
+  <h2 class="part">A. One button, the scope is chosen in the confirmation</h2>
+  <p class="note">The Data section keeps one button. Its confirmation asks which provider to rebuild and says what each
+  choice removes. Smallest change; nothing new to learn. Per-provider state (not set up, format problem, history read)
+  stays where it is today: the sidebar and the Collector view.</p>
+  <div class="row">
+    <div class="window" style="width: 560px">
+      <div class="titlebar"><i></i><i></i><i></i><span class="t">Telltale</span></div>
+      <div class="wbody" style="grid-template-columns: 1fr">
+        <div class="main">
+          <div class="sect">
+            <h3>Data</h3>
+            <dl class="kv">
+              <dt>Responses</dt><dd>Kept 180 days</dd>
+              <dt>Evaluation points</dt><dd>Kept 180 days</dd>
+              <dt>Run records</dt><dd>Kept 30 days</dd>
+              <dt>Events and baselines</dt><dd>Kept</dd>
+            </dl>
+            <div><button class="btn quiet">Rebuild history…</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet" role="dialog" aria-label="Rebuild history">
+      <h4>Rebuild history?</h4>
+      <div class="choice"><span class="dot on"></span><div>Claude Code
+        <small>Re-reads the last 30 days of Claude Code logs. Its speed history before Jan 01, 2000 is removed.</small></div></div>
+      <div class="choice"><span class="dot"></span><div>Codex
+        <small>Re-reads the last 30 days of Codex logs. Its speed history before Jan 01, 2000 is removed.</small></div></div>
+      <div class="choice"><span class="dot"></span><div>All providers
+        <small>Re-reads both. Use this after changing a rule that should apply to the past.</small></div></div>
+      <p>Accepted baselines, incidents and settings are kept. No notifications are sent for the history it reads.</p>
+      <div class="acts"><button class="btn">Cancel</button><button class="btn primary">Rebuild Claude Code</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OPTION B ============ -->
+<section>
+  <h2 class="part">B. A Providers section, one row each, with its own Rebuild (recommended)</h2>
+  <p class="note">Settings gains a <b>Providers</b> section: one row per provider with its state, its data folder, the
+  client version last seen, how much history Telltale holds, and its own <b>Rebuild</b>. The Data section keeps
+  <b>Rebuild all providers…</b>. A rebuild in progress shows in its row. The row also gives a future provider such as
+  Cowork or ChatGPT Work a place to be switched on, without designing that now.</p>
+  <div class="window" style="max-width: 920px">
+    <div class="titlebar"><i></i><i></i><i></i><span class="t">Telltale</span></div>
+    <div class="wbody">
+      <nav class="side" aria-label="Sections">
+        <div class="grp">Codex</div>
+        <a href="#">6.1 Sol</a><a href="#">5.6 Sol</a><a href="#">6.1 Terra</a>
+        <div class="grp" style="display:grid"><span>Claude Code</span><span style="font-size:11px">Reading history…</span></div>
+        <a class="off" href="#">Opus 5.5</a><a class="off" href="#">Sonnet 5.5</a>
+        <div class="bottom"><a href="#">Collector</a><a class="on" href="#">Settings</a></div>
+      </nav>
+      <div class="main">
+        <div class="sect">
+          <h3>Providers</h3>
+          <div class="prov">
+            <div class="name">Codex</div>
+            <div class="facts">
+              <span>Reading normally. Codex 0.164.0 last seen at 14:05.</span>
+              <span>History from Jan 01, 2000. Read in full Jan 31, 2000.</span>
+              <span>Data folder ~/.codex</span>
+            </div>
+            <div class="acts"><button class="btn quiet">Rebuild…</button></div>
+          </div>
+          <div class="prov">
+            <div class="name">Claude Code</div>
+            <div class="facts">
+              <span>Reading 30 days of history, started 14:02. No notifications are sent for it.</span>
+              <div class="progress" aria-hidden="true"><i></i></div>
+              <span>Data folder ~/.claude</span>
+            </div>
+            <div class="acts"><button class="btn quiet" disabled style="opacity:.45">Rebuild…</button></div>
+          </div>
+          <div class="prov">
+            <div class="name dim">Cowork <span class="small">(illustration only: a later provider, not part of this work)</span></div>
+            <div class="facts"><span>Not watched. Telltale doesn't read Cowork yet.</span></div>
+            <div class="acts"></div>
+          </div>
+        </div>
+        <div class="sect">
+          <h3>Data</h3>
+          <dl class="kv"><dt>Responses</dt><dd>Kept 180 days</dd><dt>Events and baselines</dt><dd>Kept</dd></dl>
+          <div><button class="btn quiet">Rebuild all providers…</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row" style="margin-top: 18px">
+    <div class="sheet" role="dialog" aria-label="Rebuild Codex history">
+      <h4>Rebuild Codex history?</h4>
+      <p>Telltale will re-read the last 30 days of Codex logs. Codex speed history before Jan 01, 2000 is removed. Claude Code
+      isn't touched and keeps watching. Accepted baselines are kept, and no notifications are sent for the history it
+      reads.</p>
+      <div class="acts"><button class="btn">Cancel</button><button class="btn primary">Rebuild Codex</button></div>
+    </div>
+    <div class="tradeoffs" style="max-width: 600px">
+      <div><b>For</b><ul>
+        <li>Rebuild sits next to the facts that make you want one: a format problem, a version change, missing history.</li>
+        <li>One home for each provider's state, instead of spreading it over the sidebar, Collector view and Settings.</li>
+        <li>Room for a later "watch this provider" switch (Cowork, ChatGPT Work) without a redesign.</li></ul></div>
+      <div><b>Against</b><ul>
+        <li>A new Settings section to build and test, and snapshots to add.</li>
+        <li>Two rebuild buttons in Settings, so each must say exactly what it touches.</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OPTION C ============ -->
+<section>
+  <h2 class="part">C. Rebuild from the provider's own place in the sidebar</h2>
+  <p class="note">Selecting a provider's name in the sidebar opens a provider page (today the names are headings only):
+  its state, history, models at a glance and Rebuild. Settings keeps only Rebuild all providers. The most direct, but it
+  adds a page type and a navigation level for something done rarely.</p>
+  <div class="window" style="max-width: 920px">
+    <div class="titlebar"><i></i><i></i><i></i><span class="t">Telltale</span></div>
+    <div class="wbody">
+      <nav class="side" aria-label="Sections">
+        <a href="#"><span>Codex</span></a>
+        <a href="#">&nbsp;&nbsp;6.1 Sol</a><a href="#">&nbsp;&nbsp;6.1 Terra</a>
+        <a class="on" href="#"><span>Claude Code</span></a>
+        <a href="#">&nbsp;&nbsp;Opus 5.5</a><a href="#">&nbsp;&nbsp;Sonnet 5.5</a>
+        <div class="bottom"><a href="#">Collector</a><a href="#">Settings</a></div>
+      </nav>
+      <div class="main">
+        <div class="sect">
+          <h3>Claude Code</h3>
+          <dl class="kv">
+            <dt>Reading</dt><dd>Normally. Claude Code 2.1.310 last seen at 14:05.</dd>
+            <dt>History</dt><dd>From Jan 01, 2000. Read in full Jan 31, 2000 14:03.</dd>
+            <dt>Status page</dt><dd>Claude. No open incidents.</dd>
+            <dt>Models active today</dt><dd>Opus 5.5, Sonnet 5.5, Haiku 5.5</dd>
+          </dl>
+          <div><button class="btn quiet">Rebuild Claude Code history…</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ARRIVAL ============ -->
+<section>
+  <h2 class="part">When a provider shows up for the first time</h2>
+  <p class="note">After the upgrade that adds Claude Code, the first collector run finds its logs and reads 30 days of
+  history without notifying. Three ways to tell you, from quietest to most deliberate:</p>
+  <div class="row">
+    <div style="display:grid; gap:8px; width: 340px">
+      <b>1. Quiet</b>
+      <span class="note" style="margin:0">It appears in the sidebar and the panel; Events records it. Nothing else.</span>
+      <div class="window" style="padding: 12px 14px; font-size: 13px">
+        <span class="dim num" style="font-size:12px">14:03</span>&nbsp;&nbsp;<span class="diamond" style="background: var(--dim)"></span>Telltale now watches
+        Claude Code. It read 30 days of history and sent no notifications for it.
+      </div>
+    </div>
+    <div style="display:grid; gap:8px">
+      <b>2. Announce once in the panel (recommended)</b>
+      <span class="note" style="margin:0; max-width: 340px">A standing note, like the lasting-shift prompt, until you dismiss it.</span>
+      <div class="panel">
+        <div class="phead"><b>Telltale</b><span class="sec">Checked 14:05</span></div>
+        <div class="sep"></div>
+        <div class="prompt">
+          <span>Telltale now watches Claude Code. It read 30 days of history; usual speeds are ready for Opus 5.5.</span>
+          <div class="acts"><button class="pbtn">Open Claude Code</button><button class="pbtn">Dismiss</button></div>
+        </div>
+        <div class="sep"></div>
+        <div class="empty sec" style="font-size:13px">Nothing to report.</div>
+      </div>
+    </div>
+    <div style="display:grid; gap:8px; width: 340px">
+      <b>3. Ask first</b>
+      <span class="note" style="margin:0">Found but not watched until you switch it on in Providers. Right for Cowork or
+      ChatGPT Work later; a step too many for Claude Code now.</span>
+      <div class="window" style="padding: 12px 14px; font-size: 13px; display:grid; gap:6px">
+        <span><b style="font-weight:500">Claude Code</b> <span class="dim">found in ~/.claude</span></span>
+        <span><span class="switch off"></span>Watch Claude Code</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PANEL NAMES ============ -->
+<section>
+  <h2 class="part">Carryover check: the panel's model names</h2>
+  <p class="note">Today's panel gives the name a fixed 60 pt column with one line, so Claude's names would cut off the
+  way "Sol" lost its version. Left: today's layout with Claude rows. Right: the name column sized to the longest name
+  shown (up to 96 pt), with a provider line once two providers are active.</p>
+  <div class="row">
+    <div class="panel" style="--namecol: 60px">
+      <div class="phead"><b>Today</b><span class="sec">60 pt names</span></div>
+      <div class="models">
+        <div class="mrow"><span class="n">6.1 Sol</span><span class="v">11 <small>tok/s</small></span><span class="u">usual 12</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,8 8,7 16,8 24,6 32,7 40,8 48,7 56,7"/></svg></div>
+        <div class="mrow"><span class="n">Opus 5.5</span><span class="v">22 <small>tok/s</small></span><span class="u">usual 24</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,7 16,6 24,7 32,8 40,7 48,7 56,6"/></svg></div>
+        <div class="mrow bad"><span class="n">Sonnet 5.5</span><span class="v">33 <small>tok/s</small></span><span class="u">usual 36</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,6 16,7 24,7 32,6 40,7 48,8 56,7"/></svg></div>
+        <div class="mrow bad"><span class="n">Haiku 4.5</span><span class="v">44 <small>tok/s</small></span><span class="u">usual 48</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,7 16,7 24,6 32,7 40,7 48,7 56,7"/></svg></div>
+      </div>
+    </div>
+    <div class="panel" style="--namecol: 76px">
+      <div class="phead"><b>Proposed</b><span class="sec">fitted names, provider lines</span></div>
+      <div class="models">
+        <div class="pgrp">Codex</div>
+        <div class="mrow"><span class="n">6.1 Sol</span><span class="v">11 <small>tok/s</small></span><span class="u">usual 12</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,8 8,7 16,8 24,6 32,7 40,8 48,7 56,7"/></svg></div>
+        <div class="pgrp">Claude Code</div>
+        <div class="mrow"><span class="n">Opus 5.5</span><span class="v">22 <small>tok/s</small></span><span class="u">usual 24</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,7 16,6 24,7 32,8 40,7 48,7 56,6"/></svg></div>
+        <div class="mrow"><span class="n">Sonnet 5.5</span><span class="v">33 <small>tok/s</small></span><span class="u">usual 36</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,6 16,7 24,7 32,6 40,7 48,8 56,7"/></svg></div>
+        <div class="mrow"><span class="n">Haiku 4.5</span><span class="v">44 <small>tok/s</small></span><span class="u">usual 48</span><svg viewBox="0 0 56 14"><polyline fill="none" stroke="#9AA2AA" stroke-width="1.2" points="0,7 8,7 16,7 24,6 32,7 40,7 48,7 56,7"/></svg></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

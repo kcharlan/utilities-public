@@ -10,6 +10,7 @@ public struct ProviderID: RawRepresentable, Sendable, Hashable, Codable {
     public init(rawValue: String) { self.rawValue = rawValue }
 
     public static let codex = ProviderID(rawValue: "codex")
+    public static let claude = ProviderID(rawValue: "claude")
 
     public init(from decoder: any Decoder) throws {
         rawValue = try decoder.singleValueContainer().decode(String.self)
@@ -18,6 +19,28 @@ public struct ProviderID: RawRepresentable, Sendable, Hashable, Codable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
+    }
+}
+
+public enum CompactionTrigger: String, Sendable, Codable { case auto, manual }
+
+public struct CompactionRecord: Sendable, Equatable, Hashable, Codable {
+    public var provider: ProviderID
+    public var lineID: String
+    public var sessionID: String
+    public var agentID: String?
+    public var at: Date
+    public var trigger: CompactionTrigger
+    public var tokensBefore: Int
+    public var tokensAfter: Int?
+    public var duration: TimeInterval?
+    public var precomputed: Bool
+
+    public init(provider: ProviderID, lineID: String, sessionID: String, agentID: String?, at: Date,
+                trigger: CompactionTrigger, tokensBefore: Int, tokensAfter: Int?, duration: TimeInterval?, precomputed: Bool) {
+        self.provider = provider; self.lineID = lineID; self.sessionID = sessionID; self.agentID = agentID
+        self.at = at; self.trigger = trigger; self.tokensBefore = tokensBefore; self.tokensAfter = tokensAfter
+        self.duration = duration; self.precomputed = precomputed
     }
 }
 

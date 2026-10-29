@@ -2,14 +2,14 @@
 
 ## Purpose
 
-Telltale 0.1.1 is a native macOS menu bar app that watches Codex usage metadata
-and OpenAI service status and tells you when something is off. The design is in
+Telltale 0.2.0 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
 sequence in [`docs/telltale_implementation_plan.md`](docs/telltale_implementation_plan.md).
 
 Current state: the SwiftPM package, the vendored zstd decoder and the streaming `ZstdReader`
-for Codex `.jsonl.zst` rollouts, the store, the Codex and OpenAI status sources, the usual-speed
+for Codex `.jsonl.zst` rollouts, the store, the Codex and Claude Code usage sources and their status sources, the usual-speed
 baseline, the rule engine with its notification policy, the collector run
 (`Telltale --collect`, see "How the collector runs"), the release identifiers and runtime paths,
 and the notification check used for the spec's section 4 spike, the collector's launchd job and
@@ -79,7 +79,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
   snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that six panel PNGs and six dashboard PNGs were written, that the acceptance service tests passed, and
+  27.0), that ten panel PNGs and sixteen dashboard PNGs were written, that the acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
@@ -94,13 +94,13 @@ registry or the notification check, into a separate synthetic renderer in a new 
 directory under the OS temporary directory. It seeds a database per scene from
 `Tests/Acceptance/SyntheticEnvironment.swift`, reads it through the real `LiveStore`, and
 renders the panel offscreen at 340 pt in light and dark appearances: quiet, alerting and the
-lasting-shift prompt (spec section 13's panel states). It also renders the dashboard window at
+lasting-shift prompt (spec section 13's panel states), two providers with colliding Claude names, and the arrival note. It also renders the dashboard window at
 its default width (1100 pt) in both appearances: the model view, as tall as its whole scroll
 content (14 days of speed dots with a fast spell, a slow morning with failed turns under a
-provider incident, workload and events), and the collector view's problem state at 760 pt
+provider incident, workload and events), a Claude model with fast mode, and the collector view's problem state at 760 pt
 (the last run failed), and Settings as tall as its content, with an invalid Rules entry (the
 slower rule's clear band equal to its trigger) and the watched-components checklist with names the
-synthetic status page no longer lists. It registers the bundled fonts first and fails if they don't register.
+synthetic status page no longer lists. Four more Settings scenes show normal, not-set-up, format-problem and backfilling providers in both appearances. It registers the bundled fonts first and fails if they don't register.
 It checks each panel layout's width, whole-point height and painted pixels, prints every PNG path, the executable and the
 directory, followed by the `rm -r` command that removes it. Look at every PNG; the checks
 don't judge the design. A manual run keeps its directory (SwiftPM's lock files included)
@@ -167,18 +167,20 @@ run the installed-release checks under "Native acceptance". The full contract is
 order: take the `collector.lock` overlap guard, close any run a killed process left `running` (as
 `failed`, detail `interrupted`), record the run's start, apply a pending Rebuild or a
 cold start, ingest each usage source from the 30-day lookback, fetch each status source, evaluate
-every missed 5-minute point one day per transaction (points up to `backfillThrough` are backfill and
-never notify), post the live notifications, prune per the retention table and record the run's end.
+each provider and status source independently at every missed 5-minute point, one day per
+transaction, post live notifications, prune per the retention table and record the run's end.
+Each unit keeps its own progress and backfill boundary; historical points never notify. A new
+provider starts backfilling when its source is ready, while other providers continue live.
 The plugins it runs are listed in `Sources/Telltale/Registry.swift`.
 
 It writes only under `~/Library/Application Support/Telltale` (database and lock) and
 `~/Library/Logs/Telltale/collector.log` (rotated at 5 MB, 3 archives kept), and reads `~/.codex`
-(or `CODEX_HOME`) read-only. Its only network requests go to the OpenAI status page.
+(or `CODEX_HOME`), `~/.claude` (or `CLAUDE_CONFIG_DIR`) and, when present, `~/.config/claude` read-only. Its only network requests go to the OpenAI and Claude status pages.
 
 | Exit code | Meaning |
 |---|---|
 | 0 | The run succeeded, or found another run holding the lock and recorded itself as `skipped: previous run still active`. Failed notification posts are logged and counted in the run record's detail but don't fail the run. |
-| 1 | The run failed. The run record holds the first error (when the database could be opened, including a lock failure other than "held") and the log has every step. If any usage source's ingest throws, the run skips evaluation and notification entirely and fails, so the next run evaluates those points with their data; a source that reports a format problem or a missing setup still lets the run evaluate. |
+| 1 | The run failed. The run record holds the first error (when the database could be opened, including a lock failure other than "held") and the log has every step. A throwing ingest skips that provider's evaluation and retries it next run; other providers continue, and a status source is skipped if all its providers' ingests threw. An unavailable provider with prior progress still evaluates; one without progress waits until ready. |
 | 2 | Usage error: an argument Telltale doesn't recognize. The system's own launch arguments (a lone `-psn_…`, or `-NS…`/`-Apple…` flag and value pairs) still open the app. The usage goes to stderr and nothing runs, so a mistyped launchd argument never opens the UI. |
 
 A stored rule setting that fails validation doesn't stop a run: it evaluates with the default
@@ -227,6 +229,9 @@ a model in a slower or faster episode shows its tok/s and sparkline in the lamp 
 the lasting-shift prompt with links to the provider's status-page incidents in its period,
 Accept as usual… and Keep as abnormal, and the collector footer.
 Open dashboard and the gear (Settings) open the dashboard window (see "Dashboard").
+After a newly added provider finishes its first backfill on an existing installation, a
+standing arrival note names the ready models. Open the provider's first model or dismiss the
+note; dismissal persists across relaunches and rebuilds.
 
 The app reads the database read-only (`LiveStore`): it polls every 30 seconds and watches the
 database, its `-wal` file and, while they don't exist yet, the nearest existing parent
@@ -261,7 +266,9 @@ period's incidents, Accept as usual… with its date picker, drift, learning and
 Prompt sizes (the last 3 hours against usual; the 300k+ bar takes the Load lamp's color while
 it is lit) beside Workload (median prompt, responses an
 hour, active sessions, cached input, reasoning and subagent shares, effort mix and the usage
-limit), and Events, newest first, with Undo on each live acceptance (undoing an older one
+limit). Claude's workload also shows provider-wide automatic compactions, blocked time and the
+median point of the last five; a rejected usage limit appears for five hours. Events are newest
+first, with Undo on each live acceptance (undoing an older one
 asks first, since later acceptances are undone too). While the window is closed, store changes
 reread nothing; opening it reads everything again. Readout numbers use Barlow Semi
 Condensed, registered for the process at launch; if it can't be registered, the system font
@@ -276,7 +283,7 @@ read-only. Turn off appears only once the collector's first run has created the 
 the off choice is stored there; before then the view says it can be turned off after its first
 run. A failed read of the database shows as its own line, apart from an action's failure.
 
-Settings (spec section 9.4) has five parts:
+Settings (spec section 9.4) has six parts:
 
 - **Rules**: one row per rule with its switch, its parameters (fractions of usual as percentages,
   durations in minutes, prompt sizes in thousands of tokens), Notify, Notify when it clears and
@@ -284,18 +291,24 @@ Settings (spec section 9.4) has five parts:
   rules pass validation; otherwise it stays in its field, outlined in red, with the validation
   message beneath, and nothing is stored. When the stored rules can't be used, the defaults the
   collector falls back to are shown with a note.
+  Context compactions fires at the configured count of automatic compactions in its time window
+  (by default two in 60 minutes), and clears when that window contains none. Manual compactions
+  do not count; precomputed compactions do.
 - **Collector**: the interval (1-60 minutes) and the on/off switch. While the collector is on, a
   new interval rewrites the plist and reloads the job before it is stored; a launchctl failure or
   a refused executable shows in the same words as the collector view.
+- **Providers**: each usage source's state, version, history and data folder, with a per-provider
+  Rebuild action disabled while its history is being read or a request is pending.
 - **Watched status components**: a checklist of each status page's components, followed by saved
   names the page no longer lists, marked "(not on the status page now)".
-- **Data**: the retention table (not editable) and Rebuild from Codex logs, which asks first, then
+- **Data**: the retention table (not editable) and Rebuild all providers, which asks first, then
   stores the request and kicks the job so the collector applies it.
 - **General**: Open at login and the dashboard appearance (Dark, Light or Match system), applied
   to the window at once.
 
 Every change is stored through the same read-write-existing path as Accept, so until the
 collector's first run creates the database Settings shows the defaults read-only and says so. The
+app also waits for the collector to upgrade an older database before accepting writes. The
 interval, the collector switch, Rebuild and Open at login change launchd or login-item state, so
 only the installed copy offers them; another copy says so.
 
@@ -387,6 +400,7 @@ Run by Kevin on 2026-10-28, macOS 27.0.1 (26A434), on `make acceptance`'s bundle
 | Installed 0.1.0, Rebuild from Codex logs… | Failed: confirming stored no request and started no run, because closing the alert cleared the confirmation flag before the Rebuild task checked it. Fixed in 0.1.1, along with the same pattern in the Undo confirmation |
 | Installed 0.1.0, dashboard sidebar | Failed: `gpt-6.1-sol`, `gpt-6-sol` and `gpt-5.6-sol` were all named "Sol". From 0.1.1, names keep the version ("6.1 Sol") |
 | Installed 0.1.1: interval to 2 minutes, Rebuild, log out and in, Open at login off and on, removal in Login Items | Not yet run |
+| 0.2.0 acceptance bundle and installed release, including arrival note and Claude readouts | Not yet run |
 | Market Atlas complete suites (`Calculation tools/backtest`) | UNMET: not run. Required because this branch changed `tools/check_local_deployments.zsh`, the static audit's child runner. Its data, compiler venv and `node_modules` aren't prepared, and no Market Atlas code changed; Kevin approved proceeding without them on 2026-10-28 |
 
 The panel keeps following the system when Dashboard appearance is Light or Dark; Kevin
@@ -432,31 +446,14 @@ one-executable design (spec §4) stands.
 
 ## Rule replay against real data
 
-On 2026-10-27, the rule engine at commit 4ef61b2 was replayed against Kevin's real Codex
-history, read-only from a scratch package outside the repository. Nothing from that data is
-committed. Responses were ingested from 2026-09-13, and evaluation points ran from
-2026-09-13 through Oct 27 with the default rules. The incident rule was not stepped (no
-network).
+The rule engine can be replayed against private usage history in a private scratch home.
+Keep the source data and results outside the repository; publish only a non-sensitive
+qualitative assessment.
 
-| Spec §12 anomaly | No user actions | Accepting each lasting-shift prompt |
-|---|---|---|
-| Oct 13 slower | missed | caught, 07:50, worst 0.72× |
-| Oct 16–17 faster | caught | caught, worst 1.68× |
-| Oct 22 evening slower | missed | caught, 22:05, red, worst 0.59× |
-| Oct 26 morning slower (4 capacity failures) | missed (failures caught) | caught, 10:25, red, worst 0.58× |
-| Oct 27 slower from about 08:30 | missed | caught, onset 08:15, fired 08:40 |
-
-- **With acceptances:** the run fired 7 slowdown notifications over Oct 20–27, the same as
-  §12, plus 13 other speed episodes (6 slower, 7 faster). These weren't checked against
-  status posts.
-- **Without acceptances:** the model sped up from about Oct 8–14. §8 keeps the earlier usual
-  until Kevin accepts, so later slowdowns read as normal, and about 20 "faster" episodes fire
-  instead.
-- **Thin data:** about half of the daytime 5-minute windows were too thin to judge (fewer
-  than 10 qualifying responses), mostly on low-volume days.
-
-Kevin reviewed these results and kept the defaults unchanged. The lasting-shift prompt and
-Accept are how usual follows a lasting change.
+A read-only replay with both usage sources completed in an isolated home without status
+network requests or notifications. Recorded Claude failures used the supported provider-side
+categories, and compaction episodes met the automatic-compaction trigger. This check does not
+establish whether every historical anomaly was detected or whether the defaults suit future use.
 
 ## Third-party notices
 

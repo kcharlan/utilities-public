@@ -7,6 +7,7 @@ public enum RuleID: String, Sendable, Hashable, Codable, CaseIterable {
     case slower
     case faster
     case largePrompts
+    case compactions
     case failedTurns
     case disconnects
     case incident
@@ -18,6 +19,7 @@ public enum RuleID: String, Sendable, Hashable, Codable, CaseIterable {
         case .slower: "Slower than usual"
         case .faster: "Faster than usual"
         case .largePrompts: "Large prompts"
+        case .compactions: "Context compactions"
         case .failedTurns: "Failed turns"
         case .disconnects: "Disconnects"
         case .incident: "Provider incident"
@@ -26,6 +28,33 @@ public enum RuleID: String, Sendable, Hashable, Codable, CaseIterable {
     }
 
     public static func speed(_ direction: Direction) -> RuleID { direction == .slower ? .slower : .faster }
+
+    public var signal: Signal? {
+        switch self {
+        case .slower, .faster: .speed
+        case .largePrompts, .compactions: .load
+        case .failedTurns: .errors
+        case .disconnects: .link
+        case .incident: .provider
+        case .usageLimit: nil
+        }
+    }
+}
+
+public struct RuleProviderInfo: Sendable {
+    public var name: String
+    public var failureNoun: String
+    public var signals: Set<Signal>
+    public var rules: Set<RuleID>
+    public var naming: any ModelNaming
+
+    public init(name: String, failureNoun: String, signals: Set<Signal>, rules: Set<RuleID>, naming: any ModelNaming) {
+        self.name = name; self.failureNoun = failureNoun; self.signals = signals; self.rules = rules; self.naming = naming
+    }
+
+    public func supports(_ rule: RuleID) -> Bool {
+        rules.contains(rule) && (rule.signal.map { signals.contains($0) } ?? true)
+    }
 }
 
 /// A status source as the incident rule sees it. `providers` are the usage providers whose
@@ -39,6 +68,19 @@ public struct RuleStatusSource: Sendable, Equatable {
         self.id = id
         self.displayName = displayName
         self.providers = providers
+    }
+}
+
+/// One independently progressed provider or status source.
+public enum EvaluationUnit: Sendable, Equatable {
+    case provider(ProviderID)
+    case statusSource(RuleStatusSource, available: Bool)
+
+    public var key: String {
+        switch self {
+        case .provider(let provider): provider.rawValue
+        case .statusSource(let source, _): source.id
+        }
     }
 }
 
@@ -113,12 +155,20 @@ public final class RuleEngine {
     fileprivate let baseline: BaselineEngine
     fileprivate let calendar: Calendar
     fileprivate let naming: [ProviderID: any ModelNaming]
+    fileprivate let providerInfo: [ProviderID: RuleProviderInfo]?
 
     public init(store: Store, baseline: BaselineEngine, calendar: Calendar, naming: [ProviderID: any ModelNaming]) {
         self.store = store
         self.baseline = baseline
         self.calendar = calendar
         self.naming = naming
+        self.providerInfo = nil
+    }
+
+    public init(store: Store, baseline: BaselineEngine, calendar: Calendar, providers: [ProviderID: RuleProviderInfo]) {
+        self.store = store; self.baseline = baseline; self.calendar = calendar
+        self.providerInfo = providers
+        self.naming = providers.mapValues(\.naming)
     }
 
     /// Evaluates `points` after the last evaluated point, oldest first, and returns what
@@ -126,24 +176,22 @@ public final class RuleEngine {
     /// transaction when there is one. A disabled rule isn't evaluated and writes nothing, except
     /// that at the first point evaluated while it is off its open episodes end silently with
     /// `ruleDisabled` and its state is dropped (no event, no outcome). While
-    /// `statusAvailable` is false the incident rule isn't evaluated at all (spec section 10).
+    /// a status unit is unavailable the incident rule isn't evaluated at all (spec section 10).
     @discardableResult
     public func evaluate(
-        points: [Date], providers: [ProviderID], statusSources: [RuleStatusSource], settings: RuleSettings,
-        watchedComponents: [String], statusAvailable: Bool
+        points: [Date], unit: EvaluationUnit, settings: RuleSettings, watchedComponents: [String]
     ) throws -> [RuleOutcome] {
-        let last = try store.lastEvaluatedPoint()
+        let last = try store.lastEvaluatedPoint(unit: unit.key)
         let pending = Set(points).filter { point in last.map { point > $0 } ?? true }.sorted()
         guard let first = pending.first, let final = pending.last else { return [] }
         do {
             return try store.transaction {
                 let pass = try EvaluationPass(
-                    engine: self, settings: settings, first: first, final: final, providers: providers,
-                    statusSources: statusAvailable && settings.incident.enabled ? statusSources : [],
+                    engine: self, settings: settings, first: first, final: final, unit: unit,
                     watchedComponents: Set(watchedComponents))
                 for point in pending { try pass.evaluate(at: point) }
                 try pass.finish()
-                try store.setLastEvaluatedPoint(final)
+                try store.setLastEvaluatedPoint(final, unit: unit.key)
                 return pass.outcomes
             }
         } catch {
@@ -252,8 +300,10 @@ private final class EvaluationPass {
     private let baseline: BaselineEngine
     private let calendar: Calendar
     private let naming: [ProviderID: any ModelNaming]
+    private let providerInfo: [ProviderID: RuleProviderInfo]?
     private let settings: RuleSettings
     private let providers: [ProviderID]
+    private let statusUnavailable: Bool
     /// The first instant preloaded responses cover: a day before the first point, for incident titles.
     private let preloadStart: Date
 
@@ -265,9 +315,11 @@ private final class EvaluationPass {
     private var worstChanged: Set<Int64> = []
     private var points: [EvalPointRow] = []
     private var series: [ProviderID: [(model: String, series: Series)]] = [:]
+    private var displayNames: [ProviderID: [String: String]] = [:]
     private var olderResponses: [String: [ResponseRecord]] = [:]
     private var failures: [ProviderID: [FailedTurnRecord]] = [:]
     private var connections: [ProviderID: [ConnectionEventRecord]] = [:]
+    private var compactionRecords: [ProviderID: [CompactionRecord]] = [:]
     private var connectionGaps: [ProviderID: [DateInterval]] = [:]
     /// Whether open episodes of disabled rules have been ended this pass.
     private var disabledRulesSettled = false
@@ -275,19 +327,34 @@ private final class EvaluationPass {
     private var sources: [SourceIncidents] = []
 
     init(
-        engine: RuleEngine, settings: RuleSettings, first: Date, final: Date, providers: [ProviderID],
-        statusSources: [RuleStatusSource], watchedComponents: Set<String>
+        engine: RuleEngine, settings: RuleSettings, first: Date, final: Date, unit: EvaluationUnit,
+        watchedComponents: Set<String>
     ) throws {
         store = engine.store
         baseline = engine.baseline
         calendar = engine.calendar
         naming = engine.naming
+        providerInfo = engine.providerInfo
         self.settings = settings
+        let providers: [ProviderID]
+        let seriesProviders: [ProviderID]
+        let statusSources: [RuleStatusSource]
+        switch unit {
+        case .provider(let provider):
+            providers = [provider]; seriesProviders = providers; statusSources = []
+            statusUnavailable = false
+        case .statusSource(let source, let available):
+            let admitted = source.providers.filter { engine.providerInfo?[$0]?.supports(.incident) ?? (engine.providerInfo == nil) }
+            let filtered = RuleStatusSource(id: source.id, displayName: source.displayName, providers: admitted)
+            providers = []; seriesProviders = admitted
+            statusSources = available && settings.incident.enabled && !admitted.isEmpty ? [filtered] : []
+            statusUnavailable = !available
+        }
         self.providers = providers
         preloadStart = first.addingTimeInterval(-TimeInterval(RuleEngine.titleLookbackHours * 3_600))
 
         for rule in RuleID.allCases {
-            for row in try store.ruleStates(rule: rule.rawValue) {
+            for row in try store.ruleStates(rule: rule.rawValue, unit: unit.key) {
                 let key = StateKey(rule: rule, provider: row.provider, scope: row.scope)
                 var state: ScopeState
                 do {
@@ -304,12 +371,11 @@ private final class EvaluationPass {
                 storedKeys.insert(key)
             }
         }
-        for episode in try store.openEpisodes() {
+        for episode in try store.openEpisodes(unit: unit.key) {
             if let id = episode.id { openEpisodes[id] = episode }
         }
 
-        let failed = settings.failedTurns.enabled ? try store.unevaluatedFailedTurns(through: final) : []
-        for provider in providers {
+        for provider in seriesProviders {
             let modelRules: Set<RuleID> = [.slower, .faster, .largePrompts]
             let stated = Set(states.keys.filter { $0.provider == provider.rawValue && modelRules.contains($0.rule) }.map(\.scope))
             var list: [(model: String, series: Series)] = []
@@ -318,15 +384,21 @@ private final class EvaluationPass {
                 if !responses.isEmpty || stated.contains(model) { list.append((model, Series(responses))) }
             }
             series[provider] = list
-            failures[provider] = failed.filter { $0.provider == provider }
-            if settings.disconnects.enabled {
+            if providers.contains(provider), settings.failedTurns.enabled {
+                failures[provider] = try store.unevaluatedFailedTurns(provider: provider, through: final)
+            }
+            if providers.contains(provider), settings.disconnects.enabled {
                 let window = TimeInterval(settings.disconnects.windowMinutes * 60)
                 connections[provider] = try store.connectionEvents(provider: provider, in: first.addingTimeInterval(-window)...final)
                     .filter { $0.kind != .reconnect }
                 connectionGaps[provider] = try store.connectionGaps(
                     provider: provider, overlapping: DateInterval(start: first.addingTimeInterval(-window), end: final))
             }
-            if settings.usageLimit.enabled { usage[provider] = try store.usageLimit(provider: provider) }
+            if providers.contains(provider), settings.compactions.enabled {
+                let window = TimeInterval(settings.compactions.windowMinutes * 60)
+                compactionRecords[provider] = try store.compactions(provider: provider, in: first.addingTimeInterval(-window)...final)
+            }
+            if providers.contains(provider), settings.usageLimit.enabled { usage[provider] = try store.usageLimit(provider: provider) }
         }
 
         for source in statusSources {
@@ -342,6 +414,7 @@ private final class EvaluationPass {
     }
 
     func evaluate(at point: Date) throws {
+        if statusUnavailable { return }
         if !disabledRulesSettled {
             try endDisabledRuleEpisodes(at: point)
             disabledRulesSettled = true
@@ -349,11 +422,12 @@ private final class EvaluationPass {
         for provider in providers {
             for (model, series) in series[provider] ?? [] {
                 try speed(provider: provider, model: model, series: series, at: point)
-                try largePrompts(provider: provider, model: model, series: series, at: point)
+                if supports(.largePrompts, provider) { try largePrompts(provider: provider, model: model, series: series, at: point) }
             }
-            try failedTurns(provider: provider, at: point)
-            try disconnects(provider: provider, at: point)
-            try usageLimit(provider: provider, at: point)
+            if supports(.failedTurns, provider) { try failedTurns(provider: provider, at: point) }
+            if supports(.disconnects, provider) { try disconnects(provider: provider, at: point) }
+            if supports(.compactions, provider) { try compactions(provider: provider, at: point) }
+            if supports(.usageLimit, provider) { try usageLimit(provider: provider, at: point) }
         }
         for source in sources { try incidents(source, at: point) }
     }
@@ -400,10 +474,10 @@ private final class EvaluationPass {
     // MARK: Rules
 
     private func speed(provider: ProviderID, model: String, series: Series, at point: Date) throws {
-        let directions = Direction.allCases.filter { speedRule($0).enabled }
+        let directions = Direction.allCases.filter { speedRule($0).enabled && supports(.speed($0), provider) }
         guard !directions.isEmpty else { return }
         let idleSince = point.addingTimeInterval(-TimeInterval(RuleEngine.idleMinutes * 60))
-        let display = displayName(provider: provider, model: model)
+        let display = try displayName(provider: provider, model: model)
         guard series.hasResponse(after: idleSince, through: point, withThroughput: true) else {
             for direction in directions {
                 try step(key(.speed(direction), provider, model), at: point, conditions: .unknown, idle: true, value: nil,
@@ -504,11 +578,13 @@ private final class EvaluationPass {
             ? SpeedConditions(trigger: .false, clear: Tri(quiet), red: .false)
             : SpeedConditions(trigger: .true, clear: .false, red: .true)
         let reasons = batch.map { Copy.failedTurnReason(code: $0.errorCode) }
-        let message = Copy.failedTurns(count: batch.count, reasons: reasons)
+        let message = providerInfo?[provider].map { Copy.failedTurns(source: $0.name, noun: $0.failureNoun, count: batch.count, reasons: reasons) }
+            ?? Copy.failedTurns(count: batch.count, reasons: reasons)
+        let noun = providerInfo?[provider]?.failureNoun ?? "turn"
         let context = StepContext(onset: batch.map(\.startedAt).min(), failures: batch) { transition, _ in
             switch transition {
             case .fired, .escalated: (message, nil)
-            case .cleared: (Copy.failedTurnsCleared(quietMinutes: rule.quietMinutes), nil)
+            case .cleared: ("No failed \(noun)s for \(rule.quietMinutes) minutes.", nil)
             case .idleEnded: ("", nil)
             }
         }
@@ -524,6 +600,25 @@ private final class EvaluationPass {
                     episodeID: episodeID, title: RuleID.failedTurns.title, message: message, catchUpMessage: nil))
             }
         }
+    }
+
+    private func compactions(provider: ProviderID, at point: Date) throws {
+        let rule = settings.compactions
+        guard rule.enabled else { return }
+        let start = point.addingTimeInterval(-TimeInterval(rule.windowMinutes * 60))
+        let counted = (compactionRecords[provider] ?? []).filter { $0.trigger == .auto && $0.at > start && $0.at <= point }
+        let durations = counted.compactMap(\.duration).filter { $0 >= 10 }
+        let blocked = durations.isEmpty ? nil : durations.reduce(0, +)
+        let message = Copy.compactionsFired(count: counted.count, windowMinutes: rule.windowMinutes, blocked: blocked)
+        let conditions = SpeedConditions(trigger: Tri(counted.count >= rule.count), clear: Tri(counted.isEmpty), red: .false)
+        try step(key(.compactions, provider, "*"), at: point, conditions: conditions, idle: false, value: Double(counted.count), worst: .highest,
+                 context: StepContext(onset: counted.first?.at) { transition, _ in
+                     switch transition {
+                     case .fired, .escalated: (message, message)
+                     case .cleared: (Copy.compactionsCleared(windowMinutes: rule.windowMinutes), nil)
+                     case .idleEnded: ("", nil)
+                     }
+                 })
     }
 
     private func disconnects(provider: ProviderID, at point: Date) throws {
@@ -587,7 +682,9 @@ private final class EvaluationPass {
             let watched = started.filter { data.watchedIDs.contains($0.componentID) }
             let isOpenEpisode = states[key]?.machine.isOpen == true
             // A title only matters while the incident could still fire.
-            let relevant = !watched.isEmpty || (open && !isOpenEpisode && titleNamesRecentModel(incident.name, source: source, at: point))
+            let named = open && !isOpenEpisode && titleNamesRecentModel(incident.name, source: source, at: point)
+            let specific = source.providers.contains { naming[$0]?.incidentTitleIsModelSpecific(incident.name) == true }
+            let relevant = (!watched.isEmpty && (isOpenEpisode || !specific || named)) || named
             let active = (watched.isEmpty ? started : watched).filter { $0.end.map { $0 > point } ?? true }
             let rank = active.map { Self.rank($0.status) }.max() ?? 0
             let conditions = SpeedConditions(trigger: Tri(open && relevant), clear: Tri(!open), red: Tri(rank >= 2))
@@ -685,7 +782,14 @@ private final class EvaluationPass {
     /// Appends the outcome and, unless `kind` is nil (an idle end), the event.
     private func record(_ transition: Transition, key: StateKey, at point: Date, episode: EpisodeRow, context: StepContext, kind: String?) throws {
         guard let id = episode.id else { return }
-        let (message, catchUp) = context.messages(transition, episode.onset)
+        let (rawMessage, rawCatchUp) = context.messages(transition, episode.onset)
+        let info = providerInfo?[ProviderID(rawValue: key.provider)]
+        func prefixed(_ text: String) -> String {
+            guard let info, !text.isEmpty, !text.hasPrefix("\(info.name): ") else { return text }
+            return "\(info.name): \(text)"
+        }
+        let message = prefixed(rawMessage)
+        let catchUp = rawCatchUp.map(prefixed)
         if let kind {
             try store.insertEvent(EventRow(
                 at: point, kind: kind, provider: key.provider, scope: key.scope, title: key.rule.title, body: message,
@@ -699,6 +803,11 @@ private final class EvaluationPass {
 
     // MARK: Helpers
 
+    private func supports(_ rule: RuleID, _ provider: ProviderID) -> Bool {
+        guard let providerInfo else { return true }
+        return providerInfo[provider]?.supports(rule) ?? false
+    }
+
     private func key(_ rule: RuleID, _ provider: ProviderID, _ scope: String) -> StateKey {
         StateKey(rule: rule, provider: provider.rawValue, scope: scope)
     }
@@ -709,8 +818,12 @@ private final class EvaluationPass {
 
     private func speedRule(_ direction: Direction) -> SpeedRule { direction == .slower ? settings.slower : settings.faster }
 
-    private func displayName(provider: ProviderID, model: String) -> String {
-        naming[provider]?.displayName(model: model) ?? model
+    private func displayName(provider: ProviderID, model: String) throws -> String {
+        guard let naming = naming[provider] else { return model }
+        if displayNames[provider] == nil {
+            displayNames[provider] = DisplayNames.disambiguated(try store.models(provider: provider), naming: naming)
+        }
+        return displayNames[provider]?[model] ?? naming.displayName(model: model)
     }
 
     /// The model's responses ending before the preloaded range, newest `limit`, oldest first.
@@ -745,7 +858,7 @@ private final class EvaluationPass {
                 windowMinutes: SpeedIndex.windowMinutes, color: rule == .slower ? .amber : .blue)
         case .failedTurns:
             return EpisodeMachine(firePoints: 1, clearPoints: 1, windowMinutes: 0, color: .red)
-        case .largePrompts, .disconnects, .incident, .usageLimit:
+        case .largePrompts, .compactions, .disconnects, .incident, .usageLimit:
             return EpisodeMachine(firePoints: 1, clearPoints: 1, windowMinutes: 0, color: .amber)
         }
     }

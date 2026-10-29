@@ -12,14 +12,20 @@ public struct SourceSummary: Sendable {
     /// The lamps it can feed; the UI shows only these (spec section 5).
     public var signals: Set<Signal>
     public var naming: any ModelNaming
+    public var dataFolder: URL?
+    public var failureNoun: String
+    public var supportedRules: Set<RuleID>
 
-    public init(provider: ProviderID, name: String, statusName: String, statusSourceID: String, signals: Set<Signal>, naming: any ModelNaming) {
+    public init(provider: ProviderID, name: String, statusName: String, statusSourceID: String, signals: Set<Signal>, naming: any ModelNaming, dataFolder: URL? = nil, failureNoun: String = "turn", supportedRules: Set<RuleID> = []) {
         self.provider = provider
         self.name = name
         self.statusName = statusName
         self.statusSourceID = statusSourceID
         self.signals = signals
         self.naming = naming
+        self.dataFolder = dataFolder
+        self.failureNoun = failureNoun
+        self.supportedRules = supportedRules
     }
 }
 
@@ -36,6 +42,12 @@ public struct SourceSummary: Sendable {
 ///   throughput over the last `rateWindow` (plan call: the dashboard's last-hour readout) and usual
 ///   is `mixUsual` over the same responses; the sparkline is the stored evaluation points' median
 ///   tok/s over `activeWindow`, one value per 5-minute point.
+public struct ArrivalNote: Sendable, Equatable {
+    public var provider: ProviderID
+    public var text: String
+    public var firstModel: String?
+}
+
 public struct PanelSnapshot: Sendable, Equatable {
     public struct Alert: Sendable, Equatable, Hashable {
         public var color: LampColor
@@ -51,6 +63,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         /// `provider/model`, unique across sources.
         public var id: String
         public var provider: ProviderID
+        public var providerName: String
         public var model: String
         /// The display name (`ModelNaming.displayName`).
         public var name: String
@@ -66,10 +79,11 @@ public struct PanelSnapshot: Sendable, Equatable {
 
         public init(
             provider: ProviderID, model: String, name: String, tps: Double?, usual: Double?, sparkline: [Double?], note: String?,
-            color: LampColor? = nil
+            color: LampColor? = nil, providerName: String? = nil
         ) {
             self.id = "\(provider.rawValue)/\(model)"
             self.provider = provider
+            self.providerName = providerName ?? provider.rawValue
             self.model = model
             self.name = name
             self.tps = tps
@@ -96,9 +110,11 @@ public struct PanelSnapshot: Sendable, Equatable {
     public var labels: [Signal: String]
     public var alerts: [Alert]
     public var models: [ModelRow]
+    public var arrivals: [ArrivalNote]
     public var shift: ShiftPrompt?
     /// The shift prompt in words (`Copy.shiftPrompt`), with the model's display name.
     public var shiftText: String?
+    public var shiftName: String?
     /// The collector's own lamp (green while running), for the footer's dot.
     public var collector: LampState
     /// The collector-state line.
@@ -106,15 +122,17 @@ public struct PanelSnapshot: Sendable, Equatable {
 
     public init(
         checkedAt: Date?, lamps: [Signal: LampColor?], labels: [Signal: String], alerts: [Alert], models: [ModelRow],
-        shift: ShiftPrompt?, shiftText: String?, collector: LampState, footer: String
+        shift: ShiftPrompt?, shiftText: String?, collector: LampState, footer: String, shiftName: String? = nil, arrivals: [ArrivalNote] = []
     ) {
         self.checkedAt = checkedAt
         self.lamps = lamps
         self.labels = labels
         self.alerts = alerts
         self.models = models
+        self.arrivals = arrivals
         self.shift = shift
         self.shiftText = shiftText
+        self.shiftName = shiftName
         self.collector = collector
         self.footer = footer
     }
@@ -148,13 +166,13 @@ public struct PanelSnapshot: Sendable, Equatable {
             var lamps = Dictionary(uniqueKeysWithValues: admitted.map { ($0, LampColor?.none) })
             let byProvider = Dictionary(sources.map { ($0.provider.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
 
-            var alerts: [(alert: Alert, at: Date)] = []
+            var alerts: [(alert: Alert, at: Date, provider: String, model: String?)] = []
             // Open speed episodes by `provider/model`: the row's numeral and sparkline color.
             var speedColors: [String: LampColor] = [:]
             for episode in try store.openEpisodes() {
                 guard let id = episode.id, let rule = RuleID(rawValue: episode.rule) else { continue }
                 let color = LampColor(rawValue: episode.severity) ?? .amber
-                let signal = signal(for: rule)
+                let signal = rule.signal
                 if rule == .incident {
                     // Incidents belong to a status source; the Provider lamp is admitted by any usage source declaring it.
                     guard admitted.contains(.provider) else { continue }
@@ -169,10 +187,11 @@ public struct PanelSnapshot: Sendable, Equatable {
                 }
                 let latest = try store.latestAlertEvent(episodeID: id)
                 var text = latest?.body ?? rule.title
-                if sources.count > 1, rule != .incident, let source = byProvider[episode.provider] {
+                if rule != .incident, let source = byProvider[episode.provider], !text.hasPrefix("\(source.name): ") {
                     text = "\(source.name): \(text)"
                 }
-                alerts.append((Alert(color: color, text: text), latest?.at ?? episode.firedAt))
+                alerts.append((Alert(color: color, text: text), latest?.at ?? episode.firedAt, episode.provider,
+                               (rule == .slower || rule == .faster) ? episode.scope : nil))
             }
             alerts.sort { ($0.alert.color, $0.at) > ($1.alert.color, $1.at) }
             if health?.lamp == .red { lamps[.collector] = .red }
@@ -180,10 +199,12 @@ public struct PanelSnapshot: Sendable, Equatable {
             var rows: [ModelRow] = []
             var shift: ShiftPrompt?
             var shiftText: String?
+            var shiftName: String?
             for source in sources {
                 let models = try store.models(provider: source.provider)
-                for model in models {
-                    guard try store.hasResponse(provider: source.provider, model: model, after: now.addingTimeInterval(-activeWindow), through: now) else { continue }
+                if let backfill = try store.backfill(unit: source.provider.rawValue), backfill.finishedAt == nil { continue }
+                let active = try models.filter { try store.hasResponse(provider: source.provider, model: $0, after: now.addingTimeInterval(-activeWindow), through: now) }
+                for model in active {
                     var modelRow = try row(store: store, baseline: baseline, source: source, model: model, now: now)
                     modelRow.color = speedColors[modelRow.id]
                     rows.append(modelRow)
@@ -194,35 +215,48 @@ public struct PanelSnapshot: Sendable, Equatable {
                     guard try store.hasResponse(provider: source.provider, model: model, after: shiftSince, through: now) else { continue }
                     if let prompt = try ShiftDetector.prompt(provider: source.provider, model: model, statusSourceID: source.statusSourceID, at: now, store: store, calendar: calendar) {
                         shift = prompt
-                        shiftText = Copy.shiftPrompt(
-                            model: source.naming.displayName(model: model), percent: prompt.typicalPercent, days: prompt.days,
-                            direction: prompt.direction)
                         break
                     }
                 }
             }
 
+            for source in sources {
+                var ids = rows.filter { $0.provider == source.provider }.map(\.model)
+                if let shift, shift.provider == source.provider { ids.append(shift.model) }
+                ids += alerts.filter { $0.provider == source.provider.rawValue }.compactMap(\.model)
+                let names = DisplayNames.disambiguated(ids, naming: source.naming)
+                for index in rows.indices where rows[index].provider == source.provider {
+                    rows[index].name = names[rows[index].model] ?? rows[index].name
+                }
+                if let shift, shift.provider == source.provider {
+                    shiftName = names[shift.model] ?? shift.model
+                    shiftText = Copy.shiftPrompt(model: shiftName!, percent: shift.typicalPercent, days: shift.days, direction: shift.direction)
+                }
+                for index in alerts.indices where alerts[index].provider == source.provider.rawValue {
+                    guard let model = alerts[index].model, let name = names[model] else { continue }
+                    alerts[index].alert.text = DisplayNames.speedText(alerts[index].alert.text, base: source.naming.displayName(model: model), name: name, provider: source.name)
+                }
+            }
+
+            let pending = try store.value(.pendingArrivals)
+            let dismissed = try store.value(.dismissedArrivals)
+            var arrivals: [ArrivalNote] = []
+            for source in sources where pending.contains(source.provider.rawValue) && !dismissed.contains(source.provider.rawValue) {
+                if let backfill = try store.backfill(unit: source.provider.rawValue), backfill.reason == .new && backfill.finishedAt == nil { continue }
+                let models = try store.models(provider: source.provider)
+                let names = DisplayNames.disambiguated(models, naming: source.naming)
+                let ready = try models.filter { if case .cold = try baseline.learning(provider: source.provider, model: $0, at: now) { return false }; return true }
+                arrivals.append(ArrivalNote(provider: source.provider, text: Copy.arrival(name: source.name, days: CollectorRun.lookbackDays, readyModels: ready.map { names[$0] ?? $0 }), firstModel: models.first))
+            }
             let checkedAt = try store.lastSucceededRunFinish()
             return PanelSnapshot(
                 checkedAt: checkedAt, lamps: lamps, labels: labels(admitted, sources: sources), alerts: alerts.map(\.alert),
                 models: rows, shift: shift, shiftText: shiftText, collector: health?.lamp ?? .unlit,
-                footer: try footer(health: health, store: store))
+                footer: try footer(health: health, store: store), shiftName: shiftName, arrivals: arrivals)
         }
     }
 
     // MARK: Parts
-
-    /// The lamp a rule lights; the usage limit has none (spec section 7.4).
-    public static func signal(for rule: RuleID) -> Signal? {
-        switch rule {
-        case .slower, .faster: .speed
-        case .largePrompts: .load
-        case .failedTurns: .errors
-        case .disconnects: .link
-        case .incident: .provider
-        case .usageLimit: nil
-        }
-    }
 
     static func admittedSignals(_ sources: [SourceSummary]) -> Set<Signal> {
         sources.reduce(into: Set<Signal>([.collector])) { $0.formUnion($1.signals) }
@@ -266,7 +300,7 @@ public struct PanelSnapshot: Sendable, Equatable {
         }
         return ModelRow(
             provider: source.provider, model: model, name: source.naming.displayName(model: model),
-            tps: readout.tps, usual: readout.usualTPS, sparkline: sparkline, note: note)
+            tps: readout.tps, usual: readout.usualTPS, sparkline: sparkline, note: note, providerName: source.name)
     }
 
     /// A problem first, then the off or first-run line, else the running line.

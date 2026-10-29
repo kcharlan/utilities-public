@@ -5,7 +5,7 @@ import TelltaleCore
 
 /// One row of spec section 9.4's Rules section: a rule of section 7.4's table.
 enum SettingsRule: String, CaseIterable, Identifiable {
-    case slower, faster, largePrompts, failedTurns, disconnects, incident, collectorHealth, usageLimit
+    case slower, faster, largePrompts, compactions, failedTurns, disconnects, incident, collectorHealth, usageLimit
 
     var id: String { rawValue }
     var title: String { RuleID(rawValue: rawValue)?.title ?? "Collector health" }
@@ -25,6 +25,7 @@ enum SettingsRule: String, CaseIterable, Identifiable {
         case .slower: settings.slower
         case .faster: settings.faster
         case .largePrompts: settings.largePrompts
+        case .compactions: settings.compactions
         case .failedTurns: settings.failedTurns
         case .disconnects: settings.disconnects
         case .incident: settings.incident
@@ -38,6 +39,7 @@ enum SettingsRule: String, CaseIterable, Identifiable {
         case .slower: toggle.set(on, in: &settings.slower)
         case .faster: toggle.set(on, in: &settings.faster)
         case .largePrompts: toggle.set(on, in: &settings.largePrompts)
+        case .compactions: toggle.set(on, in: &settings.compactions)
         case .failedTurns: toggle.set(on, in: &settings.failedTurns)
         case .disconnects: toggle.set(on, in: &settings.disconnects)
         case .incident: toggle.set(on, in: &settings.incident)
@@ -53,6 +55,7 @@ enum SettingsRule: String, CaseIterable, Identifiable {
         case .slower: settings.slower = defaults.slower
         case .faster: settings.faster = defaults.faster
         case .largePrompts: settings.largePrompts = defaults.largePrompts
+        case .compactions: settings.compactions = defaults.compactions
         case .failedTurns: settings.failedTurns = defaults.failedTurns
         case .disconnects: settings.disconnects = defaults.disconnects
         case .incident: settings.incident = defaults.incident
@@ -71,6 +74,7 @@ protocol RuleSwitches {
 
 extension SpeedRule: RuleSwitches {}
 extension LargePromptRule: RuleSwitches {}
+extension CompactionRule: RuleSwitches {}
 extension FailedTurnRule: RuleSwitches {}
 extension DisconnectRule: RuleSwitches {}
 extension BasicRule: RuleSwitches {}
@@ -113,6 +117,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     case largeCount, largeOf, largeTokens, largeClearAtMost
     case failedQuiet, failedCoalesce
     case disconnectCount, disconnectWindow
+    case compactionCount, compactionWindow
     case usagePercent
 
     enum Unit { case percent, minutes, count, thousandTokens }
@@ -126,6 +131,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
         case .largeCount, .largeOf, .largeTokens, .largeClearAtMost: .largePrompts
         case .failedQuiet, .failedCoalesce: .failedTurns
         case .disconnectCount, .disconnectWindow: .disconnects
+        case .compactionCount, .compactionWindow: .compactions
         case .usagePercent: .usageLimit
         }
     }
@@ -133,8 +139,8 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     var unit: Unit {
         switch self {
         case .slowerThreshold, .slowerClearBand, .fasterThreshold, .fasterClearBand, .usagePercent: .percent
-        case .slowerDuration, .slowerClearDuration, .fasterDuration, .fasterClearDuration, .failedQuiet, .failedCoalesce, .disconnectWindow: .minutes
-        case .largeCount, .largeOf, .largeClearAtMost, .disconnectCount: .count
+        case .slowerDuration, .slowerClearDuration, .fasterDuration, .fasterClearDuration, .failedQuiet, .failedCoalesce, .disconnectWindow, .compactionWindow: .minutes
+        case .largeCount, .largeOf, .largeClearAtMost, .disconnectCount, .compactionCount: .count
         case .largeTokens: .thousandTokens
         }
     }
@@ -163,6 +169,8 @@ enum RuleParameter: String, CaseIterable, Identifiable {
         case .failedQuiet: ("Clears after", "min with no failure")
         case .disconnectCount: ("Fires at", "disconnect or retry events in")
         case .disconnectWindow: ("", "min")
+        case .compactionCount: ("Fires at", "automatic compactions in")
+        case .compactionWindow: ("", "min")
         case .usagePercent: ("Fires at", "% of the limit used")
         }
     }
@@ -185,6 +193,8 @@ enum RuleParameter: String, CaseIterable, Identifiable {
         case .failedCoalesce: "Failed turns notice spacing"
         case .disconnectCount: "Disconnects count"
         case .disconnectWindow: "Disconnects window"
+        case .compactionCount: "Context compactions count"
+        case .compactionWindow: "Context compactions window"
         case .usagePercent: "Usage limit percentage"
         }
     }
@@ -208,6 +218,8 @@ enum RuleParameter: String, CaseIterable, Identifiable {
         case .failedCoalesce: String(settings.failedTurns.coalesceMinutes)
         case .disconnectCount: String(settings.disconnects.count)
         case .disconnectWindow: String(settings.disconnects.windowMinutes)
+        case .compactionCount: String(settings.compactions.count)
+        case .compactionWindow: String(settings.compactions.windowMinutes)
         case .usagePercent: Self.number(settings.usageLimit.percent)
         }
     }
@@ -244,6 +256,8 @@ enum RuleParameter: String, CaseIterable, Identifiable {
             case .failedCoalesce: settings.failedTurns.coalesceMinutes = value
             case .disconnectCount: settings.disconnects.count = value
             case .disconnectWindow: settings.disconnects.windowMinutes = value
+            case .compactionCount: settings.compactions.count = value
+            case .compactionWindow: settings.compactions.windowMinutes = value
             default: return false
             }
         }
@@ -265,7 +279,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
 /// (ruling R24); the interval and collector on/off reuse the collector view's `LaunchAgentManager`
 /// path, whose failures show in `LaunchAgentError`'s words.
 @MainActor @Observable final class SettingsModel {
-    enum Section: Hashable { case rules, components, data, general }
+    enum Section: Hashable { case rules, providers, components, data, general }
 
     struct ComponentRow: Equatable, Identifiable {
         var name: String
@@ -295,6 +309,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     @ObservationIgnored let live: LiveStore
     @ObservationIgnored let collector: CollectorViewModel
     @ObservationIgnored let sources: [SourceSummary]
+    @ObservationIgnored let statusSummaries: [StatusSourceSummary]
     let login: LoginItem
     /// The dashboard window applies a newly chosen appearance.
     @ObservationIgnored var appearanceChanged: (Appearance) -> Void = { _ in }
@@ -309,8 +324,10 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     private(set) var parameterErrors: [RuleParameter: [String]] = [:]
     private(set) var intervalDraft: String?
     private(set) var intervalError: String?
-    private(set) var watched = SettingKey.watchedComponents.defaultValue
+    private(set) var watched: [String]
     private(set) var componentGroups: [ComponentGroup] = []
+    private(set) var providers: [ProviderSummary] = []
+    private(set) var pendingProviderRebuild: ProviderSummary?
     private(set) var appearance = SettingKey.appearance.defaultValue
     private(set) var confirmingRebuild = false
     /// A failed save or action, by section.
@@ -318,10 +335,12 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     private(set) var loadError: String?
     @ObservationIgnored private var pages: [String: [String]] = [:]
 
-    init(live: LiveStore, collector: CollectorViewModel, sources: [SourceSummary], login: LoginItem) {
+    init(live: LiveStore, collector: CollectorViewModel, sources: [SourceSummary], statusSummaries: [StatusSourceSummary], login: LoginItem) {
         self.live = live
         self.collector = collector
         self.sources = sources
+        self.statusSummaries = statusSummaries
+        self.watched = Settings.defaultWatchedComponents(statusSummaries)
         self.login = login
     }
 
@@ -329,7 +348,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
     var canManage: Bool { collector.canManage }
     var firstRunNote: String? { databaseReady ? nil : Copy.settingsAfterFirstRun }
     var installedCopyNote: String? { canManage ? nil : Copy.settingsInstalledCopyOnly }
-    var rebuildConfirmation: String { Copy.rebuildConfirmation(days: CollectorRun.lookbackDays) }
+    var rebuildConfirmation: String { Copy.rebuildConfirmation(days: CollectorRun.lookbackDays, providers: sources.map(\.name)) }
     var canRebuild: Bool { canManage && databaseReady }
 
     /// Rereads the stored settings, the status pages' component lists and the login item.
@@ -337,22 +356,25 @@ enum RuleParameter: String, CaseIterable, Identifiable {
         login.refresh()
         do {
             let loaded = try live.read { store, _ in
-                (try store.usableRules(), try store.value(.watchedComponents), try store.value(.appearance),
-                 try statusSources.map { ($0.id, try store.components(source: $0.id).map(\.name)) })
+                (try store.usableRules(), try store.watchedComponents(sources: statusSummaries), try store.value(.appearance),
+                 try statusSources.map { ($0.id, try store.components(source: $0.id).map(\.name)) },
+                 try ProviderSummary.load(store: store, sources: sources))
             }
             databaseReady = loaded != nil
-            if let (usable, watched, appearance, pages) = loaded {
+            if let (usable, watched, appearance, pages, providers) = loaded {
                 rules = usable.rules
                 rulesNote = usable.problems.isEmpty ? nil : Copy.storedRulesUnusable
                 self.watched = watched
                 self.appearance = appearance
                 self.pages = Dictionary(pages, uniquingKeysWith: { first, _ in first })
+                self.providers = providers
             } else {
                 rules = .defaults
                 rulesNote = nil
-                watched = SettingKey.watchedComponents.defaultValue
+                watched = Settings.defaultWatchedComponents(statusSummaries)
                 appearance = SettingKey.appearance.defaultValue
                 pages = [:]
+                providers = []
             }
             loadError = nil
         } catch {
@@ -488,7 +510,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
             list.removeAll { $0 == name }
         }
         do {
-            try actions.set(.watchedComponents, list)
+            try actions.setWatched(list, sources: statusSummaries)
             watched = list
             errors[.components] = nil
         } catch {
@@ -499,8 +521,7 @@ enum RuleParameter: String, CaseIterable, Identifiable {
 
     /// The status sources the usage sources name, once each.
     private var statusSources: [(id: String, name: String)] {
-        var seen: Set<String> = []
-        return sources.compactMap { seen.insert($0.statusSourceID).inserted ? ($0.statusSourceID, $0.statusName) : nil }
+        statusSummaries.map { ($0.id, $0.displayName) }
     }
 
     /// Each page's components in its order; saved names no page lists follow in the first group.
@@ -520,7 +541,30 @@ enum RuleParameter: String, CaseIterable, Identifiable {
 
     // MARK: Data
 
-    /// Rebuild from Codex logs asks first (`Copy.rebuildConfirmation`).
+    func canRebuild(_ provider: ProviderSummary) -> Bool {
+        guard canRebuild else { return false }
+        switch provider.state { case .backfilling, .rebuildRequested: return false; default: return true }
+    }
+
+    func requestRebuild(provider: ProviderID) {
+        guard let row = providers.first(where: { $0.provider == provider }), canRebuild(row) else { return }
+        pendingProviderRebuild = row
+    }
+
+    func cancelProviderRebuild() { pendingProviderRebuild = nil }
+
+    func confirmRebuild(provider: ProviderID) async {
+        guard canRebuild, let row = providers.first(where: { $0.provider == provider }), canRebuild(row) else { return }
+        pendingProviderRebuild = nil
+        do {
+            try actions.requestRebuild(provider: provider)
+            try await actions.checkNow()
+            errors[.providers] = nil
+            load()
+        } catch { errors[.providers] = error.localizedDescription }
+    }
+
+    /// Rebuild all providers asks first (`Copy.rebuildConfirmation`).
     func requestRebuild() {
         guard canRebuild else { return }
         confirmingRebuild = true
@@ -601,6 +645,7 @@ struct SettingsView: View {
             }
             RulesSection(model: model)
             CollectorSettingsSection(model: model)
+            ProvidersSection(model: model)
             ComponentsSection(model: model)
             DataSection(model: model)
             GeneralSection(model: model)
@@ -758,6 +803,51 @@ private struct CollectorSettingsSection: View {
     }
 }
 
+private struct ProvidersSection: View {
+    let model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Providers")
+            ForEach(model.providers) { provider in
+                Separator()
+                HStack(alignment: .top, spacing: 16) {
+                    Text(provider.name).font(.system(size: 13, weight: .medium)).frame(width: 110, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(Copy.providerState(provider.state, name: provider.name, calendar: model.live.calendar))
+                        if let version = provider.sourceVersion, let seen = provider.lastIngestAt {
+                            Text(Copy.providerVersion(name: provider.name, version: version, seen: seen, calendar: model.live.calendar))
+                        }
+                        if let oldest = provider.oldestResponse {
+                            Text(Copy.providerHistory(oldest: oldest, finished: provider.lastBackfillFinished, calendar: model.live.calendar))
+                        }
+                        if let folder = provider.dataFolder {
+                            Text("Data folder \(abbreviate(folder))")
+                        }
+                    }.foregroundStyle(Theme.swiftUI(Theme.dim)).frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Rebuild…") { model.requestRebuild(provider: provider.provider) }
+                        .buttonStyle(DashboardButtonStyle(quiet: true)).disabled(!model.canRebuild(provider))
+                }.padding(.vertical, 8)
+            }
+            Separator()
+            if let error = model.errors[.providers] { AlertLine(color: Theme.red, text: error) }
+        }
+        .alert("Rebuild \(model.pendingProviderRebuild?.name ?? "") history?", isPresented: Binding(get: { model.pendingProviderRebuild != nil }, set: { if !$0 { model.cancelProviderRebuild() } }), presenting: model.pendingProviderRebuild) { provider in
+            Button("Rebuild \(provider.name)") { Task { await model.confirmRebuild(provider: provider.provider) } }
+            Button("Cancel", role: .cancel) { model.cancelProviderRebuild() }
+        } message: { provider in
+            Text(Copy.providerRebuildConfirmation(name: provider.name, others: model.sources.filter { $0.provider != provider.provider }.map(\.name), days: CollectorRun.lookbackDays, cutoff: model.live.calendar.date(byAdding: .day, value: -CollectorRun.lookbackDays, to: model.live.now()) ?? model.live.now().addingTimeInterval(-TimeInterval(CollectorRun.lookbackDays) * 86_400), calendar: model.live.calendar))
+        }
+    }
+
+    private func abbreviate(_ folder: URL) -> String {
+        let path = folder.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home { return "~" }
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
 private struct ComponentsSection: View {
     let model: SettingsModel
 
@@ -799,14 +889,14 @@ private struct DataSection: View {
                     }
                 }
             }
-            Button("Rebuild from Codex logs…") { model.requestRebuild() }
+            Button("Rebuild all providers…") { model.requestRebuild() }
                 .buttonStyle(DashboardButtonStyle(quiet: true))
                 .disabled(!model.canRebuild)
             if let note = model.installedCopyNote { Note(text: note) }
             if let error = model.errors[.data] { AlertLine(color: Theme.red, text: error) }
         }
         .alert(
-            "Rebuild from Codex logs?",
+            "Rebuild all providers?",
             isPresented: Binding(get: { model.confirmingRebuild }, set: { if !$0 { model.cancelRebuild() } })
         ) {
             Button("Rebuild") { Task { await model.confirmRebuild() } }

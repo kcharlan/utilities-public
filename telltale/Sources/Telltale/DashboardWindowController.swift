@@ -77,6 +77,9 @@ extension NSApplication: ActivationPolicyApplying {}
 
     func openDashboard() { show(section: model.selection ?? model.defaultSection()) }
     func openSettings() { show(section: .settings) }
+    func openProvider(_ provider: ProviderID, model: String?) {
+        if let model { show(section: .model(provider, model)) } else { openDashboard() }
+    }
 
     func setAppearance(_ appearance: NSAppearance?) {
         self.appearance = appearance

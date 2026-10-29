@@ -6,7 +6,18 @@
 /// inside `BEGIN IMMEDIATE` after re-checking `user_version`, so a second run would be a bug
 /// that should fail loudly.
 enum Schema {
-    static let currentVersion = 1
+    static let currentVersion = 2
+
+    static let version2: [String] = [
+        """
+        CREATE TABLE compactions (
+            provider TEXT NOT NULL, line_id TEXT NOT NULL, session_id TEXT NOT NULL, agent_id TEXT,
+            at REAL NOT NULL, trigger TEXT NOT NULL, tokens_before INTEGER NOT NULL, tokens_after INTEGER,
+            duration REAL, precomputed INTEGER NOT NULL, PRIMARY KEY (provider, line_id)
+        )
+        """,
+        "CREATE INDEX idx_compactions_provider_at ON compactions (provider, at)",
+    ]
 
     static let version1: [String] = [
         """

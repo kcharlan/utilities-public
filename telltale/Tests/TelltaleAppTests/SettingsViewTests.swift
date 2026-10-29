@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import SQLite3
 import TelltaleCore
 import TelltaleTestSupport
 @testable import Telltale
@@ -11,6 +12,82 @@ import TelltaleTestSupport
 /// Every write goes through `UserActions` into the collector's database (ruling R27); launchctl is
 /// always `FakeCommandRunner`.
 @MainActor @Suite(.serialized) struct SettingsViewTests {
+    @Test func providerTravelsWithTheAlert() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            let settings = world.settings
+            let previous = world.clock.now.addingTimeInterval(-60)
+            try Store.open(world.paths.database, mode: .readWriteExisting).set(.providerRebuildRequests, [ProviderID.claude.rawValue: previous])
+            settings.requestRebuild(provider: .codex)
+            settings.cancelProviderRebuild()
+            await settings.confirmRebuild(provider: .codex)
+            #expect(try stored(world, .providerRebuildRequests)[ProviderID.codex.rawValue] == world.clock.now)
+            #expect(try stored(world, .providerRebuildRequests)[ProviderID.claude.rawValue] == previous)
+            #expect(try stored(world, .rebuildRequestedAt) == nil)
+        }
+    }
+    @Test func rebuildDisabledWhenRequested() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            let store = try Store.open(world.paths.database, mode: .readWriteExisting)
+            try store.set(.providerRebuildRequests, [ProviderID.codex.rawValue: world.clock.now])
+            world.settings.load()
+            let row = try #require(world.settings.providers.first)
+            #expect(!world.settings.canRebuild(row))
+            world.settings.requestRebuild(provider: row.provider)
+            #expect(world.settings.pendingProviderRebuild == nil)
+        }
+    }
+    @Test func rebuildDisabledWhileBackfilling() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            let backfill = ProviderBackfill(reason: .new, startedAt: world.clock.now, through: world.clock.now, finishedAt: nil, announce: false)
+            let json = String(decoding: try encoder.encode(backfill), as: UTF8.self)
+            var db: OpaquePointer?
+            #expect(sqlite3_open(world.paths.database.path, &db) == SQLITE_OK)
+            defer { sqlite3_close(db) }
+            var statement: OpaquePointer?
+            #expect(sqlite3_prepare_v2(db, "INSERT INTO rule_state (rule, provider, scope, json) VALUES ('engine', 'codex', 'backfill', ?)", -1, &statement, nil) == SQLITE_OK)
+            defer { sqlite3_finalize(statement) }
+            #expect(sqlite3_bind_text(statement, 1, json, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK)
+            #expect(sqlite3_step(statement) == SQLITE_DONE)
+            world.settings.load()
+            let row = try #require(world.settings.providers.first)
+            #expect(!world.settings.canRebuild(row))
+            world.settings.requestRebuild(provider: row.provider)
+            #expect(world.settings.pendingProviderRebuild == nil)
+        }
+    }
+    @Test func compactionParametersAreEditable() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            #expect(world.settings.text(.compactionCount) == "2")
+            #expect(world.settings.text(.compactionWindow) == "60")
+            world.settings.edit(.compactionCount, "3")
+            world.settings.edit(.compactionWindow, "30")
+            #expect(try stored(world, .rules).compactions.count == 3)
+            #expect(try stored(world, .rules).compactions.windowMinutes == 30)
+            world.settings.edit(.compactionCount, "0")
+            #expect(world.settings.parameterErrors[.compactionCount] != nil)
+            #expect(try stored(world, .rules).compactions.count == 3)
+        }
+    }
+    @Test func appWriteOnVersion1WaitsForCollector() async throws {
+        try await withAsyncScratchDirectory { directory in
+            let world = try await ready(directory)
+            var db: OpaquePointer?
+            #expect(sqlite3_open(world.paths.database.path, &db) == SQLITE_OK)
+            #expect(sqlite3_exec(db, "DROP TABLE compactions; PRAGMA user_version = 1", nil, nil, nil) == SQLITE_OK)
+            sqlite3_close(db)
+            world.settings.edit(.compactionCount, "3")
+            #expect(world.settings.errors[.rules] == Copy.settingsAfterUpgrade)
+            world.settings.requestRebuild()
+            await world.settings.confirmRebuild()
+            #expect(world.settings.errors[.data] == Copy.settingsAfterUpgrade)
+        }
+    }
     /// A world whose collector has run once, with the dashboard on Settings.
     private func ready(_ directory: URL, canManage: Bool = true) async throws -> DashboardWorld {
         let world = try DashboardWorld(directory, canManage: canManage)
@@ -258,6 +335,7 @@ import TelltaleTestSupport
             settings.setWatched("Example Chat", true)
             settings.setWatched("Responses", false)
             #expect(try stored(world, .watchedComponents) == ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Example Chat"])
+            #expect(try stored(world, .watchedDefaultsApplied) == ["openai", PanelWorld.statusSourceID])
             // Unwatched, a name missing from the page drops out of the list.
             #expect(!(settings.componentGroups.first?.rows ?? []).contains { $0.name == "Responses" })
             #expect(settings.componentGroups.first?.rows.first { $0.name == "Example Chat" }?.watched == true)
@@ -270,7 +348,7 @@ import TelltaleTestSupport
             let settings = world.settings
             settings.requestRebuild()
             #expect(settings.confirmingRebuild)
-            #expect(settings.rebuildConfirmation == Copy.rebuildConfirmation(days: CollectorRun.lookbackDays))
+            #expect(settings.rebuildConfirmation == Copy.rebuildConfirmation(days: CollectorRun.lookbackDays, providers: settings.sources.map(\.name)))
             #expect(try stored(world, .rebuildRequestedAt) == nil)
             #expect(world.runner.calls.isEmpty)
 

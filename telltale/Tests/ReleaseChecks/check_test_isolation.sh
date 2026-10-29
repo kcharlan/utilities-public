@@ -14,6 +14,8 @@ matches=$(rg --no-heading --line-number --no-ignore --glob '*.swift' \
     -e 'homeDirectoryForCurrentUser' \
     -e 'NSHomeDirectory\(' \
     -e '~/\.codex' \
+    -e '~/\.claude' \
+    -e '\.config/claude' \
     -e '~/Library' \
     -e '"/Users/' \
     -e '\bLoginItem\(\s*\)' \

@@ -9,11 +9,17 @@ struct SyntheticNaming: ModelNaming {
     static let names = [Synth.model: ("Example", "1.0"), Synth.otherModel: ("Sample", "2.0")]
 
     func displayName(model: String) -> String { Self.names[model]?.0 ?? model }
+    func incidentTitleIsModelSpecific(_ title: String) -> Bool { title.contains("Sample 2.0") }
 
     func incidentTitle(_ title: String, names model: String) -> Bool {
         guard let (name, version) = Self.names[model] else { return false }
         return title.contains("\(name) \(version)")
     }
+}
+
+private struct DefaultSyntheticNaming: ModelNaming {
+    func displayName(model: String) -> String { model }
+    func incidentTitle(_ title: String, names model: String) -> Bool { false }
 }
 
 /// A temporary store with a rule engine on the America/New_York calendar, a synthetic status
@@ -45,10 +51,12 @@ final class RuleHarness {
     /// Evaluates every point after the last evaluated one (or from `from`) through `through`.
     @discardableResult
     func evaluate(from: Date? = nil, through: Date, statusAvailable: Bool = true) throws -> [RuleOutcome] {
-        let points = EvaluationPoints.after(try store.lastEvaluatedPoint(), through: through, earliest: from ?? sep4(9))
-        return try engine.evaluate(
-            points: points, providers: [.codex], statusSources: [Self.source], settings: settings,
-            watchedComponents: watched, statusAvailable: statusAvailable)
+        var outcomes: [RuleOutcome] = []
+        for unit in [EvaluationUnit.provider(.codex), .statusSource(Self.source, available: statusAvailable)] {
+            let points = EvaluationPoints.after(try store.lastEvaluatedPoint(unit: unit.key), through: through, earliest: from ?? sep4(9))
+            outcomes += try engine.evaluate(points: points, unit: unit, settings: settings, watchedComponents: watched)
+        }
+        return outcomes.sorted { $0.at < $1.at }
     }
 
     /// Sep 1–3: 20 responses a day at 40 tok/s from 09:00, so speed rules can judge Sep 4 (three
@@ -114,6 +122,123 @@ extension RuleOutcome {
 }
 
 @Suite struct RuleEngineTests {
+    @Test func defaultNamingLeavesIncidentsUnchanged() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(incidents: [h.incident(name: "Synthetic Sample 2.0 issue", published: h.sep4(9), impacts: [ComponentImpact(componentID: "comp_cli", status: "partial_outage", start: h.sep4(9))])])
+            let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, naming: [.codex: DefaultSyntheticNaming()])
+            try engine.evaluate(points: [h.sep4(9)], unit: .statusSource(RuleHarness.source, available: true), settings: h.settings, watchedComponents: h.watched)
+            #expect(try h.episodes(.incident).count == 1)
+        }
+    }
+    @Test func watchedComponentSkipsAnotherModelsIncident() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(incidents: [h.incident(name: "Synthetic Sample 2.0 issue", published: h.sep4(9),
+                impacts: [ComponentImpact(componentID: "comp_cli", status: "partial_outage", start: h.sep4(9))])])
+            try h.evaluate(through: h.sep4(9, 5))
+            #expect(try h.episodes(.incident).isEmpty)
+        }
+    }
+    @Test func watchedComponentFiresOnceTheNamedModelIsUsed() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(incidents: [h.incident(name: "Synthetic Sample 2.0 issue", published: h.sep4(9), impacts: [ComponentImpact(componentID: "comp_cli", status: "partial_outage", start: h.sep4(9))])])
+            try h.evaluate(through: h.sep4(9, 5))
+            #expect(try h.episodes(.incident).isEmpty)
+            try h.store.upsert(responses: [h.base.synth.response(model: Synth.otherModel, throughput: 40, end: h.sep4(9, 6))])
+            try h.evaluate(through: h.sep4(9, 10))
+            #expect(try h.episodes(.incident).count == 1)
+        }
+    }
+    @Test func openIncidentEpisodeSurvivesUseRollingOff() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(responses: [h.base.synth.response(model: Synth.otherModel, throughput: 40, end: h.at(9, 3, 9, 1))])
+            try h.store.upsert(incidents: [h.incident(name: "Synthetic Sample 2.0 issue", published: h.sep4(9), impacts: [ComponentImpact(componentID: "comp_cli", status: "partial_outage", start: h.sep4(9))])])
+            try h.evaluate(through: h.sep4(9))
+            try h.evaluate(through: h.sep4(9, 10))
+            #expect(try h.store.openEpisodes().filter { $0.rule == RuleID.incident.rawValue }.count == 1)
+        }
+    }
+    @Test func modelFreeTitleStillFiresOnWatchedComponent() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(incidents: [h.incident(name: "Synthetic service issue", published: h.sep4(9), impacts: [ComponentImpact(componentID: "comp_cli", status: "partial_outage", start: h.sep4(9))])])
+            try h.evaluate(through: h.sep4(9))
+            #expect(try h.episodes(.incident).count == 1)
+        }
+    }
+    @Test func providerNamedBodies() throws {
+        try withRules { h in
+            let info = RuleProviderInfo(name: "Synthetic Provider", failureNoun: "request", signals: [.errors], rules: [.failedTurns], naming: SyntheticNaming())
+            let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
+            let outcomes = try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
+            #expect(outcomes.first?.message == "Synthetic Provider: 1 request failed: model at capacity")
+            #expect(try h.events().first?[4] == "Synthetic Provider: 1 request failed: model at capacity")
+        }
+    }
+    @Test func unsupportedRuleNeitherFiresNorNotifies() throws {
+        try withRules { h in
+            let info = RuleProviderInfo(name: "Codex", failureNoun: "turn", signals: [.errors], rules: [], naming: SyntheticNaming())
+            let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
+            let outcomes = try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
+            #expect(outcomes.isEmpty)
+            #expect(try h.episodes(.failedTurns).isEmpty)
+        }
+    }
+
+    @Test func undeclaredSignalsRuleNeitherFiresNorNotifies() throws {
+        try withRules { h in
+            let info = RuleProviderInfo(name: "Codex", failureNoun: "turn", signals: [], rules: [.failedTurns], naming: SyntheticNaming())
+            let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
+            try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
+            let outcomes = try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
+            #expect(outcomes.isEmpty)
+            #expect(try h.episodes(.failedTurns).isEmpty)
+        }
+    }
+    @Test func evaluationOnlyTouchesItsUnit() throws {
+        try withRules { h in
+            let other = ProviderID(rawValue: "synthetic-other")
+            let at = h.sep4(9)
+            let id = try h.store.insertEpisode(EpisodeRow(rule: RuleID.failedTurns.rawValue, provider: other.rawValue,
+                scope: "*", direction: nil, onset: at, firedAt: at, severity: "red", worstValue: 1))
+            h.settings.failedTurns.enabled = false
+            try h.engine.evaluate(points: [at], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
+            #expect(try h.store.openEpisodes().contains { $0.id == id })
+            #expect(try h.store.lastEvaluatedPoint(unit: other.rawValue) == nil)
+        }
+    }
+
+    @Test func unavailableStatusAdvancesWithoutChangingIncidents() throws {
+        try withRules { h in
+            let at = h.sep4(9)
+            let id = try h.store.insertEpisode(EpisodeRow(rule: RuleID.incident.rawValue, provider: RuleHarness.sourceID,
+                scope: "synthetic-incident", direction: nil, onset: at, firedAt: at, severity: "amber", worstValue: 1))
+            h.settings.incident.enabled = false
+            try h.engine.evaluate(points: [at], unit: .statusSource(RuleHarness.source, available: false),
+                settings: h.settings, watchedComponents: [])
+            #expect(try h.store.openEpisodes().contains { $0.id == id })
+            #expect(try h.store.lastEvaluatedPoint(unit: RuleHarness.sourceID) == at)
+        }
+    }
+
+    @Test func sharedStatusSourceEvaluatesIncidentsOnce() throws {
+        try withRules { h in
+            try h.seedComponents()
+            try h.store.upsert(incidents: [h.incident(published: h.sep4(9),
+                impacts: [ComponentImpact(componentID: "comp_cli", status: "degraded_performance", start: h.sep4(9))])])
+            let source = RuleStatusSource(id: RuleHarness.sourceID, displayName: "Example Status",
+                providers: [.codex, ProviderID(rawValue: "synthetic-other")])
+            let outcomes = try h.engine.evaluate(points: [h.sep4(9), h.sep4(9, 5)], unit: .statusSource(source, available: true),
+                settings: h.settings, watchedComponents: h.watched)
+            #expect(outcomes.count == 1)
+            #expect(try h.episodes(.incident).count == 1)
+        }
+    }
     // MARK: Speed
 
     @Test func slowerFiresAndStoresPointsWithUsual() throws {
@@ -320,6 +445,47 @@ extension RuleOutcome {
             #expect(outcomes.map(\.at) == [h.sep4(9, 35)])
             #expect(outcomes.first?.failures.count == 1)
             #expect(try h.evaluate(through: h.sep4(9, 40)).isEmpty)
+        }
+    }
+
+    @Test func compactionsFireAtTwoAutomaticInTheWindow() throws {
+        try withRules { h in
+            func record(_ id: String, _ at: Date, _ trigger: CompactionTrigger, _ precomputed: Bool = false) -> CompactionRecord {
+                CompactionRecord(provider: .codex, lineID: id, sessionID: "synthetic", agentID: nil, at: at,
+                    trigger: trigger, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: precomputed)
+            }
+            try h.store.upsert(compactions: [record("a", h.sep4(9, 1), .auto), record("b", h.sep4(9, 6), .auto, true), record("c", h.sep4(9, 7), .manual)])
+            let outcomes = try h.evaluate(through: h.sep4(10, 10)).filter { $0.rule == .compactions }
+            #expect(outcomes.map(\.at) == [h.sep4(9, 10), h.sep4(10, 10)])
+            #expect(outcomes.first?.transition == .fired(onset: h.sep4(9, 1), severity: .amber))
+            #expect(outcomes.last?.transition == .cleared)
+            #expect(try h.episodes(.compactions).first?.worstValue == 2)
+        }
+    }
+
+    @Test func compactionsNeedTheRuleAndTheSignal() throws {
+        for (signals, rules): (Set<Signal>, Set<RuleID>) in [([], [.compactions]), ([.load], [])] {
+            try withRules { h in
+                let info = RuleProviderInfo(name: "Synthetic", failureNoun: "turn", signals: signals, rules: rules, naming: SyntheticNaming())
+                let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
+                try h.store.upsert(compactions: ["a", "b"].map {
+                    CompactionRecord(provider: .codex, lineID: $0, sessionID: "synthetic", agentID: nil, at: h.sep4(9),
+                        trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+                })
+                #expect(try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: []).isEmpty)
+            }
+        }
+    }
+
+    @Test func compactionsOnlySumLongAutomaticBlocks() throws {
+        try withRules { h in
+            let records: [(String, CompactionTrigger, Double)] = [("a", .auto, 210), ("b", .auto, 10), ("c", .auto, 9), ("d", .manual, 100)]
+            try h.store.upsert(compactions: records.map { id, trigger, duration in
+                CompactionRecord(provider: .codex, lineID: id, sessionID: "synthetic", agentID: nil, at: h.sep4(9),
+                    trigger: trigger, tokensBefore: 100, tokensAfter: nil, duration: duration, precomputed: false)
+            })
+            let outcome = try h.evaluate(through: h.sep4(9)).first { $0.rule == .compactions }
+            #expect(outcome?.message == "3 automatic compactions in the last 60 minutes. Fresh sessions or subagents would keep more context. They held sessions for 3 min 40 s.")
         }
     }
 
@@ -638,13 +804,13 @@ extension RuleOutcome {
                 if split {
                     for minute in stride(from: 0, through: 120, by: 15) {
                         let engine = RuleEngine(store: h.store, baseline: BaselineEngine(store: h.store, calendar: h.calendar), calendar: h.calendar, naming: [:])
-                        let points = EvaluationPoints.after(try h.store.lastEvaluatedPoint(), through: h.sep4(9).addingTimeInterval(Double(minute) * 60), earliest: h.sep4(9))
-                        try engine.evaluate(points: points, providers: [.codex], statusSources: [], settings: h.settings, watchedComponents: [], statusAvailable: true)
+                        let points = EvaluationPoints.after(try h.store.lastEvaluatedPoint(unit: "codex"), through: h.sep4(9).addingTimeInterval(Double(minute) * 60), earliest: h.sep4(9))
+                        try engine.evaluate(points: points, unit: .provider(.codex), settings: h.settings, watchedComponents: [])
                     }
                 } else {
                     try h.evaluate(through: h.sep4(11))
                 }
-                #expect(try h.store.lastEvaluatedPoint() == h.sep4(11))
+                #expect(try h.store.lastEvaluatedPoint(unit: "codex") == h.sep4(11))
                 results.append(try RawSQLite.rows(h.url, "SELECT rule, onset_at, fired_at, IFNULL(ended_at, 'open'), IFNULL(end_reason, '-'), severity, worst_value FROM episodes ORDER BY id").map { $0.joined(separator: " ") })
             }
         }

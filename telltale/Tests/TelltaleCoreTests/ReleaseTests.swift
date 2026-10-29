@@ -8,7 +8,7 @@ import TelltaleTestSupport
     /// the spec are three separately maintained statements of one contract.
     @Test func infoPlistMatchesRelease() throws {
         let plist = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "Resources/Info.plist"))
-        #expect(TelltaleRelease.version == "0.1.1")
+        #expect(TelltaleRelease.version == "0.2.0")
         #expect(TelltaleRelease.displayName == "Telltale")
         #expect(TelltaleRelease.bundleIdentifier == "local.utilities.telltale")
         #expect(TelltaleRelease.collectorLabel == "local.utilities.telltale.collector")
@@ -56,5 +56,14 @@ import TelltaleTestSupport
         #expect(empty == unset)
         #expect(unset.codexHome.lastPathComponent == ".codex")
         #expect(unset.codexHome.deletingLastPathComponent().path == unset.launchAgents.deletingLastPathComponent().deletingLastPathComponent().path)
+    }
+    @Test func claudeConfigDirOverrides() {
+        let home = URL(fileURLWithPath: "/tmp/telltale-synthetic-home", isDirectory: true)
+        let paths = TelltalePaths(home: home)
+        #expect(paths.claudeHome.path == "/tmp/telltale-synthetic-home/.claude")
+        #expect(paths.claudeConfigRoot.path == "/tmp/telltale-synthetic-home/" + ".config" + "/claude")
+        let live = TelltalePaths.live(environment: ["CLAUDE_CONFIG_DIR": "/tmp/synthetic-claude"])
+        #expect(live.claudeHome.path == "/tmp/synthetic-claude")
+        #expect(TelltalePaths.live(environment: ["CLAUDE_CONFIG_DIR": ""]).claudeHome == TelltalePaths.live(environment: [:]).claudeHome)
     }
 }

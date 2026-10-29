@@ -25,8 +25,8 @@ import TelltaleCore
 
     @ObservationIgnored private let paths: TelltalePaths
     @ObservationIgnored private let sources: [SourceSummary]
-    @ObservationIgnored private let calendar: Calendar
-    @ObservationIgnored private let now: @MainActor () -> Date
+    @ObservationIgnored let calendar: Calendar
+    @ObservationIgnored let now: @MainActor () -> Date
     @ObservationIgnored private let assessHealth: @MainActor () async -> CollectorHealthReport?
     @ObservationIgnored private let pollInterval: Duration
     @ObservationIgnored private let watchFiles: Bool
@@ -133,8 +133,16 @@ import TelltaleCore
     }
 
     /// A model's display name from its source's naming.
+    func providerName(_ provider: ProviderID) -> String { sources.first { $0.provider == provider }?.name ?? provider.rawValue }
+
     func displayName(provider: ProviderID, model: String) -> String {
         sources.first { $0.provider == provider }?.naming.displayName(model: model) ?? model
+    }
+
+    func disambiguatedName(provider: ProviderID, model: String) -> String {
+        guard let naming = sources.first(where: { $0.provider == provider })?.naming else { return model }
+        let ids = (try? read { store, _ in try ModelDetail.models(store: store, provider: provider) }) ?? []
+        return DisplayNames.disambiguated(ids + [model], naming: naming)[model] ?? naming.displayName(model: model)
     }
 
     // MARK: Watching

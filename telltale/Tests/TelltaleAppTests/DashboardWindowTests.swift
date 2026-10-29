@@ -10,6 +10,16 @@ import TelltaleTestSupport
 @testable import Telltale
 
 @MainActor @Suite struct DashboardWindowTests {
+    @Test func openProviderSelectsItsFirstModel() throws {
+        try withScratchDirectory { directory in
+            let world = try DashboardWorld(directory)
+            try PanelWorld.seed(world.paths)
+            world.live.reload()
+            let dashboard = world.controller(activation: ActivationRecorder(), presented: { _ in })
+            dashboard.openProvider(.codex, model: Synth.model)
+            #expect(world.model.selection == .model(.codex, Synth.model))
+        }
+    }
     @Test func showSetsRegularPolicyAndCloseRestoresAccessory() throws {
         try withScratchDirectory { directory in
             let world = try DashboardWorld(directory)

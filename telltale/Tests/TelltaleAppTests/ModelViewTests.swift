@@ -85,7 +85,7 @@ import TelltaleTestSupport
             let store = try Store.open(world.paths.database, mode: .readOnly)
             let feed = try EventFeed.load(store: store, limit: 10, naming: { _, model in model == Synth.model ? "Example" : model }, calendar: Synth.newYork)
             let accepted = try #require(feed.first { $0.kind == .baselineAccepted })
-            #expect(confirmation.text == accepted.body)
+            #expect("Codex: " + confirmation.text == accepted.body)
             #expect(confirmation.text.hasPrefix("Example's usual speed is now ") && confirmation.text.hasSuffix(" than before."))
             #expect(confirmation.epochID == accepted.undoableEpochID)
             // The dashboard's own event list shows the acceptance with Undo.
@@ -188,5 +188,33 @@ import TelltaleTestSupport
             host.layoutSubtreeIfNeeded()
             #expect(host.fittingSize.width == 1100)
         }
+    }
+}
+
+@Test func providerSpecificModelCopy() {
+    #expect(ModelCopy.effort(nil, provider: .claude) == "not recorded")
+    #expect(ModelCopy.effort(nil, provider: .codex) == "default")
+    #expect(ModelCopy.failureLegend(noun: "request") == "Failed request")
+    #expect(ModelCopy.usual(fastMode: true).contains("service tier or fast mode"))
+    #expect(!ModelCopy.usual(fastMode: false).contains("fast mode"))
+}
+
+private struct AppCollisionNaming: ModelNaming {
+    func displayName(model: String) -> String { "Example" }
+    func incidentTitle(_ title: String, names model: String) -> Bool { false }
+}
+
+@MainActor @Test func acceptanceConfirmationDisambiguatesModels() throws {
+    try withScratchDirectory { directory in
+        let paths = PanelWorld.paths(directory)
+        let store = try PanelWorld.seed(paths)
+        var synth = Synth(firstNumber: 1000)
+        try store.upsert(responses: synth.responses(2, model: Synth.otherModel, throughput: 40, from: PanelWorld.now.addingTimeInterval(-120)))
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: "synthetic", signals: [.speed], naming: AppCollisionNaming())
+        let live = LiveStore(paths: paths, sources: [source], calendar: Synth.newYork, now: { PanelWorld.now }, watchFiles: false)
+        let actions = UserActions(paths: paths, calendar: Synth.newYork, now: { PanelWorld.now }, kickstart: {})
+        let panel = PanelModel(store: live, actions: actions, notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
+        panel.accept(provider: .codex, model: Synth.model, since: PanelWorld.now)
+        #expect(panel.confirmation?.text.contains("Example (1.0)") == true)
     }
 }

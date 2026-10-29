@@ -31,12 +31,14 @@ public enum StoreError: Error, Equatable, Sendable, LocalizedError {
 /// opens `.readOnly` and writes only settings and user actions through a short-lived
 /// `.readWriteExisting` connection, so it never creates the database (ruling R27).
 public final class Store {
+    public static var currentSchemaVersion: Int { Schema.currentVersion }
     /// `.readWriteExisting` is the app's writer (ruling R27): it opens only a database the collector
     /// already created and migrated, and throws `notInitialized` instead of creating or migrating one.
     public enum Mode: Sendable { case readOnly, readWrite, readWriteExisting }
     var writes: Bool { mode != .readOnly }
 
     public let mode: Mode
+    public var schemaVersion: Int { (try? userVersion()) ?? 0 }
     let db: OpaquePointer
     private var inTransaction = false
 
@@ -48,7 +50,7 @@ public final class Store {
     deinit { sqlite3_close_v2(db) }
 
     /// Opens the database. `.readWrite` creates the directory and file, turns on WAL and foreign
-    /// keys, and migrates to `user_version` 1 inside `BEGIN IMMEDIATE`, so concurrent first
+    /// keys, and migrates to the current `user_version` inside `BEGIN IMMEDIATE`, so concurrent first
     /// opens are safe. `.readOnly` never migrates and throws `notInitialized` when
     /// `user_version` is 0.
     public static func open(_ url: URL, mode: Mode, busyTimeout: Duration = .seconds(5)) throws -> Store {
@@ -168,8 +170,8 @@ public final class Store {
             // Re-check under the write lock: another first open may have migrated meanwhile.
             let version = try userVersion()
             if version > Schema.currentVersion { throw StoreError.unsupportedSchemaVersion(version) }
-            guard version == 0 else { return }
-            for statement in Schema.version1 { try exec(statement) }
+            if version < 1 { for statement in Schema.version1 { try exec(statement) } }
+            if version < 2 { for statement in Schema.version2 { try exec(statement) } }
             try exec("PRAGMA user_version = \(Schema.currentVersion)")
         }
     }

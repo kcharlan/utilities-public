@@ -51,6 +51,7 @@ public struct CodexUsageSource: UsageSource {
     }
 
     public var provider: ProviderID { .codex }
+    public var dataFolder: URL { codexHome }
     public var displayName: String { "Codex" }
     public var statusSourceID: String { "openai" }
     public var signals: Set<Signal> { [.speed, .errors, .link, .provider, .load] }

@@ -25,6 +25,7 @@ import UserNotifications
     private let service: any NotificationService
     private let calendar: Calendar
     private let now: @MainActor () -> Date
+    private let sourceNames: [String: String]
     /// The previous check found the notify condition: one more makes an episode.
     private var unconfirmed = false
     /// A notice change made while the database doesn't exist yet (ruling R27: the app never creates
@@ -40,7 +41,7 @@ import UserNotifications
 
     init(
         paths: TelltalePaths, manager: LaunchAgentManager, currentExecutable: URL, service: any NotificationService,
-        calendar: Calendar = .current, now: @escaping @MainActor () -> Date = Date.init
+        calendar: Calendar = .current, now: @escaping @MainActor () -> Date = Date.init, sourceNames: [String: String] = [:]
     ) {
         self.paths = paths
         self.manager = manager
@@ -48,6 +49,7 @@ import UserNotifications
         self.service = service
         self.calendar = calendar
         self.now = now
+        self.sourceNames = sourceNames
     }
 
     /// Checks now and then every `checkInterval` until `stop()`.
@@ -102,7 +104,8 @@ import UserNotifications
         let at = now()
         let report = CollectorHealth.evaluate(
             enabled: inputs.enabled, installedExecutable: installed, installedAt: installedAt, currentExecutable: currentExecutable, loaded: loaded,
-            runs: inputs.runs, intervalMinutes: inputs.intervalMinutes, sourceStates: inputs.sourceStates, now: at, calendar: calendar)
+            runs: inputs.runs, intervalMinutes: inputs.intervalMinutes, sourceStates: inputs.sourceStates, now: at, calendar: calendar,
+            sourceNames: sourceNames)
         lastReport = report
         lastError = nil
         return (report, inputs, at)

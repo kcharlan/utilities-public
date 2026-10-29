@@ -4,28 +4,39 @@ import Foundation
 public protocol ModelNaming: Sendable {
     func displayName(model: String) -> String
     func incidentTitle(_ title: String, names model: String) -> Bool
+    func incidentTitleIsModelSpecific(_ title: String) -> Bool
+}
+
+extension ModelNaming {
+    public func incidentTitleIsModelSpecific(_ title: String) -> Bool { false }
 }
 
 /// What one ingest run found.
 public struct IngestBatch: Sendable {
     public var responses: [ResponseRecord]
+    public var compactions: [CompactionRecord]
     public var failedTurns: [FailedTurnRecord]
     public var connectionEvents: [ConnectionEventRecord]
     public var connectionGaps: [DateInterval]
     public var usageLimit: UsageLimitSnapshot?
     public var sourceVersion: String?
+    public var excludedServerToolResponses: Int
+    public var excludedClientErrors = 0
+    public var invalidCompactions = 0
 
     public init(
-        responses: [ResponseRecord] = [], failedTurns: [FailedTurnRecord] = [],
+        responses: [ResponseRecord] = [], compactions: [CompactionRecord] = [], failedTurns: [FailedTurnRecord] = [],
         connectionEvents: [ConnectionEventRecord] = [], connectionGaps: [DateInterval] = [],
-        usageLimit: UsageLimitSnapshot? = nil, sourceVersion: String? = nil
+        usageLimit: UsageLimitSnapshot? = nil, sourceVersion: String? = nil, excludedServerToolResponses: Int = 0
     ) {
         self.responses = responses
+        self.compactions = compactions
         self.failedTurns = failedTurns
         self.connectionEvents = connectionEvents
         self.connectionGaps = connectionGaps
         self.usageLimit = usageLimit
         self.sourceVersion = sourceVersion
+        self.excludedServerToolResponses = excludedServerToolResponses
     }
 }
 
@@ -44,11 +55,19 @@ public struct IngestResult: Sendable {
 /// A provider whose usage the collector reads (spec section 5).
 public protocol UsageSource: ModelNaming {
     var provider: ProviderID { get }
+    var dataFolder: URL { get }
     var displayName: String { get }
     var statusSourceID: String { get }
     var signals: Set<Signal> { get }
+    var failureNoun: String { get }
+    var supportedRules: Set<RuleID> { get }
     /// Problems go in the result's `state`, not out as thrown errors.
     func ingest(cursor: Data?, backfillFrom: Date, now: Date) -> IngestResult
+}
+
+extension UsageSource {
+    public var failureNoun: String { "turn" }
+    public var supportedRules: Set<RuleID> { Set(RuleID.allCases).subtracting([.compactions]) }
 }
 
 public enum StatusFetch: Sendable {
@@ -60,5 +79,10 @@ public enum StatusFetch: Sendable {
 public protocol StatusSource: Sendable {
     var id: String { get }
     var displayName: String { get }
+    var defaultWatchedComponents: [String] { get }
     func fetch(known: [IncidentRecord]) async throws -> StatusFetch
+}
+
+extension StatusSource {
+    public var defaultWatchedComponents: [String] { [] }
 }

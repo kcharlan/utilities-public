@@ -1,5 +1,16 @@
 import Foundation
-import TelltaleCore
+
+public enum RSSFeed {
+    public static func items(_ data: Data) throws -> [RSSItem] {
+        let reader = RSSReader()
+        let parser = XMLParser(data: data)
+        parser.delegate = reader
+        parser.shouldResolveExternalEntities = false
+        guard parser.parse(), reader.sawRSSRoot else { throw StatusError.unexpectedPayload("not an RSS feed") }
+        return reader.items
+    }
+}
+
 
 /// Reads RSS 2.0 `item` elements (title, link, pubDate) and notes whether the root was `rss`,
 /// so an HTML page that happens to be well-formed XML isn't taken for an empty feed.

@@ -8,10 +8,13 @@ import TelltaleTestSupport
 /// A usage source that hands out the responses added to it, each once: those ending after the
 /// previous run's `now` (its cursor) and at or before this run's. Its other output is set per test.
 final class FakeUsageSource: UsageSource, @unchecked Sendable {
+    var dataFolder: URL { URL(fileURLWithPath: "/tmp/telltale-synthetic") }
     let provider: ProviderID
     let displayName: String
     let statusSourceID: String
     let signals: Set<Signal> = [.speed, .errors, .link, .provider, .load]
+    let failureNoun: String
+    let supportedRules: Set<RuleID>
     private let naming = SyntheticNaming()
     private let lock = NSLock()
     private var pending: [ResponseRecord] = []
@@ -20,10 +23,13 @@ final class FakeUsageSource: UsageSource, @unchecked Sendable {
     private var onIngest: (@Sendable () -> Void)?
     private var calls: [(cursor: Data?, backfillFrom: Date, now: Date)] = []
 
-    init(provider: ProviderID = .codex, displayName: String = "Example", statusSourceID: String = RuleHarness.sourceID) {
+    init(provider: ProviderID = .codex, displayName: String = "Example", statusSourceID: String = RuleHarness.sourceID,
+         failureNoun: String = "turn", supportedRules: Set<RuleID> = Set(RuleID.allCases)) {
         self.provider = provider
         self.displayName = displayName
         self.statusSourceID = statusSourceID
+        self.failureNoun = failureNoun
+        self.supportedRules = supportedRules
     }
 
     func displayName(model: String) -> String { naming.displayName(model: model) }
@@ -63,6 +69,7 @@ final class FakeStatusSource: StatusSource, @unchecked Sendable {
 
     let id = RuleHarness.sourceID
     let displayName = "Example Status"
+    let defaultWatchedComponents = ["CLI"]
     private let lock = NSLock()
     private var answer: Result<StatusFetch, any Error> = .failure(Down())
 
@@ -127,6 +134,418 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
 // MARK: - Tests
 
 @Suite struct CollectorRunTests {
+    @Test func notificationLogCountsEachProviderSeparately() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let start = h.at(9, 4, 9)
+            #expect(await h.run(at: start, sources: [h.source, other]).outcome == .succeeded)
+            let now = start.addingTimeInterval(300)
+            for source in [h.source, other] {
+                source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: source.provider,
+                    threadID: "thread_synthetic_\(source.provider.rawValue)", turnID: "turn_synthetic_\(source.provider.rawValue)",
+                    startedAt: now.addingTimeInterval(-60), completedAt: now.addingTimeInterval(-60),
+                    errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            }
+            let report = await h.run(at: now, sources: [h.source, other])
+            #expect(report.notificationsPosted == 2)
+            #expect(h.log.components(separatedBy: "Posted 1 of 1 notifications").count - 1 == 2)
+            #expect(!h.log.contains("Posted 2 of 1 notifications"))
+        }
+    }
+    @Test func olderDeferredUsageLimitDoesNotReplaceNewerSnapshot() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 9)
+            let newer = UsageLimitSnapshot(provider: .codex, at: now, usedPercent: 100, windowMinutes: 300)
+            let older = UsageLimitSnapshot(provider: .codex, at: now.addingTimeInterval(-60), usedPercent: 100, windowMinutes: 10080)
+            h.source.setNextBatch(IngestBatch(usageLimit: newer))
+            #expect(await h.run(at: now).outcome == .succeeded)
+            h.source.setNextBatch(IngestBatch(usageLimit: older))
+            #expect(await h.run(at: now.addingTimeInterval(300)).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.usageLimit(provider: .codex) == newer)
+        }
+    }
+    @Test func ingestStoresCompactions() async throws {
+        try await withCollector { h in
+            let at = h.at(9, 4, 9)
+            let record = CompactionRecord(provider: .codex, lineID: "synthetic-line", sessionID: "synthetic-session", agentID: "synthetic-agent",
+                at: at, trigger: .auto, tokensBefore: 100, tokensAfter: 10, duration: 12, precomputed: true)
+            h.source.setNextBatch(IngestBatch(compactions: [record, record]))
+            #expect(await h.run(at: at).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.compactions(provider: .codex, in: at...at) == [record])
+        }
+    }
+    @Test func newlyRegisteredStatusDefaultsApplyOnlyOnce() async throws {
+        try await withCollector { h in
+            #expect(await h.run(at: h.at(9, 4, 9)).outcome == .succeeded)
+            let store = try h.store()
+            try store.set(.watchedComponents, ["Synthetic custom"])
+            h.statusSources = [FakeStatusSource()]
+            _ = await h.run(at: h.at(9, 4, 9, 5))
+            #expect(try store.value(.watchedComponents) == ["Synthetic custom", "CLI"])
+            try store.set(.watchedComponents, ["Synthetic custom"])
+            _ = await h.run(at: h.at(9, 4, 9, 10))
+            #expect(try store.value(.watchedComponents) == ["Synthetic custom"])
+        }
+    }
+    @Test func providerRebuildLeavesOtherUnitsUntouched() async throws {
+        try await withCollector { rebuilt in
+            try await withCollector { control in
+                let id = ProviderID(rawValue: "synthetic-other")
+                let other = FakeUsageSource(provider: id, displayName: "Synthetic Other")
+                let controlOther = FakeUsageSource(provider: id, displayName: "Synthetic Other")
+                let start = rebuilt.at(9, 4, 9)
+                #expect(await rebuilt.run(at: start, sources: [rebuilt.source, other]).outcome == .succeeded)
+                #expect(await control.run(at: start, sources: [control.source, controlOther]).outcome == .succeeded)
+                for provider in [ProviderID.codex, id] {
+                    let record = CompactionRecord(provider: provider, lineID: "synthetic", sessionID: "synthetic", agentID: nil,
+                        at: start, trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+                    try rebuilt.store().upsert(compactions: [record])
+                    try control.store().upsert(compactions: [record])
+                }
+                try rebuilt.store().set(.providerRebuildRequests, ["synthetic-other": start])
+                let next = start.addingTimeInterval(300)
+                let liveFailure = FailedTurnRecord(provider: .codex, threadID: "thread_synthetic_live", turnID: "turn_synthetic_live",
+                    startedAt: next.addingTimeInterval(-60), completedAt: next.addingTimeInterval(-60),
+                    errorCode: "serverOverloaded", message: "Synthetic failure")
+                rebuilt.source.setNextBatch(IngestBatch(failedTurns: [liveFailure]))
+                control.source.setNextBatch(IngestBatch(failedTurns: [liveFailure]))
+                #expect(await rebuilt.run(at: next, sources: [rebuilt.source, other]).outcome == .succeeded)
+                #expect(await control.run(at: next, sources: [control.source, controlOther]).outcome == .succeeded)
+                #expect(try rebuilt.store().compactions(provider: id, in: start...next).isEmpty)
+                #expect(try rebuilt.store().compactions(provider: .codex, in: start...next).count == 1)
+                for table in ["responses", "eval_points", "episodes", "rule_state"] {
+                    #expect(try RawSQLite.rows(rebuilt.paths.database, "SELECT * FROM \(table) WHERE provider = 'codex' ORDER BY rowid") == RawSQLite.rows(control.paths.database, "SELECT * FROM \(table) WHERE provider = 'codex' ORDER BY rowid"))
+                }
+                #expect(try rebuilt.store().lastEvaluatedPoint(unit: "codex") == next)
+                #expect(await rebuilt.notifier.posted.map(\.threadID) == control.notifier.posted.map(\.threadID))
+                #expect(await rebuilt.notifier.posted.map(\.threadID) == [NotificationPolicy.failedTurnsThreadID(provider: .codex)])
+                #expect(try rebuilt.store().backfill(unit: id.rawValue)?.reason == .rebuild)
+            }
+        }
+    }
+    @Test func providerAddedWrittenOnceAndSurvivesRebuild() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let start = h.at(9, 4, 9)
+            #expect(await h.run(at: start).outcome == .succeeded)
+            #expect(await h.run(at: start.addingTimeInterval(300), sources: [h.source, other]).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.value(.pendingArrivals) == ["synthetic-other"])
+            #expect(try EventFeed.load(store: store, limit: 100).filter { $0.body.contains("now watches Synthetic Other") }.count == 1)
+            try store.set(.providerRebuildRequests, ["synthetic-other": start])
+            #expect(await h.run(at: start.addingTimeInterval(600), sources: [h.source, other]).outcome == .succeeded)
+            #expect(try store.value(.pendingArrivals) == ["synthetic-other"])
+            #expect(try store.value(.providerRebuildRequests).isEmpty)
+            #expect(try store.backfill(unit: "synthetic-other")?.reason == .rebuild)
+            #expect(other.cursorsSeen.count == 2 && other.cursorsSeen.last! == nil)
+            #expect(try EventFeed.load(store: store, limit: 100).filter { $0.body.contains("now watches Synthetic Other") }.count == 1)
+            #expect(try EventFeed.load(store: store, limit: 100).filter { $0.body.contains("Synthetic Other history rebuilt") }.count == 1)
+            let reloaded = try h.store()
+            #expect(try reloaded.value(.pendingArrivals) == ["synthetic-other"])
+        }
+    }
+
+    @Test func globalRebuildConsumesProviderRequests() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let start = h.at(9, 4, 9)
+            #expect(await h.run(at: start, sources: [h.source, other]).outcome == .succeeded)
+            let store = try h.store()
+            try store.upsert(compactions: [.codex, other.provider].map {
+                CompactionRecord(provider: $0, lineID: "synthetic", sessionID: "synthetic", agentID: nil,
+                    at: start, trigger: .auto, tokensBefore: 100, tokensAfter: nil, duration: nil, precomputed: false)
+            })
+            try store.set(.rebuildRequestedAt, start)
+            try store.set(.providerRebuildRequests, ["synthetic-other": start])
+            #expect(await h.run(at: start.addingTimeInterval(300), sources: [h.source, other]).outcome == .succeeded)
+            #expect(try store.compactions(provider: .codex, in: start...start.addingTimeInterval(300)).isEmpty)
+            #expect(try store.compactions(provider: other.provider, in: start...start.addingTimeInterval(300)).isEmpty)
+            #expect(try store.value(.providerRebuildRequests).isEmpty)
+            #expect(try store.backfill(unit: "codex")?.reason == .rebuild)
+            #expect(try store.backfill(unit: "synthetic-other")?.reason == .rebuild)
+            #expect(try EventFeed.load(store: store, limit: 100).filter { $0.body.contains("history rebuilt") }.count == 2)
+        }
+    }
+
+    @Test func rebuildDuringOtherBackfillKeepsBothCorrect() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let start = h.at(9, 4, 9)
+            #expect(await h.run(at: start).outcome == .succeeded)
+            let second = start.addingTimeInterval(300)
+            let callbacks = Locked(0)
+            let interrupted = await h.run(at: second, sources: [h.source, other], hooks: RunHooks(afterChunkCommit: { _ in
+                let count = callbacks.value
+                callbacks.set(count + 1)
+                if count == 1 { throw InjectedCrash() }
+            }))
+            #expect(interrupted.outcome == .failed)
+            let store = try h.store()
+            #expect(try store.backfill(unit: other.provider.rawValue)?.finishedAt == nil)
+            try store.set(.providerRebuildRequests, ["codex": second])
+            let next = second.addingTimeInterval(300)
+            #expect(await h.run(at: next, sources: [h.source, other]).outcome == .succeeded)
+            #expect(try store.backfill(unit: "codex")?.reason == .rebuild)
+            #expect(try store.backfill(unit: other.provider.rawValue)?.reason == .new)
+            #expect(try store.backfill(unit: other.provider.rawValue)?.finishedAt == next)
+            #expect(try store.value(.pendingArrivals) == [other.provider.rawValue])
+            #expect(await h.notifier.posted.isEmpty)
+        }
+    }
+    @Test func statusSourceWaitsWhenAllAssociatedIngestsFailAndResumesWhenOneSucceeds() async throws {
+        try await withCollector { h in
+            let status = FakeStatusSource()
+            h.statusSources = [status]
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let start = h.at(9, 4, 9)
+            let published = start.addingTimeInterval(-300)
+            let component = StatusComponent(id: "comp_cli", name: "CLI")
+            let open = IncidentRecord(source: status.id, id: "inc_synthetic_01", name: "Synthetic outage",
+                status: "investigating", publishedAt: published, updatedAt: published,
+                link: URL(string: "https://status.example.com/incidents/inc_synthetic_01")!,
+                history: [StatusChange(at: published, status: "investigating")],
+                impacts: [ComponentImpact(componentID: component.id, status: "degraded_performance", start: published)])
+            status.setAnswer(.success(.full(components: [component], incidents: [open])))
+            #expect(await h.run(at: start, sources: [h.source, other]).outcome == .succeeded)
+            let store = try h.store()
+            let before = try store.episodes(rule: RuleID.incident.rawValue)
+            #expect(before.count == 1 && before[0].endedAt == nil)
+            let states = try store.ruleStates(rule: RuleID.incident.rawValue, unit: status.id).map(\.json)
+            var resolved = open
+            let resolvedAt = start.addingTimeInterval(120)
+            resolved.status = "resolved"
+            resolved.updatedAt = resolvedAt
+            resolved.history.append(StatusChange(at: resolvedAt, status: "resolved"))
+            status.setAnswer(.success(.full(components: [component], incidents: [resolved])))
+            var codexSynth = Synth()
+            var otherSynth = Synth(provider: other.provider)
+            h.source.add(codexSynth.responses(1, throughput: 40, from: start.addingTimeInterval(60)))
+            other.add(otherSynth.responses(1, throughput: 40, from: start.addingTimeInterval(60)))
+            try store.exec("""
+                CREATE TRIGGER synthetic_refusal BEFORE INSERT ON responses
+                BEGIN SELECT RAISE(ABORT, 'synthetic ingest refusal'); END
+                """)
+            let failedAt = start.addingTimeInterval(300)
+            #expect(await h.run(at: failedAt, sources: [h.source, other]).outcome == .failed)
+            #expect(try store.lastEvaluatedPoint(unit: status.id) == start)
+            #expect(try store.episodes(rule: RuleID.incident.rawValue) == before)
+            #expect(try store.ruleStates(rule: RuleID.incident.rawValue, unit: status.id).map(\.json) == states)
+
+            // A shared status source resumes when one associated ingest succeeds.
+            try store.exec("DROP TRIGGER synthetic_refusal")
+            try store.exec("""
+                CREATE TRIGGER synthetic_refusal BEFORE INSERT ON responses WHEN NEW.provider = 'synthetic-other'
+                BEGIN SELECT RAISE(ABORT, 'synthetic ingest refusal'); END
+                """)
+            let partialAt = start.addingTimeInterval(600)
+            #expect(await h.run(at: partialAt, sources: [h.source, other]).outcome == .failed)
+            #expect(try store.lastEvaluatedPoint(unit: status.id) == partialAt)
+            #expect(try store.episodes(rule: RuleID.incident.rawValue).first?.endedAt == failedAt)
+            #expect(await h.notifier.posted.map(\.body) == [Copy.incidentCleared(source: status.displayName, name: open.name)])
+            try store.exec("DROP TRIGGER synthetic_refusal")
+            let retryAt = start.addingTimeInterval(900)
+            #expect(await h.run(at: retryAt, sources: [h.source, other]).outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint(unit: status.id) == retryAt)
+            #expect(try store.lastEvaluatedPoint(unit: other.provider.rawValue) == retryAt)
+        }
+    }
+
+    @Test func liveProviderNotifiesWhileAnotherBackfillIsInterruptedAndResumed() async throws {
+        try await withCollector { h in
+            let start = h.at(9, 4, 9)
+            #expect(await h.run(at: start).outcome == .succeeded)
+            let now = start.addingTimeInterval(300)
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            h.source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_live", turnID: "turn_synthetic_live", startedAt: now.addingTimeInterval(-60),
+                completedAt: now.addingTimeInterval(-60), errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            let historical = now.addingTimeInterval(-29 * 86_400 - 23 * 3_600)
+            other.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: other.provider,
+                threadID: "thread_synthetic_history", turnID: "turn_synthetic_history", startedAt: historical,
+                completedAt: historical, errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            let callbacks = Locked(0)
+            let interrupted = await h.run(at: now, sources: [h.source, other], hooks: RunHooks(afterChunkCommit: { _ in
+                let count = callbacks.value
+                callbacks.set(count + 1)
+                if count == 1 { throw InjectedCrash() }
+            }))
+            #expect(interrupted.outcome == .failed)
+            let store = try h.store()
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
+            #expect(try store.lastEvaluatedPoint(unit: other.provider.rawValue) != nil)
+            #expect(try store.backfill(unit: other.provider.rawValue)?.finishedAt == nil)
+            #expect(try store.episodes(rule: RuleID.failedTurns.rawValue).contains { $0.provider == other.provider.rawValue })
+            #expect(await h.notifier.posted.map(\.threadID) == [NotificationPolicy.failedTurnsThreadID(provider: .codex)])
+
+            let retryAt = now.addingTimeInterval(300)
+            #expect(await h.run(at: retryAt, sources: [h.source, other]).outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint(unit: other.provider.rawValue) == retryAt)
+            #expect(try store.backfill(unit: other.provider.rawValue)?.finishedAt == retryAt)
+            #expect(await h.notifier.posted.map(\.threadID) == [NotificationPolicy.failedTurnsThreadID(provider: .codex)])
+        }
+    }
+    @Test func newProviderBackfillsQuietlyWhileOtherStaysLive() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let first = h.at(9, 4, 10)
+            #expect(await h.run(at: first).outcome == .succeeded)
+            let second = first.addingTimeInterval(310)
+            #expect(await h.run(at: second, sources: [h.source, other]).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == first.addingTimeInterval(300))
+            let backfill = try #require(try store.backfill(unit: "synthetic-other"))
+            #expect(backfill.reason == .new && backfill.announce && backfill.through == second)
+            #expect(backfill.finishedAt == second)
+            #expect(await h.notifier.posted.isEmpty)
+        }
+    }
+
+    @Test func freshDatabaseBackfillsBothWithoutAnnouncing() async throws {
+        try await withCollector { h in
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            let now = h.at(9, 4, 10)
+            #expect(await h.run(at: now, sources: [h.source, other]).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.backfill(unit: "codex")?.announce == false)
+            #expect(try store.backfill(unit: "synthetic-other")?.announce == false)
+        }
+    }
+
+    @Test func newStatusSourceBackfillsQuietlyOnUpgrade() async throws {
+        try await withCollector { h in
+            let old = h.at(9, 4, 9)
+            let now = h.at(9, 4, 10)
+            let store = try h.store()
+            try store.setLastEvaluatedPoint(old)
+            try store.setCursor("codex", FakeUsageSource.cursor(old))
+            try store.set(.backfillThrough, old)
+            h.statusSources = [FakeStatusSource()]
+            #expect(await h.run(at: now).outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint(unit: "openai") == old)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
+            #expect(try store.lastEvaluatedPoint(unit: RuleHarness.sourceID) == now)
+            #expect(try store.backfill(unit: RuleHarness.sourceID)?.announce == false)
+            #expect(try store.backfill(unit: RuleHarness.sourceID)?.finishedAt == now)
+        }
+    }
+
+    @Test func alertNamesItsProviderOnce() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 10)
+            let source = FakeUsageSource(displayName: "Synthetic Provider", failureNoun: "request")
+            let store = try h.store()
+            try store.setLastEvaluatedPoint(now.addingTimeInterval(-300), unit: "codex")
+            source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_01", turnID: "turn_synthetic_01", startedAt: now.addingTimeInterval(-60),
+                completedAt: now.addingTimeInterval(-60), errorCode: "overloaded", message: "Synthetic failure")]))
+            #expect(await h.run(at: now, sources: [source]).outcome == .succeeded)
+            #expect(await h.notifier.posted.map(\.body) == ["Synthetic Provider: 1 request failed: model overloaded"])
+        }
+    }
+
+    @Test func sourceRuleOverridesDispatchThroughExistential() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 10)
+            let source = FakeUsageSource(supportedRules: [])
+            let store = try h.store()
+            try store.setLastEvaluatedPoint(now.addingTimeInterval(-300), unit: "codex")
+            source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_02", turnID: "turn_synthetic_02", startedAt: now.addingTimeInterval(-60),
+                completedAt: now.addingTimeInterval(-60), errorCode: "overloaded", message: "Synthetic failure")]))
+            #expect(await h.run(at: now, sources: [source]).outcome == .succeeded)
+            #expect(try store.episodes(rule: RuleID.failedTurns.rawValue).isEmpty)
+            #expect(await h.notifier.posted.isEmpty)
+        }
+    }
+
+    @Test func upgradeFrom011KeepsCodexLive() async throws {
+        try await withCollector { h in
+            let old = h.at(9, 4, 9)
+            let now = h.at(9, 4, 10)
+            let store = try h.store()
+            try store.setLastEvaluatedPoint(old)
+            try store.setCursor("codex", FakeUsageSource.cursor(old))
+            try store.set(.backfillThrough, old)
+            let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")
+            h.source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_live", turnID: "turn_synthetic_live", startedAt: now.addingTimeInterval(-60),
+                completedAt: now.addingTimeInterval(-60), errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            other.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: other.provider,
+                threadID: "thread_synthetic_old", turnID: "turn_synthetic_old", startedAt: old,
+                completedAt: old, errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            #expect(await h.run(at: now, sources: [h.source, other]).outcome == .succeeded)
+            let notices = await h.notifier.posted
+            #expect(notices.count == 1)
+            #expect(notices.first?.threadID == NotificationPolicy.failedTurnsThreadID(provider: .codex))
+            #expect(try store.backfill(unit: other.provider.rawValue)?.announce == true)
+            #expect(try store.episodes(rule: RuleID.failedTurns.rawValue).count == 2)
+        }
+    }
+
+    @Test func emptyEligibleBackfillFinishes() async throws {
+        try await withCollector { h in
+            let point = h.at(9, 4, 10)
+            let through = point.addingTimeInterval(10)
+            let store = try h.store()
+            try store.setLastEvaluatedPoint(point, unit: "codex")
+            try store.setBackfill(ProviderBackfill(reason: .new, startedAt: through, through: through,
+                finishedAt: nil, announce: false), unit: "codex")
+            #expect(await h.run(at: through).outcome == .succeeded)
+            #expect(try store.backfill(unit: "codex")?.finishedAt == through)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == point)
+        }
+    }
+
+    @Test func failedBackfillPreparationDoesNotEvaluateHistoryLive() async throws {
+        try await withCollector { h in
+            let store = try h.store()
+            try store.exec("""
+                CREATE TRIGGER synthetic_backfill_refusal BEFORE INSERT ON rule_state
+                WHEN NEW.provider = 'codex' AND NEW.rule = 'engine' AND NEW.scope = 'backfill'
+                BEGIN SELECT RAISE(ABORT, 'synthetic backfill refusal'); END
+                """)
+            let now = h.at(9, 4, 10)
+            h.source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_history", turnID: "turn_synthetic_history", startedAt: now,
+                completedAt: now, errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            #expect(await h.run(at: now).outcome == .failed)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == nil)
+            #expect(try store.episodes(rule: RuleID.failedTurns.rawValue).isEmpty)
+            #expect(await h.notifier.posted.isEmpty)
+        }
+    }
+
+    @Test func ingestFailureSkipsOnlyThatProvider() async throws {
+        try await withCollector { h in
+            let store = try h.store()
+            let old = h.at(9, 4, 9, 50)
+            let now = h.at(9, 4, 10)
+            let broken = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-broken"), displayName: "Synthetic Broken")
+            for key in ["codex", broken.provider.rawValue] {
+                try store.setLastEvaluatedPoint(old, unit: key)
+                try store.setCursor(key, FakeUsageSource.cursor(old))
+            }
+            try store.exec("""
+                CREATE TRIGGER synthetic_ingest_refusal BEFORE INSERT ON responses
+                WHEN NEW.provider = 'synthetic-broken'
+                BEGIN SELECT RAISE(ABORT, 'synthetic ingest refusal'); END
+                """)
+            var synth = Synth(provider: broken.provider)
+            broken.add(synth.responses(1, throughput: 40, from: h.at(9, 4, 9, 55)))
+            h.source.setNextBatch(IngestBatch(failedTurns: [FailedTurnRecord(provider: .codex,
+                threadID: "thread_synthetic_live", turnID: "turn_synthetic_live", startedAt: now.addingTimeInterval(-60),
+                completedAt: now.addingTimeInterval(-60), errorCode: "serverOverloaded", message: "Synthetic failure")]))
+            #expect(await h.run(at: now, sources: [h.source, broken]).outcome == .failed)
+            #expect(try store.lastEvaluatedPoint(unit: broken.provider.rawValue) == old)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
+            #expect(await h.notifier.posted.count == 1)
+            try store.exec("DROP TRIGGER synthetic_ingest_refusal")
+            #expect(await h.run(at: now.addingTimeInterval(300), sources: [h.source, broken]).outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint(unit: broken.provider.rawValue) == now.addingTimeInterval(300))
+        }
+    }
     @Test func skippedWhenLockHeld() async throws {
         try await withCollector { harness throws in
             try FileManager.default.createDirectory(at: harness.paths.appSupport, withIntermediateDirectories: true)
@@ -158,8 +577,8 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(report.outcome == .succeeded && report.exitCode == 0 && report.notificationsPosted == 0)
             #expect(await harness.notifier.posted.isEmpty)
             let store = try harness.store()
-            #expect(try store.value(.backfillThrough) == now)
-            #expect(try store.lastEvaluatedPoint() == now)
+            #expect(try store.backfill(unit: "codex")?.through == now)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
             // §8's 30-day lookback, in the run's calendar.
             #expect(harness.source.backfillFromSeen == [harness.at(8, 5, 10)])
             let episodes = try store.episodes(rule: RuleID.slower.rawValue)
@@ -180,7 +599,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             let episode = try #require(try harness.store().episodes(rule: RuleID.slower.rawValue).first?.id)
             let expected = PendingNotification(
                 id: "slower-\(episode)-fired", title: "Slower than usual",
-                body: Copy.slowerFired(model: "Example", percent: 25, since: harness.at(9, 4, 8, 55), calendar: harness.calendar),
+                body: "Example: " + Copy.slowerFired(model: "Example", percent: 25, since: harness.at(9, 4, 8, 55), calendar: harness.calendar),
                 threadID: "slower.codex.\(Synth.model)")
             #expect(await harness.notifier.posted == [expected])
 
@@ -325,8 +744,8 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
                                                    body: "synthetic \(kind)", episodeID: episode))
                 }
                 try store.setRuleState(rule: RuleID.slower.rawValue, provider: "codex", scope: Synth.model, json: "{}")
-                try store.setLastEvaluatedPoint(old)
-                try store.setFailureNotices(FailureNotices(lastNoticeAt: old))
+                try store.setLastEvaluatedPoint(old, unit: "codex")
+                try store.setFailureNotices(FailureNotices(lastNoticeAt: old), provider: .codex)
                 try store.setCursor("codex", Data("synthetic old cursor".utf8))
                 // Kept.
                 try store.upsert(failedTurns: [FailedTurnRecord(
@@ -373,11 +792,12 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses") == "0")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM eval_points") == "0")
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM episodes") == "0")
-            #expect(try RawSQLite.rows(url, "SELECT id, kind FROM events ORDER BY id") == keptEvents)
+            #expect(try RawSQLite.rows(url, "SELECT id, kind FROM events WHERE kind != 'historyRebuilt' ORDER BY id") == keptEvents)
+            #expect(try RawSQLite.column(url, "SELECT kind FROM events WHERE kind = 'historyRebuilt'") == [EventKind.historyRebuilt])
             let ruleStates = try RawSQLite.column(url, "SELECT rule || '/' || scope FROM rule_state")
-            #expect(ruleStates == ["engine/lastPoint"])
-            #expect(try store.lastEvaluatedPoint() == now)
-            #expect(try store.failureNotices() == FailureNotices())
+            #expect(ruleStates.sorted() == ["engine/backfill", "engine/lastPoint"])
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
+            #expect(try store.failureNotices(provider: .codex) == FailureNotices())
             #expect(try store.cursor("codex") == FakeUsageSource.cursor(now))
             #expect(try RawSQLite.rows(url, "SELECT turn_id, CAST(evaluated_at AS INTEGER) FROM failed_turns") == [["turn_synthetic_901", unix(harness.at(8, 5, 10))]])
             // Kept.
@@ -392,7 +812,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(try store.value(.watchedComponents) == ["CLI"])
             // The request is consumed and the replay ends at this run.
             #expect(try store.value(.rebuildRequestedAt) == nil)
-            #expect(try store.value(.backfillThrough) == now)
+            #expect(try store.backfill(unit: "codex")?.through == now)
         }
     }
 
@@ -420,7 +840,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
                     provider: .codex, threadID: "thread_synthetic_01", turnID: "turn_synthetic_901", startedAt: old,
                     completedAt: old, errorCode: "serverOverloaded", message: "Synthetic failure 1")])
                 try store.markEvaluated(try store.unevaluatedFailedTurns(through: old), at: old)
-                try store.setLastEvaluatedPoint(old)
+                try store.setLastEvaluatedPoint(old, unit: "codex")
                 try store.set(.rebuildRequestedAt, harness.at(9, 4, 9, 55))
             }
             harness.source.setNextBatch(IngestBatch(failedTurns: [recentFailure(harness)]))
@@ -431,7 +851,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             // lookback start, is settled there uncounted rather than reported as failing then.
             let history = try failedTurnHistory(harness)
             #expect(history.episodes == [[unix(harness.at(9, 4, 9, 1)), "1.0"]])
-            #expect(history.events == [[unix(harness.at(9, 4, 9, 5)), "1 turn failed: model at capacity"]])
+            #expect(history.events == [[unix(harness.at(9, 4, 9, 5)), "Example: 1 turn failed: model at capacity"]])
             #expect(try RawSQLite.rows(harness.paths.database, "SELECT turn_id, CAST(evaluated_at AS INTEGER) FROM failed_turns ORDER BY turn_id") == [
                 ["turn_synthetic_901", unix(harness.at(8, 5, 10))],
                 ["turn_synthetic_902", unix(harness.at(9, 4, 9, 5))],
@@ -490,14 +910,14 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
 
             #expect(refused.outcome == .succeeded && refused.notificationsPosted == 0)
             // The failure waits again and no notice counts as sent, so the coalescing window stays open.
-            #expect(try harness.store().failureNotices() == FailureNotices(lastNoticeAt: nil, waiting: [failure]))
+            #expect(try harness.store().failureNotices(provider: .codex) == FailureNotices(lastNoticeAt: nil, waiting: [failure]))
 
             await harness.notifier.acceptAll()
             let retried = await harness.run(at: harness.at(9, 4, 9, 10))
 
             #expect(retried.notificationsPosted == 1)
-            #expect(await harness.notifier.posted.map(\.body) == ["1 turn failed: model at capacity"])
-            #expect(try harness.store().failureNotices() == FailureNotices(lastNoticeAt: harness.at(9, 4, 9, 10), waiting: []))
+            #expect(await harness.notifier.posted.map(\.body) == ["Example: 1 turn failed: model at capacity"])
+            #expect(try harness.store().failureNotices(provider: .codex) == FailureNotices(lastNoticeAt: harness.at(9, 4, 9, 10), waiting: []))
         }
     }
 
@@ -517,8 +937,8 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
 
             #expect(crashed.outcome == .failed && crashed.exitCode == 1)
             #expect(crashed.detail == "synthetic crash after a committed chunk")
-            #expect(try harness.store().lastEvaluatedPoint() == chunk0End)
-            #expect(try harness.store().value(.backfillThrough) == firstNow)
+            #expect(try harness.store().lastEvaluatedPoint(unit: "codex") == chunk0End)
+            #expect(try harness.store().backfill(unit: "codex")?.through == firstNow)
 
             // The next run resumes at Aug 6 10:00. The slowdown fires at Sep 4 09:20, before
             // backfillThrough, so it stays quiet even though it is still open when this run ends:
@@ -528,8 +948,8 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(resumed.outcome == .succeeded && resumed.notificationsPosted == 0)
             #expect(await harness.notifier.posted.isEmpty)
             let store = try harness.store()
-            #expect(try store.value(.backfillThrough) == firstNow)
-            #expect(try store.lastEvaluatedPoint() == harness.at(9, 4, 10, 10))
+            #expect(try store.backfill(unit: "codex")?.through == firstNow)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == harness.at(9, 4, 10, 10))
             let episodes = try store.episodes(rule: RuleID.slower.rawValue)
             #expect(episodes.map(\.firedAt) == [harness.at(9, 4, 9, 20)])
             #expect(episodes.map(\.endedAt) == [nil])
@@ -618,29 +1038,29 @@ extension CollectorRunTests {
             #expect(failed.outcome == .failed && failed.exitCode == 1)
             #expect(failed.detail.contains("synthetic write refusal"))
             let store = try harness.store()
-            #expect(try store.lastEvaluatedPoint() == nil)
-            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM eval_points") == "0")
-            #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM episodes") == "0")
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == firstNow)
+            #expect(try store.lastEvaluatedPoint(unit: "example.broken") == nil)
+            #expect(try store.backfill(unit: "example.broken") == nil)
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).count == 1)
             // The other source's ingest still landed; the broken one's cursor didn't advance.
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses WHERE provider = 'codex'") == "90")
             #expect(try store.cursor("example.broken") == nil)
-            #expect(harness.log.contains("Evaluation skipped"))
 
             // Fixed: the next run ingests the broken source again and evaluates every point.
             try RawSQLite.rows(url, "DROP TRIGGER synthetic_refusal")
             let resumed = await harness.run(at: harness.at(9, 4, 10, 5), sources: [broken, harness.source])
 
             #expect(resumed.outcome == .succeeded)
-            #expect(try store.lastEvaluatedPoint() == harness.at(9, 4, 10, 5))
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == harness.at(9, 4, 10, 5))
             #expect(try RawSQLite.scalar(url, "SELECT COUNT(*) FROM responses WHERE provider = 'example.broken'") == "3")
             #expect(try store.episodes(rule: RuleID.slower.rawValue).map(\.firedAt) == [harness.at(9, 4, 9, 20)])
-            // Points through Sep 4 10:00 are still backfill: the run that set it failed, not the replay.
-            #expect(try store.value(.backfillThrough) == firstNow)
+            // The newly ready provider backfills through the retry and remains quiet.
+            #expect(try store.backfill(unit: "example.broken")?.through == harness.at(9, 4, 10, 5))
             #expect(await harness.notifier.posted.isEmpty)
         }
     }
 
-    /// A source reporting a problem through its state isn't a thrown error: evaluation goes on.
+    /// An unready provider without progress waits until it becomes ready.
     @Test func reportedSourceProblemStillEvaluates() async throws {
         try await withCollector { harness throws in
             harness.source.setState(.notSetUp("synthetic: not set up"))
@@ -649,8 +1069,16 @@ extension CollectorRunTests {
             let now = harness.at(9, 4, 10)
 
             #expect(await harness.run(at: now).outcome == .succeeded)
-            #expect(try harness.store().lastEvaluatedPoint() == now)
+            #expect(try harness.store().lastEvaluatedPoint(unit: "codex") == nil)
+            #expect(try harness.store().backfill(unit: "codex") == nil)
+            #expect(try harness.store().episodes(rule: RuleID.slower.rawValue).isEmpty)
+            harness.source.setState(.ready)
+            #expect(await harness.run(at: now.addingTimeInterval(300)).outcome == .succeeded)
+            #expect(try harness.store().lastEvaluatedPoint(unit: "codex") == now.addingTimeInterval(300))
             #expect(try harness.store().episodes(rule: RuleID.slower.rawValue).count == 1)
+            harness.source.setState(.notSetUp("synthetic: unavailable"))
+            #expect(await harness.run(at: now.addingTimeInterval(600)).outcome == .succeeded)
+            #expect(try harness.store().lastEvaluatedPoint(unit: "codex") == now.addingTimeInterval(600))
         }
     }
 
@@ -666,7 +1094,7 @@ extension CollectorRunTests {
 
             #expect(report.outcome == .failed)
             #expect(report.detail == "Unreadable setup state for source codex")
-            #expect(try harness.store().lastEvaluatedPoint() == nil)
+            #expect(try harness.store().lastEvaluatedPoint(unit: "codex") == nil)
         }
     }
 

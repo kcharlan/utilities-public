@@ -69,6 +69,8 @@ public struct EpisodeRow: Sendable, Equatable, Hashable {
 
 /// `events.kind` values.
 public enum EventKind {
+    public static let providerAdded = "providerAdded"
+    public static let historyRebuilt = "historyRebuilt"
     public static let statusPost = "statusPost"
     public static let baselineAccepted = "baselineAccepted"
     public static let baselineUndone = "baselineUndone"
@@ -150,6 +152,21 @@ public struct EventRow: Sendable, Equatable, Hashable {
         self.link = link
         self.undoneAt = undoneAt
         self.endsAt = endsAt
+    }
+}
+
+public enum BackfillReason: String, Sendable, Codable { case new, rebuild }
+
+public struct ProviderBackfill: Sendable, Equatable, Codable {
+    public var reason: BackfillReason
+    public var startedAt: Date
+    public var through: Date
+    public var finishedAt: Date?
+    public var announce: Bool
+
+    public init(reason: BackfillReason, startedAt: Date, through: Date, finishedAt: Date?, announce: Bool) {
+        self.reason = reason; self.startedAt = startedAt; self.through = through
+        self.finishedAt = finishedAt; self.announce = announce
     }
 }
 
@@ -241,6 +258,10 @@ extension Store {
         try query("SELECT \(Self.episodeColumns) FROM episodes WHERE ended_at IS NULL ORDER BY fired_at, id", [], Self.episode)
     }
 
+    func openEpisodes(unit: String) throws -> [EpisodeRow] {
+        try query("SELECT \(Self.episodeColumns) FROM episodes WHERE ended_at IS NULL AND provider = ? ORDER BY fired_at, id", [.text(unit)], Self.episode)
+    }
+
     /// Every episode of one rule (a `RuleID` raw value), ordered by fire time.
     public func episodes(rule: String) throws -> [EpisodeRow] {
         try query("SELECT \(Self.episodeColumns) FROM episodes WHERE rule = ? ORDER BY fired_at, id", [.text(rule)], Self.episode)
@@ -284,6 +305,66 @@ extension Store {
 
     // MARK: Rule state
 
+    public func lastEvaluatedPoint(unit key: String) throws -> Date? {
+        guard let json = try ruleState(rule: Self.engineRule, provider: key, scope: "lastPoint") else { return nil }
+        do { return try StoreJSON.decode(Date.self, from: json) }
+        catch { throw StoreError.invalidData("Unreadable last evaluation point") }
+    }
+
+    func setLastEvaluatedPoint(_ point: Date, unit key: String) throws {
+        try setRuleState(rule: Self.engineRule, provider: key, scope: "lastPoint", json: try StoreJSON.encode(point))
+    }
+
+    public func backfill(unit key: String) throws -> ProviderBackfill? {
+        guard let json = try ruleState(rule: Self.engineRule, provider: key, scope: "backfill") else { return nil }
+        do { return try StoreJSON.decode(ProviderBackfill.self, from: json) }
+        catch { throw StoreError.invalidData("Unreadable backfill state") }
+    }
+
+    public func setBackfill(_ backfill: ProviderBackfill, unit key: String) throws {
+        try setRuleState(rule: Self.engineRule, provider: key, scope: "backfill", json: try StoreJSON.encode(backfill))
+    }
+
+    public func backfills() throws -> [String: ProviderBackfill] {
+        var result: [String: ProviderBackfill] = [:]
+        for row in try ruleStates(rule: Self.engineRule) where row.scope == "backfill" {
+            result[row.provider] = try StoreJSON.decode(ProviderBackfill.self, from: row.json)
+        }
+        return result
+    }
+
+    public func failureNotices(provider: ProviderID) throws -> FailureNotices {
+        guard let json = try ruleState(rule: Self.notificationsRule, provider: provider.rawValue, scope: "failedTurns") else { return FailureNotices() }
+        do { return try StoreJSON.decode(FailureNotices.self, from: json) }
+        catch { throw StoreError.invalidData("Unreadable failed-turn notice state") }
+    }
+
+    public func setFailureNotices(_ notices: FailureNotices, provider: ProviderID) throws {
+        try setRuleState(rule: Self.notificationsRule, provider: provider.rawValue, scope: "failedTurns", json: try StoreJSON.encode(notices))
+    }
+
+    func adoptGlobalProgress(providers: [ProviderID], legacyStatusSourceIDs: [String]) throws -> Bool {
+        guard let point = try lastEvaluatedPoint() else { return false }
+        let notices = try failureNotices()
+        let through = try value(.backfillThrough)
+        var keys: [String] = []
+        for provider in providers where try cursor(provider.rawValue) != nil {
+            keys.append(provider.rawValue)
+            try setFailureNotices(notices, provider: provider)
+        }
+        keys += legacyStatusSourceIDs
+        for key in keys {
+            try setLastEvaluatedPoint(point, unit: key)
+            if let through {
+                try setBackfill(ProviderBackfill(reason: .new, startedAt: through, through: through,
+                    finishedAt: point >= through ? through : nil, announce: false), unit: key)
+            }
+        }
+        try run("DELETE FROM rule_state WHERE provider = ?", [.text("*")])
+        try run("DELETE FROM settings WHERE key = ?", [.text(SettingKey<Date?>.backfillThrough.name)])
+        return true
+    }
+
     /// The latest evaluation point the rule engine finished, or nil before the first.
     public func lastEvaluatedPoint() throws -> Date? {
         guard let json = try ruleState(rule: Self.engineRule, provider: "*", scope: "lastPoint") else { return nil }
@@ -319,6 +400,12 @@ extension Store {
         }
     }
 
+    func ruleStates(rule: String, unit: String) throws -> [(provider: String, scope: String, json: String)] {
+        try query("SELECT provider, scope, json FROM rule_state WHERE rule = ? AND provider = ? ORDER BY scope", [.text(rule), .text(unit)]) {
+            (provider: $0.text(0), scope: $0.text(1), json: $0.text(2))
+        }
+    }
+
     func ruleState(rule: String, provider: String, scope: String) throws -> String? {
         try query("SELECT json FROM rule_state WHERE rule = ? AND provider = ? AND scope = ?", [.text(rule), .text(provider), .text(scope)]) {
             $0.text(0)
@@ -342,15 +429,26 @@ extension Store {
     /// or before `through`, oldest first. A turn stored without a model takes the model of a
     /// response in the same turn (spec section 6.2), or stays nil.
     public func unevaluatedFailedTurns(through: Date) throws -> [FailedTurnRecord] {
-        try query("""
+        try unevaluatedFailedTurns(providerKey: nil, through: through)
+    }
+
+    public func unevaluatedFailedTurns(provider: ProviderID, through: Date) throws -> [FailedTurnRecord] {
+        try unevaluatedFailedTurns(providerKey: provider.rawValue, through: through)
+    }
+
+    private func unevaluatedFailedTurns(providerKey: String?, through: Date) throws -> [FailedTurnRecord] {
+        let providerClause = providerKey == nil ? "" : "AND f.provider = ?"
+        var values: [SQLValue] = [.date(through)]
+        if let providerKey { values.append(.text(providerKey)) }
+        return try query("""
             SELECT f.provider, f.thread_id, f.turn_id, f.started_at, f.completed_at,
                 COALESCE(f.model, (SELECT r.model FROM responses r WHERE r.provider = f.provider AND r.turn_id = f.turn_id
                                    ORDER BY r.end_at DESC LIMIT 1)),
                 f.error_code, f.message
             FROM failed_turns f
-            WHERE f.evaluated_at IS NULL AND COALESCE(f.completed_at, f.started_at) <= ?
+            WHERE f.evaluated_at IS NULL AND COALESCE(f.completed_at, f.started_at) <= ? \(providerClause)
             ORDER BY COALESCE(f.completed_at, f.started_at), f.provider, f.turn_id
-            """, [.date(through)]) { row in
+            """, values) { row in
             FailedTurnRecord(
                 provider: ProviderID(rawValue: row.text(0)), threadID: row.text(1), turnID: row.text(2),
                 startedAt: row.date(3), completedAt: row.optionalDate(4), model: row.optionalText(5),
@@ -363,10 +461,10 @@ extension Store {
     /// evaluation point reaches before the lookback (spec sections 7.3 and 8), so such a turn, kept
     /// through a Rebuild or ingested after more than the lookback with the collector off, would
     /// otherwise be counted at the first point as a failure there.
-    func settleFailedTurns(before start: Date) throws -> Int {
+    func settleFailedTurns(before start: Date, provider: ProviderID) throws -> Int {
         try run(
-            "UPDATE failed_turns SET evaluated_at = ? WHERE evaluated_at IS NULL AND COALESCE(completed_at, started_at) < ?",
-            [.date(start), .date(start)])
+            "UPDATE failed_turns SET evaluated_at = ? WHERE provider = ? AND evaluated_at IS NULL AND COALESCE(completed_at, started_at) < ?",
+            [.date(start), .text(provider.rawValue), .date(start)])
     }
 
     /// Marks failed turns counted at the evaluation point `at`.
@@ -381,10 +479,10 @@ extension Store {
     /// Records a span the provider's connection log no longer covered as a
     /// `connectionHistoryIncomplete` event: `at` is the gap's start and `endsAt` its end.
     @discardableResult
-    public func recordConnectionGap(provider: ProviderID, gap: DateInterval, calendar: Calendar) throws -> Int64 {
+    public func recordConnectionGap(provider: ProviderID, providerName: String? = nil, gap: DateInterval, calendar: Calendar) throws -> Int64 {
         try insertEvent(EventRow(
             at: gap.start, kind: EventKind.connectionHistoryIncomplete, provider: provider.rawValue, scope: "*",
-            title: "Disconnects", body: Copy.connectionGap(from: gap.start, to: gap.end, calendar: calendar), endsAt: gap.end))
+            title: "Disconnects", body: (providerName.map { "\($0): " } ?? "") + Copy.connectionGap(from: gap.start, to: gap.end, calendar: calendar), endsAt: gap.end))
     }
 
     /// One provider's recorded connection-history gaps that overlap `interval`, oldest first.

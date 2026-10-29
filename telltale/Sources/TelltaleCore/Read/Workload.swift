@@ -15,6 +15,15 @@ import Foundation
 ///   each side sums to one **(plan call)**.
 /// - `usageLimit` is the provider's latest usage-limit snapshot (spec section 6.4).
 public struct Workload: Sendable, Equatable {
+    public struct CompactionReadout: Sendable, Equatable {
+        public var lastThreeHours: Int
+        public var blocked: TimeInterval
+        public var latestPoint: Int?
+    }
+    public struct LimitReached: Sendable, Equatable {
+        public var at: Date
+        public var resetsAt: Date?
+    }
     public struct Measure: Sendable, Equatable {
         public var now: Double?
         public var usual: Double?
@@ -56,8 +65,11 @@ public struct Workload: Sendable, Equatable {
     /// Every input-size bucket in order.
     public var histogram: [BucketShare]
     public var usageLimit: UsageLimitSnapshot?
+    public var compactions: CompactionReadout?
+    public var limitReached: LimitReached?
+    public var hasFastMode: Bool
 
-    public static func load(store: Store, provider: ProviderID, model: String, now: Date, calendar: Calendar) throws -> Workload {
+    public static func load(store: Store, provider: ProviderID, model: String, now: Date, calendar: Calendar, supportedRules: Set<RuleID> = []) throws -> Workload {
         try store.transaction {
             let window = DateInterval(start: now.addingTimeInterval(-windowLength), end: now)
             let current = try store.responses(provider: provider, model: model, endingIn: window.start...now).filter { $0.end > window.start }
@@ -76,6 +88,16 @@ public struct Workload: Sendable, Equatable {
             func measure(now: Double?, perHour: ([ResponseRecord]) -> Double?) -> Measure {
                 Measure(now: current.isEmpty ? nil : now, usual: median(hours.compactMap(perHour)))
             }
+            let limit = try store.usageLimit(provider: provider)
+            let reached = limit.flatMap { item -> LimitReached? in
+                guard provider == .claude, item.usedPercent == 100, now >= item.at, now.timeIntervalSince(item.at) <= 5 * hour else { return nil }
+                return LimitReached(at: item.at, resetsAt: item.resetsAt)
+            }
+            let automatic = supportedRules.contains(.compactions) ? try store.compactions(provider: provider, in: Date.distantPast...now).filter { $0.trigger == .auto } : []
+            let recent = automatic.filter { $0.at > window.start }
+            let compact = supportedRules.contains(.compactions) ? CompactionReadout(
+                lastThreeHours: recent.count, blocked: recent.reduce(0) { $0 + ($1.duration ?? 0) },
+                latestPoint: median(automatic.suffix(5).map { Double($0.tokensBefore) }).map { Int($0) }) : nil
             return Workload(
                 window: window, usualActiveDays: days.count,
                 medianPrompt: measure(now: medianInput(current), perHour: medianInput),
@@ -86,7 +108,8 @@ public struct Workload: Sendable, Equatable {
                 subagentShare: measure(now: subagentShare(current), perHour: subagentShare),
                 effortMix: effortMix(now: current, usual: past),
                 histogram: histogram(now: current, usual: past),
-                usageLimit: try store.usageLimit(provider: provider))
+                usageLimit: provider == .claude ? nil : limit, compactions: compact, limitReached: reached,
+                hasFastMode: try store.query("SELECT 1 FROM responses WHERE provider = ? AND model = ? AND service_tier = 'fast' AND end_at <= ? LIMIT 1", [.text(provider.rawValue), .text(model), .date(now)]) { _ in true }.first ?? false)
         }
     }
 

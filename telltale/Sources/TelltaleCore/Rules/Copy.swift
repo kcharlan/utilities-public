@@ -36,6 +36,9 @@ public enum Copy {
     public static func failedTurns(count: Int, reasons: [String]) -> String {
         "\(count) \(count == 1 ? "turn" : "turns") failed: \(list(reasons))"
     }
+    public static func failedTurns(source: String, noun: String, count: Int, reasons: [String]) -> String {
+        "\(source): \(count) \(noun)\(count == 1 ? "" : "s") failed: \(list(reasons))"
+    }
     public static func failedTurnsCatchUp(count: Int, reasons: [String], since: Date, calendar: Calendar) -> String {
         "\(count) \(count == 1 ? "turn" : "turns") failed since \(clock(since, calendar)): \(list(reasons))"
     }
@@ -45,6 +48,10 @@ public enum Copy {
         switch code {
         case "serverOverloaded": "model at capacity"
         case "cyberPolicy": "blocked by policy"
+        case "overloaded": "model overloaded"
+        case "serverError": "server error"
+        case "timeout": "request timed out"
+        case "connection": "connection failed"
         default: code
         }
     }
@@ -117,8 +124,38 @@ public enum Copy {
         "Collector command \(command) failed (\(status)): \(stderr)"
     }
     /// The caller passes spec section 8's cold-start lookback.
-    public static func rebuildConfirmation(days: Int) -> String {
-        "Telltale will re-read the last \(days) days. Your accepted baselines are kept."
+    public static func rebuildConfirmation(days: Int, providers: [String]) -> String {
+        "Telltale will re-read the last \(days) days of logs for \(providers.joined(separator: ", ")). Your accepted baselines are kept."
+    }
+    public static func providerState(_ state: ProviderSummary.State, name: String, calendar: Calendar) -> String {
+        switch state {
+        case .normal: "Reading normally."
+        case .notSetUp(let reason): reason
+        case .formatProblem(let since): formatProblem(source: name, since: since, calendar: calendar)
+        case .backfilling(let started): "Reading \(CollectorRun.lookbackDays) days of history, started \(clock(started, calendar)). No notifications are sent for it."
+        case .rebuildRequested(let at): "Rebuild requested at \(clock(at, calendar)). Waiting for the collector."
+        }
+    }
+    public static func providerDate(_ date: Date, calendar: Calendar) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        return String(format: "%@ %02d, %04d", months[max(0, min(11, (parts.month ?? 1) - 1))], parts.day ?? 1, parts.year ?? 0)
+    }
+    public static func providerVersion(name: String, version: String, seen: Date, calendar: Calendar) -> String {
+        "\(name) \(version) last seen at \(clock(seen, calendar))."
+    }
+    public static func providerHistory(oldest: Date, finished: Date?, calendar: Calendar) -> String {
+        "History from \(providerDate(oldest, calendar: calendar))." + (finished.map { " Read in full \(providerDate($0, calendar: calendar))." } ?? "")
+    }
+    public static func providerRebuildConfirmation(name: String, others: [String], days: Int, cutoff: Date, calendar: Calendar) -> String {
+        let other = others.isEmpty ? "" : " \(others.joined(separator: ", ")) \(others.count == 1 ? "isn't" : "aren't") touched and \(others.count == 1 ? "keeps" : "keep") watching."
+        return "Telltale will re-read the last \(days) days of \(name) logs. \(name) speed history before \(providerDate(cutoff, calendar: calendar)) is removed.\(other) Accepted baselines are kept, and no notifications are sent for the history it reads."
+    }
+    public static func providerAdded(name: String, days: Int) -> String {
+        "Telltale now watches \(name). It read \(days) days of history and sent no notifications for it."
+    }
+    public static func historyRebuilt(name: String, days: Int) -> String {
+        "\(name) history rebuilt from \(days) days of logs."
     }
     public static let collectorNotBuilt = "Collector not built yet"
     /// Spec section 9.3's footer while the collector is off by choice.
@@ -129,6 +166,9 @@ public enum Copy {
     /// Spec section 6.5's format-problem wording.
     public static func formatProblem(since: Date, calendar: Calendar) -> String {
         "Codex changed its log format. Telltale can't read responses since \(clock(since, calendar))."
+    }
+    public static func formatProblem(source: String, since: Date, calendar: Calendar) -> String {
+        "\(source) changed its log format. Telltale can't read \(source) responses since \(clock(since, calendar))."
     }
     public static let collectorNotLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
     /// `reason` is the run record's detail; a closing period is dropped so the sentence ends once.
@@ -180,6 +220,21 @@ public enum Copy {
     public static let collectorTurnOffAfterFirstRun = "You can turn the collector off after its first run."
     /// Settings before the first run: there is no database to store a change in yet (ruling R27).
     public static let settingsAfterFirstRun = "You can change settings after the collector's first run."
+    public static let settingsAfterUpgrade = "Telltale is updating its data. Try again after the collector's next run."
+
+    public static func compactionsFired(count: Int, windowMinutes: Int, blocked: TimeInterval?) -> String {
+        var result = "\(count) automatic compactions in the last \(windowMinutes) minutes. Fresh sessions or subagents would keep more context."
+        if let blocked {
+            let seconds = Int(blocked.rounded())
+            let duration = seconds >= 60 ? "\(seconds / 60) min \(seconds % 60) s" : "\(seconds) s"
+            result += " They held sessions for \(duration)."
+        }
+        return result
+    }
+
+    public static func compactionsCleared(windowMinutes: Int) -> String {
+        "No automatic compactions in the last \(windowMinutes) minutes."
+    }
     /// Settings that change launchd or login-item state, in a copy that isn't the installed app (R24).
     public static let settingsInstalledCopyOnly = "Only Telltale in Applications can change this."
     /// Ruling R16 in Settings: the stored rules don't decode or validate, so the defaults apply.
@@ -266,6 +321,11 @@ public enum Copy {
     private static func list(_ items: [String]) -> String {
         var seen: Set<String> = []
         return items.filter { seen.insert($0).inserted }.joined(separator: ", ")
+    }
+
+    public static func arrival(name: String, days: Int, readyModels: [String]) -> String {
+        let usual = readyModels.isEmpty ? "usual speeds are still being learned" : "usual speeds are ready for \(list(readyModels))"
+        return "Telltale now watches \(name). It read \(days) days of history; \(usual)."
     }
 
     // Port: brew_version/Sources/BrewVersion/UserNotifier.swift, failureMessage, fbd3e03.

@@ -3,6 +3,7 @@
 // database under an explicit private home, plus a command-runner double for launchctl. Shared by
 // the snapshot and acceptance builders. Every value is conspicuously synthetic.
 import Foundation
+import SQLite3
 import Synchronization
 import TelltaleCore
 
@@ -15,6 +16,11 @@ struct SyntheticNaming: ModelNaming {
         default: model
         }
     }
+    func incidentTitle(_ title: String, names model: String) -> Bool { false }
+}
+
+struct SyntheticClaudeNaming: ModelNaming {
+    func displayName(model: String) -> String { model.hasPrefix("synthetic-claude-opus-") ? "Opus 5.5" : "Haiku 4.5" }
     func incidentTitle(_ title: String, names model: String) -> Bool { false }
 }
 
@@ -32,6 +38,8 @@ final class SyntheticCommandRunner: CommandRunner, Sendable {
 enum SyntheticEnvironment {
     static let example = "example-model-1.0"
     static let sample = "example-model-2.0"
+    static let claude = "synthetic-claude-opus-2026-11-01"
+    static let claudeLong = "synthetic-claude-opus-1M"
     static let sessionID = "00000000-0000-4000-8000-000000000001"
     /// Snapshots render at a fixed instant in a fixed zone: Fri Sep 4 2026, 09:30 in New York.
     static let calendar: Calendar = {
@@ -43,13 +51,16 @@ enum SyntheticEnvironment {
     static let snapshotNow = calendar.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 9, minute: 30))!
     /// The synthetic status page the scenes' incidents come from.
     static let statusSourceID = "status.example.com"
+    static let statusSummaries = [StatusSourceSummary(id: statusSourceID, displayName: "Demo", defaultWatchedComponents: ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"])]
     static let sources = [SourceSummary(
         provider: .codex, name: "Codex", statusName: "Demo", statusSourceID: statusSourceID, signals: [.speed, .errors, .link, .provider, .load],
-        naming: SyntheticNaming())]
+        naming: SyntheticNaming(), dataFolder: URL(fileURLWithPath: "/synthetic/codex"))]
+    static let twoSources = sources + [SourceSummary(provider: .claude, name: "Claude Code", statusName: "Synthetic Claude Status", statusSourceID: "synthetic-claude-status", signals: [.speed, .errors, .provider, .load], naming: SyntheticClaudeNaming(), dataFolder: URL(fileURLWithPath: "/synthetic/claude"), failureNoun: "request", supportedRules: [.compactions])]
 
     /// The panel states the harnesses seed (spec section 13's snapshot list, plus the acceptance mix).
     enum Scene: String, CaseIterable {
-        case quiet, alerting, shift
+        case quiet, alerting, shift, twoProviders, arrival, claudeDashboard
+        case providersNormal, providersNotSetUp, providersFormatProblem, providersBackfilling
         /// The acceptance app: an alerting model, a shift prompt and the collector off.
         case acceptance
         /// The dashboard's model view: alerting, plus 14 days of hourly points with a fast spell, a
@@ -63,7 +74,7 @@ enum SyntheticEnvironment {
     }
 
     static func paths(home: URL) -> TelltalePaths {
-        TelltalePaths(home: home.appending(path: "home", directoryHint: .isDirectory), codexHome: home.appending(path: "codex", directoryHint: .isDirectory))
+        TelltalePaths(home: home.appending(path: "home", directoryHint: .isDirectory), codexHome: home.appending(path: "codex", directoryHint: .isDirectory), claudeHome: home.appending(path: "claude", directoryHint: .isDirectory))
     }
 
     /// The acceptance bundle's explicit private home (`SyntheticAcceptanceHome` in its Info.plist).
@@ -156,6 +167,18 @@ enum SyntheticEnvironment {
         // The dashboard's large-prompt alert: 4 in 10 of the last hour's prompts are 300k or more.
         try responses(example, count: 30, tps: exampleNow, from: now.addingTimeInterval(-3_600 + 60), spacing: 118) { dashboard && $0 % 5 < 2 ? 320_000 : 10_000 }
         try responses(sample, count: 20, tps: 70, from: now.addingTimeInterval(-3_600 + 90), spacing: 170)
+        if scene == .twoProviders || scene == .arrival || scene == .claudeDashboard {
+            for (index, model) in [claude, claudeLong].enumerated() {
+                let end = now.addingTimeInterval(-Double(index + 1) * 60)
+                try store.upsert(responses: [ResponseRecord(provider: .claude, model: model, effort: nil, serviceTier: "fast", sessionID: sessionID,
+                    isSubagent: false, turnID: "synthetic-claude-turn-\(index)", responseID: "synthetic-claude-response-\(index)",
+                    start: end.addingTimeInterval(-20), end: end, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 1000, reasoningTokens: nil)])
+            }
+        }
+        if scene == .arrival {
+            try store.set(.pendingArrivals, [ProviderID.claude.rawValue])
+            try store.setBackfill(ProviderBackfill(reason: .new, startedAt: now.addingTimeInterval(-3600), through: now, finishedAt: now, announce: true), unit: ProviderID.claude.rawValue)
+        }
 
         // Three hours of 5-minute points: the slowdown shows as a step in Example's sparkline.
         let lastPoint = EvaluationPoints.after(nil, through: now, earliest: now.addingTimeInterval(-EvaluationPoints.cadence)).last ?? now
@@ -189,6 +212,29 @@ enum SyntheticEnvironment {
         try store.finishRun(run, at: now.addingTimeInterval(-60), outcome: .succeeded)
         if scene == .dashboard { try dashboardHistory(store, now: now, calendar: calendar) }
         if scene == .collectorProblem { try collectorProblem(store, paths: paths, now: now) }
+        if scene == .providersNormal || scene == .providersNotSetUp || scene == .providersFormatProblem || scene == .providersBackfilling {
+            let state: SetupState = switch scene {
+            case .providersNotSetUp: .notSetUp("Synthetic source is not set up.")
+            case .providersFormatProblem: .formatProblem("Synthetic format change")
+            default: .ready
+            }
+            try store.setSourceState(SourceStateRow(source: "claude", state: state, version: "0.0.0-synthetic", unavailableSince: now.addingTimeInterval(-300), updatedAt: now))
+        }
+        if scene == .claudeDashboard || scene == .providersBackfilling {
+            // Seed an unfinished synthetic backfill to exercise the dimmed sidebar in both themes.
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            let backfill = ProviderBackfill(reason: .new, startedAt: now, through: now, finishedAt: nil, announce: false)
+            let json = String(decoding: try encoder.encode(backfill), as: UTF8.self)
+            var db: OpaquePointer?
+            guard sqlite3_open(paths.database.path, &db) == SQLITE_OK else { fatalError("Cannot open synthetic snapshot database") }
+            defer { sqlite3_close(db) }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "INSERT INTO rule_state (rule, provider, scope, json) VALUES ('engine', 'claude', 'backfill', ?)", -1, &statement, nil) == SQLITE_OK else { fatalError("Cannot prepare synthetic backfill") }
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_text(statement, 1, json, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            guard sqlite3_step(statement) == SQLITE_DONE else { fatalError("Cannot seed synthetic backfill") }
+        }
         return paths
     }
 

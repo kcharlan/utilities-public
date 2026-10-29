@@ -68,7 +68,7 @@ public enum RolloutParser {
             reader.cursor.compressedSize = file.size
             reader.cursor.compressedModified = file.modified
         } else {
-            let offset = try completeLines(of: file.url, from: reader.cursor.byteOffset ?? 0) { reader.consume($0) }
+            let offset = try LineReader.completeLines(of: file.url, from: reader.cursor.byteOffset ?? 0) { reader.consume($0) }
             reader.cursor.byteOffset = offset
             reader.cursor.compressedSize = nil
             reader.cursor.compressedModified = nil
@@ -79,35 +79,6 @@ public enum RolloutParser {
             cursor: reader.cursor, problem: reader.problem)
     }
 
-    private static let readChunkSize = 1 << 20
-
-    /// Calls `body` with each newline-terminated line from `offset` on, without its newline, and
-    /// returns the offset just after the last one.
-    private static func completeLines(of url: URL, from offset: Int, _ body: (Data) -> Void) throws -> Int {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let size = try handle.seekToEnd()
-        var consumed = UInt64(exactly: offset).map { $0 <= size } == true ? offset : 0
-        try handle.seek(toOffset: UInt64(consumed))
-        var buffer = Data()
-        while let chunk = try handle.read(upToCount: readChunkSize), !chunk.isEmpty {
-            buffer.append(chunk)
-            var lineStart = buffer.startIndex
-            while let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
-                body(buffer[lineStart..<newline])
-                consumed += newline - lineStart + 1
-                lineStart = newline + 1
-            }
-            buffer.removeSubrange(buffer.startIndex..<lineStart)
-        }
-        return consumed
-    }
-
-    /// Codex timestamps are UTC with milliseconds; whole seconds are accepted too.
-    static func date(_ text: String) -> Date? {
-        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) { return date }
-        return try? Date.ISO8601FormatStyle().parse(text)
-    }
 }
 
 /// Applies lines to a cursor and collects what they produce.
@@ -218,7 +189,7 @@ private struct RolloutLine: Decodable {
     var timestamp: String?
     var record: Record
 
-    var date: Date? { timestamp.flatMap(RolloutParser.date) }
+    var date: Date? { timestamp.flatMap(ISO8601Time.date) }
 
     init(from decoder: any Decoder) throws {
         let root = try decoder.container(keyedBy: AnyKey.self)

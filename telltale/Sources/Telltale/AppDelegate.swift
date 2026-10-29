@@ -98,15 +98,17 @@ import TelltaleCore
         let installed = isInstalledCopy
         if installed { applyLaunchSettings() }
 
-        let monitor = CollectorMonitor(paths: paths, manager: manager, currentExecutable: currentExecutable, service: notificationService, calendar: calendar)
+        let sourceNames = Dictionary(sources.map { ($0.provider, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let monitor = CollectorMonitor(paths: paths, manager: manager, currentExecutable: currentExecutable, service: notificationService, calendar: calendar,
+            sourceNames: Dictionary(sourceNames.map { ($0.key.rawValue, $0.value) }, uniquingKeysWith: { first, _ in first }))
         let live = LiveStore(paths: paths, sources: sources, calendar: calendar, health: { [weak monitor] in await monitor?.evaluate() }, watchFiles: watchFiles)
         let manager = manager
-        let actions = UserActions(paths: paths, calendar: calendar, kickstart: { try manager.kickstart() }, changed: { [weak live] in live?.reload() })
+        let actions = UserActions(paths: paths, calendar: calendar, kickstart: { try manager.kickstart() }, changed: { [weak live] in live?.reload() }, sourceNames: sourceNames)
         let panel = PanelModel(store: live, actions: actions, notifier: notifier, calendar: calendar)
         // Turn on, Turn off and Repair change launchd state, so only the installed copy may (R24).
         let collector = CollectorViewModel(
             live: live, actions: actions, manager: manager, currentExecutable: currentExecutable, canManage: installed, paths: paths, calendar: calendar)
-        let settings = SettingsModel(live: live, collector: collector, sources: sources, login: login)
+        let settings = SettingsModel(live: live, collector: collector, sources: sources, statusSummaries: Registry.statusSummaries(), login: login)
         let dashboard = DashboardWindowController(
             model: DashboardModel(live: live, panel: panel, collector: collector, settings: settings, sources: sources, calendar: calendar))
         let status = makeStatus(panel, dashboard)

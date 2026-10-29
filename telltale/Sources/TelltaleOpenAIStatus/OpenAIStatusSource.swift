@@ -11,6 +11,7 @@ public struct OpenAIStatusSource: StatusSource {
 
     public let id = OpenAIStatusSource.sourceID
     public let displayName = OpenAIStatusSource.name
+    public let defaultWatchedComponents = ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"]
 
     private let client: StatusClient
     private let clock: @Sendable () -> Date

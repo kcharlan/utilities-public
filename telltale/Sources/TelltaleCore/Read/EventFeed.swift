@@ -3,7 +3,7 @@ import Foundation
 /// One entry in the dashboard's Events list (spec section 9.2).
 public struct FeedEvent: Sendable, Equatable, Identifiable {
     public enum Kind: String, Sendable, Hashable {
-        case slowdown, speedup, largePrompts, failedTurns, disconnects, incident, usageLimit
+        case slowdown, speedup, largePrompts, compactions, failedTurns, disconnects, incident, usageLimit
         /// A rule's condition cleared (`ruleCleared`).
         case cleared
         /// An episode that ended without a clear: idle, or its rule turned off. These write no event.
@@ -35,6 +35,8 @@ public struct FeedEvent: Sendable, Equatable, Identifiable {
     public var undoConfirmation: String?
     /// The end of an entry that spans time (a connection-history gap).
     public var endsAt: Date?
+    /// Full model identifier for a model-scoped entry, used for its tooltip.
+    public var modelID: String? = nil
 }
 
 /// Spec section 9.2's Events and section 8's Undo contract, newest first.
@@ -50,19 +52,55 @@ public struct FeedEvent: Sendable, Equatable, Identifiable {
 /// the raw model id the collector wrote, so `naming` supplies display names.
 public enum EventFeed {
     public static func load(
-        store: Store, limit: Int, naming: (ProviderID, String) -> String = { $1 }, calendar: Calendar = .current
+        store: Store, limit: Int, naming: (ProviderID, String) -> String = { $1 }, calendar: Calendar = .current,
+        sources: [SourceSummary] = []
     ) throws -> [FeedEvent] {
         guard limit > 0 else { return [] }
         return try store.transaction {
-            var entries = try store.feedEvents(limit: limit).map { row in try entry(row, store: store, naming: naming) }
+            let rows = try store.feedEvents(limit: limit)
+            var entries = try rows.map { try entry($0, store: store, naming: naming) }
             entries += try store.silentEpisodeEnds(limit: limit).map { episode in
-                FeedEvent(
+                let name: String
+                if episode.rule == RuleID.incident.rawValue {
+                    name = sources.first { $0.statusSourceID == episode.provider }?.statusName ?? episode.provider
+                } else {
+                    name = sources.first { $0.provider.rawValue == episode.provider }?.name ?? episode.provider
+                }
+                let body = episode.endReason == EpisodeRow.EndReason.ruleDisabled ? Copy.episodeEndedRuleOff : Copy.episodeEndedIdle
+                return FeedEvent(
                     id: "episode-\(episode.id ?? 0)", at: episode.endedAt ?? episode.firedAt, kind: .ended, color: nil,
                     title: RuleID(rawValue: episode.rule)?.title ?? episode.rule,
-                    body: episode.endReason == EpisodeRow.EndReason.ruleDisabled ? Copy.episodeEndedRuleOff : Copy.episodeEndedIdle)
+                    body: "\(name): \(body)")
             }
             entries += try collectorFailures(store: store, limit: limit, calendar: calendar)
-            return Array(entries.sorted { ($0.at, $0.id) > ($1.at, $1.id) }.prefix(limit))
+            let visible = Array(entries.sorted { ($0.at, $0.id) > ($1.at, $1.id) }.prefix(limit))
+            let visibleIDs = Set(visible.map(\.id))
+            let shownRows = rows.filter { visibleIDs.contains("event-\($0.id)") }
+            var names: [String: [String: String]] = [:]
+            for source in sources {
+                let ids = shownRows.filter { row in
+                    row.event.provider == source.provider.rawValue && row.event.scope != "*" &&
+                    ([EventKind.baselineAccepted, EventKind.baselineUndone].contains(row.event.kind) ||
+                     [RuleID.slower.rawValue, RuleID.faster.rawValue].contains(row.rule ?? ""))
+                }.map { $0.event.scope }
+                names[source.provider.rawValue] = DisplayNames.disambiguated(ids, naming: source.naming)
+            }
+            let byID = Dictionary(uniqueKeysWithValues: shownRows.map { ("event-\($0.id)", $0) })
+            return try visible.map { original in
+                guard let row = byID[original.id] else { return original }
+                let provider = ProviderID(rawValue: row.event.provider)
+                let base = sources.first { $0.provider == provider }?.naming.displayName(model: row.event.scope)
+                let name = names[provider.rawValue]?[row.event.scope]
+                var rendered = try entry(row, store: store, naming: { p, m in names[p.rawValue]?[m] ?? naming(p, m) })
+                if let base, let name, [RuleID.slower.rawValue, RuleID.faster.rawValue].contains(row.rule ?? "") {
+                    rendered.body = DisplayNames.speedText(rendered.body, base: base, name: name, provider: sources.first { $0.provider == provider }?.name ?? "")
+                }
+                if [EventKind.ruleFired, EventKind.ruleEscalated, EventKind.ruleCleared].contains(row.event.kind),
+                   let source = sources.first(where: { $0.provider == provider }), !rendered.body.hasPrefix("\(source.name): ") {
+                    rendered.body = "\(source.name): \(rendered.body)"
+                }
+                return rendered
+            }
         }
     }
 
@@ -70,6 +108,10 @@ public enum EventFeed {
         var event = FeedEvent(
             id: "event-\(row.id)", at: row.event.at, kind: .other, color: nil, title: row.event.title, body: row.event.body,
             link: row.event.link, undoneAt: row.event.undoneAt, endsAt: row.event.endsAt)
+        if [EventKind.baselineAccepted, EventKind.baselineUndone].contains(row.event.kind) ||
+            [RuleID.slower.rawValue, RuleID.faster.rawValue].contains(row.rule ?? "") {
+            event.modelID = row.event.scope
+        }
         switch row.event.kind {
         case EventKind.ruleFired, EventKind.ruleEscalated:
             let rule = row.rule.flatMap(RuleID.init(rawValue:)) ?? RuleID.allCases.first { $0.title == row.event.title }
@@ -113,6 +155,7 @@ public enum EventFeed {
         case .slower: .slowdown
         case .faster: .speedup
         case .largePrompts: .largePrompts
+        case .compactions: .compactions
         case .failedTurns: .failedTurns
         case .disconnects: .disconnects
         case .incident: .incident

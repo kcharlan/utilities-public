@@ -39,11 +39,11 @@ import TelltaleCore
             case .alerting:
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
                 #expect(snapshot.models.map(\.color) == [.amber, nil])
-                #expect(snapshot.alerts.map(\.text).contains("Example is 26% slower than usual for prompts this size. Since 08:40."))
+                #expect(snapshot.alerts.map(\.text).contains("Codex: Example is 26% slower than usual for prompts this size. Since 08:40."))
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
                 #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
-            case .acceptance, .dashboard, .collectorProblem, .settings:
+            case .acceptance, .dashboard, .collectorProblem, .settings, .twoProviders, .arrival, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
                 Issue.record("not a panel snapshot scene")
             }
         }
@@ -67,7 +67,7 @@ import TelltaleCore
         try harness.addRedAlert()
         let relaunched = try AcceptanceHarness(home: home, notificationService: SyntheticNotificationService(native: nil))
         #expect(relaunched.live.snapshot.lamps[.errors] == .red)
-        #expect(relaunched.live.snapshot.alerts.first?.text == "3 turns failed: synthetic failure")
+        #expect(relaunched.live.snapshot.alerts.first?.text == "Codex: 3 turns failed: synthetic failure")
     }
 
     @Test func commandDoubleNeverReachesLaunchd() async throws {

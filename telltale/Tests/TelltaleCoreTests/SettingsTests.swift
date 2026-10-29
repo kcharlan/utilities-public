@@ -4,15 +4,62 @@ import TelltaleTestSupport
 @testable import TelltaleCore
 
 @Suite struct SettingsTests {
+    @Test func storedRulesWithoutCompactionsKeepTheirValues() throws {
+        var rules = RuleSettings.defaults
+        rules.slower.durationMinutes = 19
+        let data = try JSONEncoder().encode(rules)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "compactions")
+        let decoded = try JSONDecoder().decode(RuleSettings.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.slower.durationMinutes == 19)
+        #expect(decoded.compactions == RuleSettings.defaults.compactions)
+    }
+
+    @Test func compactionValidation() {
+        var rules = RuleSettings.defaults
+        rules.compactions.count = 0
+        rules.compactions.windowMinutes = 0
+        #expect(rules.validationErrors().count == 2)
+    }
+    @Test func defaultWatchedIsTheUnionOfSources() throws {
+        let sources = [StatusSourceSummary(id: "openai", displayName: "Synthetic A", defaultWatchedComponents: ["A", "B"]), StatusSourceSummary(id: "synthetic", displayName: "Synthetic B", defaultWatchedComponents: ["B", "C"])]
+        #expect(Settings.defaultWatchedComponents(sources) == ["A", "B", "C"])
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            #expect(try store.watchedComponents(sources: sources) == ["A", "B", "C"])
+        }
+    }
+
+    @Test func storedWatchedListGainsClaudeCodeOnce() throws {
+        let sources = [StatusSourceSummary(id: "openai", displayName: "Synthetic A", defaultWatchedComponents: ["A"]), StatusSourceSummary(id: "synthetic", displayName: "Synthetic B", defaultWatchedComponents: ["Synthetic Code"])]
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            try store.set(.watchedComponents, ["Custom"])
+            try store.applyWatchedDefaults(sources: sources)
+            #expect(try store.watchedComponents(sources: sources) == ["Custom", "Synthetic Code"])
+            try store.set(.watchedComponents, ["Custom"])
+            try store.applyWatchedDefaults(sources: sources)
+            #expect(try store.watchedComponents(sources: sources) == ["Custom"])
+        }
+    }
+
+    @Test func freshInstallUncheckIsKept() throws {
+        let sources = [StatusSourceSummary(id: "synthetic", displayName: "Synthetic", defaultWatchedComponents: ["Synthetic Code"])]
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            try store.applyWatchedDefaults(sources: sources)
+            try store.set(.watchedComponents, [])
+            try store.applyWatchedDefaults(sources: sources)
+            #expect(try store.watchedComponents(sources: sources).isEmpty)
+        }
+    }
     @Test func absentKeyReturnsDefault() throws {
         try withScratchDirectory { directory in
             let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
             #expect(try store.value(SettingKey.collectorEnabled) == true)
             #expect(try store.value(SettingKey.intervalMinutes) == 5)
             #expect(try store.value(SettingKey.rules) == RuleSettings.defaults)
-            #expect(try store.value(SettingKey.watchedComponents) == [
-                "CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses",
-            ])
+            #expect(try store.value(SettingKey.watchedComponents) == [])
             #expect(try store.value(SettingKey.appearance) == .dark)
             #expect(try store.value(SettingKey.openAtLogin) == true)
             #expect(try store.value(SettingKey.rebuildRequestedAt) == nil)
@@ -110,12 +157,12 @@ import TelltaleTestSupport
             SettingKey.collectorEnabled.name, SettingKey.intervalMinutes.name, SettingKey.rules.name,
             SettingKey.watchedComponents.name, SettingKey.appearance.name, SettingKey.openAtLogin.name,
             SettingKey.rebuildRequestedAt.name, SettingKey.backfillThrough.name, SettingKey.lastPrunedDay.name,
-            SettingKey.collectorHealthNotice.name,
+            SettingKey.collectorHealthNotice.name, SettingKey.providerRebuildRequests.name, SettingKey.pendingArrivals.name, SettingKey.dismissedArrivals.name, SettingKey.watchedDefaultsApplied.name,
         ]
         #expect(Set(names).count == names.count)
         #expect(names == [
             "collectorEnabled", "intervalMinutes", "rules", "watchedComponents", "appearance", "openAtLogin",
-            "rebuildRequestedAt", "backfillThrough", "lastPrunedDay", "collectorHealthNotice",
+            "rebuildRequestedAt", "backfillThrough", "lastPrunedDay", "collectorHealthNotice", "providerRebuildRequests", "pendingArrivals", "dismissedArrivals", "watchedDefaultsApplied",
         ])
     }
 

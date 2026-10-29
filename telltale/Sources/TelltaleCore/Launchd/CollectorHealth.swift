@@ -86,7 +86,7 @@ public enum CollectorHealth {
 
     public static func evaluate(
         enabled: Bool, installedExecutable: URL?, installedAt: Date?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
-        intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar
+        intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar, sourceNames: [String: String] = [:]
     ) -> CollectorHealthReport {
         guard enabled else {
             return CollectorHealthReport(
@@ -130,7 +130,7 @@ public enum CollectorHealth {
             if case .formatProblem = $0.state { true } else { false }
         }
         for state in formatProblems {
-            problems.append(Copy.formatProblem(since: state.unavailableSince ?? state.updatedAt, calendar: calendar))
+            problems.append(Copy.formatProblem(source: sourceNames[state.source] ?? state.source, since: state.unavailableSince ?? state.updatedAt, calendar: calendar))
         }
 
         return CollectorHealthReport(

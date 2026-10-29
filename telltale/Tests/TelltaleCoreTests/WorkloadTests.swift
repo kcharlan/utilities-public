@@ -39,6 +39,44 @@ private struct WorkloadSeed {
 }
 
 @Suite struct WorkloadTests {
+    @Test func unsupportedCompactionsAreHidden() throws {
+        try withBaseline { h in
+            let result = try Workload.load(store: h.store, provider: .codex, model: Synth.model, now: h.at(9, 4, 12), calendar: h.calendar, supportedRules: [])
+            #expect(result.compactions == nil)
+        }
+    }
+
+    @Test func compactionReadouts() throws {
+        try withBaseline { h in
+            let now = h.at(9, 4, 12)
+            let records = (0..<6).map { index in
+                CompactionRecord(provider: .codex, lineID: "synthetic-\(index)", sessionID: "synthetic", agentID: nil,
+                    at: now.addingTimeInterval(-Double(index + 1) * 3600), trigger: .auto, tokensBefore: (index + 1) * 1000,
+                    tokensAfter: nil, duration: 12, precomputed: false)
+            }
+            try h.store.upsert(compactions: records)
+            let result = try Workload.load(store: h.store, provider: .codex, model: Synth.model, now: now, calendar: h.calendar, supportedRules: [.compactions])
+            #expect(result.compactions?.lastThreeHours == 2)
+            #expect(result.compactions?.blocked == 24)
+            #expect(result.compactions?.latestPoint == 3000)
+        }
+    }
+
+    @Test func limitReachedOnlyForFiveHours() throws {
+        try withBaseline { h in
+            let at = h.at(9, 4, 12)
+            try h.store.setUsageLimit(UsageLimitSnapshot(provider: .claude, at: at, usedPercent: 100, windowMinutes: 300, resetsAt: nil))
+            func load(_ now: Date) throws -> Workload {
+                try Workload.load(store: h.store, provider: .claude, model: Synth.model, now: now, calendar: h.calendar)
+            }
+            #expect(try load(at).limitReached?.at == at)
+            #expect(try load(at.addingTimeInterval(5 * 3600)).limitReached?.at == at)
+            #expect(try load(at.addingTimeInterval(5 * 3600 + 1)).limitReached == nil)
+            #expect(try load(at.addingTimeInterval(-1)).limitReached == nil)
+            try h.store.setUsageLimit(UsageLimitSnapshot(provider: .claude, at: at.addingTimeInterval(1), usedPercent: 99, windowMinutes: 300, resetsAt: nil))
+            #expect(try load(at.addingTimeInterval(2)).limitReached == nil)
+        }
+    }
     @Test func nowIsLastThreeHoursActiveHoursOnly() throws {
         try withBaseline { h in
             var seed = WorkloadSeed(h)

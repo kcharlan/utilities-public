@@ -34,7 +34,7 @@ struct ModelView: View {
             if let workload = model.workload {
                 HStack(alignment: .top, spacing: 22) {
                     PromptSizes(workload: workload, loadLamp: snapshot.lamps[.load].flatMap { $0 }).frame(minWidth: 360, maxWidth: .infinity, alignment: .topLeading)
-                    WorkloadGrid(workload: workload, loadLamp: snapshot.lamps[.load].flatMap { $0 }, calendar: model.calendar)
+                    WorkloadGrid(workload: workload, loadLamp: snapshot.lamps[.load].flatMap { $0 }, calendar: model.calendar, provider: model.selectedModel?.provider ?? .codex)
                         .frame(minWidth: 340, maxWidth: .infinity, alignment: .topLeading)
                 }
             }
@@ -74,10 +74,10 @@ private struct SpeedSection: View {
                 .accessibilityLabel("Hourly \(name) speed relative to usual, \(detail.range.label)")
             Legend(items: [
                 .swatch(Theme.color(.red), "Much slower"), .swatch(Theme.color(.amber), "Slower"), .swatch(Theme.swiftUI(Theme.usual), "Usual"),
-                .swatch(Theme.color(.blue), "Faster"), .band("Provider incident"), .triangle("Failed turn"),
+                .swatch(Theme.color(.blue), "Faster"), .band("Provider incident"), .triangle(ModelCopy.failureLegend(noun: model.sources.first { $0.provider == model.selectedModel?.provider }?.failureNoun ?? "turn")),
             ])
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(Copy.usualExplanation).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+                Text(ModelCopy.usual(fastMode: model.workload?.hasFastMode ?? false)).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if model.acceptingSince == nil {
@@ -243,6 +243,7 @@ private struct WorkloadGrid: View {
     let workload: Workload
     let loadLamp: LampColor?
     let calendar: Calendar
+    let provider: ProviderID
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -273,6 +274,15 @@ private struct WorkloadGrid: View {
                     Text(limitLabel(limit)).font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
                 }
             }
+            if let compact = workload.compactions {
+                Text("\(compact.lastThreeHours) automatic compactions · \(Int(compact.blocked)) s blocked · latest point \(compact.latestPoint.map { DashboardFormat.tokens(Double($0)) } ?? "–")")
+                    .font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+                Text("Across all sessions and subagents for this provider").font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+            }
+            if let reached = workload.limitReached {
+                Text(reached.resetsAt.map { "Limit reached, resets \(Copy.clock($0, calendar))" } ?? "Limit reached")
+                    .font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
+            }
         }
     }
 
@@ -290,7 +300,7 @@ private struct WorkloadGrid: View {
 
     private func mix(_ side: KeyPath<Workload.EffortShare, Double>) -> String {
         workload.effortMix.filter { $0[keyPath: side] > 0 }
-            .map { "\($0.effort ?? "default") \(DashboardFormat.percent($0[keyPath: side]))" }
+            .map { "\(ModelCopy.effort($0.effort, provider: provider)) \(DashboardFormat.percent($0[keyPath: side]))" }
             .joined(separator: " · ")
     }
 
@@ -298,6 +308,14 @@ private struct WorkloadGrid: View {
         let window = limit.windowMinutes % 60 == 0 ? "\(limit.windowMinutes / 60)-hour" : "\(limit.windowMinutes)-minute"
         guard let resets = limit.resetsAt else { return "Of the \(window) usage limit" }
         return "Of the \(window) usage limit, resets \(Copy.clock(resets, calendar))"
+    }
+}
+
+enum ModelCopy {
+    static func effort(_ effort: String?, provider: ProviderID) -> String { effort ?? (provider == .claude ? "not recorded" : "default") }
+    static func failureLegend(noun: String) -> String { "Failed \(noun)" }
+    static func usual(fastMode: Bool) -> String {
+        fastMode ? Copy.usualExplanation.replacingOccurrences(of: "service tier", with: "service tier or fast mode") : Copy.usualExplanation
     }
 }
 
@@ -324,7 +342,7 @@ private struct EventList: View {
                             Text(Self.kindLabel(event)).lineLimit(1)
                         }
                         .frame(width: 136, alignment: .leading)
-                        Text(Self.text(event)).fixedSize(horizontal: false, vertical: true)
+                        Text(Self.text(event)).fixedSize(horizontal: false, vertical: true).help(event.modelID ?? "")
                             .frame(maxWidth: .infinity, alignment: .leading)
                         trailing(event)
                     }
@@ -360,6 +378,7 @@ private struct EventList: View {
         case .slowdown: "Slowdown"
         case .speedup: "Speedup"
         case .largePrompts: "Large prompts"
+        case .compactions: "Context compactions"
         case .failedTurns: "Failed turns"
         case .disconnects: "Disconnects"
         case .incident: "Incident"

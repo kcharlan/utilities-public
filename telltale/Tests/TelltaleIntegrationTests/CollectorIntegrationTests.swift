@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import TelltaleCodex
+import TelltaleClaude
 import TelltaleCore
 import TelltaleOpenAIStatus
 import TelltaleTestSupport
@@ -89,7 +90,7 @@ final class IntegrationHarness {
 
     init(home: URL) {
         self.home = home
-        paths = TelltalePaths(home: home, codexHome: home.appending(path: "synthetic-codex", directoryHint: .isDirectory))
+        paths = TestPaths.synthetic(home: home)
         workload = CodexWorkload(codexHome: paths.codexHome)
     }
 
@@ -147,8 +148,8 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
             let calendar = harness.calendar
             let expected: [(at: Date, title: String, body: String)] = [
                 (harness.at(9, 4, 9, 20), "Slower than usual",
-                 Copy.slowerFired(model: CodexWorkload.display, percent: 25, since: harness.at(9, 4, 8, 55), calendar: calendar)),
-                (harness.at(9, 4, 10, 5), "Slower than usual", Copy.speedCleared(model: CodexWorkload.display)),
+                 "Codex: " + Copy.slowerFired(model: CodexWorkload.display, percent: 25, since: harness.at(9, 4, 8, 55), calendar: calendar)),
+                (harness.at(9, 4, 10, 5), "Slower than usual", "Codex: " + Copy.speedCleared(model: CodexWorkload.display)),
             ]
             #expect(noticesByRun.map(\.at) == expected.map(\.at))
             #expect(noticesByRun.flatMap(\.notices).map(\.title) == expected.map(\.title))
@@ -186,7 +187,7 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
 
             #expect(report.outcome == .succeeded, "\(report.detail)")
             #expect(elapsed < .seconds(60), "catch-up took \(elapsed)")
-            let expected = Copy.slowerCatchUp(
+            let expected = "Codex: " + Copy.slowerCatchUp(
                 model: CodexWorkload.display, percent: 25, since: harness.at(9, 24, 8, 55), calendar: harness.calendar)
             #expect(await harness.notifier.posted.map(\.body) == [expected])
             let episodes = try harness.store().episodes(rule: RuleID.slower.rawValue)
@@ -238,6 +239,81 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
             // The status page was the fake one, on the synthetic base.
             let requests = await harness.transport.requests
             #expect(!requests.isEmpty && requests.allSatisfy { $0.host() == "status.example.com" })
+        }
+    }
+}
+
+private struct IntegrationStatus: StatusSource {
+    struct Down: Error {}
+    let id: String
+    let down: Bool
+    var displayName: String { id }
+    func fetch(known: [IncidentRecord]) async throws -> StatusFetch {
+        if down { throw Down() }
+        return .full(components: [], incidents: [])
+    }
+}
+
+extension CollectorIntegrationTests {
+    private func runBoth(_ h: IntegrationHarness, at now: Date, down: String? = nil) async -> RunReport {
+        await CollectorRun(paths: h.paths,
+            sources: [CodexUsageSource(codexHome: h.paths.codexHome), ClaudeUsageSource(roots: [h.paths.claudeHome])],
+            statusSources: [IntegrationStatus(id: "openai", down: down == "openai"), IntegrationStatus(id: "anthropic", down: down == "anthropic")],
+            notifier: h.notifier, calendar: h.calendar, now: now).run()
+    }
+
+    private func writeClaude(_ h: IntegrationHarness, broken: Bool = false) throws {
+        let text = try TranscriptBuilder.user("2026-09-04T12:59:00Z") + (broken
+            ? TranscriptBuilder.line(["type": "assistant", "timestamp": "2026-09-04T13:00:00Z", "message": ["id": "msg_synthetic_01", "model": "claude-opus-5-5"]])
+            : TranscriptBuilder.assistant("2026-09-04T13:00:00Z"))
+        let url = try TranscriptBuilder.file(root: h.paths.claudeHome, text: text)
+        try FileManager.default.setAttributes([.modificationDate: h.at(9, 4, 9)], ofItemAtPath: url.path)
+    }
+
+    @Test func codexAndClaudeTogether() async throws {
+        try await withIntegration { h in
+            try h.workload.write(h.workload.session(start: h.at(9, 4, 8), firstEnd: h.at(9, 4, 9), runs: [(1, 40)]))
+            try writeClaude(h)
+            #expect(await runBoth(h, at: h.at(9, 4, 10)).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.responses(provider: .codex, model: CodexWorkload.model, endingIn: h.at(9, 4)...h.at(9, 4, 10)).count == 1)
+            #expect(try store.responses(provider: .claude, model: "claude-opus-5-5", endingIn: h.at(9, 4)...h.at(9, 4, 10)).count == 1)
+        }
+    }
+
+    @Test func claudeHomeAloneWorks() async throws {
+        try await withIntegration { h in
+            try writeClaude(h)
+            #expect(await runBoth(h, at: h.at(9, 4, 10)).outcome == .succeeded)
+            #expect(try h.store().responses(provider: .claude, model: "claude-opus-5-5", endingIn: h.at(9, 4)...h.at(9, 4, 10)).count == 1)
+        }
+    }
+
+    @Test func claudeAbsentLeavesCodexUntouched() async throws {
+        try await withIntegration { h in
+            try h.workload.write(h.workload.session(start: h.at(9, 4, 8), firstEnd: h.at(9, 4, 9), runs: [(1, 40)]))
+            #expect(await runBoth(h, at: h.at(9, 4, 10)).outcome == .succeeded)
+            #expect(try h.store().responses(provider: .codex, model: CodexWorkload.model, endingIn: h.at(9, 4)...h.at(9, 4, 10)).count == 1)
+        }
+    }
+
+    @Test func statusFetchDoesntResetClaudeFormatSince() async throws {
+        try await withIntegration { h in
+            try writeClaude(h, broken: true)
+            let now = h.at(9, 4, 10)
+            #expect(await runBoth(h, at: now).outcome == .succeeded)
+            #expect(await runBoth(h, at: now.addingTimeInterval(300)).outcome == .succeeded)
+            #expect(try h.store().sourceState("claude")?.unavailableSince == now)
+            #expect(try h.store().sourceState("anthropic")?.state == .ready)
+        }
+    }
+
+    @Test func oneStatusSourceDownLeavesTheOtherEvaluated() async throws {
+        try await withIntegration { h in
+            try writeClaude(h)
+            #expect(await runBoth(h, at: h.at(9, 4, 10), down: "openai").outcome == .succeeded)
+            #expect(try h.store().sourceState("anthropic")?.state == .ready)
+            #expect(try h.store().sourceState("openai")?.unavailableSince != nil)
         }
     }
 }

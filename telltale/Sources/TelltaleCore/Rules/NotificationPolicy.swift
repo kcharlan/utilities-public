@@ -47,9 +47,10 @@ public struct FailureNotices: Sendable, Equatable, Hashable, Codable {
 public enum NotificationPolicy {
     public static func select(
         _ outcomes: [RuleOutcome], latestPoint: Date, intervalMinutes: Int, settings: RuleSettings, mode: EvalMode,
-        failureNotices: inout FailureNotices, calendar: Calendar
+        failureNotices: inout FailureNotices, calendar: Calendar, provider: RuleProviderInfo? = nil
     ) -> [PendingNotification] {
         guard mode == .live else { return [] }
+        let outcomes = outcomes.filter { provider?.supports($0.rule) ?? true }
         let isFresh = freshness(latestPoint: latestPoint, intervalMinutes: intervalMinutes)
         let (caughtUp, latestCatchUp) = catchUps(outcomes, isFresh: isFresh)
 
@@ -77,22 +78,30 @@ public enum NotificationPolicy {
             }
         }
 
-        notices += failedTurnNotices(
-            outcomes.filter { $0.rule == .failedTurns }, caughtUp: caughtUp, isFresh: isFresh, latestPoint: latestPoint,
-            rule: settings.failedTurns, failureNotices: &failureNotices, calendar: calendar)
-        return notices
+        if provider?.supports(.failedTurns) ?? true {
+            notices += failedTurnNotices(
+                outcomes.filter { $0.rule == .failedTurns }, caughtUp: caughtUp, isFresh: isFresh, latestPoint: latestPoint,
+                rule: settings.failedTurns, failureNotices: &failureNotices, calendar: calendar, provider: provider)
+        }
+        return notices.map { notice in
+            var notice = notice
+            if let provider, !notice.body.hasPrefix("\(provider.name): ") { notice.body = "\(provider.name): \(notice.body)" }
+            return notice
+        }
     }
 
     /// The `threadID` of the coalesced failed-turn notice.
-    public static let failedTurnsThreadID = "failedTurns"
+    public static func failedTurnsThreadID(provider: ProviderID) -> String { "failedTurns.\(provider.rawValue)" }
 
     /// The coalescing state to store when the failed-turn notice that `select` chose from these
     /// same inputs couldn't be posted; `failureNotices` is the state from before `select`. The
     /// notice's failures wait again and its time isn't recorded, so the next run retries it (in the
     /// plain wording, like any waiting failure).
     public static func withheldFailureNotices(
-        _ outcomes: [RuleOutcome], latestPoint: Date, intervalMinutes: Int, settings: RuleSettings, failureNotices: FailureNotices
+        _ outcomes: [RuleOutcome], latestPoint: Date, intervalMinutes: Int, settings: RuleSettings, failureNotices: FailureNotices,
+        provider: RuleProviderInfo? = nil
     ) -> FailureNotices {
+        guard provider?.supports(.failedTurns) ?? true else { return failureNotices }
         let isFresh = freshness(latestPoint: latestPoint, intervalMinutes: intervalMinutes)
         var notices = failureNotices
         _ = failedTurnNotices(
@@ -133,7 +142,8 @@ public enum NotificationPolicy {
 
     private static func failedTurnNotices(
         _ outcomes: [RuleOutcome], caughtUp: Set<Int64>, isFresh: (RuleOutcome) -> Bool, latestPoint: Date,
-        rule: FailedTurnRule, failureNotices: inout FailureNotices, calendar: Calendar, holdWindow: Bool = false
+        rule: FailedTurnRule, failureNotices: inout FailureNotices, calendar: Calendar, holdWindow: Bool = false,
+        provider: RuleProviderInfo? = nil
     ) -> [PendingNotification] {
         guard rule.enabled, rule.notify else {
             failureNotices.waiting = []
@@ -160,16 +170,22 @@ public enum NotificationPolicy {
         }
 
         let reasons = all.map { Copy.failedTurnReason(code: $0.errorCode) }
-        let body: String
+        var body: String
         if !catchUp.isEmpty, let since = all.map(\.startedAt).min() {
             body = Copy.failedTurnsCatchUp(count: all.count, reasons: reasons, since: since, calendar: calendar)
         } else {
             body = Copy.failedTurns(count: all.count, reasons: reasons)
         }
+        if let provider {
+            let old = all.count == 1 ? "turn" : "turns"
+            let noun = provider.failureNoun + (all.count == 1 ? "" : "s")
+            body = body.replacingOccurrences(of: "\(all.count) \(old) failed", with: "\(all.count) \(noun) failed")
+        }
         failureNotices = FailureNotices(lastNoticeAt: latestPoint, waiting: [])
+        let provider = all[0].provider
         return [PendingNotification(
-            id: "failedTurns-\(Int(latestPoint.timeIntervalSince1970))", title: RuleID.failedTurns.title, body: body,
-            threadID: failedTurnsThreadID)]
+            id: "failedTurns-\(provider.rawValue)-\(Int(latestPoint.timeIntervalSince1970))", title: RuleID.failedTurns.title, body: body,
+            threadID: failedTurnsThreadID(provider: provider))]
     }
 
     private static func notice(_ outcome: RuleOutcome, kind: String, body: String) -> PendingNotification {
@@ -192,6 +208,7 @@ extension RuleSettings {
         case .slower: NotificationSwitches(enabled: slower.enabled, notify: slower.notify, notifyOnClear: slower.notifyOnClear)
         case .faster: NotificationSwitches(enabled: faster.enabled, notify: faster.notify, notifyOnClear: faster.notifyOnClear)
         case .largePrompts: NotificationSwitches(enabled: largePrompts.enabled, notify: largePrompts.notify, notifyOnClear: largePrompts.notifyOnClear)
+        case .compactions: NotificationSwitches(enabled: compactions.enabled, notify: compactions.notify, notifyOnClear: compactions.notifyOnClear)
         case .failedTurns: NotificationSwitches(enabled: failedTurns.enabled, notify: failedTurns.notify, notifyOnClear: failedTurns.notifyOnClear)
         case .disconnects: NotificationSwitches(enabled: disconnects.enabled, notify: disconnects.notify, notifyOnClear: disconnects.notifyOnClear)
         case .incident: NotificationSwitches(enabled: incident.enabled, notify: incident.notify, notifyOnClear: incident.notifyOnClear)

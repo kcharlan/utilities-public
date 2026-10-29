@@ -12,6 +12,7 @@ struct AppSyntheticNaming: ModelNaming {
 /// A seeded, conspicuously synthetic Telltale database under a scratch directory, and the panel
 /// objects that read it. Sep 4 2026 in New York.
 enum PanelWorld {
+    static let statusSummaries = [StatusSourceSummary(id: statusSourceID, displayName: "Example Status", defaultWatchedComponents: ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"])]
     static let sources = [SourceSummary(
         provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: statusSourceID, signals: [.speed, .errors, .link, .provider, .load],
         naming: AppSyntheticNaming())]

@@ -20,6 +20,10 @@ public enum Appearance: String, Sendable, Equatable, Hashable, Codable, CaseIter
 /// Shared validation for the collector interval. The keys themselves are static members of
 /// `SettingKey` (below), so callers write `store.value(.collectorEnabled)`.
 public enum Settings {
+    public static func defaultWatchedComponents(_ sources: [StatusSourceSummary]) -> [String] {
+        var seen: Set<String> = []
+        return sources.flatMap(\.defaultWatchedComponents).filter { seen.insert($0).inserted }
+    }
     /// The collector interval range in minutes (spec section 9.3).
     public static let intervalRange = 1...60
 
@@ -57,10 +61,46 @@ extension SettingKey where Value == RuleSettings {
 }
 
 extension SettingKey where Value == [String] {
-    /// Spec section 7.4's watched-components defaults, matched against the status page's names.
+    public static var pendingArrivals: SettingKey<[String]> { SettingKey(name: "pendingArrivals", defaultValue: []) }
+    public static var dismissedArrivals: SettingKey<[String]> { SettingKey(name: "dismissedArrivals", defaultValue: []) }
+    /// Stored checklist; use `watchedComponents(sources:)` to resolve an absent value.
     public static var watchedComponents: SettingKey<[String]> {
-        SettingKey(name: "watchedComponents", defaultValue: ["CLI", "VS Code extension", "Codex in ChatGPT Desktop", "Codex API", "Codex Web", "Responses"])
+        SettingKey(name: "watchedComponents", defaultValue: [])
     }
+}
+
+extension SettingKey where Value == [String]? {
+    public static var watchedDefaultsApplied: SettingKey<[String]?> {
+        SettingKey(name: "watchedDefaultsApplied", defaultValue: nil)
+    }
+}
+
+extension Store {
+    public func watchedComponents(sources: [StatusSourceSummary]) throws -> [String] {
+        let optional = SettingKey<[String]?>(name: SettingKey.watchedComponents.name, defaultValue: nil)
+        return try value(optional) ?? Settings.defaultWatchedComponents(sources)
+    }
+
+    public func applyWatchedDefaults(sources: [StatusSourceSummary]) throws {
+        let optional = SettingKey<[String]?>(name: SettingKey.watchedComponents.name, defaultValue: nil)
+        let stored = try value(optional)
+        var applied = try value(.watchedDefaultsApplied) ?? ["openai"]
+        if var list = stored {
+            for source in sources where !applied.contains(source.id) {
+                for name in source.defaultWatchedComponents where !list.contains(name) { list.append(name) }
+                applied.append(source.id)
+            }
+            try set(.watchedComponents, list)
+        } else {
+            for source in sources where !applied.contains(source.id) { applied.append(source.id) }
+        }
+        try set(.watchedDefaultsApplied, applied)
+    }
+}
+
+extension SettingKey where Value == [String: Date] {
+    /// Provider ID to the time its rebuild was requested.
+    public static var providerRebuildRequests: SettingKey<[String: Date]> { SettingKey(name: "providerRebuildRequests", defaultValue: [:]) }
 }
 
 extension SettingKey where Value == Appearance {
@@ -70,7 +110,7 @@ extension SettingKey where Value == Appearance {
 extension SettingKey where Value == Date? {
     /// Set by the app to ask the collector for "Rebuild from Codex logs" (spec section 7.3).
     public static var rebuildRequestedAt: SettingKey<Date?> { SettingKey(name: "rebuildRequestedAt", defaultValue: nil) }
-    /// The end of the last completed backfill (Task 9).
+    /// Legacy global backfill boundary, adopted into per-unit state on upgrade.
     public static var backfillThrough: SettingKey<Date?> { SettingKey(name: "backfillThrough", defaultValue: nil) }
 }
 
@@ -205,6 +245,19 @@ public struct UsageLimitRule: Sendable, Equatable, Hashable, Codable {
     }
 }
 
+public struct CompactionRule: Sendable, Equatable, Hashable, Codable {
+    public var enabled: Bool
+    public var count: Int
+    public var windowMinutes: Int
+    public var notify: Bool
+    public var notifyOnClear: Bool
+
+    public init(enabled: Bool, count: Int, windowMinutes: Int, notify: Bool, notifyOnClear: Bool) {
+        self.enabled = enabled; self.count = count; self.windowMinutes = windowMinutes
+        self.notify = notify; self.notifyOnClear = notifyOnClear
+    }
+}
+
 public struct RuleSettings: Sendable, Equatable, Hashable, Codable {
     public var slower: SpeedRule
     public var faster: SpeedRule
@@ -214,10 +267,12 @@ public struct RuleSettings: Sendable, Equatable, Hashable, Codable {
     public var incident: BasicRule
     public var collectorHealth: BasicRule
     public var usageLimit: UsageLimitRule
+    public var compactions: CompactionRule
 
     public init(
         slower: SpeedRule, faster: SpeedRule, largePrompts: LargePromptRule, failedTurns: FailedTurnRule,
-        disconnects: DisconnectRule, incident: BasicRule, collectorHealth: BasicRule, usageLimit: UsageLimitRule
+        disconnects: DisconnectRule, incident: BasicRule, collectorHealth: BasicRule, usageLimit: UsageLimitRule,
+        compactions: CompactionRule = CompactionRule(enabled: true, count: 2, windowMinutes: 60, notify: true, notifyOnClear: false)
     ) {
         self.slower = slower
         self.faster = faster
@@ -227,6 +282,22 @@ public struct RuleSettings: Sendable, Equatable, Hashable, Codable {
         self.incident = incident
         self.collectorHealth = collectorHealth
         self.usageLimit = usageLimit
+        self.compactions = compactions
+    }
+
+    private enum CodingKeys: String, CodingKey { case slower, faster, largePrompts, failedTurns, disconnects, incident, collectorHealth, usageLimit, compactions }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        slower = try container.decode(SpeedRule.self, forKey: .slower)
+        faster = try container.decode(SpeedRule.self, forKey: .faster)
+        largePrompts = try container.decode(LargePromptRule.self, forKey: .largePrompts)
+        failedTurns = try container.decode(FailedTurnRule.self, forKey: .failedTurns)
+        disconnects = try container.decode(DisconnectRule.self, forKey: .disconnects)
+        incident = try container.decode(BasicRule.self, forKey: .incident)
+        collectorHealth = try container.decode(BasicRule.self, forKey: .collectorHealth)
+        usageLimit = try container.decode(UsageLimitRule.self, forKey: .usageLimit)
+        compactions = try container.decodeIfPresent(CompactionRule.self, forKey: .compactions) ?? Self.defaults.compactions
     }
 
     /// Spec section 7.4's table. Values it doesn't state are plan calls: failed turns and
@@ -272,6 +343,8 @@ public struct RuleSettings: Sendable, Equatable, Hashable, Codable {
         if failedTurns.coalesceMinutes <= 0 { invalid("Failed turns notice spacing") }
         if disconnects.count <= 0 { invalid("Disconnects count") }
         if disconnects.windowMinutes <= 0 { invalid("Disconnects window") }
+        if compactions.count <= 0 { invalid("Context compactions count") }
+        if compactions.windowMinutes <= 0 { invalid("Context compactions window") }
 
         if !(usageLimit.percent.isFinite && usageLimit.percent > 0 && usageLimit.percent <= 100) { invalid("Usage limit percentage") }
         return errors

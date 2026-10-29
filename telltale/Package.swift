@@ -8,8 +8,10 @@ let package = Package(
     platforms: [.macOS("27.0")],
     products: [
         .library(name: "TelltaleCore", targets: ["TelltaleCore"]),
+        .library(name: "TelltaleClaude", targets: ["TelltaleClaude"]),
         .library(name: "TelltaleCodex", targets: ["TelltaleCodex"]),
         .library(name: "TelltaleOpenAIStatus", targets: ["TelltaleOpenAIStatus"]),
+        .library(name: "TelltaleStatuspage", targets: ["TelltaleStatuspage"]),
         .executable(name: "Telltale", targets: ["Telltale"])
     ],
     targets: [
@@ -26,15 +28,19 @@ let package = Package(
             ]
         ),
         .target(name: "TelltaleCore"),
+        .target(name: "TelltaleClaude", dependencies: ["TelltaleCore"]),
         .target(name: "TelltaleCodex", dependencies: ["TelltaleCore", "CZstd"]),
         .target(name: "TelltaleOpenAIStatus", dependencies: ["TelltaleCore"]),
-        .executableTarget(name: "Telltale", dependencies: ["TelltaleCore", "TelltaleCodex", "TelltaleOpenAIStatus"]),
+        .target(name: "TelltaleStatuspage", dependencies: ["TelltaleCore"]),
+        .executableTarget(name: "Telltale", dependencies: ["TelltaleCore", "TelltaleCodex", "TelltaleClaude", "TelltaleOpenAIStatus", "TelltaleStatuspage"]),
         .target(name: "TelltaleTestSupport", dependencies: ["TelltaleCore", "CZstd"], path: "Tests/TelltaleTestSupport"),
         .testTarget(name: "TelltaleCoreTests", dependencies: ["TelltaleCore", "TelltaleTestSupport"]),
+        .testTarget(name: "TelltaleClaudeTests", dependencies: ["TelltaleClaude", "TelltaleCore", "TelltaleTestSupport"], resources: [.copy("Fixtures")]),
         .testTarget(name: "TelltaleCodexTests", dependencies: ["TelltaleCodex", "TelltaleCore", "TelltaleTestSupport"], resources: [.copy("Fixtures")]),
         .testTarget(name: "TelltaleOpenAIStatusTests", dependencies: ["TelltaleOpenAIStatus", "TelltaleCore", "TelltaleTestSupport"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "TelltaleStatuspageTests", dependencies: ["TelltaleStatuspage", "TelltaleCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "TelltaleAppTests", dependencies: ["Telltale", "TelltaleCore", "TelltaleTestSupport"]),
-        .testTarget(name: "TelltaleIntegrationTests", dependencies: ["TelltaleCore", "TelltaleCodex", "TelltaleOpenAIStatus", "TelltaleTestSupport"])
+        .testTarget(name: "TelltaleIntegrationTests", dependencies: ["TelltaleCore", "TelltaleCodex", "TelltaleClaude", "TelltaleOpenAIStatus", "TelltaleStatuspage", "TelltaleTestSupport"])
     ],
     swiftLanguageModes: [.v6]
 )

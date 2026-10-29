@@ -47,7 +47,7 @@ import TelltaleCore
     }
 
     @Test func decodesRSS() throws {
-        let items = try StatusDecoding.rss(Fixtures.data("feed.rss"))
+        let items = try RSSFeed.items(Fixtures.data("feed.rss"))
         #expect(items == [
             RSSItem(
                 title: "Elevated errors for Example Chat",
@@ -64,9 +64,9 @@ import TelltaleCore
         let page = try Fixtures.data("error_page.html")
         #expect(throws: StatusError.self) { try StatusDecoding.summary(page) }
         #expect(throws: StatusError.self) { try StatusDecoding.incident(page) }
-        #expect(throws: StatusError.self) { try StatusDecoding.rss(page) }
+        #expect(throws: StatusError.self) { try RSSFeed.items(page) }
         // A well-formed XML page that isn't a feed is still not an empty feed.
-        #expect(throws: StatusError.self) { try StatusDecoding.rss(Data("<html><body/></html>".utf8)) }
+        #expect(throws: StatusError.self) { try RSSFeed.items(Data("<html><body/></html>".utf8)) }
     }
 
     @Test func missingSummaryThrows() throws {

@@ -30,6 +30,49 @@ private enum Panel {
 }
 
 @Suite struct PanelSnapshotTests {
+    @Test func arrivalShowsAfterAnnouncedBackfillFinishes() throws {
+        try withRules { h in
+            try h.store.set(.pendingArrivals, ["codex"])
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: nil, announce: true), unit: "codex")
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.isEmpty)
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: true), unit: "codex")
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.first?.provider == .codex)
+        }
+    }
+
+    @Test func arrivalHiddenOnFreshInstall() throws {
+        try withRules { h in
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: false), unit: "codex")
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.isEmpty)
+        }
+    }
+    @Test func arrivalNamesModelsPastColdStart() throws {
+        try withRules { h in
+            try h.seedUsual()
+            try h.store.set(.pendingArrivals, ["codex"])
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: true), unit: "codex")
+            let arrival = try #require(Panel.load(h, at: h.sep4(9, 30)).arrivals.first)
+            #expect(arrival.text.contains("usual speeds are ready for Example"))
+        }
+    }
+    @Test func undismissedArrivalSurvivesRebuild() throws {
+        try withRules { h in
+            try h.store.set(.pendingArrivals, ["codex"])
+            try h.store.setBackfill(ProviderBackfill(reason: .rebuild, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: nil, announce: false), unit: "codex")
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.count == 1)
+            try h.store.setBackfill(ProviderBackfill(reason: .rebuild, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: h.sep4(9), announce: false), unit: "codex")
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.count == 1)
+            try h.store.set(.dismissedArrivals, ["codex"])
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).arrivals.isEmpty)
+        }
+    }
+    @Test func backfillingProviderHasNoRows() throws {
+        try withRules { h in
+            try h.run(2, throughput: 40, hour: 9)
+            try h.store.setBackfill(ProviderBackfill(reason: .new, startedAt: h.sep4(8), through: h.sep4(9), finishedAt: nil, announce: false), unit: ProviderID.codex.rawValue)
+            #expect(try Panel.load(h, at: h.sep4(9, 30)).models.isEmpty)
+        }
+    }
     @Test func quietSnapshotHasNoLamps() throws {
         try withRules { h in
             try h.seedUsual()
@@ -63,7 +106,7 @@ private enum Panel {
             let snapshot = try Panel.load(h, at: h.sep4(9, 22))
             #expect(snapshot.lamps[.speed] == .amber)
             #expect(snapshot.mostSevere == .amber)
-            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Example is 25% slower than usual for prompts this size. Since 08:55.")])
+            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example is 25% slower than usual for prompts this size. Since 08:55.")])
             #expect([Signal.errors, .link, .provider, .load, .collector].allSatisfy { snapshot.lamps[$0] == .some(nil) })
         }
     }
@@ -75,7 +118,7 @@ private enum Panel {
             try Panel.episode(h, rule: .largePrompts, severity: .amber, fired: h.sep4(9, 10), body: "Large prompts.")
             try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(8, 0), body: "1 turn failed: model at capacity")
             let snapshot = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(snapshot.alerts.map(\.text) == ["1 turn failed: model at capacity", "Large prompts.", "Example is slower.", "Sample is faster."])
+            #expect(snapshot.alerts.map(\.text) == ["Codex: 1 turn failed: model at capacity", "Codex: Large prompts.", "Codex: Example is slower.", "Codex: Sample is faster."])
             #expect(snapshot.alerts.map(\.color) == [.red, .amber, .amber, .blue])
             #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.errors] == .red && snapshot.lamps[.load] == .amber)
             #expect(snapshot.mostSevere == .red)
@@ -89,7 +132,7 @@ private enum Panel {
                 at: h.sep4(9, 28), kind: EventKind.ruleEscalated, provider: "codex", scope: "example-model-3.0", title: "Slower than usual",
                 body: "Escalated wording.", episodeID: escalated))
             let later = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(later.alerts.prefix(2).map(\.text) == ["Escalated wording.", "1 turn failed: model at capacity"])
+            #expect(later.alerts.prefix(2).map(\.text) == ["Codex: Escalated wording.", "Codex: 1 turn failed: model at capacity"])
             #expect(later.lamps[.speed] == .red)
         }
     }
@@ -250,7 +293,7 @@ private enum Panel {
             let snapshot = try Panel.load(h, at: h.sep4(9, 10), sources: [speedOnly])
             #expect(snapshot.signals == [.speed, .collector])
             #expect(snapshot.lamps[.errors] == nil && snapshot.lamps[.provider] == nil)
-            #expect(snapshot.alerts.map(\.text) == ["Example is slower."])
+            #expect(snapshot.alerts.map(\.text) == ["Codex: Example is slower."])
             #expect(snapshot.lamps[.speed] == .amber)
         }
     }
@@ -273,8 +316,46 @@ private enum Panel {
             var elsewhere = second
             elsewhere.statusName = "Other Status"
             #expect(try Panel.load(h, at: h.sep4(9, 10), sources: [Panel.codex, elsewhere]).labels[.provider] == "Status")
-            // A single source's alerts are not prefixed.
-            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Example is slower."))
+            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Codex: Example is slower."))
         }
+    }
+
+    @Test func alertNamesItsProviderOnce() throws {
+        try withRules { h in
+            try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "Codex: Example is slower.")
+            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text) == ["Codex: Example is slower."])
+        }
+    }
+}
+
+private struct PanelCollisionNaming: ModelNaming {
+    func displayName(model: String) -> String { "Example" }
+    func incidentTitle(_ title: String, names model: String) -> Bool { false }
+}
+
+@Test func shiftAndActiveRowsDisambiguateTogether() throws {
+    try withRules { h in
+        try h.seedUsual()
+        for day in 1...3 {
+            try h.base.episode(onset: h.at(9, day, 9, 45), fired: h.at(9, day, 10), ended: h.at(9, day, 11), endReason: EpisodeRow.EndReason.cleared, worst: 0.75)
+        }
+        try h.base.add(1, throughput: 40, month: 9, day: 3, hour: 13, model: Synth.otherModel)
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: PanelCollisionNaming())
+        let snapshot = try Panel.load(h, at: h.at(9, 3, 14), sources: [source])
+        #expect(snapshot.models.map(\.name) == ["Example (2.0)"])
+        #expect(snapshot.shiftName == "Example (1.0)")
+        #expect(snapshot.shiftText?.hasPrefix("Example (1.0) has been") == true)
+    }
+}
+
+@Test func openLegacyAlertsDisambiguateModels() throws {
+    try withRules { h in
+        for (model, minute) in [(Synth.model, 1), (Synth.otherModel, 2)] {
+            try Panel.episode(h, rule: .slower, scope: model, severity: .amber, fired: h.sep4(9, minute), body: "Example is 20% slower than usual.")
+        }
+        let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: PanelCollisionNaming())
+        let alerts = try Panel.load(h, at: h.sep4(9, 30), sources: [source]).alerts.map(\.text)
+        #expect(alerts.contains("Codex: Example (1.0) is 20% slower than usual."))
+        #expect(alerts.contains("Codex: Example (2.0) is 20% slower than usual."))
     }
 }

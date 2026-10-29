@@ -29,6 +29,25 @@ private enum Fixture {
 }
 
 @Suite struct CopyTests {
+    @Test func arrivalText() {
+        #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: []) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are still being learned.")
+        #expect(Copy.arrival(name: "Synthetic", days: 30, readyModels: ["Example", "Sample"]) == "Telltale now watches Synthetic. It read 30 days of history; usual speeds are ready for Example, Sample.")
+    }
+    @Test func compactionsCopy() {
+        #expect(Copy.compactionsFired(count: 3, windowMinutes: 60, blocked: 220) == "3 automatic compactions in the last 60 minutes. Fresh sessions or subagents would keep more context. They held sessions for 3 min 40 s.")
+        #expect(Copy.compactionsFired(count: 2, windowMinutes: 30, blocked: nil) == "2 automatic compactions in the last 30 minutes. Fresh sessions or subagents would keep more context.")
+        #expect(Copy.compactionsCleared(windowMinutes: 60) == "No automatic compactions in the last 60 minutes.")
+    }
+    @Test func claudeFailureReasons() {
+        #expect(Copy.failedTurnReason(code: "overloaded") == "model overloaded")
+        #expect(Copy.failedTurnReason(code: "serverError") == "server error")
+        #expect(Copy.failedTurnReason(code: "timeout") == "request timed out")
+        #expect(Copy.failedTurnReason(code: "connection") == "connection failed")
+    }
+    @Test func formatProblemNamesTheSource() {
+        #expect(Copy.formatProblem(source: "Synthetic Provider", since: Fixture.since, calendar: Fixture.calendar)
+            == "Synthetic Provider changed its log format. Telltale can't read Synthetic Provider responses since 08:05.")
+    }
     static let cases: [CopyCase] = {
         let calendar = Fixture.calendar
         let since = Fixture.since
@@ -100,8 +119,12 @@ private enum Fixture {
             CopyCase("wrongBundle", Copy.wrongBundle, "This copy of Telltale can't run the collector"),
             CopyCase("launchctlError", Copy.launchctlError(command: "bootstrap", status: 5, stderr: "Input/output error"),
                      "Collector command bootstrap failed (5): Input/output error"),
-            CopyCase("rebuildConfirmation", Copy.rebuildConfirmation(days: 30),
-                     "Telltale will re-read the last 30 days. Your accepted baselines are kept."),
+            CopyCase("rebuildConfirmation", Copy.rebuildConfirmation(days: 30, providers: ["Example A", "Example B"]),
+                     "Telltale will re-read the last 30 days of logs for Example A, Example B. Your accepted baselines are kept."),
+            CopyCase("providerAdded", Copy.providerAdded(name: "Example A", days: 30),
+                     "Telltale now watches Example A. It read 30 days of history and sent no notifications for it."),
+            CopyCase("historyRebuilt", Copy.historyRebuilt(name: "Example A", days: 30),
+                     "Example A history rebuilt from 30 days of logs."),
             CopyCase("componentMissing", Copy.componentMissing, "(not on the status page now)"),
             CopyCase("nothingToReport", Copy.nothingToReport, "Nothing to report."),
             CopyCase("waitingForFirstRun", Copy.waitingForFirstRun, "Waiting for the collector's first run."),

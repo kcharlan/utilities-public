@@ -31,6 +31,13 @@ private enum Health {
 }
 
 @Suite struct CollectorHealthTests {
+    @Test func formatProblemUsesTheSourcesName() {
+        let state = SourceStateRow(source: "synthetic-provider", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 12), updatedAt: Health.at(9, 20))
+        let report = CollectorHealth.evaluate(enabled: true, installedExecutable: Health.app, installedAt: nil, currentExecutable: Health.app,
+            loaded: true, runs: Health.healthyRuns, intervalMinutes: 5, sourceStates: [state], now: Health.at(9, 21), calendar: Synth.newYork,
+            sourceNames: ["synthetic-provider": "Synthetic Provider"])
+        #expect(report.problems.contains("Synthetic Provider changed its log format. Telltale can't read Synthetic Provider responses since 09:12."))
+    }
     @Test func allGreenWhenHealthy() {
         let report = Health.evaluate(runs: Health.healthyRuns, now: Health.at(9, 7))
         #expect(report == CollectorHealthReport(
@@ -219,7 +226,7 @@ private enum Health {
         let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
         let report = Health.evaluate(runs: runs, states: states, now: Health.at(9, 21))
         #expect([report.installed, report.loaded, report.lastRun, report.onSchedule] == [.green, .green, .green, .green])
-        #expect(report.problems == ["Codex changed its log format. Telltale can't read responses since 09:12."])
+        #expect(report.problems == ["codex changed its log format. Telltale can't read codex responses since 09:12."])
         #expect(report.notify)
         #expect(report.lamp == .red)
 

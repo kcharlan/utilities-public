@@ -40,16 +40,14 @@ public struct RunReport: Sendable, Equatable {
 ///    any other lock failure records a `failed` run when the database opens.
 /// 2. Close `running` records a killed run left (`interrupted`) and record this run's start, then
 ///    read settings. Rules that don't validate or don't decode are replaced by the defaults, with a
-///    note in the log and run detail. A pending Rebuild discards derived data (the storage mapping
-///    in `Store.discardForRebuild`), sets `backfillThrough` to now and clears the request. A cold
-///    start (no evaluated point, no `backfillThrough`) also sets `backfillThrough`.
+///    note in the log and run detail. Adopt legacy progress and apply a pending Rebuild, then
+///    prepare backfill independently for status sources and ready usage providers.
 /// 3. Ingest each usage source from §8's 30-day lookback: its records, usage limit, connection
 ///    gaps (as `connectionHistoryIncomplete` events), cursor and setup state, in one transaction
-///    per source. One source's problem never stops another source's ingest, but an ingest that
-///    throws skips steps 5 and 6 for the whole run (the run fails; the next one catches up).
+///    per source. An ingest that throws skips that provider's evaluation, while others continue.
 /// 4. Fetch and store each status source.
 /// 5. Evaluate every point after the last evaluated one (or from the lookback) through now, one
-///    day per transaction. A point at or before `backfillThrough` is backfill; later points are
+///    day per transaction for each unit. A point at or before its backfill boundary is backfill; later points are
 ///    live. A crash mid-backfill therefore resumes still in backfill. Failed turns from before the
 ///    lookback start are first settled uncounted (`Store.settleFailedTurns`), since no point
 ///    reaches them.
@@ -223,15 +221,14 @@ public struct CollectorRun: Sendable {
             let settings: RuleSettings
             let watched: [String]
             let interval: Int
-            let backfillThrough: Date?
             do {
                 let usable = try store.usableRules()
                 settings = usable.rules
                 if !usable.problems.isEmpty { note("\(CollectorRun.invalidRulesNote) \(usable.problems.joined(separator: " "))") }
-                watched = try store.value(.watchedComponents)
                 let storedInterval = try store.value(.intervalMinutes)
                 interval = Settings.usableInterval(storedInterval)
-                backfillThrough = try prepareBackfill()
+                try prepareBackfill(run)
+                watched = try store.watchedComponents(sources: run.statusSources.map { StatusSourceSummary(id: $0.id, displayName: $0.displayName, defaultWatchedComponents: $0.defaultWatchedComponents) })
             } catch {
                 fail("Couldn't read settings", error)
                 return
@@ -241,11 +238,24 @@ public struct CollectorRun: Sendable {
             // Step 3: usage sources.
             let backfillFrom = calendar.date(byAdding: .day, value: -CollectorRun.lookbackDays, to: now)
                 ?? now.addingTimeInterval(-TimeInterval(CollectorRun.lookbackDays) * 86_400)
-            var ingestFailed = false
+            var ingestFailed: Set<ProviderID> = []
             for source in run.sources {
-                if !ingest(source, backfillFrom: backfillFrom, calendar: calendar) { ingestFailed = true }
+                if !ingest(source, backfillFrom: backfillFrom, calendar: calendar) { ingestFailed.insert(source.provider) }
                 baseline.discardCache()
             }
+
+            do {
+                let existing = try Set(run.sources.filter { try store.lastEvaluatedPoint(unit: $0.provider.rawValue) != nil }.map(\.provider))
+                for source in run.sources where !ingestFailed.contains(source.provider) {
+                    let key = source.provider.rawValue
+                    if try store.lastEvaluatedPoint(unit: key) == nil, try store.backfill(unit: key) == nil,
+                       try store.sourceState(key)?.state == .ready {
+                        try store.setBackfill(ProviderBackfill(reason: .new, startedAt: now, through: now, finishedAt: nil,
+                            announce: existing.contains(where: { $0 != source.provider })), unit: key)
+                        log.write("\(source.displayName): backfilling history", at: now)
+                    }
+                }
+            } catch { fail("Couldn't prepare provider backfill", error) }
 
             // Step 4: status sources.
             var available: Set<String> = []
@@ -253,17 +263,10 @@ public struct CollectorRun: Sendable {
                 available.insert(source.id)
             }
 
-            // Steps 5 and 6 are skipped when an ingest threw: evaluated points are history (spec
-            // section 7.3) and must not be written without that source's data. The next run catches
-            // up from the unchanged last evaluated point. A problem a source reports through its
-            // setup state isn't thrown, so evaluation goes on.
-            if ingestFailed {
-                log.write("Evaluation skipped: an ingest failed, so the next run evaluates these points", at: now)
-            } else {
-                await evaluateAndNotify(
-                    run, baseline: baseline, settings: settings, watched: watched, interval: interval,
-                    backfillThrough: backfillThrough, backfillFrom: backfillFrom, available: available)
-            }
+            // Each failed ingest leaves that provider's progress unchanged for the next run.
+            await evaluateAndNotify(
+                run, baseline: baseline, settings: settings, watched: watched, interval: interval,
+                backfillFrom: backfillFrom, available: available, ingestFailed: ingestFailed)
 
             // Step 7: retention.
             do {
@@ -276,35 +279,75 @@ public struct CollectorRun: Sendable {
         /// Steps 5 and 6: evaluate one day per transaction, then select and post live notices.
         private mutating func evaluateAndNotify(
             _ run: CollectorRun, baseline: BaselineEngine, settings: RuleSettings, watched: [String], interval: Int,
-            backfillThrough: Date?, backfillFrom: Date, available: Set<String>
+            backfillFrom: Date, available: Set<String>, ingestFailed: Set<ProviderID>
         ) async {
             let calendar = run.calendar
             // Step 5: evaluation, one day per transaction.
+            let providerInfo = Dictionary(run.sources.map { source in
+                (source.provider, RuleProviderInfo(name: source.displayName, failureNoun: source.failureNoun,
+                    signals: source.signals, rules: source.supportedRules, naming: source))
+            }, uniquingKeysWith: { first, _ in first })
             let engine = RuleEngine(
                 store: store, baseline: baseline, calendar: calendar,
-                naming: Dictionary(run.sources.map { ($0.provider, $0 as any ModelNaming) }, uniquingKeysWith: { first, _ in first }))
-            let ruleSources = run.statusSources.filter { available.contains($0.id) }.map { source in
-                RuleStatusSource(
-                    id: source.id, displayName: source.displayName,
-                    providers: run.sources.filter { $0.statusSourceID == source.id }.map(\.provider))
-            }
-            func isLive(_ point: Date) -> Bool { backfillThrough.map { point > $0 } ?? true }
-            var liveOutcomes: [RuleOutcome] = []
+                providers: providerInfo)
+            var units: [EvaluationUnit] = []
             do {
-                let settled = try store.settleFailedTurns(before: backfillFrom)
-                if settled > 0 { log.write("Settled \(settled) failed turn(s) from before the lookback without counting them", at: now) }
-                let points = EvaluationPoints.after(try store.lastEvaluatedPoint(), through: now, earliest: backfillFrom)
+                for source in run.sources where !ingestFailed.contains(source.provider) {
+                    let key = source.provider.rawValue
+                    if try store.lastEvaluatedPoint(unit: key) != nil ||
+                        (store.sourceState(key)?.state == .ready && store.backfill(unit: key) != nil) {
+                        units.append(.provider(source.provider))
+                    }
+                }
+                for source in run.statusSources {
+                    let providers = run.sources.filter { $0.statusSourceID == source.id }.map(\.provider)
+                    if !providers.isEmpty && providers.allSatisfy({ ingestFailed.contains($0) }) { continue }
+                    units.append(.statusSource(RuleStatusSource(id: source.id, displayName: source.displayName, providers: providers),
+                        available: available.contains(source.id)))
+                }
+            } catch { fail("Couldn't select evaluation units", error); return }
+            for unit in units {
+              var liveOutcomes: [RuleOutcome] = []
+              var backfill: ProviderBackfill?
+              func isLive(_ point: Date) -> Bool { backfill.map { point > $0.through } ?? true }
+              do {
+                backfill = try store.backfill(unit: unit.key)
+                if case .provider(let provider) = unit {
+                    let settled = try store.settleFailedTurns(before: backfillFrom, provider: provider)
+                    if settled > 0 { log.write("Settled \(settled) failed turn(s) from before the lookback without counting them", at: now) }
+                }
+                let points = EvaluationPoints.after(try store.lastEvaluatedPoint(unit: unit.key), through: now, earliest: backfillFrom)
                 var backfilled = 0
                 for (index, start) in stride(from: 0, to: points.count, by: CollectorRun.pointsPerChunk).enumerated() {
                     let chunk = Array(points[start..<min(start + CollectorRun.pointsPerChunk, points.count)])
                     let outcomes = try engine.evaluate(
-                        points: chunk, providers: run.sources.map(\.provider), statusSources: ruleSources, settings: settings,
-                        watchedComponents: watched, statusAvailable: !ruleSources.isEmpty)
+                        points: chunk, unit: unit, settings: settings, watchedComponents: watched)
                     liveOutcomes += outcomes.filter { isLive($0.at) }
                     backfilled += chunk.filter { !isLive($0) }.count
                     try run.hooks.afterChunkCommit?(index)
                 }
-                log.write("Evaluated \(points.count) points (\(backfilled) in backfill)", at: now)
+                if var pending = backfill, pending.finishedAt == nil,
+                   EvaluationPoints.after(try store.lastEvaluatedPoint(unit: unit.key), through: pending.through, earliest: backfillFrom).isEmpty {
+                    try store.transaction {
+                        pending.finishedAt = now
+                        try store.setBackfill(pending, unit: unit.key)
+                        if case .provider(let provider) = unit, let source = run.sources.first(where: { $0.provider == provider }) {
+                            if pending.reason == .rebuild || pending.announce {
+                                let body = pending.reason == .rebuild
+                                    ? Copy.historyRebuilt(name: source.displayName, days: CollectorRun.lookbackDays)
+                                    : Copy.providerAdded(name: source.displayName, days: CollectorRun.lookbackDays)
+                                try store.insertEvent(EventRow(at: now, kind: pending.reason == .rebuild ? EventKind.historyRebuilt : EventKind.providerAdded,
+                                    provider: provider.rawValue, scope: "*", title: source.displayName, body: body))
+                            }
+                            if pending.announce {
+                                var arrivals = try store.value(.pendingArrivals)
+                                if !arrivals.contains(provider.rawValue) { arrivals.append(provider.rawValue) }
+                                try store.set(.pendingArrivals, arrivals)
+                            }
+                        }
+                    }
+                }
+                log.write("\(unit.key): evaluated \(points.count) points (\(backfilled) in backfill)", at: now)
             } catch {
                 fail("Evaluation stopped", error)
             }
@@ -312,39 +355,61 @@ public struct CollectorRun: Sendable {
             // Step 6: notifications, from whatever evaluation committed.
             do {
                 // Backfill never notifies (spec section 7.3), so a run that ends inside it selects nothing.
-                if let latest = try store.lastEvaluatedPoint(), isLive(latest) {
-                    let previous = try store.failureNotices()
+                if let latest = try store.lastEvaluatedPoint(unit: unit.key), isLive(latest) {
+                    let provider: ProviderID? = { if case .provider(let p) = unit { return p }; return nil }()
+                    let previous = try provider.map { try store.failureNotices(provider: $0) } ?? FailureNotices()
                     var notices = previous
                     let pending = NotificationPolicy.select(
                         liveOutcomes, latestPoint: latest, intervalMinutes: interval, settings: settings, mode: .live,
-                        failureNotices: &notices, calendar: calendar)
-                    try store.setFailureNotices(notices)
+                        failureNotices: &notices, calendar: calendar, provider: provider.flatMap { providerInfo[$0] })
+                    if let provider { try store.setFailureNotices(notices, provider: provider) }
                     let unposted = await post(pending, notifier: run.notifier)
                     // As CollectorMonitor does: saved before posting, put back when the post fails, so
                     // the failed-turn notice's failures wait for the next run instead of being lost.
-                    if unposted.contains(where: { $0.threadID == NotificationPolicy.failedTurnsThreadID }) {
+                    if let provider, unposted.contains(where: { $0.threadID == NotificationPolicy.failedTurnsThreadID(provider: provider) }) {
                         try store.setFailureNotices(NotificationPolicy.withheldFailureNotices(
-                            liveOutcomes, latestPoint: latest, intervalMinutes: interval, settings: settings, failureNotices: previous))
+                            liveOutcomes, latestPoint: latest, intervalMinutes: interval, settings: settings, failureNotices: previous,
+                            provider: providerInfo[provider]), provider: provider)
                     }
                 }
             } catch {
                 fail("Couldn't select notifications", error)
             }
+            }
         }
 
-        /// Applies a pending Rebuild or a cold start and returns the end of the backfill.
-        private func prepareBackfill() throws -> Date? {
+        /// Adopts old progress and prepares the requested and status-source backfills.
+        private func prepareBackfill(_ run: CollectorRun) throws {
             try store.transaction {
+                try store.applyWatchedDefaults(sources: run.statusSources.map { StatusSourceSummary(id: $0.id, displayName: $0.displayName, defaultWatchedComponents: $0.defaultWatchedComponents) })
+                _ = try store.adoptGlobalProgress(providers: run.sources.map(\.provider), legacyStatusSourceIDs: ["openai"])
+                var requests = try store.value(.providerRebuildRequests)
                 if try store.value(.rebuildRequestedAt) != nil {
                     try store.discardForRebuild()
-                    try store.set(.backfillThrough, now)
                     try store.set(.rebuildRequestedAt, nil)
-                    log.write("Rebuilding from Codex logs: derived data discarded", at: now)
-                } else if try store.lastEvaluatedPoint() == nil, try store.value(.backfillThrough) == nil {
-                    try store.set(.backfillThrough, now)
-                    log.write("Cold start: backfilling the last \(CollectorRun.lookbackDays) days", at: now)
+                    for source in run.sources {
+                        requests.removeValue(forKey: source.provider.rawValue)
+                        try store.setBackfill(ProviderBackfill(reason: .rebuild, startedAt: now, through: now, finishedAt: nil, announce: false), unit: source.provider.rawValue)
+                        log.write("\(source.displayName): rebuilding history", at: now)
+                    }
+                    for source in run.statusSources {
+                        try store.setBackfill(ProviderBackfill(reason: .rebuild, startedAt: now, through: now, finishedAt: nil, announce: false), unit: source.id)
+                        log.write("\(source.displayName): rebuilding history", at: now)
+                    }
+                    log.write("Rebuilding from provider logs: derived data discarded", at: now)
+                } else {
+                    for source in run.sources where requests[source.provider.rawValue] != nil {
+                        try store.discardForRebuild(provider: source.provider)
+                        try store.setBackfill(ProviderBackfill(reason: .rebuild, startedAt: now, through: now, finishedAt: nil, announce: false), unit: source.provider.rawValue)
+                        requests.removeValue(forKey: source.provider.rawValue)
+                        log.write("Rebuilding from \(source.displayName) logs: derived data discarded", at: now)
+                    }
                 }
-                return try store.value(.backfillThrough)
+                try store.set(.providerRebuildRequests, requests)
+                for source in run.statusSources where try store.lastEvaluatedPoint(unit: source.id) == nil && store.backfill(unit: source.id) == nil {
+                    try store.setBackfill(ProviderBackfill(reason: .new, startedAt: now, through: now, finishedAt: nil, announce: false), unit: source.id)
+                    log.write("\(source.displayName): backfilling history", at: now)
+                }
             }
         }
 
@@ -359,10 +424,11 @@ public struct CollectorRun: Sendable {
                 let batch = result.batch
                 try store.transaction {
                     try store.upsert(responses: batch.responses)
+                    try store.upsert(compactions: batch.compactions)
                     try store.upsert(failedTurns: batch.failedTurns)
                     try store.upsert(connectionEvents: batch.connectionEvents)
                     if let limit = batch.usageLimit { try store.setUsageLimit(limit) }
-                    for gap in batch.connectionGaps { try store.recordConnectionGap(provider: source.provider, gap: gap, calendar: calendar) }
+                    for gap in batch.connectionGaps { try store.recordConnectionGap(provider: source.provider, providerName: source.displayName, gap: gap, calendar: calendar) }
                     try store.setCursor(key, result.cursor)
                     try store.setSourceState(SourceStateRow(
                         source: key, state: result.state, version: batch.sourceVersion ?? previous?.version,
@@ -370,7 +436,9 @@ public struct CollectorRun: Sendable {
                 }
                 log.write(
                     "\(source.displayName): \(batch.responses.count) responses, \(batch.failedTurns.count) failed turns, "
-                        + "\(batch.connectionEvents.count) connection events, \(batch.connectionGaps.count) gaps; \(Self.describe(result.state))",
+                        + "\(batch.connectionEvents.count) connection events, \(batch.connectionGaps.count) gaps, "
+                        + "\(batch.excludedServerToolResponses) excluded server-tool responses, "
+                        + "\(batch.excludedClientErrors) excluded client errors, \(batch.invalidCompactions) invalid compactions; \(Self.describe(result.state))",
                     at: now)
                 return true
             } catch {
@@ -416,7 +484,7 @@ public struct CollectorRun: Sendable {
                     unposted.append(notification)
                 }
             }
-            if !pending.isEmpty { log.write("Posted \(posted) of \(pending.count) notifications", at: now) }
+            if !pending.isEmpty { log.write("Posted \(pending.count - unposted.count) of \(pending.count) notifications", at: now) }
             if let first = failures.first {
                 let noun = failures.count == 1 ? "notification" : "notifications"
                 notes.append("\(failures.count) \(noun) couldn't be posted: \(CollectorRun.describe(first))")
@@ -445,23 +513,38 @@ extension Store {
             [.text(RunOutcome.failed.rawValue), .text(CollectorRun.interruptedDetail), .date(at), .text(RunOutcome.running.rawValue)])
     }
 
-    /// Spec section 7.3's "Rebuild from Codex logs", as Task 9's storage mapping:
+    /// Global rebuild removes derived data for all usage and status units:
     ///
     /// - discarded: responses, evaluation points, episodes, rule events (`EventKind.ruleKinds`),
     ///   rule state (including the last evaluated point and failed-turn notices), cursors, and
     ///   `failed_turns.evaluated_at` (reset to null; the backfill counts the turns inside the
     ///   lookback again and settles older ones uncounted, `settleFailedTurns`);
     /// - kept: baseline epochs and their events, shift dismissals, incidents, status components,
-    ///   `statusPost` and `connectionHistoryIncomplete` events, failed-turn and connection-event
+    ///   `statusPost`, `providerAdded`, `historyRebuilt` and `connectionHistoryIncomplete` events, failed-turn and connection-event
     ///   rows, usage limits and source state (the next ingest overwrites both), and settings.
     func discardForRebuild() throws {
         try transaction {
             let kinds = EventKind.ruleKinds
             try run("DELETE FROM events WHERE kind IN (\(kinds.map { _ in "?" }.joined(separator: ", ")))", kinds.map(SQLValue.text))
-            for table in ["episodes", "eval_points", "rule_state", "cursors", "responses"] {
+            for table in ["episodes", "eval_points", "rule_state", "cursors", "responses", "compactions"] {
                 try exec("DELETE FROM \(table)")
             }
             try exec("UPDATE failed_turns SET evaluated_at = NULL")
+        }
+    }
+
+    /// Discard this provider's responses, evaluation points, episodes, rule events, rule state and
+    /// cursor; reset its failed-turn evaluation. Keep status units, acceptances, incidents,
+    /// failed turns, connection history, completion events and settings.
+    func discardForRebuild(provider: ProviderID) throws {
+        try transaction {
+            let kinds = EventKind.ruleKinds
+            try run("DELETE FROM events WHERE provider = ? AND kind IN (\(kinds.map { _ in "?" }.joined(separator: ", ")))", [.text(provider.rawValue)] + kinds.map(SQLValue.text))
+            for table in ["episodes", "eval_points", "rule_state", "responses", "compactions"] {
+                try run("DELETE FROM \(table) WHERE provider = ?", [.text(provider.rawValue)])
+            }
+            try run("DELETE FROM cursors WHERE source = ?", [.text(provider.rawValue)])
+            try run("UPDATE failed_turns SET evaluated_at = NULL WHERE provider = ?", [.text(provider.rawValue)])
         }
     }
 }

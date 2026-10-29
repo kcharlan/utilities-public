@@ -1,5 +1,7 @@
 import Foundation
 import TelltaleCodex
+import TelltaleClaude
+import TelltaleStatuspage
 import TelltaleCore
 import TelltaleOpenAIStatus
 
@@ -7,11 +9,15 @@ import TelltaleOpenAIStatus
 /// means adding it here. Each usage source's `statusSourceID` names a status source below.
 enum Registry {
     static func usageSources(paths: TelltalePaths) -> [any UsageSource] {
-        [CodexUsageSource(codexHome: paths.codexHome)]
+        [CodexUsageSource(codexHome: paths.codexHome), ClaudeUsageSource(roots: [paths.claudeHome] + (FileManager.default.fileExists(atPath: paths.claudeConfigRoot.path) ? [paths.claudeConfigRoot] : []))]
     }
 
     static func statusSources() -> [any StatusSource] {
-        [OpenAIStatusSource(transport: URLSessionTransport())]
+        [OpenAIStatusSource(transport: URLSessionTransport()), StatuspageSource(id: "anthropic", displayName: "Claude", baseURL: URL(string: "https://status.claude.com")!, transport: URLSessionTransport(), defaultWatchedComponents: ["Claude Code"])]
+    }
+
+    static func statusSummaries() -> [StatusSourceSummary] {
+        statusSources().map { StatusSourceSummary(id: $0.id, displayName: $0.displayName, defaultWatchedComponents: $0.defaultWatchedComponents) }
     }
 
     /// The usage sources as the panel sees them: name, the status source's name for the Provider
@@ -21,7 +27,7 @@ enum Registry {
         return usageSources(paths: paths).map { source in
             SourceSummary(
                 provider: source.provider, name: source.displayName, statusName: statusNames[source.statusSourceID] ?? source.displayName, statusSourceID: source.statusSourceID,
-                signals: source.signals, naming: source)
+                signals: source.signals, naming: source, dataFolder: source.dataFolder, failureNoun: source.failureNoun, supportedRules: source.supportedRules)
         }
     }
 }

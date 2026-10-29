@@ -18,7 +18,7 @@ struct StatusContent: View {
     var sizeChanged: (NSSize) -> Void = { _ in }
     var body: some View {
         VStack(spacing: 0) {
-            PanelView(model: model, openSettings: settingsAction, openDashboard: dashboardAction, focusGeneration: focus.generation)
+            PanelView(model: model, openSettings: settingsAction, openDashboard: dashboardAction, openProvider: providerAction, focusGeneration: focus.generation)
             if let accessory { accessory }
         }.fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: NSSize.self, of: { $0.size }, action: sizeChanged)
@@ -28,6 +28,7 @@ struct StatusContent: View {
     // Without a dashboard (Task 12) both buttons are disabled.
     private var settingsAction: (() -> Void)? { dashboard == nil ? nil : { showSettings() } }
     private var dashboardAction: (() -> Void)? { dashboard == nil ? nil : { showDashboard() } }
+    private var providerAction: ((ProviderID, String?) -> Void)? { dashboard == nil ? nil : { provider, model in dismiss(); dashboard?.openProvider(provider, model: model) } }
     func makeHostingController() -> StatusHostingController {
         let hosting = StatusHostingController(rootView: self)
         hosting.dismiss = dismiss
