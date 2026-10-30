@@ -106,6 +106,8 @@ import BrewVersionCore
                 failures[.package] = Failure(post: current, postingError: failures[.package]?.postingError)
                 continue
             }
+            // This snapshot includes every publication made while authorization was suspended.
+            packageDeliveryNeeded = false
             let content = UNMutableNotificationContent()
             content.title = current.title; content.body = current.body
             if current.sound { content.sound = .default }

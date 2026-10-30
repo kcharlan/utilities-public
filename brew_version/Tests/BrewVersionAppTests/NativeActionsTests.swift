@@ -160,6 +160,30 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(service.successfulRequests.filter { $0.content.sound != nil }.count == 1)
         #expect(notifier.lastError == nil)
     }
+    @Test func checkDuringRetryAuthorizationPostsLatestListOnce() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial
+        state.watched = [a, b].map { let listing = Listing(name: $0, kind: .formula, version: "1"); return WatchEntry(name: $0, kind: .formula, lastListing: listing, lastSeenRelease: ReleaseID(listing)) }
+        try store.save(state)
+        let service = NotificationServiceStub(); service.status = .authorized; service.postingFailure = "Synthetic failure"
+        let notifier = UserNotifier(service: service)
+        let controller = WatchController(transport: RollingNativeTransport(), installed: nil, store: store, notifier: notifier)
+        await controller.checkNow(); service.postingFailure = nil
+        let gate = NotificationGate()
+        service.authorizationGateCall = service.authorizationStatusCalls + 2
+        service.authorizationGate = { await gate.wait() }
+        let retry = Task { await notifier.retry() }; try await waitUntil { gate.entered }
+        let check = Task { await controller.checkNow() }
+        try await waitUntil { controller.state.watched.first(where: { $0.name == b })?.alertPendingSince != nil }
+        gate.release(); await retry.value; await check.value
+        #expect(service.successfulRequests.count == 1)
+        #expect(service.successfulRequests.last?.content.body == "synthetic-b 2, synthetic-a 2")
+        #expect(service.successfulRequests.last?.content.sound != nil)
+        #expect(notifier.lastError == nil)
+    }
     @Test func acknowledgementDuringInFlightPostDoesNotResurrectAlert() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
