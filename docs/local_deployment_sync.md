@@ -707,7 +707,7 @@ done
 
 Do not treat local-only files as drift. Important examples include:
 
-- Apple Health exports and its project venv.
+- Apple Health exports.
 - Tax2 hand-edited `~/.tax2/config.yaml` and private built page `~/.tax2/tax2.html` (or the corresponding `TAX2_HOME` paths).
 - Transcription counters and session backups.
 - Docker databases, exports, logs, extension configuration, API credentials, and Compose `.env` files.

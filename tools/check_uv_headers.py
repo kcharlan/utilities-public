@@ -84,14 +84,18 @@ LAUNCHERS = [
     "apple-health-extract/exercise_bouts.py",
 ]
 
-PENDING_UV_MIGRATION: frozenset[str] = frozenset({
-    "abacus usage/de-abacus.py", "anduril_steps/anduril_steps.py", "dloc/dloc",
-    "worktree-helper/worktree", "md-json/md_converter.py",
-    "Claude_plugin_converter/to_gemini_cli/migrate_skills.py",
-    "doc_linearizer/linearize.py", "data_format_converter/src/data_convert.py",
-    "reversible-skew/rs.py", "reversible-skew/rs-big.py", "video-scenes/video-scenes",
-    "apple-health-extract/extract_workout_stats.py", "apple-health-extract/exercise_bouts.py",
-})
+NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
+    "Calculation tools/backtest/data/compile_market_data.py",
+    "benchmark-llm/examples/shared/demo_prompt_executor.py",
+    "coding/design_orch/scripts/codex_json_progress.py",
+    "cognitive_switchyard/cognitive_switchyard/scripts/plan_commit_msg.py",
+    "cognitive_switchyard/scripts/codex_json_progress.py",
+    "cognitive_switchyard/tests/fixtures/workers/",
+    "docker/llm_collector/snapshots/rollup_snapshots.py",
+    "harscope/tests/verify_redaction.py",
+    "model_sentinel/__main__.py",
+    "model_sentinel/model-sentinel",
+)
 
 # Each tracked manifest must contain every launcher dependency and may contain
 # only the explicitly listed test/CLI extras. This catches drift in both
@@ -298,8 +302,6 @@ def compare_dependency_sets(
 def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> list[str]:
     """Check one launcher's tracked dependency sidecar in both directions."""
     launcher_path = REPO_ROOT / rel_path
-    if rel_path in PENDING_UV_MIGRATION and not launcher_path.is_file():
-        return []
     policy = DEPENDENCY_MANIFESTS.get(rel_path)
     if policy is None:
         return ["no dependency manifest policy registered"]
@@ -400,6 +402,15 @@ def git_repository_files() -> list[Path]:
     ]
 
 
+def read_first_line(path: Path) -> str | None:
+    """Read a text file's first line, skipping unreadable and binary files."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.readline().rstrip("\r\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def discover_launchers() -> set[str]:
     """Find files in the repository whose first line is the canonical shebang."""
     discovered: set[str] = set()
@@ -409,33 +420,15 @@ def discover_launchers() -> set[str]:
         relative = path.relative_to(REPO_ROOT)
         if path.suffix not in {"", ".py"}:
             continue
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                first_line = handle.readline().rstrip("\r\n")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if first_line == CANONICAL_SHEBANG:
+        if read_first_line(path) == CANONICAL_SHEBANG:
             discovered.add(relative.as_posix())
     return discovered
-
-
-def pending_launcher_is_skipped(rel_path: str) -> bool:
-    """Identify pending files that have not yet adopted the uv shebang."""
-    if rel_path not in PENDING_UV_MIGRATION:
-        return False
-    path = REPO_ROOT / rel_path
-    if not path.is_file():
-        return True
-    with path.open(encoding="utf-8") as handle:
-        return handle.readline().rstrip("\r\n") != CANONICAL_SHEBANG
 
 
 def check_launcher(rel_path: str) -> list[str]:
     """Return a list of violation messages for one launcher (empty == OK)."""
     problems: list[str] = []
     path = REPO_ROOT / rel_path
-    if pending_launcher_is_skipped(rel_path):
-        return []
     if not path.is_file():
         return [f"file not found: {rel_path}"]
 
@@ -474,6 +467,16 @@ def main() -> int:
     registered = set(LAUNCHERS)
     try:
         discovered = discover_launchers() - {"tools/check_uv_headers.py"}
+        for path in git_repository_files():
+            if not path.is_file():
+                continue
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            first_line = read_first_line(path)
+            allowed = any(relative.startswith(item) if item.endswith("/") else relative == item
+                          for item in NON_UV_PYTHON_ALLOWLIST)
+            if first_line is not None and re.match(r"^#!.*python", first_line) and not allowed:
+                any_failures = True
+                print(f"FAIL {relative}\n       - Python shebang is not a uv launcher")
     except RuntimeError as exc:
         print(f"FAIL launcher discovery\n       - {exc}")
         return 1
@@ -494,10 +497,7 @@ def main() -> int:
         print("\ncheck_uv_headers: FAILED (see violations above)")
         return 1
 
-    pending = sum(pending_launcher_is_skipped(path) for path in LAUNCHERS)
-    verified = len(LAUNCHERS) - pending
-    pending_clause = f", {pending} pending" if pending else ""
-    print(f"check_uv_headers: OK ({verified} launchers verified{pending_clause})")
+    print(f"check_uv_headers: OK ({len(LAUNCHERS)} launchers verified)")
     return 0
 
 
