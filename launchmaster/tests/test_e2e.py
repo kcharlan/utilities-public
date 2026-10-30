@@ -1023,12 +1023,15 @@ class TestDetailPanel:
 
     def test_detail_panel_edit_tab(self, server, page):
         page.goto(server, wait_until="networkidle")
-        page.locator(".job-table tbody tr").first.click()
-        edit_tab = page.locator(".panel-tab:has-text('Edit')")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        edit_tab = panel.locator(".panel-tab:has-text('Edit')")
         edit_tab.click()
         # Plist editor should appear
-        editor = page.locator(".plist-editor")
+        editor = panel.locator(".plist-editor")
         expect(editor).to_be_visible()
+        expect(editor.locator("textarea")).to_have_value(
+            re.compile("com.example.synthetic-idle")
+        )
 
     def test_detail_panel_close(self, server, page):
         page.goto(server, wait_until="networkidle")
