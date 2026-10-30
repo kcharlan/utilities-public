@@ -4,6 +4,17 @@ import BrewVersionCore
 @testable import Acceptance
 
 struct AcceptanceServiceTests {
+    @Test func advanceStepsEachPackageIndependently() async throws {
+        let service = SyntheticTransport(); let client = HomebrewClient(transport: service)
+        let formula = PackageName("synthetic-formula")!, cask = PackageName("synthetic-cask")!
+        await service.advance(); await service.advance(); await service.advanceCask()
+        #expect(try await client.lookup(formula, kinds: .formula).version == "3.0-synthetic")
+        #expect(try await client.lookup(cask, kinds: .cask).version == "2.0-synthetic")
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let catalog = try await CatalogClient(transport: service, cacheDirectory: home).load().catalog
+        #expect(catalog.listing(for: cask, kind: .cask)?.version == "2.0-synthetic")
+    }
     @MainActor @Test func tapTransportAndInventoryAreSynthetic() async throws {
         let service = SyntheticTransport()
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-taps-" + UUID().uuidString)

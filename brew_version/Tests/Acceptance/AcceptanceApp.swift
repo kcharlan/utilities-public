@@ -34,6 +34,18 @@ import UserNotifications
                 Button("Dark") { self.status?.setAppearance(NSAppearance(named: .darkAqua)) }
             }
             HStack {
+                Button("Both in 5s") { Task {
+                    try? await Task.sleep(for: .seconds(5)); await self.service.advance(); await self.service.advanceCask()
+                    SyntheticEnvironment.advanceRefreshClock(); await self.controller.checkNow()
+                } }
+                Button("Cask then formula") { Task {
+                    try? await Task.sleep(for: .seconds(5)); await self.service.advanceCask()
+                    SyntheticEnvironment.advanceRefreshClock(); await self.controller.checkNow()
+                    try? await Task.sleep(for: .seconds(20)); await self.service.advance()
+                    SyntheticEnvironment.advanceRefreshClock(); await self.controller.checkNow()
+                } }
+            }
+            HStack {
                 Button("Delay next lookup") { Task { await self.service.delayNextLookup() } }
                 Button("Test posting failure") {
                     self.notificationService.failNext = true
@@ -52,6 +64,7 @@ import UserNotifications
         let status = StatusItemController(controller: controller, notifier: notifier, accessory: controls)
         self.status = status
         notifier.showPopover = { [weak status] in status?.showPopover() }
+        notifier.acknowledgeAlert = { [weak controller] in controller?.acknowledgeAlerts() }
         status.showPopover()
         Task { await controller.hydrateCatalog(); await controller.scheduledTick() }
     }
@@ -67,6 +80,7 @@ import UserNotifications
     func authorizationStatus() async -> UNAuthorizationStatus { await native.authorizationStatus() }
     func requestAuthorization() async throws -> Bool { try await native.requestAuthorization() }
     func deliveredIdentifiers() async -> Set<String> { await native.deliveredIdentifiers() }
+    func listsInNotificationCenter() async -> Bool { await native.listsInNotificationCenter() }
     func removeDelivered(_ identifiers: [String]) { native.removeDelivered(identifiers) }
     func post(_ request: UNNotificationRequest) async throws {
         if failNext { failNext = false; throw SyntheticPostingError() }

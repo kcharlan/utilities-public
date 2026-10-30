@@ -2,11 +2,14 @@ import Foundation
 import BrewVersionCore
 
 actor SyntheticTransport: HTTPTransport {
-    private var version = "1.0-synthetic"
+    private var formulaMajor = 1, caskMajor = 1
+    private var version: String { "\(formulaMajor).0-synthetic" }
+    private var caskVersion: String { "\(caskMajor).0-synthetic" }
     private var delayNext = false
     private var tapFailures = false
     func setTapFailures(_ enabled: Bool) { tapFailures = enabled }
-    func advance() { version = "2.0-synthetic" }
+    func advance() { formulaMajor += 1 }
+    func advanceCask() { caskMajor += 1 }
     func delayNextLookup() { delayNext = true }
     func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
         if url.host == "raw.githubusercontent.com" {
@@ -19,7 +22,7 @@ actor SyntheticTransport: HTTPTransport {
             return .init(status: 200, body: Data("[{\"name\":\"synthetic-installed\",\"versions\":{\"stable\":\"2.0-synthetic\"}},{\"name\":\"synthetic-formula\",\"versions\":{\"stable\":\"\(version)\"}},{\"name\":\"synthetic-shared\",\"versions\":{\"stable\":\"3.0-synthetic\"}}]".utf8))
         }
         if url.path == "/api/cask.json" {
-            return .init(status: 200, body: Data(#"[{"token":"synthetic-cask","version":"1.0-synthetic"},{"token":"synthetic-shared","version":"4.0-synthetic"},{"token":"synthetic-fallback","version":"2.0-synthetic","auto_updates":true,"artifacts":[{"app":["Synthetic Missing.app"]}]}]"#.utf8))
+            return .init(status: 200, body: Data("[{\"token\":\"synthetic-cask\",\"version\":\"\(caskVersion)\"},{\"token\":\"synthetic-shared\",\"version\":\"4.0-synthetic\"},{\"token\":\"synthetic-fallback\",\"version\":\"2.0-synthetic\",\"auto_updates\":true,\"artifacts\":[{\"app\":[\"Synthetic Missing.app\"]}]}]".utf8))
         }
         if delayNext {
             delayNext = false
@@ -31,7 +34,7 @@ actor SyntheticTransport: HTTPTransport {
                 return .init(status: 200, body: Data(#"{"version":"2.0-synthetic","auto_updates":true,"artifacts":[{"app":["Synthetic Missing.app"]}]}"#.utf8))
             }
             guard ["synthetic-shared", "synthetic-cask"].contains(name) else { return .init(status: 404, body: Data()) }
-            let value = name == "synthetic-shared" ? "4.0-synthetic" : "1.0-synthetic"
+            let value = name == "synthetic-shared" ? "4.0-synthetic" : caskVersion
             return .init(status: 200, body: Data("{\"version\":\"\(value)\"}".utf8))
         }
         guard ["synthetic-formula", "synthetic-installed", "synthetic-shared"].contains(name), url.path.contains("/formula/") else {

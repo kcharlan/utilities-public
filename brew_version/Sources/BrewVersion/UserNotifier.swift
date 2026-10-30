@@ -8,6 +8,7 @@ import BrewVersionCore
     func requestAuthorization() async throws -> Bool
     func post(_ request: UNNotificationRequest) async throws
     func deliveredIdentifiers() async -> Set<String>
+    func listsInNotificationCenter() async -> Bool
     func removeDelivered(_ identifiers: [String])
 }
 @MainActor final class NativeNotificationService: NotificationService {
@@ -19,11 +20,14 @@ import BrewVersionCore
     func requestAuthorization() async throws -> Bool { try await center.requestAuthorization(options: [.alert, .sound]) }
     func post(_ request: UNNotificationRequest) async throws { try await center.add(request) }
     func deliveredIdentifiers() async -> Set<String> { Set(await center.deliveredNotifications().map { $0.request.identifier }) }
+    func listsInNotificationCenter() async -> Bool { await center.notificationSettings().notificationCenterSetting == .enabled }
     func removeDelivered(_ identifiers: [String]) { center.removeDeliveredNotifications(withIdentifiers: identifiers) }
 }
 @MainActor @Observable final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate {
     static let alertIdentifier = "brew-version.updates"
+    static let deliveryGrace: TimeInterval = 5
     var showPopover: (() -> Void)?
+    var acknowledgeAlert: (() -> Void)?
     private(set) var isSendingTestNotification = false
     private(set) var lastAlertPost: Date?
     func sendTestNotification() async {
@@ -109,13 +113,27 @@ import BrewVersionCore
             if let failure = failures[kind] { await post(failure.post, kind: kind) }
         }
     }
+    func alertWasCleared() async -> Bool {
+        guard await service.authorizationStatus() == .authorized, await service.listsInNotificationCenter(), failures[.package] == nil,
+              lastAlertPost.map({ now().timeIntervalSince($0) > Self.deliveryGrace }) ?? true else { return false }
+        return !(await service.deliveredIdentifiers()).contains(Self.alertIdentifier)
+    }
+    func removeLegacyAlerts() async {
+        let legacy = await service.deliveredIdentifiers().filter { $0 != Self.alertIdentifier }
+        service.removeDelivered(Array(legacy))
+    }
+    func handleResponse(actionIdentifier: String, requestIdentifier: String) {
+        if requestIdentifier == Self.alertIdentifier { acknowledgeAlert?() }
+        if actionIdentifier != UNNotificationDismissActionIdentifier { showPopover?() }
+    }
     private func failureMessage(_ context: String, error: any Error) -> String {
         let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let separator = detail.last.map { ".!?…。！？".contains($0) } == true ? " " : ". "
         return "\(context): \(detail)\(separator)Retry notifications."
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        await MainActor.run { self.showPopover?() }
+        let action = response.actionIdentifier, identifier = response.notification.request.identifier
+        await MainActor.run { self.handleResponse(actionIdentifier: action, requestIdentifier: identifier) }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound, .list] }
 }

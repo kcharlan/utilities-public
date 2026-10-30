@@ -4,6 +4,7 @@ import UserNotifications
 import Synchronization
 import Testing
 @testable import BrewVersion
+@testable import BrewVersionCore
 
 @MainActor struct StatusPanelSpaceTests {
     @Test func panelOpensOnActiveSpaceAndOverFullScreenApps() {
@@ -135,6 +136,10 @@ private final class PanelSaveCounter: Sendable {
     override func makeKeyAndOrderFront(_ sender: Any?) { shown = true; shows += 1 }
     override func orderOut(_ sender: Any?) { shown = false; hides += 1 }
 }
+private actor PanelNotifier: Notifier {
+    var syncs: [AlertDigest?] = []
+    func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async { syncs.append(digest) }
+}
 @MainActor private final class PanelFixture {
     static let screen = StatusScreen(frame: NSRect(x: -900, y: 100, width: 900, height: 700), visibleFrame: NSRect(x: -900, y: 140, width: 900, height: 630))
     static let icon = NSRect(x: -50, y: 778, width: 22, height: 22)
@@ -153,7 +158,9 @@ private final class PanelSaveCounter: Sendable {
     var clock: TimeInterval = 100
     let store: WatchStore
     let saves = PanelSaveCounter()
-    init(home: URL) throws {
+    let recorder = PanelNotifier()
+    let controller: WatchController
+    init(home: URL, pending: Bool = false) throws {
         _ = NSApplication.shared
         let saves = self.saves
         var io = WatchStoreIO.live
@@ -165,10 +172,15 @@ private final class PanelSaveCounter: Sendable {
         var state = AppState.initial; state.showOtherUpdates = false
         state.watched = (0..<3).map { index in
             let listing = Listing(name: PackageName("synthetic-panel-\(index)")!, kind: .formula, version: "2-synthetic")
-            return WatchEntry(name: listing.name, kind: .formula, lastListing: listing, unseenRelease: true)
+            var entry = WatchEntry(name: listing.name, kind: .formula, lastListing: listing, unseenRelease: true)
+            if pending {
+                entry.lastSeenRelease = ReleaseID(Listing(name: listing.name, kind: .formula, version: "1-synthetic"))
+                entry.alertPendingSince = Date(timeIntervalSince1970: 1)
+            }
+            return entry
         }
         try store.save(state)
-        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: QuietNotifier())
+        controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: store, notifier: recorder)
         let notifier = UserNotifier(service: notificationService)
         let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { [weak self] _ in
             guard let self else { return }
@@ -424,6 +436,15 @@ private final class PanelSaveCounter: Sendable {
     }
 }
 @MainActor struct DirectPanelOpeningTests {
+    @Test func openingPopoverAcknowledgesAlerts() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let fixture = try PanelFixture(home: home, pending: true)
+        fixture.status.showPopover(); await fixture.controller.alertQueueDrained()
+        #expect(fixture.controller.state.watched.allSatisfy { $0.alertPendingSince == nil })
+        let syncs = await fixture.recorder.syncs
+        #expect(syncs.count == 1 && syncs.last! == nil)
+    }
     @Test func programmaticOpeningIsIdempotentAndFirstNativePressCloses() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

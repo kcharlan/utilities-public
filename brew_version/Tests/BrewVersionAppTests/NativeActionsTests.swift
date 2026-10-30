@@ -29,6 +29,7 @@ import UserNotifications
         return status
     }
     func deliveredIdentifiers() async -> Set<String> { deliveredIDs }
+    func listsInNotificationCenter() async -> Bool { listsInCenter }
     func removeDelivered(_ identifiers: [String]) { removed.append(contentsOf: identifiers); deliveredIDs.subtract(identifiers) }
     func requestAuthorization() async throws -> Bool {
         authorizationRequests += 1
@@ -88,6 +89,57 @@ private struct ReopenCatalogTransport: HTTPTransport {
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func dismissAcknowledgesWithoutOpeningPopover() {
+        let notifier = UserNotifier(service: NotificationServiceStub()); var acknowledged = 0, opened = 0
+        notifier.acknowledgeAlert = { acknowledged += 1 }; notifier.showPopover = { opened += 1 }
+        notifier.handleResponse(actionIdentifier: UNNotificationDismissActionIdentifier, requestIdentifier: UserNotifier.alertIdentifier)
+        #expect(acknowledged == 1 && opened == 0)
+    }
+    @Test func recentPostIsNotTreatedAsCleared() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        var time = Date(timeIntervalSince1970: 0); let notifier = UserNotifier(service: service, now: { time })
+        await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound); service.deliveredIDs = []
+        time.addTimeInterval(UserNotifier.deliveryGrace - 0.1); #expect(!(await notifier.alertWasCleared()))
+        time.addTimeInterval(0.2); #expect(await notifier.alertWasCleared())
+    }
+    @Test func legacyCleanupKeepsTheRollingAlert() async {
+        let service = NotificationServiceStub(); service.deliveredIDs = ["synthetic-legacy-id", UserNotifier.alertIdentifier]
+        let notifier = UserNotifier(service: service); await notifier.removeLegacyAlerts()
+        #expect(service.removed == ["synthetic-legacy-id"])
+    }
+    @Test func clickAndTestNotificationResponses() {
+        let notifier = UserNotifier(service: NotificationServiceStub()); var acknowledged = 0, opened = 0
+        notifier.acknowledgeAlert = { acknowledged += 1 }; notifier.showPopover = { opened += 1 }
+        notifier.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, requestIdentifier: UserNotifier.alertIdentifier)
+        notifier.handleResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, requestIdentifier: UUID().uuidString)
+        #expect(acknowledged == 1 && opened == 2)
+    }
+    @Test func deliveredListAndAuthorizationProtectMembership() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        service.deliveredIDs = [UserNotifier.alertIdentifier]; #expect(!(await notifier.alertWasCleared()))
+        service.deliveredIDs = []; #expect(await notifier.alertWasCleared())
+        service.status = .denied; #expect(!(await notifier.alertWasCleared()))
+        service.status = .authorized; service.listsInCenter = false; #expect(!(await notifier.alertWasCleared()))
+        service.listsInCenter = true; service.postingFailure = "synthetic failure"
+        await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound)
+        #expect(!(await notifier.alertWasCleared()))
+    }
+    @Test func clearDuringRetryDoesNotRepost() async {
+        let service = NotificationServiceStub(); service.status = .authorized; service.postingFailure = "synthetic failure"
+        let notifier = UserNotifier(service: service); await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound)
+        service.postingFailure = nil; service.authorizationGateCall = service.authorizationStatusCalls + 2
+        service.authorizationGate = { await notifier.syncAlert(nil, delivery: .keepCurrent) }
+        await notifier.retry(); #expect(service.requests.count == 1)
+    }
+    @Test func retryStartsGracePeriod() async {
+        let service = NotificationServiceStub(); service.status = .authorized; service.postingFailure = "synthetic failure"
+        var time = Date(timeIntervalSince1970: 0); let notifier = UserNotifier(service: service, now: { time })
+        await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound)
+        time.addTimeInterval(20); service.postingFailure = nil; await notifier.retry(); service.deliveredIDs = []
+        #expect(!(await notifier.alertWasCleared()))
+        time.addTimeInterval(6); #expect(await notifier.alertWasCleared())
+    }
     @Test func failedPostRetriesCurrentList() async {
         let service = NotificationServiceStub(); service.status = .authorized
         let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"

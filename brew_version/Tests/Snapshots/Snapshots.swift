@@ -186,6 +186,7 @@ private actor SnapshotTransport: HTTPTransport {
     }
 }
 @MainActor private struct SnapshotNotifications: NotificationService {
+    func listsInNotificationCenter() async -> Bool { true }
     var failAuthorization = false
     func authorizationStatus() async -> UNAuthorizationStatus { failAuthorization ? .notDetermined : .authorized }
     func requestAuthorization() async throws -> Bool {

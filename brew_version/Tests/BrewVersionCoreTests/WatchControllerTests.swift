@@ -34,6 +34,19 @@ actor ControlledWatchTransport: HTTPTransport {
     }
     func waiting(_ count: Int) -> Bool { pending.count == count }
 }
+private final class RollingInstallation: InstalledReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = "1"
+    func upgrade() { lock.withLock { value = "2" } }
+    func installed(_ name: PackageName, kind: PackageKind, listing: Listing?) -> InstalledVersion? {
+        lock.withLock { InstalledVersion(version: value, source: .cellar) }
+    }
+    func snapshot(listings: [Listing]) -> InstalledSnapshot {
+        var snapshot = InstalledSnapshot()
+        for listing in listings { snapshot.versions[listing.kind, default: [:]][listing.name] = installed(listing.name, kind: listing.kind, listing: listing) }
+        return snapshot
+    }
+}
 
 @MainActor func waitForRequests(_ count: Int, on transport: ControlledWatchTransport) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -69,9 +82,90 @@ func watchResponse(_ version: String, etag: String? = nil, kind: PackageKind = .
         let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: notifier, now: { time.addTimeInterval(1); return time })
         let check = Task { await c.checkNow() }; try await waitForRequests(2, on: transport)
         await transport.finish(watchURL(a))
-        try await Task.sleep(for: .milliseconds(100))
         await transport.finish(watchURL(z)); await check.value
         #expect(await notifier.notices[0].names == [a, z])
+        let stamps = c.state.watched.map(\.alertPendingSince)
+        #expect(stamps[0] != nil && stamps[0] == stamps[1])
+    }
+    @Test func acknowledgingClearsListAndRemovesAlert() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: a, kind: .formula, version: "1"))]; try f.store.save(state)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier)
+        await c.checkNow(); c.acknowledgeAlerts(); await c.alertQueueDrained()
+        #expect(c.state.watched.allSatisfy { $0.alertPendingSince == nil })
+        #expect(await notifier.lastSyncCleared)
+    }
+    @Test func clearedAlertStartsFreshList() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+        var state = AppState.initial; state.watched = [a, b].map { baseline(Listing(name: $0, kind: .formula, version: "1")) }; try f.store.save(state)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2"), watchResponse("2")], watchURL(b): [watchResponse("1"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier)
+        await c.checkNow(); await notifier.setCleared(true); await c.checkNow()
+        #expect(await notifier.notices.last?.names == [b]); #expect(await notifier.deliveries.last == .withSound)
+    }
+    @Test func acknowledgedPackagesStayOutOfTheNextAlert() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+        var state = AppState.initial; state.watched = [a, b].map { baseline(Listing(name: $0, kind: .formula, version: "1")) }; try f.store.save(state)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2"), watchResponse("2")], watchURL(b): [watchResponse("1"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier)
+        await c.checkNow(); c.acknowledgeAlerts(); await c.alertQueueDrained(); await c.checkNow()
+        #expect(await notifier.notices.last?.names == [b]); #expect(await notifier.deliveries.last == .withSound)
+    }
+    @Test func launchRemovesAlertWithNoList() async {
+        let f = WatchFixture(); defer { f.clean() }; let notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: notifier)
+        c.reconcileAlert(); await c.alertQueueDrained()
+        #expect(await notifier.lastSyncCleared); #expect(await notifier.notices.isEmpty)
+    }
+    @Test func skipRemoveUndoAndCloseClearMembership() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!, d = PackageName("synthetic-d")!
+        var state = AppState.initial; state.watched = [a, b, d].map { baseline(Listing(name: $0, kind: .formula, version: "1")) }; try f.store.save(state)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2")], watchURL(b): [watchResponse("2")], watchURL(d): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier)
+        await c.checkNow(); c.skip(a); let removed = try #require(c.remove(b)); #expect(removed.entry.alertPendingSince == nil)
+        #expect(c.restore(removed.entry, at: removed.index)); c.popoverClosed(); await c.alertQueueDrained()
+        #expect(c.state.watched.allSatisfy { $0.alertPendingSince == nil })
+        #expect(await notifier.notices.count == 1); #expect(await notifier.lastSyncCleared)
+    }
+    @Test func emptyListDoesNotQueryClearedAndReconcileKeepsSavedListQuiet() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: a, kind: .formula, version: "1"))]; try f.store.save(state)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier)
+        await c.checkNow(); #expect(await notifier.clearedQueries == 0)
+        let restored = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: notifier)
+        restored.reconcileAlert(); await restored.alertQueueDrained()
+        #expect(await notifier.deliveries.last == .keepCurrent); #expect(await notifier.notices.count == 1)
+    }
+    @Test func failedAcknowledgementKeepsAlert() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!
+        var entry = baseline(Listing(name: a, kind: .formula, version: "2")); entry.alertPendingSince = Date(timeIntervalSince1970: 1)
+        entry.lastSeenRelease = ReleaseID(Listing(name: a, kind: .formula, version: "1")); entry.unseenRelease = true
+        var state = AppState.initial; state.watched = [entry]; try f.store.save(state)
+        let failures = IOFailures(); failures.operation = "replace"; let notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([:]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: notifier)
+        c.acknowledgeAlerts(); await c.alertQueueDrained()
+        #expect(c.state.watched[0].alertPendingSince != nil); #expect(await notifier.syncs.isEmpty)
+    }
+    @Test func installedUpgradeShrinksWithoutReposting() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: a, kind: .formula, version: "1"))]; try f.store.save(state)
+        let notifier = RecordingNotifier(), installed = RollingInstallation()
+        let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2"), watchResponse("2")]]), installed: installed, store: f.store, notifier: notifier)
+        await c.checkNow(); #expect(c.amberCount == 1)
+        installed.upgrade(); await c.checkNow()
+        #expect(c.amberCount == 0); #expect(await notifier.notices.count == 1); #expect(await notifier.lastSyncCleared)
+    }
+    @Test func acknowledgementKeepsInstalledUpdateAmber() async throws {
+        let f = WatchFixture(); defer { f.clean() }; let a = PackageName("synthetic-a")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: a, kind: .formula, version: "1"))]; try f.store.save(state)
+        let c = WatchController(transport: StubTransport([watchURL(a): [watchResponse("2")]]), installed: RollingInstallation(), store: f.store, notifier: RecordingNotifier())
+        await c.checkNow(); c.acknowledgeAlerts(); await c.alertQueueDrained(); #expect(c.amberCount == 1)
+    }
+    @Test func retryLoadReconcilesAlert() async throws {
+        let f = WatchFixture(); defer { f.clean() }; try f.store.save(.initial)
+        let notifier = RecordingNotifier(); let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: notifier)
+        var entry = baseline(Listing(name: PackageName("synthetic-a")!, kind: .formula, version: "2")); entry.alertPendingSince = Date(timeIntervalSince1970: 1)
+        entry.lastSeenRelease = ReleaseID(Listing(name: entry.name, kind: .formula, version: "1")); entry.unseenRelease = true
+        var state = AppState.initial; state.watched = [entry]; try f.store.save(state)
+        c.retryLoad(); await c.alertQueueDrained()
+        #expect(await notifier.syncs.last??.names == [entry.name]); #expect(await notifier.deliveries.last == .keepCurrent)
     }
     @Test func laterCheckReplacesTheListSilently() async throws {
         let f = WatchFixture(); defer { f.clean() }

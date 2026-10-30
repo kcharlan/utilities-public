@@ -1668,3 +1668,12 @@ and `panelScenesUseStoredSpeedReadings` cover both the visible dashes and notes.
 ### 2026-10-29 — Telltale open speed alerts
 
 Open speed rows need the stored episode extreme, not the last event body: a non-escalating change otherwise leaves the row stale. `speedAlertStatesItsWorstSinceOnset`, `reversedSpeedAlertIsNew`, `speedAlertWithoutAUsableWorstKeepsItsEventWording`, and `worstValueAlertsDisambiguateModels` cover both directions, replacement acknowledgement, fallback boundaries, and naming collisions.
+
+### 2026-10-30 — Rolling notification delivery
+
+The delivered list can lag a successful post, so an absent identifier immediately
+following delivery is not evidence of acknowledgement. A grace period protects
+membership (`recentPostIsNotTreatedAsCleared`). On macOS 27, `usernoted` rejected
+an ad hoc bundle under `/private/tmp` but accepted one under the user's home.
+A single retry slot also lost package alerts when test notifications failed;
+separate failure slots preserve the current package list (`failedPostLeavesPackagesListed`).

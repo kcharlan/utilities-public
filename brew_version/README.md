@@ -194,7 +194,8 @@ retains previous tap listings when a source fails and reports separate counts:
 “Couldn't check N tap packages.” for HTTP/network failures and
 “N tap packages can't be checked.” for unsupported, missing or unreadable
 sources (with singular wording for one). These rows never notify or increase
-the watched amber count. Tap notifications use “NAME VERSION is in TAP”.
+the watched amber count. Tap notifications use “NAME VERSION is in TAP”; see
+the rolling alert behavior under Saved watches and checks.
 
 Rollback safety: official watches/cache remain under the original `watched`
 and `listingCache` state keys; tap entries use `tapWatched` and
@@ -230,6 +231,21 @@ retry immediately. The next-check footer uses these same scheduler deadlines,
 including failed attempts and saves. While offline it describes the reconnect
 deadline instead: reconnect can bypass an unreachable request's delay, but
 cannot bypass a failed save's interval floor.
+
+Unacknowledged updates share one rolling notification. The first update sounds;
+later updates replace it silently, newest first, with updates from the same check
+ordered by name. macOS may truncate a long body, but the title retains the count.
+Clicking the alert opens the popover and acknowledges the list; dismissing it,
+opening the popover, or closing it after an update arrived also clears the list.
+Skip, stop watching and upgrading remove affected entries without reposting;
+Undo restores a watch without relisting it. Amber state remains independent.
+The list survives restart and is reconciled quietly. If the system no longer lists
+the alert at a later check, the next update starts a fresh list; denied notifications,
+disabled Notification Center listing and failed posts keep the list for retry.
+An acknowledgement that cannot be saved leaves the list and alert intact.
+Launch removes older delivered alerts and test notifications. The saved schema is
+unchanged: older state without the alert list loads, and unknown entry keys are
+ignored (`stateWithoutAlertListLoads`, `entryDecodingIgnoresUnknownKeys`).
 
 ## Catalog and Other updates
 
@@ -324,6 +340,7 @@ result of the current query; editing again cancels that pending intent.
 Select a result with the arrow keys or click; Return watches it, and Command-C
 copies its version. Only explicitly watched packages can notify. The first
 watch requests notification permission if the OS has not already decided it.
+The rolling alert and acknowledgement rules are described in Saved watches and checks.
 Selecting a catalog suggestion preserves its formula/cask kind through lookup
 and Watch. An explicit suggestion kind also controls its version lookup when
 the same name is already watched with another kind; the saved watch stays as
@@ -483,6 +500,15 @@ Watch that cask to check its fallback note in both sections. Search
 `synthetic-shared` and select the cask suggestion: its version is `4.0-synthetic`,
 while the formula is `3.0-synthetic`. `synthetic-cask` is another watchable cask;
 add two watches to exercise click/Delete/Undo without real inventory.
+For rolling-alert acceptance use a fresh home under the user's home directory
+(`BREW_VERSION_HARNESS_HOME`): on macOS 27 `usernoted` rejected a bundle in
+`/private/tmp`. Establish permission in System Settings > Notifications. Watch
+`synthetic-formula` and `synthetic-cask`, then close the popover after pressing
+**Both in 5s** or **Cask then formula**. Verify same-check ordering, silent
+replacement and newest-first order, one delivered entry, click, dismiss, popover
+acknowledgement, and clearing in Notification Center followed by a fresh list.
+The latter may be reported as a click by macOS. Finish delayed sequences before
+testing the failure and retry controls.
 **Light** and **Dark** are harness appearance controls. **Delay next lookup** holds the next individual
 synthetic lookup for two seconds, so type and press Return while it is pending.
 After real notification authorization, **Test posting failure** injects one
