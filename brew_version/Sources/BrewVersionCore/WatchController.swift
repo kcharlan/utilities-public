@@ -3,11 +3,15 @@ import Observation
 
 public protocol Notifier: Sendable {
     func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async
+    @MainActor func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never>
     func alertWasCleared() async -> Bool
     func requestAuthorization() async
 }
 public extension Notifier {
     func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async {}
+    @MainActor func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never> {
+        Task { await syncAlert(digest, delivery: delivery) }
+    }
     func alertWasCleared() async -> Bool { false }
     func requestAuthorization() async {}
 }
@@ -79,8 +83,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private let notifier: any Notifier
     private var alertQueue: Task<Void, Never>?
     @discardableResult private func enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never> {
-        let digest = alertDigest(for: state.watched), previous = alertQueue, notifier = self.notifier
-        let next = Task { await previous?.value; await notifier.syncAlert(digest, delivery: delivery) }
+        let digest = alertDigest(for: state.watched), previous = alertQueue
+        let deliveryTask = notifier.publishAlert(digest, delivery: delivery)
+        let next = Task { await previous?.value; await deliveryTask.value }
         alertQueue = next
         return next
     }

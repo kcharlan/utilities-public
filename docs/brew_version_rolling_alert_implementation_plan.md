@@ -4,7 +4,7 @@
 
 **Goal:** Implement the rolling alert defined in Behavior.
 
-**Architecture:** `WatchController` computes an `AlertDigest` from watch state and hands it to `UserNotifier` through a serial queue. The task interfaces define the persistence and system-service boundaries.
+**Architecture:** `WatchController` publishes each committed `AlertDigest` immediately on the main actor. `UserNotifier` serializes package posts and retries in one worker, while controller completion tasks preserve the check and drain contracts. The task interfaces define the persistence and system-service boundaries.
 
 **Tech Stack:** Swift 6, Swift Testing, AppKit, SwiftUI, UserNotifications. No new dependencies.
 
@@ -86,7 +86,7 @@ Not measured, and handled by design rather than by evidence:
 ## File structure
 
 - `brew_version/Sources/BrewVersionCore/WatchState.swift`: saved list field, `notice(for:)`, `AlertDigest`, `AlertDelivery`, `alertDigest(for:)`.
-- `brew_version/Sources/BrewVersionCore/WatchController.swift`: `Notifier` protocol, serial alert queue, check integration, acknowledgement, reconciliation.
+- `brew_version/Sources/BrewVersionCore/WatchController.swift`: `Notifier` protocol, immediate membership publication, delivery completion tracking, check integration, acknowledgement, reconciliation.
 - `brew_version/Sources/BrewVersion/UserNotifier.swift`: fixed-identifier delivery, retry payload, response handling, delivered-list checks.
 - `brew_version/Sources/BrewVersion/StatusItemController.swift`, `AppDelegate.swift`: acknowledgement and launch hooks.
 - `brew_version/Tests/Acceptance/*`, `Tests/Snapshots/Snapshots.swift`: harness conformance and controls.
@@ -189,16 +189,17 @@ Subject: `Add Brew Version's saved alert list and digest`. Explain the change's 
 ```swift
 public protocol Notifier: Sendable {
     func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async
+    @MainActor func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never>
     func alertWasCleared() async -> Bool
     func requestAuthorization() async
 }
-// Protocol extension defaults: syncAlert does nothing, alertWasCleared returns false.
+// Defaults: publishAlert starts syncAlert in a task, syncAlert does nothing, alertWasCleared returns false.
 ```
 
   - `UserNotifier.alertIdentifier: String`, a `static let` with value `"brew-version.updates"`.
   - `NotificationService.deliveredIdentifiers() async -> Set<String>`
   - `NotificationService.removeDelivered(_ identifiers: [String])`
-  - `WatchController.alertQueueDrained() async` (internal, for tests).
+  - `WatchController.alertQueueDrained() async` (public, for tests).
   - `WatchController.enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never>` (private).
   - `UserNotifier.init(service: any NotificationService, now: @escaping () -> Date = Date.init)`
 
@@ -322,12 +323,13 @@ Expected: compile failure naming `syncAlert` and `UserNotifier.alertIdentifier`.
 
 - [x] **Step 4: Implement the controller**
 
-Add `private var alertQueue: Task<Void, Never>?`. `enqueueAlert` captures the digest on the main actor and appends one `syncAlert` call to the chain, so calls run in commit order:
+Add `private var alertQueue: Task<Void, Never>?`. `enqueueAlert` publishes the digest immediately after the save; it chains only completion tracking, so a shrink or acknowledgement can invalidate a delivery while authorization is suspended:
 
 ```swift
 @discardableResult private func enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never> {
-    let digest = alertDigest(for: state.watched), previous = alertQueue, notifier = self.notifier
-    let next = Task { await previous?.value; await notifier.syncAlert(digest, delivery: delivery) }
+    let digest = alertDigest(for: state.watched), previous = alertQueue
+    let deliveryTask = notifier.publishAlert(digest, delivery: delivery)
+    let next = Task { await previous?.value; await deliveryTask.value }
     alertQueue = next
     return next
 }
@@ -345,13 +347,13 @@ In `checkNow`, replace the `notices` array:
 
 Replace `FailedNotice.notice` with a private `PendingPost { identifier, title, body, sound: Bool, category: String? }`. Implement the diagnostic path as pinned by `testNotificationStaysSeparateFromTheRollingAlert`.
 
-`syncAlert`:
-- `nil` digest, whatever the delivery: set a new `latestPosts[.package]`, clear `failures[.package]` and `lastAlertPost`, then call `service.removeDelivered([Self.alertIdentifier])`. The new token stops a retry that is waiting on authorization.
+`publishAlert` updates desired membership synchronously; `syncAlert` awaits its returned task. All package posts, including retries, run in a single worker; diagnostic posts remain independent.
+- `nil` digest, whatever the delivery: start a new episode, clear `failures[.package]` and `lastAlertPost`, then call `service.removeDelivered([Self.alertIdentifier])`. If a post was already in flight, remove again when it completes before delivering a new episode.
 - Retain a current package payload independently of the failure slot, updating it on every nonnil sync. `.keepCurrent` updates that payload and any package failure's title/body, preserving its pending sound, without starting a post.
-- After authorization suspensions and the `latestPosts` token guard, a package post reads the current payload rather than its pre-await copy. On failure retain that current payload. This applies to initial posts and retries; `shrinkDuringRetryPostsCurrentList` pins the nonempty mutation case.
+- After authorization and an episode check, a package post reads the current payload rather than its pre-await copy. On failure retain that current payload. This applies to initial posts and retries; `shrinkDuringRetryPostsCurrentList` pins the nonempty mutation case.
 - `.silent` and `.withSound`: post through the existing authorization path with `identifier: Self.alertIdentifier` and `categoryIdentifier = Self.alertIdentifier`. Set `content.sound` for `.withSound`, and for `.silent` when the pending package failure has a sound.
 
-Set `lastAlertPost = now()` only on a successful current-token `.package` post. The timing tests in Review Focus define its use; diagnostic posts do not change it.
+Set `lastAlertPost = now()` only on a successful current-episode `.package` post. A successful post consumes the episode's pending sound even if a newer payload awaits delivery; a new episode retains its own sound. The timing tests in Review Focus define its use; diagnostic posts do not change it.
 
 `NativeNotificationService` implements the new service methods. Its `init` registers `UNNotificationCategory(identifier: UserNotifier.alertIdentifier, actions: [], intentIdentifiers: [], options: [.customDismissAction])`. Update `SnapshotNotifications` and `SyntheticNotificationService`. The harness's Test posting failure button calls `syncAlert` with a synthetic digest.
 

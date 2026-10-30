@@ -34,7 +34,7 @@ import BrewVersionCore
         guard !isSendingTestNotification else { return }
         isSendingTestNotification = true
         defer { isSendingTestNotification = false }
-        await post(PendingPost(identifier: UUID().uuidString, title: "Brew Version test notification", body: "This is a test notification from Brew Version. Click to open the popover.", sound: true, category: nil), kind: .test)
+        await postTest(PendingPost(identifier: UUID().uuidString, title: "Brew Version test notification", body: "This is a test notification from Brew Version. Click to open the popover.", sound: true, category: nil))
     }
     private let service: any NotificationService
     private let now: () -> Date
@@ -43,6 +43,9 @@ import BrewVersionCore
     private struct PendingPost { let identifier: String; var title: String; var body: String; var sound: Bool; let category: String? }
     private struct Failure { var post: PendingPost; let postingError: String? }
     private var currentPackage: PendingPost?
+    private var packageEpisode = UUID()
+    private var packageDeliveryNeeded = false
+    private var packageWorker: Task<Void, Never>?
     private var failures: [NoticeKind: Failure] = [:]
     private var latestPosts: [NoticeKind: UUID] = [:]
     var lastError: String? {
@@ -67,51 +70,91 @@ import BrewVersionCore
         } catch { authorizationError = failureMessage("Notification authorization failed", error: error) }
     }
     func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async {
+        await publishAlert(digest, delivery: delivery).value
+    }
+    func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never> {
         guard let digest else {
-            latestPosts[.package] = UUID(); currentPackage = nil; failures[.package] = nil; lastAlertPost = nil
+            packageEpisode = UUID(); currentPackage = nil; failures[.package] = nil; lastAlertPost = nil
+            packageDeliveryNeeded = false
             service.removeDelivered([Self.alertIdentifier])
-            return
+            return Task {}
         }
         let sound = delivery == .withSound || failures[.package]?.post.sound == true
-            || (delivery == .keepCurrent && currentPackage?.sound == true)
+            || currentPackage?.sound == true
         let payload = PendingPost(identifier: Self.alertIdentifier, title: digest.title, body: digest.body, sound: sound, category: Self.alertIdentifier)
         currentPackage = payload
         if delivery == .keepCurrent {
             if var failure = failures[.package] { failure.post.title = digest.title; failure.post.body = digest.body; failures[.package] = failure }
-            return
+            return Task {}
         }
-        await post(payload, kind: .package)
+        packageDeliveryNeeded = true
+        return startPackageWorker()
     }
-    private func post(_ payload: PendingPost, kind: NoticeKind) async {
+    private func startPackageWorker() -> Task<Void, Never> {
+        if let packageWorker { return packageWorker }
+        let worker = Task { await self.deliverPackages() }
+        packageWorker = worker
+        return worker
+    }
+    private func deliverPackages() async {
+        while packageDeliveryNeeded, currentPackage != nil {
+            packageDeliveryNeeded = false
+            let episode = packageEpisode
+            await requestAuthorization()
+            guard episode == packageEpisode, let current = currentPackage else { continue }
+            guard authorizationError == nil else {
+                failures[.package] = Failure(post: current, postingError: failures[.package]?.postingError)
+                continue
+            }
+            let content = UNMutableNotificationContent()
+            content.title = current.title; content.body = current.body
+            if current.sound { content.sound = .default }
+            if let category = current.category { content.categoryIdentifier = category }
+            do {
+                try await service.post(UNNotificationRequest(identifier: current.identifier, content: content, trigger: nil))
+                guard episode == packageEpisode, currentPackage != nil else {
+                    service.removeDelivered([Self.alertIdentifier]); continue
+                }
+                failures[.package] = nil; lastAlertPost = now()
+                currentPackage?.sound = false
+            } catch {
+                if episode == packageEpisode, let latest = currentPackage {
+                    failures[.package] = Failure(post: latest, postingError: failureMessage("Couldn't post notification", error: error))
+                }
+            }
+        }
+        packageWorker = nil
+    }
+    private func postTest(_ payload: PendingPost) async {
         let token = UUID()
-        latestPosts[kind] = token
+        latestPosts[.test] = token
         await requestAuthorization()
-        guard latestPosts[kind] == token else { return }
-        guard let current = kind == .package ? currentPackage : payload else { return }
+        guard latestPosts[.test] == token else { return }
         guard authorizationError == nil else {
-            failures[kind] = Failure(post: current, postingError: failures[kind]?.postingError)
+            failures[.test] = Failure(post: payload, postingError: failures[.test]?.postingError)
             return
         }
         let content = UNMutableNotificationContent()
-        content.title = current.title; content.body = current.body
-        if current.sound { content.sound = .default }
-        if let category = current.category { content.categoryIdentifier = category }
+        content.title = payload.title; content.body = payload.body
+        if payload.sound { content.sound = .default }
+        if let category = payload.category { content.categoryIdentifier = category }
         do {
-            try await service.post(UNNotificationRequest(identifier: current.identifier, content: content, trigger: nil))
-            if latestPosts[kind] == token { failures[kind] = nil; if kind == .package { lastAlertPost = now() } }
+            try await service.post(UNNotificationRequest(identifier: payload.identifier, content: content, trigger: nil))
+            if latestPosts[.test] == token { failures[.test] = nil }
         } catch {
-            if latestPosts[kind] == token {
-                let latest = kind == .package ? (currentPackage ?? current) : current
-                failures[kind] = Failure(post: latest, postingError: failureMessage("Couldn't post notification", error: error))
+            if latestPosts[.test] == token {
+                failures[.test] = Failure(post: payload, postingError: failureMessage("Couldn't post notification", error: error))
             }
         }
     }
     func retry() async {
         await requestAuthorization()
         guard authorizationError == nil else { return }
-        for kind in [NoticeKind.package, .test] {
-            if let failure = failures[kind] { await post(failure.post, kind: kind) }
+        if failures[.package] != nil {
+            if let packageWorker { await packageWorker.value }
+            else { packageDeliveryNeeded = true; await startPackageWorker().value }
         }
+        if let failure = failures[.test] { await postTest(failure.post) }
     }
     func alertWasCleared() async -> Bool {
         guard await service.authorizationStatus() == .authorized, await service.listsInNotificationCenter(), failures[.package] == nil,

@@ -13,8 +13,10 @@ import UserNotifications
     var fail = false
     var authorizationFailure: String?
     var postingFailure: String?
+    var failingTitles: Set<String> = []
     var delivered: [String] = []
     var requests: [UNNotificationRequest] = []
+    var successfulRequests: [UNNotificationRequest] = []
     var authorizationRequests = 0
     var postingGate: (@MainActor () async -> Void)?
     var deliveredIDs: Set<String> = []
@@ -41,11 +43,24 @@ import UserNotifications
     func post(_ request: UNNotificationRequest) async throws {
         requests.append(request)
         await postingGate?()
+        if failingTitles.contains(request.content.title) { throw SyntheticAuthorizationFailure(message: "Synthetic newer package failure") }
         if let postingFailure { throw SyntheticAuthorizationFailure(message: postingFailure) }
         if fail { throw CocoaError(.fileWriteUnknown) }
         delivered.append(request.content.title)
+        successfulRequests.append(request)
         deliveredIDs.insert(request.identifier)
     }
+}
+@MainActor private final class NotificationGate {
+    var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { entered = true; await withCheckedContinuation { continuation = $0 } }
+    func release() { continuation?.resume(); continuation = nil }
+}
+@MainActor private func waitUntil(_ predicate: () -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !predicate(), ContinuousClock.now < deadline { await Task.yield() }
+    try #require(predicate())
 }
 extension UserNotifier {
     func post(_ notice: Notice) async {
@@ -65,6 +80,11 @@ private actor RollingNativeTransport: HTTPTransport {
         calls[url, default: 0] += 1
         let version = url.lastPathComponent == "synthetic-a.json" || calls[url, default: 0] > 1 ? "2" : "1"
         return HTTPResponse(status: 200, body: Data("{\"versions\":{\"stable\":\"\(version)\"}}".utf8))
+    }
+}
+private struct AllAdvanceTransport: HTTPTransport {
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        HTTPResponse(status: 200, body: Data(#"{"versions":{"stable":"2"}}"#.utf8))
     }
 }
 @MainActor final class LoginServiceStub: LoginService {
@@ -89,6 +109,87 @@ private struct ReopenCatalogTransport: HTTPTransport {
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func committedShrinkAndAcknowledgementDuringAuthorization() async throws {
+        for acknowledge in [false, true] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+            let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+            var state = AppState.initial
+            state.watched = [a, b].map { let listing = Listing(name: $0, kind: .formula, version: "1"); return WatchEntry(name: $0, kind: .formula, lastListing: listing, lastSeenRelease: ReleaseID(listing)) }
+            try store.save(state)
+            let service = NotificationServiceStub(); service.status = .authorized
+            let notifier = UserNotifier(service: service)
+            let controller = WatchController(transport: AllAdvanceTransport(), installed: nil, store: store, notifier: notifier)
+            await controller.alertQueueDrained()
+            // Both updates arrive in this check.
+            let gate = NotificationGate()
+            service.authorizationGateCall = service.authorizationStatusCalls + 1
+            service.authorizationGate = { await gate.wait() }
+            let check = Task { await controller.checkNow() }
+            try await waitUntil { gate.entered }
+            if acknowledge { controller.acknowledgeAlerts() } else { controller.skip(a) }
+            gate.release(); await check.value; await controller.alertQueueDrained()
+            if acknowledge {
+                #expect(service.successfulRequests.isEmpty && service.deliveredIDs.isEmpty)
+            } else {
+                #expect(service.successfulRequests.last?.content.title == "synthetic-b 2 is on Homebrew")
+                #expect(service.successfulRequests.last?.content.sound != nil)
+            }
+        }
+    }
+    @Test func retryAndNewCheckSerializeSuccessfulPackagePosts() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial
+        state.watched = [a, b].map { let listing = Listing(name: $0, kind: .formula, version: "1"); return WatchEntry(name: $0, kind: .formula, lastListing: listing, lastSeenRelease: ReleaseID(listing)) }
+        try store.save(state)
+        let service = NotificationServiceStub(); service.status = .authorized; service.postingFailure = "Synthetic failure"
+        let notifier = UserNotifier(service: service)
+        let controller = WatchController(transport: RollingNativeTransport(), installed: nil, store: store, notifier: notifier)
+        await controller.checkNow(); service.postingFailure = nil
+        let gate = NotificationGate(); service.postingGate = { service.postingGate = nil; await gate.wait() }
+        let retry = Task { await notifier.retry() }
+        try await waitUntil { gate.entered }
+        let check = Task { await controller.checkNow() }
+        try await waitUntil { controller.state.watched.first(where: { $0.name == b })?.alertPendingSince != nil }
+        gate.release(); await retry.value; await check.value
+        #expect(service.successfulRequests.last?.content.body == "synthetic-b 2, synthetic-a 2")
+        #expect(service.successfulRequests.filter { $0.content.sound != nil }.count == 1)
+        #expect(notifier.lastError == nil)
+    }
+    @Test func acknowledgementDuringInFlightPostDoesNotResurrectAlert() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let a = PackageName("synthetic-a")!, listing = Listing(name: a, kind: .formula, version: "1")
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial; state.watched = [WatchEntry(name: a, kind: .formula, lastListing: listing, lastSeenRelease: ReleaseID(listing))]
+        try store.save(state)
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        let controller = WatchController(transport: AllAdvanceTransport(), installed: nil, store: store, notifier: notifier)
+        await controller.alertQueueDrained()
+        let gate = NotificationGate(); service.postingGate = { service.postingGate = nil; await gate.wait() }
+        let check = Task { await controller.checkNow() }; try await waitUntil { gate.entered }
+        controller.acknowledgeAlerts(); gate.release(); await check.value; await controller.alertQueueDrained()
+        #expect(service.deliveredIDs.isEmpty)
+        #expect(controller.state.watched.allSatisfy { $0.alertPendingSince == nil })
+    }
+    @Test func newEpisodeKeepsSoundAfterEarlierInFlightPost() async throws {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        let gate = NotificationGate(); service.postingGate = { service.postingGate = nil; await gate.wait() }
+        let first = Task { await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound) }
+        try await waitUntil { gate.entered }
+        await notifier.syncAlert(nil, delivery: .keepCurrent)
+        let second = Task { await notifier.syncAlert(digest("synthetic-b"), delivery: .withSound) }
+        await Task.yield(); gate.release(); await first.value; await second.value
+        #expect(service.successfulRequests.map(\.content.body) == ["synthetic-a", "synthetic-b"])
+        #expect(service.successfulRequests.filter { $0.content.sound != nil }.count == 2)
+        #expect(service.deliveredIDs == [UserNotifier.alertIdentifier])
+    }
     @Test func dismissAcknowledgesWithoutOpeningPopover() {
         let notifier = UserNotifier(service: NotificationServiceStub()); var acknowledged = 0, opened = 0
         notifier.acknowledgeAlert = { acknowledged += 1 }; notifier.showPopover = { opened += 1 }
@@ -310,14 +411,17 @@ private struct ReopenCatalogTransport: HTTPTransport {
         let service = NotificationServiceStub(); service.status = .authorized
         let notifier = UserNotifier(service: service)
         let newer = Notice(name: PackageName("synthetic-newer")!, title: "Synthetic newer update", body: "Synthetic newer retry body.")
+        service.failingTitles = [newer.title]
+        var newerPost: Task<Void, Never>?
         service.postingGate = {
             service.postingGate = nil
-            service.postingFailure = "Synthetic newer package failure"
-            await notifier.post(newer)
-            service.postingFailure = nil
+            newerPost = Task { await notifier.post(newer) }
+            await Task.yield()
         }
         await notifier.post(Notice(name: PackageName("synthetic-older")!, title: "Synthetic older update", body: "Synthetic older body."))
+        await newerPost?.value
         #expect(notifier.lastError?.contains("Synthetic newer package failure") == true)
+        service.failingTitles = []
         await notifier.retry()
         #expect(service.requests.filter { $0.content.title == newer.title && $0.content.body == newer.body }.count == 2)
         #expect(notifier.lastError == nil)

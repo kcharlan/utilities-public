@@ -553,6 +553,10 @@ slot. While authorization is suspended, the list can shrink without posting a
 new banner; read the current payload after the authorization and request-token
 checks so retry cannot restore stale entries. Preserve the initial sound until
 a package post succeeds. Test the suspended retry with a nonempty shorter list.
+Publish membership changes before waiting for a delivery to finish, and
+serialize retries with normal package posts. An in-flight post can complete
+after removal, so remove again after it completes; track sound by alert episode
+so an older successful post cannot consume a new episode's sound.
 
 ## 2026-10-17: Observe native event paths without forcing layout
 
