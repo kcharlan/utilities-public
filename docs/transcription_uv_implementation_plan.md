@@ -105,8 +105,8 @@ Historical spike evidence is in [the decision record](transcription_uv_decision.
 
 - [ ] **Step 8: Implement `transcription/transcription` to satisfy the launcher tests and CLI.** Use `tools/check_uv_headers.py:CANONICAL_SHEBANG` and the Global Constraints header. Set `PROJECT_DIR = Path(__file__).resolve().parent`. Parse arguments before importing Streamlit, and import `streamlit.web.cli` inside `main()`. Set `sys.argv` from `build_streamlit_argv`, then `return stcli.main()`. Do not spawn a child process or set environment variables. Accept unrecognized arguments only for `self-test`. `run_self_test` must:
   - return 2 with a message when `importlib.util.find_spec("pytest")` is `None`;
-  - set `sys.argv` to `["pytest", *(pytest_args or [str(PROJECT_DIR / "tests")]), "-q", "-p", "no:cacheprovider", "-o", "tmp_path_retention_policy=none"]`;
-  - call `runpy.run_module("pytest", run_name="__main__", alter_sys=True)` rather than `import pytest`, because pytest is not a runtime dependency of the header.
+  - let pytest parse the supplied options and paths, and use `PROJECT_DIR / "tests"` when pytest received no explicit collection target, including option-only calls from any working directory;
+  - load the optional pytest overlay only after checking its availability, and call `pytest.main` with a plugin that selects the default from pytest's parsed argument source. Preserve explicit paths and node IDs.
 
 - [ ] **Step 9: Replace the `if __name__` block at the end of `app.py`** with a bare `main()` at column zero and a one-line comment that Streamlit always runs this file as a script.
 

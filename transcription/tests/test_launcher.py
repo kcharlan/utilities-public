@@ -94,6 +94,46 @@ def test_help_does_not_import_streamlit():
     subprocess.run([sys.executable, "-c", code, str(LAUNCHER)], check=True, capture_output=True)
 
 
+@pytest.mark.parametrize("caller", ["root", "elsewhere"])
+@pytest.mark.parametrize("options", [[], ["-k", "counter"], ["--basetemp", "TEMP"]])
+def test_self_test_options_discover_only_project_tests(tmp_path, caller, options):
+    root = tmp_path / "root"
+    project = root / "project"
+    tests = project / "tests"
+    tests.mkdir(parents=True)
+    (root / "pytest.ini").write_text("[pytest]\naddopts = --import-mode=importlib\n")
+    (tests / "test_project.py").write_text("def test_counter_project(): pass\n")
+    (root / "test_sentinel.py").write_text("def test_counter_sentinel(): assert False\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "test_sentinel.py").write_text("def test_counter_sentinel(): assert False\n")
+    args = [str(tmp_path / "pytest-temp") if value == "TEMP" else value for value in options]
+    code = ("import runpy,sys; from pathlib import Path; "
+            "f=runpy.run_path(sys.argv[1])['run_self_test']; "
+            "f.__globals__['PROJECT_DIR']=Path(sys.argv[2]); raise SystemExit(f(sys.argv[3:]))")
+    result = subprocess.run([sys.executable, "-c", code, str(LAUNCHER), str(project), *args],
+                            cwd=root if caller == "root" else elsewhere, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+    assert "sentinel" not in result.stdout
+
+
+def test_self_test_honors_explicit_relative_node_id(tmp_path):
+    project = tmp_path / "project"
+    (project / "tests").mkdir(parents=True)
+    (project / "tests" / "test_default.py").write_text("def test_default(): assert False\n")
+    (tmp_path / "test_alternate.py").write_text(
+        "def test_chosen(): pass\ndef test_not_chosen(): assert False\n")
+    code = ("import runpy,sys; from pathlib import Path; "
+            "f=runpy.run_path(sys.argv[1])['run_self_test']; "
+            "f.__globals__['PROJECT_DIR']=Path(sys.argv[2]); raise SystemExit(f(sys.argv[3:]))")
+    result = subprocess.run([sys.executable, "-c", code, str(LAUNCHER), str(project),
+                             "-k", "chosen", "test_alternate.py::test_chosen"], cwd=tmp_path,
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

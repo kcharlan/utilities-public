@@ -89,6 +89,10 @@ closure, installed API surfaces, and synthetic input and state behavior:
 uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test
 ```
 
+Optional pytest options such as `-k counter` still select from this project's
+tests, regardless of the caller's working directory. Explicit pytest paths or
+node IDs select those targets instead and resolve relative to the caller.
+
 The installed OpenAI client is tested with an offline transport. For release,
 run this **Release invocation** from the repository root. The named tests
 exercise both launcher shebangs and record the full environment for audit;

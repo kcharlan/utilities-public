@@ -12,8 +12,8 @@
 # ///
 
 import argparse
+import importlib
 import importlib.util
-import runpy
 import shutil
 import socket
 import sys
@@ -44,9 +44,15 @@ def run_self_test(pytest_args: list[str]) -> int:
     if importlib.util.find_spec("pytest") is None:
         print("Self-test requires pytest; use the documented test overlay.", file=sys.stderr)
         return 2
-    sys.argv = ["pytest", *(pytest_args or [str(PROJECT_DIR / "tests")]), "-q", "-p", "no:cacheprovider", "-o", "tmp_path_retention_policy=none"]
-    runpy.run_module("pytest", run_name="__main__", alter_sys=True)
-    return 0
+    pytest = importlib.import_module("pytest")
+
+    class ProjectTestDefaults:
+        def pytest_configure(self, config):
+            if config.args_source != config.ArgsSource.ARGS:
+                config.args = [str(PROJECT_DIR / "tests")]
+
+    return pytest.main([*pytest_args, "-q", "-p", "no:cacheprovider",
+                        "-o", "tmp_path_retention_policy=none"], plugins=[ProjectTestDefaults()])
 
 
 def main() -> int:

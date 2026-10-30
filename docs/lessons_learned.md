@@ -1704,3 +1704,11 @@ not just missing imports, and form selections must flow from the widget return
 value. Regression coverage: `test_path_mode_keeps_upload_prefixed_file`,
 `test_divider_rerun_makes_no_batch`, `test_divider_duration_falls_back_to_whisper`,
 and `test_app_uses_selected_model`.
+
+# Pytest option-only discovery
+
+An option list is not necessarily a collection target: pytest option values
+such as `-k counter` and `--basetemp <path>` must not be mistaken for paths.
+Use pytest's parsed argument source to supply a project default, while retaining
+explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
+from synthetic caller directories with sentinel tests.
