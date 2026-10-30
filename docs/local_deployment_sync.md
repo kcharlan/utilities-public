@@ -682,6 +682,8 @@ The maintained runtime/source copies are:
 - `~/video-scenes`
 
 `~/docs` is an unrelated name collision. Do not synchronize the repository's `docs/` directory into it.
+Transcription is a maintained source copy at `~/transcription`; run its
+`transcription` launcher in place.
 
 Copy tracked files without deleting local-only files. The following pattern is safe for one project after a rollback directory has been created:
 
@@ -709,7 +711,10 @@ Do not treat local-only files as drift. Important examples include:
 
 - Apple Health exports.
 - Tax2 hand-edited `~/.tax2/config.yaml` and private built page `~/.tax2/tax2.html` (or the corresponding `TAX2_HOME` paths).
-- Transcription counters and session backups.
+- Transcription's legacy counters in `~/transcription/session_backup.json` and
+  `~/transcription/transcription_odometer.txt`; its current counters, lock and
+  preserved unreadable files under `~/.transcription/` or `TRANSCRIPTION_HOME`,
+  and any paths selected by `CUMULATIVE_JSON_PATH` or `LIFETIME_TXT_PATH`.
 - Docker databases, exports, logs, extension configuration, API credentials, and Compose `.env` files.
 - Project venvs, caches, and `.DS_Store` files.
 
@@ -721,7 +726,9 @@ PYTHONPATH="$HOME/source/utilities-public" \
   uv run --no-python-downloads --with-requirements requirements-dev.txt python -m pytest -q
 ```
 
-The same pattern applies to `~/mls-tracker`.
+The same `PYTHONPATH` applies to copied tests in `~/mls-tracker` and
+`~/transcription`. For Transcription, use its README's Self-test command from
+the copied project directory with `--script transcription`.
 
 ## Docker-specific state
 

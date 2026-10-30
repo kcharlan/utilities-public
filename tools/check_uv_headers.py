@@ -44,7 +44,6 @@ NON_UV_ENTRYPOINT_ALLOWLIST: tuple[str, ...] = (
     "docker/llm_collector/collector/collector.py",
     "docker/llm_proxy/src/llm_proxy/main.py",
     "model_sentinel/model_sentinel/__main__.py",
-    "transcription/app.py",
 )
 
 IMPORT_DISTRIBUTION_ALIASES = {
@@ -54,6 +53,7 @@ IMPORT_DISTRIBUTION_ALIASES = {
     "fitz": "pymupdf",
     "pptx": "python-pptx",
     "readability": "readability-lxml",
+    "whisper": "openai-whisper",
     "yaml": "pyyaml",
 }
 
@@ -93,7 +93,13 @@ LAUNCHERS = [
     "video-scenes/video-scenes",
     "apple-health-extract/extract_workout_stats.py",
     "apple-health-extract/exercise_bouts.py",
+    "transcription/transcription",
 ]
+
+# Explicit targets per launcher; do not scan sibling modules implicitly.
+LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
+    "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
+}
 
 NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
     "Calculation tools/backtest/data/compile_market_data.py",
@@ -113,6 +119,7 @@ NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
 # directions without pretending test-only packages belong in PEP 723 metadata.
 # Values are: (format, repo-relative manifest path, allowed manifest-only deps).
 DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "transcription/transcription": ("requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})),
     "abacus usage/de-abacus.py": ("stdlib", "", frozenset()),
     "anduril_steps/anduril_steps.py": ("stdlib", "", frozenset()),
     "dloc/dloc": ("stdlib", "", frozenset()),
@@ -395,6 +402,25 @@ def missing_declared_imports(path: Path, text: str, dependencies: list[str]) -> 
     return sorted(missing)
 
 
+def check_launcher_targets(rel_path: str, dependencies: list[str]) -> list[str]:
+    problems = []
+    for target in LAUNCHER_TARGETS.get(rel_path, ()):
+        path = REPO_ROOT / target
+        if not path.is_file():
+            problems.append(f"registered target not found: {target}")
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            ast.parse(text, filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            problems.append(f"could not parse registered target {target}: {exc}")
+            continue
+        missing = missing_declared_imports(path, text, dependencies)
+        if missing:
+            problems.append(f"{target}: third-party imports missing from dependencies: {', '.join(missing)}")
+    return problems
+
+
 def git_repository_files() -> list[Path]:
     """List tracked plus non-ignored untracked files without walking ignored trees."""
     result = subprocess.run(
@@ -475,6 +501,7 @@ def check_launcher(rel_path: str) -> list[str]:
                     "third-party imports missing from dependencies: "
                     + ", ".join(missing_imports)
                 )
+            problems.extend(check_launcher_targets(rel_path, deps))
             problems.extend(check_dependency_manifest(rel_path, meta))
 
     for pattern in FORBIDDEN_PATTERNS:

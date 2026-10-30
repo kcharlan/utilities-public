@@ -6,7 +6,7 @@ A local, Whisper-powered transcription toolkit with two Streamlit interfaces. Bo
 
 ## Requirements
 
-- Python 3.12, as expected by `setup.sh`
+- [uv](https://docs.astral.sh/uv/) and Python 3.12 available to uv
 - [FFmpeg](https://ffmpeg.org/) available on `PATH`
 - Enough disk space to download and cache the selected Whisper model on first use
 
@@ -18,23 +18,19 @@ brew install ffmpeg
 
 ## Setup
 
-Run these commands from this directory:
+Run the launcher from this directory. uv installs the pinned dependencies on
+first use; the [decision record](../docs/transcription_uv_decision.md) records
+the measured cache footprint.
 
 ```bash
-./setup.sh
-source venv/bin/activate
+./transcription
 ```
-
-`setup.sh` deletes and recreates `venv/`, then installs the exact
-`openai-whisper`, `streamlit`, and directly imported `pandas` releases tracked
-in `requirements.txt`.
 
 ### Optional OpenAI API fallback
 
-Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. To enable that fallback, install the OpenAI client in the project virtual environment and provide the key through the environment:
+Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. The launcher installs the client; enable the fallback by providing the key through the environment:
 
 ```bash
-venv/bin/python -m pip install -r requirements-optional.txt
 export OPENAI_API_KEY="your-key"
 ```
 
@@ -42,17 +38,16 @@ Do not store the key in this repository.
 
 ## Run the primary interface
 
-The wrapper changes to the project directory before launching, so its local counter files are stored in the expected location:
+The launcher preserves the caller's working directory:
 
 ```bash
-./ui.sh
+./transcription app
 ```
 
-The equivalent manual command is:
+Use `--port N` to select the starting port or `--no-browser` for headless operation:
 
 ```bash
-source venv/bin/activate
-streamlit run app.py
+./transcription app --port 8501 --no-browser
 ```
 
 The primary interface supports:
@@ -70,8 +65,7 @@ The primary interface supports:
 From this directory:
 
 ```bash
-source venv/bin/activate
-streamlit run transcribe.py
+./transcription divider
 ```
 
 This interface supports:
@@ -79,87 +73,56 @@ This interface supports:
 - Uploading multiple `wav`, `mp3`, `m4a`, `ogg`, `flac`, or `aac` files.
 - Selecting files with a path or wildcard pattern.
 - Splitting editable transcript text on configurable divider words such as `cut` or `mark`.
-- Using `librosa` for duration detection when it is separately installed, with Whisper audio loading as the built-in fallback.
+- Using `librosa` for duration detection, with Whisper audio loading as the fallback.
 
 This older interface records a file's detected duration before transcription finishes, so a failed transcription can still increase its counters. It does not use the OpenAI API fallback.
 
-`requirements-optional.txt` pins both optional packages. Neither is installed
-by `setup.sh`; install the optional file only when those features are needed.
+`requirements-optional.txt` pins both packages included in the launcher graph.
 
 ## Validation
 
-Validate the core graph and, separately, a fresh environment containing both
-requirements files. Use Python 3.12 and keep acceptance audio, logs, model cache,
-and counters outside the checkout. For [counter isolation](#counters-and-local-state),
-run from a fresh scratch directory and set both counter environment variables;
-the working directory also isolates `transcribe.py`'s counters.
-
-From this project directory, retain its absolute path before entering scratch:
+From the repository root, run the complete automated Self-test with the
+owner-selected overlay. It checks the pinned launcher graph, dependency
+closure, installed API surfaces, and synthetic input and state behavior:
 
 ```bash
-PROJECT="$PWD"
-S=$(mktemp -d "${TMPDIR:-/tmp}/transcription-acceptance.XXXXXX")
-cd "$S"
-export CUMULATIVE_JSON_PATH="$S/session_backup.json"
-export LIFETIME_TXT_PATH="$S/transcription_odometer.txt"
-"$PROJECT/venv/bin/python" -c 'import pandas, streamlit, whisper; print(pandas.__version__, streamlit.__version__, whisper.__version__)'
+uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test
 ```
 
-Save this AppTest harness as `apptest_acceptance.py` in the scratch directory:
+Optional pytest options such as `-k counter` still select from this project's
+tests, regardless of the caller's working directory. Explicit pytest paths or
+node IDs select those targets instead and resolve relative to the caller.
 
-```python
-import sys
-from streamlit.testing.v1 import AppTest
-for script in sys.argv[1:]:
-    at = AppTest.from_file(script, default_timeout=120).run()
-    assert not at.exception, f"{script}: {at.exception}"
-```
-
-Run it against both scripts:
+The installed OpenAI client is tested with an offline transport. For release,
+run this **Release invocation** from the repository root. The named tests
+exercise both launcher shebangs and record the full environment for audit;
+the trap removes the evidence even if a check fails.
 
 ```bash
-"$PROJECT/venv/bin/python" "$S/apptest_acceptance.py" "$PROJECT/app.py" "$PROJECT/transcribe.py"
+(
+  set -eu
+  S=$(mktemp -d "${TMPDIR:-/tmp}/transcription-acceptance.XXXXXX")
+  trap 'rm -r -- "$S"' EXIT
+  TRANSCRIPTION_ACCEPTANCE_DIR="$S" uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test transcription/tests/acceptance/release_checks.py
+  uvx --no-python-downloads pip-audit --strict --no-deps --disable-pip -r "$S/freeze.txt"
+)
 ```
 
-Smoke-run each entrypoint through the project interpreter, one at a time:
-
-```bash
-"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/app.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
-"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/transcribe.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
-```
-
-For each server, require HTTP 200 from `/` and `/_stcore/health` (body `ok`),
-then terminate it cleanly. Choose an available port when 8501 is occupied.
-Repeat AppTest and smoke checks with each graph's interpreter.
-
-On macOS, generate conspicuously synthetic speech and convert it to mono audio:
+Real-model acceptance is also required before release, after the owner
+authorizes downloading Whisper's `tiny` model. Insert the following commands
+and the named Self-test before the closing parenthesis of Release invocation:
 
 ```bash
 say -o "$S/synthetic.aiff" 'This is a synthetic transcription acceptance test.'
 ffmpeg -nostdin -y -i "$S/synthetic.aiff" -ac 1 -ar 16000 "$S/synthetic.wav"
+afconvert -f m4af -d aac "$S/synthetic.aiff" "$S/synthetic.m4a"
+TRANSCRIPTION_ACCEPTANCE_DIR="$S" uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test transcription/tests/acceptance/real_model.py
 ```
 
-With the core graph, load Whisper's `tiny` model with `download_root` pointing
-inside scratch (the first run downloads the model), transcribe the WAV using
-`word_timestamps=True` and `fp16=False`, and assert nonempty text and nonempty
-segment word timings with nonnegative, ordered start/end times. With the optional
-graph, assert positive duration from `librosa.load` and verify the OpenAI client
-surface without sending a request:
-
-```python
-from openai import OpenAI
-with OpenAI(api_key="SYNTHETIC-NOT-A-REAL-KEY") as client:
-    assert callable(client.audio.transcriptions.create)
-```
-
-Finally run `pip check`, retain `pip freeze`, and audit the core and optional
-freezes separately, using each validated environment's interpreter:
-
-```bash
-"$PROJECT/venv/bin/python" -m pip check
-"$PROJECT/venv/bin/python" -m pip freeze > "$S/freeze.txt"
-uvx --no-python-downloads pip-audit --strict --no-deps --disable-pip -r "$S/freeze.txt"
-```
+The model test isolates Whisper's cache inside the same temporary directory;
+uv's cache is unchanged. It exercises word timings and both interfaces with
+synthetic audio. A missing authorization or failed check leaves the release
+gate unmet.
 
 ## Counters and local state
 
@@ -169,18 +132,78 @@ Both interfaces use three counters:
 - **Cumulative**: resettable total persisted in `session_backup.json`.
 - **Lifetime**: persistent total stored as a number in `transcription_odometer.txt`.
 
-The two persistence files are local runtime state and are ignored by Git. `app.py` writes both files atomically and lets you reset the session and cumulative totals from the interface. The divider-word interface uses ordinary file writes and provides a cumulative reset.
+Both interfaces share `~/.transcription/` (mode 0700), or the nonempty `TRANSCRIPTION_HOME` override. The nonempty `CUMULATIVE_JSON_PATH` and `LIFETIME_TXT_PATH` overrides select individual files. Tildes expand and relative paths are relative to the caller's working directory. Files and the home lock have mode 0600; existing outside parent permissions are left alone.
 
-`app.py` also accepts `CUMULATIVE_JSON_PATH` and `LIFETIME_TXT_PATH` environment variables to place these files elsewhere. `transcribe.py` always uses filenames relative to its current working directory.
+Each file is published atomically under `counters.lock`; the pair is not a single atomic transaction. Reads and updates hold the same per-home lock. Never share an override file between different runtime homes because their locks are independent. Invalid values are preserved as `.unreadable-*` files, named in a persistent interface warning, and read as zero. Inspect and reconcile preserved files before restoring their totals.
 
-Back up the files before deleting or replacing them if their history matters.
+## Manual counter migration
+
+Stop both interfaces first. The authoritative legacy files are in `~/transcription`. Run the following from the intended caller directory with the same environment overrides as the launcher. It reports absent sources and existing destinations, including dangling symlinks, as skipped; it never overwrites them.
+
+```bash
+set -eu
+expand_path() {
+  case "$1" in
+    '~') printf '%s\n' "$HOME" ;;
+    '~/'*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    '~'*)
+      rest=${1#\~}; user=${rest%%/*}; suffix=${rest#"$user"}
+      if [[ ! $user =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        printf 'Invalid user in path: %s\n' "$1" >&2; return 1
+      fi
+      eval "expanded=~$user"
+      if [ "$expanded" = "~$user" ]; then
+        printf 'Unknown user in path: %s\n' "$1" >&2; return 1
+      fi
+      printf '%s%s\n' "$expanded" "$suffix" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+home=$(expand_path "${TRANSCRIPTION_HOME:-$HOME/.transcription}")
+cumulative=$(expand_path "${CUMULATIVE_JSON_PATH:-$home/session_backup.json}")
+lifetime=$(expand_path "${LIFETIME_TXT_PATH:-$home/transcription_odometer.txt}")
+mkdir -p "$home"
+chmod 700 "$home"
+copy_counter() {
+  source=$1 destination=$2
+  if [ ! -f "$source" ]; then printf 'Skipped absent source: %s\n' "$source"; return; fi
+  if [ -e "$destination" ] || [ -L "$destination" ]; then printf 'Skipped existing destination: %s\n' "$destination"; return; fi
+  parent=$(dirname "$destination")
+  mkdir -p "$parent"
+  temp=$(mktemp "$parent/.counter-migration.XXXXXX")
+  if ! chmod 600 "$temp" || ! cat "$source" > "$temp"; then rm -f "$temp"; return 1; fi
+  if ln "$temp" "$destination" 2>/dev/null; then
+    printf 'Copied: %s\n' "$destination"
+  elif [ -e "$destination" ] || [ -L "$destination" ]; then
+    printf 'Skipped existing destination: %s\n' "$destination"
+  else
+    rm -f "$temp"
+    printf 'Could not publish destination: %s\n' "$destination" >&2
+    return 1
+  fi
+  rm -f "$temp"
+}
+copy_counter "$HOME/transcription/session_backup.json" "$cumulative"
+copy_counter "$HOME/transcription/transcription_odometer.txt" "$lifetime"
+```
+
+For a retry or rollback, compare and reconcile legacy and runtime totals yourself before choosing which values to retain. A skipped destination may contain accumulated work; do not delete it merely to retry migration.
 
 ## Legacy wrappers
 
-`run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options to `transcribe.py`. The current `transcribe.py` is a Streamlit app and does not implement those options, so these wrappers are not supported launch methods. Use one of the Streamlit commands above.
+The old wrappers are transitional pending retirement. `run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options and are not supported launch methods. Use the launcher above.
 
 ## Troubleshooting
 
 - If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
 - If local transcription is slow or runs out of memory, choose a smaller model in the interface.
-- Run manual Streamlit commands from this directory unless you intentionally override `app.py`'s counter paths.
+- Check runtime-home permissions and override paths if counters cannot be saved.
+
+## Input handling
+
+Relative paths and wildcard patterns resolve from the launcher's caller directory.
+Path inputs remain in place after processing. The selected local model is used for
+transcription. Uploads are written only after Start into a private temporary batch,
+with indexed names to distinguish duplicates, and removed after processing or an
+error. If saving an upload fails, prior results remain available and you can retry.
+A forcibly killed process can leave its upload directory in the OS temporary directory.

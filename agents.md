@@ -136,8 +136,8 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - `mls-tracker`:
   - `.venv/bin/python -m pytest -q`
   - Run `UV_PYTHON_DOWNLOADS=never ./mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
-- Streamlit apps (`transcription`):
-  - Smoke-run each Streamlit entrypoint you edited, headless, then terminate it cleanly: `venv/bin/python -m streamlit run <entrypoint> --server.headless true` from the project directory. The entrypoints are `transcription`'s `app.py` and `transcribe.py`. `transcription`'s `run.sh`, `m4a-run.sh`, and `help.sh` are unsupported legacy wrappers; do not use them.
+- Streamlit app (`transcription`):
+  - Run `uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test` from the repository root. The owner-selected test environment is the self-test overlay. It exercises both launcher modes and clean server shutdown with synthetic state. Launch with `UV_PYTHON_DOWNLOADS=never transcription/transcription [app|divider]`; the legacy wrappers are transitional.
 - Shell utilities (`pdf-split`, `media-dater`, `toggle_wifi`, etc.):
   - run `--help` and at least one safe/dry-run style command when available.
 
@@ -147,7 +147,7 @@ Avoid broad searches or edits in vendored/generated trees unless the task explic
 ## Sensitive/Stateful Files
 - Treat API keys and local state as sensitive. Do not expose secret values in diffs or logs.
 - Pay special attention in `docker/llm_collector/` (`MY_API_KEY.txt`, compose/env config, extension config, state/snapshot files).
-- Be careful editing runtime/state artifacts such as `transcription/session_backup.json`, `transcription/transcription_odometer.txt`, `docker/llm_collector/state.json`, and `docker/llm_collector/snapshots/*`.
+- Be careful editing runtime/state artifacts such as `~/.transcription/` (or its overrides), legacy `transcription/session_backup.json`, `transcription/transcription_odometer.txt`, `docker/llm_collector/state.json`, and `docker/llm_collector/snapshots/*`.
 
 ## Project-Specific Notes
 - `web_games/gorilla/index.html` and `web_games/multibody_sim/index.html` are intentionally single-file apps; preserve this architecture unless instructed otherwise.

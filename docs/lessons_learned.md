@@ -1687,3 +1687,28 @@ separate failure slots preserve the current package list (`failedPostLeavesPacka
 Pandas deprecated the in-place `DataFrame.drop` keyword even though CSV output
 remained correct. Assign the returned frame and check extraction stderr for
 warnings alongside the synthetic CSV comparisons, so deprecations are visible.
+
+### 2026-10-30 — Counter recovery and reset writes
+
+Decode errors must follow the same preservation path as malformed counter text;
+otherwise corrupt bytes crash the interface before recovery. Resetting only the
+cumulative file avoids a later lifetime-file failure after the reset has already
+been published. Numeric conversion can also overflow even when JSON parses;
+preserve that input as corrupt too. The Transcription state tests cover these cases.
+
+## 2026-10-30: Track upload ownership and retain explicit UI selections
+
+Never infer ownership of a caller's file from its name, and allocate upload
+storage only when processing starts. Duration fallback must handle decoder errors,
+not just missing imports, and form selections must flow from the widget return
+value. Regression coverage: `test_path_mode_keeps_upload_prefixed_file`,
+`test_divider_rerun_makes_no_batch`, `test_divider_duration_falls_back_to_whisper`,
+and `test_app_uses_selected_model`.
+
+# Pytest option-only discovery
+
+An option list is not necessarily a collection target: pytest option values
+such as `-k counter` and `--basetemp <path>` must not be mistaken for paths.
+Use pytest's parsed argument source to supply a project default, while retaining
+explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
+from synthetic caller directories with sentinel tests.

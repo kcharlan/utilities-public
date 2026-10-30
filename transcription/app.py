@@ -5,16 +5,13 @@
 # - Sticky transcripts in session_state
 # - Metrics + aligned reset buttons (session & cumulative) rendered at end for immediate updates
 # - Cumulative reset confirmation that appears immediately; both resets force-refresh the UI
-# - Legacy counter persistence (exact formats):
-#     * cumulative -> ./session_backup.json  (key: "cumulative_seconds")
-#     * lifetime   -> ./transcription_odometer.txt (plain text float)
+# - Shared private counter persistence in the Transcription runtime home
 # - Whisper-only duration via whisper.audio.load_audio
-# - Auto-cleanup of upload_* temp files created by file_uploader
+# - Private temporary upload batches cleaned after processing
 # - Robust against flipping input mode back/forth
 # - Per-transcript "Copy to clipboard" (HTML) that targets only that transcript and is visible
 
 import os
-import json
 import time
 import glob
 import hashlib
@@ -26,6 +23,7 @@ import streamlit as st
 import pandas as pd
 import html as _html
 from streamlit.components.v1 import html as components_html
+import transcription_state as counter_state
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="Transcription Console", layout="wide")
@@ -34,10 +32,6 @@ st.set_page_config(page_title="Transcription Console", layout="wide")
 # Config & constants
 # ----------------------------
 APP_TITLE = "Transcription Console"
-
-# Preserve your legacy filenames & formats by default.
-CUMULATIVE_JSON_PATH = os.getenv("CUMULATIVE_JSON_PATH", "session_backup.json")
-LIFETIME_TXT_PATH    = os.getenv("LIFETIME_TXT_PATH", "transcription_odometer.txt")
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -65,22 +59,6 @@ def humanize_seconds(total_seconds: float) -> str:
 def now_str() -> str:
     return dt.datetime.now().strftime(TIME_FMT)
 
-def atomic_write_text(path: str, text: str) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
-def atomic_write_json(path: str, payload: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
 def hash_file_identity(filepath: str) -> str:
     try:
         stat = os.stat(filepath)
@@ -88,13 +66,6 @@ def hash_file_identity(filepath: str) -> str:
     except Exception:
         base = f"{os.path.basename(filepath)}|{time.time_ns()}"
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
-
-def safe_unlink(path: str) -> None:
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        pass
 
 # ----------------------------
 # Whisper-only duration
@@ -114,53 +85,6 @@ def read_audio_duration_seconds(filepath: str) -> float:
         return dur
     except Exception as e:
         raise RuntimeError(f"Whisper duration failed for {os.path.basename(filepath)}: {e}")
-
-# ----------------------------
-# Legacy counters I/O (exact formats)
-# ----------------------------
-def load_counters_from_legacy() -> Dict[str, float]:
-    """
-    cumulative -> session_backup.json  key: "cumulative_seconds"
-    lifetime   -> transcription_odometer.txt (float as plain text)
-    Missing files default to 0.0 (no crashes).
-    """
-    cumulative = 0.0
-    lifetime = 0.0
-
-    # cumulative (JSON)
-    if os.path.exists(CUMULATIVE_JSON_PATH):
-        try:
-            with open(CUMULATIVE_JSON_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            cumulative = float(data.get("cumulative_seconds", 0.0))
-        except Exception as e:
-            st.warning(f"Could not read {CUMULATIVE_JSON_PATH}: {e}")
-
-    # lifetime (plain text float)
-    if os.path.exists(LIFETIME_TXT_PATH):
-        try:
-            with open(LIFETIME_TXT_PATH, "r", encoding="utf-8") as f:
-                txt = f.read().strip()
-            lifetime = float(txt) if txt else 0.0
-        except Exception as e:
-            st.warning(f"Could not read {LIFETIME_TXT_PATH}: {e}")
-
-    return {"cumulative_total_seconds": cumulative, "lifetime_total_seconds": lifetime}
-
-def save_counters_to_legacy(cumulative: float, lifetime: float) -> None:
-    """
-    Write back using your exact formats:
-      cumulative -> {"cumulative_seconds": <float>}
-      lifetime   -> "<float>\\n"
-    """
-    try:
-        atomic_write_json(CUMULATIVE_JSON_PATH, {"cumulative_seconds": float(cumulative)})
-    except Exception as e:
-        st.error(f"Failed saving cumulative to {CUMULATIVE_JSON_PATH}: {e}")
-    try:
-        atomic_write_text(LIFETIME_TXT_PATH, f"{float(lifetime)}\n")
-    except Exception as e:
-        st.error(f"Failed saving lifetime to {LIFETIME_TXT_PATH}: {e}")
 
 # ----------------------------
 # Transcription abstraction
@@ -221,10 +145,13 @@ def ensure_session_state():
     if "last_delta_seconds" not in st.session_state:
         st.session_state.last_delta_seconds = 0.0
     if "counters_initialized" not in st.session_state:
-        cnt = load_counters_from_legacy()
-        st.session_state.cumulative_total_seconds = float(cnt["cumulative_total_seconds"])
-        st.session_state.lifetime_total_seconds = float(cnt["lifetime_total_seconds"])
+        result = counter_state.read_counters()
+        st.session_state.cumulative_total_seconds = result.counters.cumulative_seconds
+        st.session_state.lifetime_total_seconds = result.counters.lifetime_seconds
+        st.session_state.counter_warnings = result.warnings
         st.session_state.counters_initialized = True
+    for warning in st.session_state.counter_warnings:
+        st.warning(warning)
     if "last_wildcard_pattern" not in st.session_state:
         st.session_state.last_wildcard_pattern = ""
     if "preview_df" not in st.session_state:
@@ -314,12 +241,12 @@ def mode_and_path_controls() -> Tuple[str, str, pd.DataFrame]:
 # ----------------------------
 # UI: Form (model, allow_non_audio, uploader, submit)
 # ----------------------------
-def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[str]]:
+def controls_form(mode: str, wildcard: str):
     """
-    Returns: selected_paths, model_name, did_submit, created_temp_files
+    Returns: selected_paths, model_name, did_submit, upload_batch
     """
     selected_paths: List[str] = []
-    created_temp_files: List[str] = []
+    upload_batch = None
     uploads = None
     did_submit = False
 
@@ -352,19 +279,23 @@ def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[
     if submitted:
         if mode == "Upload files":
             if uploads:
-                for uf in uploads:
-                    suffix = os.path.splitext(uf.name)[1].lower()
-                    if (suffix not in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma", ".mp4", ".aac"]) and not allow_non_audio:
-                        st.warning(f"Skipped non-audio by extension: {uf.name}")
-                        continue
-                    tmp_path = os.path.join(
-                        ".",
-                        f"upload_{int(time.time()*1000)}_{hashlib.md5(uf.name.encode()).hexdigest()}{suffix or '.bin'}"
-                    )
-                    with open(tmp_path, "wb") as f:
-                        f.write(uf.getbuffer())
-                    selected_paths.append(tmp_path)
-                    created_temp_files.append(tmp_path)
+                try:
+                    for index, uf in enumerate(uploads):
+                        suffix = os.path.splitext(uf.name)[1].lower()
+                        if (suffix not in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma", ".mp4", ".aac"]) and not allow_non_audio:
+                            st.warning(f"Skipped non-audio by extension: {uf.name}")
+                            continue
+                        if upload_batch is None:
+                            upload_batch = counter_state.new_upload_batch()
+                        selected_paths.append(str(counter_state.write_upload(upload_batch, index, uf.name, uf.getbuffer())))
+                except OSError as error:
+                    counter_state.discard_upload_batch(upload_batch)
+                    upload_batch = None
+                    selected_paths = []
+                    st.error(f"Could not save uploads: {error}")
+                except BaseException:
+                    counter_state.discard_upload_batch(upload_batch)
+                    raise
         else:
             # Use the curated grid selection
             st.session_state["last_wildcard_pattern"] = (wildcard or "").strip()
@@ -384,15 +315,14 @@ def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[
                     ]
                 selected_paths = chosen
 
-    return selected_paths, st.session_state.get("Whisper model (local)", "small") or "small", did_submit, created_temp_files
+    return selected_paths, model_name, did_submit, upload_batch
 
 # ----------------------------
 # Processing loop with per-file commits
 # ----------------------------
-def process_files(filepaths: List[str], model_name: str, created_temp_files: List[str]) -> float:
+def process_files(filepaths: List[str], model_name: str) -> float:
     """
     Returns total seconds added in this batch (for delta display).
-    Always cleans up temp upload_* files after processing attempts.
     """
     if not filepaths:
         return 0.0
@@ -414,15 +344,15 @@ def process_files(filepaths: List[str], model_name: str, created_temp_files: Lis
 
                 # Commit per-file AFTER success
                 st.session_state.current_session_seconds += duration
-                st.session_state.cumulative_total_seconds += duration
-                st.session_state.lifetime_total_seconds += duration
+                try:
+                    counters = counter_state.add_duration(duration)
+                    st.session_state.cumulative_total_seconds = counters.cumulative_seconds
+                    st.session_state.lifetime_total_seconds = counters.lifetime_seconds
+                except OSError as error:
+                    st.error(f"Could not save counters: {error}")
+                    st.session_state.cumulative_total_seconds += duration
+                    st.session_state.lifetime_total_seconds += duration
                 batch_added_seconds += duration
-
-                # Persist counters to legacy formats atomically
-                save_counters_to_legacy(
-                    st.session_state.cumulative_total_seconds,
-                    st.session_state.lifetime_total_seconds
-                )
 
                 # Add transcript (sticky)
                 key = f"{hash_file_identity(path)}-{time.time_ns()}"
@@ -439,10 +369,6 @@ def process_files(filepaths: List[str], model_name: str, created_temp_files: Lis
             except Exception as e:
                 fail_count += 1
                 row.error(f"({idx}/{len(filepaths)}) ❌ {base} — {e}")
-            finally:
-                # Clean up temp uploads
-                if path in created_temp_files or os.path.basename(path).startswith("upload_"):
-                    safe_unlink(path)
 
     if ok_count or fail_count:
         st.info(f"Completed. Success: {ok_count} | Failed: {fail_count} | Added: {humanize_seconds(batch_added_seconds)}")
@@ -545,15 +471,17 @@ def render_metrics_and_resets():
             c_yes, c_no = st.columns([1,1])
             with c_yes:
                 if st.button("Yes, reset cumulative", key="btn_reset_cum_yes"):
-                    st.session_state.cumulative_total_seconds = 0.0
-                    save_counters_to_legacy(
-                        st.session_state.cumulative_total_seconds,
-                        st.session_state.lifetime_total_seconds
-                    )
-                    st.session_state.confirm_reset_cum = False
-                    st.session_state.last_delta_seconds = 0.0
-                    st.toast("Cumulative total reset.", icon="♻️")
-                    st.rerun()
+                    try:
+                        counters = counter_state.reset_cumulative()
+                    except OSError as error:
+                        st.error(f"Could not reset counters: {error}")
+                    else:
+                        st.session_state.cumulative_total_seconds = counters.cumulative_seconds
+                        st.session_state.lifetime_total_seconds = counters.lifetime_seconds
+                        st.session_state.confirm_reset_cum = False
+                        st.session_state.last_delta_seconds = 0.0
+                        st.toast("Cumulative total reset.", icon="♻️")
+                        st.rerun()
             with c_no:
                 if st.button("No, keep it", key="btn_reset_cum_no"):
                     st.session_state.confirm_reset_cum = False
@@ -573,19 +501,21 @@ def main():
     mode, wildcard, _preview_df = mode_and_path_controls()
 
     # Form with model, allow_non_audio, uploader, and submit
-    selected_paths, model_name, did_submit, created_temp_files = controls_form(mode, wildcard)
+    selected_paths, model_name, did_submit, upload_batch = controls_form(mode, wildcard)
 
     # Process if submitted
-    if selected_paths:
-        batch_delta = process_files(selected_paths, model_name=model_name, created_temp_files=created_temp_files)
-        st.session_state.last_delta_seconds = float(batch_delta)
-    else:
-        # No processing this run: clear delta so UI changes don't show stale numbers
-        st.session_state.last_delta_seconds = 0.0
+    try:
+        if selected_paths:
+            batch_delta = process_files(selected_paths, model_name=model_name)
+            st.session_state.last_delta_seconds = float(batch_delta)
+        else:
+            st.session_state.last_delta_seconds = 0.0
+    finally:
+        counter_state.discard_upload_batch(upload_batch)
 
     # Transcripts, then metrics + aligned resets (metrics last so clicks reflect immediately)
     render_transcripts()
     render_metrics_and_resets()
 
-if __name__ == "__main__":
-    main()
+# Streamlit always runs this file as a script.
+main()
