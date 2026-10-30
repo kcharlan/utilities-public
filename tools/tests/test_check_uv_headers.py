@@ -268,3 +268,45 @@ def test_vid_compiler_has_stdlib_runtime_and_pytest_only_dev_policy() -> None:
         frozenset({"pytest"}),
     )
     assert check_dependency_manifest(launcher) == []
+
+
+def test_target_missing_import_is_reported(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "target.py"
+    target.write_text("def load():\n    import librosa\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "LAUNCHER_TARGETS", {"launcher": ("target.py",)}, raising=False)
+    problems = guard.check_launcher_targets("launcher", [])
+    assert any("target.py" in p and "librosa" in p for p in problems)
+
+
+def test_whisper_alias_satisfies_import(tmp_path) -> None:
+    assert missing_declared_imports(tmp_path / "target.py", "import whisper\n", ["openai-whisper==20250625"]) == []
+
+
+def test_missing_target_is_reported(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "LAUNCHER_TARGETS", {"launcher": ("missing.py",)}, raising=False)
+    assert guard.check_launcher_targets("launcher", []) == ["registered target not found: missing.py"]
+
+
+def test_target_syntax_error_is_reported(tmp_path, monkeypatch) -> None:
+    (tmp_path / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "LAUNCHER_TARGETS", {"launcher": ("bad.py",)}, raising=False)
+    assert guard.check_launcher_targets("launcher", [])
+
+
+def test_targets_belong_to_registered_launchers() -> None:
+    assert set(guard.LAUNCHER_TARGETS) <= set(LAUNCHERS)
+
+
+def test_transcription_app_is_not_entrypoint_allowlisted() -> None:
+    assert "transcription/app.py" not in guard.NON_UV_ENTRYPOINT_ALLOWLIST
+
+
+def test_transcription_policy_reconciles_manifests() -> None:
+    launcher = "transcription/transcription"
+    assert DEPENDENCY_MANIFESTS[launcher] == (
+        "requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})
+    )
+    assert check_dependency_manifest(launcher) == []

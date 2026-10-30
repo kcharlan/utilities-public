@@ -587,5 +587,5 @@ def main():
     render_transcripts()
     render_metrics_and_resets()
 
-if __name__ == "__main__":
-    main()
+# Streamlit always runs this file as a script.
+main()

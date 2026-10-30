@@ -1,0 +1,78 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#     "openai-whisper==20250625",
+#     "streamlit==1.66.0",
+#     "pandas==3.0.6",
+#     "openai==3.31.0",
+#     "librosa==1.0.0",
+# ]
+# ///
+
+import argparse
+import importlib.util
+import runpy
+import shutil
+import socket
+import sys
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent
+MODES = {"app": "app.py", "divider": "transcribe.py"}
+
+
+def find_free_port(start_port, max_attempts=20):
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start_port}–{start_port + max_attempts - 1}")
+
+
+def build_streamlit_argv(script: Path, port: int, headless: bool) -> list[str]:
+    return ["streamlit", "run", str(script), "--server.address", "127.0.0.1",
+            "--server.port", str(port), "--server.headless", str(headless).lower(),
+            "--server.showEmailPrompt", "false", "--browser.gatherUsageStats", "false"]
+
+
+def run_self_test(pytest_args: list[str]) -> int:
+    if importlib.util.find_spec("pytest") is None:
+        print("Self-test requires pytest; use the documented test overlay.", file=sys.stderr)
+        return 2
+    sys.argv = ["pytest", *(pytest_args or [str(PROJECT_DIR / "tests")]), "-q", "-p", "no:cacheprovider", "-o", "tmp_path_retention_policy=none"]
+    runpy.run_module("pytest", run_name="__main__", alter_sys=True)
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "self-test":
+        return run_self_test(sys.argv[2:])
+    parser = argparse.ArgumentParser(description="Launch the Transcription Console")
+    parser.add_argument("mode", nargs="?", choices=MODES, default="app")
+    parser.add_argument("--port", type=int, default=8501)
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args()
+    script = PROJECT_DIR / MODES[args.mode]
+    if not script.is_file():
+        print(f"Script not found: {script}", file=sys.stderr)
+        return 2
+    try:
+        port = find_free_port(args.port)
+    except (RuntimeError, OverflowError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if port != args.port:
+        print(f"Port {args.port} is busy; using {port}.", file=sys.stderr)
+    if shutil.which("ffmpeg") is None:
+        print("Warning: FFmpeg was not found on PATH.", file=sys.stderr)
+    from streamlit.web import cli as stcli
+    sys.argv = build_streamlit_argv(script, port, args.no_browser)
+    return stcli.main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

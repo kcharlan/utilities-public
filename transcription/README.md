@@ -6,7 +6,7 @@ A local, Whisper-powered transcription toolkit with two Streamlit interfaces. Bo
 
 ## Requirements
 
-- Python 3.12, as expected by `setup.sh`
+- [uv](https://docs.astral.sh/uv/) and Python 3.12 available to uv
 - [FFmpeg](https://ffmpeg.org/) available on `PATH`
 - Enough disk space to download and cache the selected Whisper model on first use
 
@@ -18,23 +18,19 @@ brew install ffmpeg
 
 ## Setup
 
-Run these commands from this directory:
+Run the launcher from this directory. uv installs the pinned dependencies on
+first use; the [decision record](../docs/transcription_uv_decision.md) records
+the measured cache footprint.
 
 ```bash
-./setup.sh
-source venv/bin/activate
+./transcription
 ```
-
-`setup.sh` deletes and recreates `venv/`, then installs the exact
-`openai-whisper`, `streamlit`, and directly imported `pandas` releases tracked
-in `requirements.txt`.
 
 ### Optional OpenAI API fallback
 
-Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. To enable that fallback, install the OpenAI client in the project virtual environment and provide the key through the environment:
+Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. The launcher installs the client; enable the fallback by providing the key through the environment:
 
 ```bash
-venv/bin/python -m pip install -r requirements-optional.txt
 export OPENAI_API_KEY="your-key"
 ```
 
@@ -42,17 +38,16 @@ Do not store the key in this repository.
 
 ## Run the primary interface
 
-The wrapper changes to the project directory before launching, so its local counter files are stored in the expected location:
+The launcher preserves the caller's working directory:
 
 ```bash
-./ui.sh
+./transcription app
 ```
 
-The equivalent manual command is:
+Use `--port N` to select the starting port or `--no-browser` for headless operation:
 
 ```bash
-source venv/bin/activate
-streamlit run app.py
+./transcription app --port 8501 --no-browser
 ```
 
 The primary interface supports:
@@ -70,8 +65,7 @@ The primary interface supports:
 From this directory:
 
 ```bash
-source venv/bin/activate
-streamlit run transcribe.py
+./transcription divider
 ```
 
 This interface supports:
@@ -79,87 +73,23 @@ This interface supports:
 - Uploading multiple `wav`, `mp3`, `m4a`, `ogg`, `flac`, or `aac` files.
 - Selecting files with a path or wildcard pattern.
 - Splitting editable transcript text on configurable divider words such as `cut` or `mark`.
-- Using `librosa` for duration detection when it is separately installed, with Whisper audio loading as the built-in fallback.
+- Using `librosa` for duration detection, with Whisper audio loading as the fallback.
 
 This older interface records a file's detected duration before transcription finishes, so a failed transcription can still increase its counters. It does not use the OpenAI API fallback.
 
-`requirements-optional.txt` pins both optional packages. Neither is installed
-by `setup.sh`; install the optional file only when those features are needed.
+`requirements-optional.txt` pins both packages included in the launcher graph.
 
 ## Validation
 
-Validate the core graph and, separately, a fresh environment containing both
-requirements files. Use Python 3.12 and keep acceptance audio, logs, model cache,
-and counters outside the checkout. For [counter isolation](#counters-and-local-state),
-run from a fresh scratch directory and set both counter environment variables;
-the working directory also isolates `transcribe.py`'s counters.
-
-From this project directory, retain its absolute path before entering scratch:
+Run the complete automated self-test with the owner-selected test overlay:
 
 ```bash
-PROJECT="$PWD"
-S=$(mktemp -d "${TMPDIR:-/tmp}/transcription-acceptance.XXXXXX")
-cd "$S"
-export CUMULATIVE_JSON_PATH="$S/session_backup.json"
-export LIFETIME_TXT_PATH="$S/transcription_odometer.txt"
-"$PROJECT/venv/bin/python" -c 'import pandas, streamlit, whisper; print(pandas.__version__, streamlit.__version__, whisper.__version__)'
+uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription self-test
 ```
 
-Save this AppTest harness as `apptest_acceptance.py` in the scratch directory:
-
-```python
-import sys
-from streamlit.testing.v1 import AppTest
-for script in sys.argv[1:]:
-    at = AppTest.from_file(script, default_timeout=120).run()
-    assert not at.exception, f"{script}: {at.exception}"
-```
-
-Run it against both scripts:
-
-```bash
-"$PROJECT/venv/bin/python" "$S/apptest_acceptance.py" "$PROJECT/app.py" "$PROJECT/transcribe.py"
-```
-
-Smoke-run each entrypoint through the project interpreter, one at a time:
-
-```bash
-"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/app.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
-"$PROJECT/venv/bin/python" -m streamlit run "$PROJECT/transcribe.py" --server.headless true --server.address 127.0.0.1 --server.port 8501
-```
-
-For each server, require HTTP 200 from `/` and `/_stcore/health` (body `ok`),
-then terminate it cleanly. Choose an available port when 8501 is occupied.
-Repeat AppTest and smoke checks with each graph's interpreter.
-
-On macOS, generate conspicuously synthetic speech and convert it to mono audio:
-
-```bash
-say -o "$S/synthetic.aiff" 'This is a synthetic transcription acceptance test.'
-ffmpeg -nostdin -y -i "$S/synthetic.aiff" -ac 1 -ar 16000 "$S/synthetic.wav"
-```
-
-With the core graph, load Whisper's `tiny` model with `download_root` pointing
-inside scratch (the first run downloads the model), transcribe the WAV using
-`word_timestamps=True` and `fp16=False`, and assert nonempty text and nonempty
-segment word timings with nonnegative, ordered start/end times. With the optional
-graph, assert positive duration from `librosa.load` and verify the OpenAI client
-surface without sending a request:
-
-```python
-from openai import OpenAI
-with OpenAI(api_key="SYNTHETIC-NOT-A-REAL-KEY") as client:
-    assert callable(client.audio.transcriptions.create)
-```
-
-Finally run `pip check`, retain `pip freeze`, and audit the core and optional
-freezes separately, using each validated environment's interpreter:
-
-```bash
-"$PROJECT/venv/bin/python" -m pip check
-"$PROJECT/venv/bin/python" -m pip freeze > "$S/freeze.txt"
-uvx --no-python-downloads pip-audit --strict --no-deps --disable-pip -r "$S/freeze.txt"
-```
+The self-test uses synthetic state and audio, and tests the installed OpenAI
+client with an offline transport. Real-model acceptance requires a separate
+model download and is described in the implementation plan.
 
 ## Counters and local state
 
@@ -177,10 +107,10 @@ Back up the files before deleting or replacing them if their history matters.
 
 ## Legacy wrappers
 
-`run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options to `transcribe.py`. The current `transcribe.py` is a Streamlit app and does not implement those options, so these wrappers are not supported launch methods. Use one of the Streamlit commands above.
+The old wrappers are transitional pending retirement. `run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options and are not supported launch methods. Use the launcher above.
 
 ## Troubleshooting
 
 - If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
 - If local transcription is slow or runs out of memory, choose a smaller model in the interface.
-- Run manual Streamlit commands from this directory unless you intentionally override `app.py`'s counter paths.
+- Until counter migration, isolate the working directory and override `app.py`'s counter paths when testing.

@@ -85,7 +85,7 @@ The [Calculation Tools guide](../Calculation%20tools/README.md) documents the st
 | [Media Dater](../media-dater/README.md) | Shell CLI | Renames image and video files from ExifTool creation metadata, with collision handling and dry-run support. |
 | [Mermaid Live Editor](../docker/mermaid/README.md) | Docker scripts | Runs the diagram editor on the host loopback interface. |
 | [PDF Split by Size](../pdf-split/README.md) | Shell CLI | Uses qpdf to split PDFs into sequential size-limited chunks; an oversized single page remains a documented exception. |
-| [Transcription Console](../transcription/README.md) | Local Streamlit app | Provides two Whisper-backed interfaces for batch audio transcription and processed-duration tracking. |
+| [Transcription Console](../transcription/README.md#setup) | Local Streamlit app | Provides two Whisper-backed interfaces for batch audio transcription and processed-duration tracking. |
 | [trim_last](../trim_last/README.md) | Shell CLI | Retains the requested final duration of media files using FFmpeg, with re-encoding or keyframe-limited stream copying. |
 | [Video Compiler](../vid-compiler/README.md) | CLI | Creates video recaps from sampled clips and tail segments. Requires FFmpeg with the macOS VideoToolbox encoder. |
 
