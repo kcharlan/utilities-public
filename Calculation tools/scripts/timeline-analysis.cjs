@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const DAY = 86400000;
-const VERIFICATION_DATE = 'October 28, 2026';
+const VERIFICATION_DATE = 'October 30, 2026';
 const median = values => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted.length ? (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2 : null;
