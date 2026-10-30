@@ -502,7 +502,8 @@ while the formula is `3.0-synthetic`. `synthetic-cask` is another watchable cask
 add two watches to exercise click/Delete/Undo without real inventory.
 For rolling-alert acceptance use a fresh home under the user's home directory
 (`BREW_VERSION_HARNESS_HOME`): on macOS 27 `usernoted` rejected a bundle in
-`/private/tmp`. Establish permission in System Settings > Notifications. Watch
+`/private/tmp`. Remove that home when the check ends. Establish permission in
+System Settings > Notifications. Watch
 `synthetic-formula` and `synthetic-cask`, then close the popover after pressing
 **Both in 5s** or **Cask then formula**. Verify same-check ordering, silent
 replacement and newest-first order, one delivered entry, click, dismiss, popover

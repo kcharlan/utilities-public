@@ -26,6 +26,7 @@ When changing existing code, maintain and extend its existing frameworks:
 - Interactive tools handle errors gracefully and let the user recover when possible.
 - After writing code, run the relevant commands from the Validation Matrix.
 - Don't leave TODOs without user approval.
+- Put test, acceptance and evidence directories in private OS temporary space, not `$HOME`. If a tool requires a home-directory location, record why in that project's docs. Remove everything your run created before reporting done, and only what your run created. If evidence must outlive the run, say where it is in your report.
 - Before finalizing, check you haven't removed or disabled existing logging or tests, bypassed existing validation or error handling, or broken existing functionality in adjacent code.
 
 ## Release Versions
@@ -113,7 +114,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
 - `tax2`:
   - `.venv/bin/python -m pytest`
-  - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "$HOME/.tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
+  - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "${TMPDIR:-/tmp}/tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
   - Repeat the build after warming the same uv cache with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser`. Open its `file://` page in offline Chromium, exercise calculator inputs/state allocations, and verify all three real downloads: QIF, Markdown rate schedule and CSV lookup. Require no page/console errors or external requests. The complete pytest suite includes automated offline browser/download coverage; retain the actual uv smoke build as a separate acceptance check.
   - Run `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser --output "$tax2_acceptance_home/explicit.html"`. Confirm `explicit.html` exists with mode `0600` (`test -f "$tax2_acceptance_home/explicit.html"` and `stat -f '%Lp' "$tax2_acceptance_home/explicit.html"` on macOS).
   - If rules or payload generation change, verify the bundled expectations and rule-validation/parity/export tests in the full suite; reference exports are outputs, not calculator inputs. After launcher-header edits, also run the fleet header guard above.
