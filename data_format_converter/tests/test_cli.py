@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 
@@ -13,11 +14,6 @@ try:
     from src.data_convert import SUPPORTED_FORMATS, load_data
 finally:
     sys.path.pop(0)
-
-try:
-    import tomllib  # type: ignore[attr-defined]
-except ModuleNotFoundError:  # pragma: no cover - exercised in 3.10
-    import tomli as tomllib  # type: ignore
 
 # Define the path to the CLI script
 CLI_PATH = "src/data_convert.py"

@@ -1,10 +1,6 @@
 import pytest
+import tomllib
 from datetime import date, datetime, time, timezone
-
-try:
-    import tomllib  # type: ignore[attr-defined]
-except ModuleNotFoundError:  # pragma: no cover - exercised in 3.10
-    import tomli as tomllib  # type: ignore
 
 from src.converters.toml_conv import dump_toml, load_toml
 
