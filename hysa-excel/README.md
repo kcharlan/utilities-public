@@ -8,7 +8,7 @@ The launcher keeps its runtime directory private (`0700`) and its input CSV and 
 
 ## Requirements
 
-Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher requests Python 3.12 or newer and declares its own `xlsxwriter` dependency; uv resolves both automatically. There is no setup script or project virtual environment.
+Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher requests Python 3.12 through 3.15 and declares its own `xlsxwriter` dependency; uv resolves both automatically. There is no setup script or project virtual environment.
 
 ## First Run
 

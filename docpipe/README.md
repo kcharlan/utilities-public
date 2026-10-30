@@ -16,7 +16,7 @@ These are external CLI tools that docpipe shells out to. If missing, docpipe war
 
 | Tool | Install command | What it enables |
 |------|----------------|-----------------|
-| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.0 does not emit its metadata. **Required for useful PDF output.** |
+| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.1 does not emit its metadata. **Required for useful PDF output.** |
 | **pandoc** | `brew install pandoc` | Fallback HTML→Markdown conversion. Primary path uses the Python `markdownify` library (auto-installed), so Pandoc is only needed if markdownify fails on a particular HTML file. Also used as DOCX fallback if `python-docx` errors. |
 
 Install both in one shot:

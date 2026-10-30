@@ -4,7 +4,7 @@ Git Fleet is a local browser dashboard for tracking many Git repositories. It co
 
 ## Quick start
 
-Git Fleet is a [uv](https://docs.astral.sh/uv/) script and requires Python 3.12 or newer.
+Git Fleet is a [uv](https://docs.astral.sh/uv/) script and requires Python 3.12 through 3.15.
 
 ```bash
 ./git_dashboard.py

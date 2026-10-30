@@ -543,7 +543,7 @@ def test_source_guard_does_not_read_config(tmp_path, monkeypatch):
 def test_runtime_manifest_and_fleet_policy_drop_retired_dependencies():
     header = (PROJECT / 'tax2').read_text().split('# /// script\n',1)[1].split('# ///',1)[0]
     metadata = tomllib.loads('\n'.join(line.removeprefix('# ') for line in header.splitlines()))
-    assert metadata == {'requires-python': '>=3.12', 'dependencies':['pydantic','pyyaml']}
+    assert metadata == {'requires-python': '>=3.12,<3.16', 'dependencies':['pydantic','pyyaml']}
     requirements = {line.split('>=',1)[0] for line in (PROJECT / 'requirements-dev.txt').read_text().splitlines()
                     if line and not line.startswith('#')}
     assert requirements == {'pytest','playwright'}

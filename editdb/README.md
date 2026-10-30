@@ -24,7 +24,7 @@ To invoke EditDB from elsewhere, symlink `editdb/editdb` into a directory on
 your `PATH`.
 
 The first invocation may access the network while uv resolves a compatible
-Python 3.12+ interpreter and the dependencies declared in the launcher's PEP
+Python 3.12 through 3.15 interpreter and the dependencies declared in the launcher's PEP
 723 header. The browser UI also loads React, Babel, Tailwind CSS, Lucide, and
 Inter from CDNs, so those resources must be available when they are not
 already cached.

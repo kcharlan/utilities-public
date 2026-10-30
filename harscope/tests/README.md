@@ -50,7 +50,7 @@ The runner starts and cleans up its own harscope process. Its temporary exports 
 
 ### Requirements
 
-- [uv](https://docs.astral.sh/uv/) for the harscope launcher and its Python 3.12+ runtime
+- [uv](https://docs.astral.sh/uv/) for the harscope launcher and its Python 3.12–3.15 runtime
 - A virtual environment activated so `python3` resolves inside it. Agents use
   the utility venv for this ad hoc workflow after `~/.claude/shared/agent-tools.sh ensure`,
   with `PATH="$HOME/.venvs/agent-tools/bin:$PATH"` on the `run_tests.sh` command.

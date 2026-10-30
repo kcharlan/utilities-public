@@ -33,7 +33,7 @@ cp extract_workout_stats.py exercise_bouts.py run.sh requirements.txt \
 cd "$HOME/.apple-health-extract/project"
 ```
 
-The launchers require Python 3.12 or newer. uv resolves their declared pandas
+The launchers require Python 3.12 through 3.15. uv resolves their declared pandas
 and tqdm dependencies on first use, which may require network access.
 Run the synthetic shell tests from the source directory:
 

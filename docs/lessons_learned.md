@@ -1753,3 +1753,12 @@ dependency supports the interpreter in use. Docpipe constrains readability-lxml
 below 0.9 because 0.9 excludes Python 3.15; its regression checks both the
 declared range and the resolved version. Review that constraint when adopting a
 new supported readability-lxml release.
+
+### 2026-10-30 — Validate standalone Python specifiers as specifiers
+
+When reusing a requirement parser for `requires-python`, separate the synthetic
+package name from the specifier with whitespace. Otherwise malformed text such
+as `oops>=3.12,<3.16` becomes part of the package name and can pass validation.
+Reject requirement markers as well: they are valid on dependencies but not in
+`requires-python`. The shared uv guard covers names, extras, markers, valid caps
+and explicit deferrals.

@@ -378,3 +378,16 @@ def test_actual_version_must_satisfy_launcher_constraint(tmp_path, monkeypatch):
     entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), ('--help',), None)
     with pytest.raises(subprocess.CalledProcessError):
         runner.verify_interpreter(entry, '/opt/homebrew/bin/python3.12', runner.clean_environment(), suite=False)
+
+
+def test_actual_version_above_upper_bound_is_rejected(tmp_path, monkeypatch):
+    import subprocess
+    from tools import run_project_tests as runner
+    launcher = synthetic_launcher(tmp_path)
+    interpreter = runner.resolve_interpreter(launcher)
+    launcher.write_text(launcher.read_text().replace('>=3.12', '<3.0'))
+    monkeypatch.setattr(runner, 'REPO_ROOT', tmp_path)
+    monkeypatch.setenv('UV_CACHE_DIR', str(tmp_path / 'cache'))
+    entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), ('--help',), None)
+    with pytest.raises(subprocess.CalledProcessError):
+        runner.verify_interpreter(entry, interpreter, runner.clean_environment(), suite=False)

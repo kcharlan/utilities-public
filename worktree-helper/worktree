@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = []
 # ///
 """Interactive helper for git worktree management."""
@@ -23,7 +23,7 @@ from typing import Any, Iterable, Optional
 
 STATE_DIR = Path.home() / ".worktree-helper"
 STATE_FILE = STATE_DIR / "state.json"
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 BACK = object()
 
 

@@ -170,7 +170,7 @@ How it works:
    ```python
    #!/usr/bin/env -S uv run --script
    # /// script
-   # requires-python = ">=3.12"
+   # requires-python = ">=3.12,<3.16"
    # dependencies = [
    #     "pyyaml",
    # ]
@@ -184,6 +184,8 @@ How it works:
 Don't create a private venv, write a `bootstrap_state.json` marker, define a `BOOTSTRAP_VERSION`, invoke pip, or `os.execv()`-re-exec. uv owns the environment. The fleet drift guard `tools/check_uv_headers.py` discovers tracked and non-ignored untracked launchers, checks imports at every scope, and compares PEP 723 dependencies with tracked project manifests in both directions. Run it after adding or editing a launcher, register the launcher's path, and add/update its dependency-manifest policy.
 
 The guard also flags regular `.py` files with no shebang and a column-zero `if __name__ == "__main__":` guard (single quotes also match), except test paths and entries in `NON_UV_ENTRYPOINT_ALLOWLIST`. Test paths have a `test` or `tests` directory, a `conftest.py` name, or a name starting with `test_`. Unreadable or undecodable files are skipped; scripts without a main guard are not detected by this signal.
+
+Raise a launcher's Python upper bound on a branch only after validating the new interpreter with every affected project's complete documented suite, including projects outside the shared test registry. Compare the resolved and actually executed interpreters before and after the change; do not infer dependency compatibility from uv's handling of dependency upper bounds.
 
 Key design rules:
 - Prefer a user-home runtime directory like `~/.toolname/` over scattered fixed paths, for mutable state.

@@ -83,7 +83,7 @@ tokenization contract. The page never reads an API key or uploads pasted data.
 ### Setup
 
 Install [uv](https://docs.astral.sh/uv/) (for example, `brew install uv`). The
-launcher resolves Python 3.12 or newer and its dependencies on first run.
+launcher resolves Python 3.12 through 3.15 and its dependencies on first run.
 
 The supported Python dependency graph, including the released `toon-format`
 distribution, is declared in [`requirements.txt`](requirements.txt).

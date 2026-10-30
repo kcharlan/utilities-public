@@ -72,7 +72,7 @@ When a session is created through the web backend with both `COGNITIVE_SWITCHYAR
 
 ## Tech Stack
 
-- **Backend:** Python 3.12+, FastAPI, uvicorn, aiosqlite, PyYAML
+- **Backend:** Python 3.12 through 3.15, FastAPI, uvicorn, aiosqlite, PyYAML
 - **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)

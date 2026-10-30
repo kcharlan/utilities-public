@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = []
 # ///
 """Fleet drift guard for the uv-managed PEP 723 launchers.
@@ -100,6 +100,9 @@ LAUNCHERS = [
     "apple-health-extract/exercise_bouts.py",
     "transcription/transcription",
 ]
+
+# Project-specific deferrals belong here with their reason, until validated.
+UNCAPPED_LAUNCHERS: tuple[str, ...] = ()
 
 # Explicit targets per launcher; do not scan sibling modules implicitly.
 LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
@@ -527,6 +530,12 @@ def check_launcher(rel_path: str) -> list[str]:
     else:
         if "requires-python" not in meta:
             problems.append("PEP 723 block missing 'requires-python'")
+        elif rel_path not in UNCAPPED_LAUNCHERS:
+            constraint = meta["requires-python"]
+            if not isinstance(constraint, str) or ";" in constraint or not _valid_requirement("python " + constraint) or not any(
+                re.match(r"^(?:<|<=|==|~=)", part.strip()) for part in constraint.split(",")
+            ):
+                problems.append("requires-python must have a valid upper bound")
         deps = meta.get("dependencies")
         if not isinstance(deps, list):
             problems.append("PEP 723 block missing a 'dependencies' list")

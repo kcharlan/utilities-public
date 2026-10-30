@@ -7,7 +7,7 @@ the end of the source video. Multiple input files are processed concurrently.
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/)
-- Python 3.12 or newer, selected by uv from the launcher's inline metadata
+- Python 3.12 through 3.15, selected by uv from the launcher's inline metadata
 - System `ffmpeg` and `ffprobe` commands on `PATH`
 - An FFmpeg build with the `h264_videotoolbox` encoder
 

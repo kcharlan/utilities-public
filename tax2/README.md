@@ -1,6 +1,6 @@
 # Tax2
 
-Tax2 3.0.1 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.0.2 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local

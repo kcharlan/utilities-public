@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = [
 #     "fastapi",
 #     "uvicorn[standard]",
@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.

@@ -18,7 +18,7 @@ ln -s "$(pwd)/jtree" /usr/local/bin/jtree
 jtree data.json
 ```
 
-jtree runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header (`brew install uv` if you don't have it). The first run resolves the Python 3.12+ interpreter and dependencies (FastAPI, uvicorn, Pydantic) into uv's shared cache, so that invocation may use the network. jtree does not create a project-local or tool-specific virtual environment or runtime-state directory.
+jtree runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header (`brew install uv` if you don't have it). The first run resolves a Python interpreter from 3.12 through 3.15 and dependencies (FastAPI, uvicorn, Pydantic) into uv's shared cache, so that invocation may use the network. jtree does not create a project-local or tool-specific virtual environment or runtime-state directory.
 
 ## Options
 

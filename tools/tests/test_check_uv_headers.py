@@ -143,6 +143,32 @@ def test_registered_missing_file_still_fails(tmp_path, monkeypatch) -> None:
     assert guard.check_launcher("probe") == ["file not found: probe"]
 
 
+@pytest.mark.parametrize("constraint, deferred, expected", [
+    (">=3.12", False, True),
+    ("oops>=3.12,<3.16", False, True),
+    ("[extra]>=3.12,<3.16", False, True),
+    (">=3.12,<3.16; python_version < '3.16'", False, True),
+    (">=3.12,<3.16", False, False),
+    (">=3.12", True, False),
+])
+def test_launcher_requires_an_upper_bound(tmp_path, monkeypatch, constraint, deferred, expected) -> None:
+    launcher = tmp_path / "probe"
+    launcher.write_text(
+        guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = "' + constraint
+        + '"\n# dependencies = []\n# ///\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "UNCAPPED_LAUNCHERS", ("probe",) if deferred else (), raising=False)
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "probe", ("stdlib", "", frozenset()))
+    assert any("upper bound" in problem for problem in guard.check_launcher("probe")) is expected
+
+
+def test_guard_metadata_has_an_upper_bound() -> None:
+    metadata = extract_pep723(Path(guard.__file__).read_text(encoding="utf-8"))
+    assert metadata is not None
+    assert "<3.16" in metadata["requires-python"]
+
+
 @pytest.mark.parametrize("dependencies, expected", [
     ([], []),
     (["pyyaml"], ["stdlib-only launcher declares dependencies: pyyaml"]),
