@@ -1,5 +1,10 @@
 # Maintenance to-do
 
+- [ ] Resolve the historical evidence gap for Model Sentinel's anonymous endpoint
+  access and shadow evaluation of its display cap and telemetry fields. See
+  [Hosts and endpoint capture](../model_sentinel/docs/hosts_and_endpoints.md#validation-and-live-evidence).
+  Any new live provider requests or saved scans require separate authorization;
+  keep evidence private.
 - [ ] Decide whether existing CDN-backed browser tools need offline delivery.
   For tools selected for migration, vendor exact-version scripts, styles, and
   fonts with source URLs, hashes, and licenses; verify browser behavior with
