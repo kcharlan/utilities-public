@@ -1681,3 +1681,9 @@ membership (`recentPostIsNotTreatedAsCleared`). On macOS 27, `usernoted` rejecte
 an ad hoc bundle under `/private/tmp` but accepted one under the user's home.
 A single retry slot also lost package alerts when test notifications failed;
 separate failure slots preserve the current package list (`failedPostLeavesPackagesListed`).
+
+### 2026-10-30 — Capture warnings in synthetic extraction tests
+
+Pandas deprecated the in-place `DataFrame.drop` keyword even though CSV output
+remained correct. Assign the returned frame and check extraction stderr for
+warnings alongside the synthetic CSV comparisons, so deprecations are visible.

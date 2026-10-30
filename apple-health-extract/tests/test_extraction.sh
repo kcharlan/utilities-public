@@ -22,7 +22,14 @@ cat > export.xml <<'XML'
 </HealthData>
 XML
 UV_PYTHON_DOWNLOADS=never "$project_dir/extract_workout_stats.py"
-UV_PYTHON_DOWNLOADS=never "$project_dir/exercise_bouts.py"
+if ! UV_PYTHON_DOWNLOADS=never "$project_dir/exercise_bouts.py" 2> bouts.stderr; then
+    cat bouts.stderr >&2
+    exit 1
+fi
+if grep -q 'Warning' bouts.stderr; then
+    cat bouts.stderr >&2
+    exit 1
+fi
 cat > expected-summary.csv <<'CSV'
 id,type,start,end,duration_min,device,hr_samples,hr_avg,hr_min,hr_max,steps_total,distance_km,calories_kcal
 0,INVENTED_WORKOUT,2001-01-01 10:00:00,2001-01-01 10:10:00,10.0,SYNTHETIC_DEVICE,1,100.0,100.0,100.0,42.0,1.0,7.0
