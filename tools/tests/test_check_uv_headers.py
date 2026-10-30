@@ -40,6 +40,65 @@ def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypat
     assert "uv launcher is not registered in LAUNCHERS" in capsys.readouterr().out
 
 
+def test_pending_launcher_without_shebang_is_skipped(tmp_path, monkeypatch) -> None:
+    (tmp_path / "probe").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
+    assert guard.check_launcher("probe") == []
+
+
+def test_pending_launcher_with_shebang_is_fully_checked(tmp_path, monkeypatch) -> None:
+    (tmp_path / "probe").write_text(guard.CANONICAL_SHEBANG + "\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
+    assert "missing or invalid PEP 723 '# /// script' block" in guard.check_launcher("probe")
+
+
+def test_pending_missing_file_is_skipped(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
+    assert guard.check_launcher("probe") == []
+    assert guard.check_dependency_manifest("probe") == []
+
+
+def test_registered_missing_file_still_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    assert guard.check_launcher("probe") == ["file not found: probe"]
+
+
+@pytest.mark.parametrize("dependencies, expected", [
+    ([], []),
+    (["pyyaml"], ["stdlib-only launcher declares dependencies: pyyaml"]),
+])
+def test_stdlib_policy(tmp_path, monkeypatch, dependencies, expected) -> None:
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "probe", ("stdlib", "", frozenset()))
+    assert guard.check_dependency_manifest("probe", {"dependencies": dependencies}) == expected
+
+
+def test_main_counts_only_skipped_pending_launchers(tmp_path, monkeypatch, capsys) -> None:
+    (tmp_path / "pending").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (tmp_path / "ready").write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12"\n# dependencies = []\n# ///\n', encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"pending", "ready"}), raising=False)
+    monkeypatch.setattr(guard, "LAUNCHERS", ["pending", "ready"])
+    monkeypatch.setattr(guard, "discover_launchers", lambda: {"ready"})
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "ready", ("stdlib", "", frozenset()))
+    assert guard.main() == 0
+    assert "OK (1 launchers verified, 1 pending)" in capsys.readouterr().out
+
+
+def test_main_counts_verified_pending_even_if_discovery_omits_it(tmp_path, monkeypatch, capsys) -> None:
+    (tmp_path / "ready").write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12"\n# dependencies = []\n# ///\n', encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"ready"}))
+    monkeypatch.setattr(guard, "LAUNCHERS", ["ready"])
+    monkeypatch.setattr(guard, "discover_launchers", lambda: set())
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "ready", ("stdlib", "", frozenset()))
+    assert guard.main() == 0
+    assert "OK (1 launchers verified)" in capsys.readouterr().out
+
+
 def test_requirement_normalization_handles_extras_versions_and_case() -> None:
     assert normalize_distribution("uvicorn[standard]>=0.30") == "uvicorn"
     assert normalize_distribution("PyMuPDF>=1.24,<2") == "pymupdf"
