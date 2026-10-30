@@ -4,7 +4,15 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 WRAPPER="$PROJECT_ROOT/run.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/apple-health-wrapper-test.XXXXXX")"
-trap 'rm -rf "$TEST_ROOT"' EXIT
+trap 'rm -r -- "$TEST_ROOT"' EXIT
+mkdir -p "$TEST_ROOT/bin"
+cat > "$TEST_ROOT/bin/uv" <<'EOF'
+#!/bin/bash
+printf 'cwd=%s\n' "$PWD"
+printf 'arg=<%s>\n' "$@"
+EOF
+chmod +x "$TEST_ROOT/bin/uv"
+export PATH="$TEST_ROOT/bin:$PATH"
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -13,11 +21,8 @@ fail() {
 
 make_project() {
     local project_dir="$1"
-    mkdir -p "$project_dir/venv/bin"
+    mkdir -p "$project_dir"
     : > "$project_dir/extract_workout_stats.py"
-    printf '#!/bin/bash\nprintf "cwd=%%s\\n" "$PWD"\nprintf "args=%%s\\n" "$*"\n' \
-        > "$project_dir/venv/bin/python"
-    chmod +x "$project_dir/venv/bin/python"
 }
 
 help_home="$TEST_ROOT/help-home"
@@ -51,8 +56,17 @@ grep -Fq "$configured_canonical" "$TEST_ROOT/environment.out" || fail "environme
 
 APPLE_HEALTH_EXTRACT_HOME="$runtime_home" "$standalone" synthetic-argument > "$TEST_ROOT/launch.out"
 grep -Fq "cwd=$configured_canonical" "$TEST_ROOT/launch.out" || fail "launcher did not use project working directory"
-grep -Fq 'args=' "$TEST_ROOT/launch.out" || fail "launcher did not invoke project interpreter"
-grep -Fq 'synthetic-argument' "$TEST_ROOT/launch.out" || fail "launcher did not forward arguments"
+printf 'cwd=%s\narg=<run>\narg=<--no-python-downloads>\narg=<--script>\narg=<%s/extract_workout_stats.py>\narg=<synthetic-argument>\n' "$configured_canonical" "$configured_canonical" > "$TEST_ROOT/expected.out"
+cmp -s "$TEST_ROOT/expected.out" "$TEST_ROOT/launch.out" || fail "uv command or forwarded arguments differ"
+
+mkdir -p "$TEST_ROOT/no-uv"
+for command in dirname mkdir chmod; do ln -s "$(command -v "$command")" "$TEST_ROOT/no-uv/$command"; done
+for option in launch --check; do
+    if PATH="$TEST_ROOT/no-uv" APPLE_HEALTH_EXTRACT_PROJECT_DIR="$configured_project" "$standalone" ${option/launch/} > /dev/null 2> "$TEST_ROOT/no-uv.err"; then
+        fail "$option succeeded without uv"
+    fi
+    grep -q 'brew install uv' "$TEST_ROOT/no-uv.err" || fail "$option missing uv installation guidance"
+done
 
 unsafe_home="$TEST_ROOT/unsafe-home"
 marker="$TEST_ROOT/SHOULD_NOT_EXIST"

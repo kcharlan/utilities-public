@@ -10,7 +10,7 @@ usage() {
     cat <<'EOF'
 Usage: run.sh [--check] [extractor arguments...]
 
-Launch the Apple Health workout extractor from its project environment.
+Launch the Apple Health workout extractor with uv (install with brew install uv).
 
 Project directory resolution, in priority order:
   1. APPLE_HEALTH_EXTRACT_PROJECT_DIR
@@ -103,8 +103,7 @@ resolve_project_dir() {
     candidate="$(cd "$candidate" && pwd -P)"
     [[ -f "$candidate/$EXPECTED_SCRIPT" ]] || fail \
         "configured project directory is missing $EXPECTED_SCRIPT: $candidate"
-    [[ -x "$candidate/venv/bin/python" ]] || fail \
-        "project environment is missing executable venv/bin/python: $candidate"
+    command -v uv >/dev/null 2>&1 || fail "uv is missing; install it with brew install uv."
     printf '%s\n' "$candidate"
 }
 
@@ -130,4 +129,4 @@ if [[ "$check_only" == true ]]; then
 fi
 
 cd "$PROJECT_DIR"
-exec "$PROJECT_DIR/venv/bin/python" "$PROJECT_DIR/$EXPECTED_SCRIPT" "$@"
+exec uv run --no-python-downloads --script "$PROJECT_DIR/$EXPECTED_SCRIPT" "$@"

@@ -16,50 +16,39 @@ Utilities for turning an Apple Health export (`export.xml`) into structured CSV 
   `tqdm`).
 - `requirements-dev.txt` – Reproduces the runtime graph used by the shell test
   and safe extraction smokes.
-- `setup.sh` – Creates a `venv/` and installs the tracked runtime requirements.
-- `run.sh` – Runs `extract_workout_stats.py` from the project virtual environment. It works beside the project or as a standalone copy using local project-path configuration.
+- `run.sh` – Runs `extract_workout_stats.py` with uv. It works beside the project or as a standalone copy using local project-path configuration.
 - `project-dir.example` – Conspicuously synthetic example of the one-line local path configuration. It is documentation only.
 
 ## Setup
 
 Keep health exports and generated CSVs outside this public checkout. From this
-source directory, create a private operational copy containing only the scripts
-and runtime requirements, then run setup there:
+source directory, install uv (`brew install uv`) and create a private operational
+copy containing only the scripts and runtime requirements:
 
 ```bash
 mkdir -p "$HOME/.apple-health-extract/project"
 chmod 700 "$HOME/.apple-health-extract" "$HOME/.apple-health-extract/project"
-cp extract_workout_stats.py exercise_bouts.py setup.sh run.sh requirements.txt \
+cp extract_workout_stats.py exercise_bouts.py run.sh requirements.txt \
   "$HOME/.apple-health-extract/project/"
 cd "$HOME/.apple-health-extract/project"
-./setup.sh
 ```
 
-The setup script requires Python 3.11 or newer and
-network access for the initial dependency installation. Python 3.11 is the
-minimum supported by the declared pandas 3 line.
-
-This creates `venv/` and installs current compatible releases of `pandas>=3.0`
-and `tqdm>=4.70` from `requirements.txt`. The provided commands call
-`venv/bin/python` directly, so activation is optional. To run the Python
-scripts by name during an interactive session, activate it with
-`source venv/bin/activate`.
-
-For a disposable development environment in the source checkout, create a virtual environment and
-install `requirements-dev.txt`; the project intentionally has no separate
-Python test framework dependency because its tracked automated test is a shell
-wrapper test:
+The launchers require Python 3.12 or newer. uv resolves their declared pandas
+and tqdm dependencies on first use, which may require network access.
+Run the synthetic shell tests from the source directory:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
 bash tests/test_run_wrapper.sh
+bash tests/test_extraction.sh
 ```
+
+The extraction test accepts an optional absolute project directory to test a
+separate copy; it creates and removes its synthetic input and output in temporary space.
 
 ## Portable Wrapper
 
 When `run.sh` remains in the private operational directory, it finds the scripts
-and virtual environment beside itself:
+beside itself:
 
 ```bash
 ./run.sh --check
@@ -112,7 +101,7 @@ Run these commands from the private operational directory:
 2. **Build incidental exercise bouts**
 
    ```bash
-   venv/bin/python exercise_bouts.py
+   ./exercise_bouts.py
    ```
 
    - Consumes `workout_summary.csv` to label bouts that overlap an official workout.
@@ -130,7 +119,7 @@ Run these commands from the private operational directory:
 
 ## Troubleshooting
 
-- Run `./run.sh --check` to validate the wrapper path and virtual environment. This check does not validate `export.xml`.
+- Run `./run.sh --check` to validate the wrapper path and uv availability. This check does not validate `export.xml`.
 - `extract_workout_stats.py` lets the XML parser open `export.xml`; malformed XML or an unreadable file stops processing.
 - `exercise_bouts.py` opens `export.xml` as UTF-8 with invalid bytes ignored, but malformed XML still stops processing.
 - If the export contains no Apple Exercise Time records, `exercise_bouts.py` raises `ValueError: No Apple Exercise Time records found!`.
