@@ -19,30 +19,20 @@ matching uses literal discovered page paths, without general URL normalization.
 Each page anchor is attached to the page's first `<h2>`, so links to a page
 without one point to a missing anchor.
 
-## Dependencies
-
-- Python 3
-- `beautifulsoup4` for HTML parsing
-- `html2text` for HTML-to-Markdown conversion
-
 ## Setup
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+Install [uv](https://docs.astral.sh/uv/) (`brew install uv`). It resolves Python and the script's dependencies on first run.
 
 ## Usage
 
-Run these commands from `doc_linearizer/` with the virtual environment active:
+Run these commands from `doc_linearizer/`:
 
 ```bash
 # Default output: ./linearized_output.md and ./assets/
-python linearize.py /path/to/ig-root
+./linearize.py /path/to/ig-root
 
 # Place the Markdown and assets directory under docs/
-python linearize.py /path/to/ig-root -o docs/flat_guide.md
+./linearize.py /path/to/ig-root -o docs/flat_guide.md
 ```
 
 The script prints discovery and per-page progress. On success it creates:
