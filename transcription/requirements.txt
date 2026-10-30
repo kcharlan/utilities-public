@@ -1,3 +1,5 @@
 openai-whisper==20250625
-streamlit==1.66.0
+streamlit==1.66.1
+# Security floor: Streamlit permits older vulnerable Pillow versions.
+pillow==13.0.0
 pandas==3.0.6

@@ -244,6 +244,13 @@ Historical spike evidence is in [the decision record](transcription_uv_decision.
 
 ### Task 4: Release Task
 
+**Release graph amendment:** the strict audit found 39 vulnerabilities in
+Pillow 12.3.0, all fixed in 13.0.0. Streamlit 1.66.0 requires Pillow below
+13. Update Streamlit to 1.66.1 and pin Pillow 13.0.0 in the launcher and
+requirements: 1.66.1 permits Pillow 13, but upgrading Streamlit alone left
+the vulnerable installed Pillow in the uv environment. The complete suite,
+guard, consumer suites and strict audit remain required for the amended graph.
+
 **Files:**
 - Create: `transcription/tests/acceptance/release_checks.py`, `transcription/tests/acceptance/real_model.py`
 - Modify: `transcription/README.md`, `docs/local_deployment_sync.md`

@@ -81,15 +81,44 @@ This older interface records a file's detected duration before transcription fin
 
 ## Validation
 
-Run the complete automated self-test with the owner-selected test overlay:
+From the repository root, run the complete automated Self-test with the
+owner-selected overlay. It checks the pinned launcher graph, dependency
+closure, installed API surfaces, and synthetic input and state behavior:
 
 ```bash
-uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription self-test
+uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test
 ```
 
-The self-test uses synthetic state and audio, and tests the installed OpenAI
-client with an offline transport. Real-model acceptance requires a separate
-model download and is described in the implementation plan.
+The installed OpenAI client is tested with an offline transport. For release,
+run this **Release invocation** from the repository root. The named tests
+exercise both launcher shebangs and record the full environment for audit;
+the trap removes the evidence even if a check fails.
+
+```bash
+(
+  set -eu
+  S=$(mktemp -d "${TMPDIR:-/tmp}/transcription-acceptance.XXXXXX")
+  trap 'rm -r -- "$S"' EXIT
+  TRANSCRIPTION_ACCEPTANCE_DIR="$S" uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test transcription/tests/acceptance/release_checks.py
+  uvx --no-python-downloads pip-audit --strict --no-deps --disable-pip -r "$S/freeze.txt"
+)
+```
+
+Real-model acceptance is also required before release, after the owner
+authorizes downloading Whisper's `tiny` model. Insert the following commands
+and the named Self-test before the closing parenthesis of Release invocation:
+
+```bash
+say -o "$S/synthetic.aiff" 'This is a synthetic transcription acceptance test.'
+ffmpeg -nostdin -y -i "$S/synthetic.aiff" -ac 1 -ar 16000 "$S/synthetic.wav"
+afconvert -f m4af -d aac "$S/synthetic.aiff" "$S/synthetic.m4a"
+TRANSCRIPTION_ACCEPTANCE_DIR="$S" uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test transcription/tests/acceptance/real_model.py
+```
+
+The model test isolates Whisper's cache inside the same temporary directory;
+uv's cache is unchanged. It exercises word timings and both interfaces with
+synthetic audio. A missing authorization or failed check leaves the release
+gate unmet.
 
 ## Counters and local state
 
