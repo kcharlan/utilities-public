@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["pydivsufsort==0.0.20"]
+# ///
 import argparse, struct, sys
 
 # --- Optional fast SA for BWT; naive fallback if missing ---

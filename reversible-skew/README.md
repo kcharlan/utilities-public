@@ -17,33 +17,25 @@ block is stored unchanged when its RLE payload would not be smaller.
   fallback is impractical for large blocks. It retains the per-block
   reconstruction guard from `rs.py:transform`, using its JIT decode routines,
   and provides a `selftest` subcommand for random, periodic, and varied data.
-- `setup.sh` — Deletes and recreates `venv/` with `python3.12`, then installs
-  the exact `pydivsufsort` and `numba` releases tracked in `requirements.txt`.
 
 Both scripts read and write the same block format, so output from either script
 can be inverted by the other.
 
 ## Setup
 
-Python 3.12 is required by the setup script. Run it from this directory:
+Install [uv](https://docs.astral.sh/uv/) (for example, `brew install uv`),
+then run the scripts directly. uv selects Python 3.12 and installs the pinned
+dependencies on first run.
 
-```bash
-./setup.sh
-source venv/bin/activate
-```
-
-`setup.sh` replaces an existing `venv/`; do not use it for an environment that
-contains packages you need to preserve.
-
-`rs.py` can run without installing third-party packages, but its fallback
-cyclic-rotation sort is suitable only for small inputs.
+The `rs.py` launcher installs `pydivsufsort`. If the script is run without it,
+the fallback cyclic-rotation sort is suitable only for small inputs.
 
 ## Usage
 
 Transform a file:
 
 ```bash
-python rs.py transform \
+./rs.py transform \
   --input input.bin \
   --output output.rsbwt \
   --block-size 4M \
@@ -58,7 +50,7 @@ a transformed block; a failed comparison stores the original block instead.
 Recover the original file:
 
 ```bash
-python rs.py inverse \
+./rs.py inverse \
   --input output.rsbwt \
   --output recovered.bin \
   --verbose
@@ -67,8 +59,8 @@ python rs.py inverse \
 Run both scripts' built-in checks:
 
 ```bash
-python rs.py selftest
-python rs-big.py selftest
+./rs.py selftest
+./rs-big.py selftest
 ```
 
 The reference selftest generates 1 MiB of random data, transforms it in

@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["pydivsufsort==0.0.20", "numba==0.68.0"]
+# ///
 import argparse, struct, sys
 
 # --- Dependencies for high-performance routines ---
