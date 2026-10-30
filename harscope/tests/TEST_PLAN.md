@@ -9,7 +9,7 @@ No UI interaction is needed — everything is tested through the backend API end
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (the harscope launcher resolves Python 3.12+ and its runtime dependencies)
-- The project virtual environment activated so the runner's `python3` calls resolve inside `.venv`
+- A virtual environment activated so the runner's `python3` calls resolve inside it. Agents use the utility venv for this ad hoc workflow after `~/.claude/shared/agent-tools.sh ensure`.
 - `curl`
 - A HAR file with security-relevant content (tokens, session IDs, JWTs, etc.)
 - HAR files with WebSocket messages are needed to test WS-specific redaction

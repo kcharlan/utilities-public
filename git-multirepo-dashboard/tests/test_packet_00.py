@@ -1,8 +1,8 @@
 """
 Packet 00 — Bootstrap & Schema: Tests
 
-Run from project root after bootstrapping:
-    ~/.git_dashboard_venv/bin/python -m pytest tests/test_packet_00.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import os
@@ -23,8 +23,8 @@ try:
     import fastapi  # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi not installed — run tests inside the app venv: "
-        "~/.git_dashboard_venv/bin/python -m pytest",
+        "fastapi not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

@@ -260,9 +260,17 @@ def test_git_fleet_browser_test_dependencies_are_manifest_only() -> None:
         "git-multirepo-dashboard/git_dashboard.py"
     ]
 
-    assert manifest_type == "requirements"
-    assert manifest_path == "git-multirepo-dashboard/tests/requirements-test.txt"
-    assert {"playwright", "pytest-playwright"} <= allowed_extras
+    assert (manifest_type, manifest_path, allowed_extras) == ("header", "", frozenset())
+    assert guard.check_test_requirements("git_fleet", {
+        "launcher": "git-multirepo-dashboard/git_dashboard.py",
+        "test_requirements": "git-multirepo-dashboard/tests/requirements-test.txt",
+    }) == []
+    requirements = guard.parse_requirements_file(
+        guard.REPO_ROOT / "git-multirepo-dashboard/tests/requirements-test.txt"
+    )
+    assert {"playwright", "pytest-playwright"} <= {
+        guard.normalize_distribution(requirement) for requirement in requirements
+    }
 
 
 def test_vid_compiler_has_stdlib_runtime_and_pytest_only_dev_policy() -> None:

@@ -1,6 +1,6 @@
 """Measure real-disk scans, keeping runtime state and results outside the repo.
 
-Run with the project's virtual-environment Python. Phase timings are inclusive
+Run with a virtual-environment Python containing the launcher's runtime dependencies. Phase timings are inclusive
 and overlap: persist_full_walk includes upsert_node_rows, and parallel calls
 can overlap one another. Their sum is not the total elapsed time.
 """

@@ -1,7 +1,2 @@
-# Runtime dependencies required when tests import the launcher in-process.
-fastapi
-uvicorn[standard]
-
-# Test-only dependencies.
 pytest>=8.0
 playwright>=1.63

@@ -142,15 +142,13 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 
 ## Validation
 
-Create the tracked test environment and run the full suite:
+From the repository root, run the full suite:
 
 ```zsh
-cd /path/to/utilities-public/expense_dock
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py expense_dock
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py expense_dock --install-browsers`.
 
 Runtime smoke checks:
 

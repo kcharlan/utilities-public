@@ -76,10 +76,10 @@ POST /api/refresh                   → Invalidate data cache
 
 ## Tests
 
+From the repository root:
+
 ```bash
-cd /path/to/utilities-public/mls-tracker
-uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py mls_tracker
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py mls_tracker --install-browsers`.

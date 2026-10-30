@@ -139,51 +139,17 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "video-scenes/video-scenes": ("requirements", "video-scenes/requirements.txt", frozenset()),
     "apple-health-extract/extract_workout_stats.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
     "apple-health-extract/exercise_bouts.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
-    "editdb/editdb": (
-        "requirements",
-        "editdb/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
+    "editdb/editdb": ("header", "", frozenset()),
     "jtree/jtree": ("header", "", frozenset()),
-    "harscope/harscope": (
-        "requirements",
-        "harscope/requirements-dev.txt",
-        frozenset(
-            {"anyio", "httpx", "playwright", "pytest", "pytest-playwright"}
-        ),
-    ),
-    "mls-tracker/mls_tracker": (
-        "requirements",
-        "mls-tracker/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest"}),
-    ),
+    "harscope/harscope": ("header", "", frozenset()),
+    "mls-tracker/mls_tracker": ("header", "", frozenset()),
     "docpipe/docpipe": ("header", "", frozenset()),
-    "storage_monitor/storage_monitor": (
-        "requirements",
-        "storage_monitor/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
+    "storage_monitor/storage_monitor": ("header", "", frozenset()),
     "tax2/tax2": ("header", "", frozenset()),
-    "routerview/routerview": (
-        "requirements",
-        "routerview/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest"}),
-    ),
-    "expense_dock/expense_dock": (
-        "requirements",
-        "expense_dock/requirements-dev.txt",
-        frozenset({"playwright", "pytest", "pytest-playwright"}),
-    ),
-    "git-multirepo-dashboard/git_dashboard.py": (
-        "requirements",
-        "git-multirepo-dashboard/tests/requirements-test.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
-    "launchmaster/launchmaster": (
-        "requirements",
-        "launchmaster/requirements-dev.txt",
-        frozenset({"playwright", "pytest", "pytest-playwright"}),
-    ),
+    "routerview/routerview": ("header", "", frozenset()),
+    "expense_dock/expense_dock": ("header", "", frozenset()),
+    "git-multirepo-dashboard/git_dashboard.py": ("header", "", frozenset()),
+    "launchmaster/launchmaster": ("header", "", frozenset()),
     "router-log-analyzer/router_log_analyze.py": ("header", "", frozenset()),
     "hysa-excel/hysa_vs_cd_model.py": ("header", "", frozenset()),
     "div_conv/div_conv": ("header", "", frozenset()),
@@ -199,11 +165,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         frozenset(),
     ),
     "vid-compiler/video_compiler.py": ("header", "", frozenset()),
-    "model_sentinel/build_standalone.py": (
-        "requirements",
-        "model_sentinel/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
+    "model_sentinel/build_standalone.py": ("header", "", frozenset()),
 }
 
 # Substrings that must never reappear in a migrated launcher.

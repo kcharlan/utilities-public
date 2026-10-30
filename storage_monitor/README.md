@@ -158,24 +158,22 @@ Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_
 
 ## Validation
 
-Create an isolated test environment and run the project suite:
+From the repository root, run the project suite:
 
 ```zsh
-cd /path/to/utilities-public/storage_monitor
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor --install-browsers`.
 
 The complete suite includes unit, native protocol, integration, and Chromium
 browser tests, with no skips. By default it builds the walker into a temporary
 directory. Run the complete suite against both sanitizer builds as well:
 
 ```zsh
-make -C native sanitize tsan
-STORAGE_MONITOR_WALKER="$PWD/native/build/sanitize/storage_monitor_walk" .venv/bin/python -m pytest -q
-STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/python -m pytest -q
+make -C storage_monitor/native sanitize tsan
+STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/sanitize/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor
+STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/tsan/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor
 ```
 
 From the repository root, run the deployment and fleet fixture suites:
@@ -204,13 +202,15 @@ isolated runtime directory. Request `/api/state` on the selected port until
 Real-disk performance and historical-walker parity checks require owner
 approval. Keep runtime homes, JSON outputs, and any path diagnostics outside
 every public checkout. Both tools check Git's registered worktree inventory and
-refuse to run if it cannot be read. From this directory, the tools accept:
+refuse to run if it cannot be read. From this directory, using a virtual
+environment with the launcher's runtime dependencies, the tools accept:
 
 ```zsh
-.venv/bin/python tests/perf/measure_scan.py --help
-.venv/bin/python tests/parity/compare_walkers.py --help
-.venv/bin/python tests/perf/measure_scan.py --runtime-home /private/output/runtime --output /private/output/performance.json --runs 3
-.venv/bin/python tests/parity/compare_walkers.py --baseline-ref BASELINE_REF --root /private/input --output /private/output/parity.json
+VENV_PYTHON=/path/to/venv/bin/python
+"$VENV_PYTHON" tests/perf/measure_scan.py --help
+"$VENV_PYTHON" tests/parity/compare_walkers.py --help
+"$VENV_PYTHON" tests/perf/measure_scan.py --runtime-home /private/output/runtime --output /private/output/performance.json --runs 3
+"$VENV_PYTHON" tests/parity/compare_walkers.py --baseline-ref BASELINE_REF --root /private/input --output /private/output/parity.json
 ```
 
 Replace the illustrative private paths and `BASELINE_REF` with approved local

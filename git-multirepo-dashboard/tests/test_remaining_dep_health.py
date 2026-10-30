@@ -7,8 +7,8 @@ Tests cover:
   - check_php_outdated(), check_php_vulns(), check_php_deps()
   - Cross-ecosystem: required fields and severity escalation
 
-Run from project root:
-    .venv/bin/python -m pytest tests/test_remaining_dep_health.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import json

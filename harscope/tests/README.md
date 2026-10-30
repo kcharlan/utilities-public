@@ -16,13 +16,7 @@ real-HAR integration workflow.
 
 ## Primary Pytest Suite
 
-```bash
-cd harscope
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
-```
+From the repository root, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope`. If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope --install-browsers`.
 
 The API tests import the FastAPI application in-process and use `httpx.AsyncClient` with `ASGITransport`, so those tests do not open a network port. Their fixtures reset the launcher’s process-global state around every test. The Playwright smoke starts a separate local server on a free port and stops it after the module. The browser UI uses React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map, with Babel Standalone 8.0.5 compiling module-aware inline JSX and Tailwind CSS 4.3.3. The direct top-level package versions are pinned, but CDN-generated transitive dependencies are not fully locked and CDN delivery is not byte-immutable. The current Playwright Chromium coverage verifies the React peer graph, exact direct scripts, representative CSS-first theme and dark-variant output, a key tab interaction, and browser/console error cleanliness. Tailwind's manual client floors are Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox are not covered by the automated browser test.
 
@@ -32,7 +26,7 @@ Use this workflow when you have a local HAR with security-relevant content and w
 
 ```bash
 cd harscope/tests
-source ../.venv/bin/activate
+source /path/to/venv/bin/activate
 
 # Default integration-test port: 8299
 ./run_tests.sh /path/to/synthetic_fixture.har
@@ -57,7 +51,9 @@ The runner starts and cleans up its own harscope process. Its temporary exports 
 ### Requirements
 
 - [uv](https://docs.astral.sh/uv/) for the harscope launcher and its Python 3.12+ runtime
-- The project virtual environment activated so `python3` resolves inside `.venv`
+- A virtual environment activated so `python3` resolves inside it. Agents use
+  the utility venv for this ad hoc workflow after `~/.claude/shared/agent-tools.sh ensure`,
+  with `PATH="$HOME/.venvs/agent-tools/bin:$PATH"` on the `run_tests.sh` command.
 - `curl` (used by the shell script for API calls)
 - A local HAR file with at least one security finding and no info-only findings
 

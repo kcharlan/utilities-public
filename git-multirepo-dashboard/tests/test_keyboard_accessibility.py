@@ -21,8 +21,8 @@ try:
     import aiosqlite  # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi/aiosqlite not installed — run tests inside the test venv: "
-        ".venv/bin/python -m pytest",
+        "fastapi/aiosqlite not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

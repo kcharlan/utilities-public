@@ -1,8 +1,8 @@
 """
 Packet 11 — Commits & Branches Sub-tabs: Tests
 
-Run from project root:
-    .venv/bin/python -m pytest tests/test_commits_branches_subtabs.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import asyncio
@@ -23,8 +23,8 @@ try:
     import aiosqlite # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi/aiosqlite not installed — run tests inside the test venv: "
-        ".venv/bin/python -m pytest",
+        "fastapi/aiosqlite not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

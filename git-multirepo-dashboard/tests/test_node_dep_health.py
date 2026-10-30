@@ -5,8 +5,8 @@ Tests cover:
   - check_node_vulns()
   - check_node_deps()
 
-Run from project root:
-    .venv/bin/python -m pytest tests/test_node_dep_health.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import json

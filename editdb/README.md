@@ -133,16 +133,13 @@ No manual runtime virtual environment or global `pip` installation is needed.
 
 ## Tests
 
-Development tests use a project-local virtual environment:
+From the repository root, run both test invocations through the shared runner:
 
 ```zsh
-cd editdb
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest tests --ignore=tests/test_e2e.py -q
-.venv/bin/python -m pytest tests/test_e2e.py -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py editdb
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py editdb --install-browsers`.
 
 Run the browser smoke separately because Playwright's synchronous event loop
 conflicts with the unit suite's `asyncio.run()`-based ASGI test client when

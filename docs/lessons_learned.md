@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-10-30: Select the editable fixture and wait for its content
+
+Launchmaster's browser test opened the first job after sorting by status, which
+selected a synthetic failed job with no plist. Checking only that the editor
+container appeared let the test race the asynchronous request and miss its
+404. Select the synthetic job with an actual plist and assert the loaded content
+before finishing; keep the browser error guard active.
+
 ## 2026-10-30: Keep test registry fixtures and argument separators explicit
 
 Once the shared registry contained real projects, guard tests that substituted a

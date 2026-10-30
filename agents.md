@@ -58,7 +58,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Registered Python suites: from the repository root run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` for each affected entry in `tools/project_tests.toml`; also run its non-Python categories and acceptance gates below. Install a missing browser explicitly with `--install-browsers` only when authorized.
 - Shared uv header guard (`tools/check_uv_headers.py`):
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
-  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Use the registered runner for Tax2, Data Format Converter, and Benchmark; for Cognitive create an absent project test environment with `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv`, install its documented test dependencies, and prepend its own `.venv/bin` to `PATH` for its suite.
+  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites, using the registered runner.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
   - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
@@ -67,7 +67,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `video-scenes`: `uv python find --no-python-downloads --script video-scenes/video-scenes`, then its README's synthetic Validation check in temporary space.
   - `apple-health-extract`: `bash tests/test_run_wrapper.sh` and `bash tests/test_extraction.sh` from its project directory; use only synthetic inputs.
 - `benchmark-llm`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm` from the repository root.
-- `cognitive_switchyard`: install `requirements.txt` and `requirements-dev.txt` in its project `.venv`, then `.venv/bin/python -m pytest tests/ -v` from its directory, including browser E2E.
+- `cognitive_switchyard`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard` from the repository root, including browser E2E.
 - `brew_version` (Swift command line, from repository root; see its README):
   - `make -C brew_version test` (complete Swift Testing suite, isolated release build integration tests and the shared temp-leak checker's self-test; no skips). It runs under `tools/check_no_temp_leaks.sh`, which gives the suite a private `$TMPDIR` inside the project's ignored `.build/tmp/` that it then removes, fails if the run leaves any Brew Version entry in `$TMPDIR` or the Darwin user temp dir, and removes only the run's new marker-only `TemporaryDirectory.*` there.
   - `make -C brew_version release` (signed CLI/app release and signature verification).
@@ -123,9 +123,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Docker update propagation (`docker/propagate-updates.zsh`):
   - `zsh docker/tests/test_propagate_updates.zsh` (stubbed refresh/deploy suite; no Docker, network or real deployment access).
   - `docker/propagate-updates.zsh refresh --dry-run` and `deploy --dry-run` are read-only. A real `refresh` changes lockfiles and a real `deploy` rebuilds running stacks; agents need approval for each.
-- `storage_monitor` (from `storage_monitor/`):
-  - `.venv/bin/python -m pytest -q` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
-  - `make -C native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/native/build/sanitize/storage_monitor_walk" .venv/bin/python -m pytest -q` and `STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/python -m pytest -q` (complete suite against ASan/UBSan and TSan walkers).
+- `storage_monitor` (from the repository root):
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
+  - `make -C storage_monitor/native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/sanitize/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` and `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/tsan/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete suite against ASan/UBSan and TSan walkers).
   - After launcher header edits, run the fleet header guard above.
   - Deployment changes also require `node --test tools/tests/deploy_storage_monitor.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh` from the repository root; shared deployment helper changes require all native installer suites above.
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
@@ -137,7 +137,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - If rules or payload generation change, verify the bundled expectations and rule-validation/parity/export tests in the full suite; reference exports are outputs, not calculator inputs. After launcher-header edits, also run the fleet header guard above.
   - Finally remove only this run's fresh acceptance home with `rm -r -- "$tax2_acceptance_home"`, after all acceptance checks, while retaining the variable pointing to the directory this run created.
 - `mls-tracker`:
-  - `.venv/bin/python -m pytest -q`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py mls_tracker` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
 - Streamlit app (`transcription`):
   - Run `uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test` from the repository root. The owner-selected test environment is the Self-test overlay. It exercises both launcher modes and clean server shutdown with synthetic state. Launch with `UV_PYTHON_DOWNLOADS=never transcription/transcription [app|divider]`.

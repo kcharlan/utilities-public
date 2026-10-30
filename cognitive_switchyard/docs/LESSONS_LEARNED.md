@@ -9,7 +9,7 @@
 
 - What went wrong: Early validation ran against the shell's default Python, which hid the real dependency path and pushed the implementation toward environment-specific workarounds.
 - Pattern that caused it: Assuming the shell's default Python and `pytest` entrypoint were the runtime of record.
-- Pattern to follow instead: Run the product through the uv-managed `switchyard` launcher and run development tests through the project's virtual environment. Never depend on Homebrew or system Python package state.
+- Pattern to follow instead: Run the product through the uv-managed `switchyard` launcher and development tests through the registered `tools/run_project_tests.py cognitive_switchyard` runner. Never depend on Homebrew or system Python package state.
 
 ## Plan Metadata With Numeric IDs
 
