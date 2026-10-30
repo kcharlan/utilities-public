@@ -167,7 +167,7 @@ bouts_df['type'] = [x[0] for x in labels]
 bouts_df['workout_type'] = [x[1] for x in labels]
 
 # --------- FINAL CLEANUP AND EXPORT ---------
-bouts_df.drop(columns=['interval'], inplace=True)
+bouts_df = bouts_df.drop(columns=['interval'])
 print(f"Exporting {len(bouts_df)} bouts to {OUTPUT_CSV}...")
 bouts_df.to_csv(OUTPUT_CSV, index=False)
 print("Done! Your exercise bouts with metrics are ready for analysis.")
