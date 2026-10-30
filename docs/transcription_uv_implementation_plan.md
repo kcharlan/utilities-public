@@ -312,6 +312,8 @@ guard, consumer suites and strict audit remain required for the amended graph.
 
 ### Task 5: Retirement Task
 
+**Execution note (2026-10-30):** The owner said the deployed launcher had not been used, expected no other callers, explicitly waived the real-use prerequisite, and authorized wrapper and venv retirement and publication. This is not acceptance of actual production use. Source retirement is underway; deployment, environment removal and final checks remain pending. The other retirement checks, including confirming no interface is running and reviewing callers before environment removal, still apply.
+
 **Files:**
 - Delete: `transcription/ui.sh`, `transcription/setup.sh`, `transcription/run.sh`, `transcription/m4a-run.sh`, `transcription/help.sh`
 - Modify: `transcription/README.md`, `agents.md`, `docs/transcription_uv_decision.md`, `docs/post_uv_retirement_implementation_plan.md`, `docs/retire_venvs_for_uv_implementation_plan.md`

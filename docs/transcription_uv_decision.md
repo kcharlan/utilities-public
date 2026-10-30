@@ -1,8 +1,12 @@
 # Transcription uv delivery decision
 
-This is an investigation and recommendation, not an implementation or release.
-The owner chooses whether to migrate. The spike was discarded and did not
-change the application, deployment, guard, or existing environments.
+This record began as an investigation and recommendation. The spike was
+discarded and did not change the application, deployment, guard, or existing
+environments. The subsequent outcome is recorded below.
+
+## Implementation and retirement outcome
+
+The owner approved migration; [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged it and the launcher was deployed. The installed shebang checks and fleet audit passed. The owner stated that the launcher had not been used, expected no other wrapper callers, waived the real-use prerequisite, and authorized wrapper and venv retirement. Actual production use has not been accepted. The [Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task) removes the source wrappers; deployed wrapper and environment removal and final checks remain pending.
 
 ## Recommendation and evidence
 

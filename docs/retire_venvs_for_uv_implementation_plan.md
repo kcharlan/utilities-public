@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **`transcription` is out of scope.** `transcription/venv` and `~/transcription/venv` are its live runtime and must not be touched. See the Transcription Migration follow-up.
+- **`transcription` is out of scope for this plan.** Its environments are governed by the [Transcription Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task), including its owner gates.
 - **Worker cap:** max 4 worktrees active at once, with a reviewer sharing its implementer's slot. Max 1 Playwright suite at a time, including Guard consumer suites.
 - **Own directory only:** tool tasks edit only their own project directory, and never a file in the Shared Files table.
 - **Worktree placement:** create task worktrees outside the main checkout, so Venv Cleanup's repository-root inventory cannot descend into their test environments.
@@ -507,7 +507,7 @@ The owner's supplied prior review reports a separate cleanup session on 2026-10-
 
 **Recovery before emptying Trash:** the supplied review reports that `~/.cache/codex-runtimes` was trashed while recently in use. If Codex misbehaves, restore that cache first. Do not treat this plan as clearance to empty Trash.
 
-**Retained and deferred candidates:** recover the cleanup session's action record before deciding whether design originals, recovery directories, repair snapshots, legacy Video Compiler files, Codex worktrees or caches still need attention. Their disposition remains unverified here. Deployment owns the environments in Deferred Venv Removal; the transcription exclusion remains in Global Constraints.
+**Retained and deferred candidates:** recover the cleanup session's action record before deciding whether design originals, recovery directories, repair snapshots, legacy Video Compiler files, Codex worktrees or caches still need attention. Their disposition remains unverified here. Deployment owns the environments in Deferred Venv Removal; Transcription is governed by the separate Retirement Task linked in Global Constraints.
 
 **Protected paths for any later backup scan or cleanup:** exclude `~/.local` (credential-bearing application data), `~/.codex` sessions and managed state, `~/.claude`, `~/.config`, `~/.docker`, `~/.gemini`, `~/.lmstudio`, `~/.venvs`, `~/.t3`, and tool runtime homes such as `~/.colophon`, `~/.model_sentinel`, `~/.storage_monitor`, `~/.tax2`, `~/.routerview`, `~/.benchmark_llm`, `~/.cognitive_switchyard` and `~/.apple-health-extract`. Do not inspect their contents to classify backups. Worktree removal must use its owning manager and confirmed Git state, under separate authorization.
 
@@ -559,6 +559,8 @@ Inspect these sources rather than inferring runtime requirements from prose:
 **Done when:** There is a written recommendation with measured numbers, a list of exceptions, and the rule changes needed, and the owner has chosen an approach. An implementation plan follows from that.
 
 ### Transcription Migration
+
+**Execution update:** [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged the migration and its launcher was deployed. The owner stated it had not been used, expected no other wrapper callers, waived the real-use prerequisite and authorized retirement. The [Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task) removes source wrappers; deployed wrappers, environments and final checks remain pending. Actual production use has not been accepted.
 
 **Goal:** Decide how `transcription` moves to uv.
 
