@@ -1,9 +1,5 @@
+import tomllib
 from typing import Any
-
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - exercised in 3.10 CI
-    import tomli as tomllib  # type: ignore
 
 import tomli_w
 

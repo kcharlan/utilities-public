@@ -82,14 +82,8 @@ tokenization contract. The page never reads an API key or uploads pasted data.
 
 ### Setup
 
-Python 3.10 or newer is required. From this directory, create and activate a
-virtual environment, then install the project requirements:
-
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-```
+Install [uv](https://docs.astral.sh/uv/) (for example, `brew install uv`). The
+launcher resolves Python 3.12 or newer and its dependencies on first run.
 
 The supported Python dependency graph, including the released `toon-format`
 distribution, is declared in [`requirements.txt`](requirements.txt).
@@ -97,7 +91,7 @@ distribution, is declared in [`requirements.txt`](requirements.txt).
 ### Usage
 
 ```sh
-python src/data_convert.py \
+./src/data_convert.py \
   --input <input-file> \
   --to <json|jsonc|xml|toon|yaml|toml> \
   [--output <output-file>]
@@ -121,10 +115,10 @@ and target extension. Both JSON targets use `.json`.
 Examples:
 
 ```sh
-python src/data_convert.py --input tests/data/sample.json --to xml --output converted.xml
-python src/data_convert.py --input tests/data/sample.xml --to jsonc
-python src/data_convert.py --input tests/data/sample.yaml --to toon --output from_yaml.toon
-python src/data_convert.py --input tests/data/sample.toml --to json
+./src/data_convert.py --input tests/data/sample.json --to xml --output converted.xml
+./src/data_convert.py --input tests/data/sample.xml --to jsonc
+./src/data_convert.py --input tests/data/sample.yaml --to toon --output from_yaml.toon
+./src/data_convert.py --input tests/data/sample.toml --to json
 ```
 
 Important conversion behavior:
@@ -165,7 +159,15 @@ Important conversion behavior:
 
 ## Testing
 
-From this directory, using the project virtual environment:
+From this directory, create a Python 3.12 development environment and install
+the test requirements:
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Run the Python suite:
 
 ```sh
 .venv/bin/python -m pytest

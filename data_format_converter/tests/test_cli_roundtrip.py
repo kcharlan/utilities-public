@@ -2,14 +2,10 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 
 import pytest
 import yaml
-
-try:
-    import tomllib  # type: ignore[attr-defined]
-except ModuleNotFoundError:  # pragma: no cover - exercised in 3.10
-    import tomli as tomllib  # type: ignore
 
 from src.converters.toon_conv import load_toon
 from src.converters.xml_conv import load_xml

@@ -1,3 +1,13 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "xmltodict",
+#     "pyyaml",
+#     "tomli_w",
+#     "toon-format==1.1.0",
+# ]
+# ///
 import argparse
 import json
 import os
