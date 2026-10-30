@@ -22,6 +22,101 @@ from cognitive_switchyard.agent_runtime import (
 from cognitive_switchyard.models import FixerContext
 
 
+@pytest.mark.parametrize("runtime_class", [ClaudeCliRuntime, CodexCliRuntime])
+@pytest.mark.parametrize("with_callback", [False, True])
+def test_false_valued_injected_runner_is_used(tmp_path, monkeypatch, runtime_class, with_callback):
+    def forbidden_runner(**_kwargs):
+        pytest.fail("real subprocess boundary must not be reached")
+
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._default_subprocess_runner", forbidden_runner)
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._streaming_subprocess_runner", forbidden_runner)
+
+    class FalseRunner:
+        def __init__(self):
+            self.calls = []
+
+        def __bool__(self):
+            return False
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return subprocess.CompletedProcess(kwargs["command"], 0, stdout="planned output\n", stderr="")
+
+    runner = FalseRunner()
+    prompt = tmp_path / "planner.md"
+    prompt.write_text("Plan", encoding="utf-8")
+    callback = (lambda *_event: None) if with_callback else None
+    runtime = runtime_class(subprocess_runner=runner, output_line_callback=callback)
+
+    assert runtime.run_planner(
+        model="test-model", prompt_path=prompt, intake_path=tmp_path / "task.md",
+        intake_text="test", session_root=tmp_path,
+    ) == "planned output\n"
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("runtime_class", [ClaudeCliRuntime, CodexCliRuntime])
+def test_injected_runner_is_used_with_output_callback(tmp_path, monkeypatch, runtime_class):
+    def forbidden_streaming_runner(**_kwargs):
+        pytest.fail("real streaming subprocess boundary must not be reached")
+
+    monkeypatch.setattr(
+        "cognitive_switchyard.agent_runtime._streaming_subprocess_runner",
+        forbidden_streaming_runner,
+    )
+    prompt = tmp_path / "planner.md"
+    prompt.write_text("Plan", encoding="utf-8")
+    calls = []
+    events = []
+
+    def runner(**kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(kwargs["command"], 0, stdout="planned output\n", stderr="")
+
+    runtime = runtime_class(subprocess_runner=runner, output_line_callback=lambda *event: events.append(event))
+    result = runtime.run_planner(
+        model="test-model", prompt_path=prompt, intake_path=tmp_path / "task.md",
+        intake_text="test", session_root=tmp_path,
+    )
+
+    assert result == "planned output\n"
+    assert len(calls) == 1
+    assert len(events) == 2
+    assert "Launching" in events[0][1]
+    assert "finished (exit 0)" in events[1][1]
+
+
+@pytest.mark.parametrize("runtime_class", [ClaudeCliRuntime, CodexCliRuntime])
+def test_default_runner_streams_with_output_callback(tmp_path, monkeypatch, runtime_class):
+    prompt = tmp_path / "planner.md"
+    prompt.write_text("Plan", encoding="utf-8")
+    events = []
+    calls = []
+
+    def streaming_runner(**kwargs):
+        calls.append(kwargs)
+        record = (
+            {"type": "system"} if runtime_class is ClaudeCliRuntime
+            else {"type": "thread.started"}
+        )
+        kwargs["line_callback"](json.dumps(record))
+        return subprocess.CompletedProcess(kwargs["command"], 0, stdout="planned output\n", stderr="")
+
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._streaming_subprocess_runner", streaming_runner)
+    runtime = runtime_class(output_line_callback=lambda *event: events.append(event))
+    assert runtime.run_planner(
+        model="test-model", prompt_path=prompt, intake_path=tmp_path / "task.md",
+        intake_text="test", session_root=tmp_path,
+    ) == "planned output\n"
+    assert len(calls) == 1
+    assert callable(calls[0]["line_callback"])
+    assert len(events) == 4
+    assert "Launching" in events[0][1]
+    assert "finished (exit 0)" in events[-1][1]
+    expected = "session started" if runtime_class is ClaudeCliRuntime else "thread started"
+    assert any(line == f"##DETAIL## CLI initialized ({expected})" for _, line in events)
+
+
 def test_claude_cli_runner_builds_planner_invocation_from_model_prompt_and_session_inputs(
     tmp_path: Path,
 ) -> None:

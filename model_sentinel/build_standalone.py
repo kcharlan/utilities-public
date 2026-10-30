@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.11,<3.16"
 # dependencies = []
 # ///
 """Package a staged Model Sentinel source tree as the standalone zipapp.

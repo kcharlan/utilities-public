@@ -1,11 +1,2 @@
-# Runtime dependencies required when tests import the launcher in-process.
-python-docx
-python-pptx
-openpyxl
-beautifulsoup4
-lxml
-readability-lxml
-markdownify
-
-# Test-only dependencies.
+packaging
 pytest>=8.0

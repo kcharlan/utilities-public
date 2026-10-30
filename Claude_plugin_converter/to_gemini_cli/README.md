@@ -21,7 +21,7 @@ the script. Run it from the Gemini workspace you want to modify:
 ```
 
 Install [uv](https://docs.astral.sh/uv/) (`brew install uv`). The converter
-requires Python 3.12 or newer and has no third-party Python dependencies.
+requires Python 3.12 through 3.15 and has no third-party Python dependencies.
 
 For a category directory named `legal`, a command such as
 `commands/brief.md` becomes `.gemini/commands/legal/brief.toml` and is invoked
@@ -44,11 +44,10 @@ as `/legal:brief`.
 
 ## Tests
 
-The converter and its tests use only the Python standard library:
+The converter and its tests use only the Python standard library. Run from the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m unittest discover -s tests -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli
 ```
 
 See the [migration guide](./MIGRATION_GUIDE.md) for the source layout, exact

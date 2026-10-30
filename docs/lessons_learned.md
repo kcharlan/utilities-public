@@ -1,5 +1,25 @@
 # Lessons learned
 
+## 2026-10-30: Select the editable fixture and wait for its content
+
+Launchmaster's browser test opened the first job after sorting by status, which
+selected a synthetic failed job with no plist. Checking only that the editor
+container appeared let the test race the asynchronous request and miss its
+404. Select the synthetic job with an actual plist and assert the loaded content
+before finishing; keep the browser error guard active.
+
+## 2026-10-30: Keep test registry fixtures and argument separators explicit
+
+Once the shared registry contained real projects, guard tests that substituted a
+synthetic repository still read the real registry and failed on unrelated paths.
+Give those tests an empty synthetic registry; keep the separate invalid-registry
+test so validation remains covered. `argparse.parse_known_args` can consume `--`
+when a positional argument precedes it, so split the raw arguments at the
+separator before parsing runner controls and test both option and positional
+forwarding. A warm uv script cache can make `uv python find --script` return
+the script environment instead of its Homebrew interpreter; discover with
+`--no-cache` in private scratch and test both cold and warm cache states.
+
 ## 2026-10-29: Snapshot closed Codex databases without changing their source
 
 A closed WAL database can be read through a private APFS clone only after validating
@@ -1712,3 +1732,33 @@ such as `-k counter` and `--basetemp <path>` must not be mistaken for paths.
 Use pytest's parsed argument source to supply a project default, while retaining
 explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
 from synthetic caller directories with sentinel tests.
+
+### 2026-10-30 — Requirements include and constraint handling
+
+Dependency checks must follow both spaced and attached requirement includes and
+fail closed on unsupported directives or unreadable files. Constraints limit
+versions but do not install packages; track their traversal separately so a
+constraint cannot hide the same file when it is later included as requirements.
+The shared uv guard's synthetic parser tests cover these cases.
+An allowlist for requirement lines must validate operators, versions and marker
+expressions as well as names; accepting arbitrary suffixes defers malformed input
+until dependency installation. Reject valid syntax outside the supported subset
+explicitly rather than guessing at it.
+
+### 2026-10-30 — uv ignores dependency Python upper bounds
+
+uv intentionally ignores upper bounds in a dependency's `Requires-Python`
+metadata. A passing suite and `uv pip check` therefore do not establish that a
+dependency supports the interpreter in use. Docpipe constrains readability-lxml
+below 0.9 because 0.9 excludes Python 3.15; its regression checks both the
+declared range and the resolved version. Review that constraint when adopting a
+new supported readability-lxml release.
+
+### 2026-10-30 — Validate standalone Python specifiers as specifiers
+
+When reusing a requirement parser for `requires-python`, separate the synthetic
+package name from the specifier with whitespace. Otherwise malformed text such
+as `oops>=3.12,<3.16` becomes part of the package name and can pass validation.
+Reject requirement markers as well: they are valid on dependencies but not in
+`requires-python`. The shared uv guard covers names, extras, markers, valid caps
+and explicit deferrals.

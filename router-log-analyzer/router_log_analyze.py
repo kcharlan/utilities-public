@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = [
 #     "PyMuPDF>=1.24,<2",
 #     "pypdf>=5,<7",
@@ -553,7 +553,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="router-log-analyzer 0.5.0",
+        version="router-log-analyzer 0.5.1",
     )
     parser.add_argument(
         "--reprocess",

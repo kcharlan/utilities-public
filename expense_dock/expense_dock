@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = [
 #     "fastapi",
 #     "uvicorn[standard]",
@@ -67,7 +67,7 @@ def parse_args():
 
 RUNTIME_PATHS = build_runtime_paths()
 DATA_DIR = str(RUNTIME_PATHS.home)
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 AUTHORITY = "https://login.microsoftonline.com/consumers"
 GRAPH_SCOPES = ["Files.ReadWrite.All"]

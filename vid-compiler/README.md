@@ -7,7 +7,7 @@ the end of the source video. Multiple input files are processed concurrently.
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/)
-- Python 3.12 or newer, selected by uv from the launcher's inline metadata
+- Python 3.12 through 3.15, selected by uv from the launcher's inline metadata
 - System `ffmpeg` and `ffprobe` commands on `PATH`
 - An FFmpeg build with the `h264_videotoolbox` encoder
 
@@ -89,14 +89,10 @@ Use `--sampling random` for different selections across runs. Reduce
 
 ## Development and validation
 
-Tests use an isolated project environment; `requirements-dev.txt` contains
-pytest only:
+Run the suite from the repository root; `requirements-dev.txt` contains pytest only:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
-uv run --script video_compiler.py --help
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py vid_compiler
 ```
 
 For a render smoke, create conspicuously synthetic sources with FFmpeg's

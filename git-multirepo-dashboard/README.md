@@ -4,7 +4,7 @@ Git Fleet is a local browser dashboard for tracking many Git repositories. It co
 
 ## Quick start
 
-Git Fleet is a [uv](https://docs.astral.sh/uv/) script and requires Python 3.12 or newer.
+Git Fleet is a [uv](https://docs.astral.sh/uv/) script and requires Python 3.12 through 3.15.
 
 ```bash
 ./git_dashboard.py
@@ -173,19 +173,16 @@ The maintained design and API reference is [docs/git_dashboard_final_spec.md](do
 
 ## Development
 
-All Python execution must use a virtual environment. The tracked requirements reproduce the launcher dependencies plus unit-test dependencies:
+From the repository root, run the unit and E2E invocations through the shared runner:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r tests/requirements-test.txt
-.venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 ```
 
-Install the Playwright browser and run the E2E suite:
+If Chromium is missing, install it once:
 
 ```bash
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest tests/test_e2e.py -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet --install-browsers
 ```
 
 Run E2E tests separately from the unit suite because Playwright's event loop conflicts with tests that use `asyncio.run()`. E2E startup uses an isolated temporary database and suppresses automatic browser launch.

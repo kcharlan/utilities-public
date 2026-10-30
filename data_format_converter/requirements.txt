@@ -1,5 +1,4 @@
 xmltodict
 pyyaml
 tomli_w
-pytest
 toon-format==1.1.0

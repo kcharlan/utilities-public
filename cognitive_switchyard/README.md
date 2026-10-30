@@ -72,7 +72,7 @@ When a session is created through the web backend with both `COGNITIVE_SWITCHYAR
 
 ## Tech Stack
 
-- **Backend:** Python 3.12+, FastAPI, uvicorn, aiosqlite, PyYAML
+- **Backend:** Python 3.12 through 3.15, FastAPI, uvicorn, aiosqlite, PyYAML
 - **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
@@ -240,13 +240,13 @@ Session environment values are configured in the Setup view or inherited by the 
 
 ## Development
 
+From the repository root:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-.venv/bin/python -m pytest tests/ -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard
 ```
 
-The suite contains unit, integration, launcher/CLI, and browser E2E tests. The development requirements install Playwright's Python packages; install the Chromium browser once with `.venv/bin/playwright install chromium`. E2E tests start their own Uvicorn server.
+The suite contains unit, integration, launcher/CLI, and browser E2E tests. If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard --install-browsers`. E2E tests start their own Uvicorn server.
 
 Starlette 1.6.0 still emits the following upstream AnyIO deprecation while its
 test client module is imported:
@@ -263,10 +263,10 @@ follow-up rather than being hidden by a global warning filter.
 
 ```bash
 # Run unit/integration tests (fast)
-.venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_cli.py
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard -- --ignore=tests/test_e2e.py --ignore=tests/test_cli.py
 
 # Run E2E tests (starts its own server)
-.venv/bin/python -m pytest tests/test_e2e.py
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard -- -k test_e2e
 ```
 
 ## Documentation

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,16 @@ def _write_executable(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _base_python_for_venv() -> str:
+    # The test must create its scratch venv from the base interpreter, not
+    # from the activated project venv. All other Python stays in the project venv.
+    base = Path(sys._base_executable)
+    assert base.is_absolute()
+    assert sys.prefix != sys.base_prefix
+    assert base.resolve().is_relative_to(Path(sys.base_prefix).resolve())
+    return shlex.quote(str(base))
 
 
 def _dependency_fingerprint(root: Path) -> str:
@@ -209,6 +221,18 @@ def test_builtin_verify_bootstraps_session_env_when_no_existing_python_env_exist
     target_root = tmp_path / "repo-root"
     session_root = tmp_path / "session-root"
     trace_path = tmp_path / f"{pack_name}-bootstrapped-trace.txt"
+    real_python3 = shutil.which("python3")
+    assert real_python3 is not None
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "python3",
+        f'''#!/bin/sh
+if [ "${{1:-}}" = "-m" ] && [ "${{2:-}}" = "venv" ]; then
+  exec {_base_python_for_venv()} "$@"
+fi
+exec "{real_python3}" "$@"
+''',
+    )
 
     target_root.mkdir()
     session_root.mkdir()
@@ -250,7 +274,7 @@ def test_builtin_verify_bootstraps_session_env_when_no_existing_python_env_exist
         capture_output=True,
         text=True,
         env={
-            "PATH": os.environ["PATH"],
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "TRACE_PATH": str(trace_path),
             "COGNITIVE_SWITCHYARD_PACK_ROOT": str(pack_root),
             "COGNITIVE_SWITCHYARD_REPO_ROOT": str(target_root),
@@ -339,6 +363,7 @@ exec "{real_python3}" "$@"
 set -eu
 if [ "${{1:-}}" = "-m" ] && [ "${{2:-}}" = "venv" ]; then
   echo source-python > "$SOURCE_BOOTSTRAP_TRACE"
+  exec {_base_python_for_venv()} "$@"
 fi
 exec "{real_python3}" "$@"
 """,

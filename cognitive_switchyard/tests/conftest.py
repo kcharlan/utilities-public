@@ -11,11 +11,11 @@ import pytest
 os.environ.setdefault("UTILITIES_TESTING", "1")
 
 # ---------------------------------------------------------------------------
-# Validate dev venv dependencies
+# Validate test dependencies
 # ---------------------------------------------------------------------------
 # When requirements.txt or requirements-dev.txt gain new packages, the dev
-# venv can silently fall behind. Detect missing packages at collection time and
-# fail with the exact setup command; tests must never mutate their interpreter.
+# environment can lack packages. Detect missing packages at collection time;
+# tests must never mutate their interpreter.
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _UTILITIES_ROOT = Path(__file__).resolve().parents[2]
@@ -54,14 +54,23 @@ def _check_dev_dependencies() -> None:
     pytest.exit(
         "Cognitive Switchyard test dependencies are missing: "
         f"{', '.join(missing)}.\n"
-        "Set up the project interpreter with:\n"
-        "  python3 -m venv .venv\n"
-        "  .venv/bin/pip install -r requirements.txt -r requirements-dev.txt",
+        "From the repository root run:\n"
+        "  UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard",
         returncode=1,
     )
 
 
 _check_dev_dependencies()
+
+
+@pytest.fixture(autouse=True)
+def block_real_agent_cli_runners(monkeypatch):
+    """Tests must inject agent output instead of invoking installed agent CLIs."""
+    def forbidden_runner(**_kwargs):
+        pytest.fail("test attempted to launch a real agent CLI")
+
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._default_subprocess_runner", forbidden_runner)
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._streaming_subprocess_runner", forbidden_runner)
 
 # ---------------------------------------------------------------------------
 # Raise the soft FD limit so cumulative test resource usage does not

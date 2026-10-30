@@ -1,14 +1,27 @@
 import argparse
+from importlib.metadata import version
 import sys
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import load_launcher
+from tools.check_uv_headers import extract_pep723
 
 
 DOCPIPE_PATH = Path(__file__).resolve().parents[1] / "docpipe"
+
+
+def test_readability_dependency_excludes_unsupported_09_and_resolves_in_range():
+    metadata = extract_pep723(DOCPIPE_PATH.read_text(encoding="utf-8"))
+    requirements = [Requirement(item) for item in metadata["dependencies"]]
+    readability = next(item for item in requirements if item.name == "readability-lxml")
+    assert "0.8.4.1" in readability.specifier
+    assert "0.9" not in readability.specifier
+    assert version("readability-lxml") in readability.specifier
 
 
 def load_docpipe_module():

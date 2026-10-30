@@ -16,7 +16,7 @@ These are external CLI tools that docpipe shells out to. If missing, docpipe war
 
 | Tool | Install command | What it enables |
 |------|----------------|-----------------|
-| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.0 does not emit its metadata. **Required for useful PDF output.** |
+| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.1 does not emit its metadata. **Required for useful PDF output.** |
 | **pandoc** | `brew install pandoc` | Fallback HTML→Markdown conversion. Primary path uses the Python `markdownify` library (auto-installed), so Pandoc is only needed if markdownify fails on a particular HTML file. Also used as DOCX fallback if `python-docx` errors. |
 
 Install both in one shot:
@@ -41,7 +41,7 @@ These are declared in the launcher's PEP 723 header and resolved by uv on first 
 | `python-pptx` | PPTX slide text, tables, speaker notes |
 | `openpyxl` | XLSX sheet extraction |
 | `beautifulsoup4` + `lxml` | HTML parsing |
-| `readability-lxml` | HTML main-content extraction |
+| `readability-lxml<0.9` | HTML main-content extraction; 0.9 excludes Python 3.15 in its published metadata |
 | `markdownify` | HTML→Markdown conversion (primary path) |
 
 ## Quick Start
@@ -183,8 +183,6 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
 Unit tests cover CLI parser + strict-mode behavior.
 
 ```bash
-cd /path/to/utilities-public/docpipe
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+cd /path/to/utilities-public
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py docpipe
 ```

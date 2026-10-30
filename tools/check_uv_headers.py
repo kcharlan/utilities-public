@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = []
 # ///
 """Fleet drift guard for the uv-managed PEP 723 launchers.
@@ -26,13 +26,17 @@ Run it directly (it is itself a uv PEP 723 script with no dependencies):
 from __future__ import annotations
 
 import ast
+from dataclasses import asdict
+import io
 import re
 import subprocess
 import sys
 import tomllib
+import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+REGISTRY_PATH = REPO_ROOT / "tools/project_tests.toml"
 
 CANONICAL_SHEBANG = "#!/usr/bin/env -S uv run --script"
 
@@ -61,6 +65,7 @@ IMPORT_DISTRIBUTION_ALIASES = {
 # intentionally excluded: it is the zipapp-form reference and has no bootstrap
 # layer. Its standalone build step is a uv script and is verified here.
 LAUNCHERS = [
+    "tools/run_project_tests.py",
     "editdb/editdb",
     "jtree/jtree",
     "harscope/harscope",
@@ -96,6 +101,9 @@ LAUNCHERS = [
     "transcription/transcription",
 ]
 
+# Project-specific deferrals belong here with their reason, until validated.
+UNCAPPED_LAUNCHERS: tuple[str, ...] = ()
+
 # Explicit targets per launcher; do not scan sibling modules implicitly.
 LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
     "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
@@ -119,6 +127,7 @@ NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
 # directions without pretending test-only packages belong in PEP 723 metadata.
 # Values are: (format, repo-relative manifest path, allowed manifest-only deps).
 DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "tools/run_project_tests.py": ("stdlib", "", frozenset()),
     "transcription/transcription": ("requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})),
     "abacus usage/de-abacus.py": ("stdlib", "", frozenset()),
     "anduril_steps/anduril_steps.py": ("stdlib", "", frozenset()),
@@ -127,89 +136,27 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "md-json/md_converter.py": ("stdlib", "", frozenset()),
     "Claude_plugin_converter/to_gemini_cli/migrate_skills.py": ("stdlib", "", frozenset()),
     "doc_linearizer/linearize.py": ("requirements", "doc_linearizer/requirements.txt", frozenset()),
-    "data_format_converter/src/data_convert.py": ("requirements", "data_format_converter/requirements.txt", frozenset({"pytest"})),
+    "data_format_converter/src/data_convert.py": ("requirements", "data_format_converter/requirements.txt", frozenset()),
     "reversible-skew/rs.py": ("requirements", "reversible-skew/requirements.txt", frozenset({"numba"})),
     "reversible-skew/rs-big.py": ("requirements", "reversible-skew/requirements.txt", frozenset()),
     "video-scenes/video-scenes": ("requirements", "video-scenes/requirements.txt", frozenset()),
     "apple-health-extract/extract_workout_stats.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
     "apple-health-extract/exercise_bouts.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
-    "editdb/editdb": (
-        "requirements",
-        "editdb/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
-    "jtree/jtree": (
-        "requirements",
-        "jtree/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
-    "harscope/harscope": (
-        "requirements",
-        "harscope/requirements-dev.txt",
-        frozenset(
-            {"anyio", "httpx", "playwright", "pytest", "pytest-playwright"}
-        ),
-    ),
-    "mls-tracker/mls_tracker": (
-        "requirements",
-        "mls-tracker/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest"}),
-    ),
-    "docpipe/docpipe": (
-        "requirements",
-        "docpipe/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "storage_monitor/storage_monitor": (
-        "requirements",
-        "storage_monitor/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
-    "tax2/tax2": (
-        "requirements",
-        "tax2/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
-    "routerview/routerview": (
-        "requirements",
-        "routerview/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest"}),
-    ),
-    "expense_dock/expense_dock": (
-        "requirements",
-        "expense_dock/requirements-dev.txt",
-        frozenset({"playwright", "pytest", "pytest-playwright"}),
-    ),
-    "git-multirepo-dashboard/git_dashboard.py": (
-        "requirements",
-        "git-multirepo-dashboard/tests/requirements-test.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
-    "launchmaster/launchmaster": (
-        "requirements",
-        "launchmaster/requirements-dev.txt",
-        frozenset({"playwright", "pytest", "pytest-playwright"}),
-    ),
-    "router-log-analyzer/router_log_analyze.py": (
-        "requirements",
-        "router-log-analyzer/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "hysa-excel/hysa_vs_cd_model.py": (
-        "requirements",
-        "hysa-excel/requirements-dev.txt",
-        frozenset({"openpyxl", "pytest"}),
-    ),
-    "div_conv/div_conv": (
-        "requirements",
-        "div_conv/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "etf_montecarlo/etf_montecarlo": (
-        "requirements",
-        "etf_montecarlo/requirements-dev.txt",
-        frozenset({"pandas", "pytest"}),
-    ),
+    "editdb/editdb": ("header", "", frozenset()),
+    "jtree/jtree": ("header", "", frozenset()),
+    "harscope/harscope": ("header", "", frozenset()),
+    "mls-tracker/mls_tracker": ("header", "", frozenset()),
+    "docpipe/docpipe": ("header", "", frozenset()),
+    "storage_monitor/storage_monitor": ("header", "", frozenset()),
+    "tax2/tax2": ("header", "", frozenset()),
+    "routerview/routerview": ("header", "", frozenset()),
+    "expense_dock/expense_dock": ("header", "", frozenset()),
+    "git-multirepo-dashboard/git_dashboard.py": ("header", "", frozenset()),
+    "launchmaster/launchmaster": ("header", "", frozenset()),
+    "router-log-analyzer/router_log_analyze.py": ("header", "", frozenset()),
+    "hysa-excel/hysa_vs_cd_model.py": ("header", "", frozenset()),
+    "div_conv/div_conv": ("header", "", frozenset()),
+    "etf_montecarlo/etf_montecarlo": ("header", "", frozenset()),
     "benchmark-llm/bench": (
         "pyproject",
         "benchmark-llm/pyproject.toml",
@@ -220,16 +167,8 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "cognitive_switchyard/requirements.txt",
         frozenset(),
     ),
-    "vid-compiler/video_compiler.py": (
-        "requirements",
-        "vid-compiler/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "model_sentinel/build_standalone.py": (
-        "requirements",
-        "model_sentinel/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
+    "vid-compiler/video_compiler.py": ("header", "", frozenset()),
+    "model_sentinel/build_standalone.py": ("header", "", frozenset()),
 }
 
 # Substrings that must never reappear in a migrated launcher.
@@ -272,6 +211,85 @@ def normalize_distribution(requirement: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+_MARKER_VARIABLES = frozenset({
+    "python_version", "python_full_version", "os_name", "sys_platform",
+    "platform_release", "platform_system", "platform_version", "platform_machine",
+    "platform_python_implementation", "implementation_name", "implementation_version", "extra",
+})
+_VERSION = re.compile(r"(?:\d+!)?\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+[a-z0-9]+(?:[._-][a-z0-9]+)*)?", re.IGNORECASE)
+_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+
+
+def _valid_marker(marker: str) -> bool:
+    """Accept a conservative subset of PEP 508 marker expressions."""
+    if "\\" in marker:
+        return False
+    try:
+        previous_string = False
+        for token in tokenize.generate_tokens(io.StringIO(marker).readline):
+            if token.type in (tokenize.NEWLINE, tokenize.NL, tokenize.ENDMARKER):
+                continue
+            if token.type not in (tokenize.NAME, tokenize.OP, tokenize.STRING):
+                return False
+            if token.type == tokenize.STRING:
+                if previous_string or not re.fullmatch(r"(?:'[^'\n]*'|\"[^\"\n]*\")", token.string):
+                    return False
+                previous_string = True
+            else:
+                previous_string = False
+        tree = ast.parse(marker, mode="eval")
+    except (SyntaxError, ValueError, tokenize.TokenError):
+        return False
+
+    def valid(node: ast.AST) -> bool:
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+            return all(valid(value) for value in node.values)
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+            return False
+        if not isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)):
+            return False
+        left, right = node.left, node.comparators[0]
+        return any(isinstance(a, ast.Name) and a.id in _MARKER_VARIABLES and
+                   isinstance(b, ast.Constant) and isinstance(b.value, str)
+                   for a, b in ((left, right), (right, left)))
+
+    return valid(tree.body)
+
+
+def _valid_requirement(line: str) -> bool:
+    """Validate supported names, version ranges and markers without dependencies.
+
+    Direct URLs, arbitrary versions and other uncommon PEP forms are rejected
+    rather than accepted without validation.
+    """
+    requirement, separator, marker = line.partition(";")
+    if separator and not _valid_marker(marker.strip()):
+        return False
+    match = re.fullmatch(rf"({_NAME})(?:\[({_NAME}(?:\s*,\s*{_NAME})*)\])?\s*(.*)", requirement.strip())
+    if not match:
+        return False
+    tail = match.group(3).strip()
+    if not tail:
+        return True
+    for part in tail.split(","):
+        spec = re.fullmatch(r"(==|!=|~=|<=|>=|<|>)\s*(\S+)", part.strip())
+        if not spec:
+            return False
+        operator, version = spec.groups()
+        wildcard = version.endswith(".*")
+        if wildcard:
+            version = version[:-2]
+            if operator not in ("==", "!=") or not re.fullmatch(r"\d+(?:\.\d+)*", version):
+                return False
+        elif not _VERSION.fullmatch(version):
+            return False
+        if "+" in version and operator not in ("==", "!="):
+            return False
+        if operator == "~=" and not re.match(r"^(?:\d+!)?\d+\.\d+", version):
+            return False
+    return True
+
+
 def parse_requirements_file(path: Path, _seen: set[Path] | None = None) -> list[str]:
     """Read requirement entries recursively, following local ``-r`` includes."""
     resolved = path.resolve()
@@ -288,16 +306,20 @@ def parse_requirements_file(path: Path, _seen: set[Path] | None = None) -> list[
         if not line or line.startswith("#"):
             continue
         line = re.split(r"\s+#", line, maxsplit=1)[0].strip()
-        if line.startswith("-r "):
-            requirements.extend(parse_requirements_file(resolved.parent / line[3:].strip(), seen))
-            continue
-        if line.startswith("--requirement "):
-            requirements.extend(
-                parse_requirements_file(resolved.parent / line.removeprefix("--requirement ").strip(), seen)
-            )
+        include = re.fullmatch(r"(?:-r\s*|--requirement(?:\s+|=))(.+)", line)
+        constraint = re.fullmatch(r"(?:-c\s*|--constraint(?:\s+|=))(.+)", line)
+        if include or constraint:
+            target = (include or constraint).group(1).strip()
+            if not target:
+                raise ValueError(f"empty include in {resolved}")
+            entries = parse_requirements_file(resolved.parent / target, seen if include else seen.copy())
+            if include:
+                requirements.extend(entries)
             continue
         if line.startswith("-"):
-            continue
+            raise ValueError(f"unsupported requirements directive in {resolved}: {line}")
+        if not _valid_requirement(line):
+            raise ValueError(f"invalid requirement or unsupported syntax in {resolved}: {line}")
         requirements.append(line)
     return requirements
 
@@ -317,6 +339,21 @@ def compare_dependency_sets(
     )
 
 
+def check_test_requirements(key: str, entry: dict) -> list[str]:
+    """Reject test-only requirements that repeat launcher dependencies."""
+    if not entry.get("test_requirements"):
+        return []
+    try:
+        metadata = extract_pep723((REPO_ROOT / entry["launcher"]).read_text(encoding="utf-8"))
+        if metadata is None or not isinstance(metadata.get("dependencies"), list):
+            return [f"{key}: invalid launcher metadata"]
+        requirements = parse_requirements_file(REPO_ROOT / entry["test_requirements"])
+        overlap = {normalize_distribution(x) for x in metadata["dependencies"]} & {normalize_distribution(x) for x in requirements}
+        return [f"{key}: test requirements repeat runtime dependencies: {', '.join(sorted(overlap))}"] if overlap else []
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        return [f"{key}: cannot check test requirements: {exc}"]
+
+
 def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> list[str]:
     """Check one launcher's tracked dependency sidecar in both directions."""
     launcher_path = REPO_ROOT / rel_path
@@ -330,6 +367,8 @@ def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> li
         return []  # Header validation reports the actionable metadata error.
 
     manifest_format, manifest_rel_path, allowed_extras = policy
+    if manifest_format == "header":
+        return []
     if manifest_format == "stdlib":
         if metadata["dependencies"]:
             return ["stdlib-only launcher declares dependencies: " + ", ".join(metadata["dependencies"])]
@@ -353,7 +392,7 @@ def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> li
                 )
         else:  # pragma: no cover - policies are constants validated by review/tests.
             return [f"unsupported dependency manifest format: {manifest_format}"]
-    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
         return [f"could not read dependency manifest {manifest_rel_path}: {exc}"]
 
     missing, unexpected = compare_dependency_sets(
@@ -491,6 +530,12 @@ def check_launcher(rel_path: str) -> list[str]:
     else:
         if "requires-python" not in meta:
             problems.append("PEP 723 block missing 'requires-python'")
+        elif rel_path not in UNCAPPED_LAUNCHERS:
+            constraint = meta["requires-python"]
+            if not isinstance(constraint, str) or ";" in constraint or not _valid_requirement("python " + constraint) or not any(
+                re.match(r"^(?:<|<=|==|~=)", part.strip()) for part in constraint.split(",")
+            ):
+                problems.append("requires-python must have a valid upper bound")
         deps = meta.get("dependencies")
         if not isinstance(deps, list):
             problems.append("PEP 723 block missing a 'dependencies' list")
@@ -551,6 +596,18 @@ def main() -> int:
             print(f"FAIL {rel_path}")
             for problem in problems:
                 print(f"       - {problem}")
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from tools.run_project_tests import load_project_tests
+        entries = load_project_tests(REGISTRY_PATH)
+        for key, entry in entries.items():
+            for problem in check_test_requirements(key, asdict(entry)):
+                any_failures = True
+                print(f"FAIL test registry\n       - {problem}")
+    except ValueError as exc:
+        any_failures = True
+        print(f"FAIL test registry\n       - {exc}")
 
     if any_failures:
         print("\ncheck_uv_headers: FAILED (see violations above)")

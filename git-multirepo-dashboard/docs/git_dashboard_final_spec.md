@@ -281,8 +281,7 @@ Markdown reports include repository/report identity, generation time, app versio
 Unit/API tests and Playwright E2E tests are separate invocations because Playwright's event loop conflicts with tests using `asyncio.run()`.
 
 ```bash
-.venv/bin/python -m pytest tests/ --ignore=tests/test_e2e.py -v
-.venv/bin/python -m pytest tests/test_e2e.py -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 ```
 
 The E2E server must use a temporary database and suppress normal browser launch. See `README.md` for environment setup.

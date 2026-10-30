@@ -1941,6 +1941,7 @@ def test_pipeline_events_are_persisted_to_event_store_via_on_pipeline_event(
 
 def test_concurrent_planners_emit_distinct_per_planner_task_ids(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Regression: When multiple planners run concurrently, each log line must
     carry a distinct task_id (e.g. __planner_060_task__ and __planner_061_task__),
@@ -1954,9 +1955,15 @@ def test_concurrent_planners_emit_distinct_per_planner_task_ids(
     def output_callback(task_id: str, line: str) -> None:
         emitted.append((task_id, line))
 
-    # Simulate _streaming_subprocess_runner returning immediately with some output
+    def forbidden_streaming_runner(**_kwargs):
+        pytest.fail("real streaming subprocess boundary must not be reached")
+
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._streaming_subprocess_runner", forbidden_streaming_runner)
+    calls = []
+
     def fake_subprocess_runner(*, command, cwd, input_text):
         import subprocess
+        calls.append(input_text)
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="plan output\n", stderr="")
 
     runtime = ClaudeCliRuntime(
@@ -1976,16 +1983,16 @@ def test_concurrent_planners_emit_distinct_per_planner_task_ids(
         for stem in ("060_task", "061_other"):
             intake_path = _Path(tmpdir) / f"{stem}.md"
             intake_path.write_text(f"# Intake {stem}\n", encoding="utf-8")
-            try:
-                runtime.planner_agent(
-                    model="test-model",
-                    prompt_path=prompt_path,
-                    intake_path=intake_path,
-                    intake_text=intake_path.read_text(),
-                    session_root=session_root,
-                )
-            except Exception:
-                pass  # Output is minimal but that's OK; we just care about task_ids
+            result = runtime.planner_agent(
+                model="test-model",
+                prompt_path=prompt_path,
+                intake_path=intake_path,
+                intake_text=intake_path.read_text(),
+                session_root=session_root,
+            )
+            assert result == "plan output\n"
+
+    assert len(calls) == 2
 
     task_ids_used = {task_id for task_id, _ in emitted}
     # Each planner must get its own distinct __planner_<stem>__ task_id

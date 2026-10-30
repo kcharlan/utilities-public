@@ -394,16 +394,12 @@ For `visibility.expose` and `visibility.hide`, the runtime strips the static pat
 
 ## Development
 
-Create a local venv, install the project, and run the full test suite:
+Run the full test suite from the repository root. The runner combines the
+launcher's runtime dependencies with `requirements-test.txt`:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm
 ```
-
-As a quick uv-managed equivalent, run `uv run --extra dev pytest`.
 
 ## Current Constraints
 

@@ -268,13 +268,11 @@ Raw reset-day statistics are retained in SQLite for auditability. Rows containin
 ## Tests
 
 ```zsh
-cd /path/to/utilities-public/router-log-analyzer
-uv venv .venv
-uv pip install --python .venv/bin/python -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+cd /path/to/utilities-public
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py router_log_analyzer
 ```
 
-`requirements-dev.txt` reproduces the launcher's PDF dependencies and adds pytest.
+The runner combines the launcher's PDF dependencies with the test-only requirements.
 
 ## Updating An Installed Copy
 

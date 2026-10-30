@@ -83,7 +83,7 @@ tokenization contract. The page never reads an API key or uploads pasted data.
 ### Setup
 
 Install [uv](https://docs.astral.sh/uv/) (for example, `brew install uv`). The
-launcher resolves Python 3.12 or newer and its dependencies on first run.
+launcher resolves Python 3.12 through 3.15 and its dependencies on first run.
 
 The supported Python dependency graph, including the released `toon-format`
 distribution, is declared in [`requirements.txt`](requirements.txt).
@@ -159,18 +159,11 @@ Important conversion behavior:
 
 ## Testing
 
-From this directory, create a Python 3.12 development environment and install
-the test requirements:
+Run the Python suite from this directory using the launcher metadata and
+test-only requirements:
 
 ```sh
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Run the Python suite:
-
-```sh
-.venv/bin/python -m pytest
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py data_format_converter
 ```
 
 The pytest suite covers each Python converter, CLI success/error paths, default

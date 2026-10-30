@@ -1,6 +1,6 @@
 # Tax2
 
-Tax2 3.0.1 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.0.2 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
@@ -180,15 +180,15 @@ docs/multi_state_design.md
 
 ## Development validation
 
-Use the existing project `.venv`, or create it only if absent. On Homebrew
-macOS (do not recreate an existing environment):
+Use the shared runner from this directory:
 
 ```bash
-/opt/homebrew/bin/python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py tax2
 ```
+
+The runner combines the launcher's runtime dependencies with the test-only
+requirements. If Chromium is missing, install it explicitly with
+`UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py tax2 --install-browsers`.
 
 The complete suite includes offline Chromium interaction and all three real
 downloads, parity, bundled expectations, and publication safety. Other browsers

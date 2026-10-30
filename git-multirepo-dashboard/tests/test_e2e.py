@@ -5,18 +5,15 @@ These tests start the real git_dashboard server and exercise it in a real
 Chromium browser. They catch rendering errors, broken CDN loads, dead buttons,
 and layout issues that unit tests miss entirely.
 
-Run E2E tests only:
-    .venv/bin/python -m pytest tests/test_e2e.py -v
-
-Run unit tests only (exclude E2E):
-    .venv/bin/python -m pytest tests -v --ignore=tests/test_e2e.py
+Run the complete suite from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 
 IMPORTANT: E2E tests must NOT run in the same pytest invocation as unit tests.
-Playwright's event loop conflicts with asyncio.run() used by unit tests.
+The runner preserves separate invocations because Playwright's event loop
+conflicts with asyncio.run() used by unit tests.
 
-Requires:
-    pip install playwright pytest-playwright
-    playwright install chromium
+If Chromium is missing, install it once with:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet --install-browsers
 """
 
 import json
@@ -37,8 +34,8 @@ try:
     from playwright.sync_api import expect  # noqa: F401
 except ImportError:
     pytest.skip(
-        "playwright not installed — run: .venv/bin/pip install playwright pytest-playwright "
-        "&& .venv/bin/playwright install chromium",
+        "playwright not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

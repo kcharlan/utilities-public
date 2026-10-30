@@ -8,7 +8,7 @@ The launcher keeps its runtime directory private (`0700`) and its input CSV and 
 
 ## Requirements
 
-Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher requests Python 3.12 or newer and declares its own `xlsxwriter` dependency; uv resolves both automatically. There is no setup script or project virtual environment.
+Install [uv](https://docs.astral.sh/uv/) once (`brew install uv`). The launcher requests Python 3.12 through 3.15 and declares its own `xlsxwriter` dependency; uv resolves both automatically. There is no setup script or project virtual environment.
 
 ## First Run
 
@@ -89,8 +89,8 @@ The workbook is first built as a temporary file in the output directory and then
 Run the isolated project suite from the repository root:
 
 ```bash
-uv run --with-requirements hysa-excel/requirements-dev.txt pytest hysa-excel/tests -v
-uv run --script tools/check_uv_headers.py
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py hysa_excel
+uv run --no-python-downloads --script tools/check_uv_headers.py
 ```
 
 Tests use temporary runtime directories and synthetic values; they never read or write `~/.hysa-excel`.

@@ -5414,7 +5414,7 @@ def test_cli_version_and_help_describe_supported_router_contracts(
 ) -> None:
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--version"])
-    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.0"
+    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.1"
 
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--help"])

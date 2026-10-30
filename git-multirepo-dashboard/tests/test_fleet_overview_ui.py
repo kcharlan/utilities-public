@@ -4,8 +4,8 @@ Packet 05 — Fleet Overview UI: Tests
 All tests check for the presence of required patterns/strings in HTML_TEMPLATE,
 following the same approach as test_html_shell.py (packet 04).
 
-Run from project root:
-    .venv/bin/python -m pytest tests/test_fleet_overview_ui.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import sys
@@ -21,8 +21,8 @@ try:
     import aiosqlite # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi/aiosqlite not installed — run tests inside the test venv: "
-        ".venv/bin/python -m pytest",
+        "fastapi/aiosqlite not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

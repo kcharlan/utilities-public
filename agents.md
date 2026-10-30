@@ -55,18 +55,19 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
+- Registered Python suites: from the repository root run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` for each affected entry in `tools/project_tests.toml`; also run its non-Python categories and acceptance gates below. Install a missing browser explicitly with `--install-browsers` only when authorized.
 - Shared uv header guard (`tools/check_uv_headers.py`):
-  - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py -q -p no:cacheprovider`.
-  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Create absent project test environments with `/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv` for Tax2 and Data Format Converter, and `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv` for Benchmark LLM and Cognitive Switchyard. Install each project's documented test dependencies; prepend its own `.venv/bin` to `PATH` for each suite so child Python processes use that environment.
+  - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
+  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites, using the registered runner.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
-  - For `Claude_plugin_converter/to_gemini_cli`, create an absent `.venv` with `/opt/homebrew/bin/python3 -m venv .venv`, run `.venv/bin/python -m unittest discover -s tests -v`, and smoke the launcher against a synthetic category in a temporary workspace.
+  - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
   - `doc_linearizer`: `bash tests/test_launcher.sh` from its project directory.
   - `reversible-skew`: `uv python find --no-python-downloads --script reversible-skew/rs.py` and the same for `reversible-skew/rs-big.py` (both must resolve Python 3.12), then the complete compatibility validation in its README.
   - `video-scenes`: `uv python find --no-python-downloads --script video-scenes/video-scenes`, then its README's synthetic Validation check in temporary space.
   - `apple-health-extract`: `bash tests/test_run_wrapper.sh` and `bash tests/test_extraction.sh` from its project directory; use only synthetic inputs.
-- `benchmark-llm`: install `.[dev]` in its project `.venv`, then `.venv/bin/python -m pytest -q` from its directory.
-- `cognitive_switchyard`: install `requirements.txt` and `requirements-dev.txt` in its project `.venv`, then `.venv/bin/python -m pytest tests/ -v` from its directory, including browser E2E.
+- `benchmark-llm`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm` from the repository root.
+- `cognitive_switchyard`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard` from the repository root, including browser E2E.
 - `brew_version` (Swift command line, from repository root; see its README):
   - `make -C brew_version test` (complete Swift Testing suite, isolated release build integration tests and the shared temp-leak checker's self-test; no skips). It runs under `tools/check_no_temp_leaks.sh`, which gives the suite a private `$TMPDIR` inside the project's ignored `.build/tmp/` that it then removes, fails if the run leaves any Brew Version entry in `$TMPDIR` or the Darwin user temp dir, and removes only the run's new marker-only `TemporaryDirectory.*` there.
   - `make -C brew_version release` (signed CLI/app release and signature verification).
@@ -91,10 +92,12 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `make check-assets` and `make check-sort` (local guards); individual categories: `make test-unit`, `make test-cli`, `make test-browser`.
   - Use this project's own Python 3.14 `.venv` and cached Chromium. Dependency/browser downloads require approval. Test fixtures and evidence stay outside the public checkout; wrappers sandbox real runtime/source access. Original native parity/performance tools and their `private/` workflow are not included.
 - `data_format_converter`:
-  - `.venv/bin/python -m pytest`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py data_format_converter` from the repository root.
   - Browser suite: `npm ci`, `npx playwright install chromium`, then `npm run test:browser`.
 - `div_conv`:
-  - `.venv/bin/python -m pytest tests -v`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py div_conv` from the repository root.
+- `docpipe`, `etf_montecarlo`, `hysa-excel`, `router-log-analyzer`, and `vid-compiler`:
+  - Run their registered suites from the repository root using `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>`; keys are `docpipe`, `etf_montecarlo`, `hysa_excel`, `router_log_analyzer`, and `vid_compiler` respectively. Preserve the README's synthetic render checks when changing video processing.
 - `docker/llm_collector` (from `docker/llm_collector/`):
   - Setup: `.venv/bin/python -m pip install -r requirements-dev.txt`, then `.venv/bin/python -m playwright install chromium`.
   - `.venv/bin/python -m pytest collector snapshots extension` (collector, snapshot and Chromium popup tests; no skips).
@@ -120,21 +123,21 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Docker update propagation (`docker/propagate-updates.zsh`):
   - `zsh docker/tests/test_propagate_updates.zsh` (stubbed refresh/deploy suite; no Docker, network or real deployment access).
   - `docker/propagate-updates.zsh refresh --dry-run` and `deploy --dry-run` are read-only. A real `refresh` changes lockfiles and a real `deploy` rebuilds running stacks; agents need approval for each.
-- `storage_monitor` (from `storage_monitor/`):
-  - `.venv/bin/python -m pytest -q` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
-  - `make -C native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/native/build/sanitize/storage_monitor_walk" .venv/bin/python -m pytest -q` and `STORAGE_MONITOR_WALKER="$PWD/native/build/tsan/storage_monitor_walk" .venv/bin/python -m pytest -q` (complete suite against ASan/UBSan and TSan walkers).
+- `storage_monitor` (from the repository root):
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
+  - `make -C storage_monitor/native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/sanitize/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` and `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/tsan/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete suite against ASan/UBSan and TSan walkers).
   - After launcher header edits, run the fleet header guard above.
   - Deployment changes also require `node --test tools/tests/deploy_storage_monitor.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh` from the repository root; shared deployment helper changes require all native installer suites above.
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
 - `tax2`:
-  - `.venv/bin/python -m pytest`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py tax2` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "${TMPDIR:-/tmp}/tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
   - Repeat the build after warming the same uv cache with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser`. Open its `file://` page in offline Chromium, exercise calculator inputs/state allocations, and verify all three real downloads: QIF, Markdown rate schedule and CSV lookup. Require no page/console errors or external requests. The complete pytest suite includes automated offline browser/download coverage; retain the actual uv smoke build as a separate acceptance check.
   - Run `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser --output "$tax2_acceptance_home/explicit.html"`. Confirm `explicit.html` exists with mode `0600` (`test -f "$tax2_acceptance_home/explicit.html"` and `stat -f '%Lp' "$tax2_acceptance_home/explicit.html"` on macOS).
   - If rules or payload generation change, verify the bundled expectations and rule-validation/parity/export tests in the full suite; reference exports are outputs, not calculator inputs. After launcher-header edits, also run the fleet header guard above.
   - Finally remove only this run's fresh acceptance home with `rm -r -- "$tax2_acceptance_home"`, after all acceptance checks, while retaining the variable pointing to the directory this run created.
 - `mls-tracker`:
-  - `.venv/bin/python -m pytest -q`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py mls_tracker` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
 - Streamlit app (`transcription`):
   - Run `uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test` from the repository root. The owner-selected test environment is the Self-test overlay. It exercises both launcher modes and clean server shutdown with synthetic state. Launch with `UV_PYTHON_DOWNLOADS=never transcription/transcription [app|divider]`.
@@ -167,7 +170,7 @@ How it works:
    ```python
    #!/usr/bin/env -S uv run --script
    # /// script
-   # requires-python = ">=3.12"
+   # requires-python = ">=3.12,<3.16"
    # dependencies = [
    #     "pyyaml",
    # ]
@@ -182,10 +185,12 @@ Don't create a private venv, write a `bootstrap_state.json` marker, define a `BO
 
 The guard also flags regular `.py` files with no shebang and a column-zero `if __name__ == "__main__":` guard (single quotes also match), except test paths and entries in `NON_UV_ENTRYPOINT_ALLOWLIST`. Test paths have a `test` or `tests` directory, a `conftest.py` name, or a name starting with `test_`. Unreadable or undecodable files are skipped; scripts without a main guard are not detected by this signal.
 
+Raise a launcher's Python upper bound on a branch only after validating the new interpreter with every affected project's complete documented suite, including projects outside the shared test registry. Compare the resolved and actually executed interpreters before and after the change; do not infer dependency compatibility from uv's handling of dependency upper bounds.
+
 Key design rules:
 - Prefer a user-home runtime directory like `~/.toolname/` over scattered fixed paths, for mutable state.
 - Keep dependencies unpinned in the header unless a tool needs a specific range (e.g. `router-log-analyzer` pins `PyMuPDF>=1.24,<2`).
-- Keep a tracked dev/test requirements file (or pyproject test extra) that reproduces the interpreter used by the full project suite; never rely on an untracked local venv's package history.
+- Keep tracked test requirements (or a pyproject test extra) for the full suite. Registered projects use test-only requirements alongside launcher metadata through the shared runner; nonregistered projects document their test interpreter and dependencies. Never rely on an untracked local venv's package history.
 - Single entry point — no separate `setup.sh`.
 - Under uv, the first invocation of any command (including `--help`) may resolve/cache the environment; that is expected and not worth a workaround.
 
@@ -246,11 +251,12 @@ Never hardcode a single port. Scan for a free port starting from the preferred d
 - Update documentation when behavior, interfaces, or run commands change.
 - If a change affects multiple projects, including through shared dependencies, validate each affected project independently with the commands above.
 - Python as an agent (Homebrew macOS). Agents on this setup run Python only inside a virtual environment. Project READMEs are written for developers on any platform and often assume an activated venv (`source venv/bin/activate`, then `python …`, `pip …`, `pytest …`). Do not run their Python setup and test commands literally; translate them:
+  - Exception for projects registered in `tools/project_tests.toml`: run their documented Python suites with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` from the repository. Read `~/.claude/shared/python-env.md` for the complete runner, synthetic fixture and deployed-test rules and all retained safeguards. For ad hoc Python in registered projects use the utility venv; this restriction is instructional, not enforced by the heuristic hook or audit. Nonregistered projects retain the venv workflow below. Preserve all non-Python test categories.
   - Use the project's existing venv: the directory the README names (`.venv` or `venv`) for the section you are following. If the README names none, use `.venv`. Call its interpreter by path instead of activating, e.g. `<dir>/bin/python -m pytest`, `<dir>/bin/python -m pip install -r <file>`, `<dir>/bin/python script.py`. Never run a bare `pytest`, `streamlit`, `pip`, `python`, or `python3`: outside an activated venv they run on Homebrew's tools or Python, which lack the project's dependencies.
   - If the venv does not exist yet, create it under that directory name from a Homebrew interpreter by absolute path: `/opt/homebrew/bin/python3 -m venv <dir>`. If the project pins a Python version anywhere (`--python X.Y`, `pythonX.Y -m venv` in a setup script, or "Python X.Y" in the README), use `/opt/homebrew/opt/python@X.Y/bin/pythonX.Y -m venv <dir>` instead. Any README `uv venv …`, with or without `--python`, becomes `uv venv --seed --no-python-downloads --python <that Homebrew interpreter path> <dir>`. If that Homebrew Python version is not installed, stop and ask; installing a Python needs approval. Then install the documented dev/test requirements into it (`<dir>/bin/python -m pip install -r <file>` or `uv pip install --python <dir>/bin/python -r <file>`, both allowed) and any other documented setup step, such as `<dir>/bin/python -m playwright install chromium`.
   - Do not run a project script that creates or recreates a venv with a bare interpreter. The scripts under `benchmark-llm/examples` use `BENCH_BASE_PYTHON`, which only a bench run sets, so never run them directly. Check any setup script before running it. Reproduce its steps as above, keeping any version it pins, and ask before recreating a venv that already exists. Where a tool accepts an interpreter option (e.g. `Calculation tools/backtest`'s `--python`), pass an absolute Homebrew interpreter.
   - Add `--no-python-downloads` right after the subcommand in `uv run`, `uv tool run`, and `uv tree --frozen` commands, and right after `uvx` (e.g. `uvx --no-python-downloads pip-audit`). For a uv launcher run directly, see the uv-managed launcher entry in the Validation Matrix.
   - Needs approval even when a README lists it:
     - any `uv run` without `--script`, `--with`, or `--with-requirements` (e.g. `uv run --python 3.12 python -m unittest …`);
-    - `uv run --with`/`--with-requirements` inside a uv project (`benchmark-llm`, `docker/llm_proxy`) without `--no-project` (e.g. `uv run --extra dev pytest` in `benchmark-llm` is approval-only too). Elsewhere, `--with` may only name packages the project's docs or requirements name; packages a task needs ad hoc go in the project venv instead;
+    - `uv run --with`/`--with-requirements` inside a uv project (`benchmark-llm`, `docker/llm_proxy`) without `--no-project`. Elsewhere, `--with` may only name packages the project's docs or requirements name; packages a task needs ad hoc go in the project venv instead;
     - commands that change a project's lockfile or sync its environment: `uv pip compile`, `uv sync`, `uv lock`, `uv add`, `uv remove`, and `uv tree` without `--frozen`.

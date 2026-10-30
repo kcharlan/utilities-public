@@ -1,13 +1,13 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.12,<3.16"
 # dependencies = [
 #     "python-docx",
 #     "python-pptx",
 #     "openpyxl",
 #     "beautifulsoup4",
 #     "lxml",
-#     "readability-lxml",
+#     "readability-lxml<0.9",
 #     "markdownify",
 # ]
 # ///
@@ -34,7 +34,7 @@ from markdownify import markdownify as md_convert
 from pptx import Presentation
 from readability import Document as ReadabilityDocument
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("docpipe")

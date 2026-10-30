@@ -150,6 +150,5 @@ For safe local validation, run the complete project suite; it supplies only fake
 executors and never invokes a paid model:
 
 ```bash
-cd benchmark-llm
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm
 ```

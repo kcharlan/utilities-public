@@ -1,8 +1,8 @@
 """
 Packet 10 — Project Detail View & Activity Chart: Tests
 
-Run from project root:
-    .venv/bin/python -m pytest tests/test_project_detail.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import asyncio
@@ -20,8 +20,8 @@ try:
     import aiosqlite # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi/aiosqlite not installed — run tests inside the test venv: "
-        ".venv/bin/python -m pytest",
+        "fastapi/aiosqlite not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 

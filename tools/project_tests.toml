@@ -1,0 +1,148 @@
+# Project test suites are registered during the rollout.
+[projects]
+
+[projects.jtree]
+project = "jtree"
+launcher = "jtree/jtree"
+test_requirements = "jtree/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.tax2]
+project = "tax2"
+launcher = "tax2/tax2"
+test_requirements = "tax2/requirements-dev.txt"
+test_commands = [["pytest"]]
+smoke_args = ["--help"]
+
+[projects.data_format_converter]
+project = "data_format_converter"
+launcher = "data_format_converter/src/data_convert.py"
+test_requirements = "data_format_converter/requirements-dev.txt"
+test_commands = [["pytest"]]
+smoke_args = ["--help"]
+
+[projects.to_gemini_cli]
+project = "Claude_plugin_converter/to_gemini_cli"
+launcher = "Claude_plugin_converter/to_gemini_cli/migrate_skills.py"
+test_commands = [["unittest", "discover", "-s", "tests", "-v"]]
+smoke_skip_reason = "The converter treats its argument as a category path and has no help option."
+
+[projects.div_conv]
+project = "div_conv"
+launcher = "div_conv/div_conv"
+test_requirements = "div_conv/requirements-dev.txt"
+test_commands = [["pytest", "tests", "-v"]]
+smoke_args = ["--help"]
+
+[projects.docpipe]
+project = "docpipe"
+launcher = "docpipe/docpipe"
+test_requirements = "docpipe/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.etf_montecarlo]
+project = "etf_montecarlo"
+launcher = "etf_montecarlo/etf_montecarlo"
+test_requirements = "etf_montecarlo/requirements-dev.txt"
+test_commands = [["pytest", "tests", "-v"]]
+smoke_args = ["--help"]
+
+[projects.hysa_excel]
+project = "hysa-excel"
+launcher = "hysa-excel/hysa_vs_cd_model.py"
+test_requirements = "hysa-excel/requirements-dev.txt"
+test_commands = [["pytest", "tests", "-v"]]
+smoke_args = ["--help"]
+
+[projects.router_log_analyzer]
+project = "router-log-analyzer"
+launcher = "router-log-analyzer/router_log_analyze.py"
+test_requirements = "router-log-analyzer/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.vid_compiler]
+project = "vid-compiler"
+launcher = "vid-compiler/video_compiler.py"
+test_requirements = "vid-compiler/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.benchmark_llm]
+project = "benchmark-llm"
+launcher = "benchmark-llm/bench"
+test_requirements = "benchmark-llm/requirements-test.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.cognitive_switchyard]
+project = "cognitive_switchyard"
+launcher = "cognitive_switchyard/switchyard"
+test_requirements = "cognitive_switchyard/requirements-dev.txt"
+test_commands = [["pytest", "tests/", "-v"]]
+smoke_args = ["--help"]
+
+[projects.editdb]
+project = "editdb"
+launcher = "editdb/editdb"
+test_requirements = "editdb/requirements-dev.txt"
+test_commands = [["pytest", "tests", "--ignore=tests/test_e2e.py", "-q"], ["pytest", "tests/test_e2e.py", "-q"]]
+smoke_args = ["--help"]
+
+[projects.expense_dock]
+project = "expense_dock"
+launcher = "expense_dock/expense_dock"
+test_requirements = "expense_dock/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.harscope]
+project = "harscope"
+launcher = "harscope/harscope"
+test_requirements = "harscope/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.mls_tracker]
+project = "mls-tracker"
+launcher = "mls-tracker/mls_tracker"
+test_requirements = "mls-tracker/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.model_sentinel]
+project = "model_sentinel"
+launcher = "model_sentinel/build_standalone.py"
+test_requirements = "model_sentinel/requirements-dev.txt"
+test_commands = [["pytest"]]
+smoke_args = ["--help"]
+
+[projects.git_fleet]
+project = "git-multirepo-dashboard"
+launcher = "git-multirepo-dashboard/git_dashboard.py"
+test_requirements = "git-multirepo-dashboard/tests/requirements-test.txt"
+test_commands = [["pytest", "tests/", "--ignore=tests/test_e2e.py", "-v"], ["pytest", "tests/test_e2e.py", "-v"]]
+smoke_args = ["--help"]
+
+[projects.routerview]
+project = "routerview"
+launcher = "routerview/routerview"
+test_requirements = "routerview/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.launchmaster]
+project = "launchmaster"
+launcher = "launchmaster/launchmaster"
+test_requirements = "launchmaster/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.storage_monitor]
+project = "storage_monitor"
+launcher = "storage_monitor/storage_monitor"
+test_requirements = "storage_monitor/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]

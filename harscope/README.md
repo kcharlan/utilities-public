@@ -154,15 +154,13 @@ important.
 
 ## Testing
 
-The full suite exercises the backend API end-to-end: loading HAR files, scanning, toggling redactions, exporting, and validating EDLs.
+The full suite exercises the backend API end-to-end: loading HAR files, scanning, toggling redactions, exporting, and validating EDLs. Run it from the repository root:
 
 ```bash
-cd harscope
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope --install-browsers`.
 
 The suite includes a Chromium smoke test for the embedded UI. The optional
 `tests/run_tests.sh <har-file>` workflow exercises a real HAR fixture. See

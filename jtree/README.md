@@ -18,7 +18,7 @@ ln -s "$(pwd)/jtree" /usr/local/bin/jtree
 jtree data.json
 ```
 
-jtree runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header (`brew install uv` if you don't have it). The first run resolves the Python 3.12+ interpreter and dependencies (FastAPI, uvicorn, Pydantic) into uv's shared cache, so that invocation may use the network. jtree does not create a project-local or tool-specific virtual environment or runtime-state directory.
+jtree runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header (`brew install uv` if you don't have it). The first run resolves a Python interpreter from 3.12 through 3.15 and dependencies (FastAPI, uvicorn, Pydantic) into uv's shared cache, so that invocation may use the network. jtree does not create a project-local or tool-specific virtual environment or runtime-state directory.
 
 ## Options
 
@@ -133,8 +133,9 @@ so browser-specific behavior on those clients requires manual verification.
 
 ```bash
 cd jtree
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py jtree
 ```
+
+The runner uses the launcher's Python constraint and runtime dependencies plus
+`requirements-dev.txt` for tests. To install Chromium when needed, run
+`UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py jtree --install-browsers`.

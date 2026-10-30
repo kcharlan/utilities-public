@@ -111,10 +111,10 @@ Python dependencies are managed by uv (declared in the launcher's PEP 723 header
 
 ## Tests
 
+From the repository root:
+
 ```bash
-cd /path/to/utilities-public/routerview
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py routerview
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py routerview --install-browsers`.

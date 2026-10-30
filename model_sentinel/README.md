@@ -1097,24 +1097,23 @@ When notifications fire and you did not explicitly supply `--output`, Model Sent
 
 ## Testing
 
-Create or activate a project virtual environment, install the development
-dependencies, install Chromium once per machine, and run the complete project
-test suite from this directory:
+From the repository root, run the complete project test suite:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py model_sentinel
 ```
 
 The Playwright browser smoke suite is part of the ordinary test run. It is not
-silently skipped when Chromium is unavailable; install the browser dependency
-before running the suite.
+silently skipped when Chromium is unavailable; install Chromium once with
+`UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py model_sentinel --install-browsers`.
+The runner selects the builder's interpreter, which does not establish the
+interpreter used by an installed standalone zipapp.
 
 For isolated Hosts visual acceptance, create a new or empty directory outside
-all repository checkouts, then run `.venv/bin/python -m
-tests.hosts_validation_fixture /private/tmp/synthetic-hosts-runtime`. The builder
+all repository checkouts, then from `model_sentinel/` run `python -m
+tests.hosts_validation_fixture /private/tmp/synthetic-hosts-runtime` in a virtual
+environment. Agents use the utility venv for this ad hoc command, after running
+`~/.claude/shared/agent-tools.sh ensure`. The builder
 rejects occupied and repository-contained paths, including filesystem aliases,
 and prints the resolved runtime path. Use it as `MODEL_SENTINEL_HOME` for
 `browse --no-open --view hosts --port 0`. Its newest capture is intentionally

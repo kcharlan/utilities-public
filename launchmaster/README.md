@@ -109,14 +109,13 @@ complete test suite.
 
 ## Tests
 
-From this directory:
+From the repository root:
 
 ```zsh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster
 ```
+
+If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster --install-browsers`.
 
 The suite includes startup checks, live API integration checks, schedule
 checks, and Playwright browser tests. It runs against the current Mac's real

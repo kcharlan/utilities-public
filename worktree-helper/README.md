@@ -211,7 +211,7 @@ Other create-related flags:
 --lock-reason TEXT
 ```
 
-The `--orphan` option appears in version 0.1.1's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
+The `--orphan` option appears in version 0.1.2's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
 
 ### Prune Flags
 

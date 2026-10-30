@@ -1,8 +1,8 @@
 """
 Packet 02 — Repo Discovery & Registration API: Tests
 
-Run from project root after bootstrapping:
-    ~/.git_dashboard_venv/bin/python -m pytest tests/test_repo_discovery.py -v
+Run from the repository root:
+    UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 """
 
 import asyncio
@@ -22,8 +22,8 @@ try:
     import aiosqlite  # noqa: F401
 except ImportError:
     pytest.skip(
-        "fastapi/aiosqlite not installed — run tests inside the app venv: "
-        "~/.git_dashboard_venv/bin/python -m pytest",
+        "fastapi/aiosqlite not installed — run from the repository root: "
+        "UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet",
         allow_module_level=True,
     )
 
