@@ -1720,3 +1720,7 @@ fail closed on unsupported directives or unreadable files. Constraints limit
 versions but do not install packages; track their traversal separately so a
 constraint cannot hide the same file when it is later included as requirements.
 The shared uv guard's synthetic parser tests cover these cases.
+An allowlist for requirement lines must validate operators, versions and marker
+expressions as well as names; accepting arbitrary suffixes defers malformed input
+until dependency installation. Reject valid syntax outside the supported subset
+explicitly rather than guessing at it.

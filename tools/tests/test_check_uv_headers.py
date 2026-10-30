@@ -368,3 +368,38 @@ def test_guard_rejects_invalid_registry(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(guard, 'LAUNCHERS', [])
     assert guard.main() == 1
     assert 'test registry' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('requirement', [
+    'demo-package=>1',
+    'demo-package==not-a-version',
+    'demo-package; definitely_not_a_marker',
+    'demo-package>=1; python_version => "3.12"',
+    'demo-package; python_version == 3.12',
+    'demo-package; bogus == "x"',
+    'demo-package>=1; python_version == "3.12" and',
+    'demo-package>=1; (python_version == "3.12"',
+    "demo-package; python_version == '3.' '12'",
+    "demo-package; python_version == '''3.12'''",
+    "demo-package; python_version == r'3.12'",
+    "demo-package; python_version == '3.12'#ignored",
+])
+def test_requirement_parser_rejects_invalid_specifiers_and_markers(tmp_path, requirement):
+    path = tmp_path / 'dev.txt'
+    path.write_text(requirement + '\n')
+    with pytest.raises(ValueError, match='invalid requirement'):
+        parse_requirements_file(path)
+
+
+@pytest.mark.parametrize('requirement', [
+    'demo_package[extra-one,extra_two]>=1.2,<3',
+    'demo-package==1.2.*; python_version >= "3.12"',
+    'demo-package!=1.2; (sys_platform == "darwin" or os_name == "posix") and python_version >= "3.12"',
+    'demo-package; "darwin" == sys_platform',
+    'demo-package; platform_machine not in "aarch64,x86_64"',
+    'demo-package~=1.2rc1',
+])
+def test_requirement_parser_accepts_supported_specifiers_and_markers(tmp_path, requirement):
+    path = tmp_path / 'dev.txt'
+    path.write_text(requirement + '\n')
+    assert parse_requirements_file(path) == [requirement]

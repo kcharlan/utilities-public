@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import ast
 from dataclasses import asdict
+import io
 import re
 import subprocess
 import sys
 import tomllib
+import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -276,6 +278,85 @@ def normalize_distribution(requirement: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+_MARKER_VARIABLES = frozenset({
+    "python_version", "python_full_version", "os_name", "sys_platform",
+    "platform_release", "platform_system", "platform_version", "platform_machine",
+    "platform_python_implementation", "implementation_name", "implementation_version", "extra",
+})
+_VERSION = re.compile(r"(?:\d+!)?\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+[a-z0-9]+(?:[._-][a-z0-9]+)*)?", re.IGNORECASE)
+_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+
+
+def _valid_marker(marker: str) -> bool:
+    """Accept a conservative subset of PEP 508 marker expressions."""
+    if "\\" in marker:
+        return False
+    try:
+        previous_string = False
+        for token in tokenize.generate_tokens(io.StringIO(marker).readline):
+            if token.type in (tokenize.NEWLINE, tokenize.NL, tokenize.ENDMARKER):
+                continue
+            if token.type not in (tokenize.NAME, tokenize.OP, tokenize.STRING):
+                return False
+            if token.type == tokenize.STRING:
+                if previous_string or not re.fullmatch(r"(?:'[^'\n]*'|\"[^\"\n]*\")", token.string):
+                    return False
+                previous_string = True
+            else:
+                previous_string = False
+        tree = ast.parse(marker, mode="eval")
+    except (SyntaxError, ValueError, tokenize.TokenError):
+        return False
+
+    def valid(node: ast.AST) -> bool:
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+            return all(valid(value) for value in node.values)
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+            return False
+        if not isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)):
+            return False
+        left, right = node.left, node.comparators[0]
+        return any(isinstance(a, ast.Name) and a.id in _MARKER_VARIABLES and
+                   isinstance(b, ast.Constant) and isinstance(b.value, str)
+                   for a, b in ((left, right), (right, left)))
+
+    return valid(tree.body)
+
+
+def _valid_requirement(line: str) -> bool:
+    """Validate supported names, version ranges and markers without dependencies.
+
+    Direct URLs, arbitrary versions and other uncommon PEP forms are rejected
+    rather than accepted without validation.
+    """
+    requirement, separator, marker = line.partition(";")
+    if separator and not _valid_marker(marker.strip()):
+        return False
+    match = re.fullmatch(rf"({_NAME})(?:\[({_NAME}(?:\s*,\s*{_NAME})*)\])?\s*(.*)", requirement.strip())
+    if not match:
+        return False
+    tail = match.group(3).strip()
+    if not tail:
+        return True
+    for part in tail.split(","):
+        spec = re.fullmatch(r"(==|!=|~=|<=|>=|<|>)\s*(\S+)", part.strip())
+        if not spec:
+            return False
+        operator, version = spec.groups()
+        wildcard = version.endswith(".*")
+        if wildcard:
+            version = version[:-2]
+            if operator not in ("==", "!=") or not re.fullmatch(r"\d+(?:\.\d+)*", version):
+                return False
+        elif not _VERSION.fullmatch(version):
+            return False
+        if "+" in version and operator not in ("==", "!="):
+            return False
+        if operator == "~=" and not re.match(r"^(?:\d+!)?\d+\.\d+", version):
+            return False
+    return True
+
+
 def parse_requirements_file(path: Path, _seen: set[Path] | None = None) -> list[str]:
     """Read requirement entries recursively, following local ``-r`` includes."""
     resolved = path.resolve()
@@ -304,8 +385,8 @@ def parse_requirements_file(path: Path, _seen: set[Path] | None = None) -> list[
             continue
         if line.startswith("-"):
             raise ValueError(f"unsupported requirements directive in {resolved}: {line}")
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._, -]+\])?\s*(?:(?:[<>=!~]=?[^;\s,]+(?:\s*,\s*[<>=!~]=?[^;\s,]+)*)|(?:@\s*\S+))?\s*(?:;\s*\S.*)?", line):
-            raise ValueError(f"invalid requirement in {resolved}: {line}")
+        if not _valid_requirement(line):
+            raise ValueError(f"invalid requirement or unsupported syntax in {resolved}: {line}")
         requirements.append(line)
     return requirements
 

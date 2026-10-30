@@ -41,13 +41,26 @@ def synthetic_launcher(tmp_path, dependencies='[]'):
 
 
 def test_extensionless_header_supplies_packages(tmp_path, monkeypatch):
+    import importlib
     import subprocess
     from tools import run_project_tests as runner
     launcher = synthetic_launcher(tmp_path, '["packaging"]')
+    contamination = tmp_path / 'contamination'
+    contamination.mkdir()
+    (contamination / 'undeclared_synthetic_sentinel.py').write_text('value = "synthetic"\n')
+    monkeypatch.syspath_prepend(str(contamination))
+    assert importlib.import_module('undeclared_synthetic_sentinel').value == 'synthetic'
+    sys.modules.pop('undeclared_synthetic_sentinel')
+    monkeypatch.setenv('PYTHONPATH', str(contamination))
     monkeypatch.setenv('UV_CACHE_DIR', str(tmp_path / 'cache'))
     env = runner.clean_environment()
     interpreter = runner.resolve_interpreter(launcher)
-    result = subprocess.run(['uv', 'run', '--no-project', '--isolated', '--no-python-downloads', '--python', interpreter, '--with-requirements', str(launcher), 'python', '-c', 'import packaging, importlib.util; assert importlib.util.find_spec("undeclared_synthetic_sentinel") is None'], cwd=tmp_path, env=env, capture_output=True, text=True)
+    command = ['uv', 'run', '--no-project', '--isolated', '--no-python-downloads', '--python', interpreter, '--with-requirements', str(launcher), 'python', '-c']
+    positive_env = env.copy()
+    positive_env['PYTHONPATH'] = str(contamination)
+    positive = subprocess.run(command + ['import undeclared_synthetic_sentinel'], cwd=tmp_path, env=positive_env, capture_output=True, text=True)
+    assert positive.returncode == 0, positive.stderr
+    result = subprocess.run(command + ['import packaging, importlib.util; assert importlib.util.find_spec("undeclared_synthetic_sentinel") is None'], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
