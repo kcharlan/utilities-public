@@ -44,11 +44,10 @@ as `/legal:brief`.
 
 ## Tests
 
-The converter and its tests use only the Python standard library:
+The converter and its tests use only the Python standard library. Run from the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m unittest discover -s tests -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli
 ```
 
 See the [migration guide](./MIGRATION_GUIDE.md) for the source layout, exact

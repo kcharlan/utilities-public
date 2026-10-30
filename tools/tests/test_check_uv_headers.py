@@ -270,9 +270,9 @@ def test_vid_compiler_has_stdlib_runtime_and_pytest_only_dev_policy() -> None:
 
     assert launcher in LAUNCHERS
     assert DEPENDENCY_MANIFESTS[launcher] == (
-        "requirements",
-        "vid-compiler/requirements-dev.txt",
-        frozenset({"pytest"}),
+        "header",
+        "",
+        frozenset(),
     )
     assert check_dependency_manifest(launcher) == []
 

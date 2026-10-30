@@ -38,12 +38,10 @@ Holdings are bootstrapped independently; the aggregate portfolio distribution su
 
 ## Development
 
-Use a project virtual environment; never install packages into the system or Homebrew Python:
+Run from the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest tests -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py etf_montecarlo
 ```
 
 Tests inject dividend history and do not contact a finance service.

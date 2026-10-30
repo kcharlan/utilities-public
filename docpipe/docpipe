@@ -7,7 +7,7 @@
 #     "openpyxl",
 #     "beautifulsoup4",
 #     "lxml",
-#     "readability-lxml",
+#     "readability-lxml<0.9",
 #     "markdownify",
 # ]
 # ///

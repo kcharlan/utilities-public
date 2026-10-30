@@ -89,14 +89,10 @@ Use `--sampling random` for different selections across runs. Reduce
 
 ## Development and validation
 
-Tests use an isolated project environment; `requirements-dev.txt` contains
-pytest only:
+Run the suite from the repository root; `requirements-dev.txt` contains pytest only:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
-uv run --script video_compiler.py --help
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py vid_compiler
 ```
 
 For a render smoke, create conspicuously synthetic sources with FFmpeg's

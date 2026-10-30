@@ -41,7 +41,7 @@ These are declared in the launcher's PEP 723 header and resolved by uv on first 
 | `python-pptx` | PPTX slide text, tables, speaker notes |
 | `openpyxl` | XLSX sheet extraction |
 | `beautifulsoup4` + `lxml` | HTML parsing |
-| `readability-lxml` | HTML main-content extraction |
+| `readability-lxml<0.9` | HTML main-content extraction; 0.9 excludes Python 3.15 in its published metadata |
 | `markdownify` | HTML→Markdown conversion (primary path) |
 
 ## Quick Start
@@ -183,8 +183,6 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
 Unit tests cover CLI parser + strict-mode behavior.
 
 ```bash
-cd /path/to/utilities-public/docpipe
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+cd /path/to/utilities-public
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py docpipe
 ```

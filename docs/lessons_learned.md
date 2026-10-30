@@ -1736,3 +1736,12 @@ An allowlist for requirement lines must validate operators, versions and marker
 expressions as well as names; accepting arbitrary suffixes defers malformed input
 until dependency installation. Reject valid syntax outside the supported subset
 explicitly rather than guessing at it.
+
+### 2026-10-30 — uv ignores dependency Python upper bounds
+
+uv intentionally ignores upper bounds in a dependency's `Requires-Python`
+metadata. A passing suite and `uv pip check` therefore do not establish that a
+dependency supports the interpreter in use. Docpipe constrains readability-lxml
+below 0.9 because 0.9 excludes Python 3.15; its regression checks both the
+declared range and the resolved version. Review that constraint when adopting a
+new supported readability-lxml release.

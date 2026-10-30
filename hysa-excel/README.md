@@ -89,8 +89,8 @@ The workbook is first built as a temporary file in the output directory and then
 Run the isolated project suite from the repository root:
 
 ```bash
-uv run --with-requirements hysa-excel/requirements-dev.txt pytest hysa-excel/tests -v
-uv run --script tools/check_uv_headers.py
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py hysa_excel
+uv run --no-python-downloads --script tools/check_uv_headers.py
 ```
 
 Tests use temporary runtime directories and synthetic values; they never read or write `~/.hysa-excel`.

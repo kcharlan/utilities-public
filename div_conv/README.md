@@ -121,8 +121,8 @@ Cooked CSVs retain the selected brokerage's declared headers rather than using a
 
 ## Development
 
+Run from the repository root:
+
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest tests -v
+UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py div_conv
 ```

@@ -58,15 +58,15 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Registered Python suites: from the repository root run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` for each affected entry in `tools/project_tests.toml`; also run its non-Python categories and acceptance gates below. Install a missing browser explicitly with `--install-browsers` only when authorized.
 - Shared uv header guard (`tools/check_uv_headers.py`):
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
-  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Use the registered runner for Tax2 and Data Format Converter; for Benchmark and Cognitive create absent project test environments with `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv`, install their documented test dependencies, and prepend each project's own `.venv/bin` to `PATH` for its suite.
+  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Use the registered runner for Tax2, Data Format Converter, and Benchmark; for Cognitive create an absent project test environment with `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv`, install its documented test dependencies, and prepend its own `.venv/bin` to `PATH` for its suite.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
-  - For `Claude_plugin_converter/to_gemini_cli`, create an absent `.venv` with `/opt/homebrew/bin/python3 -m venv .venv`, run `.venv/bin/python -m unittest discover -s tests -v`, and smoke the launcher against a synthetic category in a temporary workspace.
+  - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
   - `doc_linearizer`: `bash tests/test_launcher.sh` from its project directory.
   - `reversible-skew`: `uv python find --no-python-downloads --script reversible-skew/rs.py` and the same for `reversible-skew/rs-big.py` (both must resolve Python 3.12), then the complete compatibility validation in its README.
   - `video-scenes`: `uv python find --no-python-downloads --script video-scenes/video-scenes`, then its README's synthetic Validation check in temporary space.
   - `apple-health-extract`: `bash tests/test_run_wrapper.sh` and `bash tests/test_extraction.sh` from its project directory; use only synthetic inputs.
-- `benchmark-llm`: install `.[dev]` in its project `.venv`, then `.venv/bin/python -m pytest -q` from its directory.
+- `benchmark-llm`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm` from the repository root.
 - `cognitive_switchyard`: install `requirements.txt` and `requirements-dev.txt` in its project `.venv`, then `.venv/bin/python -m pytest tests/ -v` from its directory, including browser E2E.
 - `brew_version` (Swift command line, from repository root; see its README):
   - `make -C brew_version test` (complete Swift Testing suite, isolated release build integration tests and the shared temp-leak checker's self-test; no skips). It runs under `tools/check_no_temp_leaks.sh`, which gives the suite a private `$TMPDIR` inside the project's ignored `.build/tmp/` that it then removes, fails if the run leaves any Brew Version entry in `$TMPDIR` or the Darwin user temp dir, and removes only the run's new marker-only `TemporaryDirectory.*` there.
@@ -95,7 +95,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py data_format_converter` from the repository root.
   - Browser suite: `npm ci`, `npx playwright install chromium`, then `npm run test:browser`.
 - `div_conv`:
-  - `.venv/bin/python -m pytest tests -v`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py div_conv` from the repository root.
+- `docpipe`, `etf_montecarlo`, `hysa-excel`, `router-log-analyzer`, and `vid-compiler`:
+  - Run their registered suites from the repository root using `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>`; keys are `docpipe`, `etf_montecarlo`, `hysa_excel`, `router_log_analyzer`, and `vid_compiler` respectively. Preserve the README's synthetic render checks when changing video processing.
 - `docker/llm_collector` (from `docker/llm_collector/`):
   - Setup: `.venv/bin/python -m pip install -r requirements-dev.txt`, then `.venv/bin/python -m playwright install chromium`.
   - `.venv/bin/python -m pytest collector snapshots extension` (collector, snapshot and Chromium popup tests; no skips).
@@ -254,5 +256,5 @@ Never hardcode a single port. Scan for a free port starting from the preferred d
   - Add `--no-python-downloads` right after the subcommand in `uv run`, `uv tool run`, and `uv tree --frozen` commands, and right after `uvx` (e.g. `uvx --no-python-downloads pip-audit`). For a uv launcher run directly, see the uv-managed launcher entry in the Validation Matrix.
   - Needs approval even when a README lists it:
     - any `uv run` without `--script`, `--with`, or `--with-requirements` (e.g. `uv run --python 3.12 python -m unittest …`);
-    - `uv run --with`/`--with-requirements` inside a uv project (`benchmark-llm`, `docker/llm_proxy`) without `--no-project` (e.g. `uv run --extra dev pytest` in `benchmark-llm` is approval-only too). Elsewhere, `--with` may only name packages the project's docs or requirements name; packages a task needs ad hoc go in the project venv instead;
+    - `uv run --with`/`--with-requirements` inside a uv project (`benchmark-llm`, `docker/llm_proxy`) without `--no-project`. Elsewhere, `--with` may only name packages the project's docs or requirements name; packages a task needs ad hoc go in the project venv instead;
     - commands that change a project's lockfile or sync its environment: `uv pip compile`, `uv sync`, `uv lock`, `uv add`, `uv remove`, and `uv tree` without `--frozen`.

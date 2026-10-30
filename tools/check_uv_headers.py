@@ -157,11 +157,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "mls-tracker/requirements-dev.txt",
         frozenset({"httpx", "playwright", "pytest"}),
     ),
-    "docpipe/docpipe": (
-        "requirements",
-        "docpipe/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
+    "docpipe/docpipe": ("header", "", frozenset()),
     "storage_monitor/storage_monitor": (
         "requirements",
         "storage_monitor/requirements-dev.txt",
@@ -188,26 +184,10 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "launchmaster/requirements-dev.txt",
         frozenset({"playwright", "pytest", "pytest-playwright"}),
     ),
-    "router-log-analyzer/router_log_analyze.py": (
-        "requirements",
-        "router-log-analyzer/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "hysa-excel/hysa_vs_cd_model.py": (
-        "requirements",
-        "hysa-excel/requirements-dev.txt",
-        frozenset({"openpyxl", "pytest"}),
-    ),
-    "div_conv/div_conv": (
-        "requirements",
-        "div_conv/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
-    "etf_montecarlo/etf_montecarlo": (
-        "requirements",
-        "etf_montecarlo/requirements-dev.txt",
-        frozenset({"pandas", "pytest"}),
-    ),
+    "router-log-analyzer/router_log_analyze.py": ("header", "", frozenset()),
+    "hysa-excel/hysa_vs_cd_model.py": ("header", "", frozenset()),
+    "div_conv/div_conv": ("header", "", frozenset()),
+    "etf_montecarlo/etf_montecarlo": ("header", "", frozenset()),
     "benchmark-llm/bench": (
         "pyproject",
         "benchmark-llm/pyproject.toml",
@@ -218,11 +198,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "cognitive_switchyard/requirements.txt",
         frozenset(),
     ),
-    "vid-compiler/video_compiler.py": (
-        "requirements",
-        "vid-compiler/requirements-dev.txt",
-        frozenset({"pytest"}),
-    ),
+    "vid-compiler/video_compiler.py": ("header", "", frozenset()),
     "model_sentinel/build_standalone.py": (
         "requirements",
         "model_sentinel/requirements-dev.txt",
