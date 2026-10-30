@@ -109,7 +109,7 @@ Not measured, and handled by design rather than by evidence:
   - `public struct AlertDigest: Equatable, Sendable { public let names: [PackageName]; public let title: String; public let body: String; public init(names: [PackageName], title: String, body: String) }`
   - `public func alertDigest(for watched: [WatchEntry]) -> AlertDigest?`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 @Test func digestOrdersNewestFirstThenByName() throws {
@@ -154,23 +154,23 @@ In `WatchStoreTests`, add:
 - `stateWithoutAlertListLoads`: load `Fixtures/state-1.0.2.json` the way `TapNameTests` loads it and assert every `alertPendingSince == nil`. Then save and reload an entry with a date and assert it round-trips.
 - `entryDecodingIgnoresUnknownKeys`: encode a `WatchEntry`, add a `synthetic-future-key` to the JSON, and assert it decodes equal to the original.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run the filtered command from Global Constraints with pattern `EvaluateTests|WatchStoreTests`.
 Expected: compile failure naming `alertPendingSince` and `alertDigest`.
 
-- [ ] **Step 3: Implement in `WatchState.swift`**
+- [x] **Step 3: Implement in `WatchState.swift`**
 
 Extract only the title and body text from `evaluate` into `notice(for:)`, keeping its wording. The `notifiedRelease` guards and all state changes stay in `evaluate`, which ends with `return (next, notice(for: next))`. Its existing tests must pass unchanged.
 
 `alertDigest(for:)` keeps entries where `alertPendingSince != nil && isAmber && notice(for:) != nil` and returns `nil` when empty. Implement the ordering and text pinned by this task's digest tests, using `ReleaseID.displayVersion`. Apply the Behavior table's truncation policy.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run the same filtered command.
 Expected: PASS, with `EvaluateTests.transitions` unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Subject: `Add Brew Version's saved alert list and digest`. Explain the change's purpose in the body.
 

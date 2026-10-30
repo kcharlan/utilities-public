@@ -33,6 +33,29 @@ final class IOFailures: @unchecked Sendable {
     }
 }
 struct WatchStoreTests {
+    @Test func stateWithoutAlertListLoads() throws {
+        let fixture = try #require(Bundle.module.url(forResource: "state-1.0.2", withExtension: "json", subdirectory: "Fixtures"))
+        let f = WatchFixture(); defer { f.clean() }
+        try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.copyItem(at: fixture, to: f.file)
+        let loaded = f.store.load()
+        #expect(loaded.problem == nil && loaded.canSave)
+        #expect(!loaded.state.watched.isEmpty)
+        #expect(loaded.state.watched.allSatisfy { $0.alertPendingSince == nil })
+        var state = loaded.state
+        state.watched[0].alertPendingSince = Date(timeIntervalSince1970: 123)
+        try f.store.save(state)
+        #expect(f.store.load().state == state)
+    }
+    @Test func entryDecodingIgnoresUnknownKeys() throws {
+        var entry = baseline()
+        entry.alertPendingSince = Date(timeIntervalSince1970: 123)
+        let encoded = try JSONEncoder().encode(entry)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["synthetic-future-key"] = "synthetic-value"
+        let data = try JSONSerialization.data(withJSONObject: object)
+        #expect(try JSONDecoder().decode(WatchEntry.self, from: data) == entry)
+    }
     @Test func missingFile() {
         let f = WatchFixture(); defer { f.clean() }
         let loaded = f.store.load()
