@@ -1,5 +1,11 @@
 # Test environment retirement: decision for review
 
+**Superseded recommendation:** The approved registered isolated runner policy in
+`~/.claude/shared/python-env.md` replaces the default recommendation below for
+registered projects. Nonregistered projects and the exceptions below retain their
+existing contracts. The historical measurements remain evidence only of those
+pilots, not of fleet savings or runner correctness.
+
 **Recommendation: retain project test venvs as the default for now.** Allow a
 project-specific, explicitly documented `uv run --no-project --with-requirements`
 test command after its complete suite and dependency closure have been verified.
