@@ -2,7 +2,7 @@ import streamlit as st
 import whisper
 import glob
 import os
-import json
+import transcription_state as counter_state
 
 # --- Updated CSS with the confusing upload-section removed ---
 st.markdown("""
@@ -243,41 +243,6 @@ def seconds_to_hms(seconds):
     seconds = int(seconds % 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def load_lifetime_odometer():
-    """Load the lifetime odometer from file"""
-    odometer_file = "transcription_odometer.txt"
-    try:
-        with open(odometer_file, 'r') as f:
-            return float(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        return 0.0
-
-def save_lifetime_odometer(total_seconds):
-    """Save the lifetime odometer to file"""
-    odometer_file = "transcription_odometer.txt"
-    with open(odometer_file, 'w') as f:
-        f.write(str(total_seconds))
-
-def load_cumulative_counter():
-    """Load cumulative counter from session state or initialize"""
-    if 'cumulative_total_seconds' not in st.session_state:
-        # Try to load from a session backup file
-        backup_file = "session_backup.json"
-        try:
-            with open(backup_file, 'r') as f:
-                data = json.load(f)
-                st.session_state['cumulative_total_seconds'] = data.get('cumulative_seconds', 0.0)
-        except (FileNotFoundError, json.JSONDecodeError):
-            st.session_state['cumulative_total_seconds'] = 0.0
-    return st.session_state['cumulative_total_seconds']
-
-def save_cumulative_counter():
-    """Save cumulative counter to backup file"""
-    backup_file = "session_backup.json"
-    data = {'cumulative_seconds': st.session_state.get('cumulative_total_seconds', 0.0)}
-    with open(backup_file, 'w') as f:
-        json.dump(data, f)
-
 def get_audio_duration(file_path):
     """Get duration of audio file using librosa or fallback methods"""
     try:
@@ -300,8 +265,16 @@ if 'current_session_seconds' not in st.session_state:
     st.session_state['current_session_seconds'] = 0.0
 
 # Load counters on startup
-cumulative_seconds = load_cumulative_counter()
-lifetime_seconds = load_lifetime_odometer()
+counter_read = counter_state.read_counters()
+st.session_state.setdefault('counter_warnings', [])
+for warning in counter_read.warnings:
+    if warning not in st.session_state['counter_warnings']:
+        st.session_state['counter_warnings'].append(warning)
+for warning in st.session_state['counter_warnings']:
+    st.warning(warning)
+cumulative_seconds = counter_read.counters.cumulative_seconds
+lifetime_seconds = counter_read.counters.lifetime_seconds
+st.session_state['cumulative_total_seconds'] = cumulative_seconds
 
 # --- Streamlit UI ---
 
@@ -429,11 +402,15 @@ if transcribe_btn:
     
     # Update all counters
     st.session_state['current_session_seconds'] = total_duration
-    st.session_state['cumulative_total_seconds'] = cumulative_seconds + total_duration
-    
-    # Save counters
-    save_cumulative_counter()
-    save_lifetime_odometer(lifetime_seconds + total_duration)
+    try:
+        counters = counter_state.add_duration(total_duration)
+        cumulative_seconds = counters.cumulative_seconds
+        lifetime_seconds = counters.lifetime_seconds
+    except OSError as error:
+        st.error(f"Could not save counters: {error}")
+        cumulative_seconds += total_duration
+        lifetime_seconds += total_duration
+    st.session_state['cumulative_total_seconds'] = cumulative_seconds
     
     progress_bar.empty()
     status_text.empty()
@@ -446,7 +423,6 @@ st.markdown('<h3 class="section-header">⏱️ Transcription Time Counters</h3>'
 # Update current values for display
 current_seconds = st.session_state.get('current_session_seconds', 0.0)
 cumulative_seconds = st.session_state.get('cumulative_total_seconds', 0.0)
-lifetime_seconds = load_lifetime_odometer()
 
 st.markdown(f"""
 <div class="counter-container">
@@ -469,10 +445,14 @@ st.markdown(f"""
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
     if st.button("🔄 Reset Cumulative", help="Reset the cumulative counter to 0:00:00"):
-        st.session_state['cumulative_total_seconds'] = 0.0
-        save_cumulative_counter()
-        st.success("Cumulative counter reset!")
-        st.rerun()
+        try:
+            counters = counter_state.reset_cumulative()
+        except OSError as error:
+            st.error(f"Could not reset counters: {error}")
+        else:
+            st.session_state['cumulative_total_seconds'] = counters.cumulative_seconds
+            st.success("Cumulative counter reset!")
+            st.rerun()
 
 # --- Results Section ---
 

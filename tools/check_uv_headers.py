@@ -98,7 +98,7 @@ LAUNCHERS = [
 
 # Explicit targets per launcher; do not scan sibling modules implicitly.
 LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
-    "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py"),
+    "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
 }
 
 NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (

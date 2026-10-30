@@ -99,11 +99,62 @@ Both interfaces use three counters:
 - **Cumulative**: resettable total persisted in `session_backup.json`.
 - **Lifetime**: persistent total stored as a number in `transcription_odometer.txt`.
 
-The two persistence files are local runtime state and are ignored by Git. `app.py` writes both files atomically and lets you reset the session and cumulative totals from the interface. The divider-word interface uses ordinary file writes and provides a cumulative reset.
+Both interfaces share `~/.transcription/` (mode 0700), or the nonempty `TRANSCRIPTION_HOME` override. The nonempty `CUMULATIVE_JSON_PATH` and `LIFETIME_TXT_PATH` overrides select individual files. Tildes expand and relative paths are relative to the caller's working directory. Files and the home lock have mode 0600; existing outside parent permissions are left alone.
 
-`app.py` also accepts `CUMULATIVE_JSON_PATH` and `LIFETIME_TXT_PATH` environment variables to place these files elsewhere. `transcribe.py` always uses filenames relative to its current working directory.
+Each file is published atomically under `counters.lock`; the pair is not a single atomic transaction. Reads and updates hold the same per-home lock. Never share an override file between different runtime homes because their locks are independent. Invalid values are preserved as `.unreadable-*` files, named in a persistent interface warning, and read as zero. Inspect and reconcile preserved files before restoring their totals.
 
-Back up the files before deleting or replacing them if their history matters.
+## Manual counter migration
+
+Stop both interfaces first. The authoritative legacy files are in `~/transcription`. Run the following from the intended caller directory with the same environment overrides as the launcher. It reports absent sources and existing destinations, including dangling symlinks, as skipped; it never overwrites them.
+
+```bash
+set -eu
+expand_path() {
+  case "$1" in
+    '~') printf '%s\n' "$HOME" ;;
+    '~/'*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    '~'*)
+      rest=${1#\~}; user=${rest%%/*}; suffix=${rest#"$user"}
+      if [[ ! $user =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        printf 'Invalid user in path: %s\n' "$1" >&2; return 1
+      fi
+      eval "expanded=~$user"
+      if [ "$expanded" = "~$user" ]; then
+        printf 'Unknown user in path: %s\n' "$1" >&2; return 1
+      fi
+      printf '%s%s\n' "$expanded" "$suffix" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+home=$(expand_path "${TRANSCRIPTION_HOME:-$HOME/.transcription}")
+cumulative=$(expand_path "${CUMULATIVE_JSON_PATH:-$home/session_backup.json}")
+lifetime=$(expand_path "${LIFETIME_TXT_PATH:-$home/transcription_odometer.txt}")
+mkdir -p "$home"
+chmod 700 "$home"
+copy_counter() {
+  source=$1 destination=$2
+  if [ ! -f "$source" ]; then printf 'Skipped absent source: %s\n' "$source"; return; fi
+  if [ -e "$destination" ] || [ -L "$destination" ]; then printf 'Skipped existing destination: %s\n' "$destination"; return; fi
+  parent=$(dirname "$destination")
+  mkdir -p "$parent"
+  temp=$(mktemp "$parent/.counter-migration.XXXXXX")
+  if ! chmod 600 "$temp" || ! cat "$source" > "$temp"; then rm -f "$temp"; return 1; fi
+  if ln "$temp" "$destination" 2>/dev/null; then
+    printf 'Copied: %s\n' "$destination"
+  elif [ -e "$destination" ] || [ -L "$destination" ]; then
+    printf 'Skipped existing destination: %s\n' "$destination"
+  else
+    rm -f "$temp"
+    printf 'Could not publish destination: %s\n' "$destination" >&2
+    return 1
+  fi
+  rm -f "$temp"
+}
+copy_counter "$HOME/transcription/session_backup.json" "$cumulative"
+copy_counter "$HOME/transcription/transcription_odometer.txt" "$lifetime"
+```
+
+For a retry or rollback, compare and reconcile legacy and runtime totals yourself before choosing which values to retain. A skipped destination may contain accumulated work; do not delete it merely to retry migration.
 
 ## Legacy wrappers
 
@@ -113,4 +164,4 @@ The old wrappers are transitional pending retirement. `run.sh`, `m4a-run.sh`, an
 
 - If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
 - If local transcription is slow or runs out of memory, choose a smaller model in the interface.
-- Until counter migration, isolate the working directory and override `app.py`'s counter paths when testing.
+- Check runtime-home permissions and override paths if counters cannot be saved.

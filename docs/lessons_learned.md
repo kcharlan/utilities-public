@@ -1687,3 +1687,10 @@ separate failure slots preserve the current package list (`failedPostLeavesPacka
 Pandas deprecated the in-place `DataFrame.drop` keyword even though CSV output
 remained correct. Assign the returned frame and check extraction stderr for
 warnings alongside the synthetic CSV comparisons, so deprecations are visible.
+
+### 2026-10-30 — Counter recovery and reset writes
+
+Decode errors must follow the same preservation path as malformed counter text;
+otherwise corrupt bytes crash the interface before recovery. Resetting only the
+cumulative file avoids a later lifetime-file failure after the reset has already
+been published. The Transcription state tests cover both cases.

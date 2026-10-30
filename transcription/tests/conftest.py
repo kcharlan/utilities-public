@@ -17,11 +17,27 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 @pytest.fixture(autouse=True)
 def isolation(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("TRANSCRIPTION_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("CUMULATIVE_JSON_PATH", str(tmp_path / "session.json"))
-    monkeypatch.setenv("LIFETIME_TXT_PATH", str(tmp_path / "lifetime.txt"))
+    monkeypatch.delenv("CUMULATIVE_JSON_PATH", raising=False)
+    monkeypatch.delenv("LIFETIME_TXT_PATH", raising=False)
+
+
+@pytest.fixture
+def stub_whisper(monkeypatch):
+    import numpy as np
+    import whisper
+
+    class Model:
+        def transcribe(self, path):
+            return {"text": "synthetic transcript"}
+
+    monkeypatch.setattr(whisper, "load_model", lambda name: Model())
+    monkeypatch.setattr(whisper, "load_audio", lambda path: np.zeros(56000))
+    monkeypatch.setattr(whisper.audio, "load_audio", lambda path: np.zeros(56000))
 
 
 @pytest.fixture
