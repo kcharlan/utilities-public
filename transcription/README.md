@@ -189,10 +189,6 @@ copy_counter "$HOME/transcription/transcription_odometer.txt" "$lifetime"
 
 For a retry or rollback, compare and reconcile legacy and runtime totals yourself before choosing which values to retain. A skipped destination may contain accumulated work; do not delete it merely to retry migration.
 
-## Legacy wrappers
-
-The old wrappers are transitional pending retirement. `run.sh`, `m4a-run.sh`, and `help.sh` pass obsolete command-line options and are not supported launch methods. Use the launcher above.
-
 ## Troubleshooting
 
 - If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
