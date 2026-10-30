@@ -17,7 +17,19 @@ import UserNotifications
     var requests: [UNNotificationRequest] = []
     var authorizationRequests = 0
     var postingGate: (@MainActor () async -> Void)?
-    func authorizationStatus() async -> UNAuthorizationStatus { status }
+    var deliveredIDs: Set<String> = []
+    var removed: [String] = []
+    var listsInCenter = true
+    var authorizationGate: (@MainActor () async -> Void)?
+    var authorizationStatusCalls = 0
+    var authorizationGateCall = 1
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        authorizationStatusCalls += 1
+        if authorizationStatusCalls == authorizationGateCall { await authorizationGate?() }
+        return status
+    }
+    func deliveredIdentifiers() async -> Set<String> { deliveredIDs }
+    func removeDelivered(_ identifiers: [String]) { removed.append(contentsOf: identifiers); deliveredIDs.subtract(identifiers) }
     func requestAuthorization() async throws -> Bool {
         authorizationRequests += 1
         if let authorizationFailure { throw SyntheticAuthorizationFailure(message: authorizationFailure) }
@@ -31,11 +43,28 @@ import UserNotifications
         if let postingFailure { throw SyntheticAuthorizationFailure(message: postingFailure) }
         if fail { throw CocoaError(.fileWriteUnknown) }
         delivered.append(request.content.title)
+        deliveredIDs.insert(request.identifier)
     }
+}
+extension UserNotifier {
+    func post(_ notice: Notice) async {
+        await syncAlert(AlertDigest(names: [notice.name], title: notice.title, body: notice.body), delivery: .withSound)
+    }
+}
+func digest(_ text: String) -> AlertDigest {
+    AlertDigest(names: [PackageName("synthetic-digest")!], title: text, body: text)
 }
 private struct SyntheticAuthorizationFailure: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+}
+private actor RollingNativeTransport: HTTPTransport {
+    private var calls: [URL: Int] = [:]
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
+        calls[url, default: 0] += 1
+        let version = url.lastPathComponent == "synthetic-a.json" || calls[url, default: 0] > 1 ? "2" : "1"
+        return HTTPResponse(status: 200, body: Data("{\"versions\":{\"stable\":\"\(version)\"}}".utf8))
+    }
 }
 @MainActor final class LoginServiceStub: LoginService {
     var status: SMAppService.Status = .notRegistered
@@ -59,6 +88,94 @@ private struct ReopenCatalogTransport: HTTPTransport {
 }
 
 @MainActor struct NativeActionsTests {
+    @Test func failedPostRetriesCurrentList() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"
+        await notifier.syncAlert(digest("synthetic-a"), delivery: .withSound)
+        await notifier.syncAlert(digest("synthetic-a, synthetic-b"), delivery: .keepCurrent)
+        #expect(service.requests.count == 1)
+        service.postingFailure = nil; await notifier.retry()
+        #expect(service.requests.count == 2 && service.requests.last?.content.body == "synthetic-a, synthetic-b")
+        #expect(service.requests.last?.content.sound != nil)
+    }
+    @Test func failedFirstAlertKeepsItsSound() async {
+        for failSecond in [false, true] {
+            let service = NotificationServiceStub(); service.status = .authorized
+            let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"
+            await notifier.syncAlert(digest("first"), delivery: .withSound)
+            if !failSecond { service.postingFailure = nil }
+            await notifier.syncAlert(digest("second"), delivery: .silent)
+            if failSecond { service.postingFailure = nil; await notifier.retry() }
+            #expect(service.requests.last?.content.body == "second")
+            #expect(service.requests.last?.content.sound != nil)
+            #expect(notifier.lastError == nil)
+        }
+    }
+    @Test func shrinkDuringRetryPostsCurrentList() async throws {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"
+        await notifier.syncAlert(digest("synthetic-a 2, synthetic-b 2"), delivery: .withSound)
+        service.postingFailure = nil
+        service.authorizationGateCall = service.authorizationStatusCalls + 2
+        service.authorizationGate = { await notifier.syncAlert(digest("synthetic-b 2"), delivery: .keepCurrent) }
+        await notifier.retry()
+        #expect(service.requests.count == 2)
+        let request = try #require(service.requests.last)
+        #expect(request.content.body == "synthetic-b 2" && request.content.sound != nil)
+    }
+    @Test func shrinkDuringInitialAuthorizationKeepsSound() async throws {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        service.authorizationGate = { await notifier.syncAlert(digest("synthetic-b 2"), delivery: .keepCurrent) }
+        await notifier.syncAlert(digest("synthetic-a 2, synthetic-b 2"), delivery: .withSound)
+        let request = try #require(service.requests.first)
+        #expect(request.content.body == "synthetic-b 2")
+        #expect(request.content.sound != nil)
+    }
+    @Test func laterSuccessSupersedesAnEarlierFailure() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"
+        await notifier.syncAlert(digest("first"), delivery: .withSound)
+        service.postingFailure = nil; await notifier.syncAlert(digest("second"), delivery: .silent)
+        #expect(notifier.lastError == nil)
+        await notifier.retry(); #expect(service.requests.count == 2)
+    }
+    @Test func testNotificationStaysSeparateFromTheRollingAlert() async throws {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service); service.postingFailure = "Synthetic posting failure"
+        await notifier.syncAlert(digest("synthetic-package"), delivery: .withSound)
+        service.postingFailure = nil; await notifier.sendTestNotification()
+        let request = try #require(service.requests.last)
+        #expect(request.identifier != UserNotifier.alertIdentifier && UUID(uuidString: request.identifier) != nil)
+        #expect(request.content.categoryIdentifier.isEmpty && notifier.lastError != nil)
+        await notifier.retry(); #expect(service.requests.last?.content.body == "synthetic-package")
+    }
+    @Test func failedPostLeavesPackagesListed() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let a = PackageName("synthetic-a")!, b = PackageName("synthetic-b")!
+        let store = WatchStore(fileURL: home.appendingPathComponent("state.json"))
+        var state = AppState.initial
+        state.watched = [a, b].map { WatchEntry(name: $0, kind: .formula, lastListing: Listing(name: $0, kind: .formula, version: "1"), lastSeenRelease: ReleaseID(Listing(name: $0, kind: .formula, version: "1"))) }
+        try store.save(state)
+        let service = NotificationServiceStub(); service.status = .authorized; service.postingFailure = "Synthetic posting failure"
+        let notifier = UserNotifier(service: service)
+        let transport = RollingNativeTransport()
+        let controller = WatchController(transport: transport, installed: nil, store: store, notifier: notifier)
+        await controller.checkNow(); service.postingFailure = nil; await controller.checkNow()
+        #expect(service.requests.count == 2)
+        #expect(service.requests.last?.content.body == "synthetic-b 2, synthetic-a 2")
+        #expect(service.requests.last?.content.sound != nil)
+    }
+    @Test func alertsReuseOneIdentifierAndCategory() async {
+        let service = NotificationServiceStub(); service.status = .authorized
+        let notifier = UserNotifier(service: service)
+        await notifier.syncAlert(digest("first"), delivery: .withSound)
+        await notifier.syncAlert(digest("second"), delivery: .silent)
+        #expect(Set(service.requests.map(\.identifier)) == [UserNotifier.alertIdentifier])
+        #expect(Set(service.requests.map(\.content.categoryIdentifier)) == [UserNotifier.alertIdentifier])
+        #expect(service.requests[0].content.sound != nil && service.requests[1].content.sound == nil)
+    }
     @Test func tapRowTitleAndCommand() {
         let name = PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!
         let row = PackageRow(name: name, kind: .formula)
@@ -729,4 +846,4 @@ private struct IconPixel {
     (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)
 }
 @MainActor private final class ChangeFlag { var changed = false }
-struct QuietNotifier: Notifier { func post(_ notice: Notice) async {} }
+struct QuietNotifier: Notifier {}

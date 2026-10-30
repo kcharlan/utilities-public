@@ -37,7 +37,7 @@ import UserNotifications
                 Button("Delay next lookup") { Task { await self.service.delayNextLookup() } }
                 Button("Test posting failure") {
                     self.notificationService.failNext = true
-                    Task { await self.notifier.post(Notice(name: PackageName("synthetic-notice")!, title: "Synthetic retry notice", body: "Synthetic notification retry acceptance.")) }
+                    Task { await self.notifier.syncAlert(AlertDigest(names: [PackageName("synthetic-notice")!], title: "Synthetic retry notice", body: "Synthetic notification retry acceptance."), delivery: .withSound) }
                 }
             }
             HStack {
@@ -66,6 +66,8 @@ import UserNotifications
     var failNext = false
     func authorizationStatus() async -> UNAuthorizationStatus { await native.authorizationStatus() }
     func requestAuthorization() async throws -> Bool { try await native.requestAuthorization() }
+    func deliveredIdentifiers() async -> Set<String> { await native.deliveredIdentifiers() }
+    func removeDelivered(_ identifiers: [String]) { native.removeDelivered(identifiers) }
     func post(_ request: UNNotificationRequest) async throws {
         if failNext { failNext = false; throw SyntheticPostingError() }
         try await native.post(request)

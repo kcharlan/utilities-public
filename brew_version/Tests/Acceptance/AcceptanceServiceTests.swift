@@ -63,5 +63,5 @@ struct AcceptanceServiceTests {
         #expect(fallback.appNames == ["Synthetic Missing.app"])
     }
 }
-private struct AcceptanceQuietNotifier: Notifier { func post(_ notice: Notice) async {} }
+private struct AcceptanceQuietNotifier: Notifier {}
 @MainActor private final class AcceptanceClock { var now = Date() }

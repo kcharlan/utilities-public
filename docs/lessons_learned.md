@@ -546,6 +546,14 @@ identity, rather than restoring a shared-state snapshot after an await. Test
 success, denial, posting failure and overlapping completion in both directions.
 Keep Retry visible for pending notices even after authorization recovers.
 
+## 2026-10-30: Retain the current rolling notification payload
+
+A failed package alert must retain list membership independently of its retry
+slot. While authorization is suspended, the list can shrink without posting a
+new banner; read the current payload after the authorization and request-token
+checks so retry cannot restore stale entries. Preserve the initial sound until
+a package post succeeds. Test the suspended retry with a nonempty shorter list.
+
 ## 2026-10-17: Observe native event paths without forcing layout
 
 App reopen and accessibility press do not reproduce a physical status-button

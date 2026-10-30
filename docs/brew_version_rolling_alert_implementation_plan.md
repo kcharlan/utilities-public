@@ -202,7 +202,7 @@ public protocol Notifier: Sendable {
   - `WatchController.enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never>` (private).
   - `UserNotifier.init(service: any NotificationService, now: @escaping () -> Date = Date.init)`
 
-- [ ] **Step 1: Migrate the test doubles**
+- [x] **Step 1: Migrate the test doubles**
 
 `RecordingNotifier`:
 - `notices: [AlertDigest]` appends for `.silent` and `.withSound` only.
@@ -232,7 +232,7 @@ Update these existing tests for the agreed behavior change, and name them in the
 - `inFlightCheckPreservesConcurrentMutationsAndGenerations`: expect `notices.count == 1` and that digest's sorted `names` to equal `Array(names.suffix(2))`.
 - `checksLimitRequestsAndReadFreshInstalledVersions`: replace the `first(where:)` line with `#expect(notice(for: c.state.watched[0])?.body == "You have 0.5.")`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```swift
 @Test func oneCheckPostsOneAlertForSeveralPackages() async throws {
@@ -315,12 +315,12 @@ In `NativeActionsTests`:
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run the filtered command with pattern `WatchControllerTests|TapControllerTests|NativeActionsTests`.
 Expected: compile failure naming `syncAlert` and `UserNotifier.alertIdentifier`.
 
-- [ ] **Step 4: Implement the controller**
+- [x] **Step 4: Implement the controller**
 
 Add `private var alertQueue: Task<Void, Never>?`. `enqueueAlert` captures the digest on the main actor and appends one `syncAlert` call to the chain, so calls run in commit order:
 
@@ -341,7 +341,7 @@ In `checkNow`, replace the `notices` array:
 - With notices, enqueue `listWasEmpty ? .withSound : .silent`.
 - Await the enqueued task, so the post still follows the save and `checkNow` still returns after it.
 
-- [ ] **Step 5: Implement the notifier**
+- [x] **Step 5: Implement the notifier**
 
 Replace `FailedNotice.notice` with a private `PendingPost { identifier, title, body, sound: Bool, category: String? }`. Implement the diagnostic path as pinned by `testNotificationStaysSeparateFromTheRollingAlert`.
 
@@ -357,7 +357,7 @@ Set `lastAlertPost = now()` only on a successful current-token `.package` post. 
 
 Leave `alertWasCleared` at its default until the acknowledgement work.
 
-- [ ] **Step 6: Run the tests and builders to verify they pass**
+- [x] **Step 6: Run the tests and builders to verify they pass**
 
 Run:
 
@@ -369,7 +369,7 @@ make -C brew_version snapshots
 
 Expected: all pass, which also proves the harness and snapshot sources still compile. Remove the directories those builders print.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Subject: `Consolidate Brew Version alerts into one rolling alert`. The body names the updated tests and why they changed, and records the lost-alert fix.
 

@@ -12,7 +12,7 @@ private actor UndoExpiryGate {
 private struct UndoTransport: HTTPTransport {
     func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse { .init(status: 404, body: Data()) }
 }
-private struct UndoNotifier: Notifier { func post(_ notice: Notice) async {} }
+private struct UndoNotifier: Notifier {}
 private struct UndoFixture {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-undo-" + UUID().uuidString)
     var file: URL { directory.appendingPathComponent("state.json") }

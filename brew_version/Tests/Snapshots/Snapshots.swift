@@ -193,6 +193,8 @@ private actor SnapshotTransport: HTTPTransport {
         return true
     }
     func post(_ request: UNNotificationRequest) async throws {}
+    func deliveredIdentifiers() async -> Set<String> { [] }
+    func removeDelivered(_ identifiers: [String]) {}
 }
 private struct SnapshotAuthorizationFailure: LocalizedError {
     var errorDescription: String? { "Synthetic authorization was refused. Open System Settings, choose Notifications, select Brew Version, enable notifications, then retry." }

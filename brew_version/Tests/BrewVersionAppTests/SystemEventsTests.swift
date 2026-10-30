@@ -67,4 +67,4 @@ private actor EventTransport: HTTPTransport {
         return .init(status: 200, body: Data(#"{"versions":{"stable":"1-synthetic"}}"#.utf8))
     }
 }
-private struct EventNotifier: Notifier { func post(_ notice: Notice) async {} }
+private struct EventNotifier: Notifier {}

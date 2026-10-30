@@ -16,7 +16,7 @@ private actor SearchTransport: HTTPTransport {
         return .init(status: 200, body: Data(body.utf8))
     }
 }
-private struct SearchNotifier: Notifier { func post(_ notice: Notice) async {} }
+private struct SearchNotifier: Notifier {}
 
 private actor SourceLossTransport: HTTPTransport {
     var missing = false
