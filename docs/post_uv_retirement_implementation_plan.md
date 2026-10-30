@@ -10,6 +10,41 @@
 
 **Spec:** The owner's request to pick up the remaining pieces, plus Follow-ups in `docs/retire_venvs_for_uv_implementation_plan.md`. This plan replaces that Follow-ups section. Approval of this plan does not authorize implementation, deployment or any Gated step.
 
+## Execution record (2026-10-30)
+
+The owner separately requested execution and approved the named deployment gates,
+then approved additional gates while away. Work used independent managed
+worktrees, serial integration, task reviews, and at most one Playwright suite.
+
+| Task | Result |
+| --- | --- |
+| Apple Health warning | [PR 104](https://github.com/kcharlan/utilities-public/pull/104) merged; warning reproduced before the fix; both synthetic shell suites passed. Installed files matched merged source and the installed synthetic extraction passed. |
+| Test lockfiles | [PR 105](https://github.com/kcharlan/utilities-public/pull/105) merged; all three audits clean; Playwright remained 1.64.1. Converter: 113 Python and 6 browser tests; calculators: 179 Node and 118 browser tests; multibody: 10 browser tests. |
+| Entry-point detection | [PR 109](https://github.com/kcharlan/utilities-public/pull/109) merged; exact allowlist retained. Combined-tree validation: guard 56 tests and 32 launchers, Tax2 432 tests plus offline/download acceptance, converter 113 Python and 6 browser tests, benchmark 157 tests, Cognitive Switchyard 489 tests. |
+| Home residue audit | [PR 107](https://github.com/kcharlan/utilities-public/pull/107) merged; synthetic cases, 124 installer lifecycle tests, 17 static audit tests and the fleet shell suite passed. Real-home name/age audit reported OK. [PR 108](https://github.com/kcharlan/utilities-public/pull/108) corrected a scratch-variable name without changing behavior; its covering suite and guard passed. |
+| Webserver locks | [PR 106](https://github.com/kcharlan/utilities-public/pull/106) merged; Node and Python audits clean, three disposable builds passed, routing 5/5 and propagation 20/20 passed. Authorized deployment completed; all four services healthy. Installed Nginx syntax, API semantics, file browser, configuration UI, static-root bytes and calculator cache headers passed. |
+| Test venv decision | [PR 110](https://github.com/kcharlan/utilities-public/pull/110) merged the [decision record](test_venv_retirement_decision.md). Both approaches passed 115 div_conv tests and 160 jtree tests; the approved project-mode benchmark pilot passed 157. Cross-worktree shared-cache runs passed 115 each. Recommendation: retain project venvs by default, with project-specific uv alternatives only after validation. Owner choice remains open. |
+| Transcription decision | [PR 111](https://github.com/kcharlan/utilities-public/pull/111) merged the [decision record](transcription_uv_decision.md). Both dependency graphs passed HTTP/health startup and clean SIGINT teardown; separate AppTest runs executed both interfaces and synthetic resets. Known deployed wrappers were checked. Recommendation: one capped two-mode launcher and explicit runtime paths. No spike or migration merged; owner choice remains open. |
+
+The Cognitive Switchyard warning is `PytestRemovedIn10Warning` from
+pytest-playwright 0.10.0's session-scoped `_BaseUrlFallback.base_url` fixture
+(`pytest_playwright/pytest_playwright.py:830`). Its separate investigation remains
+outside this plan; no warning suppression was introduced.
+
+The first installed fleet audit failed with `App source drift` for Anker Charge
+Monitor. The admitted source inventory differed only in a documentation-link
+comment. Its full native suite passed; reinstalling the existing 0.4.1 release
+refreshed provenance, and source, installed metadata and receipt remained 0.4.1.
+The direct native audit and subsequent whole-fleet audit passed. The running app
+was not restarted; vault, cloud, GUI and physical-device checks were not performed.
+
+Execution choices: the explicit parallel schedule took precedence over the
+skill's serial-worker default; evidence stayed in private OS temporary space;
+the request to execute authorized the plan's commit/PR/merge workflow while
+separate deployment gates were preserved until approved. The costs if these
+interpretations were wrong would be integration rework, unavailable deleted
+scratch evidence, or published workflow changes, respectively.
+
 ## Global Constraints
 
 - **Worker cap:** max 4 worktrees at once, with a reviewer sharing its implementer's slot. Max 1 Playwright suite at a time.
@@ -54,17 +89,17 @@
 - Modify: `apple-health-extract/exercise_bouts.py`
 - Test: `apple-health-extract/tests/test_extraction.sh`
 
-- [ ] **Step 1: Make the test fail on the warning.** Where `tests/test_extraction.sh` runs `exercise_bouts.py`, send its stderr to `bouts.stderr` in the scratch directory, print that file if the script fails, then fail if it contains `Warning`.
+- [x] **Step 1: Make the test fail on the warning.** Where `tests/test_extraction.sh` runs `exercise_bouts.py`, send its stderr to `bouts.stderr` in the scratch directory, print that file if the script fails, then fail if it contains `Warning`.
 
-- [ ] **Step 2: Run it to verify it fails.** Run `bash tests/test_extraction.sh` from `apple-health-extract/`. Expected: FAIL, naming `Pandas4Warning`.
+- [x] **Step 2: Run it to verify it fails.** Run `bash tests/test_extraction.sh` from `apple-health-extract/`. Expected: FAIL, naming `Pandas4Warning`.
 
-- [ ] **Step 3: Replace the `bouts_df.drop` call** with `bouts_df = bouts_df.drop(columns=['interval'])`.
+- [x] **Step 3: Replace the `bouts_df.drop` call** with `bouts_df = bouts_df.drop(columns=['interval'])`.
 
-- [ ] **Step 4: Run every check in the `agents.md` Apple Health entry.** Expected: all pass, with CSV output unchanged.
+- [x] **Step 4: Run every check in the `agents.md` Apple Health entry.** Expected: all pass, with CSV output unchanged.
 
-- [ ] **Step 5: Commit and merge** through the merge protocol.
+- [x] **Step 5: Commit and merge** through the merge protocol.
 
-- [ ] **Step 6 (Gated): Deploy.** Follow `docs/local_deployment_sync.md` for `~/apple-health-extract`, and remove the stale `~/apple-health-extract/__pycache__`. Run `bash tests/test_extraction.sh "$HOME/apple-health-extract"` from the source directory, then `zsh tools/check_local_deployments.zsh`. Expected: each command passes.
+- [x] **Step 6 (Gated): Deploy.** Follow `docs/local_deployment_sync.md` for `~/apple-health-extract`, and remove the stale `~/apple-health-extract/__pycache__`. Run `bash tests/test_extraction.sh "$HOME/apple-health-extract"` from the source directory, then `zsh tools/check_local_deployments.zsh`. Expected: each command passes.
 
 ---
 
@@ -75,13 +110,13 @@ Use each listed project's `package.json` and `npm audit --package-lock-only` as 
 **Files:**
 - Modify: `data_format_converter/package-lock.json`, `Calculation tools/package-lock.json`, `web_games/multibody_sim/package-lock.json`
 
-- [ ] **Step 1: Refresh each lock.** In each project directory, run `npm audit fix --package-lock-only --ignore-scripts`.
+- [x] **Step 1: Refresh each lock.** In each project directory, run `npm audit fix --package-lock-only --ignore-scripts`.
 
-- [ ] **Step 2: Confirm the scope.** `git diff --stat` lists only the Files entries. Confirm each project's resolved Playwright version is unchanged. In each project, `npm audit --package-lock-only` reports no vulnerabilities. If remediation requires changing a manifest or Playwright, report that scope decision before proceeding.
+- [x] **Step 2: Confirm the scope.** `git diff --stat` lists only the Files entries. Confirm each project's resolved Playwright version is unchanged. In each project, `npm audit --package-lock-only` reports no vulnerabilities. If remediation requires changing a manifest or Playwright, report that scope decision before proceeding.
 
-- [ ] **Step 3: Run each project's complete suite**, after `npm ci`. Follow the full `agents.md` entries for `data_format_converter` (including Python tests) and `web_games/multibody_sim`, and run `npm test` from `Calculation tools`. Expected: all pass, and `http-server` still serves each browser suite.
+- [x] **Step 3: Run each project's complete suite**, after `npm ci`. Follow the full `agents.md` entries for `data_format_converter` (including Python tests) and `web_games/multibody_sim`, and run `npm test` from `Calculation tools`. Expected: all pass, and `http-server` still serves each browser suite.
 
-- [ ] **Step 4: Commit and merge** through the merge protocol.
+- [x] **Step 4: Commit and merge** through the merge protocol.
 
 ---
 
@@ -96,7 +131,7 @@ Extend the discovery in `tools/check_uv_headers.py:main` with the signal defined
 **Interfaces:**
 - Produces: `NON_UV_ENTRYPOINT_ALLOWLIST: tuple[str, ...]`, `is_test_path(relative: str) -> bool`, and `is_allowlisted(relative: str, allowlist: tuple[str, ...]) -> bool`, extracted from the matching logic in `main`.
 
-- [ ] **Step 1: Write the failing tests** in the style of `test_unlisted_python_shebang_is_rejected`. These are outlines; each test builds the files its comment names:
+- [x] **Step 1: Write the failing tests** in the style of `test_unlisted_python_shebang_is_rejected`. These are outlines; each test builds the files its comment names:
 
   ```python
   # synthetic_tool.py: no shebang, `if __name__ == "__main__":` at column 0
@@ -121,9 +156,9 @@ Extend the discovery in `tools/check_uv_headers.py:main` with the signal defined
       assert guard.main() == 0
   ```
 
-- [ ] **Step 2: Run the Guard tests** from the `agents.md` Shared uv header guard entry. Expected: the new tests fail.
+- [x] **Step 2: Run the Guard tests** from the `agents.md` Shared uv header guard entry. Expected: the new tests fail.
 
-- [ ] **Step 3: Add the check to `main`**, in the existing `git_repository_files()` loop. Fail a regular `.py` file when it has no shebang, matches `(?m)^if __name__ == ["']__main__["']:`, is not a test path, and is not allowlisted. `is_test_path` is true when any directory part is `tests` or `test`, or the name is `conftest.py` or starts with `test_`. Skip unreadable and binary files as `read_first_line` does. Say in a comment that a script with no main guard goes unseen.
+- [x] **Step 3: Add the check to `main`**, in the existing `git_repository_files()` loop. Fail a regular `.py` file when it has no shebang, matches `(?m)^if __name__ == ["']__main__["']:`, is not a test path, and is not allowlisted. `is_test_path` is true when any directory part is `tests` or `test`, or the name is `conftest.py` or starts with `test_`. Skip unreadable and binary files as `read_first_line` does. Say in a comment that a script with no main guard goes unseen.
 
   ```python
   NON_UV_ENTRYPOINT_ALLOWLIST: tuple[str, ...] = (
@@ -140,11 +175,11 @@ Extend the discovery in `tools/check_uv_headers.py:main` with the signal defined
 
   If the guard flags a newer tracked file, report it rather than widening the allowlist unasked.
 
-- [ ] **Step 4: Update `agents.md`.** Document the detection boundary defined under Add the check to `main` in the uv-managed launcher section, and name the allowlist.
+- [x] **Step 4: Update `agents.md`.** Document the detection boundary defined under Add the check to `main` in the uv-managed launcher section, and name the allowlist.
 
-- [ ] **Step 5: Run the whole `agents.md` Shared uv header guard entry**, including its consumer suites, under Worker cap. Expected: the guard prints OK and all suites pass.
+- [x] **Step 5: Run the whole `agents.md` Shared uv header guard entry**, including its consumer suites, under Worker cap. Expected: the guard prints OK and all suites pass.
 
-- [ ] **Step 6: Commit and merge** through the merge protocol.
+- [x] **Step 6: Commit and merge** through the merge protocol.
 
 ---
 
@@ -157,7 +192,7 @@ Use the table below as the audit's detection boundary. Preserve the broader Resi
 - Test: `tools/tests/test_check_home_residue.zsh`
 - Modify: `agents.md`, `docs/todo.md`
 
-- [ ] **Step 1: Write the failing test**, in the style of `tools/tests/test_check_local_deployments.zsh`, running the audit with `HOME` set to a fresh fake home. Backdate entries with `touch -t`, using `-h` for the symlink. Old means older than 24 hours. Each row is a separate case. The Shape column defines what the audit matches.
+- [x] **Step 1: Write the failing test**, in the style of `tools/tests/test_check_local_deployments.zsh`, running the audit with `HOME` set to a fresh fake home. Backdate entries with `touch -t`, using `-h` for the symlink. Old means older than 24 hours. Each row is a separate case. The Shape column defines what the audit matches.
 
   | Fixture entry | Shape | Expected |
   |---|---|---|
@@ -171,15 +206,15 @@ Use the table below as the audit's detection boundary. Preserve the broader Resi
   | Old `.config`, `.synthetic-tool`, `.zshrc.backup`, `.synthetic-review-settings` | None | Not reported, exit 0 |
   | Empty home | None | `check_home_residue: OK`, exit 0 |
 
-- [ ] **Step 2: Run it to verify it fails.** Run `zsh tools/tests/test_check_home_residue.zsh`. Expected: FAIL, because the audit does not exist.
+- [x] **Step 2: Run it to verify it fails.** Run `zsh tools/tests/test_check_home_residue.zsh`. Expected: FAIL, because the audit does not exist.
 
-- [ ] **Step 3: Write the audit under Home scans.** Match direct children of `$HOME` against the table using each entry's own timestamp. Express ages in days and append a count; exit 1 when anything is reported. Do not size entries or delete them.
+- [x] **Step 3: Write the audit under Home scans.** Match direct children of `$HOME` against the table using each entry's own timestamp. Express ages in days and append a count; exit 1 when anything is reported. Do not size entries or delete them.
 
-- [ ] **Step 4: Run it once against the real home under Home scans.** Expected: exit 0, or the report defined under Write the audit. If a false positive is identified, add it to the test as a new row and tighten the Shape.
+- [x] **Step 4: Run it once against the real home under Home scans.** Expected: exit 0, or the report defined under Write the audit. If a false positive is identified, add it to the test as a new row and tighten the Shape.
 
-- [ ] **Step 5: Update the docs.** Add `zsh tools/tests/test_check_home_residue.zsh` to the Static deployment/fleet audit tooling entry in `agents.md`. Put the real audit beside the cleanup rule in Quality and Consistency, outside mandatory validation: another agent's leftover must not fail unrelated work. Add a `docs/todo.md` item linking this plan's Decision Tasks and Owner Items.
+- [x] **Step 5: Update the docs.** Add `zsh tools/tests/test_check_home_residue.zsh` to the Static deployment/fleet audit tooling entry in `agents.md`. Put the real audit beside the cleanup rule in Quality and Consistency, outside mandatory validation: another agent's leftover must not fail unrelated work. Add a `docs/todo.md` item linking this plan's Decision Tasks and Owner Items.
 
-- [ ] **Step 6: Commit and merge** through the merge protocol.
+- [x] **Step 6: Commit and merge** through the merge protocol.
 
 ---
 
@@ -192,15 +227,15 @@ Use `docker/propagate-updates.zsh` rather than hand-editing. The approval scope 
 **Files:**
 - Modify: the lockfiles `refresh` changes under `docker/webserver/`
 
-- [ ] **Step 1: Prepare the owner's decision.** Run `docker/propagate-updates.zsh refresh --stack webserver --dry-run` and present its operation list. Copy each Node project's `package.json` and `package-lock.json` to temporary space, run the `npm update` command it prints, and report the lock diffs. Label the Python lock diff unmeasured until its compile operation is approved under Python and uv. Determine Docker availability and report each service's exposure from `docker/webserver/docker-compose.yml`. These observations require fresh output; a source reference alone cannot supply the approval packet.
+- [x] **Step 1: Prepare the owner's decision.** Run `docker/propagate-updates.zsh refresh --stack webserver --dry-run` and present its operation list. Copy each Node project's `package.json` and `package-lock.json` to temporary space, run the `npm update` command it prints, and report the lock diffs. Label the Python lock diff unmeasured until its compile operation is approved under Python and uv. Determine Docker availability and report each service's exposure from `docker/webserver/docker-compose.yml`. These observations require fresh output; a source reference alone cannot supply the approval packet.
 
-- [ ] **Step 2 (Gated): Run `docker/propagate-updates.zsh refresh --stack webserver`.** Request approval for this exact command and the operations shown by its dry run. Expected: its summary reports success, and the audits in `refresh_lock` pass.
+- [x] **Step 2 (Gated): Run `docker/propagate-updates.zsh refresh --stack webserver`.** Request approval for this exact command and the operations shown by its dry run. Expected: its summary reports success, and the audits in `refresh_lock` pass.
 
-- [ ] **Step 3: Run the `agents.md` Docker update propagation suite.** Confirm the authorized refresh also completed the webserver README's Routing regression checks through `run_stack_tests`; rerun that validation if the lockfiles change afterward. Expected: all pass.
+- [x] **Step 3: Run the `agents.md` Docker update propagation suite.** Confirm the authorized refresh also completed the webserver README's Routing regression checks through `run_stack_tests`; rerun that validation if the lockfiles change afterward. Expected: all pass.
 
-- [ ] **Step 4: Commit and merge** through the merge protocol.
+- [x] **Step 4: Commit and merge** through the merge protocol.
 
-- [ ] **Step 5 (Gated, approved separately): Run `docker/propagate-updates.zsh deploy --stack webserver`.** Require a successful command result and complete the installed acceptance under `docker/webserver/README.md`, Routing regression checks, including the paragraph beginning "After an authorized live update". Report each unmet check as an open release gate.
+- [x] **Step 5 (Gated, approved separately): Run `docker/propagate-updates.zsh deploy --stack webserver`.** Require a successful command result and complete the installed acceptance under `docker/webserver/README.md`, Routing regression checks, including the paragraph beginning "After an authorized live update". Report each unmet check as an open release gate.
 
 ---
 
@@ -219,11 +254,11 @@ Each task commits a decision record and stops for the owner's choice. Implementa
 - Start with `colophon/tools/gen_unicode.py`'s `if __name__` block, `colophon/tests/run-pytest.sh`, `git-multirepo-dashboard/tests/`, `cognitive_switchyard/cognitive_switchyard/builtin_packs/*/scripts/verify`, `Calculation tools/backtest/tests/helpers/runner.cjs`, `docker/llm_collector` and `benchmark-llm`.
 - Policy: `agents.md` Python as an agent and Validation Matrix; `~/.claude/shared/core.md`; `~/.claude/shared/python-env.md`; `python-venv-guard.sh`, `python-classifier.awk` and `audit-python-usage.sh` beside them; the PKM entries "Python Environment Policy" and "Slim instructions".
 
-- [ ] **Step 1: Measure the pilots**, `div_conv` (pytest only) and `jtree` (browser), in a worktree. Compare `.venv` setup and run against `uv run --no-project --no-python-downloads --with-requirements requirements-dev.txt pytest …`. For cold runs, set `UV_CACHE_DIR` to a fresh `mktemp -d`, record its size, then remove it. Record cold time, warm time, disk and pass count.
+- [x] **Step 1: Measure the pilots**, `div_conv` (pytest only) and `jtree` (browser), in a worktree. Compare `.venv` setup and run against `uv run --no-project --no-python-downloads --with-requirements requirements-dev.txt pytest …`. For cold runs, set `UV_CACHE_DIR` to a fresh `mktemp -d`, record its size, then remove it. Record cold time, warm time, disk and pass count.
 
-- [ ] **Step 2: Try `uv run --extra` in `benchmark-llm`.** Request approval for `uv run --no-python-downloads --extra dev pytest -q` under the `agents.md` Python as an agent entry before running it, or record this pilot as unmeasured.
+- [x] **Step 2: Try `uv run --extra` in `benchmark-llm`.** Request approval for `uv run --no-python-downloads --extra dev pytest -q` under the `agents.md` Python as an agent entry before running it, or record this pilot as unmeasured.
 
-- [ ] **Step 3: Answer these in the record:**
+- [x] **Step 3: Answer these in the record:**
 
   1. What replaces the venv: ephemeral `uv run`, a per-project script, or a Make target? Does it work for `pip install -e` projects?
   2. Do `pytest-playwright`, and tests that spawn `sys.executable`, work in an ephemeral environment?
@@ -233,7 +268,7 @@ Each task commits a decision record and stops for the owner's choice. Implementa
   6. Which projects stay exceptions, judged from the Sources?
   7. Do the classifier and hook permit the chosen form?
 
-- [ ] **Step 4: Commit the record.**
+- [x] **Step 4: Commit the record.**
 
 ### Task 7: Transcription Decision
 
@@ -247,13 +282,13 @@ Each task commits a decision record and stops for the owner's choice. Implementa
 - `tools/check_uv_headers.py`: `FORBIDDEN_PATTERNS`, `check_launcher`, `missing_declared_imports`, `IMPORT_DISTRIBUTION_ALIASES`.
 - `docs/local_deployment_sync.md`: the Transcription entries.
 
-- [ ] **Step 1: Spike in a worktree.** Build one launcher with a capped header matching `setup.sh`'s interpreter, declaring every pinned requirement. Test the question table's startup recommendation, then a child process if needed, without `os.execv`. Apply its state recommendation with `TRANSCRIPTION_HOME` pointing to synthetic scratch; isolate `transcribe.py`'s working directory before it starts.
+- [x] **Step 1: Spike in a worktree.** Build one launcher with a capped header matching `setup.sh`'s interpreter, declaring every pinned requirement. Test the question table's startup recommendation, then a child process if needed, without `os.execv`. Apply its state recommendation with `TRANSCRIPTION_HOME` pointing to synthetic scratch; isolate `transcribe.py`'s working directory before it starts.
 
-- [ ] **Step 2: Test the spike.** Through the launcher, start each script headless, request `/`, and confirm Ctrl-C ends it cleanly with no orphaned process. Do not load a Whisper model or use real audio. Launch from another directory and verify the state recommendation in the question table for each script; record additional changes needed. Keep these spike results distinct from acceptance requirements in the future implementation plan.
+- [x] **Step 2: Test the spike.** Through the launcher, start each script headless, request `/`, and confirm Ctrl-C ends it cleanly with no orphaned process. Do not load a Whisper model or use real audio. Launch from another directory and verify the state recommendation in the question table for each script; record additional changes needed. Keep these spike results distinct from acceptance requirements in the future implementation plan.
 
-- [ ] **Step 3: Measure the footprint.** Use a fresh `UV_CACHE_DIR` in temporary space, with and without the optional packages. Record cold start, warm start and disk, and say whether the cold start is acceptable.
+- [x] **Step 3: Measure the footprint.** Use a fresh `UV_CACHE_DIR` in temporary space, with and without the optional packages. Record cold start, warm start and disk, and say whether the cold start is acceptable.
 
-- [ ] **Step 4: Answer these in the record.** Each starting recommendation is there to confirm or overturn with the spike's evidence.
+- [x] **Step 4: Answer these in the record.** Each starting recommendation is there to confirm or overturn with the spike's evidence.
 
   | Question | Starting recommendation |
   |---|---|
@@ -265,9 +300,9 @@ Each task commits a decision record and stops for the owner's choice. Implementa
   | Do the old scripts go? | Use the legacy-wrapper list in `agents.md` Streamlit apps; propose deleting those wrappers, `ui.sh` and `setup.sh` after checking deployed callers |
   | Are Whisper model downloads unaffected? | Expected to be. Confirm where Whisper keeps its cache |
 
-- [ ] **Step 5: List what the implementation plan must cover:** `transcribe.py` as well as `app.py`, the verified question-table decisions, guard registration, removing `transcription/app.py` from `NON_UV_ENTRYPOINT_ALLOWLIST`, the `agents.md` Streamlit and setup-script entries, the README's Validation section, deployment, and removing the `transcription` venvs after verification.
+- [x] **Step 5: List what the implementation plan must cover:** `transcribe.py` as well as `app.py`, the verified question-table decisions, guard registration, removing `transcription/app.py` from `NON_UV_ENTRYPOINT_ALLOWLIST`, the `agents.md` Streamlit and setup-script entries, the README's Validation section, deployment, and removing the `transcription` venvs after verification.
 
-- [ ] **Step 6: Commit the record.**
+- [x] **Step 6: Commit the record.**
 
 ---
 
