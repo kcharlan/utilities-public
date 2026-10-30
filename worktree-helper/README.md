@@ -40,7 +40,7 @@ This utility wraps those flows in a friendlier interface and prints a reusable C
 
 ## Requirements
 
-- Python 3.9+
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Git on `PATH`
 - A real terminal with Python's `curses` module for the TUI mode
 - macOS or a system with `xdg-open` for the `open` action
@@ -211,7 +211,7 @@ Other create-related flags:
 --lock-reason TEXT
 ```
 
-The `--orphan` option appears in version 0.1.0's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
+The `--orphan` option appears in version 0.1.1's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
 
 ### Prune Flags
 

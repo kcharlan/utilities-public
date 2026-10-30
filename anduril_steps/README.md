@@ -12,27 +12,14 @@ It has two modes:
 
 ## Requirements
 
-- Python 3.10 or newer
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - No third-party packages
-
-Create and activate a virtual environment before running the script:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
 
 The examples below assume the current directory is `anduril_steps/`. The script
 is tracked as executable, so it can be run directly:
 
 ```bash
 ./anduril_steps.py --help
-```
-
-It can also be invoked through a compatible Python interpreter:
-
-```bash
-python3 anduril_steps.py --help
 ```
 
 ## Interactive use

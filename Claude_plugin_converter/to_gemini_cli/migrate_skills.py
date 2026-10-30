@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Convert Claude-style plugin skills and commands for Gemini CLI."""
 
 from __future__ import annotations
