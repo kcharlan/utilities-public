@@ -1,8 +1,4 @@
-# Dev/test dependencies for jtree
-# Install: pip install -r requirements-dev.txt
-fastapi
-uvicorn
-pydantic
+# Test-only dependencies; runtime dependencies are in the launcher.
 httpx
 pytest
 playwright>=1.63

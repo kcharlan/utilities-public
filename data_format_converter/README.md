@@ -159,18 +159,11 @@ Important conversion behavior:
 
 ## Testing
 
-From this directory, create a Python 3.12 development environment and install
-the test requirements:
+Run the Python suite from this directory using the launcher metadata and
+test-only requirements:
 
 ```sh
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Run the Python suite:
-
-```sh
-.venv/bin/python -m pytest
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py data_format_converter
 ```
 
 The pytest suite covers each Python converter, CLI success/error paths, default

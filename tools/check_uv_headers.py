@@ -133,7 +133,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
     "md-json/md_converter.py": ("stdlib", "", frozenset()),
     "Claude_plugin_converter/to_gemini_cli/migrate_skills.py": ("stdlib", "", frozenset()),
     "doc_linearizer/linearize.py": ("requirements", "doc_linearizer/requirements.txt", frozenset()),
-    "data_format_converter/src/data_convert.py": ("requirements", "data_format_converter/requirements.txt", frozenset({"pytest"})),
+    "data_format_converter/src/data_convert.py": ("requirements", "data_format_converter/requirements.txt", frozenset()),
     "reversible-skew/rs.py": ("requirements", "reversible-skew/requirements.txt", frozenset({"numba"})),
     "reversible-skew/rs-big.py": ("requirements", "reversible-skew/requirements.txt", frozenset()),
     "video-scenes/video-scenes": ("requirements", "video-scenes/requirements.txt", frozenset()),
@@ -144,11 +144,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "editdb/requirements-dev.txt",
         frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
     ),
-    "jtree/jtree": (
-        "requirements",
-        "jtree/requirements-dev.txt",
-        frozenset({"httpx", "playwright", "pytest", "pytest-playwright"}),
-    ),
+    "jtree/jtree": ("header", "", frozenset()),
     "harscope/harscope": (
         "requirements",
         "harscope/requirements-dev.txt",
@@ -171,11 +167,7 @@ DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
         "storage_monitor/requirements-dev.txt",
         frozenset({"playwright", "pytest"}),
     ),
-    "tax2/tax2": (
-        "requirements",
-        "tax2/requirements-dev.txt",
-        frozenset({"playwright", "pytest"}),
-    ),
+    "tax2/tax2": ("header", "", frozenset()),
     "routerview/routerview": (
         "requirements",
         "routerview/requirements-dev.txt",

@@ -55,9 +55,10 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
+- Registered Python suites: from the repository root run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` for each affected entry in `tools/project_tests.toml`; also run its non-Python categories and acceptance gates below. Install a missing browser explicitly with `--install-browsers` only when authorized.
 - Shared uv header guard (`tools/check_uv_headers.py`):
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
-  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Create absent project test environments with `/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv` for Tax2 and Data Format Converter, and `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv` for Benchmark LLM and Cognitive Switchyard. Install each project's documented test dependencies; prepend its own `.venv/bin` to `PATH` for each suite so child Python processes use that environment.
+  - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Use the registered runner for Tax2 and Data Format Converter; for Benchmark and Cognitive create absent project test environments with `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv`, install their documented test dependencies, and prepend each project's own `.venv/bin` to `PATH` for its suite.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
   - For `Claude_plugin_converter/to_gemini_cli`, create an absent `.venv` with `/opt/homebrew/bin/python3 -m venv .venv`, run `.venv/bin/python -m unittest discover -s tests -v`, and smoke the launcher against a synthetic category in a temporary workspace.
@@ -91,7 +92,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `make check-assets` and `make check-sort` (local guards); individual categories: `make test-unit`, `make test-cli`, `make test-browser`.
   - Use this project's own Python 3.14 `.venv` and cached Chromium. Dependency/browser downloads require approval. Test fixtures and evidence stay outside the public checkout; wrappers sandbox real runtime/source access. Original native parity/performance tools and their `private/` workflow are not included.
 - `data_format_converter`:
-  - `.venv/bin/python -m pytest`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py data_format_converter` from the repository root.
   - Browser suite: `npm ci`, `npx playwright install chromium`, then `npm run test:browser`.
 - `div_conv`:
   - `.venv/bin/python -m pytest tests -v`
@@ -127,7 +128,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - Deployment changes also require `node --test tools/tests/deploy_storage_monitor.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh` from the repository root; shared deployment helper changes require all native installer suites above.
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
 - `tax2`:
-  - `.venv/bin/python -m pytest`
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py tax2` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "${TMPDIR:-/tmp}/tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
   - Repeat the build after warming the same uv cache with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser`. Open its `file://` page in offline Chromium, exercise calculator inputs/state allocations, and verify all three real downloads: QIF, Markdown rate schedule and CSV lookup. Require no page/console errors or external requests. The complete pytest suite includes automated offline browser/download coverage; retain the actual uv smoke build as a separate acceptance check.
   - Run `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser --output "$tax2_acceptance_home/explicit.html"`. Confirm `explicit.html` exists with mode `0600` (`test -f "$tax2_acceptance_home/explicit.html"` and `stat -f '%Lp' "$tax2_acceptance_home/explicit.html"` on macOS).
@@ -185,7 +186,7 @@ The guard also flags regular `.py` files with no shebang and a column-zero `if _
 Key design rules:
 - Prefer a user-home runtime directory like `~/.toolname/` over scattered fixed paths, for mutable state.
 - Keep dependencies unpinned in the header unless a tool needs a specific range (e.g. `router-log-analyzer` pins `PyMuPDF>=1.24,<2`).
-- Keep a tracked dev/test requirements file (or pyproject test extra) that reproduces the interpreter used by the full project suite; never rely on an untracked local venv's package history.
+- Keep tracked test requirements (or a pyproject test extra) for the full suite. Registered projects use test-only requirements alongside launcher metadata through the shared runner; nonregistered projects document their test interpreter and dependencies. Never rely on an untracked local venv's package history.
 - Single entry point — no separate `setup.sh`.
 - Under uv, the first invocation of any command (including `--help`) may resolve/cache the environment; that is expected and not worth a workaround.
 

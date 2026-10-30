@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-30: Keep test registry fixtures and argument separators explicit
+
+Once the shared registry contained real projects, guard tests that substituted a
+synthetic repository still read the real registry and failed on unrelated paths.
+Give those tests an empty synthetic registry; keep the separate invalid-registry
+test so validation remains covered. `argparse.parse_known_args` can consume `--`
+when a positional argument precedes it, so split the raw arguments at the
+separator before parsing runner controls and test both option and positional
+forwarding. A warm uv script cache can make `uv python find --script` return
+the script environment instead of its Homebrew interpreter; discover with
+`--no-cache` in private scratch and test both cold and warm cache states.
+
 ## 2026-10-29: Snapshot closed Codex databases without changing their source
 
 A closed WAL database can be read through a private APFS clone only after validating

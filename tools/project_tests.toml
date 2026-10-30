@@ -1,2 +1,23 @@
 # Project test suites are registered during the rollout.
 [projects]
+
+[projects.jtree]
+project = "jtree"
+launcher = "jtree/jtree"
+test_requirements = "jtree/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
+[projects.tax2]
+project = "tax2"
+launcher = "tax2/tax2"
+test_requirements = "tax2/requirements-dev.txt"
+test_commands = [["pytest"]]
+smoke_args = ["--help"]
+
+[projects.data_format_converter]
+project = "data_format_converter"
+launcher = "data_format_converter/src/data_convert.py"
+test_requirements = "data_format_converter/requirements-dev.txt"
+test_commands = [["pytest"]]
+smoke_args = ["--help"]

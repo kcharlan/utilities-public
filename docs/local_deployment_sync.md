@@ -718,13 +718,42 @@ Do not treat local-only files as drift. Important examples include:
 - Docker databases, exports, logs, extension configuration, API credentials, and Compose `.env` files.
 - Project venvs, caches, and `.DS_Store` files.
 
-Some project tests use the repository's shared `tools.testkit` helper. A top-level deployment remains runtime-standalone, but its copied test files need the canonical repository root on `PYTHONPATH`:
+Some project tests use the repository's shared `tools.testkit` helper. A top-level deployment remains runtime-standalone, but its copied test files need the canonical repository root on `PYTHONPATH`. For example, with a copied Tax2 launcher, tests and test requirements, use an isolated environment from the deployed launcher metadata. Start in private scratch so interpreter discovery cannot inherit a parent project environment:
 
 ```bash
-cd "$HOME/tax2"
-PYTHONPATH="$HOME/source/utilities-public" \
-  uv run --no-python-downloads --with-requirements requirements-dev.txt python -m pytest -q
+repo="$HOME/source/utilities-public"
+deployed="$HOME/tax2"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/deployed-tests.XXXXXX")
+(
+  cd "$scratch" || exit 1
+  clean_path=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+  interpreter=$(env -i HOME="$HOME" PATH="$clean_path" TMPDIR="$scratch" UV_PYTHON_DOWNLOADS=never \
+    uv python find --no-python-downloads --no-cache --script "$deployed/tax2") || exit 1
+  case "$interpreter" in /opt/homebrew/*) ;; *) echo "Unapproved interpreter: $interpreter" >&2; exit 1 ;; esac
+  cd "$deployed" || exit 1
+  probe=$(env -i HOME="$HOME" PATH="$clean_path" TMPDIR="$scratch" UV_PYTHON_DOWNLOADS=never PYTHONPATH="$repo" \
+    uv run --no-project --isolated --no-python-downloads --python "$interpreter" \
+    --with-requirements "$deployed/tax2" --with-requirements "$deployed/requirements-dev.txt" \
+    python -c 'import sys; print(sys._base_executable); print(sys.version.split()[0])') || exit 1
+  actual=${probe%%$'\n'*}
+  [ "$actual" -ef "$interpreter" ] || { echo "Interpreter mismatch: $probe" >&2; exit 1; }
+  printf 'Actual interpreter and version:\n%s\n' "$probe"
+  env -i HOME="$HOME" PATH="$clean_path" TMPDIR="$scratch" UV_PYTHON_DOWNLOADS=never PYTHONPATH="$repo" \
+    uv run --no-project --isolated --no-python-downloads --python "$interpreter" \
+    --with-requirements "$deployed/tax2" --with-requirements "$deployed/requirements-dev.txt" \
+    python -m pytest -q
+)
+status=$?
+rm -r -- "$scratch"
+test "$status" -eq 0
 ```
+
+Use absolute canonical paths for both variables. `--no-cache` keeps discovery
+from returning the launcher's cached virtual environment after a previous run.
+The clean environment removes
+inherited virtual environment and Python import settings; the only deliberate
+import path is the canonical repository root. The shared runner itself does not
+accept an inherited `PYTHONPATH`.
 
 The same `PYTHONPATH` applies to copied tests in `~/mls-tracker` and
 `~/transcription`. For Transcription, use its README's Self-test command from

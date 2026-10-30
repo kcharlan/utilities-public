@@ -23,12 +23,19 @@ from tools.check_uv_headers import (
 import tools.check_uv_headers as guard
 
 
+@pytest.fixture
+def empty_registry(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.toml"
+    registry.write_text("[projects]\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REGISTRY_PATH", registry)
+
+
 def test_retired_python_colophon_has_no_launcher_or_manifest_policy() -> None:
     assert "colophon/colophon" not in LAUNCHERS
     assert "colophon/colophon" not in DEPENDENCY_MANIFESTS
 
 
-def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypatch, capsys) -> None:
+def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypatch, capsys, empty_registry) -> None:
     launcher = tmp_path / "synthetic_probe"
     launcher.write_text(guard.CANONICAL_SHEBANG + "\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -40,7 +47,7 @@ def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypat
     assert "uv launcher is not registered in LAUNCHERS" in capsys.readouterr().out
 
 
-def test_unlisted_python_shebang_is_rejected(tmp_path, monkeypatch, capsys) -> None:
+def test_unlisted_python_shebang_is_rejected(tmp_path, monkeypatch, capsys, empty_registry) -> None:
     launcher = tmp_path / "synthetic_probe"
     launcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -51,7 +58,7 @@ def test_unlisted_python_shebang_is_rejected(tmp_path, monkeypatch, capsys) -> N
 
 
 @pytest.mark.parametrize("quote", ['\"', "'"])
-def test_unlisted_entrypoint_is_rejected(tmp_path, monkeypatch, capsys, quote) -> None:
+def test_unlisted_entrypoint_is_rejected(tmp_path, monkeypatch, capsys, quote, empty_registry) -> None:
     launcher = tmp_path / "synthetic_tool.py"
     launcher.write_text(f"if __name__ == {quote}__main__{quote}:\n    pass\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -61,7 +68,7 @@ def test_unlisted_entrypoint_is_rejected(tmp_path, monkeypatch, capsys, quote) -
     assert "Python entry point is not a uv launcher" in capsys.readouterr().out
 
 
-def test_entrypoint_under_test_paths_is_skipped(tmp_path, monkeypatch) -> None:
+def test_entrypoint_under_test_paths_is_skipped(tmp_path, monkeypatch, empty_registry) -> None:
     paths = [tmp_path / "tests/helper.py", tmp_path / "test/helper.py",
              tmp_path / "test_probe.py", tmp_path / "conftest.py"]
     for path in paths:
@@ -73,7 +80,7 @@ def test_entrypoint_under_test_paths_is_skipped(tmp_path, monkeypatch) -> None:
     assert guard.main() == 0
 
 
-def test_module_without_main_guard_is_skipped(tmp_path, monkeypatch) -> None:
+def test_module_without_main_guard_is_skipped(tmp_path, monkeypatch, empty_registry) -> None:
     module = tmp_path / "module.py"
     module.write_text("value = 1\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -82,7 +89,7 @@ def test_module_without_main_guard_is_skipped(tmp_path, monkeypatch) -> None:
     assert guard.main() == 0
 
 
-def test_allowlisted_entrypoint_is_skipped(tmp_path, monkeypatch) -> None:
+def test_allowlisted_entrypoint_is_skipped(tmp_path, monkeypatch, empty_registry) -> None:
     paths = [tmp_path / "allowed.py", tmp_path / "examples/probe.py"]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,7 +101,7 @@ def test_allowlisted_entrypoint_is_skipped(tmp_path, monkeypatch) -> None:
     assert guard.main() == 0
 
 
-def test_binary_python_file_is_skipped(tmp_path, monkeypatch) -> None:
+def test_binary_python_file_is_skipped(tmp_path, monkeypatch, empty_registry) -> None:
     binary = tmp_path / "binary.py"
     binary.write_bytes(b"\xff\xfe\x00")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -103,7 +110,7 @@ def test_binary_python_file_is_skipped(tmp_path, monkeypatch) -> None:
     assert guard.main() == 0
 
 
-def test_binary_file_is_skipped(tmp_path, monkeypatch, capsys) -> None:
+def test_binary_file_is_skipped(tmp_path, monkeypatch, capsys, empty_registry) -> None:
     binary = tmp_path / "synthetic_binary"
     binary.write_bytes(b"\xff\xfe\x00")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
@@ -113,7 +120,7 @@ def test_binary_file_is_skipped(tmp_path, monkeypatch, capsys) -> None:
     assert "FAILED" not in capsys.readouterr().out
 
 
-def test_allowlist_matches_exact_files_and_directory_prefixes(tmp_path, monkeypatch, capsys) -> None:
+def test_allowlist_matches_exact_files_and_directory_prefixes(tmp_path, monkeypatch, capsys, empty_registry) -> None:
     exact = tmp_path / "allowed.py"
     inside = tmp_path / "workers" / "probe"
     near_miss = tmp_path / "workers-extra" / "probe"

@@ -180,15 +180,15 @@ docs/multi_state_design.md
 
 ## Development validation
 
-Use the existing project `.venv`, or create it only if absent. On Homebrew
-macOS (do not recreate an existing environment):
+Use the shared runner from this directory:
 
 ```bash
-/opt/homebrew/bin/python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py tax2
 ```
+
+The runner combines the launcher's runtime dependencies with the test-only
+requirements. If Chromium is missing, install it explicitly with
+`UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py tax2 --install-browsers`.
 
 The complete suite includes offline Chromium interaction and all three real
 downloads, parity, bundled expectations, and publication safety. Other browsers

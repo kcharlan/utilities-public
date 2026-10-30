@@ -133,8 +133,9 @@ so browser-specific behavior on those clients requires manual verification.
 
 ```bash
 cd jtree
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/playwright install chromium
-.venv/bin/python -m pytest -q
+UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py jtree
 ```
+
+The runner uses the launcher's Python constraint and runtime dependencies plus
+`requirements-dev.txt` for tests. To install Chromium when needed, run
+`UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py jtree --install-browsers`.
