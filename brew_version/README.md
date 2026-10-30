@@ -234,14 +234,22 @@ cannot bypass a failed save's interval floor.
 
 Unacknowledged updates share one rolling notification. The first update sounds;
 later updates replace it silently, newest first, with updates from the same check
-ordered by name. macOS may truncate a long body, but the title retains the count.
-Clicking the alert opens the popover and acknowledges the list; dismissing it,
-opening the popover, or closing it after an update arrived also clears the list.
+ordered by name. A newer version of a listed package moves it to the front.
+Several-package bodies use short names, including for taps. macOS may truncate
+a long body, but the title retains the count.
+Clicking the alert opens the popover and acknowledges the list; dismissing it
+with the X clears the list and leaves the popover closed. Opening the popover,
+or closing it after an update arrived, also clears the list.
 Skip, stop watching and upgrading remove affected entries without reposting;
+removing the last entry removes the delivered alert.
 Undo restores a watch without relisting it. Amber state remains independent.
-The list survives restart and is reconciled quietly. If the system no longer lists
+The list survives restart and is reconciled quietly; launch removes a rolling
+alert with no saved list behind it. If the system no longer lists
 the alert at a later check, the next update starts a fresh list; denied notifications,
 disabled Notification Center listing and failed posts keep the list for retry.
+Retry posts the current list and preserves the first alert's sound until a post
+succeeds. A five-second grace period after a successful post, including a retry,
+prevents a delayed delivered-notification listing from being mistaken for a clear.
 An acknowledgement that cannot be saved leaves the list and alert intact.
 Launch removes older delivered alerts and test notifications. The saved schema is
 unchanged: older state without the alert list loads, and unknown entry keys are
@@ -502,7 +510,9 @@ while the formula is `3.0-synthetic`. `synthetic-cask` is another watchable cask
 add two watches to exercise click/Delete/Undo without real inventory.
 For rolling-alert acceptance use a fresh home under the user's home directory
 (`BREW_VERSION_HARNESS_HOME`): on macOS 27 `usernoted` rejected a bundle in
-`/private/tmp`. Remove that home when the check ends. Establish permission in
+`/private/tmp` but accepted the probe under the user's home. For this gate, set
+`BREW_VERSION_HARNESS_HOME` to a fresh path and run `make -C brew_version acceptance`.
+Remove that home when the check ends. Establish permission in
 System Settings > Notifications. Watch
 `synthetic-formula` and `synthetic-cask`, then close the popover after pressing
 **Both in 5s** or **Cask then formula**. Verify same-check ordering, silent
@@ -510,6 +520,30 @@ replacement and newest-first order, one delivered entry, click, dismiss, popover
 acknowledgement, and clearing in Notification Center followed by a fresh list.
 The latter may be reported as a click by macOS. Finish delayed sequences before
 testing the failure and retry controls.
+
+Record each native result separately. With **Both in 5s**, check the initial
+sound and alphabetical order, then click the alert. With **Cask then formula**,
+check the first sound, silent replacement, newest-first order and single delivered
+entry, then open the popover from the menu bar. Repeat, dismiss the cask alert,
+and require the following formula alert to start a fresh list containing only the
+formula. Acknowledge it. Run **Both in 5s** again, let the banner slide away,
+and clear it in Notification Center; then use **Cask then formula** to verify
+that the cask starts a fresh list and the formula replaces it silently. Wait for
+the formula and acknowledge before proceeding.
+
+The macOS 27 synthetic probe on 2026-10-30 observed that identifier replacement
+raises a banner even when silent, delivered-list queries lag posts, and a clear
+in Notification Center reported the default action indistinguishably from a
+body click. Removing the delivered identifier after posting removed the replacement;
+the X reported a dismiss action. Long bodies truncated while titles stayed whole.
+Delivered alerts survived app relaunch and could be acted on after wake. The
+ad hoc signed probe was not retained; the owner performed the clicks and reported
+the sounds. The probe did not establish behavior after a Mac restart, with Notification
+Center listing disabled, or whether its authorization carries to a differently
+signed harness. It did not run the harness from its default temporary home.
+Establish the harness's permission separately; these observations are not a result
+of the native acceptance checklist.
+
 **Light** and **Dark** are harness appearance controls. **Delay next lookup** holds the next individual
 synthetic lookup for two seconds, so type and press Return while it is pending.
 After real notification authorization, **Test posting failure** injects one

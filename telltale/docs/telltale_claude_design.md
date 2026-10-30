@@ -1,8 +1,7 @@
 # Telltale: Claude provider design
 
-Status: **approved by Kevin**, 2026-10-28. The plan is
-[telltale_claude_implementation_plan.md](telltale_claude_implementation_plan.md).
-Base documents: [design spec](telltale_design_spec.md) (approved 2026-10-27, "the spec"),
+Status: **approved by Kevin**, 2026-10-28. Base documents:
+[design spec](telltale_design_spec.md) (approved 2026-10-27, "the spec"),
 [visual design](telltale_visual_design.md). Section references (§n) point into the spec unless
 they say "this doc".
 
@@ -142,7 +141,10 @@ or `manual`; `content` is a summary and is never read. Precomputed compaction ma
 but still removes context. The threshold can change; use the observed recent median (§7.3), not
 a hard-coded threshold. Compactions are the input for Claude's Load lamp (§7.3).
 
-## 4. Does it snap in? Confirmed, with eight core gaps
+## 4. Integration changes
+
+The gaps in the following table describe the 0.1.1 starting point, not current
+behavior. The changes in its final column are implemented contracts.
 
 The plugin interface (§5, `Sources/TelltaleCore/Plugins.swift`) fits Claude without change:
 `UsageSource.ingest(cursor:backfillFrom:now:)` returning `IngestBatch` and an opaque cursor, and
@@ -155,10 +157,10 @@ The incident rule already pairs each status source with its usage providers
 (`RuleStatusSource.providers`) and asks each provider's `ModelNaming` about titles. The schema
 needs a migration only for the compactions table Kevin added to this release (G8).
 
-Snapping in therefore means two new targets (§5–§6 of this doc) and two lines in
+The integration adds two targets (§5–§6 of this doc) to
 `Sources/Telltale/Registry.swift`, with distinct ids for the usage source (`claude`) and the
-status source (`anthropic`; §5 of this doc says why). Six things in the core don't hold up with a
-second provider (G1–G6), and Kevin's decisions on incidents and the Load lamp add two (G7, G8):
+status source (`anthropic`; §5 of this doc says why). Six original core gaps (G1–G6),
+and two changes for incidents and the Load lamp (G7, G8), are recorded here:
 
 | # | Gap | Where | Change |
 |---|---|---|---|
@@ -299,6 +301,8 @@ Code responses since 09:12." (G3).
 last line consumed (§5.3's completion rule), the file's inode and size at that point, the pending
 input time, the previous response's end, the most recent model (for failed requests), and whether
 the file has shown a usage line (for §5.7). Entries for files that no longer exist are dropped.
+When a response is deferred, events, diagnostics and version observations after its checkpoint
+are deferred with it, so a later pass cannot duplicate them or advance metadata beyond the cursor.
 
 ### 5.9 Compactions
 
@@ -447,12 +451,12 @@ existing source-state rows.
 
 ## 8. The app
 
-No new views. What changes:
+The provider integration uses the existing views:
 
 - Sidebar: a "Claude Code" group with its models; "Not set up" dimmed when `~/.claude/projects`
   is absent.
 - Panel: Claude models active in the last 3 hours get rows beside Codex's; panel alerts already
-  name the provider (`PanelSnapshot`). Notifications and Events don't yet (G6). The Provider lamp
+  name the provider (`PanelSnapshot`). Notifications and Events name it too (G6). The Provider lamp
   is captioned "Status" with two status sources (existing behavior); the incident copy already
   names the page ("Claude: Elevated errors for Claude Opus 5.5").
 - Settings: a new Providers section (§8.3 of this doc). The watched-components checklist gains
@@ -504,6 +508,12 @@ or a status source) keeps, in `rule_state` under its own id: its last evaluated 
 backfill with its reason (`new` or `rebuild`), and when its last backfill started and finished.
 A unit with no state is backfilled with reason `new`; a usage provider only once its source
 reports it is set up.
+
+The collector adopts legacy global progress first, applies rebuild requests, then prepares new
+status-source backfills in one transaction. A new usage provider starts its backfill only after a
+ready ingest; other units continue independently. Each unit commits evaluation in day-sized
+chunks and retains its own backfill boundary across interruptions. A completed undismissed
+arrival is stored separately so a later rebuild cannot erase it.
 
 **Requests.** Settings stores per-provider rebuild requests (provider id → when requested, so the
 state line can show the time) beside the

@@ -1123,4 +1123,6 @@ cases. Stop the server before removing that exact temporary runtime directory.
 
 ## Documents
 
+- [`docs/hosts_and_endpoints.md`](./docs/hosts_and_endpoints.md) — developer contracts for endpoint capture, storage, APIs, and Hosts state.
+
 - [`docs/LAUNCHD.md`](./docs/LAUNCHD.md)

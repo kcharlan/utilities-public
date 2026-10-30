@@ -104,6 +104,12 @@ C units. The original captured-corpus parity/performance machinery is not
 part of this project. See [development](development.md) for its validation
 boundary and [third-party notices](../THIRD_PARTY.md) for provenance.
 
+Disclosure collapse focuses the surviving state control without scrolling,
+then scrolls the section start into view only if its top is outside the
+viewport. Workspace controls resolve replacement nodes after rerender. Footer
+panels snapshot their live open properties before replacement, so queued native
+toggle events do not erase independent state or steal focus on rerender.
+
 ## Usage accounting rules
 
 Long-context thresholds follow CodexBar `v0.74.1` (commit `7c08c0ae7`).

@@ -1,14 +1,12 @@
 # Telltale visual design
 
-Status: draft for review (2026-10-27). This covers how Telltale looks and reads.
-Behavior, data sources and the collector are covered in the design spec, which
-is still to be written.
+This covers how Telltale looks and reads. Behavior, data sources and the collector
+are covered in the [design spec](telltale_design_spec.md) and [Claude provider design](telltale_claude_design.md).
 
 ## Subject, audience, job
 
 - **Subject.** A live health monitor for the AI coding services Kevin uses all
-  day. It starts with Codex on OpenAI models. OpenRouter and Claude come later
-  as plugins.
+  day. It watches Codex and Claude Code. OpenRouter is a possible later plugin.
 - **Audience.** One person, a heavy agent user, glancing at it between tasks.
 - **Job.** Answer two questions at a glance: "Is something off?" and "Is it
   them or me?" (provider trouble, or a heavy workload of my own).

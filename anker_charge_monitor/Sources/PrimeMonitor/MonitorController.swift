@@ -493,7 +493,7 @@ struct PortControlGenerations: Hashable, Sendable {
 }
 
 // MARK: - Port control
-// Contracts: docs/port_control_implementation_plan.md "Design decisions". The Core
+// Contracts: docs/architecture.md "Port control". The Core
 // `PortOperation` decides; this extension feeds it events and executes its actions.
 extension MonitorController {
     var portControlBlock: PortControlBlock? {

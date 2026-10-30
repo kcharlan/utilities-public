@@ -5,8 +5,8 @@
 Telltale 0.3.2 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
-[`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the build
-sequence in [`docs/telltale_implementation_plan.md`](docs/telltale_implementation_plan.md).
+[`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the Claude provider
+design in [`docs/telltale_claude_design.md`](docs/telltale_claude_design.md).
 
 Current state: the SwiftPM package, the vendored zstd decoder and the streaming `ZstdReader`
 for Codex `.jsonl.zst` rollouts, the store, the Codex and Claude Code usage sources and their status sources, the usual-speed

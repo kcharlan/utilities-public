@@ -153,7 +153,7 @@ switch state as confirmation; a restart's pause starts from the report that the
 port is off. A confirmed change simply clears the phase text. A change that is
 not confirmed within 10 seconds is reported above the rows, prefixed with the
 name of the charger it was sent to, with a **Dismiss** button; the in-app
-[wording](docs/port_control_implementation_plan.md#wording) lists each message.
+[wording](docs/architecture.md#port-control-messages) lists each message.
 A restart whose "off" is not confirmed, because no report arrives in time or the
 command fails, does not stop there: it sends "on" at once, without the pause, so
 the port is not left off. If that "on" is confirmed, the restart still reports
@@ -202,7 +202,8 @@ trimming; two spellings of one key are rejected. `source` and other top-level
 keys are kept. A label uses the device name, then the brand class, then the
 vendor, then the uppercase hexadecimal `VID:PID`. A device that has not reported
 its identity is labelled "Unidentified device"; some devices never answer, so
-that label can persist while the device charges.
+that label can persist while the device charges. Decimal brand keys with leading
+zeroes are rejected.
 While the panel is open the app checks the file every second and decodes it
 when its device, inode, size or modification time changes, so editor saves apply
 without a restart. An invalid file is left untouched: the last loaded names stay
@@ -271,6 +272,29 @@ Exit codes are 0 success, 2 missing account/charger, 3 timeout, 4 concurrent
 instance, and 5 startup/persistence/backend failure. This contacts the real vault
 and service; it is a separate operator acceptance check, outside `make test`.
 Its reading output is private and must remain outside the repository.
+
+### Physical and installed acceptance
+
+Synthetic protocol and panel tests do not establish physical charger behavior or
+installed-app interaction. The 2026-10-21 owner observation recorded in
+[lessons](docs/lessons_learned.md#2026-10-21-let-decoded-identities-outrank-protocol-comments)
+established that decoded identity can coexist with support value 2 and that an
+unresolved device can remain unidentified; it does not establish every physical
+or installed acceptance check. The status of the complete checks below is unknown.
+Live checks and installation require separate authorization.
+
+With the GUI quit, use the installed `--live-check` above to compare decoded and
+raw detail fields with the [protocol reference](docs/anker_protocol_reference.md#62-detail-fields),
+including an attached device and an empty USB-C port. Do not induce faults. In a
+separately authorized real-charger check, use a device whose power can be observed,
+never the port powering this Mac: check turn off, turn on, restart, the shared
+USB-A pair, and quitting during a restart. Confirm power on the device as well as
+the panel; a sent command alone does not establish restoration. Independently
+switch a USB-C port off and on in the Anker app and use `--live-check` after each
+change to compare its reported switch state with the other ports. After a separately
+authorized installation, check off/on, identity labels, naming across quit and
+reopen, live catalog edits and physical keyboard and mouse interaction. Verify
+source, installed metadata and Settings versions agree.
 
 ## Privacy and development
 
