@@ -69,13 +69,48 @@ LAUNCHERS = [
     "cognitive_switchyard/switchyard",
     "vid-compiler/video_compiler.py",
     "model_sentinel/build_standalone.py",
+    "abacus usage/de-abacus.py",
+    "anduril_steps/anduril_steps.py",
+    "dloc/dloc",
+    "worktree-helper/worktree",
+    "md-json/md_converter.py",
+    "Claude_plugin_converter/to_gemini_cli/migrate_skills.py",
+    "doc_linearizer/linearize.py",
+    "data_format_converter/src/data_convert.py",
+    "reversible-skew/rs.py",
+    "reversible-skew/rs-big.py",
+    "video-scenes/video-scenes",
+    "apple-health-extract/extract_workout_stats.py",
+    "apple-health-extract/exercise_bouts.py",
 ]
+
+PENDING_UV_MIGRATION: frozenset[str] = frozenset({
+    "abacus usage/de-abacus.py", "anduril_steps/anduril_steps.py", "dloc/dloc",
+    "worktree-helper/worktree", "md-json/md_converter.py",
+    "Claude_plugin_converter/to_gemini_cli/migrate_skills.py",
+    "doc_linearizer/linearize.py", "data_format_converter/src/data_convert.py",
+    "reversible-skew/rs.py", "reversible-skew/rs-big.py", "video-scenes/video-scenes",
+    "apple-health-extract/extract_workout_stats.py", "apple-health-extract/exercise_bouts.py",
+})
 
 # Each tracked manifest must contain every launcher dependency and may contain
 # only the explicitly listed test/CLI extras. This catches drift in both
 # directions without pretending test-only packages belong in PEP 723 metadata.
 # Values are: (format, repo-relative manifest path, allowed manifest-only deps).
 DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "abacus usage/de-abacus.py": ("stdlib", "", frozenset()),
+    "anduril_steps/anduril_steps.py": ("stdlib", "", frozenset()),
+    "dloc/dloc": ("stdlib", "", frozenset()),
+    "worktree-helper/worktree": ("stdlib", "", frozenset()),
+    "md-json/md_converter.py": ("stdlib", "", frozenset()),
+    "Claude_plugin_converter/to_gemini_cli/migrate_skills.py": ("stdlib", "", frozenset()),
+    "doc_linearizer/linearize.py": ("requirements", "doc_linearizer/requirements.txt", frozenset()),
+    "data_format_converter/src/data_convert.py": ("requirements", "data_format_converter/requirements.txt", frozenset({"pytest"})),
+    "reversible-skew/rs.py": ("requirements", "reversible-skew/requirements.txt", frozenset({"numba"})),
+    "reversible-skew/rs-big.py": ("requirements", "reversible-skew/requirements.txt", frozenset()),
+    "video-scenes/video-scenes": ("requirements", "video-scenes/requirements.txt", frozenset()),
+    "apple-health-extract/extract_workout_stats.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
+    "apple-health-extract/exercise_bouts.py": ("requirements", "apple-health-extract/requirements-dev.txt", frozenset()),
     "editdb/editdb": (
         "requirements",
         "editdb/requirements-dev.txt",
@@ -262,17 +297,23 @@ def compare_dependency_sets(
 
 def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> list[str]:
     """Check one launcher's tracked dependency sidecar in both directions."""
+    launcher_path = REPO_ROOT / rel_path
+    if rel_path in PENDING_UV_MIGRATION and not launcher_path.is_file():
+        return []
     policy = DEPENDENCY_MANIFESTS.get(rel_path)
     if policy is None:
         return ["no dependency manifest policy registered"]
 
-    launcher_path = REPO_ROOT / rel_path
     if metadata is None:
         metadata = extract_pep723(launcher_path.read_text(encoding="utf-8"))
     if metadata is None or not isinstance(metadata.get("dependencies"), list):
         return []  # Header validation reports the actionable metadata error.
 
     manifest_format, manifest_rel_path, allowed_extras = policy
+    if manifest_format == "stdlib":
+        if metadata["dependencies"]:
+            return ["stdlib-only launcher declares dependencies: " + ", ".join(metadata["dependencies"])]
+        return []
     manifest_path = REPO_ROOT / manifest_rel_path
     if not manifest_path.is_file():
         return [f"dependency manifest not found: {manifest_rel_path}"]
@@ -378,10 +419,23 @@ def discover_launchers() -> set[str]:
     return discovered
 
 
+def pending_launcher_is_skipped(rel_path: str) -> bool:
+    """Identify pending files that have not yet adopted the uv shebang."""
+    if rel_path not in PENDING_UV_MIGRATION:
+        return False
+    path = REPO_ROOT / rel_path
+    if not path.is_file():
+        return True
+    with path.open(encoding="utf-8") as handle:
+        return handle.readline().rstrip("\r\n") != CANONICAL_SHEBANG
+
+
 def check_launcher(rel_path: str) -> list[str]:
     """Return a list of violation messages for one launcher (empty == OK)."""
     problems: list[str] = []
     path = REPO_ROOT / rel_path
+    if pending_launcher_is_skipped(rel_path):
+        return []
     if not path.is_file():
         return [f"file not found: {rel_path}"]
 
@@ -440,7 +494,10 @@ def main() -> int:
         print("\ncheck_uv_headers: FAILED (see violations above)")
         return 1
 
-    print(f"check_uv_headers: OK ({len(LAUNCHERS)} launchers verified)")
+    pending = sum(pending_launcher_is_skipped(path) for path in LAUNCHERS)
+    verified = len(LAUNCHERS) - pending
+    pending_clause = f", {pending} pending" if pending else ""
+    print(f"check_uv_headers: OK ({verified} launchers verified{pending_clause})")
     return 0
 
 
