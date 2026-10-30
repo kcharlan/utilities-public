@@ -63,6 +63,16 @@ def _check_dev_dependencies() -> None:
 
 _check_dev_dependencies()
 
+
+@pytest.fixture(autouse=True)
+def block_real_agent_cli_runners(monkeypatch):
+    """Tests must inject agent output instead of invoking installed agent CLIs."""
+    def forbidden_runner(**_kwargs):
+        pytest.fail("test attempted to launch a real agent CLI")
+
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._default_subprocess_runner", forbidden_runner)
+    monkeypatch.setattr("cognitive_switchyard.agent_runtime._streaming_subprocess_runner", forbidden_runner)
+
 # ---------------------------------------------------------------------------
 # Raise the soft FD limit so cumulative test resource usage does not
 # hit the default macOS cap of 256.

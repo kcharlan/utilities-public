@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Streaming Must Honor Injected Process Runners
+
+- What went wrong: Enabling phase output callbacks bypassed the injected runner and launched the real agent CLI, while a test swallowed the resulting exception.
+- Pattern to follow instead: Honor injected runners in both streaming and non-streaming paths, guard real subprocess boundaries in regressions, and assert successful results rather than swallowing errors.
+
 ## YAML Parsing In A Homebrew Python Environment
 
 - What went wrong: Early validation ran against the shell's default Python, which hid the real dependency path and pushed the implementation toward environment-specific workarounds.

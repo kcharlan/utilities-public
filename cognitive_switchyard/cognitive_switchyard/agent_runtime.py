@@ -81,6 +81,7 @@ class ClaudeCliRuntime:
     ) -> None:
         self.command = command
         self._subprocess_runner = subprocess_runner or _default_subprocess_runner
+        self._has_injected_runner = subprocess_runner is not None
         self._output_line_callback = output_line_callback
 
     def planner_agent(
@@ -241,12 +242,15 @@ class ClaudeCliRuntime:
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Claude CLI ({model}){attempt_label}...")
-            completed = _streaming_subprocess_runner(
-                command=command,
-                cwd=session_root,
-                input_text=input_text,
-                line_callback=_make_detail_extracting_callback(effective_task_id, self._output_line_callback),
-            )
+            if self._has_injected_runner:
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=input_text)
+            else:
+                completed = _streaming_subprocess_runner(
+                    command=command,
+                    cwd=session_root,
+                    input_text=input_text,
+                    line_callback=_make_detail_extracting_callback(effective_task_id, self._output_line_callback),
+                )
             self._output_line_callback(
                 effective_task_id,
                 f"[{phase}] Claude CLI finished (exit {completed.returncode})",
@@ -302,6 +306,7 @@ class CodexCliRuntime:
     ) -> None:
         self.command = command
         self._subprocess_runner = subprocess_runner or _default_subprocess_runner
+        self._has_injected_runner = subprocess_runner is not None
         self._output_line_callback = output_line_callback
 
     def planner_agent(
@@ -482,16 +487,19 @@ class CodexCliRuntime:
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Codex CLI ({model}){attempt_label}...")
-            completed = _streaming_subprocess_runner(
-                command=command,
-                cwd=session_root,
-                input_text="",
-                line_callback=_make_detail_extracting_callback(
-                    effective_task_id,
-                    self._output_line_callback,
-                    detail_extractor=_extract_detail_from_codex_json,
-                ),
-            )
+            if self._has_injected_runner:
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text="")
+            else:
+                completed = _streaming_subprocess_runner(
+                    command=command,
+                    cwd=session_root,
+                    input_text="",
+                    line_callback=_make_detail_extracting_callback(
+                        effective_task_id,
+                        self._output_line_callback,
+                        detail_extractor=_extract_detail_from_codex_json,
+                    ),
+                )
             self._output_line_callback(
                 effective_task_id,
                 f"[{phase}] Codex CLI finished (exit {completed.returncode})",
