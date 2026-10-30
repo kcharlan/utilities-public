@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pandas>=3.0",
+#     "tqdm>=4.70",
+# ]
+# ///
 import xml.etree.ElementTree as ET
 import pandas as pd
 from datetime import timedelta
