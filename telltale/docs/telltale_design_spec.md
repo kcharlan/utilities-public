@@ -1,8 +1,7 @@
 # Telltale design spec
 
-Status: approved by Kevin, 2026-10-27. Implementation plan:
-[telltale_implementation_plan.md](telltale_implementation_plan.md).
-Companion documents:
+Status: approved by Kevin, 2026-10-27, with subsequent changes described below and in
+the [Claude provider design](telltale_claude_design.md). Companion documents:
 
 - [Visual design](telltale_visual_design.md): look, type, color, copy rules.
 - [Mockups](mockups/telltale_mockups.html): panel, dashboard and collector view.
@@ -47,8 +46,7 @@ spin up more agents "into the teeth of a slowdown".
 - A collector that the app installs, controls and health-checks.
 - Configurable alert rules: per-rule on/off, thresholds, durations,
   notifications.
-- Provider plugins. Codex (OpenAI models) ships first; OpenRouter and Claude
-  follow later.
+- Provider plugins. Codex and Claude Code are registered; OpenRouter remains a future possibility.
 
 **Non-goals (for now)**
 
@@ -57,7 +55,7 @@ spin up more agents "into the teeth of a slowdown".
 - Cost or token accounting. Colophon and CodexBar do that.
 - Model-list tracking. Model Sentinel does that.
 - Sending synthetic probe requests to providers.
-- OpenRouter and Claude plugins. Only their interface is defined here.
+- An OpenRouter plugin. Only its interface is considered here.
 
 **Anti-goals** (failure even if it technically works)
 
@@ -197,11 +195,10 @@ dynamic loading **(my call)**. There are two kinds:
 Each plugin also declares which signals it can feed, so the UI shows only
 lamps a provider supports. Records must not carry prompt or response text.
 
-Later plugins are out of scope. Notes only, not binding:
+Other plugins are out of scope. Notes only, not binding:
 
 - **OpenRouter** could use per-generation stats or activity exports.
-- **Claude** could use Claude Code transcripts under `~/.claude/projects`,
-  and status.claude.com.
+- **Claude Code** is specified in the [Claude provider design](telltale_claude_design.md).
 
 ## 6. Codex usage source
 
@@ -392,7 +389,8 @@ format and read problems or any other state.
 Applies to the speed rules and the large-prompt rule:
 
 - **Fire** when the condition has been true at every point over the rule's
-  duration. 15 minutes means 3 consecutive points.
+  duration. 15 minutes means 3 consecutive points. Trigger and clear durations
+  round up to whole five-minute evaluation points, with a minimum of one point.
 - **Clear** when it has been within the rule's clear band for its clear
   duration. The speed default is within 8% of usual for 30 minutes.
   - The clear band must be stricter than the trigger.
@@ -443,7 +441,9 @@ after it. It preserves failed turns, connection gaps, usage limits, source versi
 and exclusion counts; older failed turns follow the existing settlement path.
 Already stored rows are governed by retention, not this ingest filter.
 
-**Rebuild from Codex logs** discards derived data:
+**Rebuild** discards derived data for the selected provider or, for a global
+request, all providers and status units. The per-provider storage and ordering
+contract is in the [Claude provider design](telltale_claude_design.md#83-providers-section-per-provider-rebuild-and-the-arrival-note):
 
 - discarded: responses, evaluation points, episodes, rule events
 - kept: acceptances and their epochs, which are replayed as dated inputs at
@@ -592,7 +592,8 @@ Open slower and faster alerts show the worst representable deviation since onset
   more than one new rendered row and acts on those rendered rows. Collector
   health has its own acknowledgement and footer toggle; its acknowledged dot
   is a ring. Notifications keep their posting policy; acknowledgement removes
-  the corresponding delivered notifications. No acknowledgement event is added.
+  the corresponding delivered notifications by thread only after the database
+  write succeeds. No acknowledgement event is added.
 
   | Alert | Acknowledgement holds | Becomes new |
   |---|---|---|
@@ -724,6 +725,9 @@ the start of each run.
 - Fetched once per collector run. Store incidents and their history. Fetch
   details for new or changed incidents only.
 - `https://status.openai.com/feed.rss` is a fallback for titles and links.
+  RSS items have no reliable open or resolved state: an RSS-only result records
+  deduplicated status-post events, preserves existing incidents and leaves the
+  source unavailable. It never opens or clears incident episodes or their lamps.
 - **Do not use `/api/v2/summary.json`.** On 2026-10-27 it reported "All
   Systems Operational" during an active incident (page `updated_at` was
   Oct 16).
@@ -787,7 +791,7 @@ Follow Brew Version's layout and conventions. Project folder `telltale/`:
 - No external package dependencies. Vendored zstd is a C target.
 - Library targets:
   - `TelltaleCore`: models, rule engine, baseline, storage.
-  - `TelltaleCodex` and `TelltaleOpenAIStatus`: plugins.
+  - `TelltaleCodex`, `TelltaleClaude`, `TelltaleOpenAIStatus` and `TelltaleStatuspage`: plugins.
 - One executable target, `Telltale`.
 - `Makefile` targets: `build`, `test`, `release` (app bundle signed with a stable identity,
   `CodexBar Local` by default, never ad-hoc: an approved deviation, as in `anker_charge_monitor`),
@@ -823,10 +827,8 @@ The maintained dashboard snapshots include an idle sidebar in light and dark app
 
 **Release and deploy:**
 
-- Add `tools/deploy_telltale.mjs` modeled on `tools/deploy_brew_version.mjs`.
-  It installs to `/Applications/Telltale.app`.
-- Add a section to `docs/local_deployment_sync.md`.
-- Add a README entry and Validation Matrix lines in `AGENTS.md`/`CLAUDE.md`.
+- `tools/deploy_telltale.mjs`, modeled on the Anker Charge Monitor installer,
+  installs to `/Applications/Telltale.app`; the deployment guide describes its contract.
 - After deploying, if the collector is on, the app's Repair check confirms
   the plist still points to the installed executable.
 - Version bump rules per the repo.
