@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "beautifulsoup4",
+#     "html2text",
+# ]
+# ///
 import argparse
 import glob
 import os
