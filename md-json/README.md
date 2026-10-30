@@ -11,22 +11,19 @@ The converter uses only the Python standard library. It expects a Moneydance
 export whose top-level object contains an `all_items` array with `acct` and
 `txn` objects.
 
-Use the included setup script to create a local virtual environment:
+Install [uv](https://docs.astral.sh/uv/):
 
 ```bash
-./setup.sh
-source venv/bin/activate
+brew install uv
 ```
-
-No packages need to be installed after activation.
 
 ## Usage
 
 Keep Moneydance exports and generated CSVs outside this public repository. After
-activating the virtual environment, supply private input and output paths:
+installing uv, supply private input and output paths:
 
 ```bash
-python md_converter.py \
+./md_converter.py \
   --input "$HOME/.md-json/export.json" \
   --output "$HOME/.md-json/transactions.csv"
 ```

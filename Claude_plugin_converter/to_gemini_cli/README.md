@@ -16,12 +16,12 @@ The workspace is the current working directory, not the directory containing
 the script. Run it from the Gemini workspace you want to modify:
 
 ```bash
-uv run /path/to/Claude_plugin_converter/to_gemini_cli/migrate_skills.py \
+/path/to/Claude_plugin_converter/to_gemini_cli/migrate_skills.py \
   /path/to/claude-plugin/category
 ```
 
-The converter requires Python 3.10 or newer and has no third-party Python
-dependencies. `uv` supplies the interpreter for the commands in this guide.
+Install [uv](https://docs.astral.sh/uv/) (`brew install uv`). The converter
+requires Python 3.12 or newer and has no third-party Python dependencies.
 
 For a category directory named `legal`, a command such as
 `commands/brief.md` becomes `.gemini/commands/legal/brief.toml` and is invoked
@@ -47,7 +47,8 @@ as `/legal:brief`.
 The converter and its tests use only the Python standard library:
 
 ```bash
-uv run --python 3.12 python -m unittest discover -s tests -v
+python3 -m venv .venv
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 See the [migration guide](./MIGRATION_GUIDE.md) for the source layout, exact

@@ -22,7 +22,7 @@ Only immediate child directories of `skills/` and top-level `.md` files in
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) with Python 3.10 or newer for the runtime.
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`), which supplies Python 3.12 or newer for the runtime.
 - Gemini CLI installed and configured.
 - A local Claude-style plugin directory.
 
@@ -61,7 +61,7 @@ source path:
 
 ```bash
 cd /path/to/gemini-workspace
-uv run /path/to/Claude_plugin_converter/to_gemini_cli/migrate_skills.py \
+/path/to/Claude_plugin_converter/to_gemini_cli/migrate_skills.py \
   /path/to/claude-plugin/legal
 ```
 

@@ -50,8 +50,7 @@ source.
 
 ## Convert the download
 
-From the `abacus usage` directory, activate the virtual environment described in
-the README, then run:
+Install uv as described in the README, then run from the `abacus usage` directory:
 
 ```bash
 ./de-abacus.py \

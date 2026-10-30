@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """
 Anduril 2 stepped-ramp helper for the "1..150" brightness scale.
 Includes a solver to find settings for a specific target step/level.

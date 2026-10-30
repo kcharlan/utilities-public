@@ -16,18 +16,10 @@ number of source-code lines currently present in a repository.
 
 ## Requirements
 
-- Python 3.9 or newer
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Git
 
 The tool has no third-party Python dependencies.
-
-Create a virtual environment in this tool's directory and activate it before
-running the executable, whose shebang uses `python3` from `PATH`:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
 
 ## Usage
 

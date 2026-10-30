@@ -16,11 +16,10 @@ elsewhere.
 
 ## Quick start
 
-Create and activate a virtual environment before invoking the Python script:
+Install [uv](https://docs.astral.sh/uv/) before invoking the script:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+brew install uv
 ```
 
 1. Follow [`Operational_Guide.md`](./Operational_Guide.md) to create the two
@@ -36,7 +35,7 @@ source .venv/bin/activate
 ```
 
 When the output argument is omitted, the script writes a `.csv` beside the
-input file. It requires Python 3 and has no third-party dependencies.
+input file. It has no third-party dependencies.
 
 ## Files
 
