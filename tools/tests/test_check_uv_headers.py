@@ -50,6 +50,59 @@ def test_unlisted_python_shebang_is_rejected(tmp_path, monkeypatch, capsys) -> N
     assert "not a uv launcher" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("quote", ['\"', "'"])
+def test_unlisted_entrypoint_is_rejected(tmp_path, monkeypatch, capsys, quote) -> None:
+    launcher = tmp_path / "synthetic_tool.py"
+    launcher.write_text(f"if __name__ == {quote}__main__{quote}:\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [launcher])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 1
+    assert "Python entry point is not a uv launcher" in capsys.readouterr().out
+
+
+def test_entrypoint_under_test_paths_is_skipped(tmp_path, monkeypatch) -> None:
+    paths = [tmp_path / "tests/helper.py", tmp_path / "test/helper.py",
+             tmp_path / "test_probe.py", tmp_path / "conftest.py"]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: paths)
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 0
+
+
+def test_module_without_main_guard_is_skipped(tmp_path, monkeypatch) -> None:
+    module = tmp_path / "module.py"
+    module.write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [module])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 0
+
+
+def test_allowlisted_entrypoint_is_skipped(tmp_path, monkeypatch) -> None:
+    paths = [tmp_path / "allowed.py", tmp_path / "examples/probe.py"]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: paths)
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    monkeypatch.setattr(guard, "NON_UV_ENTRYPOINT_ALLOWLIST", ("allowed.py", "examples/"))
+    assert guard.main() == 0
+
+
+def test_binary_python_file_is_skipped(tmp_path, monkeypatch) -> None:
+    binary = tmp_path / "binary.py"
+    binary.write_bytes(b"\xff\xfe\x00")
+    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [binary])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 0
+
+
 def test_binary_file_is_skipped(tmp_path, monkeypatch, capsys) -> None:
     binary = tmp_path / "synthetic_binary"
     binary.write_bytes(b"\xff\xfe\x00")

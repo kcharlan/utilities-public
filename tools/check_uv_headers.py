@@ -36,6 +36,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CANONICAL_SHEBANG = "#!/usr/bin/env -S uv run --script"
 
+NON_UV_ENTRYPOINT_ALLOWLIST: tuple[str, ...] = (
+    "benchmark-llm/benchmark_llm/__main__.py",
+    "benchmark-llm/examples/",
+    "cognitive_switchyard/cognitive_switchyard/__main__.py",
+    "colophon/tools/gen_unicode.py",
+    "docker/llm_collector/collector/collector.py",
+    "docker/llm_proxy/src/llm_proxy/main.py",
+    "model_sentinel/model_sentinel/__main__.py",
+    "transcription/app.py",
+)
+
 IMPORT_DISTRIBUTION_ALIASES = {
     "bs4": "beautifulsoup4",
     "dateutil": "python-dateutil",
@@ -411,6 +422,17 @@ def read_first_line(path: Path) -> str | None:
         return None
 
 
+def is_test_path(relative: str) -> bool:
+    path = Path(relative)
+    return (any(part in {"test", "tests"} for part in path.parts[:-1])
+            or path.name == "conftest.py" or path.name.startswith("test_"))
+
+
+def is_allowlisted(relative: str, allowlist: tuple[str, ...]) -> bool:
+    return any(relative.startswith(item) if item.endswith("/") else relative == item
+               for item in allowlist)
+
+
 def discover_launchers() -> set[str]:
     """Find files in the repository whose first line is the canonical shebang."""
     discovered: set[str] = set()
@@ -472,11 +494,21 @@ def main() -> int:
                 continue
             relative = path.relative_to(REPO_ROOT).as_posix()
             first_line = read_first_line(path)
-            allowed = any(relative.startswith(item) if item.endswith("/") else relative == item
-                          for item in NON_UV_PYTHON_ALLOWLIST)
+            allowed = is_allowlisted(relative, NON_UV_PYTHON_ALLOWLIST)
             if first_line is not None and re.match(r"^#!.*python", first_line) and not allowed:
                 any_failures = True
                 print(f"FAIL {relative}\n       - Python shebang is not a uv launcher")
+            if (path.suffix == ".py" and first_line is not None
+                    and not first_line.startswith("#!") and not is_test_path(relative)
+                    and not is_allowlisted(relative, NON_UV_ENTRYPOINT_ALLOWLIST)):
+                try:
+                    source = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                # Scripts without a main guard remain unseen by this signal.
+                if re.search(r"(?m)^if __name__ == [\"']__main__[\"']:", source):
+                    any_failures = True
+                    print(f"FAIL {relative}\n       - Python entry point is not a uv launcher")
     except RuntimeError as exc:
         print(f"FAIL launcher discovery\n       - {exc}")
         return 1
