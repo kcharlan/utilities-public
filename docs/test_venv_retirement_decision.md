@@ -13,7 +13,7 @@ alone does not make dependencies reproducible.
 On 2026-10-30, macOS ARM, uv 0.13.6, the two requirements-file pilots used the
 same Homebrew Python 3.14 and fresh project venvs and fresh uv caches. Times are
 single wall-clock observations, not benchmarks. Cold pip installation used a
-fresh pip cache; venv creation time was not measured. Cold uv includes resolving,
+fresh pip cache. Cold uv includes resolving,
 downloading and executing tests; warm uv reuses that pilot's cache. Both browser
 paths reused an already installed Chromium, whose storage and installation time
 are excluded. `du -sk` reports allocated KiB, and hard links, filesystem cloning,
@@ -23,6 +23,14 @@ and package sharing make subtraction an estimate rather than reclaimed bytes.
 | --- | ---: | ---: | ---: | --- | ---: |
 | div_conv | 2.08 s | 2.47 / 2.47 s | 4.15 / 2.84 s | 115 passed | 28,688 / 2,028 / 17,992 |
 | jtree | 8.37 s | 5.45 / 4.02 s | 8.49 / 4.56 s | 160 passed, one warning | 191,272 / 51,408 / 343,820 |
+
+Fresh venv creation was measured separately at new project-local paths, using the
+same Homebrew Python: 1.35 s for div_conv and 1.36 s for jtree. Adding creation,
+install, and cold test components gives 5.90 s and 15.18 s respectively, versus
+the 4.15 s and 8.49 s cold uv runs above. These sums are not timed end-to-end
+runs: creation was measured later, and the two creation commands ran concurrently
+with each other and the cross-worktree test below. System load and network
+conditions may differ across observations.
 
 Commands, from each project directory, used a new `.venv` created with
 `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv`, then
@@ -36,6 +44,9 @@ after measuring. Jtree's warning was pytest's deprecation of session-scoped
 instance-method fixtures; neither path skipped tests. The browser test launches
 the app via `sys.executable`, as do div_conv CLI tests; these particular cases
 worked in both environments. They do not prove all subprocess patterns work.
+For the separate creation measurements, the same `-m venv` command targeted
+the new `.venv/setup-measurement` path in each project; it did not recreate the
+venvs used for the test timings.
 
 For comparison, venv plus cold pip cache occupied 30,716 KiB for div_conv and
 242,680 KiB for jtree; fresh uv cache alone occupied 17,992 and 343,820 KiB,
@@ -45,12 +56,15 @@ cache may amortize artifacts across projects and worktrees, but it retains bytes
 outside the checkout (`uv cache dir` identifies its location). No fleet-wide
 reclaimed-space claim follows from these single-project measurements.
 
-Two simultaneous div_conv invocations against one initially empty temporary uv
-cache both passed 115 tests, taking 3.86 and 3.88 s; the cache occupied 28,232
-KiB afterward. They used the same checkout, not separate worktrees, and this
-does not establish safety when projects sync a shared `.venv`, when caches are
-cleaned concurrently, or across different dependency resolutions. Test output
-and application state still need separate isolation.
+Two simultaneous div_conv invocations in separate worktrees against one initially
+empty temporary uv cache both passed 115 tests in 4.18 s each; the cache occupied
+22,920 KiB afterward and was then removed. Both used the same Python 3.14 and
+requirements-file uv command above, with `pytest tests -q -p no:cacheprovider`
+and `PYTHONDONTWRITEBYTECODE=1` to avoid writes to the second checkout. The
+worktrees were at commits `6cbdd29` and `4a0e22c`. This single trial does not
+establish safety when projects sync a shared `.venv`, when caches are cleaned
+concurrently, or across different dependency resolutions. Test output and
+application state still need separate isolation.
 
 The separately authorized `uv run --no-python-downloads --extra dev pytest -q`
 in benchmark-llm built the editable project, created its `.venv` using Homebrew
