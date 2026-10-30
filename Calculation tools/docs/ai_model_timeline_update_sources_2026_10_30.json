@@ -1,0 +1,89 @@
+{
+  "checked": "2026-10-30",
+  "latestRelease": "2026-10-29",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_28.json",
+  "preservedHistoricalRows": 527,
+  "additions": [
+    {
+      "model": "Mistral Large 4 (open weights)",
+      "lab": "Mistral",
+      "date": "2026-10-29",
+      "tier": "open-weights",
+      "note": "Mistral released weights for its multimodal coding and cybersecurity model after the October 6 API preview. Its open-weight license limits model-as-a-service offerings.",
+      "source": "https://mistral.ai/news/mistral-large-4-oss/"
+    },
+    {
+      "model": "Granite Switch 4.1.1",
+      "lab": "IBM",
+      "date": "2026-10-29",
+      "tier": "open-weights",
+      "note": "Modular patch updates the multilingual speech recognition model and decision adapter; the Granite Switch 4.1 base remains unchanged.",
+      "source": "https://huggingface.co/blog/ibm-granite/granite-switch-4-1-1"
+    },
+    {
+      "model": "Nemotron 3.5 Transcribe",
+      "lab": "NVIDIA",
+      "date": "2026-10-28",
+      "tier": "open-weights",
+      "note": "Promptable speech model for transcription in 40 languages, speaker attribution, translation and audio questions; supports recordings up to one hour.",
+      "source": "https://research.nvidia.com/labs/nemotron/NVIDIA-Nemotron-3.5-Transcribe/"
+    },
+    {
+      "model": "Granite Switch 4.1 family",
+      "lab": "IBM",
+      "date": "2026-10-14",
+      "tier": "open-weights",
+      "note": "Apache-licensed 8B and 30B modular models combine chat, decision and safety adapters with speech recognition on one endpoint. Model cards date the release October 14; IBM announced it October 15.",
+      "source": "https://huggingface.co/blog/ibm-granite/granite-switch-4-1"
+    }
+  ],
+  "corrections": [
+    {
+      "before": {
+        "model": "Mistral Large 4 (public preview)",
+        "lab": "Mistral",
+        "date": "2026-10-06",
+        "tier": "flagship",
+        "note": "Natively multimodal flagship for coding, agents, and enterprise work, available in public API preview through Mistral Studio. Planned open weights are not yet public; Mistral says they will follow by the end of October.",
+        "source": "https://mistral.ai/news/mistral-large-4/"
+      },
+      "after": {
+        "model": "Mistral Large 4 (public preview)",
+        "lab": "Mistral",
+        "date": "2026-10-06",
+        "tier": "flagship",
+        "note": "Natively multimodal flagship for coding, agents, and enterprise work, initially available in public API preview through Mistral Studio. Weights were released October 29 under an open-weight license.",
+        "source": "https://mistral.ai/news/mistral-large-4/"
+      },
+      "reason": "Weights were released October 29 after the API preview."
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "Mistral / IBM / NVIDIA",
+      "sourceURLs": [
+        "https://mistral.ai/news/mistral-large-4-oss/",
+        "https://huggingface.co/blog/ibm-granite/granite-switch-4-1-1",
+        "https://research.nvidia.com/labs/nemotron/NVIDIA-Nemotron-3.5-Transcribe/",
+        "https://huggingface.co/blog/ibm-granite/granite-switch-4-1"
+      ],
+      "result": "Checked original lab announcements and model cards, including earlier releases missed by the prior sweep."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Style Sketch",
+      "reason": "An AI fashion app, not a separately identified model release.",
+      "sources": [
+        "https://techcrunch.com/2026/10/29/meta-quietly-launches-an-ai-fashion-app-called-style-sketch/"
+      ]
+    },
+    {
+      "candidate": "Qwen4 Max",
+      "reason": "A predicted launch date, not a verified release.",
+      "sources": [
+        "https://waifuai.github.io/llm-countdowns/"
+      ]
+    }
+  ]
+}
