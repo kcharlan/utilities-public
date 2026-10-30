@@ -1,0 +1,18 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#     "opencv-python==5.0.0.93",
+#     "numpy==2.5.4",
+#     "Click==8.5.0",
+#     "tqdm==4.70.1",
+#     "platformdirs==4.13.1",
+#     "scenedetect==0.7.2",
+# ]
+# ///
+
+import sys
+
+from scenedetect.__main__ import main
+
+sys.exit(main())
