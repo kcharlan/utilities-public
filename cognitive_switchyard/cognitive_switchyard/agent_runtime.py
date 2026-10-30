@@ -80,7 +80,7 @@ class ClaudeCliRuntime:
         output_line_callback: OutputLineCallback | None = None,
     ) -> None:
         self.command = command
-        self._subprocess_runner = subprocess_runner or _default_subprocess_runner
+        self._subprocess_runner = _default_subprocess_runner if subprocess_runner is None else subprocess_runner
         self._has_injected_runner = subprocess_runner is not None
         self._output_line_callback = output_line_callback
 
@@ -305,7 +305,7 @@ class CodexCliRuntime:
         output_line_callback: OutputLineCallback | None = None,
     ) -> None:
         self.command = command
-        self._subprocess_runner = subprocess_runner or _default_subprocess_runner
+        self._subprocess_runner = _default_subprocess_runner if subprocess_runner is None else subprocess_runner
         self._has_injected_runner = subprocess_runner is not None
         self._output_line_callback = output_line_callback
 
