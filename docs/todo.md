@@ -20,6 +20,9 @@
   the copied command's shell round trip, unusable cwd rejection and database
   targeting, then record the verified behavior and CLI version in the runtime
   doc. Archived, project-archived and subagent sessions stay ineligible.
+- [ ] Resolve Colophon's unknown Antigravity real-source parity and
+  credential-access acceptance status. See [evidence and acceptance](../colophon/docs/development.md#antigravity-evidence-and-acceptance);
+  real-source work requires separate authorization and private evidence.
 - [ ] Review the container image update policy: retain deliberate tag-based
   refreshes or pin digests with an explicit refresh process. Validate any
   change through each affected stack's complete suite and health checks.

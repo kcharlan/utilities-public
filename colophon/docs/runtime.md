@@ -163,6 +163,7 @@ filtered list exceeds six rows. The end action expands the preview or returns
 to the top six. Both collapse paths restore focus to the selected scope button
 and bring an offscreen section start back into view. Changing metrics preserves
 scope; lists of six or fewer omit both scope and end controls.
+Scope buttons expose their selection with `aria-pressed`.
 
 Reader disclosure controls use `show more` and `show less` for requests and
 answers, including subagent answers. Expanded text taller than the viewport
@@ -172,6 +173,8 @@ toggle. Additional requests start behind `+ N follow-ups sent while it worked`;
 when open, `hide N follow-ups` appears at both ends. Collapsing text or
 follow-ups restores focus to its surviving toggle and returns an offscreen
 block start to view, while an in-view start keeps its scroll position.
+The text and follow-up state toggles expose `aria-expanded`; their separate
+end actions do not. Footer summaries retain native disclosure semantics.
 
 Footer diagnostic and database panels retain independent open states across
 source and metric changes. Each native summary has a matching `hide` action

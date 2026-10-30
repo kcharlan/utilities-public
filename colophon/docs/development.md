@@ -41,6 +41,40 @@ These are standalone checks, not historical parity coverage or performance
 evidence. Help describes these shipped checks; historical native parity/performance
 tools and their private workflow are not included here.
 
+## Antigravity evidence and acceptance
+
+The [public schema fixture](../tests/fixtures/antigravity/README.md) records
+the producing language-server hashes and qualified descriptor provenance.
+[Token rules](token_rules.md#antigravity-accounting-and-oracle-provenance-050)
+record synthetic native ccusage 20.0.42 probes, binary hash and accounting
+adaptations. The proposed [ccusage v20.0.42 Rust source](https://github.com/ccusage/ccusage/tree/v20.0.42/rust/adapters/antigravity)
+was not independently located or verified; those probes are behavioral
+evidence, not source verification. Pricing normalization adapts the pinned
+[CodexBar Antigravity reader](https://github.com/steipete/CodexBar/tree/e5d6977ba547aa7046eed3865f8ee1cdd5d58731/Sources/CodexBarCore/Providers/Antigravity).
+Synthetic canary tests establish non-disclosure in their fixtures, not that a
+real execution never opens credentials. CLI/IDE archive and subagent tests do
+not establish behavior of untested upstream UI operations.
+
+Real-source parity and credential-access acceptance require separate
+authorization; completion is unknown. If authorized, compare the reader and
+oracle on coherent private snapshots using the token-rule projection, reconcile
+concurrent-source changes before interpreting mismatches, and check discovery,
+archive, zero-step, large-database and unpriced results. A separate sandbox
+denying reads outside the admitted files and SQLite coordination sidecars is
+needed for unopened-credential evidence. Keep copies and evidence private and
+remove only the scratch created for that run. Historical session authorization
+and oracle paths are not standing permission or executable instructions.
+
+After an authorized deployment, follow the [deployment guide](../../docs/local_deployment_sync.md#native-colophon-deployment)
+and audit the installation. Run the installed executable offline and without
+opening a browser against fresh private synthetic source and runtime homes;
+inspect the generated page without replacing the owner's runtime page. Compare
+source and installed `--version`, `payload.meta.version`, and the rendered
+`[data-version]` footer, allowing the `colophon ` display prefix. All four
+must agree with the release version and the installer audit must succeed.
+
+## Test isolation and maintenance
+
 The [tests README](../tests/README.md) describes fixtures and browser guards.
 Wrappers create invented homes/logs under `/tmp`, select the tested release
 through `COLOPHON_BIN`, disable Python bytecode/pytest caches, and deny real
