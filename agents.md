@@ -27,6 +27,7 @@ When changing existing code, maintain and extend its existing frameworks:
 - After writing code, run the relevant commands from the Validation Matrix.
 - Don't leave TODOs without user approval.
 - Put test, acceptance and evidence directories in private OS temporary space, not `$HOME`. If a tool requires a home-directory location, record why in that project's docs. Remove everything your run created before reporting done, and only what your run created. If evidence must outlive the run, say where it is in your report.
+- Run `zsh tools/check_home_residue.zsh` on demand to report old, temporary-looking direct children of `$HOME` by name and age. This heuristic does not classify or remove them and is not mandatory validation.
 - Before finalizing, check you haven't removed or disabled existing logging or tests, bypassed existing validation or error handling, or broken existing functionality in adjacent code.
 
 ## Release Versions
@@ -111,6 +112,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `tools/tests/test_check_no_temp_leaks.sh` (checker cases with a fake TMPDIR and Darwin temp dir, and both Makefiles' `test` and harness targets with a fake `swift`).
   - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
 - Static deployment/fleet audit tooling:
+  - `zsh tools/tests/test_check_home_residue.zsh` (synthetic home residue audit cases).
   - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs` (native and calculator-page installer lifecycles and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`

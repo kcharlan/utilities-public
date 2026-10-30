@@ -26,3 +26,6 @@
 - [ ] Review the container image update policy: retain deliberate tag-based
   refreshes or pin digests with an explicit refresh process. Validate any
   change through each affected stack's complete suite and health checks.
+- [ ] Resolve the [post-uv decision tasks](post_uv_retirement_implementation_plan.md#decision-tasks)
+  and [owner items](post_uv_retirement_implementation_plan.md#owner-items), including
+  evidence location and retention; the home residue name heuristic does not settle them.
