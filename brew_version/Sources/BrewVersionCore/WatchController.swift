@@ -2,10 +2,19 @@ import Foundation
 import Observation
 
 public protocol Notifier: Sendable {
-    func post(_ notice: Notice) async
+    func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async
+    @MainActor func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never>
+    func alertWasCleared() async -> Bool
     func requestAuthorization() async
 }
-public extension Notifier { func requestAuthorization() async {} }
+public extension Notifier {
+    func syncAlert(_ digest: AlertDigest?, delivery: AlertDelivery) async {}
+    @MainActor func publishAlert(_ digest: AlertDigest?, delivery: AlertDelivery) -> Task<Void, Never> {
+        Task { await syncAlert(digest, delivery: delivery) }
+    }
+    func alertWasCleared() async -> Bool { false }
+    func requestAuthorization() async {}
+}
 
 public struct Suggestion: Equatable, Sendable {
     public let name: PackageName
@@ -72,6 +81,15 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private var installationRevision = 0
     private let store: WatchStore
     private let notifier: any Notifier
+    private var alertQueue: Task<Void, Never>?
+    @discardableResult private func enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never> {
+        let digest = alertDigest(for: state.watched), previous = alertQueue
+        let deliveryTask = notifier.publishAlert(digest, delivery: delivery)
+        let next = Task { await previous?.value; await deliveryTask.value }
+        alertQueue = next
+        return next
+    }
+    public func alertQueueDrained() async { await alertQueue?.value }
     private let now: () -> Date
     private var cache: ListingCache
     private var client: HomebrewClient
@@ -119,7 +137,16 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         installationCapture = nil
         targetedVersions = [:]
         recomputeOthers()
+        reconcileAlert()
         Task { await self.refreshInstalled() }
+    }
+
+    public func reconcileAlert() { if canSave { enqueueAlert(.keepCurrent) } }
+    public func acknowledgeAlerts() {
+        guard canSave, state.watched.contains(where: { $0.alertPendingSince != nil }) else { return }
+        var candidate = state
+        for index in candidate.watched.indices { candidate.watched[index].alertPendingSince = nil }
+        if commit(candidate) { enqueueAlert(.keepCurrent) }
     }
 
     @discardableResult private func commit(_ candidate: AppState) -> Bool {
@@ -204,8 +231,11 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public func remove(_ name: PackageName) -> (entry: WatchEntry, index: Int)? {
         guard canSave, let index = state.watched.firstIndex(where: { $0.name == name }) else { return nil }
         var candidate = state
-        let entry = candidate.watched.remove(at: index)
+        var entry = candidate.watched.remove(at: index)
+        let wasPending = entry.alertPendingSince != nil
+        entry.alertPendingSince = nil
         guard commit(candidate) else { return nil }
+        if wasPending { enqueueAlert(.keepCurrent) }
         generations.removeValue(forKey: name)
         // Replace the cache boundary synchronously: in-flight lookups can finish
         // into their old actor, but cannot resurrect a removed watch's ETag.
@@ -225,20 +255,24 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard canSave, let index = state.watched.firstIndex(where: { $0.name == name }),
               let listing = state.watched[index].lastListing else { return }
         var candidate = state
+        let wasPending = candidate.watched[index].alertPendingSince != nil
         candidate.watched[index].skippedRelease = ReleaseID(listing)
         candidate.watched[index].unseenRelease = false
-        commit(candidate)
+        candidate.watched[index].alertPendingSince = nil
+        if commit(candidate), wasPending { enqueueAlert(.keepCurrent) }
     }
     public func popoverClosed() {
         guard canSave else { return }
         var candidate = state
+        let wasPending = candidate.watched.contains { $0.alertPendingSince != nil }
+        for index in candidate.watched.indices { candidate.watched[index].alertPendingSince = nil }
         for index in candidate.watched.indices where candidate.watched[index].installed == nil {
             if let listing = candidate.watched[index].lastListing {
                 candidate.watched[index].lastSeenRelease = ReleaseID(listing)
             }
             candidate.watched[index].unseenRelease = false
         }
-        commit(candidate)
+        if commit(candidate), wasPending { enqueueAlert(.keepCurrent) }
     }
     public func setInterval(_ interval: CheckInterval) {
         guard canSave else { return }
@@ -648,19 +682,26 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
         let listings = results.compactMap { try? $0.result.get() }
         let installation = await refreshInstalled(extraListings: listings)
+        await alertQueue?.value
+        let alertCleared = state.watched.contains { $0.alertPendingSince != nil } ? await notifier.alertWasCleared() : false
         let snapshot = cache.snapshot()
         // No suspension from here through commit: merge into the latest committed state.
         var candidate = state
-        var notices: [Notice] = []
+        if alertCleared { for index in candidate.watched.indices { candidate.watched[index].alertPendingSince = nil } }
+        let previousDigest = alertDigest(for: candidate.watched)
+        let listWasEmpty = previousDigest == nil
+        let stamp = now()
+        var hasNotices = false
         for result in results {
             guard generations[result.name] == result.generation,
                   let index = candidate.watched.firstIndex(where: { $0.name == result.name }) else { continue }
             switch result.result {
             case .success(let listing):
                 let local = installation.installed(result.name, kind: listing.kind)
-                let (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local)
+                var (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local)
+                if notice != nil { entry.alertPendingSince = stamp; hasNotices = true }
+                else if !entry.isAmber { entry.alertPendingSince = nil }
                 candidate.watched[index] = entry
-                if let notice { notices.append(notice) }
             case .failure(let error): candidate.watched[index].lastError = error.rowMessage
             }
         }
@@ -672,7 +713,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         if !retryWatchesOnReconnect { candidate.lastCheck = now() }
         candidate.listingCache = snapshot
         guard commit(candidate) else { return }
-        for notice in notices { await notifier.post(notice) }
+        let currentDigest = alertDigest(for: state.watched)
+        if hasNotices { await enqueueAlert(listWasEmpty ? .withSound : .silent).value }
+        else if previousDigest != currentDigest { await enqueueAlert(.keepCurrent).value }
     }
 }
 

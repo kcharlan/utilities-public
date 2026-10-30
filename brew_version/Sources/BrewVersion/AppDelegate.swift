@@ -26,11 +26,12 @@ import BrewVersionCore
         let status = StatusItemController(controller: controller, notifier: notifier)
         self.status = status
         notifier.showPopover = { [weak status] in status?.showPopover() }
+        notifier.acknowledgeAlert = { [weak controller] in controller?.acknowledgeAlerts() }
         events = SystemEvents(network: { [weak self] in await self?.controller.setNetworkAvailable($0) }) { [weak self] in
             await self?.controller.scheduledTick()
         }
         events?.start()
-        Task { await controller.hydrateCatalog() }
+        Task { await notifier.removeLegacyAlerts(); controller.reconcileAlert(); await controller.hydrateCatalog() }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         status?.showPopover(); return true

@@ -12,6 +12,41 @@ func baseline(_ listing: Listing = watchListing("1.0"), installed: InstalledVers
 
 struct EvaluateTests {
     let old = InstalledVersion(version: "0.5", source: .cellar)
+    @Test func digestOrdersNewestFirstThenByName() throws {
+        let older = Date(timeIntervalSince1970: 100), newer = Date(timeIntervalSince1970: 200)
+        let digest = try #require(alertDigest(for: [pending("synthetic-a", "1.0", older),
+                                                    pending("synthetic-c", "3.0", newer),
+                                                    pending("synthetic-b", "2.0", newer)]))
+        #expect(digest.names.map(\.rawValue) == ["synthetic-b", "synthetic-c", "synthetic-a"])
+        #expect(digest.title == "3 updates on Homebrew")
+        #expect(digest.body == "synthetic-b 2.0, synthetic-c 3.0, synthetic-a 1.0")
+    }
+    @Test func singleDigestKeepsTheIndividualAlertText() throws {
+        let digest = try #require(alertDigest(for: [pending("synthetic-a", "2.0", Date(timeIntervalSince1970: 1))]))
+        #expect(digest.title == "synthetic-a 2.0 is on Homebrew")
+        #expect(digest.body == "You have 0.5.")
+    }
+    @Test func digestSkipsEntriesThatAreNoLongerAmberOrNotPending() {
+        var skipped = pending("synthetic-a", "2.0", Date(timeIntervalSince1970: 1))
+        skipped.skippedRelease = skipped.lastListing.map(ReleaseID.init)
+        var told = pending("synthetic-b", "2.0", Date(timeIntervalSince1970: 1))
+        told.alertPendingSince = nil
+        #expect(alertDigest(for: [skipped, told]) == nil)
+    }
+    @Test func tapDigestUsesShortNames() throws {
+        let since = Date(timeIntervalSince1970: 1)
+        let digest = try #require(alertDigest(for: [
+            pending("synthetic-owner/synthetic-tap/synthetic-tool", "7.8", since),
+            pending("synthetic-a", "2.0", since)
+        ]))
+        #expect(digest.body == "synthetic-a 2.0, synthetic-tool 7.8")
+    }
+    func pending(_ name: String, _ version: String, _ since: Date) -> WatchEntry {
+        let listing = Listing(name: PackageName(name)!, kind: .formula, version: version)
+        return WatchEntry(name: listing.name, kind: .formula, lastListing: listing,
+                          installed: InstalledVersion(version: "0.5", source: .cellar),
+                          alertPendingSince: since)
+    }
     @Test func transitions() {
         let v = watchListing()
         let (added, noNotice) = evaluate(WatchEntry(name: watchName), listing: v, installed: old)

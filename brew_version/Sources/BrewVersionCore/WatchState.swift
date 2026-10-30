@@ -37,15 +37,17 @@ public struct WatchEntry: Codable, Equatable, Sendable {
     public var skippedRelease: ReleaseID?
     public var unseenRelease: Bool
     public var lastError: String?
+    public var alertPendingSince: Date?
 
     public init(name: PackageName, kind: PackageKind? = nil, lastListing: Listing? = nil,
                 installed: InstalledVersion? = nil, lastSeenRelease: ReleaseID? = nil,
                 notifiedRelease: ReleaseID? = nil, skippedRelease: ReleaseID? = nil,
-                unseenRelease: Bool = false, lastError: String? = nil) {
+                unseenRelease: Bool = false, lastError: String? = nil, alertPendingSince: Date? = nil) {
         self.name = name; self.kind = kind; self.lastListing = lastListing
         self.installed = installed; self.lastSeenRelease = lastSeenRelease
         self.notifiedRelease = notifiedRelease; self.skippedRelease = skippedRelease
         self.unseenRelease = unseenRelease; self.lastError = lastError
+        self.alertPendingSince = alertPendingSince
     }
     public var isAmber: Bool {
         guard let listing = lastListing, skippedRelease != ReleaseID(listing),
@@ -67,6 +69,50 @@ public struct Notice: Equatable, Sendable {
     }
 }
 
+public enum AlertDelivery: Equatable, Sendable {
+    case keepCurrent, silent, withSound
+}
+
+public struct AlertDigest: Equatable, Sendable {
+    public let names: [PackageName]
+    public let title: String
+    public let body: String
+    public init(names: [PackageName], title: String, body: String) {
+        self.names = names; self.title = title; self.body = body
+    }
+}
+
+public func notice(for entry: WatchEntry) -> Notice? {
+    guard let listing = entry.lastListing else { return nil }
+    let release = ReleaseID(listing)
+    let body: String
+    switch updateStatus(listing: listing, installed: entry.installed) {
+    case .updateAvailable(let installed):
+        body = "You have \(installed)."
+    case .notInstalled:
+        guard let previous = entry.lastSeenRelease else { return nil }
+        body = "Was \(previous.displayVersion)."
+    default:
+        return nil
+    }
+    let title = entry.name.tap.map { "\(entry.name.shortName) \(release.displayVersion) is in \($0)" }
+        ?? "\(entry.name) \(release.displayVersion) is on Homebrew"
+    return Notice(name: entry.name, title: title, body: body)
+}
+
+public func alertDigest(for watched: [WatchEntry]) -> AlertDigest? {
+    let entries = watched.filter { $0.alertPendingSince != nil && $0.isAmber && notice(for: $0) != nil }
+        .sorted {
+            if $0.alertPendingSince != $1.alertPendingSince { return $0.alertPendingSince! > $1.alertPendingSince! }
+            return $0.name.rawValue < $1.name.rawValue
+        }
+    guard let first = entries.first, let firstNotice = notice(for: first) else { return nil }
+    let names = entries.map(\.name)
+    if entries.count == 1 { return AlertDigest(names: names, title: firstNotice.title, body: firstNotice.body) }
+    let body = entries.map { "\($0.name.shortName) \(ReleaseID($0.lastListing!).displayVersion)" }.joined(separator: ", ")
+    return AlertDigest(names: names, title: "\(entries.count) updates on Homebrew", body: body)
+}
+
 public func evaluate(_ entry: WatchEntry, listing: Listing, installed: InstalledVersion?) -> (WatchEntry, Notice?) {
     var next = entry
     next.lastListing = listing; next.installed = installed; next.kind = listing.kind; next.lastError = nil
@@ -82,25 +128,20 @@ public func evaluate(_ entry: WatchEntry, listing: Listing, installed: Installed
         return (next, nil)
     }
     guard !unversioned else { return (next, nil) }
-    let body: String
     switch updateStatus(listing: listing, installed: installed) {
-    case .updateAvailable(let installed):
+    case .updateAvailable:
         next.lastSeenRelease = release
-        body = "You have \(installed)."
     case .notInstalled:
         guard previous != release else { next.unseenRelease = false; return (next, nil) }
         guard entry.notifiedRelease != release else { return (next, nil) }
         next.unseenRelease = true
-        body = "Was \(previous.displayVersion)."
     default:
         next.lastSeenRelease = release
         return (next, nil)
     }
     guard entry.notifiedRelease != release else { return (next, nil) }
     next.notifiedRelease = release
-    let title = entry.name.tap.map { "\(entry.name.shortName) \(release.displayVersion) is in \($0)" }
-        ?? "\(entry.name) \(release.displayVersion) is on Homebrew"
-    return (next, Notice(name: entry.name, title: title, body: body))
+    return (next, notice(for: next))
 }
 
 public struct AppState: Codable, Equatable, Sendable {

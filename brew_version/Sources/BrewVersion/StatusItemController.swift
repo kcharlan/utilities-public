@@ -180,6 +180,7 @@ struct StatusContent: View {
         focus.generation = UUID()
         positionPanel()
         panel.makeKeyAndOrderFront(nil)
+        controller.acknowledgeAlerts()
     }
     private func hidePanel() {
         guard panel.isVisible else { return }

@@ -546,6 +546,18 @@ identity, rather than restoring a shared-state snapshot after an await. Test
 success, denial, posting failure and overlapping completion in both directions.
 Keep Retry visible for pending notices even after authorization recovers.
 
+## 2026-10-30: Retain the current rolling notification payload
+
+A failed package alert must retain list membership independently of its retry
+slot. While authorization is suspended, the list can shrink without posting a
+new banner; read the current payload after the authorization and request-token
+checks so retry cannot restore stale entries. Preserve the initial sound until
+a package post succeeds. Test the suspended retry with a nonempty shorter list.
+Publish membership changes before waiting for a delivery to finish, and
+serialize retries with normal package posts. An in-flight post can complete
+after removal, so remove again after it completes; track sound by alert episode
+so an older successful post cannot consume a new episode's sound.
+
 ## 2026-10-17: Observe native event paths without forcing layout
 
 App reopen and accessibility press do not reproduce a physical status-button
@@ -1660,3 +1672,12 @@ and `panelScenesUseStoredSpeedReadings` cover both the visible dashes and notes.
 ### 2026-10-29 — Telltale open speed alerts
 
 Open speed rows need the stored episode extreme, not the last event body: a non-escalating change otherwise leaves the row stale. `speedAlertStatesItsWorstSinceOnset`, `reversedSpeedAlertIsNew`, `speedAlertWithoutAUsableWorstKeepsItsEventWording`, and `worstValueAlertsDisambiguateModels` cover both directions, replacement acknowledgement, fallback boundaries, and naming collisions.
+
+### 2026-10-30 — Rolling notification delivery
+
+The delivered list can lag a successful post, so an absent identifier immediately
+following delivery is not evidence of acknowledgement. A grace period protects
+membership (`recentPostIsNotTreatedAsCleared`). On macOS 27, `usernoted` rejected
+an ad hoc bundle under `/private/tmp` but accepted one under the user's home.
+A single retry slot also lost package alerts when test notifications failed;
+separate failure slots preserve the current package list (`failedPostLeavesPackagesListed`).
