@@ -3,11 +3,35 @@ import fcntl
 import json
 import math
 import os
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def new_upload_batch() -> Path:
+    return Path(tempfile.mkdtemp(prefix="transcription-upload-"))
+
+
+def write_upload(batch: Path, index: int, name: str, data: bytes) -> Path:
+    basename = Path(name).name
+    if basename in ("", ".", ".."):
+        basename = "upload"
+    path = batch / f"{index:04d}-{basename}"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
+    return path
+
+
+def discard_upload_batch(batch: Path | None) -> None:
+    if batch is not None:
+        try:
+            shutil.rmtree(batch)
+        except FileNotFoundError:
+            pass
 
 @dataclass(frozen=True)
 class Counters:

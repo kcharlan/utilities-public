@@ -165,3 +165,12 @@ The old wrappers are transitional pending retirement. `run.sh`, `m4a-run.sh`, an
 - If Whisper cannot load an audio file, confirm that `ffmpeg` is installed and available on `PATH`.
 - If local transcription is slow or runs out of memory, choose a smaller model in the interface.
 - Check runtime-home permissions and override paths if counters cannot be saved.
+
+## Input handling
+
+Relative paths and wildcard patterns resolve from the launcher's caller directory.
+Path inputs remain in place after processing. The selected local model is used for
+transcription. Uploads are written only after Start into a private temporary batch,
+with indexed names to distinguish duplicates, and removed after processing or an
+error. If saving an upload fails, prior results remain available and you can retry.
+A forcibly killed process can leave its upload directory in the OS temporary directory.

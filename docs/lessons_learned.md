@@ -1695,3 +1695,12 @@ otherwise corrupt bytes crash the interface before recovery. Resetting only the
 cumulative file avoids a later lifetime-file failure after the reset has already
 been published. Numeric conversion can also overflow even when JSON parses;
 preserve that input as corrupt too. The Transcription state tests cover these cases.
+
+## 2026-10-30: Track upload ownership and retain explicit UI selections
+
+Never infer ownership of a caller's file from its name, and allocate upload
+storage only when processing starts. Duration fallback must handle decoder errors,
+not just missing imports, and form selections must flow from the widget return
+value. Regression coverage: `test_path_mode_keeps_upload_prefixed_file`,
+`test_divider_rerun_makes_no_batch`, `test_divider_duration_falls_back_to_whisper`,
+and `test_app_uses_selected_model`.

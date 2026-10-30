@@ -7,7 +7,7 @@
 # - Cumulative reset confirmation that appears immediately; both resets force-refresh the UI
 # - Shared private counter persistence in the Transcription runtime home
 # - Whisper-only duration via whisper.audio.load_audio
-# - Auto-cleanup of upload_* temp files created by file_uploader
+# - Private temporary upload batches cleaned after processing
 # - Robust against flipping input mode back/forth
 # - Per-transcript "Copy to clipboard" (HTML) that targets only that transcript and is visible
 
@@ -66,13 +66,6 @@ def hash_file_identity(filepath: str) -> str:
     except Exception:
         base = f"{os.path.basename(filepath)}|{time.time_ns()}"
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
-
-def safe_unlink(path: str) -> None:
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        pass
 
 # ----------------------------
 # Whisper-only duration
@@ -248,12 +241,12 @@ def mode_and_path_controls() -> Tuple[str, str, pd.DataFrame]:
 # ----------------------------
 # UI: Form (model, allow_non_audio, uploader, submit)
 # ----------------------------
-def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[str]]:
+def controls_form(mode: str, wildcard: str):
     """
-    Returns: selected_paths, model_name, did_submit, created_temp_files
+    Returns: selected_paths, model_name, did_submit, upload_batch
     """
     selected_paths: List[str] = []
-    created_temp_files: List[str] = []
+    upload_batch = None
     uploads = None
     did_submit = False
 
@@ -286,19 +279,23 @@ def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[
     if submitted:
         if mode == "Upload files":
             if uploads:
-                for uf in uploads:
-                    suffix = os.path.splitext(uf.name)[1].lower()
-                    if (suffix not in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma", ".mp4", ".aac"]) and not allow_non_audio:
-                        st.warning(f"Skipped non-audio by extension: {uf.name}")
-                        continue
-                    tmp_path = os.path.join(
-                        ".",
-                        f"upload_{int(time.time()*1000)}_{hashlib.md5(uf.name.encode()).hexdigest()}{suffix or '.bin'}"
-                    )
-                    with open(tmp_path, "wb") as f:
-                        f.write(uf.getbuffer())
-                    selected_paths.append(tmp_path)
-                    created_temp_files.append(tmp_path)
+                try:
+                    for index, uf in enumerate(uploads):
+                        suffix = os.path.splitext(uf.name)[1].lower()
+                        if (suffix not in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".wma", ".mp4", ".aac"]) and not allow_non_audio:
+                            st.warning(f"Skipped non-audio by extension: {uf.name}")
+                            continue
+                        if upload_batch is None:
+                            upload_batch = counter_state.new_upload_batch()
+                        selected_paths.append(str(counter_state.write_upload(upload_batch, index, uf.name, uf.getbuffer())))
+                except OSError as error:
+                    counter_state.discard_upload_batch(upload_batch)
+                    upload_batch = None
+                    selected_paths = []
+                    st.error(f"Could not save uploads: {error}")
+                except BaseException:
+                    counter_state.discard_upload_batch(upload_batch)
+                    raise
         else:
             # Use the curated grid selection
             st.session_state["last_wildcard_pattern"] = (wildcard or "").strip()
@@ -318,15 +315,14 @@ def controls_form(mode: str, wildcard: str) -> Tuple[List[str], str, bool, List[
                     ]
                 selected_paths = chosen
 
-    return selected_paths, st.session_state.get("Whisper model (local)", "small") or "small", did_submit, created_temp_files
+    return selected_paths, model_name, did_submit, upload_batch
 
 # ----------------------------
 # Processing loop with per-file commits
 # ----------------------------
-def process_files(filepaths: List[str], model_name: str, created_temp_files: List[str]) -> float:
+def process_files(filepaths: List[str], model_name: str) -> float:
     """
     Returns total seconds added in this batch (for delta display).
-    Always cleans up temp upload_* files after processing attempts.
     """
     if not filepaths:
         return 0.0
@@ -373,10 +369,6 @@ def process_files(filepaths: List[str], model_name: str, created_temp_files: Lis
             except Exception as e:
                 fail_count += 1
                 row.error(f"({idx}/{len(filepaths)}) ❌ {base} — {e}")
-            finally:
-                # Clean up temp uploads
-                if path in created_temp_files or os.path.basename(path).startswith("upload_"):
-                    safe_unlink(path)
 
     if ok_count or fail_count:
         st.info(f"Completed. Success: {ok_count} | Failed: {fail_count} | Added: {humanize_seconds(batch_added_seconds)}")
@@ -509,15 +501,17 @@ def main():
     mode, wildcard, _preview_df = mode_and_path_controls()
 
     # Form with model, allow_non_audio, uploader, and submit
-    selected_paths, model_name, did_submit, created_temp_files = controls_form(mode, wildcard)
+    selected_paths, model_name, did_submit, upload_batch = controls_form(mode, wildcard)
 
     # Process if submitted
-    if selected_paths:
-        batch_delta = process_files(selected_paths, model_name=model_name, created_temp_files=created_temp_files)
-        st.session_state.last_delta_seconds = float(batch_delta)
-    else:
-        # No processing this run: clear delta so UI changes don't show stale numbers
-        st.session_state.last_delta_seconds = 0.0
+    try:
+        if selected_paths:
+            batch_delta = process_files(selected_paths, model_name=model_name)
+            st.session_state.last_delta_seconds = float(batch_delta)
+        else:
+            st.session_state.last_delta_seconds = 0.0
+    finally:
+        counter_state.discard_upload_batch(upload_batch)
 
     # Transcripts, then metrics + aligned resets (metrics last so clicks reflect immediately)
     render_transcripts()

@@ -18,14 +18,14 @@ st.markdown("""
         font-weight: 700;
         margin-bottom: 0;
     }
-    
+
     .subtitle {
         text-align: center;
         color: #6b7280;
         font-size: 1.1rem;
         margin-bottom: 2rem;
     }
-    
+
     .section-header {
         color: #374151;
         font-weight: 600;
@@ -34,7 +34,7 @@ st.markdown("""
         padding-bottom: 0.5rem;
         border-bottom: 2px solid #e5e7eb;
     }
-    
+
     /* Counter styles */
     .counter-container {
         background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
@@ -43,20 +43,20 @@ st.markdown("""
         margin: 1rem 0;
         border-left: 4px solid #10b981;
     }
-    
+
     .counter-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin: 0.5rem 0;
     }
-    
+
     .counter-label {
         font-weight: 600;
         color: #374151;
         font-size: 1rem;
     }
-    
+
     .counter-time {
         font-family: 'Monaco', 'Menlo', monospace;
         font-size: 1.2rem;
@@ -67,7 +67,7 @@ st.markdown("""
         border-radius: 6px;
         border: 1px solid #d1d5db;
     }
-    
+
     /* Style the actual file uploader to be more prominent */
     .stFileUploader {
         background: linear-gradient(135deg, #667eea10 0%, #764ba210 100%) !important;
@@ -77,37 +77,37 @@ st.markdown("""
         border: 2px dashed #667eea !important;
         transition: all 0.3s ease;
     }
-    
+
     .stFileUploader:hover {
         border-color: #764ba2 !important;
         background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%) !important;
     }
-    
+
     .stFileUploader > div {
         border: none !important;
         background: transparent !important;
     }
-    
+
     /* Fix for dark mode - ensure text is visible */
     .stSelectbox > div > div {
         background-color: var(--background-color, #f9fafb) !important;
     }
-    
+
     .stSelectbox > div > div > div {
         color: var(--text-color, #1f2937) !important;
     }
-    
+
     .stTextInput > div > div > input {
         background-color: var(--background-color, #f9fafb) !important;
         border-radius: 8px;
         border: 1px solid #d1d5db;
         color: var(--text-color, #1f2937) !important;
     }
-    
+
     .stTextInput > div > div > input::placeholder {
         color: var(--text-color-60, #6b7280) !important;
     }
-    
+
     .stButton > button {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%) !important;
         color: white !important;
@@ -117,12 +117,12 @@ st.markdown("""
         font-weight: 600;
         transition: all 0.3s ease;
     }
-    
+
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
     }
-    
+
     .stTextArea > div > div > textarea {
         background-color: var(--background-color, #f9fafb) !important;
         border-radius: 8px;
@@ -130,7 +130,7 @@ st.markdown("""
         font-family: 'Monaco', 'Menlo', monospace;
         color: var(--text-color, #1f2937) !important;
     }
-    
+
     .file-card {
         background: var(--secondary-background-color, white);
         border-radius: 12px;
@@ -139,71 +139,71 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         border-left: 4px solid #667eea;
     }
-    
+
     .stAlert {
         border-radius: 8px;
     }
-    
+
     /* Dark mode specific overrides */
     @media (prefers-color-scheme: dark) {
         .counter-container {
             background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
             border-left-color: #10b981;
         }
-        
+
         .counter-label {
             color: #f9fafb;
         }
-        
+
         .counter-time {
             background: #1f2937;
             color: #34d399;
             border-color: #6b7280;
         }
-        
+
         .stSelectbox > div > div {
             background-color: #374151 !important;
         }
-        
+
         .stSelectbox > div > div > div {
             color: #f9fafb !important;
         }
-        
+
         .stTextInput > div > div > input {
             background-color: #374151 !important;
             color: #f9fafb !important;
             border-color: #4b5563;
         }
-        
+
         .stTextInput > div > div > input::placeholder {
             color: #9ca3af !important;
         }
-        
+
         .stTextArea > div > div > textarea {
             background-color: #374151 !important;
             color: #f9fafb !important;
             border-color: #4b5563;
         }
-        
+
         .stFileUploader {
             background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%) !important;
             border-color: #667eea !important;
         }
-        
+
         .stFileUploader:hover {
             border-color: #764ba2 !important;
             background: linear-gradient(135deg, #667eea25 0%, #764ba225 100%) !important;
         }
-        
+
         .file-card {
             background: #1f2937;
         }
-        
+
         .section-header {
             color: #f9fafb;
             border-bottom-color: #4b5563;
         }
-        
+
         .subtitle {
             color: #9ca3af;
         }
@@ -225,17 +225,6 @@ def process_text_with_dividers(text, divider_words):
 def expand_wildcard_paths(pattern):
     return glob.glob(os.path.expanduser(pattern))
 
-def get_file_names_from_uploads(uploaded_files):
-    import tempfile
-    temp_dir = tempfile.mkdtemp()
-    file_paths = []
-    for uploaded_file in uploaded_files:
-        file_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        file_paths.append(file_path)
-    return file_paths
-
 def seconds_to_hms(seconds):
     """Convert seconds to HH:MM:SS format"""
     hours = int(seconds // 3600)
@@ -250,13 +239,13 @@ def get_audio_duration(file_path):
         import librosa
         y, sr = librosa.load(file_path, sr=None)
         return len(y) / sr
-    except ImportError:
+    except Exception:
         try:
             # Fallback to using whisper's load_audio
             import whisper
             audio = whisper.load_audio(file_path)
             return len(audio) / whisper.audio.SAMPLE_RATE
-        except:
+        except Exception:
             # Last resort - return 0 if we can't determine duration
             return 0.0
 
@@ -279,7 +268,7 @@ st.session_state['cumulative_total_seconds'] = cumulative_seconds
 # --- Streamlit UI ---
 
 st.set_page_config(
-    page_title="Whisper Transcriber", 
+    page_title="Whisper Transcriber",
     layout="wide",
     page_icon="🎙️"
 )
@@ -340,7 +329,7 @@ files_to_process = []
 if file_pattern and show_advanced:
     files_to_process = expand_wildcard_paths(file_pattern)
 elif uploaded_files:
-    files_to_process = get_file_names_from_uploads(uploaded_files)
+    files_to_process = [file.name for file in uploaded_files]
 
 # File status
 if files_to_process:
@@ -355,7 +344,7 @@ else:
 st.markdown('<h3 class="section-header">🚀 Transcription</h3>', unsafe_allow_html=True)
 
 transcribe_btn = st.button(
-    "🎯 Start Transcription", 
+    "🎯 Start Transcription",
     disabled=not files_to_process,
     help="Click to begin transcribing your selected audio files"
 )
@@ -363,14 +352,6 @@ transcribe_btn = st.button(
 # --- Transcription Logic ---
 
 if transcribe_btn:
-    # Reset current session counter
-    st.session_state['current_session_seconds'] = 0.0
-    
-    st.session_state['transcriptions'] = []
-    st.session_state['raw_texts'] = []
-    st.session_state['processed_texts'] = []
-    st.session_state['file_names'] = files_to_process
-
     with st.spinner(f"🔄 Loading Whisper model '{model_name}'..."):
         try:
             model = whisper.load_model(model_name)
@@ -378,43 +359,61 @@ if transcribe_btn:
             st.error(f"❌ Error loading model '{model_name}': {e}")
             st.stop()
 
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    total_duration = 0.0
-    
-    for idx, file in enumerate(files_to_process):
-        status_text.write(f"🎵 Transcribing: **{os.path.basename(file)}** ({idx + 1}/{len(files_to_process)})")
-        try:
-            # Get audio duration
-            duration = get_audio_duration(file)
-            total_duration += duration
-            
-            # Transcribe
-            result = model.transcribe(file)
-            raw_text = result["text"]
-        except Exception as e:
-            raw_text = f"[ERROR] Could not transcribe {file}: {e}"
-            
-        st.session_state['raw_texts'].append(raw_text)
-        st.session_state['processed_texts'].append("")
-        progress_bar.progress((idx + 1) / len(files_to_process))
-    
-    # Update all counters
-    st.session_state['current_session_seconds'] = total_duration
+    upload_batch = None
     try:
-        counters = counter_state.add_duration(total_duration)
-        cumulative_seconds = counters.cumulative_seconds
-        lifetime_seconds = counters.lifetime_seconds
-    except OSError as error:
-        st.error(f"Could not save counters: {error}")
-        cumulative_seconds += total_duration
-        lifetime_seconds += total_duration
-    st.session_state['cumulative_total_seconds'] = cumulative_seconds
-    
-    progress_bar.empty()
-    status_text.empty()
-    st.success("✅ Transcription completed successfully!")
+        try:
+            if uploaded_files and not (file_pattern and show_advanced):
+                upload_batch = counter_state.new_upload_batch()
+                files_to_process = [str(counter_state.write_upload(upload_batch, i, file.name, file.getbuffer()))
+                                    for i, file in enumerate(uploaded_files)]
+        except OSError as error:
+            st.error(f"Could not save uploads: {error}")
+        else:
+            st.session_state['current_session_seconds'] = 0.0
+            st.session_state['transcriptions'] = []
+            st.session_state['raw_texts'] = []
+            st.session_state['processed_texts'] = []
+            st.session_state['file_names'] = files_to_process
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            total_duration = 0.0
+
+            for idx, file in enumerate(files_to_process):
+                status_text.write(f"🎵 Transcribing: **{os.path.basename(file)}** ({idx + 1}/{len(files_to_process)})")
+                try:
+                    # Get audio duration
+                    duration = get_audio_duration(file)
+                    total_duration += duration
+
+                    # Transcribe
+                    result = model.transcribe(file)
+                    raw_text = result["text"]
+                except Exception as e:
+                    raw_text = f"[ERROR] Could not transcribe {file}: {e}"
+
+                st.session_state['raw_texts'].append(raw_text)
+                st.session_state['processed_texts'].append("")
+                progress_bar.progress((idx + 1) / len(files_to_process))
+
+            # Update all counters
+            st.session_state['current_session_seconds'] = total_duration
+            try:
+                counters = counter_state.add_duration(total_duration)
+                cumulative_seconds = counters.cumulative_seconds
+                lifetime_seconds = counters.lifetime_seconds
+            except OSError as error:
+                st.error(f"Could not save counters: {error}")
+                cumulative_seconds += total_duration
+                lifetime_seconds += total_duration
+            st.session_state['cumulative_total_seconds'] = cumulative_seconds
+
+            progress_bar.empty()
+            status_text.empty()
+            st.success("✅ Transcription completed successfully!")
+    finally:
+        counter_state.discard_upload_batch(upload_batch)
 
 # --- Time Counters Display (Always Visible) ---
 
@@ -458,14 +457,14 @@ with col1:
 
 if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
     st.markdown('<h3 class="section-header">📄 Transcription Results</h3>', unsafe_allow_html=True)
-    
+
     for idx, file in enumerate(st.session_state['file_names']):
         st.markdown(f'<div class="file-card">', unsafe_allow_html=True)
-        
+
         st.markdown(f"### 📎 {os.path.basename(file)}")
-        
+
         col1, col2 = st.columns([3, 1])
-        
+
         with col1:
             raw_text = st.text_area(
                 label="Raw Transcript",
@@ -474,19 +473,19 @@ if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
                 height=200,
                 help="✏️ You can edit this transcript before processing"
             )
-        
+
         with col2:
             st.write("")  # Spacing
             st.write("")  # Spacing
             if st.button(
-                "✨ Process Text", 
+                "✨ Process Text",
                 key=f"process_{idx}",
                 help="Apply divider words to split the transcript"
             ):
                 processed = process_text_with_dividers(raw_text, divider_words)
                 st.session_state['processed_texts'][idx] = processed
                 st.success("Text processed!")
-        
+
         if st.session_state['processed_texts'][idx]:
             st.text_area(
                 label="Processed Output",
@@ -495,12 +494,12 @@ if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
                 height=200,
                 help="📝 Final processed transcript with dividers applied"
             )
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
 st.markdown(
-    '<p style="text-align: center; color: #6b7280; font-size: 0.9rem;">Built with ❤️ using Streamlit and OpenAI Whisper</p>', 
+    '<p style="text-align: center; color: #6b7280; font-size: 0.9rem;">Built with ❤️ using Streamlit and OpenAI Whisper</p>',
     unsafe_allow_html=True
 )
