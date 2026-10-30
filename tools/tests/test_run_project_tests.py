@@ -75,6 +75,27 @@ def test_empty_header_is_accepted(tmp_path, monkeypatch):
     assert result.stdout.strip() == 'synthetic-ok'
 
 
+def test_resolution_after_script_cache_is_warmed(tmp_path, monkeypatch, capsys):
+    import subprocess
+    from tools import run_project_tests as runner
+    launcher = synthetic_launcher(tmp_path, '["packaging"]')
+    with launcher.open('a') as script:
+        script.write('print("synthetic help")\n')
+    monkeypatch.setenv('UV_CACHE_DIR', str(tmp_path / 'cache'))
+    monkeypatch.setattr(runner, 'REPO_ROOT', tmp_path)
+    entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), ('--help',), None)
+    first = runner.resolve_interpreter(launcher)
+    result = subprocess.run(['uv', 'run', '--no-python-downloads', '--script', str(launcher), '--help'],
+                            cwd=tmp_path, env=runner.clean_environment(), capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'synthetic help'
+    second = runner.resolve_interpreter(launcher)
+    assert runner.is_approved_interpreter(Path(second))
+    assert Path(first).resolve() == Path(second).resolve()
+    runner.verify_interpreter(entry, second, runner.clean_environment(), suite=False)
+    assert 'Actual base interpreter:' in capsys.readouterr().out
+
+
 def test_existing_venv_cannot_supply_undeclared_package(tmp_path, monkeypatch):
     import subprocess
     from tools import run_project_tests as runner
@@ -164,6 +185,36 @@ def test_print_command_and_unknown_key_do_not_start_processes(monkeypatch, capsy
     assert 'unsafe help' in output and '<resolved-interpreter>' in output and '-k example' in output
     assert runner.main(['missing', '--print-command']) == 1
     assert 'unknown project' in capsys.readouterr().err
+
+
+def test_separator_forwards_target_and_control_looking_flags(monkeypatch):
+    from subprocess import CompletedProcess
+    from tools import run_project_tests as runner
+    entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), None, 'unsafe help')
+    monkeypatch.setattr(runner, 'load_project_tests', lambda path: {'demo': entry})
+    monkeypatch.setattr(runner, 'resolve_interpreter', lambda path: '/opt/homebrew/bin/python3.12')
+    monkeypatch.setattr(runner, 'verify_interpreter', lambda *a, **kw: None)
+    calls = []
+    monkeypatch.setattr(runner.subprocess, 'run', lambda args, **kw: calls.append(args) or CompletedProcess(args, 0))
+    extra = ['tests/test_launcher.py::test_example', '-q', '--install-browsers']
+    assert runner.main(['demo', '--', *extra]) == 0
+    assert calls[0][-3:] == extra
+    monkeypatch.setattr(runner.sys, 'argv', ['run_project_tests.py', 'demo', '--', *extra])
+    assert runner.main() == 0
+    assert calls[1][-3:] == extra
+
+
+def test_separator_keeps_runner_validation_before_it(monkeypatch, capsys):
+    from tools import run_project_tests as runner
+    entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), None, 'unsafe help')
+    monkeypatch.setattr(runner, 'load_project_tests', lambda path: {'demo': entry})
+    assert runner.main(['--print-command', 'demo', '--', '-q']) == 0
+    assert '-q' in capsys.readouterr().out
+    for args in (['demo', '--unknown', '--', '-q'], ['demo', '--smoke-only', '--', '-q'],
+                 ['demo', '--install-browsers', '--', '-q']):
+        with pytest.raises(SystemExit) as exc:
+            runner.main(args)
+        assert exc.value.code == 2
 
 
 def test_smoke_failure_stops_suite_and_preserves_status(monkeypatch):

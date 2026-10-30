@@ -96,7 +96,9 @@ def is_approved_interpreter(path: Path, homebrew_root: Path = Path("/opt/homebre
 
 def resolve_interpreter(launcher: Path) -> str:
     with tempfile.TemporaryDirectory(prefix="project-tests-discovery-") as scratch:
-        result = subprocess.run(["uv", "python", "find", "--no-python-downloads", "--script", str(launcher)], cwd=scratch, env=clean_environment(), capture_output=True, text=True, check=True)
+        env = clean_environment()
+        env["TMPDIR"] = scratch
+        result = subprocess.run(["uv", "python", "find", "--no-python-downloads", "--no-cache", "--script", str(launcher)], cwd=scratch, env=env, capture_output=True, text=True, check=True)
     interpreter = result.stdout.strip()
     if not is_approved_interpreter(Path(interpreter)):
         raise ValueError(f"uv selected an unapproved interpreter: {interpreter}; install or select an approved Homebrew interpreter")
@@ -150,10 +152,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke-only", action="store_true")
     parser.add_argument("--install-browsers", action="store_true")
     parser.add_argument("--print-command", action="store_true")
-    args, extra = parser.parse_known_args(argv)
-    if extra and extra[0] == "--":
-        extra = extra[1:]
-    elif extra:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if "--" in raw_args:
+        separator = raw_args.index("--")
+        runner_args, extra = raw_args[:separator], raw_args[separator + 1:]
+    else:
+        runner_args, extra = raw_args, []
+    args, unknown = parser.parse_known_args(runner_args)
+    if unknown:
         parser.error("extra arguments must follow --")
     if (args.smoke_only and (args.install_browsers or extra)) or (args.install_browsers and extra):
         parser.error("--smoke-only and --install-browsers cannot be combined with other actions or extra arguments")
