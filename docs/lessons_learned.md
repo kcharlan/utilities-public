@@ -1712,3 +1712,11 @@ such as `-k counter` and `--basetemp <path>` must not be mistaken for paths.
 Use pytest's parsed argument source to supply a project default, while retaining
 explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
 from synthetic caller directories with sentinel tests.
+
+### 2026-10-30 — Requirements include and constraint handling
+
+Dependency checks must follow both spaced and attached requirement includes and
+fail closed on unsupported directives or unreadable files. Constraints limit
+versions but do not install packages; track their traversal separately so a
+constraint cannot hide the same file when it is later included as requirements.
+The shared uv guard's synthetic parser tests cover these cases.

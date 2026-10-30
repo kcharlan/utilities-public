@@ -26,6 +26,7 @@ Run it directly (it is itself a uv PEP 723 script with no dependencies):
 from __future__ import annotations
 
 import ast
+from dataclasses import asdict
 import re
 import subprocess
 import sys
@@ -33,6 +34,7 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+REGISTRY_PATH = REPO_ROOT / "tools/project_tests.toml"
 
 CANONICAL_SHEBANG = "#!/usr/bin/env -S uv run --script"
 
@@ -61,6 +63,7 @@ IMPORT_DISTRIBUTION_ALIASES = {
 # intentionally excluded: it is the zipapp-form reference and has no bootstrap
 # layer. Its standalone build step is a uv script and is verified here.
 LAUNCHERS = [
+    "tools/run_project_tests.py",
     "editdb/editdb",
     "jtree/jtree",
     "harscope/harscope",
@@ -119,6 +122,7 @@ NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
 # directions without pretending test-only packages belong in PEP 723 metadata.
 # Values are: (format, repo-relative manifest path, allowed manifest-only deps).
 DEPENDENCY_MANIFESTS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "tools/run_project_tests.py": ("stdlib", "", frozenset()),
     "transcription/transcription": ("requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})),
     "abacus usage/de-abacus.py": ("stdlib", "", frozenset()),
     "anduril_steps/anduril_steps.py": ("stdlib", "", frozenset()),
@@ -288,16 +292,20 @@ def parse_requirements_file(path: Path, _seen: set[Path] | None = None) -> list[
         if not line or line.startswith("#"):
             continue
         line = re.split(r"\s+#", line, maxsplit=1)[0].strip()
-        if line.startswith("-r "):
-            requirements.extend(parse_requirements_file(resolved.parent / line[3:].strip(), seen))
-            continue
-        if line.startswith("--requirement "):
-            requirements.extend(
-                parse_requirements_file(resolved.parent / line.removeprefix("--requirement ").strip(), seen)
-            )
+        include = re.fullmatch(r"(?:-r\s*|--requirement(?:\s+|=))(.+)", line)
+        constraint = re.fullmatch(r"(?:-c\s*|--constraint(?:\s+|=))(.+)", line)
+        if include or constraint:
+            target = (include or constraint).group(1).strip()
+            if not target:
+                raise ValueError(f"empty include in {resolved}")
+            entries = parse_requirements_file(resolved.parent / target, seen if include else seen.copy())
+            if include:
+                requirements.extend(entries)
             continue
         if line.startswith("-"):
-            continue
+            raise ValueError(f"unsupported requirements directive in {resolved}: {line}")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._, -]+\])?\s*(?:(?:[<>=!~]=?[^;\s,]+(?:\s*,\s*[<>=!~]=?[^;\s,]+)*)|(?:@\s*\S+))?\s*(?:;\s*\S.*)?", line):
+            raise ValueError(f"invalid requirement in {resolved}: {line}")
         requirements.append(line)
     return requirements
 
@@ -317,6 +325,21 @@ def compare_dependency_sets(
     )
 
 
+def check_test_requirements(key: str, entry: dict) -> list[str]:
+    """Reject test-only requirements that repeat launcher dependencies."""
+    if not entry.get("test_requirements"):
+        return []
+    try:
+        metadata = extract_pep723((REPO_ROOT / entry["launcher"]).read_text(encoding="utf-8"))
+        if metadata is None or not isinstance(metadata.get("dependencies"), list):
+            return [f"{key}: invalid launcher metadata"]
+        requirements = parse_requirements_file(REPO_ROOT / entry["test_requirements"])
+        overlap = {normalize_distribution(x) for x in metadata["dependencies"]} & {normalize_distribution(x) for x in requirements}
+        return [f"{key}: test requirements repeat runtime dependencies: {', '.join(sorted(overlap))}"] if overlap else []
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        return [f"{key}: cannot check test requirements: {exc}"]
+
+
 def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> list[str]:
     """Check one launcher's tracked dependency sidecar in both directions."""
     launcher_path = REPO_ROOT / rel_path
@@ -330,6 +353,8 @@ def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> li
         return []  # Header validation reports the actionable metadata error.
 
     manifest_format, manifest_rel_path, allowed_extras = policy
+    if manifest_format == "header":
+        return []
     if manifest_format == "stdlib":
         if metadata["dependencies"]:
             return ["stdlib-only launcher declares dependencies: " + ", ".join(metadata["dependencies"])]
@@ -353,7 +378,7 @@ def check_dependency_manifest(rel_path: str, metadata: dict | None = None) -> li
                 )
         else:  # pragma: no cover - policies are constants validated by review/tests.
             return [f"unsupported dependency manifest format: {manifest_format}"]
-    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
         return [f"could not read dependency manifest {manifest_rel_path}: {exc}"]
 
     missing, unexpected = compare_dependency_sets(
@@ -551,6 +576,18 @@ def main() -> int:
             print(f"FAIL {rel_path}")
             for problem in problems:
                 print(f"       - {problem}")
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from tools.run_project_tests import load_project_tests
+        entries = load_project_tests(REGISTRY_PATH)
+        for key, entry in entries.items():
+            for problem in check_test_requirements(key, asdict(entry)):
+                any_failures = True
+                print(f"FAIL test registry\n       - {problem}")
+    except ValueError as exc:
+        any_failures = True
+        print(f"FAIL test registry\n       - {exc}")
 
     if any_failures:
         print("\ncheck_uv_headers: FAILED (see violations above)")

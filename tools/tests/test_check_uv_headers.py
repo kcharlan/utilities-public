@@ -310,3 +310,61 @@ def test_transcription_policy_reconciles_manifests() -> None:
         "requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})
     )
     assert check_dependency_manifest(launcher) == []
+
+
+def test_attached_requirement_includes_and_constraints(tmp_path):
+    (tmp_path / 'nested.txt').write_text('Demo_Package[extra]>=1; python_version >= "3.12"\n')
+    (tmp_path / 'constraints.txt').write_text('only-constraint<2\n')
+    (tmp_path / 'dev.txt').write_text('-rnested.txt\n--requirement=nested.txt\n-c constraints.txt\n')
+    assert [normalize_distribution(x) for x in parse_requirements_file(tmp_path / 'dev.txt')] == ['demo-package']
+
+
+def test_requirement_parser_rejects_unknown_directive(tmp_path):
+    path = tmp_path / 'dev.txt'
+    path.write_text('--editable ./local\n')
+    with pytest.raises(ValueError, match='unsupported'):
+        parse_requirements_file(path)
+
+
+def test_header_policy_needs_no_sidecar(monkeypatch):
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, 'example', ('header', '', frozenset()))
+    assert guard.check_dependency_manifest('example', {'dependencies': ['demo']}) == []
+
+
+def test_test_requirements_rejects_runtime_dependencies(tmp_path, monkeypatch):
+    launcher = tmp_path / 'launcher'
+    launcher.write_text('# /// script\n# requires-python = ">=3.12"\n# dependencies = ["demo_package>=1"]\n# ///\n')
+    (tmp_path / 'test.txt').write_text('Demo.Package[extra]>=1; python_version >= "3.12"\npytest\n')
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    assert 'demo-package' in ' '.join(guard.check_test_requirements('fake', {'launcher': 'launcher', 'test_requirements': 'test.txt'}))
+
+
+@pytest.mark.parametrize('line', ['--index-url https://example.invalid/simple', '-e ./local', 'not a requirement'])
+def test_requirement_parser_rejects_invalid_entries(tmp_path, line):
+    path = tmp_path / 'dev.txt'
+    path.write_text(line + '\n')
+    with pytest.raises(ValueError):
+        parse_requirements_file(path)
+
+
+def test_constraint_does_not_hide_later_requirement(tmp_path):
+    (tmp_path / 'shared.txt').write_text('demo-package<2\n')
+    (tmp_path / 'dev.txt').write_text('-c shared.txt\n-r shared.txt\n')
+    assert [normalize_distribution(item) for item in parse_requirements_file(tmp_path / 'dev.txt')] == ['demo-package']
+
+
+def test_missing_requirement_include_fails_closed(tmp_path):
+    (tmp_path / 'dev.txt').write_text('--requirement=missing.txt\n')
+    with pytest.raises(FileNotFoundError):
+        parse_requirements_file(tmp_path / 'dev.txt')
+
+
+def test_guard_rejects_invalid_registry(tmp_path, monkeypatch, capsys):
+    registry = tmp_path / 'registry.toml'
+    registry.write_text('[projects.bad]\nproject = "missing"\n')
+    monkeypatch.setattr(guard, 'REGISTRY_PATH', registry)
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    monkeypatch.setattr(guard, 'git_repository_files', lambda: [])
+    monkeypatch.setattr(guard, 'LAUNCHERS', [])
+    assert guard.main() == 1
+    assert 'test registry' in capsys.readouterr().out

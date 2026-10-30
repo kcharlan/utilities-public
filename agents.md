@@ -56,7 +56,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
 - Shared uv header guard (`tools/check_uv_headers.py`):
-  - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py -q -p no:cacheprovider`.
+  - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
   - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites. Create absent project test environments with `/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv` for Tax2 and Data Format Converter, and `/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv` for Benchmark LLM and Cognitive Switchyard. Install each project's documented test dependencies; prepend its own `.venv/bin` to `PATH` for each suite so child Python processes use that environment.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
