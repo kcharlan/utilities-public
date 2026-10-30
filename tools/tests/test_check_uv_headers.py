@@ -40,25 +40,42 @@ def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypat
     assert "uv launcher is not registered in LAUNCHERS" in capsys.readouterr().out
 
 
-def test_pending_launcher_without_shebang_is_skipped(tmp_path, monkeypatch) -> None:
-    (tmp_path / "probe").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+def test_unlisted_python_shebang_is_rejected(tmp_path, monkeypatch, capsys) -> None:
+    launcher = tmp_path / "synthetic_probe"
+    launcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
-    assert guard.check_launcher("probe") == []
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [launcher])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 1
+    assert "not a uv launcher" in capsys.readouterr().out
 
 
-def test_pending_launcher_with_shebang_is_fully_checked(tmp_path, monkeypatch) -> None:
-    (tmp_path / "probe").write_text(guard.CANONICAL_SHEBANG + "\n", encoding="utf-8")
+def test_binary_file_is_skipped(tmp_path, monkeypatch, capsys) -> None:
+    binary = tmp_path / "synthetic_binary"
+    binary.write_bytes(b"\xff\xfe\x00")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
-    assert "missing or invalid PEP 723 '# /// script' block" in guard.check_launcher("probe")
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [binary])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    assert guard.main() == 0
+    assert "FAILED" not in capsys.readouterr().out
 
 
-def test_pending_missing_file_is_skipped(tmp_path, monkeypatch) -> None:
+def test_allowlist_matches_exact_files_and_directory_prefixes(tmp_path, monkeypatch, capsys) -> None:
+    exact = tmp_path / "allowed.py"
+    inside = tmp_path / "workers" / "probe"
+    near_miss = tmp_path / "workers-extra" / "probe"
+    for path in (exact, inside, near_miss):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"probe"}), raising=False)
-    assert guard.check_launcher("probe") == []
-    assert guard.check_dependency_manifest("probe") == []
+    monkeypatch.setattr(guard, "git_repository_files", lambda: [exact, inside, near_miss])
+    monkeypatch.setattr(guard, "LAUNCHERS", [])
+    monkeypatch.setattr(guard, "NON_UV_PYTHON_ALLOWLIST", ("allowed.py", "workers/"))
+    assert guard.main() == 1
+    output = capsys.readouterr().out
+    assert "workers-extra/probe" in output
+    assert "FAIL allowed.py" not in output
+    assert "FAIL workers/probe" not in output
 
 
 def test_registered_missing_file_still_fails(tmp_path, monkeypatch) -> None:
@@ -74,29 +91,6 @@ def test_stdlib_policy(tmp_path, monkeypatch, dependencies, expected) -> None:
     monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
     monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "probe", ("stdlib", "", frozenset()))
     assert guard.check_dependency_manifest("probe", {"dependencies": dependencies}) == expected
-
-
-def test_main_counts_only_skipped_pending_launchers(tmp_path, monkeypatch, capsys) -> None:
-    (tmp_path / "pending").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-    (tmp_path / "ready").write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12"\n# dependencies = []\n# ///\n', encoding="utf-8")
-    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"pending", "ready"}), raising=False)
-    monkeypatch.setattr(guard, "LAUNCHERS", ["pending", "ready"])
-    monkeypatch.setattr(guard, "discover_launchers", lambda: {"ready"})
-    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "ready", ("stdlib", "", frozenset()))
-    assert guard.main() == 0
-    assert "OK (1 launchers verified, 1 pending)" in capsys.readouterr().out
-
-
-def test_main_counts_verified_pending_even_if_discovery_omits_it(tmp_path, monkeypatch, capsys) -> None:
-    (tmp_path / "ready").write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12"\n# dependencies = []\n# ///\n', encoding="utf-8")
-    monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(guard, "PENDING_UV_MIGRATION", frozenset({"ready"}))
-    monkeypatch.setattr(guard, "LAUNCHERS", ["ready"])
-    monkeypatch.setattr(guard, "discover_launchers", lambda: set())
-    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, "ready", ("stdlib", "", frozenset()))
-    assert guard.main() == 0
-    assert "OK (1 launchers verified)" in capsys.readouterr().out
 
 
 def test_requirement_normalization_handles_extras_versions_and_case() -> None:

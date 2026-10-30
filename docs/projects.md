@@ -111,7 +111,7 @@ The [Docker guide](../docker/README.md) covers stack organization and update pro
 | [n8n proof of concept](../docker/n8n-poc/README.md) | Docker stack | Runs loopback-only n8n with private environment configuration and persistent state outside Git. |
 | [Reversible Skew](../reversible-skew/README.md) | Experimental Python CLI | Explores blockwise Burrows–Wheeler, Move-to-Front, and run-length transforms, with unchanged-block fallback and reconstruction checks. |
 | [Task orchestration scaffold](../coding/task_orch/README.md) | Legacy reference scripts and prompts | Retained source-project snapshot, superseded by Cognitive Switchyard. Its environment and test assumptions require adaptation before reuse. |
-| [Video Scene Detection Cheatsheet](../video-scenes/README.md) | Setup helper and command reference | Documents PySceneDetect scene-boundary, splitting, and preview workflows. |
+| [Video Scene Detection](../video-scenes/README.md) | CLI | uv-managed PySceneDetect launcher for scene-boundary, splitting, and preview workflows. |
 
 Shared [repository tools](../tools/) include deployment installers, the fleet deployment audit, launcher-header validation, browser/launcher test helpers, and temporary-file leak checks. Their tests live in [tools/tests/](../tools/tests/). See the [deployment guide](local_deployment_sync.md), [maintenance to-do list](todo.md), and [lessons learned](lessons_learned.md) for repository-wide guidance.
 
