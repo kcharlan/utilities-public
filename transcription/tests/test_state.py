@@ -136,6 +136,17 @@ def test_invalid_utf8_is_preserved():
     assert str(saved) in result.warnings[0]
 
 
+def test_oversized_json_integer_is_preserved():
+    state.runtime_home().mkdir()
+    raw = b'{"cumulative_seconds": ' + b'9' * 401 + b'}'
+    state.cumulative_path().write_bytes(raw)
+    result = state.read_counters()
+    saved, = state.runtime_home().glob("session_backup.json.unreadable-*")
+    assert result.counters.cumulative_seconds == 0.0
+    assert saved.read_bytes() == raw
+    assert any(str(saved) in warning for warning in result.warnings)
+
+
 @pytest.mark.parametrize("sources", [(True, True), (True, False), (False, True), (False, False)])
 @pytest.mark.parametrize("overrides", [False, True])
 def test_readme_migration_block(sources, overrides, tmp_path, monkeypatch):

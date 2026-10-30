@@ -64,7 +64,7 @@ def _read_value(path: Path, cumulative: bool, warnings: list[str]) -> float:
         if not math.isfinite(number) or number < 0:
             raise ValueError("invalid counter value")
         return number
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         saved = path.with_name(f"{path.name}.unreadable-{stamp}-{uuid.uuid4().hex}")
         os.replace(path, saved)

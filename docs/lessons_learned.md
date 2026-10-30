@@ -1693,4 +1693,5 @@ warnings alongside the synthetic CSV comparisons, so deprecations are visible.
 Decode errors must follow the same preservation path as malformed counter text;
 otherwise corrupt bytes crash the interface before recovery. Resetting only the
 cumulative file avoids a later lifetime-file failure after the reset has already
-been published. The Transcription state tests cover both cases.
+been published. Numeric conversion can also overflow even when JSON parses;
+preserve that input as corrupt too. The Transcription state tests cover these cases.
