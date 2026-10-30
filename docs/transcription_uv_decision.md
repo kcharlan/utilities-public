@@ -73,12 +73,21 @@ Add `whisper: openai-whisper` to `IMPORT_DISTRIBUTION_ALIASES`; verify manifest
 comparison covers both pinned requirements files. This decision does not set a
 general sibling-module scanning policy.
 
-After checking deployed callers, remove `run.sh`, `m4a-run.sh`, and `help.sh`
-(already documented as unsupported), plus `ui.sh` and `setup.sh`, when their
-replacement is ready. Repository references were reviewed, but deployed or
-external callers have not been checked; deletion is conditional on that check.
-The deployed `~/transcription` copy and its local-only counters must be
-preserved and handled according to `docs/local_deployment_sync.md`.
+The deployment guide identifies `~/transcription` as the maintained copy and
+does not list a Transcription command in its `~/Library/Scripts` direct-copy
+mapping. A read-only comparison found all five deployed wrappers present and
+byte-identical to the tracked scripts. Their source shows that none invokes
+another wrapper: `ui.sh` starts `app.py` through Streamlit, the three legacy
+wrappers invoke `transcribe.py` with obsolete CLI options, and `setup.sh`
+creates the environment. Thus `ui.sh` is a documented deployed entry point
+that needs an equivalent replacement and updated instructions; the unsupported
+legacy entry points need clear replacement guidance, and setup becomes the uv
+launcher. Once those replacements are verified, propose removing all five.
+This check covers the documented maintained copy and direct-copy mapping; it
+does not establish the absence of arbitrary external callers, shell aliases,
+scheduled jobs or manually installed links. The deployed copy and its
+local-only counters must be preserved and handled according to
+`docs/local_deployment_sync.md`.
 
 ## Future implementation plan scope
 
@@ -90,7 +99,8 @@ preserved and handled according to `docs/local_deployment_sync.md`.
   from `NON_UV_ENTRYPOINT_ALLOWLIST`, and test the guard changes and consumers.
 - Update the README Setup, Run, optional dependency, counters and Validation
   sections, plus the `agents.md` Streamlit and setup-script entries. Replace
-  wrappers only after the deployed-caller check.
+  wrappers only after replacement guidance and deployment are verified; account
+  for any additional callers the owner identifies.
 - Run the full documented core and optional validation, including AppTest,
   headless HTTP and teardown, synthetic audio and model acceptance, dependency
   checks and audit, plus fleet guard and all affected project suites. The spike
