@@ -13,8 +13,9 @@ account boundaries so queued old events cannot cross into a new session. Polling
 has one guarded connected transition. Sleep/network recovery cleans up before
 reconnecting; terminal authentication failure requires explicit sign-in.
 
-Port switch control follows [the port-control plan's "Design
-decisions"](port_control_implementation_plan.md#design-decisions). `PortOperation`
+## Port control
+
+`PortOperation`
 (Core) is a clock-free state machine for one turn-off, turn-on or restart: it
 takes `requested`, publish results, snapshots with their receive marks, ticks,
 disconnection, reconnection fences and ending reasons, and returns publish,
@@ -38,6 +39,18 @@ status already arrived, the result is obsolete; otherwise the controller waits f
 it and reports the publish as failed only if none follows within the confirmation
 deadline. Any other write error fails the phase at once.
 
+Each phase requests status after its write and accepts the wanted switch state
+only after that request starts, with a receive time no earlier than the request
+and a receive sequence beyond the write receipt on the same connection. A fresh
+nonmatching report does not fail the phase early; the latest one determines the
+failure at the deadline. The protocol has no request correlation, and buffered
+reports can pass both fences: see [protocol reference §7](anker_protocol_reference.md#7-port-switch-command).
+The policy requests confirmation every second, allows 10 seconds for a reply,
+holds a confirmed-off restart for 5 seconds, and arms confirmation for 5 seconds.
+During a same-process reconnect, a turning-off or plain operation resumes status
+confirmation without resending; a paused restart keeps its original end time,
+and a turning-on restart resends on. A suspended deadline does not run.
+
 Sign-out, charger selection, credential edits, Retry, Reload Credentials, sign-in
 and quit end the operation synchronously at entry, before they invalidate
 anything. A restart's ending "on" write is issued to the backend while its old
@@ -58,6 +71,32 @@ without a write. `AppDelegate` awaits `endPortOperation()` before
 a new operation, or fresh matching evidence from its own account and charger
 clears it.
 
+The ending write budget includes abort and drain. `AnkerCloudBackend.abortCommands`
+revokes its command context; `NWMQTTLink.close` resolves pending sends and ignores
+late callbacks. Operations and outcomes are memory-only; after relaunch, controls
+derive their state from new reports.
+
+## Port control messages
+
+`PanelView` presents the following text; outcomes carry the original charger
+label and remain separate from another charger's rows.
+
+| Where | Text |
+| --- | --- |
+| Row / detail switch state | `Off`; `Port switch`: `On`, `Off`, or `Not reported by this charger` |
+| Buttons | `Restart`, `Turn off`, `Turn on`; USB-A: `Restart USB-A ports`, `Turn off USB-A ports`, `Turn on USB-A ports` |
+| Armed buttons | `Confirm restart`, `Confirm turn off` |
+| Armed caption | `{port or A1 and A2} is supplying {power} to {device label or a connected device}.` |
+| Phase | `Turning off…`, `On again in {n} s`, `Turning on…` |
+| Unavailable | `Another port is changing.`, `Reconnect to control ports.`, `Readings are stale.` |
+| Off unconfirmed | `Couldn't confirm {target} turned off.` |
+| On unconfirmed, fresh off report | `{target} is still off. Turn it on to restore power.` |
+| On unconfirmed, no fresh off report | `Couldn't confirm {target} turned on.` |
+| Restart ended without confirmed restoration | `{target} may still be off. Check the charger and turn the port on if needed.` |
+| Outcome context and dismissal | `{original charger label}: {outcome}`; `Dismiss` |
+
+## Identity and persistence
+
 `MemorySessionStore` retains credentials and renewed service sessions only in
 RAM. `StateStore` persists nonsecret configuration using private modes and atomic
 replacement (`PrivateFile.replace`). `AppInstanceGate` holds an exclusive process lease. No backend,
@@ -76,6 +115,15 @@ live-check never creates it. An omitted dependency is the memory-only
 tests and snapshot fixtures cannot reach the owner's runtime file.
 `StatusItemController` pairs the store's `panelOpened`/`panelClosed` with the
 monitor's, which bounds the one-second reload loop to panel visibility.
+Brand keys are canonical decimal UInt16 values without leading zeroes and exclude
+the absence sentinel. Missing or malformed detail fields stay unknown independently;
+raw present payloads remain available for diagnostics. Decoded USB-C identity wins
+over the identity-support flag, and the zero identity is unidentified rather than
+a promise that identification will finish. See [detail fields](anker_protocol_reference.md#62-detail-fields).
+Reload compares device, inode, size and nanosecond modification time, including
+the signature of an invalid attempted load; edits preserving all four are outside
+the reload guarantee. The store validates current content again before a naming
+write and preserves unknown top-level keys.
 
 `PortDetailState`, owned by `StatusItemController` and passed through
 `StatusContent` to `PanelView`, holds the one expanded port row, the naming draft
