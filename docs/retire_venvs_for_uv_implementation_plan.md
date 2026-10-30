@@ -560,7 +560,7 @@ Inspect these sources rather than inferring runtime requirements from prose:
 
 ### Transcription Migration
 
-**Execution update:** [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged the migration and its launcher was deployed. The owner stated it had not been used, expected no other wrapper callers, waived the real-use prerequisite and authorized retirement. The [Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task) removes source wrappers; deployed wrappers, environments and final checks remain pending. Actual production use has not been accepted.
+**Execution update:** [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged the migration. The owner stated the deployed launcher had not been used, expected no other wrapper callers, waived the real-use prerequisite and authorized retirement. [PR 114](https://github.com/kcharlan/utilities-public/pull/114) removed the source wrappers; deployed wrappers and both named venvs were trashed. Installed help, both shebang checks and the fleet audit passed. The [Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task) records the bounded caller checks. Actual production use has not been accepted; manual counter migration remains owner-run and was not performed.
 
 **Goal:** Decide how `transcription` moves to uv.
 
