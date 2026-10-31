@@ -131,8 +131,8 @@ tree into a timestamped private container under
 `~/.utilities-deploy-backups/backtest/` and copies twelve files to
 `<WEBROOT>/calculators/backtest`. A brief unavailable route is acceptable.
 A copy or verification error restores the saved tree using ordinary moves;
-backups are never automatically pruned. Recovery commands are in the project
-guide. Existing attributes, including `com.apple.macl`, are not admission
+backups follow the [retention rule](#deployment-backup-retention). Recovery
+commands are in the project guide. Existing attributes, including `com.apple.macl`, are not admission
 failures and shared ancestor permissions are not changed.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`;
@@ -157,6 +157,14 @@ state; agents never run data acquisition (see the project guide). The
 [isolated tests](../tools/tests/check_static_deployments.test.mjs) use invented
 history. No release manifests, receipts, parser or metadata restoration
 framework is required for this single-owner localhost deployment.
+
+### Deployment backup retention
+
+After a successful forward deployment and cleanup, the deployers keep the
+newest two eligible backup directories per tool, by directory modification
+time descending and name descending for ties. Failed, unchanged, dry-run and
+rollback operations do not prune. Pruning failures warn without changing the
+successful deployment result. Save any backup needed longer elsewhere.
 
 ## Calculator page direct-copy deployments
 
@@ -197,7 +205,8 @@ file is saved at `~/.utilities-deploy-backups/<namespace>/copy-*/<page>.html`
 in a new `0700` directory, with backup file mode `0600`. It verifies a temporary
 candidate's bytes and complete permission mode before atomically renaming it
 over the destination. Copy, validation or activation failure leaves the prior
-installed file in place and removes the candidate. Backups are retained.
+installed file in place and removes the candidate. Backups follow the
+[retention rule](#deployment-backup-retention).
 To roll back, copy the chosen backup over the installed file and restore its
 desired serving mode (normally `0644`); audit will flag that older copy until
 source and deployment match again. Neighboring calculators and local state are
@@ -358,7 +367,8 @@ executable remain valid; installers never quit or launch the app.
 Activation, receipt publication, rollback and cleanup failures return nonzero
 and restore the previous app/receipt, including an initially absent app.
 Rollback validates the saved hashes before backing up and displacing the
-current release. Both backup generations remain independent and retained.
+current release. Both backup generations remain independent; later successful
+forward deployments apply the [retention rule](#deployment-backup-retention).
 Errors report the retained recovery location, and include restoration failures
 if recovery cannot finish. A rollback to an older source intentionally causes
 the current-source audit to report drift until that source is deployed again.
@@ -530,7 +540,8 @@ an absent prior app. Rollback validates the backup before saving the displaced
 release and restores prior bytes and modes. If activation and restoration both
 fail, the error includes both failures and the retained backup path. Stop and
 recover from that backup after resolving the reported filesystem problem; do
-not discard it or repeatedly deploy over the unresolved state. Backups are retained.
+not discard it or repeatedly deploy over the unresolved state. Later successful
+forward deployments apply the [retention rule](#deployment-backup-retention).
 
 Cleanup attempts cover every owned staging and build directory even if another
 cleanup fails. Reported errors retain the original activation/restoration
@@ -595,7 +606,8 @@ toolchain changes or cryptographic authenticity.
 Before replacement, the previous launcher, walker and receipt are saved under
 `~/.utilities-deploy-backups/storage_monitor/copy-*/`, in a mode-0700 directory
 with mode-0600 backup files and metadata recording original modes and digests.
-Activation failure restores the previous files. Backups are retained. Roll back
+Activation failure restores the previous files. Backups follow the
+[retention rule](#deployment-backup-retention). Roll back
 using the exact backup directory printed by the installer:
 
 ```sh
@@ -662,7 +674,8 @@ The installer copies only the six documented project files, verifies staged
 bytes before activation, backs up a changed prior source tree under
 `~/.utilities-deploy-backups/`, refreshes the
 `~/Library/Scripts/tm-snapshot-monitor` command symlink, and installs the
-hourly user LaunchAgent. Mutable counters and bounded logs remain under
+hourly user LaunchAgent. Successful updates apply the
+[retention rule](#deployment-backup-retention). Mutable counters and bounded logs remain under
 `~/Library/Application Support/TimeMachineSnapshotMonitor`, outside both source
 trees. The read-only deployment audit compares the installed project tree
 byte-for-byte and mode-for-mode and verifies the stable command link target.

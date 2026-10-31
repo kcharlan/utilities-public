@@ -122,6 +122,22 @@ for (const page of pages) {
     return {base, repo, home, webroot, source, target, git, run};
   }
 
+  test(`${page.filename}: successful update prunes older backups; dry run and failure preserve them`, t => {
+    const f = fixture(t); assert.equal(f.run().status, 0);
+    const root = path.join(f.home, '.utilities-deploy-backups', page.backups);
+    for (const name of ['copy-old-a', 'copy-old-b', 'copy-old-c']) {
+      const dir = path.join(root, name); fs.mkdirSync(dir, {recursive: true});
+      fs.writeFileSync(path.join(dir, 'payload'), 'invented'); fs.utimesSync(dir, 1, 1);
+    }
+    fs.writeFileSync(f.source, html('B')); f.git('add', '.');
+    assert.equal(f.run('--dry-run').status, 0);
+    fs.writeFileSync(f.source, html('unstaged')); assert.equal(f.run().status, 1);
+    for (const name of ['copy-old-a', 'copy-old-b', 'copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
+    fs.writeFileSync(f.source, html('B')); assert.equal(f.run().status, 0);
+    const names = fs.readdirSync(root); assert.equal(names.length, 2); assert.ok(names.includes('copy-old-c'));
+    const saved = names.find(name => name !== 'copy-old-c'); assert.equal(fs.readFileSync(path.join(root,saved,page.filename),'utf8'),html('A'));
+  });
+
   test(`${page.filename}: dry run, first install and backed-up update without touching neighbors`, t => {
     const f = fixture(t);
     assert.equal(f.run('--dry-run').status, 0);

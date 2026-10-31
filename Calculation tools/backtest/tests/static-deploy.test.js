@@ -5,6 +5,17 @@ const fs=require('node:fs/promises'),path=require('node:path');
 const {staticFixture}=require('./helpers/static-fixture.cjs');
 async function fixture(t){const f=await staticFixture(t);f.buildDir=path.join(f.base,'build');f.webroot=path.join(f.base,'webroot');f.backupRoot=path.join(f.base,'backups');await fs.mkdir(f.webroot);await(await import('../tools/build_static.mjs')).buildStatic({...f,outputDir:f.buildDir});f.site=path.join(f.webroot,'calculators/backtest');return f;}
 const load=()=>import('../tools/deploy_static.mjs');
+test('successful deployment retains the newest two timestamped backups only',async t=>{
+ const f=await fixture(t),api=await load();await fs.mkdir(f.site,{recursive:true});await fs.writeFile(path.join(f.site,'legacy'),'invented prior');await fs.mkdir(f.backupRoot);
+ for(const name of ['2020-01-01T-old','2021-01-01T-old','2022-01-01T-old','unrelated']){const dir=path.join(f.backupRoot,name);await fs.mkdir(dir);await fs.writeFile(path.join(dir,'payload'),'invented');await fs.utimes(dir,new Date('2020-01-01'),new Date(name.startsWith('2022')?'2022-01-01':'2020-01-01'));}
+ const result=await api.deployStatic(f);assert.deepEqual((await fs.readdir(f.backupRoot)).sort(),['2022-01-01T-old',path.basename(result.backupContainer),'unrelated'].sort());assert.equal(await fs.readFile(path.join(result.backupDirectory,'legacy'),'utf8'),'invented prior');
+});
+test('failed deployment leaves old backups untouched',async t=>{
+ const f=await fixture(t),api=await load();await fs.mkdir(f.site,{recursive:true});await fs.writeFile(path.join(f.site,'legacy'),'invented prior');await fs.mkdir(f.backupRoot);
+ for(const name of ['2020-01-01T-old','2021-01-01T-old','2022-01-01T-old']){await fs.mkdir(path.join(f.backupRoot,name));await fs.writeFile(path.join(f.backupRoot,name,'payload'),'invented');}
+ await assert.rejects(api.deployStatic({...f,hooks:{verify:async()=>{throw Error('invented failure');}}}),/invented failure/);
+ for(const name of ['2020-01-01T-old','2021-01-01T-old','2022-01-01T-old'])assert.equal(await fs.readFile(path.join(f.backupRoot,name,'payload'),'utf8'),'invented');
+});
 test('deploy copies flat runtime and moves whole legacy app privately preserving links and siblings',async t=>{
  const f=await fixture(t),api=await load();await fs.mkdir(f.site,{recursive:true});await fs.writeFile(path.join(f.site,'legacy.txt'),'invented old');await fs.symlink('legacy.txt',path.join(f.site,'legacy-link'));await fs.writeFile(path.join(f.webroot,'calculators/other.html'),'invented sibling');
  const result=await api.deployStatic(f);assert.equal(result.canonicalURL,'/calculators/backtest/index.html');assert.equal(await fs.readFile(path.join(result.backupDirectory,'legacy.txt'),'utf8'),'invented old');assert.equal(await fs.readlink(path.join(result.backupDirectory,'legacy-link')),'legacy.txt');assert.equal((await fs.stat(path.dirname(result.backupDirectory))).mode&0o777,0o700);

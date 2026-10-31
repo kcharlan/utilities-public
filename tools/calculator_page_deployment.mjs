@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import {regular, inspectAncestors, externalDirectory, atomicFile} from './deployment_files.mjs';
+import {regular, inspectAncestors, externalDirectory, atomicFile, pruneBackups} from './deployment_files.mjs';
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -59,6 +59,7 @@ function deployPage({filename, label, backupName, script}) {
   }
   fs.mkdirSync(path.dirname(target), {recursive: true, mode: 0o755});
   atomicFile(target, bytes, mode, `.${backupName}-stage-`);
+  if (backup) pruneBackups(path.dirname(backup));
   console.log(`${label} deployed to /calculators/${filename}`);
   if (backup) console.log(`Previous file retained in a private ${backupName} deployment backup`);
 }

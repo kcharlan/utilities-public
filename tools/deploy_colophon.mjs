@@ -5,7 +5,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, pruneBackups} from './deployment_files.mjs';
 
 export const buildInput = name => name === 'colophon/Makefile' ||
   /^colophon\/(src|assets|vendor\/(yyjson|zstd))\//.test(name) || name === 'colophon/tools/embed.pl';
@@ -107,6 +107,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (dry) { console.log('Dry run: validated tracked native build inputs; no files changed'); return; }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'colophon-native-build-'));
+  let saved;
   try {
     for (const entry of inventory.entries) {
       const file = path.join(scratch, entry.name); fs.mkdirSync(path.dirname(file), {recursive: true}); fs.writeFileSync(file, entry.bytes, {mode: entry.permissions});
@@ -119,13 +120,14 @@ export function main(argv = process.argv.slice(2)) {
     if (![0xfeedfacf, 0xfeedface, 0xcafebabe, 0xbebafeca].includes(bytes.readUInt32LE(0))) throw new Error('Expected a native Mach-O executable');
     if (sourceInventory(repo, undefined, true).sourceHash !== inventory.sourceHash) throw new Error('Native inputs changed during build');
     fs.mkdirSync(scripts, {recursive: true, mode: 0o755});
-    const saved = backup(scripts, os.homedir(), repo);
+    saved = backup(scripts, os.homedir(), repo);
     try {
       atomicFile(target, bytes, 0o755, '.colophon-stage-'); diagnostic(target);
       atomicFile(receipt, Buffer.from(JSON.stringify({schema: 1, sourceHash: inventory.sourceHash, binaryHash: sha(bytes), mode: 0o755}) + '\n'), 0o600, '.colophon-stage-');
     } catch (error) { restore(readBackup(saved), scripts); throw error; }
     console.log('Native Colophon deployed; rollback backup: ' + saved);
   } finally { fs.rmSync(scratch, {recursive: true, force: true}); }
+  if (saved) pruneBackups(path.dirname(saved));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { main(); } catch (error) { console.error('Colophon native deployment failed: ' + error.message); process.exitCode = 1; }

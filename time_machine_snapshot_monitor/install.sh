@@ -28,6 +28,71 @@ fail_install() {
     exit 6
 }
 
+admit_backup_root() {
+    case "$TMSM_BACKUP_ROOT" in
+        /*) ;;
+        *) /bin/echo "backup root must be absolute: $TMSM_BACKUP_ROOT" >&2; return 1 ;;
+    esac
+    case "/$TMSM_BACKUP_ROOT/" in
+        */../*|*/./*) /bin/echo "unsafe backup root: $TMSM_BACKUP_ROOT" >&2; return 1 ;;
+    esac
+    probe=$TMSM_BACKUP_ROOT
+    while [ "${probe%/}" != "$probe" ] && [ "$probe" != "/" ]; do probe=${probe%/}; done
+    while [ "$probe" != "/" ] && [ "$probe" != "." ]; do
+        if [ -L "$probe" ]; then
+            case "$probe" in
+                /tmp|/var) [ "$(/usr/bin/uname -s)" = Darwin ] && [ -d "$probe" ] || return 1 ;;
+                *) /bin/echo "refusing linked backup path: $probe" >&2; return 1 ;;
+            esac
+        elif [ -e "$probe" ] && [ ! -d "$probe" ]; then
+            /bin/echo "backup path is not a directory: $probe" >&2; return 1
+        fi
+        parent=$(dirname -- "$probe")
+        [ "$parent" != "$probe" ] || break
+        probe=$parent
+    done
+    if [ -d "$TMSM_BACKUP_ROOT" ]; then
+        mode=$(/usr/bin/stat -f '%Lp' "$TMSM_BACKUP_ROOT") || return 1
+        if [ $((0$mode & 0222)) -eq 0 ] || [ $((0$mode & 0111)) -eq 0 ] ||
+            [ ! -w "$TMSM_BACKUP_ROOT" ] || [ ! -x "$TMSM_BACKUP_ROOT" ] ||
+            ! /bin/ls -A "$TMSM_BACKUP_ROOT" >/dev/null; then
+            /bin/echo "backup root is not readable/writable/searchable: $TMSM_BACKUP_ROOT" >&2
+            return 1
+        fi
+    fi
+}
+
+prune_backups() {
+    admit_backup_root || { /bin/echo "Warning: backup pruning refused" >&2; return; }
+    [ -d "$TMSM_BACKUP_ROOT" ] || { /bin/echo "Warning: backup root missing: $TMSM_BACKUP_ROOT" >&2; return; }
+    while :; do
+        count=0 oldest=
+        for candidate in "$TMSM_BACKUP_ROOT"/time-machine-snapshot-monitor.*; do
+            [ -d "$candidate" ] && [ ! -L "$candidate" ] || continue
+            count=$((count + 1))
+            if [ -z "$oldest" ]; then
+                oldest=$candidate
+            else
+                newer=$(/usr/bin/find -P "$oldest" -prune -newer "$candidate" -print) || {
+                    /bin/echo "Warning: cannot compare backup: $candidate" >&2; return
+                }
+                reverse=$(/usr/bin/find -P "$candidate" -prune -newer "$oldest" -print) || {
+                    /bin/echo "Warning: cannot compare backup: $candidate" >&2; return
+                }
+                if [ -n "$newer" ] || { [ -z "$reverse" ] && [ "$candidate" \< "$oldest" ]; }; then
+                    oldest=$candidate
+                fi
+            fi
+        done
+        [ "$count" -gt 2 ] || return
+        if ! /usr/bin/find -P "$oldest" -type d -exec /bin/chmod u+rwx {} + ||
+            ! /bin/rm -rf -- "$oldest"; then
+            /bin/echo "Warning: cannot remove backup: $oldest" >&2
+            return
+        fi
+    done
+}
+
 distribution_files='
 README.md
 bin/tm-snapshot-monitor
@@ -102,9 +167,11 @@ deploy_source_tree() {
 
     backup_dir=
     if [ -d "$TMSM_INSTALL_DIR" ]; then
-        /bin/mkdir -p "$TMSM_BACKUP_ROOT" ||
-            fail_install "could not create deployment backup directory"
-        /bin/chmod 700 "$TMSM_BACKUP_ROOT" 2>/dev/null || :
+        admit_backup_root || { /bin/rm -rf -- "$staging_dir"; fail_install "unsafe deployment backup root"; }
+        /bin/mkdir -p "$TMSM_BACKUP_ROOT" || {
+            /bin/rm -rf -- "$staging_dir"; fail_install "could not create deployment backup directory"
+        }
+        admit_backup_root || { /bin/rm -rf -- "$staging_dir"; fail_install "unsafe deployment backup root"; }
         backup_dir=$(/usr/bin/mktemp -d \
             "$TMSM_BACKUP_ROOT/time-machine-snapshot-monitor.XXXXXX") || {
             /bin/rm -rf -- "$staging_dir"
@@ -140,6 +207,7 @@ deploy_source_tree() {
 
     if [ -n "$backup_dir" ]; then
         /bin/echo "Previous source backup: $backup_dir/time_machine_snapshot_monitor"
+        prune_backups
     fi
     exit 0
 }

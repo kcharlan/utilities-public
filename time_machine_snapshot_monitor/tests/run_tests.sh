@@ -584,7 +584,28 @@ test_installer_and_uninstaller_are_idempotent() {
     assert_equals "installer preserves existing Scripts directory mode" "755" "$scripts_mode"
     assert_equals "installer preserves existing LaunchAgents directory mode" "755" "$agents_mode"
 
+    /bin/mkdir -p "$backup_root/time-machine-snapshot-monitor.old-a" "$backup_root/time-machine-snapshot-monitor.old-b" "$backup_root/time-machine-snapshot-monitor.old-c" "$backup_root/unrelated"
+    for old in a b c; do
+        /usr/bin/printf 'invented backup\n' >"$backup_root/time-machine-snapshot-monitor.old-$old/payload"
+        /usr/bin/touch -t 202001010000 "$backup_root/time-machine-snapshot-monitor.old-$old"
+    done
+    /bin/ln -s "$backup_root/unrelated" "$backup_root/time-machine-snapshot-monitor.link"
     /usr/bin/printf 'synthetic installed drift\n' >"$install_dir/README.md"
+    /usr/bin/env \
+        TMSM_HOME="$test_home" TMSM_RUNTIME_DIR="$runtime" TMSM_INSTALL_DIR="$install_dir" \
+        TMSM_BACKUP_ROOT="$backup_root" TMSM_PUBLIC_LINK="$public_link" TMSM_PLIST_PATH="$plist" \
+        ALERTER_BIN="$FAKE_BIN/alerter" LAUNCHCTL_BIN="$FAKE_BIN/launchctl" PLUTIL_BIN="$FAKE_BIN/plutil" \
+        TMUTIL_BIN="$FAKE_BIN/tmutil" MOUNT_BIN="$FAKE_BIN/mount" \
+        FAKE_TMUTIL_OUTPUT="$idle_fixture" FAKE_MOUNT_OUTPUT="$empty_mounts" FAKE_PLUTIL_EXIT=1 \
+        "$PROJECT_DIR/install.sh" >"$output" 2>&1
+    assert_status "failed setup restores prior source" 6 "$?"
+    assert_contains "failed setup preserves installed drift" "$(/bin/cat "$install_dir/README.md")" "synthetic installed drift"
+    for old in a b c; do
+        assert_contains "failed setup preserves old backup $old" "$(/bin/cat "$backup_root/time-machine-snapshot-monitor.old-$old/payload")" "invented backup"
+    done
+    for empty in "$backup_root"/time-machine-snapshot-monitor.*; do
+        [ -d "$empty" ] && [ ! -L "$empty" ] && /bin/rmdir "$empty" 2>/dev/null || :
+    done
     /usr/bin/env \
         TMSM_HOME="$test_home" \
         TMSM_RUNTIME_DIR="$runtime" \
@@ -601,6 +622,7 @@ test_installer_and_uninstaller_are_idempotent() {
         FAKE_MOUNT_OUTPUT="$empty_mounts" \
         "$PROJECT_DIR/install.sh" >"$output" 2>&1
     assert_status "installer updates a changed installed source tree" 0 "$?"
+    [ ! -e "$backup_root/time-machine-snapshot-monitor.old-a" ] && [ ! -e "$backup_root/time-machine-snapshot-monitor.old-b" ] && [ -f "$backup_root/time-machine-snapshot-monitor.old-c/payload" ] && [ -L "$backup_root/time-machine-snapshot-monitor.link" ] && [ -d "$backup_root/unrelated" ] && pass "reinstall retains newest two real backups" || fail "reinstall retains newest two real backups"
     if /usr/bin/cmp -s "$PROJECT_DIR/README.md" "$install_dir/README.md"; then
         pass "installer restores repository bytes after installed drift"
     else
@@ -616,6 +638,34 @@ test_installer_and_uninstaller_are_idempotent() {
         "deployment backup preserves previous installed bytes" \
         "$(/bin/cat "$backup_readme")" \
         "synthetic installed drift"
+
+    linked_root="$test_home/linked-backups"
+    /bin/ln -s "$backup_root" "$linked_root"
+    /bin/mkdir "$backup_root/time-machine-snapshot-monitor.extra"
+    /usr/bin/printf 'invented protected\n' >"$backup_root/time-machine-snapshot-monitor.extra/payload"
+    /usr/bin/printf 'synthetic second drift\n' >"$install_dir/README.md"
+    before_linked=$(/bin/ls -A "$backup_root")
+    /usr/bin/env \
+        TMSM_HOME="$test_home" TMSM_RUNTIME_DIR="$runtime" TMSM_INSTALL_DIR="$install_dir" \
+        TMSM_BACKUP_ROOT="$linked_root" TMSM_PUBLIC_LINK="$public_link" TMSM_PLIST_PATH="$plist" \
+        ALERTER_BIN="$FAKE_BIN/alerter" LAUNCHCTL_BIN="$FAKE_BIN/launchctl" PLUTIL_BIN="$FAKE_BIN/plutil" \
+        TMUTIL_BIN="$FAKE_BIN/tmutil" MOUNT_BIN="$FAKE_BIN/mount" \
+        FAKE_TMUTIL_OUTPUT="$idle_fixture" FAKE_MOUNT_OUTPUT="$empty_mounts" \
+        "$PROJECT_DIR/install.sh" >"$output" 2>&1
+    assert_status "linked backup root refuses deployment" 6 "$?"
+    assert_contains "linked root refusal identifies path" "$(/bin/cat "$output")" "linked backup path"
+    assert_equals "linked root target membership is unchanged" "$before_linked" "$(/bin/ls -A "$backup_root")"
+    assert_contains "linked root preserves old backup" "$(/bin/cat "$backup_root/time-machine-snapshot-monitor.old-c/payload")" "invented backup"
+    assert_contains "linked root preserves target contents" "$(/bin/cat "$backup_root/time-machine-snapshot-monitor.extra/payload")" "invented protected"
+    /usr/bin/env \
+        TMSM_HOME="$test_home" TMSM_RUNTIME_DIR="$runtime" TMSM_INSTALL_DIR="$install_dir" \
+        TMSM_BACKUP_ROOT="$linked_root/" TMSM_PUBLIC_LINK="$public_link" TMSM_PLIST_PATH="$plist" \
+        ALERTER_BIN="$FAKE_BIN/alerter" LAUNCHCTL_BIN="$FAKE_BIN/launchctl" PLUTIL_BIN="$FAKE_BIN/plutil" \
+        TMUTIL_BIN="$FAKE_BIN/tmutil" MOUNT_BIN="$FAKE_BIN/mount" \
+        FAKE_TMUTIL_OUTPUT="$idle_fixture" FAKE_MOUNT_OUTPUT="$empty_mounts" \
+        "$PROJECT_DIR/install.sh" >"$output" 2>&1
+    assert_status "linked backup root with trailing slash refuses deployment" 6 "$?"
+    assert_equals "trailing slash leaves target membership unchanged" "$before_linked" "$(/bin/ls -A "$backup_root")"
 
     /usr/bin/env \
         TMSM_HOME="$test_home" \

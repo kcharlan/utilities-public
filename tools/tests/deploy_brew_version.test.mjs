@@ -290,8 +290,10 @@ for(const operation of ['deploy','rollback']) {
   });
   test(`${operation} reports completed activation separately from cleanup failures`,t=>{
     const f=fixture(t);succeeds(f.run());const first=active(f);f.release('second');const saved=backupPath(succeeds(f.run()));
+    const old=path.join(path.dirname(saved),'copy-old');fs.mkdirSync(old);fs.writeFileSync(path.join(old,'payload'),'invented');fs.utimesSync(old,1,1);
     const attempts=cleanupFaults(f,{operation});
     const r=operation==='deploy'?f.run('--rebuild'):f.run('--rollback',saved);
+    assert.equal(fs.readFileSync(path.join(old,'payload'),'utf8'),'invented');
     assert.equal(r.status,1);assert.match(r.stderr,new RegExp(operation==='deploy'?'Deployment completed':'Rollback completed'));
     assert.match(r.stderr,/cleanup/i);assert.doesNotMatch(r.stderr,/activation failed|restoration failed|deployment failed/i);
     assertCleanupEvidence(r,attempts(),operation==='deploy'?['outer-stage','scratch']:['rollback-stage']);
@@ -310,4 +312,21 @@ test('atomic publication error survives atomic cleanup failure and successful re
   const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic atomic publication error/);
   assertCleanupEvidence(r,attempts(),['atomic-stage']);assertActiveDeployment(f,before);
   const backup=/Recovery backup: (.+)/.exec(r.stdout)?.[1];assert.ok(backup,r.stdout);assert.ok(r.stderr.includes(backup),r.stderr);
+});
+
+test('forward deployment prunes older backups while rollback and dry run preserve them', t => {
+  const f = fixture(t); succeeds(f.run());
+  const root = path.join(f.home, '.utilities-deploy-backups', 'brew-version');
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) { const dir=path.join(root,name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir,'payload'),'invented'); fs.utimesSync(dir,1,1); }
+  f.release('next'); succeeds(f.run('--dry-run'));
+  const beforeFailure=fs.readdirSync(root).sort();
+  fs.appendFileSync(path.join(f.project,'Makefile'),'\\n# invented unstaged change\\n');
+  assert.equal(f.run().status,1); f.git('checkout','--','.');
+  assert.deepEqual(fs.readdirSync(root).sort(),beforeFailure);
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
+  const result=f.run(); succeeds(result); const saved=/rollback backup: (.+)/.exec(result.stdout)[1];
+  const names=fs.readdirSync(root); assert.equal(names.length,2); assert.ok(names.includes(path.basename(saved)));
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
+  const before=fs.readdirSync(root).sort(); succeeds(f.run('--rollback',saved));
+  for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
 });

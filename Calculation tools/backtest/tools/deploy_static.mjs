@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { safeRoot, verifySelected } from './data_contract.mjs';
+import { pruneBackups } from '../../../tools/deployment_files.mjs';
 import {
   DEFAULT_SOURCE, REPO_ROOT, defaultDataHome, readRuntime, validateFlat, copyRuntime,
 } from './build_static.mjs';
@@ -102,6 +103,7 @@ export async function deployStatic(options = {}) {
     });
     await validateFlat(site, expected);
     if (hooks.verify) await hooks.verify(site, expected);
+    pruneBackups(backupRoot, { isBackup: name => /^\d{4}-\d{2}-\d{2}T/.test(name) });
     return {
       ...summary, backupDirectory: saved ? backupDirectory : null,
       backupContainer: container,
