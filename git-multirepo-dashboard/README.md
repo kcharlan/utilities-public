@@ -152,13 +152,16 @@ The application intentionally remains one uv-managed Python file:
 - A React 19.3.0 SPA, its CSS, and all JSX are embedded in `git_dashboard.py` and served by `GET /`; there is no frontend build or `node_modules`.
 - Hash routes select the Fleet, Analytics, and repository detail views.
 
-The frontend uses an exact six-entry import map for React, ReactDOM, their JSX
-runtime subpaths, and `react-is`, plus Babel Standalone 8.0.5 for module-aware
-inline JSX. Recharts 3.10.1 loads as ESM with its React peers externalized to
-that map, so the application and charts share one React graph. The direct
-top-level package versions are pinned, but CDN-generated transitive module
-resolution and delivered bytes remain network-dependent and are not fully
-immutable.
+The frontend uses an exact import map for React, ReactDOM, their JSX runtime
+subpaths, and `react-is`, plus Babel Standalone 8.0.5 for module-aware inline
+JSX. Recharts 3.10.1 loads as ESM with its React peers externalized to that
+map, so the application and charts share one React graph. The map also points
+`react-is` and Recharts' ranged `es-toolkit` URLs at published exact-version
+modules, because esm.sh resolves those URLs on demand and fails them when its
+build storage is full (`RECHARTS_3_IMPORTS` in `tools/testkit.py`). The direct
+top-level package versions are pinned, but other CDN-generated transitive
+module resolution and delivered bytes remain network-dependent and are not
+fully immutable.
 
 The six SQLite tables are:
 

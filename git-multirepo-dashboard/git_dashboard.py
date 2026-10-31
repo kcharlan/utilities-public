@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -3130,7 +3130,18 @@ HTML_TEMPLATE = """\
       "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
       "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
       "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
-      "react-is": "https://esm.sh/react-is@19.3.0?external=react"
+      "react-is": "https://esm.sh/react-is@19.3.0/es2022/react-is.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/get?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/get.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/isEqual?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/isEqual.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/last?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/last.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/maxBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/maxBy.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/minBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/minBy.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/omit?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/omit.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/range?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/range.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/sortBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sortBy.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/sumBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sumBy.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/throttle?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/throttle.mjs",
+      "https://esm.sh/es-toolkit@%5E1.39.3/compat/uniqBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/uniqBy.mjs"
     }
   }
   </script>

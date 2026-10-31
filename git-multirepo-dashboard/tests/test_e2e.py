@@ -401,7 +401,11 @@ def test_react_peer_resource_graph_is_single_and_aligned(server, page):
     react_resources = [
         url for url in requests if is_react_package_resource(url)
     ]
-    assert_react_esm_graph(react_resources, react_dom_wrapper_policy="required")
+    assert_react_esm_graph(
+        react_resources,
+        react_dom_wrapper_policy="required",
+        recharts=True,
+    )
     assert requests.count(
         "https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is"
     ) == 1

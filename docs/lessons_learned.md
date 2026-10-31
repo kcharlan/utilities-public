@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-10-30: Reproduce a CDN failure with the headers a page sends
+
+esm.sh reported healthy and each Recharts dependency opened directly, yet Git
+Fleet and RouterView could not load. Browser module imports always send `Origin`.
+With that header the ranged `es-toolkit` URLs bypassed Cloudflare's stale copy and
+reached an origin returning `no space left on device`; `react-is@19.3.0?external=react`
+failed either way. Compare `curl` with and without `Origin` before calling a URL
+healthy, and read the failing request in the browser's network log. Published
+exact-version modules kept serving, so `RECHARTS_3_IMPORTS` in `tools/testkit.py`
+maps those URLs to them. Remove the es-toolkit entries when a Recharts upgrade
+changes its ranged URLs; the map test and browser suites will show the mismatch.
+
 ## 2026-10-30: Select the editable fixture and wait for its content
 
 Launchmaster's browser test opened the first job after sorting by status, which

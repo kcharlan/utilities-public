@@ -34,10 +34,46 @@ REACT_19_IMPORTS = (
     ("react-is", "https://esm.sh/react-is@19.3.0?external=react"),
 )
 
+# Recharts is the only React peer that imports react-is, and its CDN wrapper
+# pulls es-toolkit through ranged URLs. esm.sh must resolve those URLs and the
+# react-is wrapper on demand, so its build storage can fail them while
+# published exact-version modules keep serving.
+RECHARTS_3_IMPORTS = (
+    *(entry for entry in REACT_19_IMPORTS if entry[0] != "react-is"),
+    ("react-is", "https://esm.sh/react-is@19.3.0/es2022/react-is.mjs"),
+    *(
+        (
+            f"https://esm.sh/es-toolkit@%5E1.39.3/compat/{name}?target=es2022",
+            f"https://esm.sh/es-toolkit@1.53.0/es2022/compat/{name}.mjs",
+        )
+        for name in (
+            "get",
+            "isEqual",
+            "last",
+            "maxBy",
+            "minBy",
+            "omit",
+            "range",
+            "sortBy",
+            "sumBy",
+            "throttle",
+            "uniqBy",
+        )
+    ),
+)
 
-def assert_react_19_import_map(imports: Mapping[str, str]) -> None:
-    """Require the shared six-entry React 19 import-map contract exactly."""
-    assert dict(imports) == dict(REACT_19_IMPORTS)
+
+def assert_react_19_import_map(
+    imports: Mapping[str, str],
+    *,
+    recharts: bool = False,
+) -> None:
+    """Require the shared React 19 import-map contract exactly.
+
+    Pages that load Recharts use its pinned variant of the six-entry map.
+    """
+    expected = RECHARTS_3_IMPORTS if recharts else REACT_19_IMPORTS
+    assert dict(imports) == dict(expected)
 
 
 def is_react_package_resource(resource_url: str) -> bool:
@@ -57,6 +93,7 @@ def assert_react_esm_graph(
         "forbidden",
         "optional",
     ] = "required",
+    recharts: bool = False,
 ) -> None:
     """Validate stable esm.sh React peer-graph boundaries.
 
@@ -114,7 +151,11 @@ def assert_react_esm_graph(
     assert wrapper_counts["/react@19.3.0/jsx-dev-runtime"] == 0
     assert wrapper_counts["/react-dom@19.3.0/client"] == 1
     react_is_wrapper_present = wrapper_counts["/react-is@19.3.0"] == 1
-    assert react_is_wrapper_present == ("react-is" in generated_packages)
+    if recharts:
+        assert not react_is_wrapper_present
+        assert "react-is" in generated_packages
+    else:
+        assert react_is_wrapper_present == ("react-is" in generated_packages)
 
     react_dom_wrapper_count = wrapper_counts["/react-dom@19.3.0"]
     if react_dom_wrapper_policy == "required":

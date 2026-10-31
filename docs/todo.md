@@ -31,5 +31,8 @@
   evidence location and retention; the home residue name heuristic does not settle them.
 - [x] Choose a script-lock policy: selective runtime locks, as recorded in the
   [pilot decision record](script_lock_decision.md).
+- [ ] Confirm Model Sentinel's installed runtime interpreter. Test-environment parity
+  left it unverified; the builder interpreter is not evidence for the installed
+  zipapp. Any live inspection needs an authorized diagnostic.
 - [ ] Plan and implement the selected script-lock rollout, including runner,
   deployment, audit, refresh and per-project validation described in the record.
