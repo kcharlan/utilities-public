@@ -114,9 +114,16 @@ seed runtime files, load provider configuration, or contact a provider.
 `--version` is also configuration-free and reports the product version,
 artifact kind, Git revision context, packaged source hash, and UTC build time.
 
-The standalone removes the repo dependency for normal execution. The
-repo-provided `launchd` installer is separate and embeds the checkout path when
-it is seeded; see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
+Reinstalling over an existing target saves it under
+`~/.utilities-deploy-backups/model-sentinel` (override with
+`MODEL_SENTINEL_BACKUP_ROOT`). After a successful install, the newest two
+`copy-*` directories are retained by modification time, with descending name
+breaking ties. To recover, first save the current target, then copy a saved
+`model-sentinel` to a temporary file beside the target, make it executable and
+atomically rename it over the target. Restoring an older build makes `--check`
+report stale when it differs from the current checkout.
+
+The scheduled job runs the standalone too; see [`docs/LAUNCHD.md`](./docs/LAUNCHD.md).
 
 The standalone supports both environment credentials and a private persistent
 credential file. In the default environment mode, credentials from a sourced
@@ -1033,9 +1040,10 @@ Files older than the configured number of days are deleted during each scan run.
 
 Model Sentinel includes a user-level `launchd` setup path for macOS.
 
-Seed the runtime-home launchd files with:
+Build the standalone first, then seed the runtime-home launchd files:
 
 ```bash
+./install_standalone.sh
 ./setup_launchd.sh
 ```
 

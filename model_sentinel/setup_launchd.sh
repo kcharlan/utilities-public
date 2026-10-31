@@ -47,7 +47,7 @@ copy_if_missing "$LAUNCHD_ENV_TEMPLATE" "$LAUNCHD_ENV_TARGET" "launchd env file"
 if [ -f "$INSTALL_TARGET" ]; then
   printf "Keeping existing launchd installer: %s\n" "$INSTALL_TARGET"
 else
-  sed "s|__MODEL_SENTINEL_PROJECT_DIR__|$SCRIPT_DIR|g" "$INSTALL_TEMPLATE" > "$INSTALL_TARGET"
+  cp "$INSTALL_TEMPLATE" "$INSTALL_TARGET"
   chmod +x "$INSTALL_TARGET"
   printf "Created launchd installer: %s\n" "$INSTALL_TARGET"
 fi
