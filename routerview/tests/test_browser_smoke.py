@@ -170,7 +170,10 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
         re.DOTALL,
     )
     assert import_map_match is not None
-    assert_react_19_import_map(json.loads(import_map_match.group(1))["imports"])
+    assert_react_19_import_map(
+        json.loads(import_map_match.group(1))["imports"],
+        recharts=True,
+    )
     assert "react@18.3.1" not in module.HTML_TEMPLATE
     assert "/umd/react" not in module.HTML_TEMPLATE
     assert "@babel/standalone@8.0.5/babel.min.js" in module.HTML_TEMPLATE
@@ -229,7 +232,7 @@ def test_dashboard_recharts_interactions_and_resource_graph(tmp_path):
             for resource in dependency_resources
             if is_react_package_resource(resource)
         ]
-        assert_react_esm_graph(react_resources)
+        assert_react_esm_graph(react_resources, recharts=True)
         dependency_counts = Counter(dependency_resources)
         assert dependency_counts[recharts_url] == 1
         for direct_resource in script_sources:

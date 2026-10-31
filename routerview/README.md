@@ -69,8 +69,12 @@ Keyboard shortcuts (ignored while typing in a field): `/` focuses the log search
 The embedded, build-free SPA uses an exact-version import map for React 19.3.0,
 ReactDOM 19.3.0, and react-is 19.3.0. Babel Standalone 8.0.5 compiles the
 module-aware inline JSX, and Recharts 3.10.1 is loaded as ESM while
-externalizing those mapped peers so the page has one React graph. Chart
-interactions use public tooltip, legend, shape, and cell callbacks rather than
+externalizing those mapped peers so the page has one React graph. The map also
+points `react-is` and Recharts' ranged `es-toolkit` URLs at published
+exact-version modules, because esm.sh resolves those URLs on demand and fails
+them when its build storage is full (`RECHARTS_3_IMPORTS` in
+`tools/testkit.py`). Chart interactions use public tooltip, legend, shape, and
+cell callbacks rather than
 Recharts 2 chart-state fields. Tailwind uses the exact `@tailwindcss/browser`
 4.3.3 package with CSS-first `@theme` tokens and an explicit class-based
 dark-mode variant. These pins lock direct top-level package versions, but

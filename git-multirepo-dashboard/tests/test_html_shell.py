@@ -47,7 +47,7 @@ def test_html_includes_react_19_esm_contract(html_body):
     )
     assert import_map_match is not None
     import_map = json.loads(import_map_match.group(1))
-    assert_react_19_import_map(import_map["imports"])
+    assert_react_19_import_map(import_map["imports"], recharts=True)
     assert "react@18.3.1" not in html_body
     assert "react-dom@18.3.1" not in html_body
     assert "@babel/standalone@8.0.5" in html_body
