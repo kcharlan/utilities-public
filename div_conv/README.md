@@ -75,13 +75,13 @@ and Fidelity's single-account History export:
 Run Date,Action,Symbol,Description,Type,Price ($),Quantity,Commission ($),Fees ($),Accrued Interest ($),Amount ($),Cash Balance ($),Settlement Date
 ```
 
-History exports do not declare their account in the CSV. For that variant, `brokerages.fidelity.accounts` must contain exactly one mapping; the converter uses that sole source account and refuses to guess when multiple mappings exist. Fidelity's blank-record-separated, single-cell notice trailer is ignored after all tabular rows have been validated. The cooked CSV preserves the Fidelity header and every ledger row, normalizes `Run Date` to `M/D/YY`, and renders integral `Quantity` values without a decimal fraction, matching the earlier Actual-import contract.
+History exports do not declare their account in the CSV. For that variant, `brokerages.fidelity.accounts` must contain exactly one mapping; the converter uses that sole source account and refuses to guess when multiple mappings exist. Fidelity's blank-record-separated, single-cell notice trailer is ignored after all tabular rows have been validated. The cooked CSV preserves the Fidelity header and included ledger rows, normalizes `Run Date` to `M/D/YY`, and renders integral `Quantity` values without a decimal fraction.
 
 Supported Fidelity actions:
 
 - `DIVIDEND RECEIVED` (case-insensitive, with an optional detail suffix) → normalized `dividend`, rendered as QIF `MiscInc` with memo `Dividend <source symbol/security>`
 
-`REINVESTMENT` (also with an optional detail suffix) is skipped with a visible warning and does not require a mapping.
+`REINVESTMENT` (also with an optional detail suffix) is excluded from both cooked CSV and QIF with a visible warning and does not require a mapping.
 
 Vanguard required headers, in the usual export order:
 
@@ -96,9 +96,11 @@ Supported Vanguard actions:
 - `Dividend` → normalized `dividend`, rendered as QIF `MiscInc` with memo `Dividend <source symbol/security>`
 - `Withdrawal` → normalized `withdrawal`, rendered as QIF `XOut` with a transfer target, a fixed locally configured cash security, and the transaction description as its memo (`Withdrawal` when the description is blank)
 
-`Reinvestment` and `Sweep out` are skipped with visible warnings and do not require mappings.
+`Reinvestment` and `Sweep out` are excluded from both cooked CSV and QIF with visible warnings and do not require mappings.
 
-The Vanguard cooked CSV preserves the Vanguard header and every recognized source row unchanged, including reinvestment and sweep rows that are intentionally omitted from QIF output.
+The Vanguard cooked CSV preserves the Vanguard header and included source rows unchanged. Reinvestment and sweep rows are omitted, matching QIF transaction inclusion.
+
+For both brokerages, inclusion depends on the supported transaction action, never the fund name, symbol, investment type, or amount sign. Changing funds does not change filtering; included dividends still require the normal local security mapping. The dividend income entry remains included when its accompanying reinvestment purchase is excluded. Negative dividend adjustments and Vanguard withdrawals remain included. Unknown actions stop conversion rather than being silently discarded.
 
 The two contracts are registered as separate adapters. Each adapter owns its required headers, allowed source actions, and raw-row extraction. Shared code owns configuration validation, batch cooking, rendering, and the all-artifact output transaction.
 

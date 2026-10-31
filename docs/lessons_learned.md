@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-10-31: Apply transaction inclusion to every import output
+
+Div Conv's skipped-action branch preserved reinvestments in cooked CSV while
+omitting them from QIF, so a CSV import still admitted transactions reported as
+skipped. Apply the adapter's action decision before adding rows to either output;
+retain source validation and explicit warnings. Filter on transaction action,
+not security names or amount signs: funds change and legitimate withdrawals and
+dividend adjustments can be negative. Synthetic regressions cover both Fidelity
+contracts and Vanguard, changed funds, unmapped reinvestment securities, and
+negative, zero and positive amounts.
+
 ## 2026-10-30: Reproduce a CDN failure with the headers a page sends
 
 esm.sh reported healthy and each Recharts dependency opened directly, yet Git

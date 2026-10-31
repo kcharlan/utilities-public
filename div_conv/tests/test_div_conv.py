@@ -506,7 +506,7 @@ def test_cli_empty_sources_have_no_expression(tmp_path: Path, skipped: bool, mix
     assert result.stdout.endswith(f"Converted {len(sources)} file(s), {int(mixed)} transaction(s), total amount {'1.00' if mixed else '0.00'}.\n")
     assert (tmp_path / "synthetic-empty.qif").read_bytes() == b""
     cooked = list(csv.DictReader((tmp_path / "synthetic-empty.cooked.csv").open()))
-    assert len(cooked) == int(skipped)
+    assert cooked == []
     assert ("Skipped action 'REINVESTMENT'" in result.stderr) == skipped
 
 
@@ -986,12 +986,10 @@ def test_fidelity_history_export_is_detected_and_converted(tmp_path: Path) -> No
     cooked_path = tmp_path / "synthetic-fidelity-history.cooked.csv"
     assert cooked_path.read_bytes().splitlines(keepends=True)[0].endswith(b"\r\n")
     cooked = list(csv.DictReader(cooked_path.open(encoding="utf-8")))
-    assert len(cooked) == 2
+    assert len(cooked) == 1
     assert list(cooked[0]) == APP["FIDELITY_HISTORY_HEADERS"]
     assert cooked[0]["Run Date"] == "1/2/30"
     assert cooked[0]["Quantity"] == "2"
-    assert cooked[1]["Run Date"] == "1/2/30"
-    assert cooked[1]["Action"].startswith("Reinvestment")
     qif = (tmp_path / "synthetic-fidelity-history.qif").read_text(encoding="utf-8")
     assert qif.startswith("!Type:Invst\n")
     assert "!Account" not in qif
@@ -1171,6 +1169,54 @@ def test_fidelity_processes_dividend_and_visibly_skips_reinvestment(
     assert "MDividend SYNTH1\n" in qif
     assert "Skipped action 'REINVESTMENT'" in result.stderr
     assert "1 transaction(s)" in result.stdout
+
+
+@pytest.mark.parametrize("brokerage,history", [("fidelity", False), ("fidelity", True), ("vanguard", False)])
+@pytest.mark.parametrize("amount", ["-12.34", "0.00", "12.34"])
+@pytest.mark.parametrize("symbol", ["SYNTH_NEW_FUND_A", "SYNTH_NEW_FUND_B"])
+def test_reinvestment_filter_uses_action_not_fund_or_amount(
+    tmp_path: Path, brokerage: str, history: bool, amount: str, symbol: str
+) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {brokerage: configured_section("SYNTHETIC ACCOUNT", symbol, brokerage=brokerage)})
+    source = tmp_path / "synthetic-action-filter.csv"
+    if brokerage == "fidelity":
+        headers = APP["FIDELITY_HISTORY_HEADERS" if history else "FIDELITY_HEADERS"]
+        values = {
+            "Account": "SYNTHETIC ACCOUNT", "Run Date": "2030-01-02",
+            "Action": "DIVIDEND RECEIVED SYNTHETIC DETAIL", "Symbol": symbol,
+            "Description": "SYNTHETIC CHANGED FUND", "Type": "SYNTHETIC TYPE",
+            "Amount ($)": amount,
+        }
+        action_key, skipped_actions = "Action", ["Reinvestment Synthetic Detail"]
+    else:
+        headers = APP["VANGUARD_HEADERS"]
+        values = {
+            "Account Number": "SYNTHETIC ACCOUNT", "Trade Date": "2030-01-02",
+            "Transaction Type": "Dividend", "Symbol": symbol,
+            "Investment Name": "SYNTHETIC CHANGED FUND", "Net Amount": amount,
+        }
+        action_key, skipped_actions = "Transaction Type", ["Reinvestment", "Sweep out"]
+    rows = [values]
+    for action in skipped_actions:
+        # Skipped purchases need no security mapping, even for a newly chosen fund.
+        rows.append({**values, action_key: action, "Symbol": "SYNTH_UNMAPPED_NEW_FUND"})
+    write_csv(source, headers, [[row.get(header, "") for header in headers] for row in rows])
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 0, result.stderr
+    with source.with_suffix(".cooked.csv").open(newline="", encoding="utf-8") as handle:
+        cooked = list(csv.DictReader(handle))
+    assert len(cooked) == 1
+    assert cooked[0][action_key] == values[action_key]
+    assert cooked[0]["Symbol"] == symbol
+    assert cooked[0]["Amount ($)" if brokerage == "fidelity" else "Net Amount"] == amount
+    qif = source.with_suffix(".qif").read_text(encoding="utf-8")
+    assert qif.count("^\n") == 1
+    assert f"T{amount}\n" in qif
+    assert "NMiscInc\n" in qif
+    assert result.stderr.count("Skipped action") == len(skipped_actions)
 
 
 def test_invocation_wide_source_output_collision_is_rejected_even_with_overwrite(
@@ -1649,14 +1695,12 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
             (tmp_path / "synthetic-vanguard.cooked.csv").open(encoding="utf-8")
         )
     )
-    assert len(cooked) == 5
+    assert len(cooked) == 3
     assert list(cooked[0]) == APP["VANGUARD_HEADERS"]
     assert [row["Transaction Type"] for row in cooked] == [
         "Dividend",
         "Withdrawal",
         "Withdrawal",
-        "Reinvestment",
-        "Sweep out",
     ]
     qif = (tmp_path / "synthetic-vanguard.qif").read_text(encoding="utf-8")
     assert qif.startswith("!Type:Invst\n")
