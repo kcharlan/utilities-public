@@ -106,6 +106,7 @@ typeset -a COPY_MAPPINGS=(
   'trim_last/trim_last|trim_last'
   'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
   'worktree-helper/worktree|worktree'
+  'apple-health-extract/run.sh|apple-health-extract'
 )
 
 typeset -a HOME_PROJECTS=(
@@ -232,6 +233,7 @@ new_fixture() {
     "$FIXTURE_HOME/.config" \
     "$FIXTURE_HOME/.local/state"
   cp -p -- "$AUDIT_SOURCE" "$FIXTURE_REPO/tools/check_local_deployments.zsh"
+  cp -p -- "$REPO_UNDER_TEST/tools/deployment_copies.json" "$REPO_UNDER_TEST/tools/deploy_copies.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_anker_charge_monitor.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_telltale.mjs" "$FIXTURE_REPO/tools/"
@@ -336,7 +338,7 @@ new_fixture() {
     cp -p -- "$FIXTURE_REPO/Calculation tools/$calculator_page" "$FIXTURE_HOME/invented web root/calculators/$calculator_page"
   done
 
-  git -C "$FIXTURE_REPO" init -q
+  git -C "$FIXTURE_REPO" init -q -b main
   git -C "$FIXTURE_REPO" config user.name "Synthetic Audit Tester"
   git -C "$FIXTURE_REPO" config user.email "audit-tester@example.invalid"
   git -C "$FIXTURE_REPO" add .
@@ -1850,5 +1852,40 @@ test_native_telltale_deployment() {
   done
 }
 test_native_telltale_deployment
+
+test_copy_manifest_and_lifecycle() {
+  new_fixture
+  print 'synthetic wrapper drift' >> "$FIXTURE_SCRIPTS/apple-health-extract"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'wrapper drift'
+  assert_contains "$AUDIT_STDERR" 'apple-health-extract bytes differ'
+
+  new_fixture
+  print '{invalid' > "$FIXTURE_REPO/tools/deployment_copies.json"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'modified manifest'
+  assert_contains "$AUDIT_STDERR" 'deployment copy manifest is unreadable, invalid, or modified'
+  git -C "$FIXTURE_REPO" add tools/deployment_copies.json
+  git -C "$FIXTURE_REPO" commit -qm 'synthetic malformed manifest'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'malformed committed manifest'
+  assert_contains "$AUDIT_STDERR" 'deployment copy manifest is unreadable, invalid, or modified'
+
+  new_fixture
+  jq '(.scripts[], .projects[]) |= del(.smoke, .entrypoint)' "$FIXTURE_REPO/tools/deployment_copies.json" > "$FIXTURE_ROOT/manifest.json"
+  cp "$FIXTURE_ROOT/manifest.json" "$FIXTURE_REPO/tools/deployment_copies.json"
+  print 'synthetic updated source' >> "$FIXTURE_REPO/div_conv/div_conv"
+  git -C "$FIXTURE_REPO" add .
+  git -C "$FIXTURE_REPO" commit -qm 'synthetic update'
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'source update is drift'
+  HOME="$FIXTURE_HOME" "$FIXTURE_NODE" "$FIXTURE_REPO/tools/deploy_copies.mjs" --repo "$FIXTURE_REPO" --scripts-dir "$FIXTURE_SCRIPTS" --local-root "$FIXTURE_LOCAL" --only div_conv > "$FIXTURE_ROOT/deploy.stdout" 2> "$FIXTURE_ROOT/deploy.stderr" || {
+    cat "$FIXTURE_ROOT/deploy.stderr" >&2
+    fail 'copy deployer lifecycle'
+  }
+  run_audit
+  assert_status 0 "$AUDIT_STATUS" 'deployed source audit'
+}
+test_copy_manifest_and_lifecycle
 
 print -- "check_local_deployments tests: PASS"

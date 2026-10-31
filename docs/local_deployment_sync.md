@@ -72,7 +72,7 @@ Define the deployment form before building its installer or audit:
 | Maintained source tree | An explicit inventory of maintained files; updates preserve local-only configuration and runtime state. |
 | Generated static artifact | A declared source/data inventory and build recipe; verify the built runtime inventory and installed bytes independently of source tests. |
 
-Direct copies and maintained source trees retain the tracked-copy rules above.
+Add each new direct copy or home project to [`tools/deployment_copies.json`](../tools/deployment_copies.json). Direct copies and maintained source trees retain the tracked-copy rules above.
 Generated artifacts use their explicitly admitted inputs and runtime inventory;
 Market Atlas follows the installer-only exception in rule 3. All forms preserve
 local state.
@@ -631,25 +631,7 @@ zsh tools/tests/test_check_local_deployments.zsh
 
 ## `~/Library/Scripts`
 
-These files are direct copies of tracked source and should remain byte-for-byte identical:
-
-- `de-abacus.py` <- `abacus usage/de-abacus.py`
-- `div_conv` <- `div_conv/div_conv`
-- `dloc` <- `dloc/dloc`
-- `docker-disk-compact.zsh` <- `docker/docker-disk-compact/docker-disk-compact.zsh`
-- `editdb` <- `editdb/editdb`
-- `etf_montecarlo` <- `etf_montecarlo/etf_montecarlo`
-- `expense_dock` <- `expense_dock/expense_dock`
-- `harscope` <- `harscope/harscope`
-- `jtree` <- `jtree/jtree`
-- `launchmaster` <- `launchmaster/launchmaster`
-- `media-dater` <- `media-dater/media-dater`
-- `moneydance_rotate_backups.sh` <- `moneydance backup rotation/moneydance_rotate_backups.sh`
-- `router_log_analyze.py` <- `router-log-analyzer/router_log_analyze.py`
-- `routerview` <- `routerview/routerview`
-- `trim_last` <- `trim_last/trim_last`
-- `usage-monthly-csv` <- `usage-monthly-csv/usage-monthly-csv`
-- `worktree` <- `worktree-helper/worktree`
+Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` to select an entry and `--dry-run` to inspect changes without writing. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
 
 `model-sentinel` is intentionally different: it is a generated zipapp. Rebuild
 it with `model_sentinel/install_standalone.sh`. The audit derives its exact
@@ -660,7 +642,7 @@ also validates the generated `model_sentinel/_packaged_build.py` provenance
 file, including its bounded size, exact structure, and source hash. The
 installer builds through uv (`uv run --no-python-downloads --script
 model_sentinel/build_standalone.py`), so it needs uv on `PATH` but no project
-venv or particular `python3`; run it as is.
+venv or particular `python3`; run it as is. The installer retains the newest two eligible backups after a successful forward deployment; see [Model Sentinel’s README](../model_sentinel/README.md) for restoration.
 
 `time_machine_snapshot_monitor` is a maintained multi-file copy under
 `~/Library/Scripts/time_machine_snapshot_monitor`. Deploy or update it from the
@@ -683,42 +665,7 @@ Use the project README for setup, repair, and removal behavior.
 
 ## Top-level home project copies
 
-The maintained runtime/source copies are:
-
-- `~/apple-health-extract`
-- `~/docker`
-- `~/mem_snapshots`
-- `~/mls-tracker`
-- `~/tax2`
-- `~/transcription`
-- `~/vid-compiler`
-- `~/video-scenes`
-
-`~/docs` is an unrelated name collision. Do not synchronize the repository's `docs/` directory into it.
-Transcription is a maintained source copy at `~/transcription`; run its
-`transcription` launcher in place.
-
-Copy tracked files without deleting local-only files. The following pattern is safe for one project after a rollback directory has been created:
-
-```zsh
-repo="$HOME/source/utilities-public"
-project="tax2"
-backup="$HOME/.utilities-deploy-backups/manual-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$backup"
-chmod 700 "$backup"
-
-git -C "$repo" ls-files -z -- "$project" | while IFS= read -r -d '' relative; do
-  source_file="$repo/$relative"
-  destination="$HOME/$relative"
-  relative_destination="${destination#$HOME/}"
-  if [[ -e "$destination" ]] && ! cmp -s "$source_file" "$destination"; then
-    mkdir -p "$backup/${relative_destination:h}"
-    cp -p "$destination" "$backup/$relative_destination"
-  fi
-  mkdir -p "${destination:h}"
-  cp -p "$source_file" "$destination"
-done
-```
+The maintained home project copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json); `~/docker` is owned by Docker propagation. Use `node tools/deploy_copies.mjs` to install or update tracked files while preserving local-only files. `~/docs` is an unrelated name collision and is not synchronized. Transcription runs in place from its maintained copy.
 
 Do not treat local-only files as drift. Important examples include:
 
@@ -804,6 +751,8 @@ tie-break. Failed, unchanged and dry runs leave backups untouched.
 ## Rollback
 
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
+
+Restore a copy-deployer backup with `node tools/deploy_copies.mjs --rollback BACKUP`. Hand-made backups have no `state.json` and cannot be used with this command.
 
 Market Atlas moves the entire prior app into a new private backup container,
 without normalizing the saved tree or promising exact metadata restoration.

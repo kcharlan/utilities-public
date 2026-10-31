@@ -19,6 +19,7 @@ This repository is a personal utilities monorepo of independently maintained pro
 - Anything that needs the owner goes in `docs/todo.md` or your report, with why it matters, the options and a recommendation, never only in a plan or the PKM.
 - Treat each independently maintained project as standalone, whether top-level or nested; account for shared dependencies when determining affected projects.
 - Keep changes scoped; do not refactor across unrelated projects unless explicitly asked.
+- Agents deploy through the applicable deployer; never hand-copy deployment files.
 - Many paths contain spaces (for example `Calculation tools`, `abacus usage`, `moneydance backup rotation`): always quote paths in shell commands.
 - Follow documentation chains: if a README references other docs (design docs, API specs, `docs/` folders), read them before making changes, and check sibling directories whose docs or code interact with your change. `rg --files` finds files like `DESIGN.md`, `ARCHITECTURE.md` and `API.md`.
 
@@ -118,7 +119,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
 - Static deployment/fleet audit tooling:
   - `zsh tools/tests/test_check_home_residue.zsh` (synthetic home residue audit cases).
-  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs` (native and calculator-page installer lifecycles and shared filesystem helpers).
+  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs tools/tests/deploy_copies.test.mjs` (installer lifecycles and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
