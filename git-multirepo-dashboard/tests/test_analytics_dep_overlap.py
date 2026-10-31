@@ -316,5 +316,5 @@ def test_dep_overlap_orders_versions(test_app):
 def test_overlap_component_keys_include_source(test_app):
     client, _ = test_app
     component = client.get('/').text.split('function DepOverlap()', 1)[1].split('// ── FleetDepsTab', 1)[0]
-    assert 'key={JSON.stringify([repo.repo_id, repo.source_path])}' in component
-    assert '{repo.source_path}' in component
+    assert 'key=${JSON.stringify([repo.repo_id, repo.source_path])}' in component
+    assert '${repo.source_path}' in component

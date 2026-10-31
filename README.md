@@ -34,7 +34,7 @@ The [complete project catalog](docs/projects.md) groups applications, utilities,
 
 Start with the linked project README. There is no repository-wide installation step: delivery ranges from shell commands and static pages to Python applications, native binaries, and Docker stacks.
 
-Many Python tools use [uv](https://docs.astral.sh/uv/) to resolve their declared dependencies on first run. Other prerequisites, credentials, configuration, or build steps are project-specific. A local browser interface may still load assets from public CDNs; check the project documentation before relying on offline use.
+Many Python tools use [uv](https://docs.astral.sh/uv/) to resolve their declared dependencies on first run. Other prerequisites, credentials, configuration, network access for data, or build steps are project-specific; consult each project’s documentation.
 
 Keep operational configuration, inputs, and generated output in the project's documented private runtime locations. The source checkout is not a data directory.
 
@@ -42,6 +42,6 @@ Keep operational configuration, inputs, and generated output in the project's do
 
 Each project README describes its setup and validation commands. Contributor conventions and the rules for choosing a CLI, built page, static page, or local server live in [agents.md](agents.md).
 
-Shared repository tooling lives in [tools/](tools/): deployment installers, the read-only fleet deployment audit, the uv launcher header guard, browser and launcher test helpers, and the shared temporary-file leak checker. Their tests are in [tools/tests/](tools/tests/).
+Shared repository tooling lives in [tools/](tools/): deployment installers, the read-only fleet deployment audit, the uv launcher header guard, browser and launcher test helpers, and the shared temporary-file leak checker. The [frontend kit](tools/frontend_vendor/) and `tools/sync_frontend_vendor.mjs` maintain embedded browser assets. Their tests are in [tools/tests/](tools/tests/).
 
 Repository updates do not update installed copies. See the [deployment guide](docs/local_deployment_sync.md) for installation, verification, and rollback, the [maintenance to-do list](docs/todo.md) for open follow-ups, and the [lessons learned](docs/lessons_learned.md) for cross-project pitfalls.

@@ -1,5 +1,15 @@
 # Lessons Learned
 
+## DAG Geometry Must Follow Rendered Nodes
+
+- What went wrong: The replacement DAG treated an 80-pixel layout estimate as the rendered height, so wrapped titles displaced handles and invalidated fit, edge and selection geometry.
+- Pattern to follow instead: Measure rendered node dimensions and share them across every geometry consumer; test a wrapping title as well as live updates without resetting the user's viewport.
+
+## Option Text Whitespace After Template Conversion
+
+- What went wrong: Converting JSX to tagged templates introduced spaces around an interpolated option label, changing its exact visible text.
+- Pattern to follow instead: Check rendered option and button text after conversion, and keep intentional whitespace explicit around interpolations.
+
 ## Streaming Must Honor Injected Process Runners
 
 - What went wrong: Enabling phase output callbacks bypassed the injected runner and launched the real agent CLI, while a test swallowed the resulting exception.

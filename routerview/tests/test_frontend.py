@@ -14,29 +14,9 @@ def load_module():
     return load_launcher(SCRIPT_PATH)
 
 
-def test_recharts_3_esm_loads_once_with_externalized_react_peers():
-    module = load_module()
-    html = module.HTML_TEMPLATE
-    recharts_url = (
-        "https://esm.sh/recharts@3.10.1"
-        "?external=react,react-dom,react-is"
-    )
-
-    assert html.count(recharts_url) == 1
-    assert "from 'react';" in html
-    assert "from 'react-dom/client';" in html
-    assert f"from '{recharts_url}';" in html
-    assert "/umd/Recharts.js" not in html
-    assert "recharts@2.15.4" not in html
-
-
-def test_chart_interactions_do_not_read_removed_recharts_2_state():
-    module = load_module()
-    html = module.HTML_TEMPLATE
-
-    assert "activeTooltipIndex" not in html
-    assert "activePayload" not in html
-    assert 'className="rv-main-chart-plot"' in html
+def test_chart_plot_supports_linked_crosshair():
+    html = load_module().HTML_TEMPLATE
+    assert 'plotClass=${"rv-main-chart-plot"}' in html
     assert "querySelectorAll('.rv-main-chart-plot')" in html
 
 
@@ -47,7 +27,7 @@ def test_chart_tooltip_includes_bucket_totals_for_additive_metrics():
     assert "const showTotals = metric!=='latency';" in module.HTML_TEMPLATE
     assert "const primaryTotal = sumTooltipValues(primary);" in module.HTML_TEMPLATE
     assert "const compTotal = sumTooltipValues(comp);" in module.HTML_TEMPLATE
-    assert '<span className="font-medium text-slate-300">Total</span>' in module.HTML_TEMPLATE
+    assert 'font-medium text-slate-300' in module.HTML_TEMPLATE
 
 
 def test_chart_tooltip_sorts_cost_rows_descending():
@@ -69,7 +49,7 @@ def test_csv_import_triggers_dashboard_refresh():
     # exports are UTC and are recovered from the gen-ID epoch server-side.
     assert "fd.append('tz'," not in module.HTML_TEMPLATE
     assert "if(d.status==='ok') onImportComplete?.();" in module.HTML_TEMPLATE
-    assert "<SettingsPanel onClose={()=>setShowSettings(false)} onImportComplete={()=>{fetchData();fetchLog();}}/>" in module.HTML_TEMPLATE
+    assert "onImportComplete=${()=>{fetchData();fetchLog();}}" in module.HTML_TEMPLATE
     assert "/api/admin/rebuild-timestamps?confirm=true" in module.HTML_TEMPLATE
 
 
@@ -79,8 +59,8 @@ def test_header_shows_selected_preset_with_resolved_range():
     assert "function formatResolvedRange(fromIso,toIso,tz)" in module.HTML_TEMPLATE
     assert "const activeRangeLabel = RANGE_OPTS.find(o=>o.v===timeRange)?.l||'Custom Range';" in module.HTML_TEMPLATE
     assert "const resolvedRange = summary?.from&&summary?.to ? formatResolvedRange(summary.from, summary.to, tz) : null;" in module.HTML_TEMPLATE
-    assert "<Header" in module.HTML_TEMPLATE
-    assert "summary={summary}" in module.HTML_TEMPLATE
+    assert "<${Header}" in module.HTML_TEMPLATE
+    assert "summary=${summary}" in module.HTML_TEMPLATE
 
 
 def test_rebuild_timestamps_button_wired_in_settings_panel():
@@ -95,7 +75,7 @@ def test_rebuild_timestamps_button_wired_in_settings_panel():
         "The database will be backed up to ~/.routerview/backups/ first.`"
     ) in module.HTML_TEMPLATE
     assert "setRebuilding(true);" in module.HTML_TEMPLATE
-    assert ">{rebuilding?'Rebuilding...':'Rebuild Timestamps'}<" in module.HTML_TEMPLATE
+    assert ">${rebuilding?'Rebuilding...':'Rebuild Timestamps'}<" in module.HTML_TEMPLATE
 
 
 def _first_arg_literal(source: str, start: int):

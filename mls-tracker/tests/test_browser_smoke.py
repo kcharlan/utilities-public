@@ -1,8 +1,5 @@
-from collections import Counter
 from contextlib import contextmanager
-import json
 from pathlib import Path
-import re
 import socket
 import sys
 import threading
@@ -18,10 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
-    assert_react_19_import_map,
-    assert_react_esm_graph,
+    assert_frontend_vendor_current,
+    assert_launcher_compiles_cleanly,
+    assert_classes_styled,
     guard_browser_errors,
-    is_react_package_resource,
 )
 
 
@@ -75,7 +72,7 @@ def _install_synthetic_data(monkeypatch):
             "name": f"Synthetic Team {index}",
             "abbreviation": f"S{index}",
             "colors": {"primary": "#336699", "secondary": "#112233", "accent": "#ffffff"},
-            "logo": "",
+            "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmV8AAAAASUVORK5CYII=",
         }
         for index in range(1, 11)
     ]
@@ -85,7 +82,7 @@ def _install_synthetic_data(monkeypatch):
         if state["refreshes"]:
             standings[0].update(gp=33, w=0, l=32, t=1, pts=1, ppg=0.03)
             standings[8].update(gp=33, w=19, l=11, t=3, pts=60, ppg=1.818)
-        return {"Eastern Conference": standings}
+        return {"Eastern Conference": standings, "Western Conference": [dict(standings[1])]}
 
     def invalidate():
         state["refreshes"] += 1
@@ -96,77 +93,18 @@ def _install_synthetic_data(monkeypatch):
     return state
 
 
-def test_tailwind_v4_contract_and_browser_support_are_documented():
+def test_frontend_contract():
+    assert_frontend_vendor_current(PROJECT_ROOT / "mls_tracker")
+    assert_launcher_compiles_cleanly(PROJECT_ROOT / "mls_tracker")
     source = mls_tracker.HTML_TEMPLATE
-    import_map_match = re.search(
-        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
-        source,
-        re.DOTALL,
-    )
-    assert import_map_match is not None
-    imports = json.loads(import_map_match.group(1))["imports"]
-    assert_react_19_import_map(imports)
-    assert "react@18.3.1" not in source
-    assert "react-dom@18.3.1" not in source
-    assert "/umd/react" not in source
-    assert source.count("@babel/standalone@8.0.5/babel.min.js") == 1
-    assert "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" in source
-    assert "cdn.tailwindcss.com" not in source
-    assert "tailwind.config" not in source
-    assert '<style type="text/tailwindcss">' in source
-    assert "@custom-variant dark (&:where(.dark, .dark *));" in source
-    assert "--color-team-primary: var(--team-primary);" in source
-    assert "--color-surface-100: var(--surface-100);" in source
-    assert "--font-display: 'Oswald', sans-serif;" in source
-    assert "--font-body: 'Source Sans 3', sans-serif;" in source
-    assert "bg-surface-100/95" in source
-    assert "text-white/90" in source
-    assert "bg-white/20" in source
-    for legacy_opacity_utility in (
-        "bg-opacity-",
-        "border-opacity-",
-        "divide-opacity-",
-        "placeholder-opacity-",
-        "ring-opacity-",
-        "text-opacity-",
-    ):
-        assert legacy_opacity_utility not in source
-    assert (
-        '<script type="text/babel" data-type="module" '
-        'data-presets="env,react">'
-    ) in source
-    assert "import * as React from 'react';" in source
-    assert "import * as ReactDOM from 'react-dom';" not in source
-    assert "import * as ReactDOMClient from 'react-dom/client';" in source
-    assert "ReactDOMClient.createRoot(" in source
-
-    readme = README.read_text()
-    user_guide = USER_GUIDE.read_text()
-    normalized_readme = " ".join(readme.split())
-    for document in (readme, user_guide):
-        assert "@tailwindcss/browser" in document
-        assert "4.3.3" in document
-        for dependency in (
-            "React 19.3.0",
-            "ReactDOM 19.3.0",
-            "react-is 19.3.0",
-            "Babel Standalone 8.0.5",
-        ):
-            assert dependency in " ".join(document.split())
-    assert "not byte-immutable" in readme
-    assert "exact-version import map" in normalized_readme
-    assert "module-aware inline JSX" in normalized_readme
-    assert "direct top-level package versions" in normalized_readme
-    assert "CDN-generated transitive dependencies are not fully locked" in normalized_readme
-    assert "React 18 UMD" not in readme
-    assert "current Playwright Chromium" in normalized_readme
-    assert "Chrome 111" in readme
-    assert "Safari 16.4" in readme
-    assert "Firefox 128" in readme
-    assert "Safari and Firefox are not covered by the automated browser test" in normalized_readme
+    assert "--color-team-primary: var(--team-primary)" in source
+    assert "--color-surface-100: var(--surface-100)" in source
+    assert "Chrome 111" in README.read_text()
+    assert "Safari 16.4" in README.read_text()
+    assert "Firefox 128" in README.read_text()
 
 
-def test_embedded_dashboard_loads_tailwind_v4_and_persists_dark_mode(monkeypatch):
+def test_embedded_dashboard_styles_and_persists_dark_mode(monkeypatch):
     synthetic_state = _install_synthetic_data(monkeypatch)
 
     with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
@@ -177,40 +115,9 @@ def test_embedded_dashboard_loads_tailwind_v4_and_persists_dark_mode(monkeypatch
             page.goto(url, wait_until="domcontentloaded")
             expect(page.get_by_text("Current Points")).to_be_visible(timeout=15_000)
 
-            external_script_sources = page.locator("script[src]").evaluate_all(
-                """elements => elements
-                    .map(element => element.src)
-                    .filter(source => new URL(source).origin !== location.origin)"""
-            )
-            assert Counter(external_script_sources) == Counter(
-                {
-                    "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js": 1,
-                    "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3": 1,
-                    "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js": 1,
-                }
-            )
-            external_resources = page.evaluate(
-                """() => performance.getEntriesByType('resource')
-                    .map(entry => entry.name)
-                    .filter(name => !name.startsWith(location.origin))"""
-            )
-            react_resources = [
-                resource
-                for resource in external_resources
-                if is_react_package_resource(resource)
-            ]
-            assert_react_esm_graph(
-                react_resources,
-                react_dom_wrapper_policy="forbidden",
-            )
-            non_react_counts = Counter(
-                resource
-                for resource in external_resources
-                if not is_react_package_resource(resource)
-            )
-            for direct_resource in external_script_sources:
-                assert non_react_counts[direct_resource] == 1
-
+            assert_classes_styled(page, ignore=["dark", "group"])
+            assert page.get_by_title("Toggle dark mode").evaluate("element => element.getBoundingClientRect().height") == 26
+            assert "—" in page.locator(".header-clip").inner_text()
             title = page.locator("h1", has_text="Synthetic Team 1")
             page.wait_for_function(
                 "getComputedStyle(document.querySelector('.font-display')).fontFamily.startsWith('Oswald')"
@@ -351,11 +258,15 @@ def test_native_body_baseline_remains_when_tailwind_is_unavailable(monkeypatch):
     with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
-        with guard_browser_errors(page, expected=("Failed to load resource: net::ERR_FAILED",)):
-            page.route(
-                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-                lambda route: route.abort(),
-            )
+        def without_compiled_utilities(route):
+            response = route.fetch()
+            source = response.text()
+            start = source.index('<style>\n/*! tailwindcss')
+            end = source.index('</style>', start) + len('</style>')
+            route.fulfill(response=response, body=source[:start] + source[end:])
+
+        page.route(url + '/', without_compiled_utilities)
+        with guard_browser_errors(page):
             page.goto(url, wait_until="domcontentloaded")
             expect(page.get_by_title("Toggle dark mode")).to_be_visible(
                 timeout=15_000
@@ -372,4 +283,58 @@ def test_native_body_baseline_remains_when_tailwind_is_unavailable(monkeypatch):
                 "backgroundColor": "rgb(250, 250, 250)",
                 "color": "rgb(24, 24, 27)",
             }
+        browser.close()
+
+
+def test_page_loads_offline(monkeypatch):
+    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    _install_synthetic_data(monkeypatch)
+    with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context()
+        blocked = block_external_requests(context, allowed_origins=[url])
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="domcontentloaded")
+            expect(page.get_by_text("Current Points")).to_be_visible(timeout=15_000)
+            expect(page.locator("img").first).to_be_visible()
+            assert page.locator("img").first.get_attribute("src").startswith("data:image/png;base64,")
+            assert_no_external_resources(page, blocked)
+            assert_offline_page_source(page.content())
+        browser.close()
+
+
+def test_controls_update_the_view_immediately(monkeypatch):
+    _install_synthetic_data(monkeypatch)
+    with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        with guard_browser_errors(page):
+            page.goto(url)
+            expect(page.get_by_role("heading", name="Synthetic Team 1")).to_be_visible()
+            selects = page.locator("select")
+            selects.nth(1).select_option(label="Synthetic Team 3")
+            expect(page.get_by_role("heading", name="Synthetic Team 3")).to_be_visible()
+            page.locator('input[type="number"]').fill("5")
+            expect(page.get_by_text("Playoff cutoff line (position 5)")).to_be_visible()
+            selects.nth(0).select_option("western")
+            expect(page.get_by_role("heading", name="Synthetic Team 2")).to_be_visible()
+            page.get_by_text("Technical Details").click()
+            expect(page.get_by_text("Cache TTL:")).to_be_visible()
+            assert_classes_styled(page, ignore=["dark", "group"])
+        browser.close()
+
+
+def test_initial_scenarios_wait_for_selected_team(monkeypatch):
+    _install_synthetic_data(monkeypatch)
+    with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        requests = []
+        page.on("request", lambda req: requests.append(req.url) if "/api/scenarios?" in req.url else None)
+        with guard_browser_errors(page):
+            page.goto(url)
+            expect(page.get_by_text("Current Points")).to_be_visible()
+            assert requests
+            assert all("Synthetic%20Team%201" in request for request in requests)
         browser.close()

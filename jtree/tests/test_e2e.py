@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import signal
 import socket
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -21,10 +19,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
-    assert_react_19_import_map,
-    assert_react_esm_graph,
+    assert_no_external_resources,
+    assert_offline_page_source,
+    block_external_requests,
+    assert_frontend_vendor_current,
+    assert_launcher_compiles_cleanly,
+    assert_classes_styled,
     guard_browser_errors,
-    is_react_package_resource,
 )
 
 
@@ -32,6 +33,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_ROOT / "jtree"
 README = PROJECT_ROOT / "README.md"
 USER_GUIDE = PROJECT_ROOT / "docs" / "USER_GUIDE.md"
+
+
+def test_page_loads_offline(server, browser):
+    context = browser.new_context()
+    blocked = block_external_requests(context, allowed_origins=[server])
+    page = context.new_page()
+    with guard_browser_errors(page):
+        page.goto(server, wait_until="domcontentloaded")
+        expect(page.get_by_title("Toggle theme")).to_be_visible(timeout=15000)
+        assert_no_external_resources(page, blocked)
+        assert_offline_page_source(page.content())
+    context.close()
 
 
 def _find_free_port() -> int:
@@ -83,111 +96,28 @@ def server(tmp_path_factory):
                 process.wait(timeout=5)
 
 
-def test_supported_cdn_versions_are_pinned():
+def test_frontend_contract():
+    assert_frontend_vendor_current(LAUNCHER)
+    assert_launcher_compiles_cleanly(LAUNCHER)
     source = LAUNCHER.read_text()
-    import_map_match = re.search(
-        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
-        source,
-        re.DOTALL,
-    )
-    assert import_map_match is not None
-    imports = json.loads(import_map_match.group(1))["imports"]
-    assert_react_19_import_map(imports)
-    assert "react@18.3.1" not in source
-    assert "react-dom@18.3.1" not in source
-    assert "/umd/react" not in source
-    assert source.count("@babel/standalone@8.0.5/babel.min.js") == 1
-    assert source.count("https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3") == 1
-    assert source.count("lucide@1.46.0/dist/umd/lucide.min.js") == 1
-    assert "cdn.tailwindcss.com" not in source
-    assert "tailwind.config" not in source
-    assert '<style type="text/tailwindcss">' in source
-    assert "@custom-variant dark (&:where(.dark, .dark *));" in source
-    assert "--color-blueprint-bg: #0a1628;" in source
-    assert "--color-node-type-object: #4fc3f7;" in source
-    assert "--font-sans: 'DM Sans', sans-serif;" in source
-    assert "--font-mono: 'JetBrains Mono', monospace;" in source
-    assert (
-        '<script type="text/babel" data-type="module" '
-        'data-presets="env,react">'
-    ) in source
-    assert "import * as React from 'react';" in source
-    assert "import * as ReactDOM from 'react-dom';" not in source
-    assert "import * as ReactDOMClient from 'react-dom/client';" in source
-    assert "ReactDOMClient.createRoot(" in source
+    for token in ("--color-blueprint-bg: #0a1628;", "--color-node-type-object: #4fc3f7;", "--font-sans: 'DM Sans', sans-serif;", "--font-mono: 'JetBrains Mono', monospace;"):
+        assert token in source
+    for document in (README.read_text(), USER_GUIDE.read_text()):
+        normalized = ' '.join(document.split())
+        for text in ('current Playwright Chromium', 'Chrome 111', 'Safari 16.4', 'Firefox 128'):
+            assert text in normalized
+    assert 'Safari and Firefox are not covered by the automated browser test' in ' '.join(README.read_text().split())
 
 
-def test_frontend_dependency_contract_is_documented():
-    readme = README.read_text()
-    user_guide = USER_GUIDE.read_text()
-    normalized_readme = " ".join(readme.split())
-
-    for document in (readme, user_guide):
-        normalized = " ".join(document.split())
-        for dependency in (
-            "React 19.3.0",
-            "ReactDOM 19.3.0",
-            "react-is 19.3.0",
-            "Babel Standalone 8.0.5",
-            "Tailwind CSS 4.3.3",
-        ):
-            assert dependency in normalized
-        assert "exact-version import map" in normalized
-        assert "module-aware inline JSX" in normalized
-        assert "direct top-level package versions" in normalized
-        assert "CDN-generated transitive dependencies are not fully locked" in normalized
-        assert "not byte-immutable" in normalized
-        assert "current Playwright Chromium" in normalized
-        assert "Chrome 111" in document
-        assert "Safari 16.4" in document
-        assert "Firefox 128" in document
-
-    assert "not byte-immutable" in readme
-    assert "Playwright" in readme
-    assert "Chromium" in readme
-    assert "Chrome 111" in readme
-    assert "Safari 16.4" in readme
-    assert "Firefox 128" in readme
-    assert "Safari and Firefox are not covered by the automated browser test" in normalized_readme
-    assert "React 18 UMD" not in readme
-
-
-def test_app_loads_tailwind_v4_persists_theme_and_opens_search(server, page):
+def test_app_persists_theme_and_opens_search(server, page):
     with guard_browser_errors(page, expected=("__console_capture_probe__",)):
         page.goto(server, wait_until="domcontentloaded")
         theme_toggle = page.get_by_title("Toggle theme")
         expect(theme_toggle).to_be_visible(timeout=15_000)
         page.evaluate("console.error('__console_capture_probe__')")
 
-        script_sources = page.locator("script[src]").evaluate_all(
-            """elements => elements
-                .map(element => element.src)
-                .filter(source => new URL(source).origin !== location.origin)"""
-        )
-        assert Counter(script_sources) == Counter(
-            {
-                "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js": 1,
-                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3": 1,
-                "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js": 1,
-            }
-        )
-        external_resources = page.evaluate(
-            """() => performance.getEntriesByType('resource')
-                .map(entry => entry.name)
-                .filter(name => !name.startsWith(location.origin))"""
-        )
-        react_resources = [
-            url for url in external_resources if is_react_package_resource(url)
-        ]
-        assert_react_esm_graph(
-            react_resources,
-            react_dom_wrapper_policy="forbidden",
-        )
-        non_react_counts = Counter(
-            url for url in external_resources if not is_react_package_resource(url)
-        )
-        for direct_resource in script_sources:
-            assert non_react_counts[direct_resource] == 1
+        page.evaluate("document.fonts.ready")
+        assert_offline_page_source(page.content())
 
         title = page.locator(".text-node-type-object").filter(has_text="jtree").first
         page.wait_for_function(
@@ -218,17 +148,10 @@ def test_app_loads_tailwind_v4_persists_theme_and_opens_search(server, page):
         expect(search).to_be_visible()
         search.click()
         expect(page.get_by_placeholder("Search keys and values...")).to_be_visible()
+        assert_classes_styled(page)
 
 
-def test_native_css_retains_body_font_when_tailwind_is_unavailable(server, page):
-    page.route(
-        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3",
-        lambda route: route.fulfill(
-            status=200,
-            content_type="application/javascript",
-            body="",
-        ),
-    )
+def test_body_font_and_background(server, page):
     with guard_browser_errors(page):
         page.goto(server, wait_until="domcontentloaded")
         expect(page.get_by_title("Toggle theme")).to_be_visible(timeout=15_000)
@@ -245,3 +168,93 @@ def test_native_css_retains_body_font_when_tailwind_is_unavailable(server, page)
             "overflow": "hidden",
             "backgroundColor": "rgb(10, 22, 40)",
         }
+
+
+def test_search_updates_on_each_keystroke(server, page):
+    with guard_browser_errors(page):
+        page.goto(server)
+        page.get_by_title('Search (Ctrl+F)').click()
+        field = page.get_by_placeholder('Search keys and values...')
+        for character, expected in [('n', 'n'), ('a', 'na'), ('m', 'nam'), ('e', 'name')]:
+            field.press(character)
+            expect(field).to_have_value(expected)
+        expect(page.locator('.search-panel').get_by_text('name', exact=True)).to_be_visible()
+
+
+def test_inline_editor_takes_focus_when_opened(server, page):
+    with guard_browser_errors(page):
+        page.goto(server)
+        page.locator('.graph-node').filter(has_text='synthetic').dblclick()
+        field = page.locator('.modal-box input')
+        expect(field).to_be_focused()
+        expect(field).to_have_value('synthetic')
+
+
+def open_synthetic_data(page, server, tmp_path, data):
+    fixture = tmp_path / 'invented.json'
+    fixture.write_text(json.dumps(data, ensure_ascii=False))
+    assert page.request.post(server + '/api/open', data={'path': str(fixture)}).ok
+    page.goto(server)
+
+
+def test_values_with_markup_display_literally(server, page, tmp_path):
+    value = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'literal': value})
+        node = page.locator('.graph-node').filter(has_text='literal')
+        expect(node.locator('[title]').last).to_have_attribute('title', value)
+        expect(node.locator('[title]').last).to_have_text('"' + value + '"')
+        assert node.locator('b').count() == 0
+
+
+def test_non_latin_keys_and_values_render_with_fallback_fonts(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'Ж': '漢', 'Ł': 'Ж'})
+        page.evaluate('document.fonts.ready')
+        for glyph in ('Ł', 'Ж'):
+            expect(page.get_by_title(glyph).first).to_have_text(glyph)
+        expect(page.get_by_title('漢').first).to_have_text('"漢"')
+        page.evaluate("""() => {
+            const holder = document.createElement('div');
+            holder.id = 'font-probes';
+            holder.style.cssText = 'position:fixed;top:100px;left:100px;background:white;color:black;font-size:48px;z-index:9999';
+            for (const glyph of ['Ł', 'Ж', '漢']) {
+                const span = document.createElement('span');
+                span.textContent = glyph; span.style.fontFamily = 'JetBrains Mono, monospace';
+                holder.appendChild(span);
+            }
+            document.body.appendChild(holder);
+        }""")
+        page.locator('#font-probes').screenshot(path=tmp_path / 'glyphs.png')
+        session = page.context.new_cdp_session(page)
+        session.send('DOM.enable')
+        session.send('CSS.enable')
+        root = session.send('DOM.getDocument')['root']['nodeId']
+        for index in range(1, 4):
+            node_id = session.send('DOM.querySelector', {'nodeId': root, 'selector': f'#font-probes span:nth-child({index})'})['nodeId']
+            fonts = session.send('CSS.getPlatformFontsForNode', {'nodeId': node_id})['fonts']
+            assert any(not font['isCustomFont'] and font['glyphCount'] > 0 for font in fonts), fonts
+        if os.environ.get('JTREE_GLYPH_SCREENSHOT'):
+            page.locator('#font-probes').screenshot(path=os.environ['JTREE_GLYPH_SCREENSHOT'])
+
+
+def test_wheel_pan_zoom_and_image_export(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'shape': 'synthetic'})
+        canvas = page.locator('.blueprint-grid').last
+        node = page.locator('.graph-node').filter(has_text='shape')
+        expect(node).to_be_visible()
+        before = node.bounding_box()
+        canvas.hover(position={'x': 500, 'y': 350})
+        page.mouse.wheel(0, 90)
+        page.wait_for_function("before => document.querySelectorAll('.graph-node')[1].getBoundingClientRect().y !== before", arg=before['y'])
+        assert page.evaluate('window.scrollY') == 0
+        page.keyboard.down('Control')
+        page.mouse.wheel(0, -100)
+        page.keyboard.up('Control')
+        expect(page.get_by_text('110%', exact=True)).to_be_visible()
+        page.get_by_title('Export view').click()
+        with page.expect_download() as download:
+            page.get_by_text('PNG', exact=True).click()
+        path = download.value.path()
+        assert path.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')

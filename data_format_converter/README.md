@@ -18,16 +18,11 @@ object, rendered into every structured format, and added to the comparison
 table. The raw-text panel only estimates the pasted text; it does not convert
 or clear the structured inputs.
 
-The page has no backend and does not upload pasted data to this repository. It
-does, however, load the following resources from public CDNs:
-
-- the `@iarna/toml` 3.0.0 parser and serializer;
-- [`js-yaml` 5.4.3 browser UMD build](https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js);
-- Google Fonts.
-
-Network access is therefore required on first load unless those resources are
-already cached. The selected theme is the only value saved to browser
-`localStorage`.
+The page has no backend, makes no network requests, and does not upload pasted
+data. Its TOML and YAML parsers and Latin-subset fonts are embedded in the
+page, so it works offline. The selected theme is the only value saved to
+browser `localStorage`, under `data_format_converter.theme`. An older `theme`
+preference is migrated when no converter-specific preference exists.
 
 ### Token counts
 
@@ -171,7 +166,7 @@ output naming, and cross-format round trips. TOML pairs containing null values
 are intentionally excluded because TOML has no null value.
 
 The Playwright suite serves this directory with a local `http-server` on
-`127.0.0.1:4175`, loads the static page in Chromium, verifies that the pinned
+`127.0.0.1:4175`, loads the static page in Chromium, verifies that the embedded
 YAML and TOML browser dependencies initialize and perform a structured
 conversion, and checks the YAML compatibility cases named above:
 

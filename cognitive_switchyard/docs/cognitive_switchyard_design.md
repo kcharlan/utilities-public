@@ -19,7 +19,7 @@ otherwise.
 Cognitive Switchyard is a single-user, local-first engine that runs a batch of
 work items through a multi-phase pipeline: intake, planning, dependency
 resolution, constrained parallel execution, verification, and auto-fix. A
-FastAPI server and an embedded React UI provide setup and live monitoring; the
+FastAPI server and an embedded UI provide setup and live monitoring; the
 same pipeline also runs headless from the CLI.
 
 The engine is workload-agnostic. Workload-specific behavior lives in **runner
@@ -60,7 +60,7 @@ is coding-specific.
 ```
                         +-----------------+
                         |    Web UI       |
-                        |  (React SPA)    |
+                        |  (Preact SPA)   |
                         +--------+--------+
                                  |
                             WebSocket + REST
@@ -458,27 +458,7 @@ the file after parsing.
 The UI is a single embedded HTML string (`html_template.py`) served at `/`
 with a bootstrap JSON payload. There is no npm, bundler, or `node_modules`.
 
-- React 19 publishes no UMD builds, so the page uses browser ESM through an
-  exact six-entry import map covering React, its production and development
-  JSX-runtime subpaths, ReactDOM, ReactDOM Client, and react-is. Versions:
-  React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, served by esm.sh.
-- Babel Standalone 8.0.5 compiles the inline JSX as a module
-  (`data-type="module"`), so the app imports the mapped React bindings.
-- React Flow 12.11.6 (`@xyflow/react`) is imported as ESM with React and
-  ReactDOM externalized, so its peer imports resolve through the same mapped
-  React 19 graph instead of creating a second copy. The DAG view uses its v12
-  named exports.
-- Lucide icons load as a UMD script; Google Fonts and the React Flow stylesheet
-  are the only external stylesheets. Styling is project-owned CSS with color
-  tokens, with no Tailwind runtime.
-
-The exact URLs are listed in the README and enforced by static tests
-(`tests/test_html_template.py`) and browser tests (`tests/test_e2e.py`).
-Direct versions are pinned, but CDN-generated transitive dependencies are not
-fully locked and CDN responses are not byte-immutable, so startup needs network
-access. If offline startup or byte-reproducible delivery becomes a requirement,
-the migration path is locally built and served frontend assets. That is a
-frontend-only change that leaves the backend, packs, and orchestrator alone.
+The embedded frontend uses Preact, project CSS, inlined fonts and icons, and a first-party DAG canvas. It loads without external browser resources and communicates with the local server for application data. Browser tests cover offline startup and DAG interactions.
 
 Visual direction: a dense, dark operational dashboard with status-colored
 accents. The design tokens live in the template's `:root` block.
@@ -501,7 +481,7 @@ accents. The design tokens live in the template's `:root` block.
   `task_idle`; the server raises its alert at 80%.
 - **Task detail:** metadata, constraints, plan path, events, live or retained
   log, and Move or Reveal actions.
-- **DAG:** React Flow graph of `resolution.json`. Each node shows its task
+- **DAG:** Interactive graph of `resolution.json`. Each node shows its task
   title and status, colored by status; `task_status_change` messages update
   them while the view is open. Double-click a node to open the task.
 - **History and Settings:** completed and aborted sessions with release notes
@@ -680,8 +660,7 @@ Pausing stops new dispatch. Active workers finish, and then the loop exits.
 
 ### Constraints
 
-- The frontend stays a single embedded HTML string with no build step; peer
-  ESM packages must externalize the import-mapped React (section 6.1).
+- The frontend stays a single embedded HTML string with no runtime asset downloads.
 - The launcher `switchyard` is a uv PEP 723 script and the single entry point.
   Its header is authoritative for runtime dependencies; `requirements.txt` and
   `requirements-dev.txt` reproduce the development and test environment. There

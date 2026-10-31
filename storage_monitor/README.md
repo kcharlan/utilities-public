@@ -1,6 +1,6 @@
 # Storage Monitor
 
-Storage Monitor is a local-first macOS disk-usage and cleanup console. It indexes the writable APFS Data volume, inventories local Time Machine snapshots, and surfaces large files and cleanup candidates in a React dashboard. Scan data and action logs remain on the Mac.
+Storage Monitor is a local-first macOS disk-usage and cleanup console. It indexes the writable APFS Data volume, inventories local Time Machine snapshots, and surfaces large files and cleanup candidates in a dashboard. Scan data and action logs remain on the Mac.
 
 The application pairs a single executable Python launcher with a native C
 `getattrlistbulk` walker. The walker indexes the volume; the launcher owns scan
@@ -12,7 +12,7 @@ The launcher provides:
 
 - a uv-managed FastAPI backend;
 - a localhost-only web server;
-- an embedded React UI whose browser libraries are loaded from public CDNs; and
+- an embedded offline browser UI; and
 - mutable runtime state under `~/.storage_monitor/` by default.
 
 ## Native walker boundary
@@ -42,7 +42,7 @@ boundary must preserve the native protocol, hardlink, mount and filename tests.
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Xcode Command Line Tools (`xcode-select --install`), providing Apple clang and `make` to build `storage_monitor_walk`
 - Node.js, for `tools/deploy_storage_monitor.mjs`
-- a browser with network access to load React, Babel, Tailwind CSS, and Lucide from their CDNs
+- a modern browser
 
 ## Build and Deploy
 
@@ -81,29 +81,11 @@ On first run, uv resolves FastAPI and uvicorn into its shared cache, so that inv
 4. binds to `127.0.0.1`, preferring port 8473 and trying the next 19 ports if necessary; and
 5. opens the dashboard in the default browser.
 
-The build-free frontend uses React 19.3.0 and ReactDOM 19.3.0 through an
-exact-version import map. Its six direct ESM entries pin `react`, both JSX
-runtime subpaths, `react-dom`, `react-dom/client`, and react-is 19.3.0;
-ReactDOM and react-is externalize the shared React peer. Babel Standalone 8.0.5
-compiles the module-aware inline JSX. Tailwind CSS 4.3.3 is loaded through the
-exact-version `@tailwindcss/browser` package. A minimal `text/tailwindcss`
-block declares the generated utilities, while first-party theme and component
-rules remain in a normal stylesheet so the dashboard keeps its core styling if
-the Tailwind CDN is unavailable.
-
-The direct top-level package versions in the import map and script URLs are
-exact, which prevents drift in those requested versions. CDN-generated
-transitive dependencies are not fully locked, however, and the interface still
-requires network access at runtime. Exact pins are not byte-immutable delivery
-guarantees; offline or byte-for-byte reproducible use would require a separate
-vendoring or release-artifact flow.
-
-The automated browser smoke covers the current Playwright Chromium only. For
-manual clients, Tailwind 4 requires Chrome 111 or newer, Safari 16.4 or newer,
-or Firefox 128 or newer. Safari and Firefox are not covered by the automated
-suite. The browser smoke also verifies the current Lucide UMD API, representative
-Tailwind-generated utility styles, theme persistence, and browser error
-cleanliness.
+The frontend embeds Preact, hooks, htm, and its styles in the launcher. The
+dashboard makes no external browser requests and works offline after uv has
+resolved its dependencies. The automated browser suite covers Playwright
+Chromium, theme persistence, representative styles, and browser errors; Safari
+and Firefox are not covered by that suite.
 
 Use `--no-browser` to suppress the browser launch or `--port PORT` (`-p PORT`) to choose a different preferred port:
 

@@ -25,7 +25,7 @@ MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresp
 
 Install [uv](https://docs.astral.sh/uv/) first (`brew install uv`). The launcher declares Python 3.12+ and its runtime dependencies (FastAPI, uvicorn, and requests) in a PEP 723 header. On first launch, uv resolves them into its shared cache; later launches reuse that cache.
 
-**Requirements:** uv and an internet connection. The backend fetches data from ESPN, while the browser loads React 19.3.0, ReactDOM 19.3.0, react-is 19.3.0, Babel Standalone 8.0.5, exact-version `@tailwindcss/browser` 4.3.3, Lucide Icons, and Google Fonts from CDNs. React uses an exact-version import map and Babel compiles module-aware inline JSX. Tailwind uses embedded CSS-first theme tokens and class-based dark mode. The direct top-level package versions are pinned, but CDN-generated transitive dependencies are not fully locked and delivery is not byte-immutable.
+**Requirements:** uv and an internet connection for ESPN data. Frontend assets are embedded; The backend embeds ESPN team logos in cached data; a logo is omitted when its fetch fails.
 
 ### Data Source
 
@@ -199,7 +199,7 @@ If something goes wrong (network issue, ESPN API down), a red banner appears ben
 - An error icon and message
 - A **Retry** button to attempt the fetch again
 
-A React error boundary also catches UI crashes and shows a full-page error overlay with a reload button.
+A frontend error boundary also catches UI crashes and shows a full-page error overlay with a reload button.
 
 ---
 

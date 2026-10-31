@@ -1,9 +1,9 @@
 """
 End-to-end tests using Playwright.
 
-These tests start the real launchmaster server and exercise the React SPA
-in a real Chromium browser. They catch rendering errors, broken CDN loads,
-dead buttons, and layout issues that API-only tests miss entirely.
+These tests start launchmaster with isolated synthetic jobs and exercise its
+interface in Chromium. They catch rendering errors, dead buttons, and layout
+issues that API-only tests miss entirely.
 
 Run E2E tests only:
     pytest tests/test_e2e.py -v
@@ -44,12 +44,11 @@ REPO_ROOT = PROJECT_ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
-    REACT_19_IMPORTS,
-    assert_react_19_import_map,
-    assert_react_esm_graph,
+    assert_frontend_vendor_current,
+    assert_launcher_compiles_cleanly,
+    assert_offline_page_source,
     capture_browser_errors,
     guard_browser_errors,
-    is_react_package_resource,
 )
 
 LAUNCHER = PROJECT_ROOT / "launchmaster"
@@ -68,47 +67,9 @@ def fail_on_unexpected_browser_errors(request):
         yield
 
 
-def test_supported_cdn_versions_are_pinned():
-    source = LAUNCHER.read_text()
-    import_map_match = re.search(
-        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
-        source,
-        re.DOTALL,
-    )
-    assert import_map_match is not None
-    import_map = json.loads(import_map_match.group(1))
-    assert_react_19_import_map(import_map["imports"])
-    assert "react@18.3.1" not in source
-    assert "react-dom@18.3.1" not in source
-    assert "@babel/standalone@8.0.5" in source
-    assert "lucide@1.46.0" in source
-    assert (
-        '<script type="text/babel" data-type="module" '
-        'data-presets="env,react">'
-    ) in source
-    assert "import * as React from 'react';" in source
-    assert "import * as ReactDOM from 'react-dom';" in source
-    assert "import * as ReactDOMClient from 'react-dom/client';" in source
-    assert "ReactDOMClient.createRoot(" in source
-
-    readme = " ".join(README.read_text().split())
-    for dependency in (
-        "React 19.3.0",
-        "ReactDOM 19.3.0",
-        "Babel Standalone 8.0.5",
-        "react-is 19.3.0",
-    ):
-        assert dependency in readme
-    assert "exact-version import map" in readme
-    assert "module-aware inline JSX" in readme
-    assert "not byte-immutable" in readme
-    assert "direct top-level package versions" in readme
-    assert (
-        "CDN-generated transitive dependencies are not fully locked"
-        in readme
-    )
-    assert "current Playwright Chromium" in readme
-
+def test_embedded_frontend_contract():
+    assert_frontend_vendor_current(LAUNCHER)
+    assert_launcher_compiles_cleanly(LAUNCHER)
 
 def _put_settings(server, updates):
     request = urllib.request.Request(
@@ -551,18 +512,8 @@ class TestFailedPanelActions:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. Page Load & CDN Dependencies
+# 1. Page Load & Embedded Dependencies
 # ═══════════════════════════════════════════════════════════════════════════════
-
-SYNTHETIC_REACT_GRAPH = [
-    "https://esm.sh/react@19.3.0",
-    "https://esm.sh/react@19.3.0/jsx-runtime",
-    "https://esm.sh/react-dom@19.3.0?external=react",
-    "https://esm.sh/react-dom@19.3.0/client?external=react",
-    "https://esm.sh/react@19.3.0/generated/opaque/react-entry",
-    "https://esm.sh/react-dom@19.3.0/arbitrary/internal/client-entry",
-]
-
 
 class FakePage:
     def __init__(self):
@@ -583,11 +534,6 @@ class FakeConsoleMessage:
     def __init__(self, message_type, text):
         self.type = message_type
         self.text = text
-
-
-def test_react_import_map_validation_is_order_insensitive():
-    source = dict(reversed(tuple(REACT_19_IMPORTS)))
-    assert_react_19_import_map(source)
 
 
 def test_browser_error_guard_detaches_listeners_after_success():
@@ -666,151 +612,6 @@ def test_browser_error_guard_can_reuse_real_page_without_listener_leaks(browser)
         page.close()
 
 
-@pytest.mark.parametrize(
-    "resource_url",
-    (
-        "https://esm.sh/react",
-        "https://esm.sh/react/jsx-runtime",
-        "https://esm.sh/react@19.3.0",
-        "https://esm.sh/react-dom",
-        "https://esm.sh/react-dom@19.3.0/client?external=react",
-        "https://esm.sh/react-is",
-        "https://esm.sh/react-is@19.3.0?external=react",
-    ),
-)
-def test_react_resource_matcher_accepts_bare_and_versioned_packages(resource_url):
-    assert is_react_package_resource(resource_url)
-
-
-@pytest.mark.parametrize(
-    ("index", "old", "new"),
-    (
-        (0, "react@19.3.0", "react"),
-        (0, "19.3.0", "19.2.0"),
-        (0, SYNTHETIC_REACT_GRAPH[0], f"{SYNTHETIC_REACT_GRAPH[0]}?dev"),
-        (0, "https://esm.sh", "https://cdn.example.invalid"),
-        (4, "19.3.0", "19.2.0"),
-    ),
-    ids=(
-        "bare-root",
-        "wrong-version",
-        "wrong-query",
-        "wrong-origin",
-        "wrong-generated-version",
-    ),
-)
-def test_react_graph_validator_rejects_contract_mutations(index, old, new):
-    mutated = list(SYNTHETIC_REACT_GRAPH)
-    mutated[index] = mutated[index].replace(old, new)
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(mutated)
-
-
-def test_react_graph_validator_rejects_duplicate_resources():
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(
-            [*SYNTHETIC_REACT_GRAPH, SYNTHETIC_REACT_GRAPH[0]]
-        )
-
-
-def test_react_graph_validator_allows_no_generated_react_or_react_dom_resources():
-    assert_react_esm_graph(
-        SYNTHETIC_REACT_GRAPH[:4],
-        react_dom_wrapper_policy="required",
-    )
-
-
-@pytest.mark.parametrize("query_suffix", ("?dev", "?"), ids=("value", "bare"))
-def test_react_graph_validator_rejects_query_bearing_generated_resource(
-    query_suffix,
-):
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(
-            [
-                *SYNTHETIC_REACT_GRAPH,
-                f"https://esm.sh/react@19.3.0/opaque/generated{query_suffix}",
-            ]
-        )
-
-
-def test_react_graph_validator_rejects_trailing_query_on_direct_wrapper():
-    resources = list(SYNTHETIC_REACT_GRAPH)
-    resources[0] = f"{resources[0]}?"
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(resources)
-
-
-def test_react_graph_validator_accepts_matching_react_is_wrapper_and_resource():
-    assert_react_esm_graph(
-        [
-            *SYNTHETIC_REACT_GRAPH,
-            "https://esm.sh/react-is@19.3.0?external=react",
-            "https://esm.sh/react-is@19.3.0/opaque/generated",
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    "react_is_resource",
-    (
-        "https://esm.sh/react-is@19.3.0?external=react",
-        "https://esm.sh/react-is@19.3.0/opaque/generated",
-    ),
-    ids=("wrapper-without-generated", "generated-without-wrapper"),
-)
-def test_react_graph_validator_rejects_unpaired_react_is_resources(
-    react_is_resource,
-):
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph([*SYNTHETIC_REACT_GRAPH, react_is_resource])
-
-
-@pytest.mark.parametrize(
-    ("policy", "include_wrapper"),
-    (
-        ("required", True),
-        ("forbidden", False),
-        ("optional", True),
-        ("optional", False),
-    ),
-)
-def test_react_graph_validator_honors_react_dom_wrapper_policy(
-    policy,
-    include_wrapper,
-):
-    resources = [
-        url
-        for url in SYNTHETIC_REACT_GRAPH
-        if include_wrapper or url != "https://esm.sh/react-dom@19.3.0?external=react"
-    ]
-    assert_react_esm_graph(resources, react_dom_wrapper_policy=policy)
-
-
-def test_react_graph_validator_rejects_wrong_react_dom_wrapper_policy():
-    without_wrapper = [
-        url
-        for url in SYNTHETIC_REACT_GRAPH
-        if url != "https://esm.sh/react-dom@19.3.0?external=react"
-    ]
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(
-            without_wrapper,
-            react_dom_wrapper_policy="required",
-        )
-    with pytest.raises(AssertionError):
-        assert_react_esm_graph(
-            SYNTHETIC_REACT_GRAPH,
-            react_dom_wrapper_policy="forbidden",
-        )
-
-
-def test_react_graph_validator_accepts_arbitrary_generated_route_layouts():
-    assert_react_esm_graph(
-        SYNTHETIC_REACT_GRAPH,
-        react_dom_wrapper_policy="required",
-    )
-
-
 class TestPageLoad:
     def test_browser_error_capture_observes_console_and_page_errors(
         self, browser
@@ -835,52 +636,10 @@ class TestPageLoad:
         finally:
             unguarded_page.close()
 
-    def test_react_esm_resource_graph_is_single_version(self, server, page):
+    def test_embedded_page_source(self, server, page):
         page.goto(server, wait_until="networkidle")
         expect(page.locator(".topbar-brand")).to_be_visible()
-
-        assert page.locator("script[src]").evaluate_all(
-            "elements => elements.map(element => element.src)"
-        ) == [
-            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
-            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-        ]
-
-        resource_urls = page.evaluate(
-            """() => performance.getEntriesByType('resource')
-                .map(entry => entry.name)"""
-        )
-        dependency_resources = [
-            url for url in resource_urls if is_react_package_resource(url)
-        ]
-        assert_react_esm_graph(
-            dependency_resources,
-            react_dom_wrapper_policy="required",
-        )
-
-        for bad_resource in (
-            "https://esm.sh/react",
-            "https://esm.sh/react-dom",
-            "https://esm.sh/react-is",
-            "https://esm.sh/preact@19.3.0",
-            "https://esm.sh/react@19.2.0",
-            "https://esm.sh/react@19.3.0?dev",
-            "https://cdn.example.invalid/react@19.3.0",
-            dependency_resources[0],
-        ):
-            mutated_resources = [*resource_urls, bad_resource]
-            discovered_resources = [
-                url
-                for url in mutated_resources
-                if is_react_package_resource(url)
-            ]
-            if "preact" in bad_resource:
-                discovered_resources.append(bad_resource)
-            with pytest.raises(AssertionError):
-                assert_react_esm_graph(
-                    discovered_resources,
-                    react_dom_wrapper_policy="required",
-                )
+        assert_offline_page_source(page.content())
 
     def test_page_loads_without_js_errors(self, server, page):
         """SPA loads without uncaught exceptions or console errors."""
@@ -1457,3 +1216,57 @@ class TestAppleJobsToggle:
         assert "232" in border or "160" in border or "rgba" in border, (
             f"Apple row border color doesn't look amber: {border}"
         )
+
+
+def test_page_loads_offline(server, browser):
+    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    context = browser.new_context()
+    blocked = block_external_requests(context, allowed_origins=[server])
+    page = context.new_page()
+    try:
+        with guard_browser_errors(page):
+            page.goto(server, wait_until="networkidle")
+            expect(page.locator('.job-table')).to_be_visible()
+            assert_no_external_resources(page, blocked)
+            assert_offline_page_source(page.content())
+    finally:
+        context.close()
+
+
+def test_job_search_updates_on_each_keystroke(server, page):
+    page.goto(server, wait_until="networkidle")
+    search = page.locator('.filter-search')
+    for length, character in enumerate('failed', start=1):
+        search.press_sequentially(character)
+        expect(search).to_have_value('failed'[:length])
+        expect(page.locator('.job-table tbody tr')).to_have_count(1)
+        expect(page.locator('.job-table tbody tr')).to_contain_text('com.example.synthetic-failed')
+    search.press('Backspace')
+    expect(search).to_have_value('faile')
+    expect(page.locator('.job-table tbody tr')).to_have_count(1)
+
+
+def test_editor_dialog_focuses_its_first_field(server, page):
+    page.goto(server, wait_until="networkidle")
+    page.get_by_role('button', name='New Job').click()
+    expect(page.locator('.modal input').first).to_be_focused()
+
+
+def test_action_menu_portal_opens_positions_and_closes(server, page):
+    page.goto(server, wait_until="networkidle")
+    row = _job_row(page, 'com.example.synthetic-idle')
+    menu = page.locator('.job-action-menu')
+    viewport = page.viewport_size
+    def open_at_corner():
+        row.evaluate("(el, p) => el.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: p.x, clientY: p.y, button: 2}))", {'x': viewport['width'] - 1, 'y': viewport['height'] - 1})
+        expect(menu).to_be_visible()
+        box = menu.bounding_box()
+        assert box['x'] >= 0 and box['y'] >= 0
+        assert box['x'] + box['width'] <= viewport['width'] - 1
+        assert box['y'] + box['height'] <= viewport['height'] - 1, menu.evaluate("e => [e.getAttribute('style'), getComputedStyle(e).top, e.parentElement.isConnected]")
+    open_at_corner()
+    page.locator('.topbar-brand').click()
+    expect(menu).to_have_count(0)
+    open_at_corner()
+    page.keyboard.press('Escape')
+    expect(menu).to_have_count(0)

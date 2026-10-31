@@ -126,7 +126,7 @@ def test_project_card_has_role_button(client):
     end_marker = "// GridControls"
     end_idx = html.index(end_marker, card_idx)
     card_src = html[card_idx:end_idx]
-    assert 'role="button"' in card_src or "role={'button'}" in card_src, (
+    assert 'role=${"button"}' in card_src, (
         "ProjectCard must have role='button'"
     )
 

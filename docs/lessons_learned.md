@@ -1,5 +1,9 @@
 # Lessons learned
 
+## 2026-10-31: Verify offline ports in the rendered browser
+
+Block external requests and check browser errors while exercising actual views; source checks alone cannot catch runtime parsing, input events, CSS cascade or SVG attribute differences. Compare isolated synthetic baseline and port screenshots after fonts and layout settle. Preserve icon wrappers, portal attachment timing, dependent-fetch selection guards and raw string escape semantics where they affect rendering. Charts need real browser coverage for axes, legends, single points and resizing, in addition to geometry tests. Keep canonical embedded assets synchronized and test drift.
+
 ## 2026-10-31: Apply transaction inclusion to every import output
 
 Div Conv's skipped-action branch preserved reinvestments in cooked CSV while
@@ -19,9 +23,9 @@ With that header the ranged `es-toolkit` URLs bypassed Cloudflare's stale copy a
 reached an origin returning `no space left on device`; `react-is@19.3.0?external=react`
 failed either way. Compare `curl` with and without `Origin` before calling a URL
 healthy, and read the failing request in the browser's network log. Published
-exact-version modules kept serving, so `RECHARTS_3_IMPORTS` in `tools/testkit.py`
-maps those URLs to them. Remove the es-toolkit entries when a Recharts upgrade
-changes its ranged URLs; the map test and browser suites will show the mismatch.
+exact-version modules kept serving, so a temporary import map routed those URLs
+to them. The subsequent offline port replaced the remote stack and removed the
+import-map contracts; embedded assets no longer depend on that service.
 
 ## 2026-10-30: Select the editable fixture and wait for its content
 

@@ -27,7 +27,6 @@ import json
 import socket
 import threading
 import time
-from collections import Counter
 from pathlib import Path
 from textwrap import dedent
 
@@ -39,10 +38,10 @@ import uvicorn  # noqa: E402
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
 
 from tools.testkit import (  # noqa: E402
-    assert_react_19_import_map,
-    assert_react_esm_graph,
+    assert_no_external_resources,
+    assert_offline_page_source,
+    block_external_requests,
     guard_browser_errors,
-    is_react_package_resource,
 )
 from cognitive_switchyard.config import build_runtime_paths  # noqa: E402
 from cognitive_switchyard.html_template import render_app_html  # noqa: E402
@@ -652,6 +651,29 @@ class TestProjectOwnedBaseStyles:
 
 class TestInitialLoad:
     """Verify the SPA loads correctly and core navigation works."""
+
+    def test_session_form_field_updates_on_each_keystroke(self, fresh_server, page):
+        page.goto(fresh_server["url"])
+        field = page.locator("label.field-label", has_text="Session Name").locator("xpath=../input")
+        field.wait_for()
+        field.fill("")
+        for index, char in enumerate("Synthetic"):
+            field.focus()
+            field.press("End")
+            field.press_sequentially(char)
+            page.get_by_role("button", name="Show Advanced" if index % 2 == 0 else "Hide Advanced").click()
+            assert field.input_value() == "Synthetic"[:index + 1]
+
+    def test_page_loads_offline(self, fresh_server, browser):
+        context = browser.new_context()
+        blocked = block_external_requests(context, allowed_origins=[fresh_server["url"]])
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(fresh_server["url"])
+            page.get_by_text("Create Session").first.wait_for(timeout=SLOW_TIMEOUT)
+            assert_no_external_resources(page, blocked)
+            assert_offline_page_source(page.content())
+        context.close()
 
     def test_spa_renders_setup_view(self, server_url, page):
         """Root URL serves SPA with setup view visible."""
@@ -1345,8 +1367,298 @@ class TestTaskDetail:
 # ---------------------------------------------------------------------------
 
 
+def _open_synthetic_canvas(fresh_server, page):
+    store, home = fresh_server["store"], fresh_server["runtime_home"]
+    sid = "synthetic-navigation"
+    store.create_session(session_id=sid, name="Synthetic navigation", pack="claude-code", created_at="2026-01-01T00:00:00Z", config_json="{}")
+    for task_id, dependency in (("root", "none"), ("middle", "root"), ("leaf", "middle")):
+        source = _write_intake_plan(home, sid, task_id, depends_on=dependency)
+        plan = source.read_text(encoding="utf-8")
+        store.upsert_ready_task_plan(session_id=sid, plan=parse_task_plan(plan, source=source), plan_text=plan, created_at="2026-01-01T00:00:01Z")
+    store.update_session_status(sid, status="running", started_at="2026-01-01T00:00:01Z")
+    page.goto(fresh_server["url"])
+    page.locator("button[aria-label='Open DAG']").click()
+    page.locator(".dag-node[data-id='root']").wait_for()
+
+
 class TestDagView:
-    """Verify DAG API and the React Flow 12 browser integration."""
+    """Verify DAG API and interactive canvas behavior."""
+
+    def test_dag_preserves_navigation_controls_and_zoom_bounds(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        viewport = page.locator(".dag-viewport")
+        matrix = lambda: viewport.evaluate("el => { const m = new DOMMatrix(getComputedStyle(el).transform); return [m.a, m.e, m.f]; }")
+        fitted = matrix()
+        assert fitted != [1, 0, 0]  # fitView overrides the default viewport
+        for _ in range(20):
+            page.locator(".dag-zoom-in").click()
+        assert matrix()[0] == pytest.approx(2)  # React Flow default maxZoom
+        for _ in range(30):
+            page.locator(".dag-zoom-out").click()
+        assert matrix()[0] == pytest.approx(0.5)  # React Flow default minZoom
+        page.locator(".dag-fit-view").click()
+        assert matrix() == pytest.approx(fitted)
+        box = page.locator(".dag-canvas-root").bounding_box()
+        x, y = box["x"] + box["width"] * .7, box["y"] + box["height"] * .3
+        before = matrix()
+        minimap = page.locator(".dag-minimap-viewport").get_attribute("x")
+        page.mouse.move(x, y)
+        page.mouse.wheel(0, -120)
+        page.wait_for_function("previous => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a !== previous", arg=before[0])
+        after = matrix()
+        assert (x - box["x"] - before[1]) / before[0] == pytest.approx((x - box["x"] - after[1]) / after[0], abs=.01)
+        assert page.locator(".dag-minimap-viewport").get_attribute("x") != minimap
+        page.mouse.move(box["x"] + 10, box["y"] + 10)
+        page.mouse.down(); page.mouse.move(box["x"] + 50, box["y"] + 40); page.mouse.up()
+        assert matrix()[1] == pytest.approx(after[1] + 40, abs=1)
+        page.locator(".dag-fit-view").click()
+        before_pinch = matrix()[0]
+        cdp = page.context.new_cdp_session(page)
+        x, y = box["x"] + 100, box["y"] + 100
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 1}, {"x": x + 100, "y": y, "id": 2}]})
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x - 30, "y": y, "id": 1}, {"x": x + 130, "y": y, "id": 2}]})
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        assert matrix()[0] > before_pinch
+        cdp.detach()
+
+    def test_dag_drag_does_not_open_the_task(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        old = node.evaluate("el => [parseFloat(el.style.left), parseFloat(el.style.top)]")
+        box = node.bounding_box()
+        page.mouse.move(box["x"] + 30, box["y"] + 25)
+        page.mouse.down(); page.mouse.move(box["x"] + 80, box["y"] + 55, steps=5); page.mouse.up()
+        new = node.evaluate("el => [parseFloat(el.style.left), parseFloat(el.style.top)]")
+        assert new[0] > old[0] and new[1] > old[1]
+        assert page.locator(".split-view .detail-panel").count() == 0
+
+    def test_dag_drag_near_edge_auto_pans(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']").bounding_box()
+        canvas = page.locator(".dag-canvas-root").bounding_box()
+        viewport = page.locator(".dag-viewport")
+        before = viewport.get_attribute("style")
+        page.mouse.move(node["x"] + 30, node["y"] + 25)
+        page.mouse.down()
+        page.mouse.move(canvas["x"] + canvas["width"] - 2, canvas["y"] + canvas["height"] / 2, steps=5)
+        page.wait_for_function("previous => document.querySelector('.dag-viewport').getAttribute('style') !== previous", arg=before)
+        page.mouse.up()
+
+    def test_dag_keyboard_select_and_delete(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        node.focus()
+        page.keyboard.press("Enter")
+        assert "selected" in node.get_attribute("class")
+        page.keyboard.press("ArrowRight")
+        assert float(node.evaluate("el => el.style.left.replace('px', '')")) == 301
+        page.keyboard.press("Backspace")
+        assert node.count() == 0
+        assert page.locator(".dag-edge").count() == 0
+
+    def test_dag_multiple_nodes_can_be_selected_and_deleted(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.locator(".dag-node[data-id='root']").click()
+        page.locator(".dag-node[data-id='leaf']").click(modifiers=["Meta"])
+        assert page.locator(".dag-node.selected").count() == 2
+        page.keyboard.press("Backspace")
+        assert page.locator(".dag-node[data-id='middle']").count() == 1
+        assert page.locator(".dag-node.selected").count() == 0
+        page.wait_for_function("() => document.querySelectorAll('.dag-edge').length === 0")
+        assert page.locator(".dag-edge").count() == 0
+
+    def test_dag_edge_can_be_selected_and_deleted(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        edge = page.locator(".dag-edges g").first
+        edge.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => document.querySelector('.dag-edges g')?.dataset.selected === 'true'")
+        page.keyboard.press("Backspace")
+        page.wait_for_function("() => document.querySelectorAll('.dag-edge').length === 1")
+        assert page.locator(".dag-edge").count() == 1
+
+    def test_dag_mixed_edge_multiselection_and_delete(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        edges = page.locator(".dag-edges g")
+        edges.nth(0).dispatch_event("click", {"bubbles": True})
+        edges.nth(1).dispatch_event("click", {"bubbles": True, "metaKey": True})
+        assert page.locator('.dag-edges g[data-selected="true"]').count() == 2
+        edges.nth(0).dispatch_event("click", {"bubbles": True, "metaKey": True})
+        assert page.locator('.dag-edges g[data-selected="true"]').count() == 1
+        edges.nth(0).dispatch_event("click", {"bubbles": True, "metaKey": True})
+        page.locator(".dag-node[data-id='root']").click(modifiers=["Meta"])
+        assert page.locator('.dag-edges g[data-selected="true"]').count() == 2
+        assert page.locator(".dag-node.selected").count() == 1
+        page.keyboard.press("Backspace")
+        page.wait_for_function("() => document.querySelectorAll('.dag-edge').length === 0")
+        assert page.locator(".dag-node[data-id='root']").count() == 0
+        assert page.locator(".dag-node[data-id='middle']").count() == 1
+
+    def test_dag_modifier_edge_selection_preserves_node_selection(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.locator(".dag-node[data-id='leaf']").click()
+        page.locator(".dag-edges g").last.dispatch_event("click", {"bubbles": True, "metaKey": True})
+        assert page.locator(".dag-node[data-id='leaf'].selected").count() == 1
+        assert page.locator('.dag-edges g[data-selected="true"]').count() == 1
+        page.keyboard.press("Backspace")
+        page.wait_for_function("() => document.querySelectorAll('.dag-edge').length === 0")
+        assert page.locator(".dag-node[data-id='leaf']").count() == 0
+
+    def test_dag_long_title_uses_measured_geometry(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.get_by_role("button", name="Back to Monitor").click()
+        title = "Synthetic wrapping title " * 14
+        page.route("**/dag", lambda route: route.fulfill(json={"tasks": [
+            {"task_id": "long", "title": title, "status": "ready", "depends_on": [], "anti_affinity": []},
+            {"task_id": "next", "title": "Synthetic next", "status": "ready", "depends_on": ["long"], "anti_affinity": []},
+        ], "groups": []}))
+        page.locator("button[aria-label='Open DAG']").click()
+        node = page.locator(".dag-node[data-id='long']")
+        node.wait_for()
+        page.wait_for_function("() => document.querySelector('.dag-node[data-id=long]').offsetHeight > 80")
+        page.wait_for_function("""() => { const n = document.querySelector('.dag-node[data-id=long]').getBoundingClientRect(), c = document.querySelector('.dag-canvas-root').getBoundingClientRect(); return n.top >= c.top && n.bottom <= c.bottom && n.left >= c.left && n.right <= c.right; }""")
+        page.locator(".dag-fit-view").click()
+        canvas, box = page.locator(".dag-canvas-root").bounding_box(), node.bounding_box()
+        assert box["height"] > 80
+        assert box["x"] >= canvas["x"] and box["y"] >= canvas["y"]
+        assert box["x"] + box["width"] <= canvas["x"] + canvas["width"]
+        assert box["y"] + box["height"] <= canvas["y"] + canvas["height"]
+        assert page.locator(".dag-task-node").evaluate_all("els => { const c = document.querySelector('.dag-canvas-root').getBoundingClientRect(); return els.every(el => { const r = el.getBoundingClientRect(); return r.left >= c.left && r.right <= c.right && r.top >= c.top && r.bottom <= c.bottom; }); }")
+        handle = node.locator(".dag-source-handle").bounding_box()
+        edge_start = page.locator(".dag-edge").first.evaluate("el => { const p = el.getPointAtLength(0).matrixTransform(el.getScreenCTM()); return [p.x, p.y]; }")
+        assert edge_start[0] == pytest.approx(handle["x"] + handle["width"] / 2, abs=2)
+        assert edge_start[1] == pytest.approx(handle["y"] + handle["height"] / 2, abs=2)
+        mini = page.locator(".dag-minimap rect").nth(2)
+        mini_ratio = float(mini.get_attribute("height")) / float(mini.get_attribute("width"))
+        assert mini_ratio == pytest.approx(box["height"] / box["width"], abs=.02)
+        page.mouse.move(handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2)
+        page.mouse.down(); page.mouse.move(handle["x"] + 40, handle["y"] + 40)
+        preview_start = page.locator(".dag-connection-preview").evaluate("el => { const p = el.getPointAtLength(0).matrixTransform(el.getScreenCTM()); return [p.x, p.y]; }")
+        current_edge_start = page.locator(".dag-edge").first.evaluate("el => { const p = el.getPointAtLength(0).matrixTransform(el.getScreenCTM()); return [p.x, p.y]; }")
+        assert preview_start == pytest.approx(current_edge_start, abs=2)
+        page.mouse.up()
+        box = node.bounding_box()
+        page.keyboard.down("Shift")
+        page.mouse.move(box["x"] - 4, box["y"] - 4); page.mouse.down()
+        page.mouse.move(box["x"] + box["width"] + 4, box["y"] + box["height"] - 10, steps=4); page.mouse.up()
+        page.keyboard.up("Shift")
+        assert "selected" not in node.get_attribute("class")
+        page.keyboard.down("Shift")
+        page.mouse.move(box["x"] - 4, box["y"] - 4); page.mouse.down()
+        page.mouse.move(box["x"] + box["width"] + 4, box["y"] + box["height"] + 4, steps=4); page.mouse.up()
+        page.keyboard.up("Shift")
+        assert "selected" in node.get_attribute("class")
+
+    def test_dag_group_name_renders_once(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.get_by_role("button", name="Back to Monitor").click()
+        page.route("**/dag", lambda route: route.fulfill(json={"tasks": [
+            {"task_id": "alpha", "title": "Synthetic alpha", "status": "ready", "depends_on": [], "anti_affinity": []},
+            {"task_id": "beta", "title": "Synthetic beta", "status": "ready", "depends_on": [], "anti_affinity": []},
+        ], "groups": [{"name": "Synthetic group", "members": ["alpha", "beta"]}]}))
+        page.locator("button[aria-label='Open DAG']").click()
+        page.locator(".dag-node[data-id='alpha']").wait_for()
+        assert page.get_by_text("Synthetic group", exact=True).count() == 1
+
+    def test_dag_shift_drag_selects_nodes(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        first = page.locator(".dag-node[data-id='root']").bounding_box()
+        last = page.locator(".dag-node[data-id='leaf']").bounding_box()
+        page.keyboard.down("Shift")
+        page.mouse.move(first["x"] - 10, first["y"] - 10)
+        page.mouse.down()
+        page.mouse.move(last["x"] + last["width"] + 10, last["y"] + last["height"] + 10, steps=5)
+        page.mouse.up()
+        page.keyboard.up("Shift")
+        assert page.locator(".dag-node.selected").count() == 3
+        page.keyboard.press("Backspace")
+        page.wait_for_function("() => document.querySelectorAll('.dag-task-node').length === 0")
+
+    def test_dag_selection_near_edge_auto_pans(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        canvas = page.locator(".dag-canvas-root").bounding_box()
+        before = page.locator(".dag-viewport").get_attribute("style")
+        page.keyboard.down("Shift")
+        page.mouse.move(canvas["x"] + 30, canvas["y"] + 30)
+        page.mouse.down()
+        page.mouse.move(canvas["x"] + canvas["width"] - 2, canvas["y"] + 50, steps=5)
+        page.wait_for_function("previous => document.querySelector('.dag-viewport').getAttribute('style') !== previous", arg=before, timeout=3000)
+        page.mouse.up()
+        page.keyboard.up("Shift")
+
+    def test_dag_space_drag_pans_over_node(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        position = node.evaluate("el => [el.style.left, el.style.top]")
+        before = page.locator(".dag-viewport").get_attribute("style")
+        box = node.bounding_box()
+        page.keyboard.down("Space")
+        page.mouse.move(box["x"] + 30, box["y"] + 25)
+        page.mouse.down(); page.mouse.move(box["x"] + 70, box["y"] + 50, steps=5); page.mouse.up()
+        page.keyboard.up("Space")
+        assert page.locator(".dag-viewport").get_attribute("style") != before
+        assert node.evaluate("el => [el.style.left, el.style.top]") == position
+
+    def test_dag_connection_preview_is_transient(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        before = page.locator(".dag-edge").count()
+        source = page.locator(".dag-node[data-id='root'] .dag-source-handle").bounding_box()
+        target = page.locator(".dag-node[data-id='leaf'] .dag-target-handle").bounding_box()
+        page.mouse.move(source["x"] + source["width"] / 2, source["y"] + source["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(target["x"] + target["width"] / 2, target["y"] + target["height"] / 2, steps=5)
+        page.locator(".dag-connection-preview").wait_for(state="attached")
+        page.mouse.up()
+        assert page.locator(".dag-connection-preview").count() == 0
+        assert page.locator(".dag-edge").count() == before
+
+    def test_dag_click_to_connect_is_transient(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        before = page.locator(".dag-edge").count()
+        page.locator(".dag-node[data-id='root'] .dag-source-handle").click()
+        page.locator(".dag-connection-preview").wait_for(state="attached")
+        page.locator(".dag-node[data-id='leaf'] .dag-target-handle").click()
+        assert page.locator(".dag-connection-preview").count() == 0
+        assert page.locator(".dag-edge").count() == before
+
+    def test_dag_task_titles_display_literally(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.get_by_role("button", name="Back to Monitor").click()
+        sample = "<b>x</b> & ${y} `value` {{X}} &nbsp;"
+        page.route("**/dag", lambda route: route.fulfill(json={"tasks": [{"task_id": "literal", "title": sample, "status": "ready", "depends_on": [], "anti_affinity": []}], "groups": []}))
+        page.locator("button[aria-label='Open DAG']").click()
+        label = page.locator(".dag-node[data-id='literal'] .secondary")
+        label.wait_for()
+        assert label.inner_text() == sample
+        assert label.locator("b").count() == 0
+
+    def test_dag_with_one_node_and_no_edges_fits_and_renders(self, fresh_server, page):
+        store, home = fresh_server["store"], fresh_server["runtime_home"]
+        sid = "synthetic-single-node"
+        store.create_session(session_id=sid, name="Synthetic single node", pack="claude-code", created_at="2026-01-01T00:00:00Z", config_json="{}")
+        source = _write_intake_plan(home, sid, "only")
+        plan = source.read_text(encoding="utf-8")
+        store.upsert_ready_task_plan(session_id=sid, plan=parse_task_plan(plan, source=source), plan_text=plan, created_at="2026-01-01T00:00:01Z")
+        store.update_session_status(sid, status="running", started_at="2026-01-01T00:00:01Z")
+        page.goto(fresh_server["url"])
+        page.locator("button[aria-label='Open DAG']").click()
+        page.locator(".dag-node[data-id='only']").wait_for()
+        assert page.locator(".dag-edge").count() == 0
+        assert page.locator(".dag-viewport").get_attribute("style")
+
+    def test_dag_svg_attributes_contain_no_nan(self, fresh_server, page):
+        store, home = fresh_server["store"], fresh_server["runtime_home"]
+        sid = "synthetic-svg"
+        store.create_session(session_id=sid, name="Synthetic SVG", pack="claude-code", created_at="2026-01-01T00:00:00Z", config_json="{}")
+        for task_id, dependency in (("root", "none"), ("leaf", "root")):
+            source = _write_intake_plan(home, sid, task_id, depends_on=dependency)
+            plan = source.read_text(encoding="utf-8")
+            store.upsert_ready_task_plan(session_id=sid, plan=parse_task_plan(plan, source=source), plan_text=plan, created_at="2026-01-01T00:00:01Z")
+        store.update_session_status(sid, status="running", started_at="2026-01-01T00:00:01Z")
+        page.goto(fresh_server["url"])
+        page.locator("button[aria-label='Open DAG']").click()
+        page.locator(".dag-edge").first.wait_for(state="attached")
+        assert page.locator(".dag-canvas-root svg").evaluate_all("els => els.every(el => !el.outerHTML.includes('NaN'))")
 
     def test_dag_returns_tasks(self, server_url, runtime_home, page):
         """DAG endpoint returns task dependency graph."""
@@ -1379,7 +1691,7 @@ class TestDagView:
         assert "t002" in task_ids
         _poll_session_status(page, "dag-001", {"idle", "completed", "aborted"})
 
-    def test_react_flow_v12_renders_and_supports_dag_interactions(
+    def test_dag_renders_and_supports_interactions(
         self, server_url, runtime_home, page, request, browser_error_guard
     ):
         runtime_paths = build_runtime_paths(home=runtime_home)
@@ -1387,7 +1699,7 @@ class TestDagView:
         session_id = "dag-ui-v12-001"
         store.create_session(
             session_id=session_id,
-            name="Synthetic React Flow 12 DAG",
+            name="Synthetic DAG",
             pack="claude-code",
             created_at="2026-09-16T12:00:00Z",
             config_json="{}",
@@ -1418,90 +1730,41 @@ class TestDagView:
         page.goto(server_url, wait_until="domcontentloaded")
         page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
 
-        dependency_graph = page.evaluate("""() => ({
-            importMap: JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports,
-            scripts: Array.from(document.querySelectorAll('script[src]'), el => el.src),
-            stylesheets: Array.from(document.querySelectorAll('link[rel~="stylesheet"]'), el => el.href),
-            resources: performance.getEntriesByType('resource').map(entry => entry.name),
-        })""")
-        assert_react_19_import_map(dependency_graph["importMap"])
-        expected_scripts = [
-            "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
-            "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-        ]
-        expected_stylesheets = [
-            "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
-            "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
-        ]
-        assert dependency_graph["scripts"] == expected_scripts
-        assert dependency_graph["stylesheets"] == expected_stylesheets
-        external_resources = [
-            url
-            for url in dependency_graph["resources"]
-            if not url.startswith(server_url)
-        ]
-        assert all("/reactflow@" not in url for url in external_resources)
-        assert_react_esm_graph(
-            [
-                url
-                for url in external_resources
-                if is_react_package_resource(url) and "/@xyflow/" not in url
-            ]
-        )
-        xyflow_resources = [
-            url for url in external_resources if "/@xyflow/react@" in url
-        ]
-        assert (
-            xyflow_resources.count(
-                "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom"
-            )
-            == 1
-        )
-        assert all(
-            "/@xyflow/react@12.11.6/" in url
-            or url.endswith("@xyflow/react@12.11.6?external=react,react-dom")
-            for url in xyflow_resources
-        )
-        unpkg_resources = [
-            url for url in external_resources if url.startswith("https://unpkg.com/")
-        ]
-        assert Counter(unpkg_resources) == Counter(
-            expected_scripts + [expected_stylesheets[-1]]
-        )
+        assert_offline_page_source(page.content())
 
         page.locator("button[aria-label='Open DAG']").click()
-        page.wait_for_selector(".react-flow__node[data-id='root']", timeout=SLOW_TIMEOUT)
-        assert page.locator(".react-flow__node:not([data-id^='group-'])").count() == 3
-        assert page.locator(".react-flow__edge").count() == 2
-        assert page.locator(".react-flow__node[data-id='root']").evaluate(
+        page.wait_for_selector(".dag-node[data-id='root']", timeout=SLOW_TIMEOUT)
+        assert page.locator(".dag-node:not([data-id^='group-'])").count() == 3
+        assert page.locator(".dag-edge").count() == 2
+        assert page.locator(".dag-node[data-id='root']").evaluate(
             "element => getComputedStyle(element).position"
         ) == "absolute"
 
-        viewport = page.locator(".react-flow__viewport")
+        viewport = page.locator(".dag-viewport")
         fitted_transform = viewport.get_attribute("style")
-        page.locator(".react-flow__controls-zoomin").click()
+        page.locator(".dag-zoom-in").click()
         page.wait_for_function(
-            """previous => document.querySelector('.react-flow__viewport')
+            """previous => document.querySelector('.dag-viewport')
                 ?.getAttribute('style') !== previous""",
             arg=fitted_transform,
             timeout=SLOW_TIMEOUT,
         )
         zoomed_transform = viewport.get_attribute("style")
         assert zoomed_transform != fitted_transform
-        page.locator(".react-flow__controls-fitview").click()
+        page.locator(".dag-fit-view").click()
         page.wait_for_function(
-            """previous => document.querySelector('.react-flow__viewport')
+            """previous => document.querySelector('.dag-viewport')
                 ?.getAttribute('style') !== previous""",
             arg=zoomed_transform,
             timeout=SLOW_TIMEOUT,
         )
         assert viewport.get_attribute("style") != zoomed_transform
 
-        middle_node = page.locator(".react-flow__node[data-id='middle']")
+        middle_node = page.locator(".dag-node[data-id='middle']")
         middle_node.click()
         page.wait_for_function(
             """() => document.querySelector(
-                ".react-flow__node[data-id='middle']"
+                ".dag-node[data-id='middle']"
             )?.classList.contains('selected')""",
             timeout=SLOW_TIMEOUT,
         )
@@ -1515,9 +1778,9 @@ class TestDagView:
         page.locator(".split-view .log-panel").wait_for(
             state="visible", timeout=SLOW_TIMEOUT
         )
-        page.wait_for_selector(".react-flow", state="detached", timeout=SLOW_TIMEOUT)
+        page.wait_for_selector(".dag-canvas-root", state="detached", timeout=SLOW_TIMEOUT)
 
-    def test_dag_nodes_show_task_titles_and_live_statuses(
+    def test_dag_status_update_keeps_dragged_position_and_zoom(
         self, fresh_server, page, browser_error_guard
     ):
         """DAG nodes carry real titles/statuses and follow live status changes.
@@ -1552,8 +1815,8 @@ class TestDagView:
         page.goto(fresh_server["url"], wait_until="domcontentloaded")
         page.wait_for_selector("button[aria-label='Open DAG']", timeout=SLOW_TIMEOUT)
         page.locator("button[aria-label='Open DAG']").click()
-        root_node = page.locator(".react-flow__node[data-id='root']")
-        leaf_node = page.locator(".react-flow__node[data-id='leaf']")
+        root_node = page.locator(".dag-node[data-id='root']")
+        leaf_node = page.locator(".dag-node[data-id='leaf']")
         root_node.wait_for(timeout=SLOW_TIMEOUT)
 
         assert root_node.locator(".secondary").inner_text() == "Task root"
@@ -1566,6 +1829,12 @@ class TestDagView:
 
         ready_border = leaf_border_color()
         assert ready_border != root_node.evaluate("node => getComputedStyle(node).borderTopColor")
+        box = leaf_node.bounding_box()
+        page.mouse.move(box["x"] + 30, box["y"] + 25)
+        page.mouse.down(); page.mouse.move(box["x"] + 65, box["y"] + 45, steps=5); page.mouse.up()
+        position = leaf_node.evaluate("el => [el.style.left, el.style.top]")
+        page.locator(".dag-zoom-out").click()
+        transform = page.locator(".dag-viewport").get_attribute("style")
 
         # A WebSocket task_status_change must recolor the open graph. Republish
         # until the page's WebSocket is connected and the change lands.
@@ -1586,7 +1855,7 @@ class TestDagView:
             try:
                 page.wait_for_function(
                     """() => document.querySelector(
-                        ".react-flow__node[data-id='leaf'] .status-badge"
+                        ".dag-node[data-id='leaf'] .status-badge"
                     )?.textContent === 'active'""",
                     timeout=500,
                 )
@@ -1595,6 +1864,8 @@ class TestDagView:
                 continue
         assert leaf_node.locator(".status-badge").inner_text() == "active"
         assert leaf_border_color() != ready_border
+        assert leaf_node.evaluate("el => [el.style.left, el.style.top]") == position
+        assert page.locator(".dag-viewport").get_attribute("style") == transform
 
 # ---------------------------------------------------------------------------
 # 11. SETTINGS CRUD

@@ -2,27 +2,17 @@
 
 launchmaster is a local macOS control center for inspecting and managing
 `launchd` jobs. A single executable Python file serves a FastAPI backend and an
-embedded React interface; there is no frontend build step.
+embedded Preact interface; there is no frontend build step.
 
-The embedded frontend uses React 19.3.0 and ReactDOM 19.3.0 through an
-exact-version import map, including the aligned react-is 19.3.0 peer. Babel
-Standalone 8.0.5 compiles the module-aware inline JSX in the browser, so the
-single-file application still has no frontend build step. The maintained
-automated browser target is current Playwright Chromium.
+Frontend scripts, icons, and Latin-subset fonts are embedded in the launcher,
+so the interface works offline. The maintained automated browser target is
+current Playwright Chromium.
 
 ## Requirements
 
 - macOS with `launchctl`
 - [uv](https://docs.astral.sh/uv/)
-- A browser with internet access to load the React, Babel, Lucide, and font
-  assets referenced by the embedded interface
-
-The direct top-level package versions in the import map and script URLs are
-exact. This prevents drift in those requested versions, but CDN-generated
-transitive dependencies are not fully locked, and the interface still requires
-the network at runtime. Exact pins are not byte-immutable delivery guarantees;
-offline or byte-for-byte reproducible use would require a separate vendoring or
-release-artifact flow.
+- A modern browser
 
 launchmaster runs with the permissions of the user who started it. Reading or
 changing jobs under `/Library` or `/System/Library` may fail unless that user
@@ -117,11 +107,6 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster
 
 If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster --install-browsers`.
 
-The suite includes startup checks, live API integration checks, schedule
-checks, and Playwright browser tests. It runs against the current Mac's real
-`launchctl` state, while the API and browser fixtures use separate temporary
-`LAUNCHMASTER_HOME` directories and therefore do not read or modify the real
-launchmaster configuration or backups.
-
-The browser tests also need network access for the interface's CDN-hosted
-dependencies.
+The suite includes startup checks, synthetic API integration checks, schedule
+checks, and Playwright browser tests. API and browser servers use isolated
+temporary homes and synthetic jobs; their job mutation endpoints are disabled.
