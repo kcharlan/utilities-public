@@ -121,10 +121,14 @@ export function pruneBackups(root, options = {}) {
     }
     candidates.sort((a, b) => b.mtime - a.mtime || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
     function writable(directory) {
-      const entry = fs.lstatSync(directory);
-      if (!entry.isDirectory() || entry.isSymbolicLink()) return;
-      fs.chmodSync(directory, (entry.mode & 0o7777) | 0o700);
-      for (const name of fs.readdirSync(directory)) writable(path.join(directory, name));
+      let names;
+      try {
+        const entry = fs.lstatSync(directory);
+        if (!entry.isDirectory() || entry.isSymbolicLink()) return;
+        fs.chmodSync(directory, (entry.mode & 0o7777) | 0o700);
+        names = fs.readdirSync(directory);
+      } catch (error) { throw new Error(directory + ': ' + error.message, {cause: error}); }
+      for (const name of names) writable(path.join(directory, name));
     }
     for (const {file} of candidates.slice(keep)) {
       try { writable(file); fs.rmSync(file, {recursive: true}); removed.push(file); }

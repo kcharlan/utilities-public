@@ -74,6 +74,22 @@ test('backup retention warns and preserves payloads on injected stat and removal
   assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old'); assert.equal(warnings.length, 2);
 });
 
+test('backup retention reports the affected nested path on chmod and enumeration errors', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const nested = path.join(old, 'nested'); fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'payload'), 'invented protected contents');
+  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
+  const chmod = fs.chmodSync, read = fs.readdirSync;
+  try {
+    fs.chmodSync = (file, mode) => { if (file === nested) throw new Error('invented chmod error'); return chmod(file, mode); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync = chmod;
+    fs.readdirSync = file => { if (file === nested) throw new Error('invented enumeration error'); return read(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
+  } finally { fs.chmodSync = chmod; fs.readdirSync = read; console.warn = warn; }
+  assert.equal(fs.readFileSync(path.join(nested, 'payload'), 'utf8'), 'invented protected contents');
+  assert.equal(warnings.length, 2); for (const warning of warnings) assert.ok(warning.includes(nested));
+});
+
 // Each single-page calculator installer shares one lifecycle; run it against every page.
 const pages = [
   {script: 'tools/deploy_ai_model_timeline.mjs', filename: 'ai-model-timeline.html', backups: 'ai-model-timeline'},
