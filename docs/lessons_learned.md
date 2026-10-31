@@ -1783,6 +1783,10 @@ fixtures. Deployment admission must size its `git show` buffer from the source
 bytes already read, while retaining exact index comparisons. Exercise a large
 tracked blob through the default inventory and verify that both staged and
 unstaged mismatches still fail before publication.
+Synthetic Git fixtures must also suppress inherited automatic maintenance for
+their Git commands and child deployers. Otherwise a maintenance lock can vanish
+during a whole-tree snapshot. An aggressive-maintenance regression should keep
+the complete mutation assertion and verify that maintenance never starts.
 
 ### 2026-10-30 — Requirements include and constraint handling
 
