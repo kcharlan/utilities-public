@@ -15,6 +15,8 @@ This is a public-facing repository, so anything committed here is published. Nev
 This repository is a personal utilities monorepo of independently maintained projects with their own runtimes, dependencies, and workflows. Many projects occupy top-level folders; grouping directories such as `docker` and `web_games` contain separate nested projects.
 
 ## Core Rules
+- This is a personal hobby repository: breakage is found in use and fixed then. Do not add owner sign-offs, acceptance or evidence to-dos, confirmation tasks for working software, new version or digest pins, script locks, or dependency-review schedules. The native acceptance and live checks named below are optional; they never block a change, release or handoff, and are not tracked as open work. Authorization for real deployment and for live provider or private data still applies.
+- Anything that needs the owner goes in `docs/todo.md` or your report, with why it matters, the options and a recommendation, never only in a plan or the PKM.
 - Treat each independently maintained project as standalone, whether top-level or nested; account for shared dependencies when determining affected projects.
 - Keep changes scoped; do not refactor across unrelated projects unless explicitly asked.
 - Many paths contain spaces (for example `Calculation tools`, `abacus usage`, `moneydance backup rotation`): always quote paths in shell commands.

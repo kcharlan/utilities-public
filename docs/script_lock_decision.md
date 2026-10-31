@@ -1,6 +1,6 @@
 # Script locks: decision for review
 
-**Owner decision:** use selective locks for runtime-dependent uv scripts in a follow-up rollout, introduced project by project after the integration gaps below are resolved. This investigation did not introduce production locks; the current release continues to use floating dependencies. The present test runner is not locked and fleet-wide parity is not established.
+**Decision (2026-10-31): keep floating dependencies; the rollout is retired.** The owner does not want the upkeep of locks for a personal repository. A dependency that breaks a tool gets fixed when it is found. The earlier selective-lock choice is withdrawn, and the rest of this record is kept only as pilot history.
 
 ## Pilot evidence
 
@@ -12,7 +12,7 @@ When the private Jtree header was changed to require Uvicorn 0.54.0 while its lo
 
 ## Scope and delivery
 
-Candidates with third-party runtime dependencies in the guard's 34-launcher inventory are: EditDB, Jtree, Harscope, MLS Tracker, Docpipe, Storage Monitor, Tax2, RouterView, Expense Dock, Git Fleet, Launchmaster, Router Log Analyzer, HYSA Excel, ETF Monte Carlo, Benchmark, Cognitive Switchyard, Doc Linearizer, Data Format Converter, both Reversible Skew launchers, Video Scenes, both Apple Health extractors, and Transcription. This includes launchers outside the test registry. Existing direct pins still leave transitive dependencies floating. Git Fleet and RouterView remain in scope; their browser acceptance is owner-deferred, not passed. The remaining ten guard entries have empty dependency lists and gain little from package locks; their interpreter and other runtime requirements still need validation. Model Sentinel's builder is among these stdlib entries, while its installed zipapp has a separate runtime contract. Docker, non-uv tools, and other nonstandard delivery paths remain under their own policies.
+Candidates with third-party runtime dependencies in the guard's 34-launcher inventory are: EditDB, Jtree, Harscope, MLS Tracker, Docpipe, Storage Monitor, Tax2, RouterView, Expense Dock, Git Fleet, Launchmaster, Router Log Analyzer, HYSA Excel, ETF Monte Carlo, Benchmark, Cognitive Switchyard, Doc Linearizer, Data Format Converter, both Reversible Skew launchers, Video Scenes, both Apple Health extractors, and Transcription. This includes launchers outside the test registry. Existing direct pins still leave transitive dependencies floating. Git Fleet and RouterView remain in scope; their browser suites pass since `1886b33`. The remaining ten guard entries have empty dependency lists and gain little from package locks; their interpreter and other runtime requirements still need validation. Model Sentinel's builder is among these stdlib entries, while its installed zipapp has a separate runtime contract. Docker, non-uv tools, and other nonstandard delivery paths remain under their own policies.
 
 Benchmark has a project `uv.lock`, but `bench` runs as a PEP 723 script. A project lock alone is not evidence that this script uses the same resolution. Treat its script and project delivery paths separately.
 

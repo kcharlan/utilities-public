@@ -55,8 +55,10 @@ Synthetic canary tests establish non-disclosure in their fixtures, not that a
 real execution never opens credentials. CLI/IDE archive and subagent tests do
 not establish behavior of untested upstream UI operations.
 
-Real-source parity and credential-access acceptance require separate
-authorization; completion is unknown. If authorized, compare the reader and
+Real-source parity and credential-access acceptance are not tracked as open work.
+Discovery admits only UUID-named `.db` and `.pb` files under the `conversations`
+directories, and synthetic canaries cover credential files. If real totals look
+wrong and a comparison is authorized, compare the reader and
 oracle on coherent private snapshots using the token-rule projection, reconcile
 concurrent-source changes before interpreting mismatches, and check discovery,
 archive, zero-step, large-database and unpriced results. A separate sandbox

@@ -198,15 +198,9 @@ synthetic Hosts visual procedure. Historical rollout instructions and old expect
 results are not evidence that a live check passed. Live provider requests, real
 saved scans and deployment require separate authorization; retain evidence privately.
 
-The endpoint capture plan specified a separate live acceptance on an explicitly
-authorized saved scrape: reconcile persisted mappings and path outcomes with the
-planned, attempted and failed counts, then inspect exact-edge changes in the API and
-report. Its status is not established by the implementation or synthetic tests.
-The plan also called for live evidence that anonymous endpoint access worked before
-production enablement, and a two-week shadow period followed by private telemetry
-review of the provisional display cap and profile telemetry fields. The historical
-status of those checks is unknown; default-on capture and implemented reports do not
-establish that they occurred. This records the evidence gap, not a new rollout order.
+The live acceptance, shadow period and telemetry review from the endpoint capture plan
+were dropped on 2026-10-31. Capture runs on real scans, and problems get fixed when
+they appear. The display cap stays at 25 until use shows it should change.
 The legacy-schema fixture's source revision is
 `d40cf3c063a2f7e13448eae412f0753371f6a68e`; `test_endpoint_legacy_schema_preservation`
 protects existing data when the schema is initialized.

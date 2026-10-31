@@ -24,6 +24,10 @@ directory and read its README before starting it.
 
 ## Propagating Dependency Updates
 
+Stacks deliberately follow moving image tags, and their update scripts just repull
+or rebuild. Images are not pinned to digests, so updates arrive without version
+tracking.
+
 `propagate-updates.zsh` carries dependency updates from this source tree to the
 deployed copy (`~/docker`) and the stacks running from it, in two phases with a
 commit in between. Run it from anywhere in the repository:
