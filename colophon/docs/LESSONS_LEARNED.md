@@ -240,6 +240,15 @@ historical evidence, not available native acceptance commands.
   checksums and truncated values. Test const encoders against read-only memory:
   comparing values alone misses writes that store the same value.
 
+## OpenCode continuation restrictions
+
+Apply lifecycle and agent restrictions independently even when payload capability
+normally disables both; an archived agent must satisfy both support flags. Keep
+shell arguments independently quoted, and test compiled orphan and child rows as
+well as mutated support combinations. See `tests/test_browser.py`'s OpenCode action
+and shell-roundtrip regressions and `tests/test_opencode.py`'s capability regression.
+The synthetic command test does not establish upstream database routing.
+
 ## Recorded-cost aggregate overflow
 
 Finite request costs can still overflow a session, turn or bucket sum. Check

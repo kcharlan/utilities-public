@@ -147,7 +147,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.5.1\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.5.2\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
@@ -158,7 +158,7 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     if(in->source_host)text(w,in->source_host);else jsonw_raw(w,"null");
     jsonw_raw(w,"}");sources(w,in);jsonw_raw(w,",\"costs\":{\"available\":");jsonw_raw(w,!in->ledger||in->ledger->available?"true":"false");jsonw_raw(w,",\"reason\":");if(in->ledger&&in->ledger->reason.p)jsonw_string(w,in->ledger->reason);else jsonw_raw(w,"null");jsonw_raw(w,"},\"live_quiet_ms\":7200000,"
         "\"links\":{\"open_in_codex\":{\"live\":true,\"archived\":false,\"subagent\":true},"
-        "\"continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false},\"claude_continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false}}},"
+        "\"continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false},\"claude_continue_in_cli\":{\"live\":true,\"archived\":true,\"subagent\":false},\"opencode_continue_in_cli\":{\"live\":true,\"archived\":false,\"subagent\":false}}},"
         "\"sessions\":");payload_sessions(w,in->corpus,&ids);jsonw_raw(w,",\"subagents\":");payload_subagents(w,in->corpus,&ids);jsonw_raw(w,",\"workspaces\":");payload_workspaces(w,in->corpus);jsonw_raw(w,",\"models\":");
     if(in->pricing)pricing_models_json(w,in->pricing);else jsonw_raw(w,"{}");jsonw_raw(w,",\"diagnostics\":{\"skipped_files\":[");
     bool skipped_first=true;

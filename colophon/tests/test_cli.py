@@ -663,7 +663,7 @@ def test_help_and_version_create_no_runtime(native):
     assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.5.1\n"
+    assert version.stdout == "colophon 0.5.2\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):

@@ -28,8 +28,7 @@ subagents, archive state and recorded catalog estimates to the native pipeline,
 payload, offline page and CLI summary. OpenCode is enabled by default; `--opencode-db PATH`
 selects one file and `--no-opencode` disables discovery. Sources are reread
 each run without a parse cache. The page retains database status/reasons,
-preview skips, missing usage and residual diagnostics. Continuation remains
-disabled: disposable CLI/database routing acceptance has not been established.
+preview skips, missing usage and residual diagnostics.
 
 Version 0.4.1 groups every provider's sessions in one repository into one
 workspace: Claude and OpenCode record no git remote, so it is read from the
@@ -50,6 +49,9 @@ unpriced usage. Source, payload, page footer and installer share this version.
 Version 0.5.1 reads OpenCode 2.1 messages, which keep their id and type only in
 database columns. Earlier releases rejected every such message as malformed and
 fell back to unattributed session totals dated at each session's start.
+
+Version 0.5.2 offers a copied Continue in CLI command for eligible live
+OpenCode primary sessions with absolute working-directory and database paths.
 
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.

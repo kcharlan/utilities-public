@@ -50,7 +50,8 @@ def test_opencode_only_build_counts_cost_actions_and_private_runtime(native):
     row, = payload["sessions"]
     assert row["provider"] == "opencode"
     assert row["opencode_database"] == str(path)
-    assert row["capabilities"] == {"copy_session_id": True, "copy_log_path": False, "open_in_codex": False, "continue_in_cli": False}
+    assert row["capabilities"] == {"copy_session_id": True, "copy_log_path": False, "open_in_codex": False, "continue_in_cli": True}
+    assert payload["meta"]["links"]["opencode_continue_in_cli"] == {"live": True, "archived": False, "subagent": False}
     assert row["own_usage"]["input"] == 10
     assert row["own_usage"]["cost_usd"] == .25
     assert source(payload)["status"] == "ok"
@@ -61,6 +62,20 @@ def test_opencode_only_build_counts_cost_actions_and_private_runtime(native):
     assert "opencode: 1 sessions" in result.stdout and "$0.25 est." in result.stdout
     assert stat.S_IMODE(native.runtime.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(p.stat().st_mode) == (0o700 if p.is_dir() else 0o600) for p in native.runtime.rglob("*"))
+
+
+def test_opencode_continue_capability_only_on_primary_rows(native):
+    database(native)
+    database(native, "opencode-child.db", session="synthetic-child", parent=SESSION)
+    database(native, "opencode-orphan.db", session="synthetic-orphan", parent="synthetic-missing")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    primary, = [row for row in payload["sessions"] if row["id"] == SESSION]
+    assert primary["capabilities"]["continue_in_cli"] is True
+    assert payload["subagents"]["synthetic-child"]["capabilities"]["continue_in_cli"] is False
+    orphan, = [row for row in payload["sessions"] if row["id"] == "synthetic-orphan"]
+    assert orphan["capabilities"]["continue_in_cli"] is False
 
 
 def test_opencode_messages_without_embedded_identity_keep_request_usage(native):
@@ -483,7 +498,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.5.1"
+    assert payload["meta"]["version"] == "0.5.2"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):

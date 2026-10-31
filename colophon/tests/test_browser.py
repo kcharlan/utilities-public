@@ -231,6 +231,7 @@ def opencode_page(native, mutate=None):
 def test_opencode_source_hash_descendants_actions_and_version(page, native):
     def mutate(payload):
         row = next(r for r in payload["sessions"] if r["provider"] == "opencode")
+        row["cwd"] = "/synthetic/opencode"
         child = copy.deepcopy(row)
         child.update(id="synthetic-opencode-child", kind="subagent", parent_id=row["id"], children=[])
         foreign = copy.deepcopy(child)
@@ -238,17 +239,17 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.5.1"
+    assert payload["meta"]["version"] == "0.5.2"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.1")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.2")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
         expect(reader.locator('[data-subagent-id="synthetic-foreign-child"]')).to_have_count(0)
         expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
         expect(reader.get_by_role("button", name="Copy log path")).to_have_count(0)
-        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(1)
         page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.syntheticCopied = text}, configurable: true})")
         reader.get_by_role("button", name="Copy session ID", exact=True).click()
         assert page.evaluate("window.syntheticCopied") == OPENCODE_SESSION
@@ -411,6 +412,8 @@ def test_opencode_source_states_structured_diagnostics_and_preview(page, native,
     (True, False, "ARCHIVED"), (False, True, "ARCHIVED (PROJECT)"), (True, True, "ARCHIVED")])
 def test_opencode_native_database_archive_reader_and_estimates(page, native, session_archived, project_archived, label):
     path = database(native, archived=CLOCK if session_archived else None, project_archived=CLOCK if project_archived else None)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE session_v2 SET directory=?", (str(native.root),))
     assert native.build().returncode == 0
     assert native.payload()['sessions'][0]['archive_reason'] == ('session' if session_archived else 'project')
     with guard_browser_errors(page):
@@ -901,6 +904,97 @@ def test_source_no_data_snapshot_footer_and_phone(page, native):
         page.set_viewport_size({"width": 375, "height": 812})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert requests == []
+
+def test_opencode_continue_shell_roundtrip(page, native):
+    cwd = native.root / "synthetic cwd's ; $(false)"
+    cwd.mkdir()
+    db_path = str(native.root / "synthetic db's ; $(false)")
+    identity = "synthetic id's ; $(false)"
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["provider"] == "opencode")
+        row.update(id=identity, cwd=str(cwd), opencode_database=db_path)
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-list-row][data-provider="opencode"]').click()
+        reader = page.locator("[data-reader]")
+        page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.syntheticCopied = text}, configurable: true})")
+        reader.get_by_role("button", name="Copy Continue in CLI").click()
+        command = page.evaluate("window.syntheticCopied")
+        stubdir = native.root / "synthetic-bin"
+        stubdir.mkdir()
+        stub = stubdir / "opencode"
+        stub.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" "$OPENCODE_DB" "$#" "$@"\n')
+        stub.chmod(0o700)
+        result = subprocess.run(["/bin/sh", "-c", command], env={"PATH": str(stubdir)}, text=True, capture_output=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [str(cwd), db_path, "3", "--standalone", "--session", identity]
+        expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy log path")).to_have_count(0)
+        assert requests == []
+
+
+@pytest.mark.parametrize("changes,allow", [({}, True), ({"archived": True}, False),
+    ({"cwd": ""}, False), ({"cwd": "relative"}, False),
+    ({"opencode_database": None}, False), ({"opencode_database": "relative"}, False),
+    ({"kind": "orphan"}, False), ({"kind": None}, False),
+    ({"capabilities": {"continue_in_cli": False, "copy_session_id": True}}, False)])
+def test_opencode_action_lifecycle(page, native, changes, allow):
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["provider"] == "opencode")
+        row["cwd"] = "/synthetic/cwd"
+        row.update(changes)
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-list-row][data-provider="opencode"]').click()
+        reader = page.locator("[data-reader]")
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(int(allow))
+        expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
+        assert requests == []
+
+
+@pytest.mark.parametrize("archived,kind,flags", [
+    (False, "session", {"live": False, "archived": True, "subagent": True}),
+    (True, "session", {"live": True, "archived": False, "subagent": True}),
+    (False, "orphan", {"live": True, "archived": True, "subagent": False}),
+    (True, "orphan", {"live": True, "archived": False, "subagent": True}),
+])
+def test_opencode_action_support_flags(page, native, archived, kind, flags):
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["provider"] == "opencode")
+        row.update(cwd="/synthetic/cwd", archived=archived, kind=kind)
+        row["capabilities"]["continue_in_cli"] = True
+        payload["meta"]["links"]["opencode_continue_in_cli"] = flags
+    opencode_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator('[data-list-row][data-provider="opencode"]').click()
+        reader = page.locator("[data-reader]")
+        expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+        expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
+        assert requests == []
+
+
+def test_opencode_compiled_agents_stay_hidden(page, native):
+    database(native)
+    database(native, "opencode-child.db", session="synthetic-child", parent=OPENCODE_SESSION)
+    database(native, "opencode-orphan.db", session="synthetic-orphan", parent="synthetic-missing")
+    def mutate(payload):
+        payload["meta"]["links"].setdefault("opencode_continue_in_cli", {"live": True, "archived": False})["subagent"] = True
+        for row in [*payload["sessions"], *payload["subagents"].values()]:
+            if row["provider"] == "opencode":
+                row.update(cwd="/synthetic/cwd", opencode_database="/synthetic/db")
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        for identity in ("synthetic-child", "synthetic-orphan"):
+            page.goto(native.page.as_uri() + "#v=session&p=all&src=opencode&s=" + identity)
+            reader = page.locator("[data-reader]")
+            expect(reader.get_by_role("button", name="Copy Continue in CLI")).to_have_count(0)
+            expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
+        assert requests == []
+
 
 def test_claude_continue_shell_roundtrip_and_eligibility(page, native):
     cwd = native.root / "synthetic cwd's ; $(false)"

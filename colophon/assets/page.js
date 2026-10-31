@@ -1213,15 +1213,16 @@
     const isSubagent = !row.kind || row.kind === "subagent" || row.kind === "orphan";
     const supports = action => action && action[lifecycle] && (!isSubagent || action.subagent);
     const claude = providerOf(row) === "claude";
+    const opencode = providerOf(row) === "opencode";
     const codex = providerOf(row) === "codex";
     const capable = action => !row.capabilities || row.capabilities[action] === true;
     const usablePath = value => typeof value === "string" && value.startsWith("/") && !/[\x00-\x1f\x7f]/.test(value);
     const canContinue = capable("continue_in_cli") && (claude ? supports(data.meta.links.claude_continue_in_cli) && usablePath(row.cwd) && usablePath(row.resume_config_dir) &&
-      !row.history_only && !row.flags.includes("transcript_deleted") : codex && supports(data.meta.links.continue_in_cli));
+      !row.history_only && !row.flags.includes("transcript_deleted") : opencode ? supports(data.meta.links.opencode_continue_in_cli) && usablePath(row.cwd) && usablePath(row.opencode_database) : codex && supports(data.meta.links.continue_in_cli));
     // Claude CLI searches from cwd; CLAUDE_CONFIG_DIR chooses its session store.
     // https://code.claude.com/docs/en/cli-reference (--resume)
     // https://code.claude.com/docs/en/settings (CLAUDE_CONFIG_DIR)
-    const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : "codex resume " + row.id;
+    const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : opencode ? "cd " + shellArgument(row.cwd) + " && OPENCODE_DB=" + shellArgument(row.opencode_database) + " opencode --standalone --session " + shellArgument(row.id) : "codex resume " + row.id;
     header.append(el("div", {class: "reader-buttons"},
       ...(codex && capable("open_in_codex") && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),

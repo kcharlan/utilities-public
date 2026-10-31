@@ -29,9 +29,3 @@ evidence gaps are not tracked; breakage found in use gets fixed then.
 - [x] Replace hand deployment with the manifest-driven copy deployer, including
   the Apple Health wrapper, and back up Model Sentinel zipapp replacements.
   See [deployment guidance](local_deployment_sync.md).
-- [ ] Add Colophon's Continue in CLI action for OpenCode sessions, which Codex and
-  Claude rows already have. Try the command against a disposable database first:
-  `opencode --session` creates a session when the ID isn't found, and `--standalone`
-  may be needed for `OPENCODE_DB` to apply instead of the background service. The
-  action needs a branch in `colophon/assets/page.js`, and `continue_in_cli` enabled in
-  `colophon/src/out/session_payload.c`. Keep archived and subagent sessions ineligible.
