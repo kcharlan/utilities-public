@@ -568,6 +568,20 @@ test_prune_refuses_linked_root() {
   [[ -f "$target/docker-20200101-010101/marker" ]] || fail 'linked root contents changed'
 }
 
+test_prune_orders_fractional_mtimes_before_names() {
+  new_case fractional_backup_times
+  local root="$HOME_DIR/.utilities-deploy-backups"
+  write_file "$root/docker-20200101-010101/marker" newer
+  write_file "$root/docker-20200102-010101/marker" older
+  perl -MTime::HiRes=utime -e 'utime 1577836800.9, 1577836800.9, $ARGV[0] or die $!; utime 1577836800.1, 1577836800.1, $ARGV[1] or die $!' \
+    "$root/docker-20200101-010101" "$root/docker-20200102-010101"
+  commit_change webserver/index/package-lock.json '// changed'
+  run_script deploy --stack webserver
+  assert_status 0
+  [[ -f "$root/docker-20200101-010101/marker" && ! -e "$root/docker-20200102-010101" ]] ||
+    fail 'fractional modification times did not take precedence over names'
+}
+
 test_prune_refuses_unwritable_root() {
   new_case unwritable_backup_root
   local root="$HOME_DIR/.utilities-deploy-backups" name

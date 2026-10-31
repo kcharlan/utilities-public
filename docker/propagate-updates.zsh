@@ -488,11 +488,11 @@ prune_docker_backups() {
   for entry in "$root"/*(N); do
     name="${entry:t}"
     [[ ! -L "$entry" && -d "$entry" && "$name" =~ '^docker-[0-9]{8}-[0-9]{6}(-[0-9]+)?$' ]] || continue
-    stamp="$(stat -f '%m' "$entry")" || { warn "cannot stat $entry"; return 0; }
-    candidates+=("$(printf '%020d\t%s' "$stamp" "$name")")
+    stamp="$(LC_ALL=C perl -MTime::HiRes=stat -e 'my @s = stat($ARGV[0]); @s or die "$ARGV[0]: $!\n"; printf "%.9f", $s[9]' "$entry")" || { warn "cannot stat $entry"; return 0; }
+    candidates+=("$stamp"$'\t'"$name")
   done
   (( ${#candidates} > 2 )) || return 0
-  ordered="$(printf '%s\n' "${candidates[@]}" | LC_ALL=C sort -r)" || { warn "cannot sort backups in $root"; return 0; }
+  ordered="$(printf '%s\n' "${candidates[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2r)" || { warn "cannot sort backups in $root"; return 0; }
   sorted=("${(@f)ordered}")
   for entry in "${sorted[@]:2}"; do
     name="${entry#*$'\t'}"
