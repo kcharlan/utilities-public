@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {hashInventory} from '../deployment_files.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 function fixture(t) {
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'copy-deploy-test-')); t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
@@ -19,6 +20,18 @@ function fixture(t) {
  const run=(...a)=>runEnv({},...a);
  return {base,repo,home,scripts,local,git,run,runEnv};
 }
+test('default deployment admits large tracked blobs and still rejects index mismatches',t=>{
+ const f=fixture(t), file=path.join(f.repo,'project/large-synthetic.bin');
+ const original=Buffer.alloc(2*1024*1024+200000,0x53);
+ fs.writeFileSync(file,original); f.git('add','.'); f.git('commit','-m','add synthetic large blob');
+ let r=f.run('--dry-run'); assert.equal(r.status,0,r.stderr); assert.equal(fs.existsSync(f.local),false);
+ r=f.run(); assert.equal(r.status,0,r.stderr); assert.deepEqual(fs.readFileSync(path.join(f.local,'project/large-synthetic.bin')),original);
+ const entry=()=>[{name:'project/large-synthetic.bin',mode:'100644'}];
+ const changed=Buffer.alloc(original.length,0x54); fs.writeFileSync(file,changed);
+ assert.throws(()=>hashInventory(f.repo,entry(),true),/working bytes differ from Git index/);
+ f.git('add','project/large-synthetic.bin'); fs.writeFileSync(file,original);
+ assert.throws(()=>hashInventory(f.repo,entry(),true),/working bytes differ from Git index/);
+});
 test('installs a tracked project and restores it through rollback',t=>{
  const f=fixture(t), target=path.join(f.local,'project/file');
  let r=f.run('--dry-run'); assert.equal(r.status,0,r.stderr); assert.equal(fs.existsSync(target),false);

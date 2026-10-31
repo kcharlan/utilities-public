@@ -64,7 +64,7 @@ export function hashInventory(repo, entries, requireStaged) {
     const file = path.join(repo, entry.name), stat = regular(file), bytes = fs.readFileSync(file);
     const mode = stat.mode & 0o7777;
     if (mode !== (entry.mode === '100755' ? 0o755 : 0o644)) throw new Error('Native source mode differs from index');
-    if (requireStaged && !bytes.equals(execFileSync('git', ['-C', repo, 'show', ':' + entry.name]))) {
+    if (requireStaged && !bytes.equals(execFileSync('git', ['-C', repo, 'show', ':' + entry.name], {maxBuffer: Math.max(1024 * 1024, bytes.length + 1)}))) {
       throw new Error('Native working bytes differ from Git index; validate and stage first');
     }
     hash.update(entry.name + '\0' + mode.toString(8) + '\0' + sha(bytes) + '\0');
