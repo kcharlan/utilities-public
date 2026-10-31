@@ -61,6 +61,7 @@ typeset -rA STACK_UPDATER=(
   llm_collector llm_collector/llm_collector_container/update.sh
   llm_proxy llm_proxy/update.sh
   mermaid mermaid/update.sh
+  n8n-poc n8n-poc/update.sh
   webserver webserver/update.sh
 )
 # Stacks with their own source-to-deployment tool. Deploy never copies them;
@@ -465,6 +466,45 @@ backup_file() {
     chmod 600 "$target"
 }
 
+# Pruning is best-effort and must never follow user-created directory links.
+prune_docker_backups() {
+  local root="${BACKUP_PARENT:a}" part current=/ entry name stamp ordered dir mode
+  local -a candidates=() sorted=()
+  for part in "${(@s:/:)root}"; do
+    [[ -n "$part" ]] || continue
+    current="${current%/}/$part"
+    if [[ -L "$current" ]]; then
+      if [[ "$(uname -s)" != Darwin || ( "$current" != /tmp && "$current" != /var ) || ! -d "$current" ]]; then
+        warn "cannot prune backups through linked path: $current"; return 0
+      fi
+    elif [[ ! -d "$current" ]]; then
+      warn "cannot inspect backup directory: $current"; return 0
+    fi
+  done
+  mode="$(stat -f '%Lp' "$root")" || { warn "cannot stat $root"; return 0; }
+  if [[ ! -w "$root" || ! -x "$root" ]] || (( (8#$mode & 8#300) != 8#300 )); then
+    warn "backup directory is not writable and searchable: $root"; return 0
+  fi
+  for entry in "$root"/*(N); do
+    name="${entry:t}"
+    [[ ! -L "$entry" && -d "$entry" && "$name" =~ '^docker-[0-9]{8}-[0-9]{6}(-[0-9]+)?$' ]] || continue
+    stamp="$(stat -f '%m' "$entry")" || { warn "cannot stat $entry"; return 0; }
+    candidates+=("$(printf '%020d\t%s' "$stamp" "$name")")
+  done
+  (( ${#candidates} > 2 )) || return 0
+  ordered="$(printf '%s\n' "${candidates[@]}" | LC_ALL=C sort -r)" || { warn "cannot sort backups in $root"; return 0; }
+  sorted=("${(@f)ordered}")
+  for entry in "${sorted[@]:2}"; do
+    name="${entry#*$'\t'}"
+    dir="$root/$name"
+    if [[ -L "$dir" || ! -d "$dir" ]]; then warn "backup changed: $dir"; continue; fi
+    if ! find -P "$dir" -type d -exec chmod u+rwx {} +; then
+      warn "cannot prepare backup for removal: $dir"; continue
+    fi
+    rm -rf -- "$dir" || warn "cannot remove backup: $dir"
+  done
+}
+
 # Replaces one deployed file atomically, keeping the source file's mode.
 install_file() {
   local relative="$1" destination="$DEPLOY_ROOT/$1" staged
@@ -654,6 +694,9 @@ cmd_deploy() {
 
   print_summary
   [[ -z "$BACKUP_DIR" ]] || log "Backups of replaced files: $BACKUP_DIR"
+  if [[ -n "$BACKUP_DIR" && "$DRY_RUN" != true ]] && (( PROBLEMS == 0 )); then
+    prune_docker_backups
+  fi
   if [[ "$DRY_RUN" != true ]]; then
     log "Rescan dependencies in Git Fleet to confirm the refreshed versions."
   fi

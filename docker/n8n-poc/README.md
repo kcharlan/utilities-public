@@ -16,6 +16,10 @@ Copy `.env.example` to `.env`, replace every synthetic value, and keep the file 
 ./up.sh
 ```
 
+Run `./update.sh` to pull the current image, restart and check its status.
+A new image can migrate the database in `N8N_DATA_DIR`; maintain a suitable
+backup before updating.
+
 The UI is available at `http://127.0.0.1:5678` by default. To stop it:
 
 ```bash

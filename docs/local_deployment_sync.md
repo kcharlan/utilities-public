@@ -784,6 +784,10 @@ Validate Compose configuration before starting. Rebuild/start only the projects 
 
 `docker/propagate-updates.zsh deploy` applies these rules to `~/docker`: it copies only committed tracked files, backs up replaced files under `~/.utilities-deploy-backups/docker-<timestamp>/`, reruns `update.sh` only for stacks that were running, and verifies they are running again. Its `refresh` phase updates and audits the Docker lockfiles beforehand. See [docker/README.md](../docker/README.md#propagating-dependency-updates).
 
+After a successful deploy that creates a backup, it keeps the two newest eligible
+Docker backup directories by modification time, with descending name as the
+tie-break. Failed, unchanged and dry runs leave backups untouched.
+
 ## Rollback
 
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
