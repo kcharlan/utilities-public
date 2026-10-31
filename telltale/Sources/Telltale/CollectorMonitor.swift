@@ -5,19 +5,34 @@ import UserNotifications
 /// The UI's collector health check (spec sections 7.4 and 9.3): the collector can't report its
 /// own absence, so the app checks every minute and posts the Collector health notification.
 ///
-/// A health episode starts when `CollectorHealthReport.notify` holds on two checks in a row (one
-/// check alone can be the moment after wake before launchd's catch-up run starts) and ends at the
-/// first check where it doesn't. It posts once per episode and, when "Notify when it clears" is on,
-/// `Copy.collectorRecovered` at the end. The open episode is stored as
-/// `SettingKey.collectorHealthNotice`, so a relaunched app doesn't announce it again. With the
-/// rule off nothing posts and an open episode ends silently; with Notify off the episode is
-/// tracked without its notice, as the collector's rules are.
+/// A health episode starts when `CollectorHealthReport.notify` holds on two checks in a row and ends
+/// at the first check where it doesn't, unless it is only held after a wake. It posts once per
+/// episode and, when "Notify when it clears" is on, `Copy.collectorRecovered` at the end.
+///
+/// launchd's catch-up run can start more than a minute after wake, so two checks alone don't cover
+/// it, and two checks can sit in separate dark wakes hours apart. Each check therefore compares
+/// `asleepTotal`, which counts every sleep, the ones before a dark wake too: when it grew, the Mac has
+/// just woken, unconfirmed problems start over and `CollectorHealth` gets the wake as `awakeSince`.
+///
+/// The open episode is stored as `SettingKey.collectorHealthNotice`, so a relaunched app doesn't
+/// announce it again. With the rule off nothing posts and an open episode ends silently; with Notify
+/// off the episode is tracked without its notice, as the collector's rules are.
 @MainActor final class CollectorMonitor {
     /// Spec section 9.3: every minute.
     static let checkInterval: TimeInterval = 60
     static let threadID = "collectorHealth"
     /// How many recent counted runs a check reads; enough for every verdict (`CollectorHealth`).
     static let runWindow = 20
+    /// Growth in `asleepTotal` that counts as a sleep; the two clocks are read a moment apart.
+    static let minimumSleep: TimeInterval = 1
+
+    /// Seconds asleep since boot: the continuous clock counts sleep and the uptime clock doesn't. The
+    /// uptime clock is read first, so the difference can't underflow.
+    nonisolated static func asleepSinceBoot() -> TimeInterval {
+        let awake = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let continuous = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)
+        return TimeInterval(continuous - awake) / 1_000_000_000
+    }
 
     private let paths: TelltalePaths
     private let manager: LaunchAgentManager
@@ -26,6 +41,11 @@ import UserNotifications
     private let calendar: Calendar
     private let now: @MainActor () -> Date
     private let sourceNames: [String: String]
+    private let asleepTotal: @MainActor () -> TimeInterval
+    /// `asleepTotal` at the last check; nil before the first.
+    private var lastAsleepTotal: TimeInterval?
+    /// When a check first saw the Mac awake after a sleep; nil until it has slept under this monitor.
+    private var awakeSince: Date?
     /// The previous check found the notify condition: one more makes an episode.
     private var unconfirmed = false
     /// A notice change made while the database doesn't exist yet (ruling R27: the app never creates
@@ -41,7 +61,8 @@ import UserNotifications
 
     init(
         paths: TelltalePaths, manager: LaunchAgentManager, currentExecutable: URL, service: any NotificationService,
-        calendar: Calendar = .current, now: @escaping @MainActor () -> Date = Date.init, sourceNames: [String: String] = [:]
+        calendar: Calendar = .current, now: @escaping @MainActor () -> Date = Date.init, sourceNames: [String: String] = [:],
+        asleepTotal: @escaping @MainActor () -> TimeInterval = { CollectorMonitor.asleepSinceBoot() }
     ) {
         self.paths = paths
         self.manager = manager
@@ -50,6 +71,7 @@ import UserNotifications
         self.calendar = calendar
         self.now = now
         self.sourceNames = sourceNames
+        self.asleepTotal = asleepTotal
     }
 
     /// Checks now and then every `checkInterval` until `stop()`.
@@ -73,7 +95,7 @@ import UserNotifications
     @discardableResult func check() async -> CollectorHealthReport? {
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
-            if report.lamp != .red {
+            if report.lamp != .red, !report.heldAfterWake {
                 do { try Store.open(paths.database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }
                 catch StoreError.notInitialized { }
             }
@@ -106,13 +128,23 @@ import UserNotifications
             (manager.installedExecutable(), manager.installedAt(), manager.isLoaded())
         }.value
         let at = now()
+        noteSleep(at: at)
         let report = CollectorHealth.evaluate(
             enabled: inputs.enabled, installedExecutable: installed, installedAt: installedAt, currentExecutable: currentExecutable, loaded: loaded,
             runs: inputs.runs, intervalMinutes: inputs.intervalMinutes, sourceStates: inputs.sourceStates, now: at, calendar: calendar,
-            sourceNames: sourceNames)
+            sourceNames: sourceNames, awakeSince: awakeSince)
         lastReport = report
         lastError = nil
         return (report, inputs, at)
+    }
+
+    private func noteSleep(at: Date) {
+        let total = asleepTotal()
+        if let lastAsleepTotal, total - lastAsleepTotal >= Self.minimumSleep {
+            awakeSince = at
+            unconfirmed = false
+        }
+        lastAsleepTotal = total
     }
 
     // MARK: Episodes
@@ -130,10 +162,11 @@ import UserNotifications
         }
         guard let text = report.notice else {
             unconfirmed = false
-            guard let notice else { return }
+            guard let notice, !report.heldAfterWake else { return }
             try save(nil)
             if rule.notifyOnClear {
-                try await post(id: Self.identifier(notice, "cleared"), body: Copy.collectorRecovered, restoring: notice)
+                try await post(
+                    id: Self.identifier(notice, "cleared"), title: Copy.clearedTitle(CollectorHealth.title), body: Copy.collectorRecovered, restoring: notice)
             }
             return
         }
@@ -145,7 +178,8 @@ import UserNotifications
         let opened = HealthNoticeState(problem: text, notifiedAt: at)
         try save(opened)
         if rule.notify {
-            try await post(id: Self.identifier(opened, "fired"), body: opened.problem, restoring: nil)
+            try await post(
+                id: Self.identifier(opened, "fired"), title: Copy.alertTitle(CollectorHealth.title, lamp: .red), body: opened.problem, restoring: nil)
         }
         unconfirmed = false
     }
@@ -155,8 +189,8 @@ import UserNotifications
     }
 
     /// Posts, putting `restoring` back as the stored notice when the post fails.
-    private func post(id: String, body: String, restoring previous: HealthNoticeState?) async throws {
-        let notification = PendingNotification(id: id, title: CollectorHealth.title, body: body, threadID: Self.threadID)
+    private func post(id: String, title: String, body: String, restoring previous: HealthNoticeState?) async throws {
+        let notification = PendingNotification(id: id, title: title, body: body, threadID: Self.threadID)
         do {
             try await service.post(NativeNotificationPoster.request(for: notification))
         } catch {

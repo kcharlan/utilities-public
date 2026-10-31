@@ -308,6 +308,20 @@ public enum Copy {
 
     // MARK: Notifications
 
+    /// A banner's title says what happened before anything else, since a banner can't be colored and
+    /// its body often says it last. An alert leads with the lamp that lit, in that lamp's color.
+    public static func alertTitle(_ rule: String, lamp: LampColor) -> String {
+        let glyph = switch lamp {
+        case .red: "🔴"
+        case .amber: "🟠"
+        case .blue: "🔵"
+        }
+        return "\(glyph) \(rule)"
+    }
+    /// A clear leads with a colorless check and the word: dark cockpit, no green "OK" (visual design
+    /// doc), and a different shape, not only a different color, from an alert's lamp.
+    public static func clearedTitle(_ rule: String) -> String { "✓ Cleared: \(rule)" }
+
     public static let notificationCheckTitle = "Telltale notification check"
     public static func notificationCheckBody(mode: String) -> String { "Notification check: \(mode)" }
     /// Reported when a check's request posted but never appeared among delivered notifications.

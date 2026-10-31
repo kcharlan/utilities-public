@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.3.2 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.3 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the Claude provider
@@ -223,10 +223,23 @@ plist, `launchctl print` (Loaded only) and the sources' format and read problems
 job should be on but isn't loaded, the two newest finished runs failed, no run succeeded for more
 than 3 intervals (measured from turn-on, the plist's last write, until a run is on record), or a
 format or read problem that two consecutive collector runs report (the lamp and panel message show from the first
-report; see the shared problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, so the minute after wake, before launchd's catch-up run, doesn't notify. The open episode is stored in the
+report; see the shared problem policy in the design spec, section 6.5). An episode starts only when two checks in a row see it, with no sleep between them. The open episode is stored in the
 `collectorHealthNotice` setting, so a relaunch doesn't repeat it; "Telltale's collector is running
 again." follows when the rule's clear notice is on; turning the collector or the rule off ends an
 episode silently.
+
+Time asleep doesn't count against the collector, whether the lid was closed or the Mac only made a
+dark wake. The monitor sees every sleep from the gap between the continuous and uptime clocks, so it
+doesn't depend on a wake notification and needs no permission. After a wake the overdue checks count awake time from the wake, so with a 5-minute interval a
+collector that never comes back alerts after about 15 minutes awake. Two failed runs wait out the
+schedule limit (11 minutes at that interval), so a failure in the moment after wake gets its retry.
+Not loaded and source problems aren't held. A hold isn't a recovery: an episode open at lid close
+stays open, with no "running again", until a run succeeds. Sleep before Telltale launched isn't
+seen, but launchd runs the job when it loads at login.
+
+Banner titles lead with what happened: the lit lamp's color for an alert ("🔴 Collector health"),
+"✓ Cleared:" for a clear (see "Notification banners" in the
+[visual design](docs/telltale_visual_design.md)).
 
 ## Menu bar and panel
 
@@ -363,7 +376,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
-- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.2, with build 7 in help.
+- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.3, with build 8 in help.
 - Status item dot, Light and Dark bars: a new alert shows a filled dot and an acknowledged one a ring whose hollow centre is plain at a glance; Mark as new fills it again.
 - VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly

@@ -143,6 +143,23 @@ green when true and red when it should be true but isn't:
 Below them: the interval, the last and next run, Run now, Turn off and
 Turn on, and the recent log lines.
 
+### Notification banners
+
+A banner is the system's, so its only color is what the title text can carry, and
+its body often names the outcome last. The title therefore says what happened
+first, so a glance tells an alert from a clear:
+
+| Banner | Title | Example |
+|---|---|---|
+| Alert (new, catch-up, escalated) | The lit lamp's color, then the rule | 🔴 Collector health |
+| Cleared | A plain check and "Cleared:", then the rule | ✓ Cleared: Collector health |
+
+Lamp glyphs follow the lamp's severity: 🔴 red, 🟠 amber, 🔵 blue. A clear is a
+lamp going out, so it has no color: green would break the dark cockpit and the
+rule that green means only "collector is on". The two also differ in shape and
+wording, so the difference doesn't rest on color. Event and rule titles in the
+app stay plain; only the banner carries the glyph.
+
 ## Principles
 
 1. **Dark cockpit.** Healthy means quiet. Color appears only for a

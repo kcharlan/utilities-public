@@ -82,7 +82,24 @@ import TelltaleTestSupport
         let fire = outcome(at: latest, fired(latest), message: "fired copy", catchUp: "catch-up copy")
         let notices = select([fire])
         #expect(notices == [PendingNotification(
-            id: "slower-1-fired", title: "Slower than usual", body: "fired copy", threadID: "slower.codex.\(Synth.model)")])
+            id: "slower-1-fired", title: "🟠 Slower than usual", body: "fired copy", threadID: "slower.codex.\(Synth.model)")])
+    }
+
+    /// A banner's title leads with what happened: the lamp that lit, in its color, or the clear.
+    @Test func titlesLeadWithAlertOrCleared() {
+        #expect(select([outcome(at: latest, fired(latest))]).map(\.title) == ["🟠 Slower than usual"])
+        #expect(select([outcome(at: latest, fired(latest, severity: .red))]).map(\.title) == ["🔴 Slower than usual"])
+        #expect(select([outcome(.faster, at: latest, fired(latest, severity: .blue))]).map(\.title) == ["🔵 Faster than usual"])
+        #expect(select([outcome(at: latest, .escalated)]).map(\.title) == ["🔴 Slower than usual"])
+        #expect(select([outcome(at: latest, .cleared)]).map(\.title) == ["✓ Cleared: Slower than usual"])
+        // A catch-up alert is still an alert.
+        let caughtUp = outcome(at: minutesBefore(120), fired(minutesBefore(120)), catchUp: "caught up")
+        #expect(select([caughtUp]).map(\.title) == ["🟠 Slower than usual"])
+        let failed = outcome(.failedTurns, at: latest, fired(latest, severity: .red), scope: "*", failures: [failure(1, at: latest)])
+        #expect(select([failed]).map(\.title) == ["🔴 Failed turns"])
+        var clearNotices = RuleSettings.defaults
+        clearNotices.failedTurns.notifyOnClear = true
+        #expect(select([outcome(.failedTurns, at: latest, .cleared, scope: "*")], settings: clearNotices).map(\.title) == ["✓ Cleared: Failed turns"])
     }
 
     @Test func transitionExactlyOneIntervalOldIsFresh() {

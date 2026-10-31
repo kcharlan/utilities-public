@@ -619,7 +619,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(report.outcome == .succeeded && report.notificationsPosted == 1)
             let episode = try #require(try harness.store().episodes(rule: RuleID.slower.rawValue).first?.id)
             let expected = PendingNotification(
-                id: "slower-\(episode)-fired", title: "Slower than usual",
+                id: "slower-\(episode)-fired", title: "🟠 Slower than usual",
                 body: "Example: " + Copy.slowerFired(model: "Example", percent: 25, since: harness.at(9, 4, 8, 55), calendar: harness.calendar),
                 threadID: "slower.codex.\(Synth.model)")
             #expect(await harness.notifier.posted == [expected])

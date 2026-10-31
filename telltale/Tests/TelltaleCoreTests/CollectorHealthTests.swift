@@ -19,11 +19,11 @@ private enum Health {
 
     static func evaluate(
         enabled: Bool = true, installed: URL? = app, installedAt: Date? = nil, loaded: Bool = true, runs: [CollectorRunRecord], interval: Int = 5,
-        states: [SourceStateRow] = [], now: Date
+        states: [SourceStateRow] = [], now: Date, awakeSince: Date? = nil
     ) -> CollectorHealthReport {
         CollectorHealth.evaluate(
             enabled: enabled, installedExecutable: installed, installedAt: installedAt, currentExecutable: app, loaded: loaded, runs: runs,
-            intervalMinutes: interval, sourceStates: states, now: now, calendar: Synth.newYork)
+            intervalMinutes: interval, sourceStates: states, now: now, calendar: Synth.newYork, awakeSince: awakeSince)
     }
 
     /// Two successful runs at 09:00 and 09:05.
@@ -297,6 +297,51 @@ private enum Health {
         #expect(unloaded.notice == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
         // Unconfirmed problems alone don't notify.
         #expect(Health.evaluate(runs: runs, states: [states[0]], now: Health.at(9, 21)).notice == nil)
+    }
+
+    @Test func timeAsleepDoesNotCountAgainstTheCollector() {
+        let runs = [Health.run(1, Health.at(1, 0), .succeeded)]
+        let woke = Health.at(9, 0)
+        let justAwake = Health.evaluate(runs: runs, now: Health.at(9, 1), awakeSince: woke)
+        #expect(!justAwake.notify && justAwake.heldAfterWake)
+        #expect(justAwake.problems.isEmpty && justAwake.lamp == .green && justAwake.problemKeys.isEmpty)
+        // On schedule and no-success run from the wake, with their usual limits.
+        let lateSchedule = Health.evaluate(runs: runs, now: Health.at(9, 11, 1), awakeSince: woke)
+        #expect(lateSchedule.onSchedule == .red && !lateSchedule.notify && lateSchedule.heldAfterWake)
+        #expect(Health.evaluate(runs: runs, now: Health.at(9, 15), awakeSince: woke).notice == nil)
+        let overdue = Health.evaluate(runs: runs, now: Health.at(9, 15, 1), awakeSince: woke)
+        #expect(overdue.notice == "The collector hasn't run since 01:00.")
+        #expect(!overdue.heldAfterWake)
+    }
+
+    @Test func aRunAfterWakeEndsTheHold() {
+        let runs = [Health.run(1, Health.at(1, 0), .succeeded), Health.run(2, Health.at(9, 1), .succeeded)]
+        let report = Health.evaluate(runs: runs, now: Health.at(9, 2), awakeSince: Health.at(9, 0))
+        #expect(!report.heldAfterWake && !report.notify && report.lamp == .green)
+    }
+
+    @Test func failuresAroundWakeGetARetry() {
+        let runs = [Health.run(1, Health.at(1, 0), .failed, detail: "synthetic"), Health.run(2, Health.at(9, 1), .failed, detail: "synthetic")]
+        let woke = Health.at(9, 0)
+        let held = Health.evaluate(runs: runs, now: Health.at(9, 2), awakeSince: woke)
+        #expect(!held.notify && held.heldAfterWake)
+        // The failure itself still shows; only the notification waits.
+        #expect(held.lastRun == .red && held.lamp == .red)
+        #expect(Health.evaluate(runs: runs, now: Health.at(9, 11, 1), awakeSince: woke).notice?.hasPrefix("The collector failed at 09:01") == true)
+    }
+
+    @Test func wakeDoesNotHoldProblemsSleepCannotExplain() {
+        let woke = Health.at(9, 5)
+        let unloaded = Health.evaluate(loaded: false, runs: Health.healthyRuns, now: Health.at(9, 6), awakeSince: woke)
+        #expect(unloaded.notice == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+        let state = SourceStateRow(source: "example", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 0), updatedAt: Health.at(9, 5))
+        #expect(Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 6), awakeSince: woke).notify)
+    }
+
+    @Test func aWakeLongAgoChangesNothing() {
+        let runs = [Health.run(1, Health.at(9, 0), .failed, detail: "synthetic"), Health.run(2, Health.at(9, 5), .failed, detail: "synthetic")]
+        let woke = Health.at(1, 0)
+        #expect(Health.evaluate(runs: runs, now: Health.at(9, 6), awakeSince: woke) == Health.evaluate(runs: runs, now: Health.at(9, 6)))
     }
 
     @Test func invalidStoredIntervalFallsBackToTheDefault() {

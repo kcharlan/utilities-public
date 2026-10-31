@@ -24,10 +24,13 @@ public struct CollectorHealthReport: Sendable, Equatable {
     /// the panel lists. Nil while the condition doesn't hold.
     public var notice: String?
     public var problemKeys: Set<String>
+    /// The Mac woke too recently to judge a verdict that would otherwise notify. It isn't a recovery,
+    /// so an open episode and its acknowledgement stay as they are.
+    public var heldAfterWake: Bool
 
     public init(
         installed: LampState, loaded: LampState, lastRun: LampState, onSchedule: LampState, problems: [String], needsRepair: Bool,
-        footer: String, notice: String?, problemKeys: Set<String> = []
+        footer: String, notice: String?, problemKeys: Set<String> = [], heldAfterWake: Bool = false
     ) {
         self.installed = installed
         self.loaded = loaded
@@ -38,6 +41,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
         self.footer = footer
         self.notice = notice
         self.problemKeys = problemKeys
+        self.heldAfterWake = heldAfterWake
     }
 
     /// Section 7.4's Collector health condition holds: post (or keep) a health notification.
@@ -69,6 +73,10 @@ public struct CollectorHealthReport: Sendable, Equatable {
 ///   format-problem policy: the lamp and message show from the first report, the notification
 ///   waits for the second). A run still in progress that started on schedule
 ///   holds back the no-success verdict until it ends.
+/// - Time asleep is not the collector's fault. With `awakeSince`, when the Mac last woke, On schedule
+///   and no-success are measured from the later of the run and the wake, and two failed runs don't
+///   notify until the schedule limit has passed since the wake, so a failure in the moment after
+///   wake gets its retry. Not loaded and source problems don't depend on time and aren't held.
 public enum CollectorHealth {
     /// Section 7.4's rule name, used as the notification title.
     public static let title = "Collector health"
@@ -96,7 +104,7 @@ public enum CollectorHealth {
 
     public static func evaluate(
         enabled: Bool, installedExecutable: URL?, installedAt: Date?, currentExecutable: URL, loaded: Bool, runs: [CollectorRunRecord],
-        intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar, sourceNames: [String: String] = [:]
+        intervalMinutes: Int, sourceStates: [SourceStateRow], now: Date, calendar: Calendar, sourceNames: [String: String] = [:], awakeSince: Date? = nil
     ) -> CollectorHealthReport {
         guard enabled else {
             return CollectorHealthReport(
@@ -108,6 +116,8 @@ public enum CollectorHealth {
             .sorted { ($0.startedAt, $0.id) > ($1.startedAt, $1.id) }
         let finished = counted.filter { $0.outcome == .succeeded || $0.outcome == .failed }
         var problems: [String] = []
+        /// The later of `date` and the wake: where the awake time that counts against the collector starts.
+        func awake(_ date: Date) -> Date { max(date, awakeSince ?? date) }
 
         let installedMatches = installedExecutable.map { LaunchAgentManager.sameExecutable($0, currentExecutable) } ?? false
         if !loaded { problems.append(Copy.collectorNotLoaded) }
@@ -124,15 +134,19 @@ public enum CollectorHealth {
         var onSchedule = LampState.unlit
         let scheduleLimit = Self.scheduleLimit(intervalMinutes: intervalMinutes)
         if let newest = counted.first {
-            onSchedule = now.timeIntervalSince(newest.startedAt) <= scheduleLimit ? .green : .red
+            onSchedule = now.timeIntervalSince(awake(newest.startedAt)) <= scheduleLimit ? .green : .red
             if onSchedule == .red { problems.append(Copy.collectorOverdue(since: newest.startedAt, calendar: calendar)) }
         }
 
-        let twoFailures = finished.count >= 2 && finished.prefix(2).allSatisfy { $0.outcome == .failed }
+        let failedTwice = finished.count >= 2 && finished.prefix(2).allSatisfy { $0.outcome == .failed }
+        let justWoke = awakeSince.map { now.timeIntervalSince($0) <= scheduleLimit } ?? false
+        let twoFailures = failedTwice && !justWoke
+        var heldAfterWake = failedTwice && justWoke
         var noSuccess = false
         if let reference = finished.first(where: { $0.outcome == .succeeded })?.startedAt ?? counted.last?.startedAt ?? installedAt {
             let pending = counted.first.map { $0.outcome == .running && !isStranded($0, intervalMinutes: intervalMinutes, now: now) } ?? false
-            noSuccess = !pending && now.timeIntervalSince(reference) > 3 * interval
+            noSuccess = !pending && now.timeIntervalSince(awake(reference)) > 3 * interval
+            if !pending, !noSuccess, now.timeIntervalSince(reference) > 3 * interval { heldAfterWake = true }
             if noSuccess, problems.isEmpty { problems.append(Copy.collectorOverdue(since: reference, calendar: calendar)) }
         }
 
@@ -162,6 +176,6 @@ public enum CollectorHealth {
         return CollectorHealthReport(
             installed: installedMatches ? .green : .red, loaded: loaded ? .green : .red, lastRun: lastRun, onSchedule: onSchedule,
             problems: problems, needsRepair: !installedMatches, footer: counted.isEmpty && problems.isEmpty ? Copy.waitingForFirstRun : "",
-            notice: notice, problemKeys: keys)
+            notice: notice, problemKeys: keys, heldAfterWake: heldAfterWake)
     }
 }

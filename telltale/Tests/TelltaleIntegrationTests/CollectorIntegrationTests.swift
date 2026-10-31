@@ -165,9 +165,9 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
 
             let calendar = harness.calendar
             let expected: [(at: Date, title: String, body: String)] = [
-                (harness.at(9, 4, 9, 20), "Slower than usual",
+                (harness.at(9, 4, 9, 20), "🟠 Slower than usual",
                  "Codex: " + Copy.slowerFired(model: CodexWorkload.display, percent: 25, since: harness.at(9, 4, 8, 55), calendar: calendar)),
-                (harness.at(9, 4, 10, 5), "Slower than usual", "Codex: " + Copy.speedCleared(model: CodexWorkload.display)),
+                (harness.at(9, 4, 10, 5), "✓ Cleared: Slower than usual", "Codex: " + Copy.speedCleared(model: CodexWorkload.display)),
             ]
             #expect(noticesByRun.map(\.at) == expected.map(\.at))
             #expect(noticesByRun.flatMap(\.notices).map(\.title) == expected.map(\.title))
