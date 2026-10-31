@@ -1772,6 +1772,9 @@ Order eligible real directories by modification time and descending name on
 ties; reject linked roots and ancestors before touching contents. Remove
 read-only descendants without following nested links, and report pruning
 failures as warnings with the affected path.
+Include slash-terminated linked roots in admission tests: `lstat` can otherwise
+follow the final link. An EXIT trap is too late to gate retention; explicitly
+check final permission changes and owned staging cleanup before pruning.
 
 ### 2026-10-30 — Requirements include and constraint handling
 
