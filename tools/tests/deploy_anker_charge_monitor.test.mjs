@@ -24,14 +24,15 @@ function fixture(t) {
   for(const name of ['install.sh','resolve_signing_identity.sh'])write('tools/'+name,fs.readFileSync(path.join(repoRoot,'anker_charge_monitor/tools',name)),0o755);
   write('Package.swift','// conspicuously synthetic package\n');write('Resources/Info.plist',plist);
   write('Makefile',`release:\n\tmkdir -p 'build/release/Anker Charge Monitor.app/Contents/MacOS'\n\tclang -mmacosx-version-min=27.0 Sources/main.c -o 'build/release/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor'\n\tcp Resources/Info.plist 'build/release/Anker Charge Monitor.app/Contents/Info.plist'\n`);
-  const git=(...args)=>execFileSync('git',['-C',repo,...args],{stdio:'pipe'});
+  const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH,
+    GIT_CONFIG_COUNT:'2',GIT_CONFIG_KEY_0:'maintenance.auto',GIT_CONFIG_VALUE_0:'false',GIT_CONFIG_KEY_1:'gc.auto',GIT_CONFIG_VALUE_1:'0'};
+  const git=(...args)=>execFileSync('git',['-C',repo,...args],{stdio:'pipe',env});
   git('init','-q');git('config','user.name','Synthetic Test');git('config','user.email','synthetic@example.invalid');
   const release=label=>{write('Sources/main.c',`#include <stdio.h>\nint main(void){puts("synthetic ${label} must never execute");return 91;}\n`);git('add','.');git('commit','-qm','Synthetic '+label);};
   release('first');
   fs.writeFileSync(path.join(bin,'security'),`#!/bin/bash\n[ "\${SYNTHETIC_MISSING:-0}" = 0 ] || exit 0\necho ' Matching identities'\necho ' 1) ${fingerprint} "CodexBar Local"'\nif [ "\${SYNTHETIC_AMBIGUOUS:-0}" = 1 ]; then echo ' 2) ${'B'.repeat(40)} "CodexBar Local"'; fi\n`,{mode:0o755});
   fs.writeFileSync(path.join(bin,'codesign'),`#!/bin/bash\n[ "$#" = 5 ] && [ "$1" = --verify ] && [ "$2" = --strict ] && [ "$3" = -R ] && [ "$4" = '=identifier "local.utilities.prime-monitor" and certificate leaf = H"${fingerprint}"' ] || exit 94\n[ ! -e "\${!#}/synthetic-reject" ] || exit 95\n`,{mode:0o755});
   fs.writeFileSync(path.join(bin,'pgrep'),'#!/bin/sh\nexit 1\n',{mode:0o755});
-  const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH};
   const run=(...args)=>spawnSync(process.execPath,[script,'--repo',repo,'--apps-dir',apps,'--scripts-dir',scripts,...args],{env,encoding:'utf8'});
   return {base,repo,home,project,apps,scripts,bin,darwin,write,git,release,env,run,app:path.join(apps,'Anker Charge Monitor.app'),receipt:path.join(scripts,'.anker-charge-monitor-native.json')};
 }
@@ -39,6 +40,22 @@ function ok(result){assert.equal(result.status,0,result.stdout+result.stderr);re
 const backup=result=>/rollback backup: (.+)/.exec(result.stdout)[1];
 function state(f){return [fs.existsSync(f.app)?appTreeHash(f.app):null,fs.existsSync(f.receipt)?fs.readFileSync(f.receipt,'utf8'):null];}
 function tree(dir){return fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).map(e=>[e.name,fs.lstatSync(path.join(dir,e.name)).mode,e.isDirectory()?tree(path.join(dir,e.name)):fs.readFileSync(path.join(dir,e.name)).toString('base64')]);}
+
+test('fixture suppresses inherited aggressive Git maintenance while retaining mutation checks',t=>{
+  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'synthetic-git-maintenance-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
+  const config=path.join(scratch,'gitconfig'),trace=path.join(scratch,'trace');
+  fs.writeFileSync(config,'[maintenance]\n auto = true\n autoDetach = false\n[maintenance "loose-objects"]\n enabled = true\n auto = 1\n');
+  const previous={GIT_CONFIG_GLOBAL:process.env.GIT_CONFIG_GLOBAL,GIT_TRACE2_EVENT:process.env.GIT_TRACE2_EVENT};
+  try {
+    process.env.GIT_CONFIG_GLOBAL=config;process.env.GIT_TRACE2_EVENT=trace;
+    const f=fixture(t);f.release('maintenance-probe');f.env.SYNTHETIC_MISSING='1';
+    const before=tree(f.base),result=f.run();assert.equal(result.status,1);assert.match(result.stderr,/Signing identity missing or ambiguous/);assert.deepEqual(tree(f.base),before);
+    const events=fs.readFileSync(trace,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+    assert.equal(events.some(e=>e.event==='region_enter'&&e.category==='maintenance'&&e.label==='loose-objects'),false,'inherited auto maintenance ran');
+  } finally {
+    for(const [key,value] of Object.entries(previous))if(value===undefined)delete process.env[key];else process.env[key]=value;
+  }
+});
 
 test('app source inventory includes maintained installer/signing and root dependencies',()=>{
   for(const name of ['Package.swift','Makefile','Sources/a.swift','Tests/a.sh','Resources/Info.plist','tools/install.sh','tools/resolve_signing_identity.sh']) assert.equal(buildInput('anker_charge_monitor/'+name),true,name);
