@@ -1756,6 +1756,23 @@ Use pytest's parsed argument source to supply a project default, while retaining
 explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
 from synthetic caller directories with sentinel tests.
 
+### 2026-10-31 — Exercise the deployed scheduled command
+
+A scheduled runner can keep executing checkout code even when the standalone
+artifact is current. Build the deployed artifact in a synthetic home, remove the
+checkout, and run the generated job with cached credentials. Validate executable
+admission both during installation and each run. Preserve operator settings when
+replacing an existing runtime installer.
+
+### 2026-10-31 — Prune only after successful forward deployment
+
+Backup retention belongs after activation, validation and cleanup. Failure,
+rollback, unchanged and dry-run paths must preserve older recovery copies.
+Order eligible real directories by modification time and descending name on
+ties; reject linked roots and ancestors before touching contents. Remove
+read-only descendants without following nested links, and report pruning
+failures as warnings with the affected path.
+
 ### 2026-10-30 — Requirements include and constraint handling
 
 Dependency checks must follow both spaced and attached requirement includes and
