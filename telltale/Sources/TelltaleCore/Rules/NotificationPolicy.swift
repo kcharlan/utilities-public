@@ -185,13 +185,19 @@ public enum NotificationPolicy {
         failureNotices = FailureNotices(lastNoticeAt: latestPoint, waiting: [])
         let provider = all[0].provider
         return [PendingNotification(
-            id: "failedTurns-\(provider.rawValue)-\(Int(latestPoint.timeIntervalSince1970))", title: RuleID.failedTurns.title, body: body,
+            id: "failedTurns-\(provider.rawValue)-\(Int(latestPoint.timeIntervalSince1970))", title: Copy.alertTitle(RuleID.failedTurns.title, lamp: .red), body: body,
             threadID: failedTurnsThreadID(provider: provider))]
     }
 
     private static func notice(_ outcome: RuleOutcome, kind: String, body: String) -> PendingNotification {
-        PendingNotification(
-            id: "\(outcome.rule.rawValue)-\(outcome.episodeID)-\(kind)", title: outcome.title, body: body,
+        // Only fires, escalations and clears notify, and an escalation is always to red.
+        let title = switch outcome.transition {
+        case .fired(_, let severity)?: Copy.alertTitle(outcome.title, lamp: severity)
+        case .cleared?: Copy.clearedTitle(outcome.title)
+        default: Copy.alertTitle(outcome.title, lamp: .red)
+        }
+        return PendingNotification(
+            id: "\(outcome.rule.rawValue)-\(outcome.episodeID)-\(kind)", title: title, body: body,
             threadID: threadID(rule: outcome.rule, provider: outcome.provider, scope: outcome.scope))
     }
 }

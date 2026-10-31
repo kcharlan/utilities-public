@@ -478,6 +478,10 @@ Every value is editable in Settings. Each rule has: on/off, its parameters,
 When two lamp colors are possible, the lamp shows the most severe one.
 Severity order: red, amber, blue.
 
+Time asleep doesn't count against the collector (§9.3): after a wake, "no
+successful run for 3× the interval" and On schedule measure awake time from the
+wake, and 2 failed runs in a row don't notify until the schedule limit has passed.
+
 An open failed-turn alert reports the episode's total and onset. After a count
 increase beyond an acknowledgement, it reports the new count and acknowledgement
 time, with the episode total beneath it. Reasons come from counted membership.
@@ -692,6 +696,16 @@ Collector lamps:
   Collector health notification. The collector can't report its own absence.
   If both the app and the job are down, nothing alerts; the panel says so on
   next open.
+- **Sleep isn't downtime.** launchd can start its catch-up run more than a
+  minute after wake, and the Mac also makes short dark wakes overnight. Each
+  check compares the continuous and uptime clocks, whose difference grows by
+  every sleep, dark wakes included. When it grew, the Mac has just woken:
+  a problem seen before the sleep starts its two checks over, and On schedule and
+  no-success count from the wake. Two failed runs wait out the schedule limit
+  (2 × the interval + 1 minute), so a failure in the moment after wake gets
+  its retry. Not loaded and source problems aren't held, since sleep doesn't
+  explain them. A hold is not a recovery: an open episode and its
+  acknowledgement stay as they are until a run succeeds or the hold ends.
 - **Collector acknowledgement:** a red job/run lamp or a repair requirement
   uses the key `collector`; each format or read problem uses `source.<id>`.
   Changes among job problems or among problem kinds for one source retain the

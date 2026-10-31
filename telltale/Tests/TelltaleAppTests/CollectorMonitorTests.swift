@@ -33,6 +33,7 @@ import TelltaleTestSupport
     let store: Store
     let currentExecutable = URL(fileURLWithPath: "/nonexistent-synthetic/Applications/Telltale.app/Contents/MacOS/Telltale")
     var now = MonitorHarness.at(9, 0)
+    var asleep: TimeInterval = 0
 
     init(_ directory: URL) throws {
         self.directory = directory
@@ -47,7 +48,7 @@ import TelltaleTestSupport
         let paths = other ?? paths
         return CollectorMonitor(
             paths: paths, manager: LaunchAgentManager(paths: paths, uid: 4_242, runner: runner), currentExecutable: currentExecutable,
-            service: service, calendar: Synth.newYork, now: { [unowned self] in self.now })
+            service: service, calendar: Synth.newYork, now: { [unowned self] in self.now }, asleepTotal: { [unowned self] in self.asleep })
     }
 
     /// `launchctl print` succeeds (loaded) or reports the service missing.
@@ -66,6 +67,12 @@ import TelltaleTestSupport
         var rules = try store.value(.rules)
         change(&rules.collectorHealth)
         try store.set(.rules, rules)
+    }
+
+    /// The Mac sleeps for `hours`: the wall clock and the sleep clock move and no check runs.
+    func sleep(hours: Double) {
+        now = now.addingTimeInterval(hours * 3_600)
+        asleep += hours * 3_600
     }
 
     /// Advances the clock a minute (the health-check cadence) and checks.
@@ -135,7 +142,7 @@ private let recovered = "Telltale's collector is running again."
             await h.tick(monitor)
             #expect(h.bodies == [notLoaded])
             let request = try #require(h.service.posted.first)
-            #expect(request.content.title == "Collector health")
+            #expect(request.content.title == "🔴 Collector health")
             #expect(request.content.threadIdentifier == "collectorHealth")
             #expect(try h.store.value(.collectorHealthNotice) == HealthNoticeState(problem: notLoaded, notifiedAt: h.now))
 
@@ -170,12 +177,132 @@ private let recovered = "Telltale's collector is running again."
             let report = await h.tick(monitor)
             #expect(report?.notify == false)
             #expect(h.bodies == [notLoaded, recovered])
-            #expect(h.service.posted.last?.content.title == "Collector health")
+            #expect(h.service.posted.last?.content.title == "✓ Cleared: Collector health")
             #expect(try h.store.value(.collectorHealthNotice) == nil)
 
             // Healthy checks after that stay quiet.
             await h.tick(monitor)
             #expect(h.bodies == [notLoaded, recovered])
+        }
+    }
+
+    /// The reported sequence: overnight sleep, then launchd's catch-up run starts 83 seconds after
+    /// wake, past the two checks at 0 and 60 seconds. Nothing posts and nothing lights.
+    @Test func wakeBeforeTheCatchUpRunPostsNothing() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            await h.tick(monitor)
+            h.sleep(hours: 9)
+
+            let first = await monitor.check()
+            #expect(first?.heldAfterWake == true)
+            #expect(first?.problems.isEmpty == true)
+            #expect(first?.onSchedule == .green)
+            await h.tick(monitor)
+            h.now = h.now.addingTimeInterval(23)
+            try h.recordRun(at: h.now, .succeeded)
+            let after = await h.tick(monitor)
+            #expect(after?.heldAfterWake == false)
+            await h.tick(monitor)
+            #expect(h.service.posted.isEmpty)
+            #expect(try h.store.value(.collectorHealthNotice) == nil)
+        }
+    }
+
+    /// Time asleep doesn't count, but awake time does: a collector that doesn't come back alerts.
+    @Test func collectorThatStaysDownAfterWakeStillAlerts() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            await h.tick(monitor)
+            h.sleep(hours: 9)
+            await monitor.check()
+            // The default 5-minute interval: nothing for 15 minutes awake, then two checks confirm it.
+            for _ in 0..<15 { await h.tick(monitor) }
+            #expect(h.service.posted.isEmpty)
+            await h.tick(monitor)
+            await h.tick(monitor)
+            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(h.service.posted.first?.content.title == "🔴 Collector health")
+        }
+    }
+
+    /// A problem open at lid close isn't a recovery because the hold hides it: no "running again"
+    /// on wake and no second alert after the hold.
+    @Test func wakeHoldDoesNotClearAnOpenEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            for _ in 0..<17 { await h.tick(monitor) }
+            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            let opened = try h.store.value(.collectorHealthNotice)
+            #expect(opened != nil)
+
+            h.sleep(hours: 9)
+            await monitor.check()
+            for _ in 0..<20 { await h.tick(monitor) }
+            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(try h.store.value(.collectorHealthNotice) == opened)
+
+            try h.recordRun(at: h.now, .succeeded)
+            await h.tick(monitor)
+            #expect(h.bodies == ["The collector hasn't run since 09:00.", recovered])
+        }
+    }
+
+    /// Acknowledging survives the hold; it clears on a healthy check, not a held one.
+    @Test func wakeHoldKeepsTheAcknowledgement() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let plist = h.paths.launchAgents.appending(path: "local.utilities.telltale.collector.plist")
+            try FileManager.default.createDirectory(at: h.paths.launchAgents, withIntermediateDirectories: true)
+            try PropertyListSerialization.data(fromPropertyList: ["ProgramArguments": [h.currentExecutable.path, "--collect"]], format: .xml, options: 0).write(to: plist)
+            let monitor = h.monitor()
+            await h.tick(monitor)
+            let acknowledgement = CollectorAcknowledgement(at: h.now, keys: ["collector"])
+            try h.store.set(.collectorAcknowledgement, acknowledgement)
+
+            h.sleep(hours: 9)
+            let held = await monitor.check()
+            #expect(held?.lamp == .green && held?.heldAfterWake == true)
+            #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
+
+            try h.recordRun(at: h.now, .succeeded)
+            await h.tick(monitor)
+            #expect(try h.store.value(.collectorAcknowledgement) == nil)
+        }
+    }
+
+    /// Two checks must see a problem in one stretch awake: a check before sleep and one after, or
+    /// one in each of two dark wakes hours apart, aren't "in a row".
+    @Test func checksEitherSideOfASleepDoNotConfirmAnEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(false)
+            let monitor = h.monitor()
+            await h.tick(monitor)
+            h.sleep(hours: 1)
+            await monitor.check()
+            h.sleep(hours: 1)
+            await monitor.check()
+            #expect(h.service.posted.isEmpty)
+            await h.tick(monitor)
+            #expect(h.bodies == [notLoaded])
+        }
+    }
+
+    /// The two clocks are read a moment apart, so the total wobbles by that moment while awake. The
+    /// wobble must stay far under `minimumSleep`, or ordinary checks would read as a sleep.
+    @Test func asleepSinceBootHoldsStillWhileAwake() {
+        let first = CollectorMonitor.asleepSinceBoot()
+        #expect(first >= 0)
+        for _ in 0..<1_000 {
+            #expect(abs(CollectorMonitor.asleepSinceBoot() - first) < CollectorMonitor.minimumSleep / 10)
         }
     }
 
