@@ -1776,6 +1776,14 @@ Include slash-terminated linked roots in admission tests: `lstat` can otherwise
 follow the final link. An EXIT trap is too late to gate retention; explicitly
 check final permission changes and owned staging cleanup before pruning.
 
+### 2026-10-31 — Size Git output buffers for tracked files
+
+Node's default subprocess output buffer is smaller than some tracked synthetic
+fixtures. Deployment admission must size its `git show` buffer from the source
+bytes already read, while retaining exact index comparisons. Exercise a large
+tracked blob through the default inventory and verify that both staged and
+unstaged mismatches still fail before publication.
+
 ### 2026-10-30 — Requirements include and constraint handling
 
 Dependency checks must follow both spaced and attached requirement includes and
