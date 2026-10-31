@@ -168,8 +168,8 @@ Useful files:
 - `~/.model_sentinel/logs/launchd.stderr.log`
 - `~/.model_sentinel/reports/`
 
-For a job customized to run the standalone target, diagnose deployment
-freshness from the checkout before inspecting the logs:
+The job runs the standalone target, so diagnose deployment freshness from the
+checkout before inspecting the logs:
 
 ```bash
 ./install_standalone.sh --check

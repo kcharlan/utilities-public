@@ -4,11 +4,6 @@ This list holds real repairs and features only. Anything that needs the owner go
 here with its reason, not in a plan or the PKM. Sign-offs, acceptance checks and
 evidence gaps are not tracked; breakage found in use gets fixed then.
 
-- [x] Repair Model Sentinel's scheduled scan to use the deployed zipapp.
-  See [launchd setup and migration](../model_sentinel/docs/LAUNCHD.md).
-- [x] Retain the newest two eligible rollback backups after successful forward
-  deployment, preserving backups on failure, rollback, unchanged and dry runs.
-  See [deployment recovery](local_deployment_sync.md#rollback).
 - [ ] Port the 14 CDN-backed tools to vendored assets so they work offline and an
   outage can't break them, as esm.sh did to Git Fleet and RouterView on 2026-10-30.
   Follow the front-end rules in [agents.md](../agents.md), with no exceptions.
@@ -24,8 +19,3 @@ evidence gaps are not tracked; breakage found in use gets fixed then.
     or SVG), and `@xyflow/react` in Cognitive Switchyard.
   - Remove the React and Recharts contracts from `tools/testkit.py` once the last
     app is ported.
-- [x] Move uv and n8n image tags onto normal refresh and add the n8n updater.
-  See [Docker propagation](../docker/README.md#propagating-dependency-updates).
-- [x] Replace hand deployment with the manifest-driven copy deployer, including
-  the Apple Health wrapper, and back up Model Sentinel zipapp replacements.
-  See [deployment guidance](local_deployment_sync.md).

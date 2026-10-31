@@ -278,8 +278,14 @@ working directory and database and uses `opencode --standalone --session`;
 copying does not run it. Archived sessions and subagents cannot continue.
 `tests/test_opencode.py` and `tests/test_browser.py` cover payload eligibility,
 action restrictions and shell-quoted command arguments with synthetic data.
-No empirical evidence currently establishes originating-database routing,
-existing-service behavior or a verified CLI launch mode for `OPENCODE_DB`.
+A disposable probe on OpenCode 2.2.5 (synthetic database, local stub provider)
+found that a background service ignores a client's `OPENCODE_DB`, while
+`--standalone` always uses the selected database. The copied command resumed with
+full history beside a service on the same database, and that service's next turn
+included the new turn; beside a service on another database, the turn stayed in
+the selected database. An unknown ID opens a new-session screen and writes no
+session row before a first prompt. Not tested: two clients with a turn in flight
+on one session, forked sessions, or a database needing a schema migration.
 Copy session ID remains available for live, archived and subagent rows; OpenCode
 offers no Codex links or Copy log path. Project-only archives show `ARCHIVED (PROJECT)`;
 session archives show `ARCHIVED`, including when both archive flags are set.
