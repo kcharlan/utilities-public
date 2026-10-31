@@ -13,6 +13,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from tests.browse_fixtures import build_fixture_db
 from tests.credential_fixtures import (
     assert_synthetic_saved_snapshot, synthetic_provider_server, write_credential_config,
@@ -120,6 +122,60 @@ def test_reinstall_refuses_unsafe_backup_roots_without_changing_target(tmp_path:
         assert target.read_bytes() == before and list(root.iterdir()) == []
     finally:
         root.chmod(0o700)
+
+
+@pytest.mark.parametrize("failure", ["chmod", "cleanup"])
+def test_final_setup_failure_preserves_old_backups(tmp_path: Path, failure: str) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin/model-sentinel"
+    assert _run_installer(project, env, str(target)).returncode == 0
+    previous = target.read_bytes()
+    home = Path(env["MODEL_SENTINEL_HOME"])
+    bootstrap = home / "launchd.env"
+    bootstrap.write_text("# synthetic bootstrap preserved\n")
+    root = Path(env["MODEL_SENTINEL_BACKUP_ROOT"])
+    originals = {}
+    for name in ("copy-old-a", "copy-old-b", "copy-old-c"):
+        folder = root / name
+        folder.mkdir(parents=True)
+        payload = f"synthetic {name}".encode()
+        (folder / "model-sentinel").write_bytes(payload)
+        os.utime(folder, (1, 1))
+        originals[name] = payload
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    marker = tmp_path / "injected-failure"
+    env["SYNTHETIC_FAILURE_MARKER"] = str(marker)
+    env["SYNTHETIC_LAUNCHD_ENV"] = str(bootstrap)
+    env["TMPDIR"] = str(tmp_path)
+    env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
+    if failure == "chmod":
+        command = stubs / "chmod"
+        command.write_text(
+            '#!/bin/sh\nif [ "$2" = "$SYNTHETIC_LAUNCHD_ENV" ]; then\n'
+            '  echo "synthetic final chmod failure" >&2; exit 9\nfi\nexec /bin/chmod "$@"\n'
+        )
+    else:
+        command = stubs / "rm"
+        command.write_text(
+            '#!/bin/sh\ncase "${2:-}" in */model-sentinel-zipapp.*)\n'
+            '  if [ ! -e "$SYNTHETIC_FAILURE_MARKER" ]; then\n'
+            '    : > "$SYNTHETIC_FAILURE_MARKER"\n'
+            '    echo "synthetic final cleanup failure" >&2; exit 9\n'
+            '  fi;;\nesac\nexec /bin/rm "$@"\n'
+        )
+    command.chmod(0o755)
+    result = _run_installer(project, env, str(target))
+    assert result.returncode != 0
+    assert f"synthetic final {failure} failure" in result.stderr
+    assert not list(tmp_path.glob("model-sentinel-zipapp.*"))
+    assert bootstrap.read_text() == "# synthetic bootstrap preserved\n"
+    assert {p.name for p in root.iterdir()} >= set(originals)
+    for name, payload in originals.items():
+        assert (root / name / "model-sentinel").read_bytes() == payload
+    new = [p for p in root.iterdir() if p.name not in originals]
+    assert len(new) == 1 and (new[0] / "model-sentinel").read_bytes() == previous
 
 
 def _run_command(command: list[str], env: dict[str, str], cwd: Path):

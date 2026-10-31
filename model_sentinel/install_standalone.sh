@@ -69,7 +69,9 @@ cleanup() {
   if [ -n "$TMP_TARGET" ]; then
     rm -f "$TMP_TARGET"
   fi
-  rm -rf "$STAGING_DIR"
+  if [ -n "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
+  fi
 }
 
 trap cleanup EXIT
@@ -288,7 +290,14 @@ copy_if_missing "$SCRIPT_DIR/providers.env.template" "$RUNTIME_HOME/providers.en
 copy_if_missing "$SCRIPT_DIR/settings.env.template" "$RUNTIME_HOME/settings.env" "settings config"
 copy_if_missing "$SCRIPT_DIR/launchd.env.template" "$RUNTIME_HOME/launchd.env" "launchd env file"
 
-chmod 600 "$RUNTIME_HOME/launchd.env" || true
+chmod 600 "$RUNTIME_HOME/launchd.env"
+
+cleanup
+if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+  echo "Failed to remove standalone staging directory: $STAGING_DIR" >&2
+  exit 1
+fi
+STAGING_DIR=""
 
 if [ -n "$BACKUP_CREATED" ]; then
   prune_backups
