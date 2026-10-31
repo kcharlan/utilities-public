@@ -46,6 +46,7 @@ test('backup retention refuses missing, read-only and linked roots and invalid o
   fs.chmodSync(root, 0o500); assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync(root, 0o700);
   const link = path.join(root, 'alias'); fs.symlinkSync(root, link);
   assert.deepEqual(pruneBackups(link, {keep: 0}), []);
+  assert.deepEqual(pruneBackups(link + '/', {keep: 0}), []);
   assert.deepEqual(pruneBackups(path.join(link, 'copy-old'), {keep: 0}), []);
   for (const options of [{keep: -1}, {keep: 1.5}, {isBackup: null}, null]) assert.deepEqual(pruneBackups(root, options), []);
   assert.deepEqual(pruneBackups(root, {isBackup: () => { throw new Error('invented predicate error'); }}), []);

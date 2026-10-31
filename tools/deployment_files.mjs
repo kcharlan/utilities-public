@@ -103,6 +103,8 @@ export function pruneBackups(root, options = {}) {
   const removed = [];
   const warn = (file, error) => console.warn('Backup pruning failed for ' + file + ': ' + error.message);
   try {
+    // lstat follows a linked directory when its path ends with a separator.
+    if (typeof root === 'string') while (root.length > path.parse(root).root.length && root.endsWith(path.sep)) root = root.slice(0, -1);
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('Invalid retention options');
     const {keep = 2, isBackup = name => /^copy[-.]/.test(name)} = options;
     if (!Number.isInteger(keep) || keep < 0 || typeof isBackup !== 'function') throw new Error('Invalid retention options');
