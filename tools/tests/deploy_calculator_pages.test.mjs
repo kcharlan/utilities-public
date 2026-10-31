@@ -4,6 +4,75 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
+import {pruneBackups} from '../deployment_files.mjs';
+
+function retentionFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synthetic-retention-'));
+  t.after(() => { fs.chmodSync(root, 0o700); fs.rmSync(root, {recursive: true, force: true}); });
+  const add = (name, time = 1) => {
+    const dir = path.join(root, name); fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'payload'), name);
+    fs.utimesSync(dir, time, time); return dir;
+  };
+  return {root, add};
+}
+
+test('backup retention sorts by mtime then descending name and returns removed paths', t => {
+  const {root, add} = retentionFixture(t);
+  const old = add('copy-old'); const a = add('copy-a', 2); add('copy-z', 2); add('copy-new', 3);
+  const other = add('unrelated'); fs.writeFileSync(path.join(root, 'copy-file'), 'keep');
+  fs.symlinkSync(other, path.join(root, 'copy-link'));
+  assert.deepEqual(pruneBackups(root), [a, old]);
+  assert.equal(fs.readFileSync(path.join(other, 'payload'), 'utf8'), 'unrelated');
+  assert.equal(fs.lstatSync(path.join(root, 'copy-link')).isSymbolicLink(), true);
+  assert.equal(fs.readFileSync(path.join(root, 'copy-file'), 'utf8'), 'keep');
+  assert.deepEqual(pruneBackups(root), []);
+});
+
+test('backup retention removes read-only descendants without following nested links', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const outside = add('protected'); fs.chmodSync(path.join(outside, 'payload'), 0o400);
+  const child = path.join(old, 'nested'); fs.mkdirSync(child); fs.writeFileSync(path.join(child, 'data'), 'old');
+  fs.symlinkSync(outside, path.join(old, 'link')); fs.chmodSync(child, 0o500); fs.chmodSync(old, 0o500);
+  assert.deepEqual(pruneBackups(root, {keep: 0}), [old]);
+  assert.equal(fs.statSync(path.join(outside, 'payload')).mode & 0o777, 0o400);
+});
+
+test('backup retention refuses missing, read-only and linked roots and invalid options', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const warnings = []; const original = console.warn; console.warn = msg => warnings.push(msg);
+  t.after(() => { console.warn = original; });
+  assert.deepEqual(pruneBackups(path.join(root, 'absent')), []);
+  fs.chmodSync(root, 0o500); assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync(root, 0o700);
+  const link = path.join(root, 'alias'); fs.symlinkSync(root, link);
+  assert.deepEqual(pruneBackups(link, {keep: 0}), []);
+  assert.deepEqual(pruneBackups(path.join(link, 'copy-old'), {keep: 0}), []);
+  for (const options of [{keep: -1}, {keep: 1.5}, {isBackup: null}, null]) assert.deepEqual(pruneBackups(root, options), []);
+  assert.deepEqual(pruneBackups(root, {isBackup: () => { throw new Error('invented predicate error'); }}), []);
+  assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old');
+  assert.ok(warnings.length >= 9);
+});
+
+test('backup retention admits custom names and supported system aliases', t => {
+  const {root, add} = retentionFixture(t); const old = add('snapshot-old'); add('copy-keep');
+  assert.deepEqual(pruneBackups(root, {keep: 0, isBackup: name => name.startsWith('snapshot-')}), [old]);
+  if (process.platform === 'darwin' && root.startsWith('/var/')) {
+    add('copy-new', 2); assert.equal(pruneBackups(root, {keep: 1}).length, 1);
+  }
+});
+
+test('backup retention warns and preserves payloads on injected stat and removal errors', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
+  const stat = fs.lstatSync, rm = fs.rmSync;
+  try {
+    fs.lstatSync = file => { if (file === old) throw new Error('invented stat error'); return stat(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.lstatSync = stat;
+    fs.rmSync = file => { if (file === old) throw new Error('invented removal error'); return rm(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
+  } finally { fs.lstatSync = stat; fs.rmSync = rm; console.warn = warn; }
+  assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old'); assert.equal(warnings.length, 2);
+});
 
 // Each single-page calculator installer shares one lifecycle; run it against every page.
 const pages = [
