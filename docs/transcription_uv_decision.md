@@ -6,7 +6,7 @@ environments. The subsequent outcome is recorded below.
 
 ## Implementation and retirement outcome
 
-The owner approved migration; [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged it and the launcher was deployed. The owner stated that the launcher had not been used, expected no other wrapper callers, waived the real-use prerequisite, and authorized retirement. [PR 114](https://github.com/kcharlan/utilities-public/pull/114) removed the source wrappers; deployed wrappers and both named legacy environments were then trashed. The [Retirement Task](transcription_uv_implementation_plan.md#task-5-retirement-task) records the caller checks and successful installed validation. The owner then migrated the counters and validated them.
+The owner approved migration; [PR 113](https://github.com/kcharlan/utilities-public/pull/113) merged it and the launcher was deployed. The owner stated that the launcher had not been used, expected no other wrapper callers, waived the real-use prerequisite, and authorized retirement. [PR 114](https://github.com/kcharlan/utilities-public/pull/114) removed the source wrappers; deployed wrappers and both named legacy environments were then trashed. Searches of the tracked and deployed Transcription scripts found no `venv` references, a search across tracked `.sh` and `.py` files found no wrapper callers, and installed help, both shebang checks and the deployment audit passed. The owner then migrated the counters and validated them.
 
 ## Recommendation and evidence
 

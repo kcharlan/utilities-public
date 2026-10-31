@@ -153,6 +153,7 @@ Avoid broad searches or edits in vendored/generated trees unless the task explic
 - Treat API keys and local state as sensitive. Do not expose secret values in diffs or logs.
 - Pay special attention in `docker/llm_collector/` (`MY_API_KEY.txt`, compose/env config, extension config, state/snapshot files).
 - Be careful editing runtime/state artifacts such as `~/.transcription/` (or its overrides), legacy `transcription/session_backup.json`, `transcription/transcription_odometer.txt`, `docker/llm_collector/state.json`, and `docker/llm_collector/snapshots/*`.
+- Exclude these from any backup scan or home cleanup, and do not inspect their contents to classify them: `~/.local` (credential-bearing application data), `~/.codex` sessions and managed state, `~/.claude`, `~/.config`, `~/.docker`, `~/.gemini`, `~/.lmstudio`, `~/.venvs`, `~/.t3`, and tool runtime homes such as `~/.colophon`, `~/.model_sentinel`, `~/.storage_monitor`, `~/.tax2`, `~/.routerview`, `~/.benchmark_llm`, `~/.cognitive_switchyard` and `~/.apple-health-extract`. Remove a worktree only through its owning manager, after confirming its Git state, and with separate authorization.
 
 ## Project-Specific Notes
 - `web_games/gorilla/index.html` and `web_games/multibody_sim/index.html` are intentionally single-file apps; preserve this architecture unless instructed otherwise.
