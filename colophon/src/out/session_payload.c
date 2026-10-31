@@ -280,7 +280,8 @@ static void payload_rows(JsonWriter *w, const Corpus *c, const PayloadIds *ids,
       jsonw_raw(w,",\"opencode_database\":");string(w,s->opencode_database);
     }
     if(s->provider==PROVIDER_OPENCODE||s->provider==PROVIDER_ANTIGRAVITY){
-      jsonw_raw(w,",\"capabilities\":{\"copy_session_id\":true,\"copy_log_path\":false,\"open_in_codex\":false,\"continue_in_cli\":false}");
+      jsonw_raw(w,",\"capabilities\":{\"copy_session_id\":true,\"copy_log_path\":false,\"open_in_codex\":false,\"continue_in_cli\":");
+      jsonw_raw(w,s->provider==PROVIDER_OPENCODE && !s->archived && str_equal(s->kind,STR_LIT("session")) ? "true}" : "false}");
     }
     jsonw_raw(w,s->history_only?",\"history_only\":true":",\"history_only\":false");jsonw_raw(w,",\"resume_config_dir\":");string(w,s->resume_config_dir);
     if (!agents) {

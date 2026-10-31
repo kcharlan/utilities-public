@@ -134,7 +134,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.5.1`).
+displays the embedded payload's release version (`colophon 0.5.2`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -224,7 +224,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.5.1`.
+runtime state. Version is currently `colophon 0.5.2`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -272,8 +272,12 @@ remain unpriced and explicit zero stays priced zero. No OpenCode model catalog,
 credential tables or unrelated key/value settings are read. Costs are OpenCode
 catalog estimates, not invoices. Source session/project archive precedence is
 reported as `archive_reason=session|project`; absolute source provenance is
-`opencode_database`. Rows expose `capabilities` permitting only Copy session ID.
-Continuation stays disabled: disposable CLI/database acceptance is unmet.
+`opencode_database`. Live primary sessions with usable absolute working-directory
+and database paths offer Copy Continue in CLI. The copied command selects the
+working directory and database and uses `opencode --standalone --session`;
+copying does not run it. Archived sessions and subagents cannot continue.
+`tests/test_opencode.py` and `tests/test_browser.py` cover payload eligibility,
+action restrictions and shell-quoted command arguments with synthetic data.
 No empirical evidence currently establishes originating-database routing,
 existing-service behavior or a verified CLI launch mode for `OPENCODE_DB`.
 Copy session ID remains available for live, archived and subagent rows; OpenCode
