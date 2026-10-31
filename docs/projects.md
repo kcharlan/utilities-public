@@ -93,7 +93,7 @@ The [Calculation Tools guide](../Calculation%20tools/README.md) documents the st
 
 | Project | Delivery | Purpose and scope |
 | --- | --- | --- |
-| [AI Model Timeline](../Calculation%20tools/README.md#ai-model-timelinehtml) | Static page | Explores a curated release dataset by lab, date, and tier through timeline and report views. D3 loads from a CDN. |
+| [AI Model Timeline](../Calculation%20tools/README.md#ai-model-timelinehtml) | Static page | Explores a curated release dataset by lab, date, and tier through timeline and report views, using embedded D3. |
 | [Gorilla.BAS Reimagined](../web_games/gorilla/README.md) | Static page | Artillery game with AI and local multiplayer, arcade progression, and procedural graphics and audio; no runtime network calls. |
 | [MLS Tracker](../mls-tracker/README.md) | Local web app | Explores playoff races using ESPN standings and simplified cutoff projections. It does not model fixtures, tiebreakers, or other teams' movement and is not an official clinch/elimination model. |
 | [Multibody Gravity Lab](../web_games/multibody_sim/README.md) | Static page | N-body gravity sandbox and screensaver with collision merges, trails, predictions, and JSON save/load. |

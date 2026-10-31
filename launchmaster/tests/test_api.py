@@ -1,8 +1,8 @@
 """
 Integration tests for launchmaster REST API.
 
-These tests run against a real launchmaster server and verify
-that API responses match the actual macOS launchd system state.
+These tests run against launchmaster with synthetic launchd inputs and verify
+that API responses match those inputs.
 
 Run:  pytest tests/test_api.py -v
 """
@@ -13,6 +13,24 @@ import urllib.request
 import urllib.error
 
 import pytest
+
+
+def test_synthetic_server_denies_native_mutations(server_url):
+    request = urllib.request.Request(
+        f"{server_url}/api/jobs/com.example.synthetic-idle/stop", method="POST"
+    )
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request)
+    assert error.value.code == 403
+
+
+def test_synthetic_server_lists_only_fixture_jobs(api_jobs):
+    assert {job["label"] for job in api_jobs} == {
+        "com.example.synthetic-idle", "com.example.synthetic-failed",
+        "com.example.synthetic-disabled", "com.apple.example-synthetic",
+        "com.example.synthetic-calendar", "com.example.synthetic-interval",
+        "com.example.synthetic-running", "com.example.synthetic-watch",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -93,7 +111,7 @@ class TestEnabledDisabledRegression:
     - Frontend checked job.enabled (always undefined → falsy → showed "Disabled")
     - The "loaded" detection had a pop-then-check bug that always returned False
 
-    These tests verify enabled/disabled state matches the real launchctl state.
+    These tests verify enabled/disabled state matches synthetic launchctl state.
     """
 
     def test_enabled_matches_launchctl_print_disabled(
@@ -152,6 +170,9 @@ class TestEnabledDisabledRegression:
 
 class TestPidAndExitCode:
     def test_running_jobs_have_pids(self, api_jobs_no_apple):
+        running = next(j for j in api_jobs_no_apple if j["label"] == "com.example.synthetic-running")
+        assert running["status"] == "running"
+        assert running["pid"] == 424242
         for job in api_jobs_no_apple:
             if job["status"] == "running":
                 assert job["pid"] is not None and job["pid"] > 0, (

@@ -38,7 +38,7 @@ git-multirepo-dashboard/
 - packaging
 - pydantic
 
-There is no application-managed virtual environment and no frontend build. uv resolves and caches Python dependencies. The React 19.3.0 SPA, CSS, and JSX are embedded in `HTML_TEMPLATE`. An exact six-entry ESM import map covers React, ReactDOM, their JSX runtime subpaths, and aligned `react-is`; Babel Standalone 8.0.5 compiles the module-aware inline JSX. Recharts 3.10.1 loads as ESM with those React peers externalized so charts and application code share one React graph. Direct top-level package versions are pinned, while CDN-generated transitive module resolution and delivered bytes remain network-dependent rather than fully immutable. Fonts also load from public CDNs.
+There is no application-managed virtual environment and no runtime frontend build. uv resolves and caches Python dependencies. The Preact and htm SPA, CSS, fonts, and SVG charts are embedded in the launcher and served in `HTML_TEMPLATE`; browser assets work offline.
 
 The FastAPI application binds to `127.0.0.1`. Port 8300 is preferred, but startup probes as many as 20 consecutive ports and uses the first available one. Automatic browser launch can be disabled with `--no-browser`, `GIT_DASHBOARD_NO_BROWSER`, or test mode.
 
@@ -252,7 +252,7 @@ The local SPA consumes these JSON and streaming endpoints:
 
 ### Dependency overlap response
 
-`GET /api/analytics/dep-overlap` returns `{ "packages": [...] }`. Each entry groups declarations by manager and identity name, includes `count` (declaration uses), `repo_count` (distinct repositories), and `repos[]` with `repo_id`, `name`, `version`, and `source_path`. Groups with fewer than two uses are excluded; results sort by use count descending. `version_spread` uses distinct non-null versions ordered by `packaging.version.Version`, followed by invalid version text in lexical order. Empty version sets produce an empty spread. Expanded rows display each manifest beside its version and use repository ID plus source path as their React key.
+`GET /api/analytics/dep-overlap` returns `{ "packages": [...] }`. Each entry groups declarations by manager and identity name, includes `count` (declaration uses), `repo_count` (distinct repositories), and `repos[]` with `repo_id`, `name`, `version`, and `source_path`. Groups with fewer than two uses are excluded; results sort by use count descending. `version_spread` uses distinct non-null versions ordered by `packaging.version.Version`, followed by invalid version text in lexical order. Empty version sets produce an empty spread. Expanded rows display each manifest beside its version and use repository ID plus source path as their component key.
 
 ## UI contracts
 
@@ -264,7 +264,7 @@ Important interaction contracts:
 - Cards remain keyboard reachable; delete controls do not steal the card navigation action.
 - Repository detail preserves the selected branch across Branches and Commits.
 - Dependency findings can be exported entirely in the browser as Markdown or JSON.
-- Missing CDN resources or JavaScript errors are covered by the separate Playwright suite.
+- Offline asset loading and JavaScript errors are covered by the separate Playwright suite.
 
 `summarizeDeps(groups, manifests)` returns declaration and inventory manifest counts, individual `ok`, `outdated`, `major`, and `vulnerable` severity counts, state-based `unchecked`, and `fullyChecked`. A fully checked declaration has outdated state `checked`/`floating` and vulnerability state `checked`. Inventory counts include empty and failed files, independent of nonempty groups.
 

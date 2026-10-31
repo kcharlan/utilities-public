@@ -277,14 +277,15 @@ def test_allocation_color_palette(test_app):
         assert color in html
 
 
-def test_allocation_uses_recharts_area_chart(test_app):
-    """GET / → HTML contains AreaChart and stackOffset references in TimeAllocation."""
+def test_allocation_uses_stacked_area_chart(test_app):
+    """GET / → HTML contains the stacked allocation chart."""
     client, _ = test_app
     resp = client.get("/")
     assert resp.status_code == 200
     html = resp.text
-    assert "AreaChart" in html
-    assert "stackOffset" in html
+    allocation = html.split('function TimeAllocation()', 1)[1].split('function AnalyticsTab()', 1)[0]
+    assert "svgCharts.CartesianChart" in allocation
+    assert "stack:true" in allocation
 
 
 # ─────────────────────────────────────────────────────────────────────────────

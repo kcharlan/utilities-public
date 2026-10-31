@@ -1,6 +1,6 @@
 const { expect, test } = require('@playwright/test');
 
-test('pinned Chart.js initializes and renders the default financing calculation', async ({ page }) => {
+test('Chart.js initializes and renders the default financing calculation', async ({ page }) => {
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
   page.on('console', (message) => {
@@ -9,10 +9,6 @@ test('pinned Chart.js initializes and renders the default financing calculation'
 
   await page.goto('/early_loan_termination_calculator.html');
 
-  await expect(page.locator('script[src*="chart.js"]')).toHaveAttribute(
-    'src',
-    'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js',
-  );
   await expect.poll(() => page.evaluate(() => window.Chart?.version)).toBe('4.5.1');
   await expect(page.locator('#amortTbl tbody tr')).toHaveCount(24);
   await expect(page.locator('#saveTbl tbody tr')).toHaveCount(24);

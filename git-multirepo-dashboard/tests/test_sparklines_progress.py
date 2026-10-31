@@ -296,9 +296,9 @@ def test_full_scan_button_uses_prop_not_closure():
     assert full_scan_idx > 0, "Full Scan text not found after Header definition"
     # Look at the onClick in the 800 chars before "Full Scan" (style block is large)
     region = template[max(header_start, full_scan_idx - 800):full_scan_idx]
-    assert "onClick={onFullScan}" in region, (
-        "Header's Full Scan button must use onClick={onFullScan} (the prop), "
-        "not onClick={handleFullScan} (which is out of scope)"
+    assert "onClick=${onFullScan}" in region, (
+        "Header's Full Scan button must use the onFullScan prop, "
+        "not handleFullScan (which is out of scope)"
     )
 
 

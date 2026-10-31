@@ -91,11 +91,14 @@ def _synthetic_job(
 def _write_synthetic_jobs(runtime_home: Path) -> Path:
     """Create the E2E-only job manifest and its exportable fake plist."""
     plist_path = runtime_home / "com.example.synthetic-idle.plist"
+    log_path = runtime_home / "synthetic.log"
+    log_path.write_text("Synthetic log line\n")
     with plist_path.open("wb") as f:
         plistlib.dump(
             {
                 "Label": "com.example.synthetic-idle",
                 "ProgramArguments": ["/usr/bin/true"],
+                "StandardOutPath": str(log_path),
             },
             f,
         )
@@ -122,27 +125,45 @@ def _write_synthetic_jobs(runtime_home: Path) -> Path:
             is_apple=False,
             last_exit=78,
         ),
+        _synthetic_job(
+            "com.example.synthetic-disabled",
+            plist_path=None,
+            domain="unknown",
+            is_apple=False,
+            last_exit=0,
+        ),
     ]
+    synthetic_jobs[0]["stdout_path"] = str(log_path)
+    for suffix, schedule in (
+        ("calendar", {"StartCalendarInterval": {"Weekday": 1, "Hour": 9, "Minute": 30}}),
+        ("interval", {"StartInterval": 300}),
+        ("running", {"KeepAlive": True}),
+        ("watch", {"WatchPaths": ["/synthetic/input"]}),
+    ):
+        label = f"com.example.synthetic-{suffix}"
+        path = runtime_home / f"{label}.plist"
+        with path.open("wb") as f:
+            plistlib.dump({"Label": label, "ProgramArguments": ["/usr/bin/true"], **schedule}, f)
+        job = _synthetic_job(label, plist_path=str(path), domain="user-agent", is_apple=False, last_exit=0)
+        if suffix == "running":
+            job["pid"] = 424242
+        synthetic_jobs.append(job)
     manifest_path = runtime_home / "synthetic-jobs.json"
     manifest_path.write_text(json.dumps(synthetic_jobs, indent=2) + "\n")
     return manifest_path
 
 
 @contextmanager
-def _running_server(runtime_home: Path, *, with_synthetic_jobs: bool = False):
+def _running_server(runtime_home: Path):
     """Run one isolated launchmaster server and always terminate it."""
     port = _find_free_port()
     env = dict(os.environ)
     env["UTILITIES_TESTING"] = "1"
     env["LAUNCHMASTER_HOME"] = str(runtime_home)
-    env.pop("LAUNCHMASTER_SYNTHETIC_JOBS", None)
-    if with_synthetic_jobs:
-        env["LAUNCHMASTER_SYNTHETIC_JOBS"] = str(
-            _write_synthetic_jobs(runtime_home)
-        )
+    env["LAUNCHMASTER_SYNTHETIC_JOBS"] = str(_write_synthetic_jobs(runtime_home))
 
     proc = subprocess.Popen(
-        [sys.executable, str(LAUNCHMASTER_SCRIPT), "--port", str(port), "--no-browser"],
+        [sys.executable, str(PROJECT_ROOT / "tests" / "synthetic_server.py"), str(LAUNCHMASTER_SCRIPT), str(port)],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -171,7 +192,7 @@ def _running_server(runtime_home: Path, *, with_synthetic_jobs: bool = False):
 
 @pytest.fixture(scope="session")
 def server_url(tmp_path_factory):
-    """Run the API/integration server with isolated runtime state."""
+    """Run the API/integration server with synthetic jobs and isolated state."""
     with _running_server(tmp_path_factory.mktemp("launchmaster-api-home")) as url:
         yield url
 
@@ -179,10 +200,7 @@ def server_url(tmp_path_factory):
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     """Run a separate E2E server so browser tests cannot share API-suite state."""
-    with _running_server(
-        tmp_path_factory.mktemp("launchmaster-e2e-home"),
-        with_synthetic_jobs=True,
-    ) as url:
+    with _running_server(tmp_path_factory.mktemp("launchmaster-e2e-home")) as url:
         yield url
 
 
@@ -224,38 +242,20 @@ def api_jobs_no_apple(server_url) -> list:
 
 @pytest.fixture(scope="session")
 def launchctl_state() -> Dict[str, Dict[str, Any]]:
-    """Get the real launchctl list state for comparison."""
-    result = subprocess.run(
-        ["launchctl", "list"], capture_output=True, text=True, timeout=10
-    )
-    state = {}
-    for line in result.stdout.splitlines()[1:]:  # skip header
-        parts = line.split("\t")
-        if len(parts) == 3:
-            pid_str, status_str, label = parts
-            pid = int(pid_str) if pid_str != "-" else None
-            last_exit = int(status_str) if status_str != "-" else None
-            state[label] = {"pid": pid, "last_exit": last_exit}
-    return state
+    """Expected launchctl state supplied to the synthetic server."""
+    return {
+        "com.example.synthetic-idle": {"pid": None, "last_exit": 0},
+        "com.example.synthetic-failed": {"pid": None, "last_exit": 78},
+        "com.example.synthetic-disabled": {"pid": None, "last_exit": 0},
+        "com.example.synthetic-calendar": {"pid": None, "last_exit": 0},
+        "com.example.synthetic-interval": {"pid": None, "last_exit": 0},
+        "com.example.synthetic-running": {"pid": 424242, "last_exit": 0},
+        "com.example.synthetic-watch": {"pid": None, "last_exit": 0},
+        "com.apple.example-synthetic": {"pid": None, "last_exit": 0},
+    }
 
 
 @pytest.fixture(scope="session")
 def disabled_labels() -> set:
-    """Get the set of explicitly disabled job labels from launchctl."""
-    uid = os.getuid()
-    disabled = set()
-    try:
-        result = subprocess.run(
-            ["launchctl", "print-disabled", f"gui/{uid}"],
-            capture_output=True, text=True, timeout=10,
-        )
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if "=>" in line:
-                label_part, state_part = line.split("=>", 1)
-                label = label_part.strip().strip('"')
-                if "disabled" in state_part.lower():
-                    disabled.add(label)
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-    return disabled
+    """Expected disabled labels supplied to the synthetic server."""
+    return {"com.example.synthetic-disabled"}

@@ -8,7 +8,7 @@ real-HAR integration workflow.
 | File | Description |
 |---|---|
 | `test_api.py` | Primary pytest suite for all 26 FastAPI routes, scanner behavior, exports, validation, and robustness cases |
-| `test_e2e.py` | Chromium smoke for CDN loading, page errors, and tab interaction |
+| `test_e2e.py` | Chromium smoke for offline loading, page errors, and tab interaction |
 | `conftest.py` | ASGI client, isolated application state, and conspicuously synthetic HAR fixtures |
 | `TEST_PLAN.md` | Durable matrix and failure-mode reference for the optional real-HAR workflow |
 | `run_tests.sh` | Starts a local server and runs eight real-HAR redaction scenarios |
@@ -18,7 +18,7 @@ real-HAR integration workflow.
 
 From the repository root, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope`. If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope --install-browsers`.
 
-The API tests import the FastAPI application in-process and use `httpx.AsyncClient` with `ASGITransport`, so those tests do not open a network port. Their fixtures reset the launcher’s process-global state around every test. The Playwright smoke starts a separate local server on a free port and stops it after the module. The browser UI uses React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map, with Babel Standalone 8.0.5 compiling module-aware inline JSX and Tailwind CSS 4.3.3. The direct top-level package versions are pinned, but CDN-generated transitive dependencies are not fully locked and CDN delivery is not byte-immutable. The current Playwright Chromium coverage verifies the React peer graph, exact direct scripts, representative CSS-first theme and dark-variant output, a key tab interaction, and browser/console error cleanliness. Tailwind's manual client floors are Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox are not covered by the automated browser test.
+The API tests import the FastAPI application in-process and use `httpx.AsyncClient` with `ASGITransport`, so those tests do not open a network port. Their fixtures reset the launcher’s process-global state around every test. The Playwright smoke starts a separate local server on a free port and stops it after the module. The browser UI embeds its Preact runtime, icons, fonts and styles. Chromium tests verify offline loading, theme output, interaction, and browser error cleanliness. Safari and Firefox are not covered by the automated browser test.
 
 ## Optional Real-HAR Workflow
 

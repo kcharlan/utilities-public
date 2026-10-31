@@ -10,7 +10,6 @@ import socket
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -21,10 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
-    assert_react_19_import_map,
-    assert_react_esm_graph,
     guard_browser_errors,
-    is_react_package_resource,
 )
 
 
@@ -95,72 +91,10 @@ def server(tmp_path_factory):
                 process.wait(timeout=5)
 
 
-def test_supported_cdn_versions_are_pinned():
-    source = LAUNCHER.read_text()
-    import_map_match = re.search(
-        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
-        source,
-        re.DOTALL,
-    )
-    assert import_map_match is not None
-    imports = json.loads(import_map_match.group(1))["imports"]
-    assert_react_19_import_map(imports)
-    assert "react@18.3.1" not in source
-    assert "react-dom@18.3.1" not in source
-    assert "/umd/react" not in source
-    assert source.count("@babel/standalone@8.0.5/babel.min.js") == 1
-    assert source.count("https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3") == 1
-    assert source.count("lucide@1.46.0/dist/umd/lucide.min.js") == 1
-    assert "cdn.tailwindcss.com" not in source
-    assert "tailwind.config" not in source
-    assert '<style type="text/tailwindcss">' in source
-    assert "@custom-variant dark (&:where(.dark, .dark *));" in source
-    assert "--color-ink: #1a1a1a;" in source
-    assert "--color-card-dark: #242424;" in source
-    assert "--font-sans: 'DM Sans', system-ui, sans-serif;" in source
-    assert "--font-mono: 'JetBrains Mono', monospace;" in source
-    assert (
-        '<script type="text/babel" data-type="module" '
-        'data-presets="env,react">'
-    ) in source
-    assert "import * as React from 'react';" in source
-    assert "import * as ReactDOM from 'react-dom';" not in source
-    assert "import * as ReactDOMClient from 'react-dom/client';" in source
-    assert "ReactDOMClient.createRoot(" in source
-
-
-def test_frontend_dependency_contract_is_documented():
-    documents = [
-        README.read_text(),
-        USER_GUIDE.read_text(),
-        TEST_README.read_text(),
-        TEST_PLAN.read_text(),
-    ]
-
-    for document in documents:
-        normalized = " ".join(document.split())
-        for dependency in (
-            "React 19.3.0",
-            "ReactDOM 19.3.0",
-            "react-is 19.3.0",
-            "Babel Standalone 8.0.5",
-            "Tailwind CSS 4.3.3",
-        ):
-            assert dependency in normalized
-        assert "exact-version import map" in normalized
-        assert "module-aware inline JSX" in normalized
-        assert "direct top-level package versions" in normalized
-        assert "CDN-generated transitive dependencies are not fully locked" in normalized
-        assert "not byte-immutable" in normalized
-        assert "current Playwright Chromium" in normalized
-        assert "Chrome 111" in document
-        assert "Safari 16.4" in document
-        assert "Firefox 128" in document
-
-    readme = documents[0]
-    normalized_readme = " ".join(readme.split())
-    assert "Safari and Firefox are not covered by the automated browser test" in normalized_readme
-    assert "React 18 UMD" not in readme
+def test_embedded_frontend_is_current():
+    from tools.testkit import assert_frontend_vendor_current, assert_launcher_compiles_cleanly
+    assert_frontend_vendor_current(LAUNCHER)
+    assert_launcher_compiles_cleanly(LAUNCHER)
 
 
 def test_app_loads_without_browser_errors_and_opens_security(server, page):
@@ -177,40 +111,11 @@ def test_app_loads_without_browser_errors_and_opens_security(server, page):
             "getComputedStyle(document.querySelector('#root > div')).color === 'rgb(26, 26, 26)'"
         )
         assert app_shell.evaluate("element => getComputedStyle(element).color") == "rgb(26, 26, 26)"
+        assert 'DM Sans' in app_shell.evaluate("element => getComputedStyle(element).fontFamily")
+        assert 'JetBrains Mono' in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--font-mono')")
         assert page.evaluate(
             "getComputedStyle(document.documentElement).getPropertyValue('--color-ink').trim()"
         ) == "#1a1a1a"
-
-        script_sources = page.locator("script[src]").evaluate_all(
-            """elements => elements
-                .map(element => element.src)
-                .filter(source => new URL(source).origin !== location.origin)"""
-        )
-        assert Counter(script_sources) == Counter(
-            {
-                "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js": 1,
-                "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3": 1,
-                "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js": 1,
-            }
-        )
-
-        external_resources = page.evaluate(
-            """() => performance.getEntriesByType('resource')
-                .map(entry => entry.name)
-                .filter(name => !name.startsWith(location.origin))"""
-        )
-        react_resources = [
-            url for url in external_resources if is_react_package_resource(url)
-        ]
-        assert_react_esm_graph(
-            react_resources,
-            react_dom_wrapper_policy="forbidden",
-        )
-        non_react_counts = Counter(
-            url for url in external_resources if not is_react_package_resource(url)
-        )
-        for direct_resource in script_sources:
-            assert non_react_counts[direct_resource] == 1
 
         light_header_background = page.locator("header").evaluate(
             "element => getComputedStyle(element).backgroundColor"
@@ -235,3 +140,118 @@ def test_app_loads_without_browser_errors_and_opens_security(server, page):
 
         security.click()
         expect(page.get_by_role("combobox", name="")).to_have_count(2)
+
+
+def test_page_loads_offline(server, browser):
+    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    context = browser.new_context()
+    blocked = block_external_requests(context, allowed_origins=[server])
+    page = context.new_page()
+    try:
+        with guard_browser_errors(page):
+            page.goto(server, wait_until='domcontentloaded')
+            expect(page.get_by_role('button', name='Security')).to_be_visible(timeout=15000)
+            assert_no_external_resources(page, blocked)
+            assert_offline_page_source(page.content())
+    finally:
+        context.close()
+
+
+def _load_synthetic(page, server, har):
+    result = page.request.post(server + '/api/open-content', data={
+        'content': json.dumps(har), 'filename': 'synthetic.har',
+    })
+    assert result.ok
+    page.goto(server, wait_until='domcontentloaded')
+    expect(page.get_by_placeholder('Search URLs...')).to_be_visible()
+
+
+def test_url_search_updates_on_each_keystroke(server, page, minimal_har_dict):
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        search = page.get_by_placeholder('Search URLs...')
+        expect(page.get_by_text('/api/data', exact=False).first).to_be_visible()
+        for prefix in ['s', 'su', 'sub', 'subm', 'submi', 'submit']:
+            search.press_sequentially(prefix[-1])
+            expect(search).to_have_value(prefix)
+            if prefix == 's':  # Both URLs contain the HTTPS scheme.
+                expect(page.get_by_text('/api/data', exact=False).first).to_be_visible()
+            else:
+                expect(page.get_by_text('/api/data', exact=False)).to_have_count(0)
+            expect(page.get_by_text('/api/submit', exact=False).first).to_be_visible()
+        search.press('Backspace')
+        expect(search).to_have_value('submi')
+        expect(page.get_by_text('/api/submit', exact=False).first).to_be_visible()
+
+
+def test_har_values_with_markup_display_literally(server, page, minimal_har_dict):
+    sample = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
+    minimal_har_dict['log']['entries'][0]['response']['headers'].append(
+        {'name': 'X-Synthetic-Markup', 'value': sample}
+    )
+    minimal_har_dict['log']['entries'][0]['response']['content'] = {'size': len(sample), 'mimeType': 'text/plain', 'text': sample}
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='Response', exact=False).first.click()
+        expect(page.get_by_text(sample, exact=True)).to_be_visible()
+        assert page.locator('b').filter(has_text='x').count() == 0
+        page.get_by_role('button', name='Body', exact=False).click()
+        expect(page.locator('pre')).to_have_text(sample)
+        assert page.locator('pre b').count() == 0
+
+
+def test_sequence_wheel_and_pointer_pan(server, page, minimal_har_dict):
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_role('button', name='Sequence', exact=True).click()
+        canvas = page.locator('.seq-canvas')
+        expect(canvas.locator('svg').first).to_be_visible()
+        assert canvas.locator("line[marker-end], line[marker-start]").count() > 0
+        scene = canvas.locator('div[style*="transform"]').first
+        before = scene.get_attribute('style')
+        canvas.hover()
+        page.mouse.wheel(0, 80)
+        expect(scene).not_to_have_attribute('style', before)
+        before = scene.get_attribute('style')
+        page.evaluate("window.addEventListener('wheel', e => { window.wheelPrevented = e.defaultPrevented }, {once: true})")
+        page.keyboard.down('Control')
+        page.mouse.wheel(0, -80)
+        page.keyboard.up('Control')
+        page.wait_for_function('window.wheelPrevented === true')
+        expect(scene).not_to_have_attribute('style', before)
+        before = scene.get_attribute('style')
+        box = canvas.bounding_box()
+        page.mouse.move(box['x'] + box['width'] - 100, box['y'] + box['height'] - 100)
+        page.mouse.down()
+        page.mouse.move(box['x'] + box['width'] - 50, box['y'] + box['height'] - 70, steps=5)
+        page.mouse.up()
+        expect(scene).not_to_have_attribute('style', before)
+
+
+def test_view_classes_have_styles(server, page, minimal_har_dict):
+    from tools.testkit import assert_classes_styled
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        for tab in ['Waterfall', 'Inspector', 'Security', 'Decisions', 'Sequence', 'Dashboard', 'Export']:
+            page.get_by_role('button', name=tab, exact=False).first.click()
+            if tab == 'Inspector':
+                page.get_by_role('button', name='Waterfall', exact=True).click()
+                page.get_by_text('/api/data', exact=False).first.click()
+            page.wait_for_timeout(200)
+            assert_classes_styled(page, ignore=['dark'])
+
+
+def test_websocket_plain_text_with_markup_displays_literally(server, page, minimal_har_dict):
+    sample = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
+    minimal_har_dict['log']['entries'][0]['_webSocketMessages'] = [
+        {'type': 'receive', 'time': 0, 'opcode': 1, 'data': sample},
+    ]
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='WebSocket', exact=False).click()
+        page.get_by_role('button', name=re.compile('RECV')).click()
+        payload = page.locator('pre')
+        expect(payload).to_have_text(sample)
+        assert payload.locator('b').count() == 0

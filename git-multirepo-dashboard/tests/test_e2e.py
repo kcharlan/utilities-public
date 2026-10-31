@@ -2,7 +2,7 @@
 End-to-end tests using Playwright.
 
 These tests start the real git_dashboard server and exercise it in a real
-Chromium browser. They catch rendering errors, broken CDN loads, dead buttons,
+Chromium browser. They catch rendering errors, external asset requests, dead buttons,
 and layout issues that unit tests miss entirely.
 
 Run the complete suite from the repository root:
@@ -46,13 +46,28 @@ REPO_ROOT = PROJECT_ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (  # noqa: E402
-    assert_react_esm_graph,
+    assert_no_external_resources,
+    assert_offline_page_source,
+    block_external_requests,
     capture_browser_errors,
     guard_browser_errors,
-    is_react_package_resource,
 )
 
 GIT_DASHBOARD = PROJECT_ROOT / "git_dashboard.py"
+
+
+def test_page_loads_offline(browser, server):
+    context = browser.new_context()
+    blocked = block_external_requests(context, allowed_origins=[server])
+    page = context.new_page()
+    try:
+        with guard_browser_errors(page):
+            page.goto(server, wait_until="domcontentloaded")
+            expect(page.locator("header")).to_be_visible(timeout=10000)
+            assert_no_external_resources(page, blocked)
+            assert_offline_page_source(page.content())
+    finally:
+        context.close()
 
 
 @pytest.fixture(autouse=True)
@@ -95,11 +110,28 @@ def fail_on_unexpected_browser_errors(page, request):
 
 
 def _open_app(page, url):
-    """Navigate without CDN-idle heuristics and wait for the mounted shell."""
+    """Navigate and wait for the mounted shell."""
     page.goto(url, wait_until="domcontentloaded")
-    # DOMContentLoaded precedes the CDN module graph and in-browser JSX compile.
-    # Use the browser action timeout for the mounted-shell readiness assertion.
+    # DOMContentLoaded can precede the application mount.
     expect(page.locator("header")).to_be_visible(timeout=30000)
+
+
+def _assert_tooltip_readable_in_viewport(page, tooltip):
+    tooltip.wait_for(state="visible")
+    page.wait_for_function("""() => {
+        const el = document.querySelector('.svgc-tooltip');
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        const chart = el.parentElement.getBoundingClientRect();
+        return r.left >= Math.max(0, chart.left) && r.top >= Math.max(0, chart.top) &&
+               r.right <= Math.min(innerWidth, chart.right) && r.bottom <= Math.min(innerHeight, chart.bottom);
+    }""")
+    assert tooltip.bounding_box()
+    assert tooltip.evaluate("el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight")
+    assert tooltip.evaluate("""el => [...el.querySelectorAll('div')].every(div =>
+        [...div.childNodes].filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())
+          .every(node => { const range = document.createRange(); range.selectNodeContents(node);
+                           return range.getClientRects().length === 1; }))""")
 
 
 def _find_free_port():
@@ -366,7 +398,7 @@ def test_clean_banner_requires_both_checks(page, seeded_coverage):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 1. Page Load & CDN Dependencies
+# 1. Page Load & Offline Assets
 # ═════════════════════════════════════════════════════════════════════════════
 
 def test_page_loads_without_js_errors(server, page):
@@ -374,8 +406,8 @@ def test_page_loads_without_js_errors(server, page):
     _open_app(page, server)
 
 
-def test_cdn_resources_load(server, page):
-    """All CDN resources (React, Recharts, fonts, etc.) load successfully."""
+def test_page_resources_load(server, page):
+    """The page loads without failed resource requests."""
     failed_requests = []
     page.on("requestfailed", lambda req: failed_requests.append(
         f"{req.method} {req.url}: {req.failure}"
@@ -383,41 +415,15 @@ def test_cdn_resources_load(server, page):
 
     _open_app(page, server)
 
-    cdn_failures = [
-        failure
-        for failure in failed_requests
-        if any(host in failure for host in ("esm.sh", "unpkg", "fonts"))
-    ]
-    assert cdn_failures == [], f"CDN resources failed to load: {cdn_failures}"
+    assert failed_requests == [], f"Resources failed to load: {failed_requests}"
 
 
-def test_react_peer_resource_graph_is_single_and_aligned(server, page):
-    """The ESM page loads one aligned React peer graph for Recharts 3."""
-    requests = []
-    page.on("request", lambda request: requests.append(request.url))
-
-    _open_app(page, server)
-
-    react_resources = [
-        url for url in requests if is_react_package_resource(url)
-    ]
-    assert_react_esm_graph(
-        react_resources,
-        react_dom_wrapper_policy="required",
-        recharts=True,
-    )
-    assert requests.count(
-        "https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is"
-    ) == 1
-    assert not any("umd/Recharts.js" in url for url in requests)
-
-
-def test_react_app_mounts(server, page):
-    """React app mounts successfully — the root div has content."""
+def test_app_mounts(server, page):
+    """The app mounts successfully — the root div has content."""
     _open_app(page, server)
 
     root = page.locator("#root")
-    assert root.inner_html() != "", "React app did not mount — #root is empty"
+    assert root.inner_html() != "", "App did not mount — #root is empty"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1162,14 +1168,116 @@ def test_repo_sparkline_renders_responsively(server, page):
     card.wait_for()
     card.hover()
 
-    chart = card.locator(".recharts-wrapper")
-    area = card.locator("path.recharts-area-area")
+    chart = card.locator(".svgc-wrapper")
+    area = card.locator("path.svgc-area")
     chart.wait_for(state="visible")
     chart_box = chart.bounding_box()
     card_box = card.bounding_box()
     assert chart_box and chart_box["width"] > 0 and chart_box["height"] > 0
     assert card_box and chart_box["width"] <= card_box["width"] + 1
     assert area.get_attribute("d"), "Sparkline area path was not drawn"
+
+
+def test_project_filter_updates_on_each_keystroke(server, page):
+    repos = [{'id': name, 'name': name, 'path': '/tmp/' + name,
+              'path_exists': True, 'sparkline': [0, 1]} for name in ('Alpha', 'Beta')]
+    page.route('**/api/fleet', lambda route: route.fulfill(json={'repos': repos, 'kpis': {}}))
+    _open_app(page, server)
+    field = page.get_by_placeholder('Filter projects...')
+    field.press_sequentially('Al')
+    expect(page.locator('.project-card')).to_have_count(1)
+    expect(page.locator('.project-card')).to_contain_text('Alpha')
+    field.press('Backspace')
+    expect(page.locator('.project-card')).to_have_count(2)
+
+
+def test_card_sparkline_appears_on_hover_and_keyboard_focus(server, page):
+    page.route('**/api/fleet', lambda route: route.fulfill(json={'repos': [{
+        'id': 'synthetic', 'name': 'Synthetic', 'path': '/tmp/synthetic',
+        'path_exists': True, 'sparkline': [0, 3, 1]}], 'kpis': {}}))
+    _open_app(page, server)
+    card = page.locator('.project-card')
+    overlay = card.locator('.svgc-responsive').locator('..')
+    card.hover()
+    page.wait_for_function('(el) => getComputedStyle(el).transform === "matrix(1, 0, 0, 1, 0, 0)"', arg=overlay.element_handle())
+    page.mouse.move(0, 0)
+    page.wait_for_function('(el) => getComputedStyle(el).transform === "matrix(1, 0, 0, 1, 0, 32)"', arg=overlay.element_handle())
+    card.focus()
+    page.wait_for_function('(el) => getComputedStyle(el).transform === "matrix(1, 0, 0, 1, 0, 0)"', arg=overlay.element_handle())
+
+
+def test_activity_chart_renders_with_no_history_and_one_day(server, page):
+    today = date.today().isoformat()
+    page.route('**/api/repos/synthetic', lambda route: route.fulfill(json={
+        'id': 'synthetic', 'name': 'Synthetic', 'path': '/tmp/synthetic',
+        'path_exists': True, 'working_state': {}}))
+    page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': []}))
+    _open_app(page, server + '#/repo/synthetic')
+    page.get_by_role('button', name='All', exact=True).click()
+    expect(page.locator('.svgc-wrapper')).to_be_visible()
+    page.unroute('**/api/repos/synthetic/history*')
+    page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': [
+        {'date': today, 'commits': 1, 'insertions': 3, 'deletions': 1}]}))
+    page.reload()
+    page.get_by_role('button', name='All', exact=True).click()
+    paths = page.locator('.svgc-wrapper path')
+    expect(paths.first).to_be_visible()
+    assert all('NaN' not in (p.get_attribute('d') or '') for p in paths.all())
+
+
+def test_hiding_every_allocation_series_leaves_a_valid_chart(server, page):
+    page.route('**/api/analytics/allocation*', lambda route: route.fulfill(json={'series': [
+        {'repo_id': 'synthetic', 'name': 'Synthetic', 'data': [{'date': date.today().isoformat(), 'commits': 2}]}]}))
+    _open_app(page, server + '#/analytics')
+    page.get_by_role('button', name='Synthetic', exact=True).click()
+    paths = page.locator('.svgc-wrapper path.svgc-area')
+    expect(paths.first).to_have_attribute('fill-opacity', '0')
+    assert all('NaN' not in (p.get_attribute('d') or '') for p in paths.all())
+
+
+def test_constrained_chart_tooltip_scrolls_and_keeps_focus(server, page):
+    _open_app(page, server)
+    page.evaluate("""() => {
+      const host = document.createElement('div');
+      host.id = 'synthetic-tooltip-chart';
+      Object.assign(host.style, {position:'fixed', right:'12px', bottom:'12px', width:'220px', zIndex:'1000'});
+      document.body.appendChild(host);
+      const h = preact.h;
+      preact.render(h(svgCharts.CartesianChart, {
+        data:[{date:'synthetic-latest', value:2}], xKey:'date', height:80,
+        series:[{key:'value', color:'#4c8dff'}],
+        tooltip:({label, payload}) => h('div', {style:{background:'#fff', color:'#000'}},
+          h('div', null, label + ': ' + payload[0].value),
+          Array.from({length:30}, (_, i) => h('div', null, 'Synthetic row ' + i)))
+      }), host);
+    }""")
+    chart = page.locator('#synthetic-tooltip-chart .svgc-wrapper')
+    box = chart.bounding_box()
+    page.mouse.move(box['x'] + box['width'] - 5, box['y'] + box['height'] - 5)
+    tooltip = chart.get_by_role('region', name='Chart tooltip')
+    expect(tooltip).to_be_visible()
+    assert tooltip.evaluate('el => el.scrollHeight > el.clientHeight')
+    assert 'synthetic-latest: 2' in tooltip.inner_text()
+    tooltip.focus()
+    page.mouse.move(0, 0)
+    expect(tooltip).to_be_focused()
+    page.keyboard.press('ArrowDown')
+    page.wait_for_function("document.querySelector('#synthetic-tooltip-chart .svgc-tooltip')?.scrollTop > 0")
+    page.wait_for_timeout(500)
+    before = tooltip.evaluate('el => el.scrollTop')
+    tooltip.hover()
+    page.mouse.wheel(0, 400)
+    page.wait_for_function("before => document.querySelector('#synthetic-tooltip-chart .svgc-tooltip')?.scrollTop > before", arg=before)
+    page.mouse.wheel(0, 2000)
+    page.wait_for_function("""() => { const el = document.querySelector('#synthetic-tooltip-chart .svgc-tooltip');
+        return el && el.scrollTop + el.clientHeight >= el.scrollHeight - 1; }""", timeout=3000)
+    assert 'Synthetic row 29' in tooltip.inner_text()
+    last = tooltip.get_by_text('Synthetic row 29', exact=True).bounding_box()
+    bounds = tooltip.bounding_box()
+    assert last['y'] >= bounds['y'] and last['y'] + last['height'] <= bounds['y'] + bounds['height']
+    assert 'synthetic-latest: 2' in tooltip.inner_text()
+    page.locator('header button').first.focus()
+    expect(tooltip).to_have_count(0)
 
 
 def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, page):
@@ -1200,32 +1308,44 @@ def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, pag
     )
 
     page.goto(server + "#/repo/synthetic-repo")
-    chart = page.locator(".detail-content .recharts-wrapper")
+    chart = page.locator(".detail-content .svgc-wrapper")
     chart.wait_for(state="visible")
+    assert chart.locator('.svgc-grid-horizontal').count() > 0
+    assert chart.locator('.svgc-grid-vertical').count() == 0
+    axis_line = chart.locator('.svgc-x-axis-line')
+    assert axis_line.count() == 1
+    assert float(axis_line.get_attribute('x2')) > float(axis_line.get_attribute('x1'))
+    assert axis_line.evaluate("el => getComputedStyle(el).stroke") != 'none'
 
-    container_box = page.locator(".detail-content .recharts-responsive-container").bounding_box()
+    container_box = page.locator(".detail-content .svgc-responsive").bounding_box()
     chart_box = chart.bounding_box()
     assert container_box and chart_box
     assert abs(container_box["width"] - chart_box["width"]) <= 2
 
-    area_paths = chart.locator("path.recharts-area-area")
+    area_paths = chart.locator("path.svgc-area")
     assert area_paths.count() >= 2
     assert all(area_paths.nth(i).get_attribute("d") for i in range(2))
     axis_labels = [label for label in chart.locator("svg text").all_text_contents() if label]
     assert any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", label) for label in axis_labels)
     assert any(re.fullmatch(r"-?\d+", label) for label in axis_labels)
+    tick = chart.locator('svg text').first
+    assert tick.evaluate("el => getComputedStyle(el).fontFamily").startswith('"JetBrains Mono"')
+    assert tick.evaluate("el => getComputedStyle(el).fontSize") == '11px'
+    assert tick.bounding_box()['x'] >= chart.bounding_box()['x']
 
-    zero_line = chart.locator(".recharts-reference-line-line").bounding_box()
+    zero_line = chart.locator(".svgc-reference-line").bounding_box()
     positive = area_paths.nth(0).bounding_box()
     negative = area_paths.nth(1).bounding_box()
     assert zero_line and positive and negative
     assert positive["y"] < zero_line["y"]
     assert negative["y"] + negative["height"] > zero_line["y"]
 
+    chart.scroll_into_view_if_needed()
+    chart_box = chart.bounding_box()
     page.mouse.move(chart_box["x"] + chart_box["width"] - 8,
-                    chart_box["y"] + chart_box["height"] / 2)
-    tooltip = page.locator(".recharts-tooltip-wrapper")
-    tooltip.wait_for(state="visible")
+                    chart_box["y"] + chart_box["height"] - 8)
+    tooltip = page.locator(".svgc-tooltip")
+    _assert_tooltip_readable_in_viewport(page, tooltip)
     tooltip_text = tooltip.inner_text()
     assert today.isoformat() in tooltip_text
     assert "+10 insertions" in tooltip_text
@@ -1279,7 +1399,7 @@ def test_activity_gap_fill_uses_browser_local_calendar_day(server, browser):
 
         with guard_browser_errors(page):
             _open_app(page, server + "#/repo/synthetic-boundary")
-            chart = page.locator(".detail-content .recharts-wrapper")
+            chart = page.locator(".detail-content .svgc-wrapper")
             chart.wait_for(state="visible")
             chart_box = chart.bounding_box()
             assert chart_box
@@ -1287,7 +1407,7 @@ def test_activity_gap_fill_uses_browser_local_calendar_day(server, browser):
                 chart_box["x"] + chart_box["width"] - 8,
                 chart_box["y"] + chart_box["height"] / 2,
             )
-            tooltip = page.locator(".recharts-tooltip-wrapper")
+            tooltip = page.locator(".svgc-tooltip")
             tooltip.wait_for(state="visible")
             assert "2026-09-16" in tooltip.inner_text()
             assert "2026-09-17" not in tooltip.inner_text()
@@ -1309,17 +1429,20 @@ def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
             ]},
             {"repo_id": "beta", "name": "Synthetic Beta", "data": [
                 {"date": day, "commits": commits}
-                for day, commits in zip(dates, (1, 2, 4, 3))
+                for day, commits in zip(dates, (1, 2, 4, 4))
             ]},
         ]}),
     )
 
     page.goto(server + "#/analytics")
     heading = page.get_by_role("heading", name="Time Allocation")
-    chart = heading.locator("xpath=../following-sibling::*[1]").locator(".recharts-wrapper")
+    chart = heading.locator("xpath=../following-sibling::*[1]").locator(".svgc-wrapper")
     chart.wait_for(state="visible")
-    assert chart.locator("path.recharts-area-area").count() == 2
-    curves = chart.locator("path.recharts-area-curve")
+    assert chart.locator('.svgc-grid-horizontal').count() > 0
+    assert chart.locator('.svgc-grid-vertical').count() > 0
+    assert chart.locator('.svgc-x-axis-line').count() == 0
+    assert chart.locator("path.svgc-area").count() == 2
+    curves = chart.locator("path.svgc-curve")
     assert curves.count() == 2
     curve_endpoints = curves.evaluate_all("""
         paths => paths.map(path => {
@@ -1330,22 +1453,29 @@ def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
     """)
     assert curve_endpoints[0]["x"] == pytest.approx(curve_endpoints[1]["x"], abs=1)
     assert curve_endpoints[1]["y"] < curve_endpoints[0]["y"], (
-        "Synthetic Beta's final value (3) must render above Synthetic Alpha's "
-        "final value (7), proving the second area uses the cumulative stacked value (10)"
+        "Synthetic Beta's final value (4) must render above Synthetic Alpha's "
+        "final value (7), proving the second area uses the cumulative stacked value (11)"
     )
     axis_labels = [label for label in chart.locator("svg text").all_text_contents() if label]
     assert any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", label) for label in axis_labels)
     assert any(re.fullmatch(r"\d+", label) for label in axis_labels)
+    assert max(int(label) for label in axis_labels if re.fullmatch(r"\d+", label)) <= 11
+    tick = chart.locator('svg text').first
+    assert tick.evaluate("el => getComputedStyle(el).fontFamily").startswith('"JetBrains Mono"')
+    assert tick.evaluate("el => getComputedStyle(el).fontSize") == '11px'
+    assert tick.bounding_box()['x'] >= chart.bounding_box()['x']
 
     box = chart.bounding_box()
     assert box and box["width"] > 200 and box["height"] == pytest.approx(260, abs=2)
-    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2)
-    tooltip = page.locator(".recharts-tooltip-wrapper")
-    tooltip.wait_for(state="visible")
+    chart.scroll_into_view_if_needed()
+    box = chart.bounding_box()
+    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] - 8)
+    tooltip = page.locator(".svgc-tooltip")
+    _assert_tooltip_readable_in_viewport(page, tooltip)
     tooltip_text = tooltip.inner_text()
     assert active_week in tooltip_text
     assert re.search(r"Synthetic Alpha\s*:\s*7(?:\D|$)", tooltip_text)
-    assert re.search(r"Synthetic Beta\s*:\s*3(?:\D|$)", tooltip_text)
+    assert re.search(r"Synthetic Beta\s*:\s*4(?:\D|$)", tooltip_text)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

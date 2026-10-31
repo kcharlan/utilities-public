@@ -1,161 +1,28 @@
 from __future__ import annotations
 
-import json
-import re
-from html.parser import HTMLParser
 from pathlib import Path
 from textwrap import dedent
-from urllib.parse import urlparse
 
 from cognitive_switchyard.html_template import render_app_html
-from tools.testkit import assert_react_19_import_map
+from tools.testkit import assert_frontend_vendor_current, assert_launcher_compiles_cleanly, assert_offline_page_source
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-class _DependencyCollector(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.script_sources: list[str] = []
-        self.stylesheet_hrefs: list[str] = []
-        self.inline_scripts: list[str] = []
-        self._inside_inline_script = False
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
-        if tag == "script":
-            source = attributes.get("src")
-            if source:
-                self.script_sources.append(source)
-            else:
-                self._inside_inline_script = True
-        elif tag == "link" and "stylesheet" in (attributes.get("rel") or "").split():
-            href = attributes.get("href")
-            if href:
-                self.stylesheet_hrefs.append(href)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "script":
-            self._inside_inline_script = False
-
-    def handle_data(self, data: str) -> None:
-        if self._inside_inline_script:
-            self.inline_scripts.append(data)
-
-
-def _normalized_external_url(url: str) -> tuple[str, str, str]:
-    parsed = urlparse(url)
-    return parsed.scheme.lower(), parsed.netloc.lower(), parsed.path
-
-
-def test_render_app_html_has_exact_external_dependency_inventory_without_tailwind() -> None:
+def test_render_app_html_embeds_offline_frontend() -> None:
     html = render_app_html({"ok": True})
-    dependencies = _DependencyCollector()
-    dependencies.feed(html)
-
-    assert dependencies.script_sources == [
-        "https://unpkg.com/@babel/standalone@8.0.5/babel.min.js",
-        "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
-    ]
-    assert dependencies.stylesheet_hrefs == [
-        "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
-        "https://unpkg.com/@xyflow/react@12.11.6/dist/style.css",
-    ]
-
-    external_urls = dependencies.script_sources + dependencies.stylesheet_hrefs
-    assert all("/reactflow@" not in url for url in external_urls)
-    assert all(
-        "tailwind" not in "".join(_normalized_external_url(url)).lower()
-        for url in external_urls
-    )
-
-    executable_javascript = "\n".join(dependencies.inline_scripts)
-    executable_javascript = re.sub(r"/\*.*?\*/", "", executable_javascript, flags=re.DOTALL)
-    executable_javascript = re.sub(r"//[^\n]*", "", executable_javascript)
-    assert re.search(
-        r"\b(?:window\s*\.\s*)?tailwind\s*\.\s*config\s*=",
-        executable_javascript,
-        flags=re.IGNORECASE,
-    ) is None
-
-    import_map_match = re.search(
-        r'<script type="importmap">\s*(\{.*?\})\s*</script>',
-        html,
-        re.DOTALL,
-    )
-    assert import_map_match is not None
-    assert_react_19_import_map(json.loads(import_map_match.group(1))["imports"])
-    assert "react@18.3.1" not in html
-    assert "react-dom@18.3.1" not in html
-    assert "@xyflow/react@12.11.6/dist/umd" not in html
+    assert_offline_page_source(html)
+    assert_frontend_vendor_current(PROJECT_ROOT / "cognitive_switchyard" / "html_template.py")
+    assert_launcher_compiles_cleanly(PROJECT_ROOT / "cognitive_switchyard" / "html_template.py")
 
 
-def test_render_app_html_uses_react_flow_v12_named_esm_exports() -> None:
+def test_render_app_html_includes_fonts_and_design_token_block() -> None:
     html = render_app_html({"ok": True})
 
-    assert (
-        'from "https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom";'
-        in html
-    )
-    assert "ReactFlow as ReactFlowComponent" in html
-    assert "ReactFlowLib" not in html
-    assert "window.ReactFlow" not in html
-
-
-def test_render_app_html_uses_module_aware_babel_and_mapped_react_bindings() -> None:
-    html = render_app_html({"ok": True})
-
-    assert (
-        '<script type="text/babel" data-type="module" '
-        'data-presets="env,react">'
-    ) in html
-    assert "import * as React from 'react';" in html
-    assert "import * as ReactDOMClient from 'react-dom/client';" in html
-    assert "ReactDOMClient.createRoot(" in html
-    assert "window.jsxRuntime" not in html
-    assert "createReactElementFromJsxRuntime" not in html
-
-
-def test_frontend_dependency_documentation_matches_esm_runtime() -> None:
-    readme = " ".join((PROJECT_ROOT / "README.md").read_text().split())
-    design = " ".join(
-        (PROJECT_ROOT / "docs" / "cognitive_switchyard_design.md")
-        .read_text()
-        .split()
-    )
-
-    for dependency in (
-        "React 19.3.0",
-        "ReactDOM 19.3.0",
-        "react-is 19.3.0",
-        "Babel Standalone 8.0.5",
-        "React Flow 12.11.6",
-    ):
-        assert dependency in readme
-        assert dependency in design
-    for contract in (
-        "exact-version import map",
-        "module-aware inline JSX",
-        "direct top-level package versions",
-        "CDN-generated transitive dependencies are not fully locked",
-        "not byte-immutable",
-        "current Playwright Chromium",
-    ):
-        assert contract in readme
-    assert "React 18 SPA" not in design
-    assert "pinned to React 18" not in design
-
-
-def test_render_app_html_includes_required_google_fonts_import_and_design_token_block() -> None:
-    html = render_app_html({"ok": True})
-
-    assert '<link rel="preconnect" href="https://fonts.googleapis.com">' in html
-    assert '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' in html
-    assert (
-        '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">'
-        in html
-    )
+    assert 'font-family:"DM Sans"' in html
+    assert 'font-family:"JetBrains Mono"' in html
+    assert 'font-family:"Space Grotesk"' in html
     assert (
         dedent(
             """
@@ -266,7 +133,7 @@ def test_render_app_html_uses_valid_single_brace_css_and_react_syntax() -> None:
     html = render_app_html({"ok": True})
 
     assert "body {" in html
-    assert "const { useEffect, useMemo, useRef, useState } = React;" in html
+    assert "const {useEffect, useMemo, useRef, useState} = preactHooks;" in html
     assert "body {{" not in html
     assert "const {{ useEffect, useMemo, useRef, useState }} = React;" not in html
     assert "window.location.reload" not in html
@@ -341,8 +208,8 @@ def test_task_detail_view_contains_timing_field_labels_and_elapsed_field_compone
     html = render_app_html({"ok": True})
 
     # Static labels rendered as JSX literals
-    assert 'field-label">Started' in html
-    assert 'field-label">Completed' in html
+    assert 'class=${"field-label"}>Started' in html
+    assert 'class=${"field-label"}>Completed' in html
     # ElapsedField renders label dynamically; verify the string literals exist in the component
     assert '"Elapsed"' in html
     assert '"Duration"' in html
@@ -356,7 +223,7 @@ def test_task_row_renders_fta_badge_for_full_test_after_tasks() -> None:
 
     # FTA badge text and its tooltip title attribute must appear in the task row rendering code
     assert ">FTA<" in html, "FTA badge text must be present in task row JSX"
-    assert 'title="Full test after completion"' in html, (
+    assert 'title=${"Full test after completion"}' in html, (
         "FTA badge must have a descriptive title attribute for tooltip"
     )
     # Badge is conditional on task.full_test_after — the condition must be present
@@ -371,7 +238,7 @@ def test_task_detail_view_shows_fta_badge_and_constraint_row() -> None:
 
     # FTA badge appears in the detail header (near status badge, inside TaskDetailView)
     # The task-list badge and detail badge both use the same title attribute
-    assert 'title="Full test after completion"' in html
+    assert 'title=${"Full test after completion"}' in html
 
     # FULL_TEST_AFTER constraint row exists in the constraints section
     assert "FULL_TEST_AFTER:" in html, (
@@ -487,7 +354,7 @@ def test_task_detail_view_renders_timestamp_prefix_on_log_lines() -> None:
     html = render_app_html({"ok": True})
 
     # The timestamp span must be rendered conditionally on entry.ts
-    assert "entry.ts ? <span" in html, (
+    assert "entry.ts ? html`<span" in html, (
         "TaskDetailView must render a timestamp span when entry.ts is present"
     )
     # The timestamp must be sliced to HH:MM:SS (chars 11-19 of an ISO 8601 string)
@@ -583,13 +450,13 @@ def test_task_detail_view_passes_phase_props_at_call_site() -> None:
     html = render_app_html({"ok": True})
 
     # The call site must pass all three new props
-    assert "taskLogs={taskLogs}" in html, (
+    assert "taskLogs=${taskLogs}" in html, (
         "TaskDetailView call site must pass taskLogs prop"
     )
-    assert "sessionStatus={appSessionStatus}" in html, (
+    assert "sessionStatus=${appSessionStatus}" in html, (
         "TaskDetailView call site must pass sessionStatus as appSessionStatus"
     )
-    assert "runtimeState={appRuntimeState}" in html, (
+    assert "runtimeState=${appRuntimeState}" in html, (
         "TaskDetailView call site must pass runtimeState as appRuntimeState"
     )
 
@@ -628,7 +495,7 @@ def test_render_app_html_includes_health_summary_bar_component() -> None:
     assert "function HealthSummaryBar(" in html, (
         "HealthSummaryBar component must be defined in the app HTML"
     )
-    assert "<HealthSummaryBar" in html, (
+    assert "<${HealthSummaryBar}" in html, (
         "HealthSummaryBar must be rendered in MonitorView"
     )
 
@@ -640,7 +507,7 @@ def test_render_app_html_includes_task_row_elapsed_component() -> None:
     assert "function TaskRowElapsed(" in html, (
         "TaskRowElapsed component must be defined in the app HTML"
     )
-    assert "<TaskRowElapsed" in html, (
+    assert "<${TaskRowElapsed}" in html, (
         "TaskRowElapsed must be rendered in the task feed"
     )
 

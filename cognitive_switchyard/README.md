@@ -37,7 +37,7 @@ When a session is created through the web backend with both `COGNITIVE_SWITCHYAR
 ```
                     +-----------------+
                     |    Web UI       |
-                    |  (React SPA)    |
+                    |  (Preact SPA)   |
                     +--------+--------+
                              |
                         WebSocket + REST
@@ -73,37 +73,11 @@ When a session is created through the web backend with both `COGNITIVE_SWITCHYAR
 ## Tech Stack
 
 - **Backend:** Python 3.12 through 3.15, FastAPI, uvicorn, aiosqlite, PyYAML
-- **Frontend:** Single-file embedded React 19 SPA (CDN-loaded ESM, no npm/node_modules)
+- **Frontend:** Single-file embedded Preact SPA (no runtime asset downloads)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
 
-The embedded no-build frontend uses React 19.3.0, ReactDOM 19.3.0, and
-react-is 19.3.0 through an exact-version import map, with module-aware inline
-JSX compiled by Babel Standalone 8.0.5. It retains project-owned CSS embedded
-in the HTML template and has no Tailwind runtime. At runtime the browser loads
-Google Fonts plus these direct top-level package versions:
-
-- `https://esm.sh/react@19.3.0`
-- `https://esm.sh/react@19.3.0/jsx-runtime`
-- `https://esm.sh/react@19.3.0/jsx-dev-runtime`
-- `https://esm.sh/react-dom@19.3.0?external=react`
-- `https://esm.sh/react-dom@19.3.0/client?external=react`
-- `https://esm.sh/react-is@19.3.0?external=react`
-- `https://unpkg.com/@babel/standalone@8.0.5/babel.min.js`
-- `https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js`
-- `https://esm.sh/@xyflow/react@12.11.6?external=react,react-dom`
-- `https://unpkg.com/@xyflow/react@12.11.6/dist/style.css`
-- `https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap`
-
-The React Flow 12.11.6 ESM URL externalizes React and ReactDOM so its bare peer
-imports, including `react/jsx-runtime`, resolve through that same import map
-instead of creating a second React graph. Exact URLs pin direct dependencies,
-but runtime CDN access remains required: CDN-generated transitive dependencies
-are not fully locked and CDN responses are not byte-immutable. Static HTML
-tests own the exact direct script, stylesheet, and import-map inventory.
-Browser E2E tests run against current Playwright Chromium, validate the
-resolved React peer resource graph and representative DAG interactions, and
-fail on unexpected page or console errors.
+The embedded frontend includes Preact, its icons and fonts in the HTML template. The browser needs no external frontend resources; it communicates with the local server for application data. Browser tests cover offline startup and DAG interactions.
 
 ## Quick Start
 
@@ -115,7 +89,7 @@ fail on unexpected page or console errors.
 ./switchyard start --session my-session --pack claude-code
 ```
 
-The `serve` command starts a FastAPI server (default `127.0.0.1:8100`; override with `--host`/`--port`) with the embedded React SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
+The `serve` command starts a FastAPI server (default `127.0.0.1:8100`; override with `--host`/`--port`) with the embedded SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
 
 `start` creates the session if it does not exist (using `--pack`, or `default_pack` from `config.yaml`) and otherwise resumes it; resuming with a different `--pack` is refused. Both `start` and `serve` first delete completed and aborted sessions that finished more than `retention_days` ago.
 
@@ -179,7 +153,7 @@ Built-in packs are synced to the runtime directory whenever `packs`, `sync-packs
 
 ## Web UI
 
-The embedded React SPA provides four main views:
+The embedded SPA provides four main views:
 
 - **Setup** -- Create sessions, configure packs, set repo root/branch for worktree isolation, run preflight checks, manage intake items
 - **Monitor** -- Real-time pipeline strip, streaming phase logs (planning/resolution/execution), worker cards with progress bars and log tails, verification progress countdown, auto-fix attempt tracking

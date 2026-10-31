@@ -39,7 +39,7 @@ import uvicorn
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-VERSION = "1.0.2"
+VERSION = "1.1.0"
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
@@ -2166,41 +2166,1205 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RouterView</title>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@19.3.0",
-    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
-    "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
-    "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
-    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
-    "react-is": "https://esm.sh/react-is@19.3.0/es2022/react-is.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/get?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/get.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/isEqual?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/isEqual.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/last?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/last.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/maxBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/maxBy.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/minBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/minBy.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/omit?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/omit.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/range?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/range.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/sortBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sortBy.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/sumBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sumBy.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/throttle?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/throttle.mjs",
-    "https://esm.sh/es-toolkit@%5E1.39.3/compat/uniqBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/uniqBy.mjs"
-  }
-}
-</script>
-<script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
-<style type="text/tailwindcss">
-  @custom-variant dark (&:where(.dark, .dark *));
-
-  @theme {
+<!-- frontend-vendor -->
+<style>
+/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
+@layer properties;
+@layer theme, base, components, utilities;
+@layer theme {
+  :root, :host {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+      "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+      "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    --color-red-100: oklch(93.6% 0.032 17.717);
+    --color-red-300: oklch(80.8% 0.114 19.571);
+    --color-red-400: oklch(70.4% 0.191 22.216);
+    --color-red-600: oklch(57.7% 0.245 27.325);
+    --color-red-700: oklch(50.5% 0.213 27.518);
+    --color-red-900: oklch(39.6% 0.141 25.723);
+    --color-amber-400: oklch(82.8% 0.189 84.429);
+    --color-amber-500: oklch(76.9% 0.188 70.08);
+    --color-green-300: oklch(87.1% 0.15 154.449);
+    --color-green-400: oklch(79.2% 0.209 151.711);
+    --color-green-900: oklch(39.3% 0.095 152.535);
+    --color-blue-100: oklch(93.2% 0.032 255.585);
+    --color-blue-300: oklch(80.9% 0.105 251.813);
+    --color-blue-400: oklch(70.7% 0.165 254.624);
+    --color-blue-500: oklch(62.3% 0.214 259.815);
+    --color-blue-600: oklch(54.6% 0.245 262.881);
+    --color-slate-100: oklch(96.8% 0.007 247.896);
+    --color-slate-200: oklch(92.9% 0.013 255.508);
+    --color-slate-300: oklch(86.9% 0.022 252.894);
+    --color-slate-400: oklch(70.4% 0.04 256.788);
+    --color-slate-500: oklch(55.4% 0.046 257.417);
+    --color-slate-600: oklch(44.6% 0.043 257.281);
+    --color-slate-700: oklch(37.2% 0.044 257.287);
+    --color-slate-800: oklch(27.9% 0.041 260.031);
+    --color-slate-900: oklch(20.8% 0.042 265.755);
+    --color-slate-950: oklch(12.9% 0.042 264.695);
+    --color-black: #000;
+    --color-white: #fff;
+    --spacing: 0.25rem;
+    --container-xs: 20rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: calc(1 / 0.75);
+    --text-sm: 0.875rem;
+    --text-sm--line-height: calc(1.25 / 0.875);
+    --text-lg: 1.125rem;
+    --text-lg--line-height: calc(1.75 / 1.125);
+    --text-2xl: 1.5rem;
+    --text-2xl--line-height: calc(2 / 1.5);
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --tracking-wide: 0.025em;
+    --radius-sm: 0.25rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
+    --animate-spin: spin 1s linear infinite;
+    --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    --blur-sm: 8px;
+    --default-transition-duration: 150ms;
+    --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    --default-font-family: var(--font-sans);
+    --default-mono-font-family: var(--font-mono);
     --color-surface: #1e293b;
     --color-surface-dark: #0f172a;
     --color-card: #334155;
   }
+}
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  html, :host {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: var(--default-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+    font-feature-settings: var(--default-font-feature-settings, normal);
+    font-variation-settings: var(--default-font-variation-settings, normal);
+    -webkit-tap-highlight-color: transparent;
+  }
+  hr {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  abbr:where([title]) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  a {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  b, strong {
+    font-weight: bolder;
+  }
+  code, kbd, samp, pre {
+    font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-feature-settings: var(--default-mono-font-feature-settings, normal);
+    font-variation-settings: var(--default-mono-font-variation-settings, normal);
+    font-size: 1em;
+  }
+  small {
+    font-size: 80%;
+  }
+  sub, sup {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  sub {
+    bottom: -0.25em;
+  }
+  sup {
+    top: -0.5em;
+  }
+  table {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  :-moz-focusring:where(:not(iframe)) {
+    outline: auto;
+  }
+  progress {
+    vertical-align: baseline;
+  }
+  summary {
+    display: list-item;
+  }
+  ol, ul, menu {
+    list-style: none;
+  }
+  img, svg, video, canvas, audio, iframe, embed, object {
+    display: block;
+    vertical-align: middle;
+  }
+  img, video {
+    max-width: 100%;
+    height: auto;
+  }
+  button, input, select, optgroup, textarea, ::file-selector-button {
+    font: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    border-radius: 0;
+    background-color: transparent;
+    opacity: 1;
+  }
+  :where(select:is([multiple], [size])) optgroup {
+    font-weight: bolder;
+  }
+  :where(select:is([multiple], [size])) optgroup option {
+    padding-inline-start: 20px;
+  }
+  ::file-selector-button {
+    margin-inline-end: 4px;
+  }
+  ::placeholder {
+    opacity: 1;
+  }
+  @supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {
+    ::placeholder {
+      color: currentcolor;
+      @supports (color: color-mix(in lab, red, red)) {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+      }
+    }
+  }
+  textarea {
+    resize: vertical;
+  }
+  ::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  ::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  ::-webkit-datetime-edit {
+    display: inline-flex;
+  }
+  ::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  ::-webkit-datetime-edit, ::-webkit-datetime-edit-year-field, ::-webkit-datetime-edit-month-field, ::-webkit-datetime-edit-day-field, ::-webkit-datetime-edit-hour-field, ::-webkit-datetime-edit-minute-field, ::-webkit-datetime-edit-second-field, ::-webkit-datetime-edit-millisecond-field, ::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  ::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  :-moz-ui-invalid {
+    box-shadow: none;
+  }
+  button, input:where([type="button"], [type="reset"], [type="submit"]), ::file-selector-button {
+    appearance: button;
+  }
+  ::-webkit-inner-spin-button, ::-webkit-outer-spin-button {
+    height: auto;
+  }
+  [hidden]:where(:not([hidden="until-found"])) {
+    display: none !important;
+  }
+}
+@layer utilities {
+  .absolute {
+    position: absolute;
+  }
+  .fixed {
+    position: fixed;
+  }
+  .relative {
+    position: relative;
+  }
+  .static {
+    position: static;
+  }
+  .sticky {
+    position: sticky;
+  }
+  .inset-0 {
+    inset: 0px;
+  }
+  .top-0 {
+    top: 0px;
+  }
+  .top-0\\.5 {
+    top: calc(var(--spacing) * 0.5);
+  }
+  .top-full {
+    top: 100%;
+  }
+  .right-0 {
+    right: 0px;
+  }
+  .left-0 {
+    left: 0px;
+  }
+  .left-0\\.5 {
+    left: calc(var(--spacing) * 0.5);
+  }
+  .left-4\\.5 {
+    left: calc(var(--spacing) * 4.5);
+  }
+  .z-30 {
+    z-index: 30;
+  }
+  .z-40 {
+    z-index: 40;
+  }
+  .z-50 {
+    z-index: 50;
+  }
+  .mx-auto {
+    margin-inline: auto;
+  }
+  .my-2 {
+    margin-block: calc(var(--spacing) * 2);
+  }
+  .mt-1 {
+    margin-top: var(--spacing);
+  }
+  .mt-2 {
+    margin-top: calc(var(--spacing) * 2);
+  }
+  .mt-3 {
+    margin-top: calc(var(--spacing) * 3);
+  }
+  .mt-4 {
+    margin-top: calc(var(--spacing) * 4);
+  }
+  .mb-1 {
+    margin-bottom: var(--spacing);
+  }
+  .mb-2 {
+    margin-bottom: calc(var(--spacing) * 2);
+  }
+  .mb-3 {
+    margin-bottom: calc(var(--spacing) * 3);
+  }
+  .mb-4 {
+    margin-bottom: calc(var(--spacing) * 4);
+  }
+  .ml-0\\.5 {
+    margin-left: calc(var(--spacing) * 0.5);
+  }
+  .ml-1 {
+    margin-left: var(--spacing);
+  }
+  .ml-2 {
+    margin-left: calc(var(--spacing) * 2);
+  }
+  .ml-4 {
+    margin-left: calc(var(--spacing) * 4);
+  }
+  .ml-auto {
+    margin-left: auto;
+  }
+  .flex {
+    display: flex;
+  }
+  .grid {
+    display: grid;
+  }
+  .hidden {
+    display: none;
+  }
+  .inline-block {
+    display: inline-block;
+  }
+  .h-3 {
+    height: calc(var(--spacing) * 3);
+  }
+  .h-4 {
+    height: calc(var(--spacing) * 4);
+  }
+  .h-6 {
+    height: calc(var(--spacing) * 6);
+  }
+  .h-28 {
+    height: calc(var(--spacing) * 28);
+  }
+  .h-40 {
+    height: calc(var(--spacing) * 40);
+  }
+  .h-64 {
+    height: calc(var(--spacing) * 64);
+  }
+  .h-96 {
+    height: calc(var(--spacing) * 96);
+  }
+  .max-h-40 {
+    max-height: calc(var(--spacing) * 40);
+  }
+  .max-h-72 {
+    max-height: calc(var(--spacing) * 72);
+  }
+  .min-h-screen {
+    min-height: 100vh;
+  }
+  .w-3 {
+    width: calc(var(--spacing) * 3);
+  }
+  .w-4 {
+    width: calc(var(--spacing) * 4);
+  }
+  .w-6 {
+    width: calc(var(--spacing) * 6);
+  }
+  .w-8 {
+    width: calc(var(--spacing) * 8);
+  }
+  .w-10 {
+    width: calc(var(--spacing) * 10);
+  }
+  .w-32 {
+    width: calc(var(--spacing) * 32);
+  }
+  .w-40 {
+    width: calc(var(--spacing) * 40);
+  }
+  .w-56 {
+    width: calc(var(--spacing) * 56);
+  }
+  .w-80 {
+    width: calc(var(--spacing) * 80);
+  }
+  .w-96 {
+    width: calc(var(--spacing) * 96);
+  }
+  .w-full {
+    width: 100%;
+  }
+  .max-w-32 {
+    max-width: calc(var(--spacing) * 32);
+  }
+  .max-w-56 {
+    max-width: calc(var(--spacing) * 56);
+  }
+  .max-w-\\[1600px\\] {
+    max-width: 1600px;
+  }
+  .max-w-xs {
+    max-width: var(--container-xs);
+  }
+  .min-w-0 {
+    min-width: 0px;
+  }
+  .min-w-32 {
+    min-width: calc(var(--spacing) * 32);
+  }
+  .flex-1 {
+    flex: 1;
+  }
+  .shrink-0 {
+    flex-shrink: 0;
+  }
+  .transform {
+    transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,);
+  }
+  .animate-pulse {
+    animation: var(--animate-pulse);
+  }
+  .animate-spin {
+    animation: var(--animate-spin);
+  }
+  .cursor-default {
+    cursor: default;
+  }
+  .cursor-grab {
+    cursor: grab;
+  }
+  .cursor-pointer {
+    cursor: pointer;
+  }
+  .grid-cols-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+  .grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .flex-col {
+    flex-direction: column;
+  }
+  .flex-wrap {
+    flex-wrap: wrap;
+  }
+  .items-center {
+    align-items: center;
+  }
+  .justify-between {
+    justify-content: space-between;
+  }
+  .justify-center {
+    justify-content: center;
+  }
+  .justify-start {
+    justify-content: flex-start;
+  }
+  .gap-0\\.5 {
+    gap: calc(var(--spacing) * 0.5);
+  }
+  .gap-1 {
+    gap: var(--spacing);
+  }
+  .gap-1\\.5 {
+    gap: calc(var(--spacing) * 1.5);
+  }
+  .gap-2 {
+    gap: calc(var(--spacing) * 2);
+  }
+  .gap-3 {
+    gap: calc(var(--spacing) * 3);
+  }
+  .gap-4 {
+    gap: calc(var(--spacing) * 4);
+  }
+  .gap-6 {
+    gap: calc(var(--spacing) * 6);
+  }
+  .self-start {
+    align-self: flex-start;
+  }
+  .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .overflow-auto {
+    overflow: auto;
+  }
+  .overflow-hidden {
+    overflow: hidden;
+  }
+  .overflow-x-auto {
+    overflow-x: auto;
+  }
+  .overflow-y-auto {
+    overflow-y: auto;
+  }
+  .rounded {
+    border-radius: 0.25rem;
+  }
+  .rounded-2xl {
+    border-radius: var(--radius-2xl);
+  }
+  .rounded-full {
+    border-radius: calc(infinity * 1px);
+  }
+  .rounded-lg {
+    border-radius: var(--radius-lg);
+  }
+  .rounded-sm {
+    border-radius: var(--radius-sm);
+  }
+  .rounded-xl {
+    border-radius: var(--radius-xl);
+  }
+  .border {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+  }
+  .border-2 {
+    border-style: var(--tw-border-style);
+    border-width: 2px;
+  }
+  .border-t {
+    border-top-style: var(--tw-border-style);
+    border-top-width: 1px;
+  }
+  .border-b {
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 1px;
+  }
+  .border-l {
+    border-left-style: var(--tw-border-style);
+    border-left-width: 1px;
+  }
+  .border-l-2 {
+    border-left-style: var(--tw-border-style);
+    border-left-width: 2px;
+  }
+  .border-blue-500 {
+    border-color: var(--color-blue-500);
+  }
+  .border-red-700 {
+    border-color: var(--color-red-700);
+  }
+  .border-slate-600 {
+    border-color: var(--color-slate-600);
+  }
+  .border-slate-700 {
+    border-color: var(--color-slate-700);
+  }
+  .border-slate-700\\/50 {
+    border-color: color-mix(in srgb, oklch(37.2% 0.044 257.287) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-slate-700) 50%, transparent);
+    }
+  }
+  .border-slate-800 {
+    border-color: var(--color-slate-800);
+  }
+  .border-t-transparent {
+    border-top-color: transparent;
+  }
+  .border-l-amber-500 {
+    border-left-color: var(--color-amber-500);
+  }
+  .bg-black\\/60 {
+    background-color: color-mix(in srgb, #000 60%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-black) 60%, transparent);
+    }
+  }
+  .bg-blue-500 {
+    background-color: var(--color-blue-500);
+  }
+  .bg-blue-500\\/10 {
+    background-color: color-mix(in srgb, oklch(62.3% 0.214 259.815) 10%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-blue-500) 10%, transparent);
+    }
+  }
+  .bg-blue-500\\/20 {
+    background-color: color-mix(in srgb, oklch(62.3% 0.214 259.815) 20%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-blue-500) 20%, transparent);
+    }
+  }
+  .bg-blue-600 {
+    background-color: var(--color-blue-600);
+  }
+  .bg-card {
+    background-color: var(--color-card);
+  }
+  .bg-green-900\\/40 {
+    background-color: color-mix(in srgb, oklch(39.3% 0.095 152.535) 40%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-green-900) 40%, transparent);
+    }
+  }
+  .bg-red-700 {
+    background-color: var(--color-red-700);
+  }
+  .bg-red-900\\/40 {
+    background-color: color-mix(in srgb, oklch(39.6% 0.141 25.723) 40%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-red-900) 40%, transparent);
+    }
+  }
+  .bg-red-900\\/90 {
+    background-color: color-mix(in srgb, oklch(39.6% 0.141 25.723) 90%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-red-900) 90%, transparent);
+    }
+  }
+  .bg-slate-700 {
+    background-color: var(--color-slate-700);
+  }
+  .bg-slate-700\\/40 {
+    background-color: color-mix(in srgb, oklch(37.2% 0.044 257.287) 40%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-slate-700) 40%, transparent);
+    }
+  }
+  .bg-slate-800 {
+    background-color: var(--color-slate-800);
+  }
+  .bg-slate-900 {
+    background-color: var(--color-slate-900);
+  }
+  .bg-slate-900\\/50 {
+    background-color: color-mix(in srgb, oklch(20.8% 0.042 265.755) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-slate-900) 50%, transparent);
+    }
+  }
+  .bg-slate-950 {
+    background-color: var(--color-slate-950);
+  }
+  .bg-transparent {
+    background-color: transparent;
+  }
+  .bg-white {
+    background-color: var(--color-white);
+  }
+  .p-1 {
+    padding: var(--spacing);
+  }
+  .p-1\\.5 {
+    padding: calc(var(--spacing) * 1.5);
+  }
+  .p-2 {
+    padding: calc(var(--spacing) * 2);
+  }
+  .p-3 {
+    padding: calc(var(--spacing) * 3);
+  }
+  .p-4 {
+    padding: calc(var(--spacing) * 4);
+  }
+  .p-6 {
+    padding: calc(var(--spacing) * 6);
+  }
+  .p-8 {
+    padding: calc(var(--spacing) * 8);
+  }
+  .px-1 {
+    padding-inline: var(--spacing);
+  }
+  .px-1\\.5 {
+    padding-inline: calc(var(--spacing) * 1.5);
+  }
+  .px-2 {
+    padding-inline: calc(var(--spacing) * 2);
+  }
+  .px-2\\.5 {
+    padding-inline: calc(var(--spacing) * 2.5);
+  }
+  .px-3 {
+    padding-inline: calc(var(--spacing) * 3);
+  }
+  .px-4 {
+    padding-inline: calc(var(--spacing) * 4);
+  }
+  .py-0\\.5 {
+    padding-block: calc(var(--spacing) * 0.5);
+  }
+  .py-1 {
+    padding-block: var(--spacing);
+  }
+  .py-1\\.5 {
+    padding-block: calc(var(--spacing) * 1.5);
+  }
+  .py-2 {
+    padding-block: calc(var(--spacing) * 2);
+  }
+  .pt-1 {
+    padding-top: var(--spacing);
+  }
+  .pt-2 {
+    padding-top: calc(var(--spacing) * 2);
+  }
+  .pt-3 {
+    padding-top: calc(var(--spacing) * 3);
+  }
+  .pt-5 {
+    padding-top: calc(var(--spacing) * 5);
+  }
+  .pb-1 {
+    padding-bottom: var(--spacing);
+  }
+  .text-center {
+    text-align: center;
+  }
+  .text-left {
+    text-align: left;
+  }
+  .text-right {
+    text-align: right;
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+  .text-2xl {
+    font-size: var(--text-2xl);
+    line-height: var(--tw-leading, var(--text-2xl--line-height));
+  }
+  .text-lg {
+    font-size: var(--text-lg);
+    line-height: var(--tw-leading, var(--text-lg--line-height));
+  }
+  .text-sm {
+    font-size: var(--text-sm);
+    line-height: var(--tw-leading, var(--text-sm--line-height));
+  }
+  .text-xs {
+    font-size: var(--text-xs);
+    line-height: var(--tw-leading, var(--text-xs--line-height));
+  }
+  .font-bold {
+    --tw-font-weight: var(--font-weight-bold);
+    font-weight: var(--font-weight-bold);
+  }
+  .font-medium {
+    --tw-font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-medium);
+  }
+  .font-normal {
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+  }
+  .font-semibold {
+    --tw-font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-semibold);
+  }
+  .tracking-wide {
+    --tw-tracking: var(--tracking-wide);
+    letter-spacing: var(--tracking-wide);
+  }
+  .break-all {
+    word-break: break-all;
+  }
+  .whitespace-nowrap {
+    white-space: nowrap;
+  }
+  .text-amber-400 {
+    color: var(--color-amber-400);
+  }
+  .text-blue-300 {
+    color: var(--color-blue-300);
+  }
+  .text-blue-400 {
+    color: var(--color-blue-400);
+  }
+  .text-green-300 {
+    color: var(--color-green-300);
+  }
+  .text-green-400 {
+    color: var(--color-green-400);
+  }
+  .text-red-100 {
+    color: var(--color-red-100);
+  }
+  .text-red-300 {
+    color: var(--color-red-300);
+  }
+  .text-red-400 {
+    color: var(--color-red-400);
+  }
+  .text-slate-100 {
+    color: var(--color-slate-100);
+  }
+  .text-slate-200 {
+    color: var(--color-slate-200);
+  }
+  .text-slate-300 {
+    color: var(--color-slate-300);
+  }
+  .text-slate-400 {
+    color: var(--color-slate-400);
+  }
+  .text-slate-500 {
+    color: var(--color-slate-500);
+  }
+  .text-slate-600 {
+    color: var(--color-slate-600);
+  }
+  .text-white {
+    color: var(--color-white);
+  }
+  .underline {
+    text-decoration-line: underline;
+  }
+  .placeholder-slate-500::placeholder {
+    color: var(--color-slate-500);
+  }
+  .placeholder-slate-600::placeholder {
+    color: var(--color-slate-600);
+  }
+  .accent-blue-500 {
+    accent-color: var(--color-blue-500);
+  }
+  .opacity-0 {
+    opacity: 0%;
+  }
+  .opacity-30 {
+    opacity: 30%;
+  }
+  .opacity-60 {
+    opacity: 60%;
+  }
+  .opacity-70 {
+    opacity: 70%;
+  }
+  .opacity-80 {
+    opacity: 80%;
+  }
+  .shadow-2xl {
+    --tw-shadow: 0 25px 50px -12px var(--tw-shadow-color, rgb(0 0 0 / 0.25));
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .shadow-xl {
+    --tw-shadow: 0 20px 25px -5px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 8px 10px -6px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .outline {
+    outline-style: var(--tw-outline-style);
+    outline-width: 1px;
+  }
+  .filter {
+    filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+  }
+  .backdrop-blur-sm {
+    --tw-backdrop-blur: blur(var(--blur-sm));
+    -webkit-backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+    backdrop-filter: var(--tw-backdrop-blur,) var(--tw-backdrop-brightness,) var(--tw-backdrop-contrast,) var(--tw-backdrop-grayscale,) var(--tw-backdrop-hue-rotate,) var(--tw-backdrop-invert,) var(--tw-backdrop-opacity,) var(--tw-backdrop-saturate,) var(--tw-backdrop-sepia,);
+  }
+  .transition-all {
+    transition-property: all;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+  .transition-colors {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+  .outline-none {
+    --tw-outline-style: none;
+    outline-style: none;
+  }
+  .select-none {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  @media (hover: hover) {
+    .group-hover\\:opacity-100:is(:where(.group):hover *) {
+      opacity: 100%;
+    }
+    .hover\\:border-slate-500:hover {
+      border-color: var(--color-slate-500);
+    }
+    .hover\\:bg-red-600:hover {
+      background-color: var(--color-red-600);
+    }
+    .hover\\:bg-red-900\\/30:hover {
+      background-color: color-mix(in srgb, oklch(39.6% 0.141 25.723) 30%, transparent);
+    }
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\\:bg-red-900\\/30:hover {
+        background-color: color-mix(in oklab, var(--color-red-900) 30%, transparent);
+      }
+    }
+    .hover\\:bg-slate-700:hover {
+      background-color: var(--color-slate-700);
+    }
+    .hover\\:bg-slate-700\\/30:hover {
+      background-color: color-mix(in srgb, oklch(37.2% 0.044 257.287) 30%, transparent);
+    }
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\\:bg-slate-700\\/30:hover {
+        background-color: color-mix(in oklab, var(--color-slate-700) 30%, transparent);
+      }
+    }
+    .hover\\:text-blue-100:hover {
+      color: var(--color-blue-100);
+    }
+    .hover\\:text-blue-300:hover {
+      color: var(--color-blue-300);
+    }
+    .hover\\:text-red-400:hover {
+      color: var(--color-red-400);
+    }
+    .hover\\:text-slate-200:hover {
+      color: var(--color-slate-200);
+    }
+    .hover\\:text-slate-300:hover {
+      color: var(--color-slate-300);
+    }
+  }
+  .focus\\:border-blue-500:focus {
+    border-color: var(--color-blue-500);
+  }
+  .disabled\\:opacity-30:disabled {
+    opacity: 30%;
+  }
+  .disabled\\:opacity-50:disabled {
+    opacity: 50%;
+  }
+  @media (width >= 48rem) {
+    .md\\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (width >= 64rem) {
+    .lg\\:grid-cols-6 {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+  .dark\\:bg-slate-800:where(.dark, .dark *) {
+    background-color: var(--color-slate-800);
+  }
+  .dark\\:bg-surface:where(.dark, .dark *) {
+    background-color: var(--color-surface);
+  }
+}
+@property --tw-rotate-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-rotate-y {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-rotate-z {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-skew-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-skew-y {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-outline-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-brightness {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-contrast {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-grayscale {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-hue-rotate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-invert {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-opacity {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-saturate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-sepia {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-drop-shadow-size {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-brightness {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-contrast {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-grayscale {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-hue-rotate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-invert {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-opacity {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-saturate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-backdrop-sepia {
+  syntax: "*";
+  inherits: false;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@layer properties {
+  @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    *, ::before, ::after, ::backdrop {
+      --tw-rotate-x: initial;
+      --tw-rotate-y: initial;
+      --tw-rotate-z: initial;
+      --tw-skew-x: initial;
+      --tw-skew-y: initial;
+      --tw-border-style: solid;
+      --tw-font-weight: initial;
+      --tw-tracking: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-outline-style: solid;
+      --tw-blur: initial;
+      --tw-brightness: initial;
+      --tw-contrast: initial;
+      --tw-grayscale: initial;
+      --tw-hue-rotate: initial;
+      --tw-invert: initial;
+      --tw-opacity: initial;
+      --tw-saturate: initial;
+      --tw-sepia: initial;
+      --tw-drop-shadow: initial;
+      --tw-drop-shadow-color: initial;
+      --tw-drop-shadow-alpha: 100%;
+      --tw-drop-shadow-size: initial;
+      --tw-backdrop-blur: initial;
+      --tw-backdrop-brightness: initial;
+      --tw-backdrop-contrast: initial;
+      --tw-backdrop-grayscale: initial;
+      --tw-backdrop-hue-rotate: initial;
+      --tw-backdrop-invert: initial;
+      --tw-backdrop-opacity: initial;
+      --tw-backdrop-saturate: initial;
+      --tw-backdrop-sepia: initial;
+    }
+  }
+}
 </style>
 <style>
+.rv-main-legend .svgc-legend { font-size: 11px; padding-top: 8px; }
 body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui,sans-serif; margin:0; }
 ::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-track { background: #1e293b; }
@@ -2214,22 +3378,21 @@ body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-type="module" data-presets="env,react">
-import * as React from 'react';
-import * as ReactDOMClient from 'react-dom/client';
-import {
-  AreaChart,Area,LineChart,Line,BarChart,Bar,PieChart,Pie,Cell,Rectangle,
-  XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,ReferenceLine
-} from 'https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is';
+<script type="module">
+const html = htm.bind(preact.h);
+const {focusOnMount} = frontendKit;
+const {CartesianChart, DonutChart, HBarChart, Legend} = svgCharts;
 
-const { useState, useEffect, useCallback, useRef, useMemo, memo } = React;
+
+
+
+
+const {useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo} = preactHooks;
 const COLORS = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#22c55e','#06b6d4','#f97316','#a855f7','#14b8a6','#ef4444','#84cc16','#64748b'];
 
 // Inline SVG icons — no CDN dependency
 const _i = (d,extra='') => ({size=14,className='',...p}) =>
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...p}
-    dangerouslySetInnerHTML={{__html:d+extra}}/>;
+  html`<svg width=${size} height=${size} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"currentColor"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"} class=${className} ...${p} dangerouslySetInnerHTML=${{__html:d+extra}} />`;
 const LI = {
   Settings:      _i('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
   X:             _i('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
@@ -2278,23 +3441,17 @@ function formatResolvedRange(fromIso,toIso,tz) {
 }
 
 function Spinner() {
-  return <div className="inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"/>;
+  return html`<div class=${"inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"} />`;
 }
 function SkeletonCard() {
-  return <div className="bg-slate-800 dark:bg-slate-800 light:bg-white rounded-xl p-4 h-28 animate-pulse"/>;
+  return html`<div class=${"bg-slate-800 dark:bg-slate-800 rounded-xl p-4 h-28 animate-pulse"} />`;
 }
 function EmptyState({message='No data for this range'}) {
-  return <div className="flex flex-col items-center justify-center h-40 text-slate-500 gap-2">
-    <LI.BarChart2 size={32} className="opacity-30"/>
-    <p className="text-sm">{message}</p>
-  </div>;
+  return html`<div class=${"flex flex-col items-center justify-center h-40 text-slate-500 gap-2"}> <${LI.BarChart2} size=${32} className=${"opacity-30"} /> <p class=${"text-sm"}>${message}</p> </div>`;
 }
 function ErrorBanner({error,onRetry}) {
   if(!error) return null;
-  return <div className="fixed top-0 left-0 right-0 z-50 bg-red-900/90 text-red-100 px-4 py-2 flex items-center justify-between text-sm">
-    <span>{error}</span>
-    <button onClick={onRetry} className="ml-4 underline">Retry</button>
-  </div>;
+  return html`<div class=${"fixed top-0 left-0 right-0 z-50 bg-red-900/90 text-red-100 px-4 py-2 flex items-center justify-between text-sm"}> <span>${error}</span> <button onClick=${onRetry} class=${"ml-4 underline"}>Retry</button> </div>`;
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -2334,19 +3491,7 @@ function ExportMenu({chartRef, onCSV, name='chart'}) {
   const ref=useRef();
   useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
-  return <div ref={ref} className="relative">
-    <button onClick={()=>setOpen(!open)} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded hover:border-slate-500">
-      <LI.Download size={12}/> Export
-    </button>
-    {open&&<div className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-32 py-1">
-      {onCSV&&<button onClick={()=>{onCSV();setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">CSV</button>}
-      {chartRef&&<>
-        <button onClick={()=>{exportChartSVG(chartRef,name);setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">SVG</button>
-        <button onClick={()=>{exportChartRaster(chartRef,name,'png');setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">PNG</button>
-        <button onClick={()=>{exportChartRaster(chartRef,name,'jpg');setOpen(false);}} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700">JPG</button>
-      </>}
-    </div>}
-  </div>;
+  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Download} size=${12} /> Export </button> ${open&&html`<div class=${"absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-32 py-1"}> ${onCSV&&html`<button onClick=${()=>{onCSV();setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>CSV</button>`} ${chartRef&&html` <button onClick=${()=>{exportChartSVG(chartRef,name);setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>SVG</button> <button onClick=${()=>{exportChartRaster(chartRef,name,'png');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>PNG</button> <button onClick=${()=>{exportChartRaster(chartRef,name,'jpg');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>JPG</button> `} </div>`} </div>`;
 }
 
 // ── FilterDropdown ────────────────────────────────────────────────────────────
@@ -2360,34 +3505,10 @@ function FilterDropdown({label, options=[], selected=[], onChange}) {
   const toggle = val => onChange(selected.includes(val)?selected.filter(v=>v!==val):[...selected,val]);
   const getLabel = o => typeof o==='object'?(o.label||o.id):o;
   const getId = o => typeof o==='object'?o.id:o;
-  return <div ref={ref} className="relative">
-    <button onClick={()=>setOpen(!open)}
-      className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors ${selected.length>0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>
-      {label}{selected.length>0&&<span className="bg-blue-500 text-white rounded-full px-1.5 ml-0.5">{selected.length}</span>}
-      <LI.ChevronDown size={10}/>
-    </button>
-    {open&&<div className="absolute top-full mt-1 left-0 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 w-56 max-h-72 overflow-hidden flex flex-col">
-      <div className="p-2 border-b border-slate-700">
-        <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Search..." autoFocus
-          className="w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none placeholder-slate-500"/>
-      </div>
-      <div className="flex text-xs px-2 py-1 gap-3 border-b border-slate-700">
-        <button onClick={()=>onChange(filtered.map(getId))} className="text-blue-400 hover:text-blue-300">All</button>
-        <button onClick={()=>onChange([])} className="text-slate-400 hover:text-slate-300">Clear</button>
-      </div>
-      <div className="overflow-y-auto flex-1">
-        {filtered.length===0&&<div className="px-3 py-2 text-xs text-slate-500">No matches</div>}
-        {filtered.map(opt=>{
+  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors ${selected.length>0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}> ${label}${selected.length>0&&html`<span class=${"bg-blue-500 text-white rounded-full px-1.5 ml-0.5"}>${selected.length}</span>`} <${LI.ChevronDown} size=${10} /> </button> ${open&&html`<div class=${"absolute top-full mt-1 left-0 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 w-56 max-h-72 overflow-hidden flex flex-col"}> <div class=${"p-2 border-b border-slate-700"}> <input type=${"text"} value=${search} onInput=${e=>setSearch(e.target.value)} placeholder=${"Search..."} ref=${focusOnMount} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none placeholder-slate-500"} /> </div> <div class=${"flex text-xs px-2 py-1 gap-3 border-b border-slate-700"}> <button onClick=${()=>onChange(filtered.map(getId))} class=${"text-blue-400 hover:text-blue-300"}>All</button> <button onClick=${()=>onChange([])} class=${"text-slate-400 hover:text-slate-300"}>Clear</button> </div> <div class=${"overflow-y-auto flex-1"}> ${filtered.length===0&&html`<div class=${"px-3 py-2 text-xs text-slate-500"}>No matches</div>`} ${filtered.map(opt=>{
           const id=getId(opt), lbl=getLabel(opt);
-          return <label key={id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 cursor-pointer text-xs text-slate-300">
-            <input type="checkbox" checked={selected.includes(id)} onChange={()=>toggle(id)} className="accent-blue-500"/>
-            <span className="truncate" title={lbl}>{lbl}</span>
-          </label>;
-        })}
-      </div>
-    </div>}
-  </div>;
+          return html`<label key=${id} class=${"flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 cursor-pointer text-xs text-slate-300"}> <input type=${"checkbox"} checked=${selected.includes(id)} onInput=${()=>toggle(id)} class=${"accent-blue-500"} /> <span class=${"truncate"} title=${lbl}>${lbl}</span> </label>`;
+        })} </div> </div>`} </div>`;
 }
 
 // ── KPI Cards ─────────────────────────────────────────────────────────────────
@@ -2395,17 +3516,10 @@ const COST_CYCLES = ['avg','p50','p95','min','max'];
 const LAT_CYCLES  = ['avg','p50','p95','min','max'];
 function KPICard({title,value,subValue,delta,deltaLabel,positive,children}) {
   const deltaColor = delta==null?'text-slate-500':positive===false?'text-red-400':'text-green-400';
-  return <div className="bg-card dark:bg-surface rounded-xl p-4 flex flex-col gap-1 min-w-0">
-    <p className="text-xs text-slate-400 truncate">{title}</p>
-    <p className="text-2xl font-bold text-slate-100 truncate">{value}</p>
-    {subValue&&<p className="text-xs text-slate-500">{subValue}</p>}
-    {delta!=null&&<p className={`text-xs ${deltaColor}`}>{delta>0?'+':''}{(delta*100).toFixed(1)}% {deltaLabel}</p>}
-    {children}
-  </div>;
+  return html`<div class=${"bg-card dark:bg-surface rounded-xl p-4 flex flex-col gap-1 min-w-0"}> <p class=${"text-xs text-slate-400 truncate"}>${title}</p> <p class=${"text-2xl font-bold text-slate-100 truncate"}>${value}</p> ${subValue&&html`<p class=${"text-xs text-slate-500"}>${subValue}</p>`} ${delta!=null&&html`<p class=${`text-xs ${deltaColor}`}>${delta>0?'+':''}${(delta*100).toFixed(1)}% ${deltaLabel}</p>`} ${children} </div>`;
 }
 function KPICards({summary,costCycle,setCostCycle,latCycle,setLatCycle}) {
-  if(!summary) return <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-    {Array(6).fill(0).map((_,i)=><SkeletonCard key={i}/>)}</div>;
+  if(!summary) return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}> ${Array(6).fill(0).map((_,i)=>html`<${SkeletonCard} key=${i} />`)}</div>`;
   const s = summary;
   const comp = s.comparison;
   const compLabel = s.compare_mode ? ({dow:'DoD',wow:'WoW',mom_date:'MoM',mom_relative:'MoM',qoq:'QoQ',yoy_date:'YoY',yoy_relative:'YoY',prior_period:'vs prior'}[s.compare_mode]||'vs prior') : null;
@@ -2414,27 +3528,7 @@ function KPICards({summary,costCycle,setCostCycle,latCycle,setLatCycle}) {
   const costKey = {avg:'avg_cost_per_request',p50:'p50_cost_per_request',p95:'p95_cost_per_request',min:'min_cost_per_request',max:'max_cost_per_request'}[costCycle]||'avg_cost_per_request';
   const latKey  = {avg:'avg_latency_ms',p50:'p50_latency_ms',p95:'p95_latency_ms',min:'min_latency_ms',max:'max_latency_ms'}[latCycle]||'avg_latency_ms';
 
-  return <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-    <KPICard title="Total Requests" value={fmtNum(s.request_count)}
-      delta={comp?delta(s.request_count,comp.request_count):null} deltaLabel={compLabel} positive={true}/>
-    <KPICard title="Total Cost" value={fmt$(s.total_cost)}
-      subValue={s.projected_cost?`~${fmt$(s.projected_cost)} projected`:null}
-      delta={comp?delta(s.total_cost,comp.total_cost):null} deltaLabel={compLabel} positive={false}/>
-    <KPICard title={`Cost/Req (${costCycle.toUpperCase()})`} value={fmt$4(s[costKey])}
-      delta={comp?delta(s[costKey],comp[costKey]):null} deltaLabel={compLabel} positive={false}>
-      <button onClick={()=>setCostCycle(c=>COST_CYCLES[(COST_CYCLES.indexOf(c)+1)%COST_CYCLES.length])}
-        className="text-xs text-blue-400 hover:text-blue-300 self-start">cycle →</button>
-    </KPICard>
-    <KPICard title={`Latency (${latCycle.toUpperCase()})`} value={fmtMs(s[latKey])}
-      delta={comp?delta(s[latKey],comp[latKey]):null} deltaLabel={compLabel} positive={false}>
-      <button onClick={()=>setLatCycle(c=>LAT_CYCLES[(LAT_CYCLES.indexOf(c)+1)%LAT_CYCLES.length])}
-        className="text-xs text-blue-400 hover:text-blue-300 self-start">cycle →</button>
-    </KPICard>
-    <KPICard title="Cache Hit Rate" value={fmtPct(s.cache_hit_rate)}
-      delta={comp?delta(s.cache_hit_rate,comp.cache_hit_rate):null} deltaLabel={compLabel} positive={true}/>
-    <KPICard title="Total Tokens" value={fmtNum(s.total_tokens)}
-      delta={comp?delta(s.total_tokens,comp.total_tokens):null} deltaLabel={compLabel} positive={true}/>
-  </div>;
+  return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}> <${KPICard} title=${"Total Requests"} value=${fmtNum(s.request_count)} delta=${comp?delta(s.request_count,comp.request_count):null} deltaLabel=${compLabel} positive=${true} /> <${KPICard} title=${"Total Cost"} value=${fmt$(s.total_cost)} subValue=${s.projected_cost?`~${fmt$(s.projected_cost)} projected`:null} delta=${comp?delta(s.total_cost,comp.total_cost):null} deltaLabel=${compLabel} positive=${false} /> <${KPICard} title=${`Cost/Req (${costCycle.toUpperCase()})`} value=${fmt$4(s[costKey])} delta=${comp?delta(s[costKey],comp[costKey]):null} deltaLabel=${compLabel} positive=${false}> <button onClick=${()=>setCostCycle(c=>COST_CYCLES[(COST_CYCLES.indexOf(c)+1)%COST_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button> <//> <${KPICard} title=${`Latency (${latCycle.toUpperCase()})`} value=${fmtMs(s[latKey])} delta=${comp?delta(s[latKey],comp[latKey]):null} deltaLabel=${compLabel} positive=${false}> <button onClick=${()=>setLatCycle(c=>LAT_CYCLES[(LAT_CYCLES.indexOf(c)+1)%LAT_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button> <//> <${KPICard} title=${"Cache Hit Rate"} value=${fmtPct(s.cache_hit_rate)} delta=${comp?delta(s.cache_hit_rate,comp.cache_hit_rate):null} deltaLabel=${compLabel} positive=${true} /> <${KPICard} title=${"Total Tokens"} value=${fmtNum(s.total_tokens)} delta=${comp?delta(s.total_tokens,comp.total_tokens):null} deltaLabel=${compLabel} positive=${true} /> </div>`;
 }
 
 // ── Custom Tooltip ────────────────────────────────────────────────────────────
@@ -2457,28 +3551,7 @@ function ChartTooltip({active,payload,label,metric,compareRange}) {
   const showTotals = metric!=='latency';
   const primaryTotal = sumTooltipValues(primary);
   const compTotal = sumTooltipValues(comp);
-  return <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-xs max-w-xs">
-    <p className="text-slate-400 mb-2">{label}</p>
-    {orderedPrimary.map((p,i)=><div key={i} className="flex justify-between gap-4">
-      <span className="flex items-center gap-1"><span style={{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}}/>{p.name}</span>
-      <span className="font-mono text-slate-200">{fmt(p.value)}</span>
-    </div>)}
-    {showTotals&&primary.length>1&&<div className="flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700">
-      <span className="font-medium text-slate-300">Total</span>
-      <span className="font-mono text-slate-100">{fmt(primaryTotal)}</span>
-    </div>}
-    {comp.length>0&&<>
-      <p className="text-slate-500 mt-2 mb-1 border-t border-slate-700 pt-1">{compareRange||'Comparison'}</p>
-      {orderedComp.map((p,i)=><div key={i} className="flex justify-between gap-4 opacity-60">
-        <span className="flex items-center gap-1"><span style={{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}}/>{p.name.replace(/^_c_/,'')}</span>
-        <span className="font-mono text-slate-200">{fmt(p.value)}</span>
-      </div>)}
-      {showTotals&&comp.length>1&&<div className="flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700 opacity-80">
-        <span className="font-medium text-slate-300">Total</span>
-        <span className="font-mono text-slate-100">{fmt(compTotal)}</span>
-      </div>}
-    </>}
-  </div>;
+  return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-xs max-w-xs"}> <p class=${"text-slate-400 mb-2"}>${label}</p> ${orderedPrimary.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4"}> <span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name}</span> <span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span> </div>`)} ${showTotals&&primary.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700"}> <span class=${"font-medium text-slate-300"}>Total</span> <span class=${"font-mono text-slate-100"}>${fmt(primaryTotal)}</span> </div>`} ${comp.length>0&&html` <p class=${"text-slate-500 mt-2 mb-1 border-t border-slate-700 pt-1"}>${compareRange||'Comparison'}</p> ${orderedComp.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4 opacity-60"}> <span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name.replace(/^_c_/,'')}</span> <span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span> </div>`)} ${showTotals&&comp.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700 opacity-80"}> <span class=${"font-medium text-slate-300"}>Total</span> <span class=${"font-mono text-slate-100"}>${fmt(compTotal)}</span> </div>`} `} </div>`;
 }
 
 // ── Main Chart ────────────────────────────────────────────────────────────────
@@ -2487,6 +3560,18 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
   const [hidden,setHidden]=useState(new Set());
   const [hoverIdx,setHoverIdx]=useState(null);
   const [cumulative,setCumulative]=useState(false);
+  const legendRef=useRef();
+  const [legendHeight,setLegendHeight]=useState(24);
+  useLayoutEffect(()=>{
+    const node=legendRef.current;
+    if(!node) return;
+    const measure=()=>setLegendHeight(node.getBoundingClientRect().height);
+    measure();
+    if(typeof ResizeObserver==='undefined') return;
+    const observer=new ResizeObserver(measure);
+    observer.observe(node);
+    return ()=>observer.disconnect();
+  },[data?.series, data?.comparison_series, chartType]);
 
   // Shared Y domain across both charts so scale differences are honest
   const yDomain = useMemo(()=>{
@@ -2519,8 +3604,8 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
     return maxVal>0 ? [0, Math.ceil(maxVal*1.05*100)/100] : undefined;
   },[data?.series,data?.comparison_series,data?.buckets,data?.comparison_buckets,cumulative,metric]);
 
-  if(!data||!data.series) return <div className="bg-slate-800 rounded-xl p-4 h-96 flex items-center justify-center"><Spinner/></div>;
-  if(!data.buckets?.length) return <div className="bg-slate-800 rounded-xl p-4"><EmptyState/></div>;
+  if(!data||!data.series) return html`<div class=${"bg-slate-800 rounded-xl p-4 h-96 flex items-center justify-center"}><${Spinner} /></div>`;
+  if(!data.buckets?.length) return html`<div class=${"bg-slate-800 rounded-xl p-4"}><${EmptyState} /></div>`;
 
   const hasComp = !!(data.comparison_series?.length);
   const canCumulative = metric!=='latency';
@@ -2559,17 +3644,7 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
     if(bucketSize==='month') return v;
     return v;
   };
-  const commonAxisProps={stroke:'#475569',fontSize:11,tick:{fill:'#94a3b8'}};
-  const gridProps={strokeDasharray:'3 3',stroke:'#334155'};
-  const handleLegend = e => {
-    const seriesName=e?.dataKey??e?.value;
-    if(seriesName==null) return;
-    setHidden(prev=>{const n=new Set(prev);n.has(seriesName)?n.delete(seriesName):n.add(seriesName);return n;});
-  };
-
-  const ChartEl = chartType==='line'?LineChart:chartType==='bar'?BarChart:AreaChart;
-  const SeriesEl = chartType==='line'?Line:chartType==='bar'?Bar:Area;
-  const stackId = isCum?undefined:(chartType==='area'||chartType==='bar'?'1':undefined);
+  const stackId = !isCum && (chartType==='area'||chartType==='bar');
 
   // Linked crosshair: measure the rendered plot rather than the outer chart,
   // whose Y-axis gutter would shift the categorical bucket calculation.
@@ -2603,154 +3678,64 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
 
   const metricLabel = metric==='cost'?'Cost':metric==='requests'?'Requests':metric==='tokens'?'Tokens':'Latency';
 
-  const renderChart = (chartData, label, height) => (
-    <div onMouseMove={event=>handleMouseMove(event,chartData.length)} onMouseLeave={handleMouseLeave}>
-      {hasComp && <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>}
-      <ResponsiveContainer width="100%" height={height}>
-        <ChartEl data={chartData}>
-          <CartesianGrid className="rv-main-chart-plot" {...gridProps}/>
-          <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
-          <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
-          <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
-          {!hasComp && <Legend onClick={handleLegend} wrapperStyle={{paddingTop:8,fontSize:11,color:'#94a3b8'}}/>}
-          {data.series.map((s)=>{
-            const col=modelColor(s.name);
-            const hiddenS=hidden.has(s.name);
-            return <SeriesEl key={s.name} type="monotone" dataKey={s.name}
-              stroke={col} fill={col}
-              fillOpacity={hiddenS?0:0.5} strokeOpacity={hiddenS?0:1}
-              stackId={stackId} dot={false}/>;
-          })}
-          {(()=>{const ri=refLineIdx(chartData);return ri!=null&&<ReferenceLine x={chartData[ri]?.bucket} stroke="#94a3b8" strokeDasharray="3 3" strokeOpacity={0.5}/>;})()}
-        </ChartEl>
-      </ResponsiveContainer>
-    </div>
-  );
+  const renderChart = (chartData, label, height, isComparison=false) => {
+    const source = isComparison ? data.comparison_series : data.series;
+    const series = source.map(s => ({key:s.name, label:s.name, color:modelColor(s.name),
+      stack:stackId, strokeWidth:1, fillOpacity:hidden.has(s.name)?0:(isComparison?0.4:0.5),
+      strokeOpacity:hidden.has(s.name)?0:(isComparison?0.8:1),
+      strokeDasharray:isComparison?'5 3':undefined}));
+    const ri=refLineIdx(chartData);
+    return html`<div onMouseMove=${event=>handleMouseMove(event,chartData.length)} onMouseLeave=${handleMouseLeave}>
+      ${hasComp && html`<p class=${"text-xs text-slate-500 mb-1 ml-1"}>${label}</p>`}
+      <${CartesianChart} kind=${chartType} data=${chartData} xKey=${"bucket"} series=${series}
+        height=${height} margin=${{left:70, right:32, top:10, bottom:25}} yFormat=${yFmt} xFormat=${xFmt}
+        yDomain=${yDomain} grid=${{horizontal:true,vertical:true,stroke:'#334155',strokeDasharray:'3 3'}}
+        xAxisLine=${'#475569'} yAxisLine=${'#475569'} referenceOpacity=${0.5} plotClass=${"rv-main-chart-plot"}
+        referenceX=${ri!=null?chartData[ri]?.bucket:undefined}
+        tooltip=${props=>html`<${ChartTooltip} ...${props} metric=${metric} />`} />
+      ${!hasComp && html`<div ref=${legendRef} class=${"rv-main-legend"}><${Legend} kind=${chartType} series=${[...series].sort((a,b)=>a.label<b.label?-1:a.label>b.label?1:0)} hidden=${hidden} onToggle=${name=>setHidden(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n;})} /></div>`}
+    </div>`;
+  };
+  const renderCompChart = (chartData,label,height) => renderChart(chartData,label,height,true);
 
-  const renderCompChart = (chartData, label, height) => (
-    <div onMouseMove={event=>handleMouseMove(event,chartData.length)} onMouseLeave={handleMouseLeave}>
-      <p className="text-xs text-slate-500 mb-1 ml-1">{label}</p>
-      <ResponsiveContainer width="100%" height={height}>
-        <ChartEl data={chartData}>
-          <CartesianGrid className="rv-main-chart-plot" {...gridProps}/>
-          <XAxis dataKey="bucket" {...commonAxisProps} tickFormatter={xFmt}/>
-          <YAxis {...commonAxisProps} tickFormatter={yFmt} width={70} {...(yDomain?{domain:yDomain}:{})}/>
-          <Tooltip content={<ChartTooltip metric={metric}/>} wrapperStyle={{outline:'none'}}/>
-          {data.comparison_series.map((s)=>{
-            const col=modelColor(s.name);
-            const hiddenS=hidden.has(s.name);
-            return <SeriesEl key={s.name} type="monotone" dataKey={s.name}
-              stroke={col} fill={col}
-              fillOpacity={hiddenS?0:0.4} strokeOpacity={hiddenS?0:0.8}
-              strokeDasharray="5 3"
-              stackId={stackId} dot={false}/>;
-          })}
-          {(()=>{const ri=refLineIdx(chartData);return ri!=null&&<ReferenceLine x={chartData[ri]?.bucket} stroke="#94a3b8" strokeDasharray="3 3" strokeOpacity={0.5}/>;})()}
-        </ChartEl>
-      </ResponsiveContainer>
-    </div>
-  );
-
-  return <div className="bg-slate-800 rounded-xl p-4">
-    <div className="flex items-center justify-between mb-3">
-      <h2 className="text-sm font-medium text-slate-300">
-        {metricLabel} over Time{isCum?' (Cumulative)':''}
-        {groupBy!=='none'&&<span className="text-slate-500 font-normal ml-1">by {groupBy}</span>}
-      </h2>
-      <div className="flex items-center gap-2">
-        {canCumulative&&<button onClick={()=>setCumulative(c=>!c)}
-          className={`text-xs px-2 py-1 rounded ${cumulative?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:text-slate-300'}`}
-          title="Toggle cumulative view">Σ Cumulative</button>}
-        <ExportMenu chartRef={ref} onCSV={onExport} name="timeseries"/>
-      </div>
-    </div>
-    <div ref={ref}>
-      {hasComp ? <>
-        {renderChart(primaryData, 'Current Period', 240)}
-        <div className="my-2"/>
-        {renderCompChart(compData, data.compare_range||'Prior Period', 200)}
-        <div className="flex flex-wrap justify-center gap-3 mt-2 text-xs">
-          {data.series.map(s=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"}> <div class=${"flex items-center justify-between mb-3"}> <h2 class=${"text-sm font-medium text-slate-300"}> ${metricLabel} over Time${isCum?' (Cumulative)':''} ${groupBy!=='none'&&html`<span class=${"text-slate-500 font-normal ml-1"}>by ${groupBy}</span>`} </h2> <div class=${"flex items-center gap-2"}> ${canCumulative&&html`<button onClick=${()=>setCumulative(c=>!c)} class=${`text-xs px-2 py-1 rounded ${cumulative?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:text-slate-300'}`} title=${"Toggle cumulative view"}>Σ Cumulative</button>`} <${ExportMenu} chartRef=${ref} onCSV=${onExport} name=${"timeseries"} /> </div> </div> <div ref=${ref}> ${hasComp ? html` ${renderChart(primaryData, 'Current Period', 240)} <div class=${"my-2"} /> ${renderCompChart(compData, data.compare_range||'Prior Period', 200)} <div class=${"flex flex-wrap justify-center gap-3 mt-2 text-xs"}> ${data.series.map(s=>{
             const col=modelColor(s.name);
             const dim=hidden.has(s.name);
-            return <button key={s.name} className="flex items-center gap-1" style={{opacity:dim?0.3:1}}
-              onClick={()=>setHidden(prev=>{const n=new Set(prev);n.has(s.name)?n.delete(s.name):n.add(s.name);return n;})}>
-              <span style={{width:8,height:8,borderRadius:'50%',background:col,display:'inline-block'}}/><span className="text-slate-400">{s.name}</span>
-            </button>;
-          })}
-        </div>
-      </> : renderChart(primaryData, '', 380)}
-    </div>
-  </div>;
+            return html`<button key=${s.name} class=${"flex items-center gap-1"} style=${{opacity:dim?0.3:1}} onClick=${()=>setHidden(prev=>{const n=new Set(prev);n.has(s.name)?n.delete(s.name):n.add(s.name);return n;})}> <span style=${{width:8,height:8,borderRadius:'50%',background:col,display:'inline-block'}} /><span class=${"text-slate-400"}>${s.name}</span> </button>`;
+          })} </div> ` : renderChart(primaryData, '', Math.max(0,380-legendHeight))} </div> </div>`;
 }
 
 // ── Heatmap ───────────────────────────────────────────────────────────────────
 function HeatmapView({data}) {
-  if(!data) return <div className="bg-slate-800 rounded-xl p-4 h-64 animate-pulse"/>;
+  if(!data) return html`<div class=${"bg-slate-800 rounded-xl p-4 h-64 animate-pulse"} />`;
   const matrix = data.matrix||[];
   const allVals = matrix.flat().filter(v=>v!=null);
   const maxVal = allVals.length?Math.max(...allVals):1;
   const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const HOURS=Array.from({length:24},(_,i)=>i);
-  return <div className="bg-slate-800 rounded-xl p-4 overflow-x-auto">
-    <h2 className="text-sm font-medium text-slate-300 mb-3">Usage Heatmap</h2>
-    <div className="flex gap-1">
-      <div className="flex flex-col gap-1 pt-5">
-        {DAYS.map(d=><div key={d} className="h-6 w-8 text-xs text-slate-500 flex items-center">{d}</div>)}
-      </div>
-      <div>
-        <div className="flex gap-1 mb-1">
-          {HOURS.map(h=><div key={h} className="w-6 text-center text-slate-600" style={{fontSize:9}}>{h%6===0?h:''}</div>)}
-        </div>
-        {DAYS.map((d,di)=><div key={di} className="flex gap-1 mb-1">
-          {HOURS.map(h=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4 overflow-x-auto"}> <h2 class=${"text-sm font-medium text-slate-300 mb-3"}>Usage Heatmap</h2> <div class=${"flex gap-1"}> <div class=${"flex flex-col gap-1 pt-5"}> ${DAYS.map(d=>html`<div key=${d} class=${"h-6 w-8 text-xs text-slate-500 flex items-center"}>${d}</div>`)} </div> <div> <div class=${"flex gap-1 mb-1"}> ${HOURS.map(h=>html`<div key=${h} class=${"w-6 text-center text-slate-600"} style=${{fontSize:9}}>${h%6===0?h:''}</div>`)} </div> ${DAYS.map((d,di)=>html`<div key=${di} class=${"flex gap-1 mb-1"}> ${HOURS.map(h=>{
             const v=matrix[di]?.[h];
             const intensity=v!=null?v/maxVal:0;
-            return <div key={h} title={`${d} ${h}:00 — ${v!=null?v.toFixed(4):'no data'}`}
-              className="w-6 h-6 rounded-sm cursor-default"
-              style={{background:v!=null?`rgba(59,130,246,${0.1+intensity*0.9})`:'#1e293b'}}/>;
-          })}
-        </div>)}
-      </div>
-    </div>
-  </div>;
+            return html`<div key=${h} title=${`${d} ${h}:00 — ${v!=null?v.toFixed(4):'no data'}`} class=${"w-6 h-6 rounded-sm cursor-default"} style=${{background:v!=null?`rgba(59,130,246,${0.1+intensity*0.9})`:'#1e293b'}} />`;
+          })} </div>`)} </div> </div> </div>`;
 }
 
 // ── Breakdown Panel ───────────────────────────────────────────────────────────
 function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,panelKey,dragProps,exportQS=''}) {
-  if(!data) return <div className="bg-slate-800 rounded-xl p-4 h-64 animate-pulse"/>;
+  if(!data) return html`<div class=${"bg-slate-800 rounded-xl p-4 h-64 animate-pulse"} />`;
   const items = data.data||[];
-  if(!items.length) return <div className="bg-slate-800 rounded-xl p-4"><h3 className="text-sm text-slate-400 mb-3">{title}</h3><EmptyState/></div>;
+  if(!items.length) return html`<div class=${"bg-slate-800 rounded-xl p-4"}><h3 class=${"text-sm text-slate-400 mb-3"}>${title}</h3><${EmptyState} /></div>`;
   const fmtVal = v=>metric==='cost'?fmt$(v,2):metric==='latency'?fmtMs(v):fmtNum(v);
   const BDTooltip = ({active,payload,label})=>{
     if(!active||!payload?.length) return null;
     const d=payload[0]?.payload;
-    return <div className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl text-xs">
-      <p className="text-slate-300 font-medium mb-1">{d?.dimension||label}</p>
-      <p className="text-slate-400">{fmtVal(payload[0]?.value)}</p>
-    </div>;
+    return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl text-xs"}> <p class=${"text-slate-300 font-medium mb-1"}>${d?.dimension||label}</p> <p class=${"text-slate-400"}>${fmtVal(payload[0]?.value)}</p> </div>`;
   };
-  const tooltipProps={content:<BDTooltip/>,wrapperStyle:{outline:'none'}};
   const activateBarFilter = dimension => {
     if(onFilter&&dimension) onFilter(dimension);
   };
-  const handleBarKeyDown = (event,dimension) => {
-    if(event.key==='Enter'||event.key===' ') {
-      event.preventDefault();
-      activateBarFilter(dimension);
-    }
-  };
 
-  return <div className="bg-slate-800 rounded-xl p-4" {...dragProps}>
-    <div className="flex items-center justify-between mb-3">
-      <div className="flex items-center gap-2">
-        {dragProps&&<LI.GripVertical size={14} className="text-slate-600 cursor-grab"/>}
-        <h3 className="text-sm font-medium text-slate-300">{title}</h3>
-      </div>
-      <ExportMenu chartRef={chartRef} name={panelKey} onCSV={()=>window.open(`/api/export/csv?view=breakdown&group_by=${panelKey}&metric=${metric}&${exportQS}`)}/>
-    </div>
-    <div ref={chartRef}>
-      {type==='pie'
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"} ...${dragProps}> <div class=${"flex items-center justify-between mb-3"}> <div class=${"flex items-center gap-2"}> ${dragProps&&html`<${LI.GripVertical} size=${14} className=${"text-slate-600 cursor-grab"} />`} <h3 class=${"text-sm font-medium text-slate-300"}>${title}</h3> </div> <${ExportMenu} chartRef=${chartRef} name=${panelKey} onCSV=${()=>window.open(`/api/export/csv?view=breakdown&group_by=${panelKey}&metric=${metric}&${exportQS}`)} /> </div> <div ref=${chartRef}> ${type==='pie'
         ? (()=>{
             // Roll up small slices into "Other" when there are many items
             const MAX_SLICES = 7;
@@ -2762,49 +3747,16 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
               const otherVal = rest.reduce((s,r)=>s+r.value,0);
               pieItems = [...top, {dimension:`Other (${rest.length})`, value:otherVal}];
             }
-            const legendRows = Math.ceil(pieItems.length/3);
-            const pieH = 200 + legendRows * 22;
-            return <ResponsiveContainer width="100%" height={pieH}>
-              <PieChart>
-                <Pie data={pieItems} dataKey="value" nameKey="dimension" cx="50%" cy="45%" innerRadius={50} outerRadius={85}
-                  onClick={e=>onFilter&&e.dimension&&!e.dimension.startsWith('Other')&&onFilter(e.dimension)}>
-                  {pieItems.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
-                </Pie>
-                <Tooltip {...tooltipProps}/>
-                <Legend wrapperStyle={{fontSize:11,color:'#94a3b8'}}/>
-              </PieChart>
-            </ResponsiveContainer>;
+            const chartItems=pieItems.map((item,i)=>({...item,label:item.dimension,color:COLORS[i%COLORS.length]}));
+            return html`<${DonutChart} items=${chartItems} height=${200} innerRadius=${50} outerRadius=${85} startAngle=${0} clockwise=${false} stroke=${"var(--color-white)"} strokeWidth=${1} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>onFilter&&item.dimension&&!item.dimension.startsWith('Other')&&onFilter(item.dimension)} />
+              <div class=${"rv-donut-legend flex flex-wrap justify-center gap-3 text-xs"} style=${{fontSize:11}}>${[...chartItems].sort((a,b)=>a.label<b.label?-1:a.label>b.label?1:0).map(item=>html`<span style=${{color:item.color}}><span style=${{display:"inline-block",width:14,height:10,background:item.color,marginRight:4}} />${item.label}</span>`)}</div>`;
           })()
         : (()=>{
             const barItems = items.slice(0,10);
             const barH = Math.max(220, barItems.length * 28 + 40);
-            return <ResponsiveContainer width="100%" height={barH}>
-              <BarChart layout="vertical" data={barItems}>
-                <XAxis type="number" stroke="#475569" fontSize={11} tickFormatter={fmtVal}/>
-                <YAxis type="category" dataKey="dimension" stroke="#475569" fontSize={10} width={130}
-                  tick={({x,y,payload})=>{
-                    const t=payload.value||'';
-                    const label=t.length>20?t.slice(0,18)+'…':t;
-                    return <g transform={`translate(${x},${y})`}><title>{t}</title><text x={-4} y={0} dy={4} textAnchor="end" fill="#94a3b8" fontSize={10}>{label}</text></g>;
-                  }}/>
-                <Tooltip {...tooltipProps}/>
-                <Bar dataKey="value" radius={[0,4,4,0]}
-                  shape={props=>{
-                    const dimension=props?.payload?.dimension;
-                    const dimensionLabel=panelKey.replace(/_/g,' ');
-                    return <Rectangle {...props} style={{cursor:'pointer'}} role="button" tabIndex={0}
-                      aria-label={`Filter by ${dimensionLabel} ${dimension}`}
-                      onClick={()=>activateBarFilter(dimension)}
-                      onKeyDown={event=>handleBarKeyDown(event,dimension)}/>;
-                  }}>
-                  {barItems.map((entry,i)=><Cell key={i} fill={modelColor(entry.dimension)}/>)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>;
-          })()
-      }
-    </div>
-  </div>;
+            const chartItems=barItems.map(item=>({...item,label:item.dimension,color:modelColor(item.dimension),ariaLabel:`Filter by ${panelKey.replace(/_/g,' ')} ${item.dimension}`}));
+            return html`<${HBarChart} items=${chartItems} height=${barH} labelWidth=${130} labelMaxChars=${19} valueFormat=${fmtVal} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>activateBarFilter(item.dimension)} />`;
+          })()} </div> </div>`;
 }
 
 // ── Log Viewer ────────────────────────────────────────────────────────────────
@@ -2836,108 +3788,18 @@ function LogViewer({logData,logSort,setLogSort,logSearch,setLogSearch,logPage,se
     else setLogSort({col,dir:'desc'});
   };
   const SortIcon=({col})=>{
-    if(logSort.col!==col) return <LI.ChevronsUpDown size={10} className="text-slate-600 ml-0.5"/>;
-    return logSort.dir==='desc'?<LI.ChevronDown size={10} className="text-blue-400 ml-0.5"/>:<LI.ChevronUp size={10} className="text-blue-400 ml-0.5"/>;
+    if(logSort.col!==col) return html`<${LI.ChevronsUpDown} size=${10} className=${"text-slate-600 ml-0.5"} />`;
+    return logSort.dir==='desc'?html`<${LI.ChevronDown} size=${10} className=${"text-blue-400 ml-0.5"} />`:html`<${LI.ChevronUp} size=${10} className=${"text-blue-400 ml-0.5"} />`;
   };
   const cols=ALL_COLS.filter(c=>visibleCols.includes(c.key));
   const total=logData?.total||0;
   const pages=logData?.pages||1;
 
-  return <div className="bg-slate-800 rounded-xl p-4">
-    <div className="flex items-center gap-3 mb-3 flex-wrap">
-      <h2 className="text-sm font-medium text-slate-300">Recent Generations</h2>
-      <div className="flex items-center gap-1 bg-slate-700 rounded px-2 flex-1 min-w-32 max-w-56">
-        <LI.Search size={12} className="text-slate-500"/>
-        <input id="log-search" type="text" value={localSearch} onChange={e=>handleSearch(e.target.value)}
-          placeholder="Search..." className="bg-transparent text-xs text-slate-200 outline-none py-1 w-full placeholder-slate-600"/>
-      </div>
-      <div className="relative">
-        <button onClick={()=>setColOpen(!colOpen)} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500">
-          <LI.Columns size={12}/> Cols
-        </button>
-        {colOpen&&<div className="absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 w-40 py-2">
-          {ALL_COLS.map(c=><label key={c.key} className="flex items-center gap-2 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" checked={visibleCols.includes(c.key)}
-              onChange={()=>setVisibleCols(prev=>prev.includes(c.key)?prev.filter(k=>k!==c.key):[...prev,c.key])}
-              className="accent-blue-500"/>
-            {c.label}
-          </label>)}
-        </div>}
-      </div>
-      <button onClick={onExportCSV} className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500">
-        <LI.Download size={12}/> CSV
-      </button>
-      <span className="text-xs text-slate-500 ml-auto">
-        {total>0?`${(logPage-1)*logPageSize+1}–${Math.min(logPage*logPageSize,total)} of ${fmtNum(total)}`:'0 results'}
-      </span>
-    </div>
-
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-slate-700">
-            {cols.map(c=><th key={c.key} className={`p-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none ${c.align==='right'?'text-right':c.align==='center'?'text-center':'text-left'}`}
-              onClick={()=>handleSort(c.key)}>
-              <span className="flex items-center gap-0.5 whitespace-nowrap justify-start">{c.align==='right'&&<span className="flex-1"/>}{c.label}<SortIcon col={c.key}/></span>
-            </th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {data.length===0&&<tr><td colSpan={cols.length} className="p-4 text-center text-slate-500">No generations found</td></tr>}
-          {data.map(row=><React.Fragment key={row.id}>
-            <tr className={`border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-colors ${row.anomalies?.length?'border-l-2 border-l-amber-500':''} ${expandedRow===row.id?'bg-slate-700/40':''}`}
-              onClick={()=>setExpandedRow(expandedRow===row.id?null:row.id)}>
-              {cols.map(c=><td key={c.key} className={`p-2 text-slate-300 ${c.align==='right'?'text-right':c.align==='center'?'text-center':''} max-w-32 truncate`}>
-                {c.fmt?c.fmt(row[c.key]):row[c.key]??'-'}
-                {c.key==='model_short'&&row.anomalies?.length>0&&<span className="ml-1 text-amber-400" title={row.anomalies.join(', ')}>⚠</span>}
-              </td>)}
-            </tr>
-            {expandedRow===row.id&&<tr>
-              <td colSpan={cols.length} className="p-3 bg-slate-900/50">
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs mb-2">
-                  {Object.entries(row).filter(([k])=>!['trace_metadata','anomalies'].includes(k)).map(([k,v])=><div key={k} className="flex gap-2">
-                    <span className="text-slate-500 shrink-0">{k}:</span>
-                    <span className="text-slate-300 break-all">{String(v??'-')}</span>
-                  </div>)}
-                </div>
-                {row.trace_metadata&&<details className="mt-2">
-                  <summary className="text-xs text-slate-500 cursor-pointer">trace_metadata</summary>
-                  <pre className="mt-1 text-xs text-slate-400 bg-slate-900 rounded p-2 overflow-auto max-h-40">{JSON.stringify(JSON.parse(row.trace_metadata||'{}'),null,2)}</pre>
-                </details>}
-              </td>
-            </tr>}
-          </React.Fragment>)}
-        </tbody>
-      </table>
-    </div>
-
-    <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-700">
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-slate-500">Per page:</span>
-        {[25,50,100,250].map(n=><button key={n} onClick={()=>{setLogPageSize(n);setLogPage(1);}}
-          className={`px-2 py-0.5 text-xs rounded ${logPageSize===n?'bg-blue-600 text-white':'text-slate-400 hover:text-slate-200'}`}>{n}</button>)}
-      </div>
-      <div className="flex items-center gap-1">
-        <button onClick={()=>setLogPage(1)} disabled={logPage<=1}
-          className="px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30">First</button>
-        <button onClick={()=>setLogPage(p=>Math.max(1,p-1))} disabled={logPage<=1}
-          className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"><LI.ChevronLeft size={14}/></button>
-        <input type="text" value={logPage} onChange={e=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"}> <div class=${"flex items-center gap-3 mb-3 flex-wrap"}> <h2 class=${"text-sm font-medium text-slate-300"}>Recent Generations</h2> <div class=${"flex items-center gap-1 bg-slate-700 rounded px-2 flex-1 min-w-32 max-w-56"}> <${LI.Search} size=${12} className=${"text-slate-500"} /> <input id=${"log-search"} type=${"text"} value=${localSearch} onInput=${e=>handleSearch(e.target.value)} placeholder=${"Search..."} class=${"bg-transparent text-xs text-slate-200 outline-none py-1 w-full placeholder-slate-600"} /> </div> <div class=${"relative"}> <button onClick=${()=>setColOpen(!colOpen)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Columns} size=${12} /> Cols </button> ${colOpen&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 w-40 py-2"}> ${ALL_COLS.map(c=>html`<label key=${c.key} class=${"flex items-center gap-2 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer"}> <input type=${"checkbox"} checked=${visibleCols.includes(c.key)} onInput=${()=>setVisibleCols(prev=>prev.includes(c.key)?prev.filter(k=>k!==c.key):[...prev,c.key])} class=${"accent-blue-500"} /> ${c.label} </label>`)} </div>`} </div> <button onClick=${onExportCSV} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Download} size=${12} /> CSV </button> <span class=${"text-xs text-slate-500 ml-auto"}> ${total>0?`${(logPage-1)*logPageSize+1}–${Math.min(logPage*logPageSize,total)} of ${fmtNum(total)}`:'0 results'} </span> </div> <div class=${"overflow-x-auto"}> <table class=${"w-full text-xs"}> <thead> <tr class=${"border-b border-slate-700"}> ${cols.map(c=>html`<th key=${c.key} class=${`p-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none ${c.align==='right'?'text-right':c.align==='center'?'text-center':'text-left'}`} onClick=${()=>handleSort(c.key)}> <span class=${"flex items-center gap-0.5 whitespace-nowrap justify-start"}>${c.align==='right'&&html`<span class=${"flex-1"} />`}${c.label}<${SortIcon} col=${c.key} /></span> </th>`)} </tr> </thead> <tbody> ${data.length===0&&html`<tr><td colSpan=${cols.length} class=${"p-4 text-center text-slate-500"}>No generations found</td></tr>`} ${data.map(row=>html`<${preact.Fragment} key=${row.id}> <tr class=${`border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-colors ${row.anomalies?.length?'border-l-2 border-l-amber-500':''} ${expandedRow===row.id?'bg-slate-700/40':''}`} onClick=${()=>setExpandedRow(expandedRow===row.id?null:row.id)}> ${cols.map(c=>html`<td key=${c.key} class=${`p-2 text-slate-300 ${c.align==='right'?'text-right':c.align==='center'?'text-center':''} max-w-32 truncate`}> ${c.fmt?c.fmt(row[c.key]):row[c.key]??'-'} ${c.key==='model_short'&&row.anomalies?.length>0&&html`<span class=${"ml-1 text-amber-400"} title=${row.anomalies.join(', ')}>⚠</span>`} </td>`)} </tr> ${expandedRow===row.id&&html`<tr> <td colSpan=${cols.length} class=${"p-3 bg-slate-900/50"}> <div class=${"grid grid-cols-2 md:grid-cols-3 gap-2 text-xs mb-2"}> ${Object.entries(row).filter(([k])=>!['trace_metadata','anomalies'].includes(k)).map(([k,v])=>html`<div key=${k} class=${"flex gap-2"}> <span class=${"text-slate-500 shrink-0"}>${k}:</span> <span class=${"text-slate-300 break-all"}>${String(v??'-')}</span> </div>`)} </div> ${row.trace_metadata&&html`<details class=${"mt-2"}> <summary class=${"text-xs text-slate-500 cursor-pointer"}>trace_metadata</summary> <pre class=${"mt-1 text-xs text-slate-400 bg-slate-900 rounded p-2 overflow-auto max-h-40"}>${JSON.stringify(JSON.parse(row.trace_metadata||'{}'),null,2)}</pre> </details>`} </td> </tr>`} <//>`)} </tbody> </table> </div> <div class=${"flex items-center justify-between mt-3 pt-3 border-t border-slate-700"}> <div class=${"flex items-center gap-2"}> <span class=${"text-xs text-slate-500"}>Per page:</span> ${[25,50,100,250].map(n=>html`<button key=${n} onClick=${()=>{setLogPageSize(n);setLogPage(1);}} class=${`px-2 py-0.5 text-xs rounded ${logPageSize===n?'bg-blue-600 text-white':'text-slate-400 hover:text-slate-200'}`}>${n}</button>`)} </div> <div class=${"flex items-center gap-1"}> <button onClick=${()=>setLogPage(1)} disabled=${logPage<=1} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>First</button> <button onClick=${()=>setLogPage(p=>Math.max(1,p-1))} disabled=${logPage<=1} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronLeft} size=${14} /></button> <input type=${"text"} value=${logPage} onInput=${e=>{
           const v=parseInt(e.target.value,10);
           if(!isNaN(v)&&v>=1&&v<=pages) setLogPage(v);
           else if(e.target.value==='') setLogPage(1);
-        }}
-          onKeyDown={e=>{if(e.key==='Enter'){const v=parseInt(e.target.value,10);if(!isNaN(v))setLogPage(Math.max(1,Math.min(pages,v)));}}}
-          className="w-10 text-center text-xs text-slate-300 bg-slate-700 rounded px-1 py-0.5 outline-none border border-slate-600 focus:border-blue-500"
-        />
-        <span className="text-xs text-slate-500">/ {pages}</span>
-        <button onClick={()=>setLogPage(p=>Math.min(pages,p+1))} disabled={logPage>=pages}
-          className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"><LI.ChevronRight size={14}/></button>
-        <button onClick={()=>setLogPage(pages)} disabled={logPage>=pages}
-          className="px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30">Last</button>
-      </div>
-    </div>
-  </div>;
+        }} onKeyDown=${e=>{if(e.key==='Enter'){const v=parseInt(e.target.value,10);if(!isNaN(v))setLogPage(Math.max(1,Math.min(pages,v)));}}} class=${"w-10 text-center text-xs text-slate-300 bg-slate-700 rounded px-1 py-0.5 outline-none border border-slate-600 focus:border-blue-500"} /> <span class=${"text-xs text-slate-500"}>/ ${pages}</span> <button onClick=${()=>setLogPage(p=>Math.min(pages,p+1))} disabled=${logPage>=pages} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronRight} size=${14} /></button> <button onClick=${()=>setLogPage(pages)} disabled=${logPage>=pages} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>Last</button> </div> </div> </div>`;
 }
 
 // ── Settings Panel ────────────────────────────────────────────────────────────
@@ -2983,45 +3845,7 @@ function SettingsPanel({onClose,onImportComplete}) {
     setRebuilding(false);
   };
 
-  return <div className="fixed inset-0 z-50 flex">
-    <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={onClose}/>
-    <div className="w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto p-6 flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">Settings</h2>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-200"><LI.X size={20}/></button>
-      </div>
-
-      {health&&<section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Database</h3>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="text-slate-500">Generations:</div><div className="text-slate-300">{fmtNum(health.total_generations)}</div>
-          <div className="text-slate-500">DB size:</div><div className="text-slate-300">{health.db_size_mb} MB</div>
-          <div className="text-slate-500">Version:</div><div className="text-slate-300">{health.version}</div>
-        </div>
-        <button onClick={refreshStats} className="px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded">Refresh Stats</button>
-        <button onClick={rebuildTimestamps} disabled={rebuilding} className="px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded disabled:opacity-50">{rebuilding?'Rebuilding...':'Rebuild Timestamps'}</button>
-      </section>}
-
-      <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Purge Data</h3>
-        <input type="date" value={purgeDate} onChange={e=>setPurgeDate(e.target.value)}
-          className="bg-slate-800 text-xs text-slate-200 px-3 py-2 rounded border border-slate-700 outline-none focus:border-blue-500"/>
-        <button onClick={purge} className="px-3 py-2 text-xs bg-red-700 hover:bg-red-600 text-white rounded">Purge Before Date</button>
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-1">Import</h3>
-        <input type="file" ref={fileRef} accept=".csv" onChange={importFile} className="hidden"/>
-        <button onClick={()=>fileRef.current?.click()} disabled={importing}
-          className="flex items-center gap-2 px-3 py-2 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded">
-          {importing?<Spinner/>:<LI.Upload size={12}/>} Import CSV
-        </button>
-        {importResult&&<div className={`text-xs p-2 rounded ${importResult.error?'bg-red-900/40 text-red-300':'bg-green-900/40 text-green-300'}`}>
-          {importResult.error||`Inserted: ${importResult.inserted}, Skipped: ${importResult.skipped}`}
-        </div>}
-      </section>
-    </div>
-  </div>;
+  return html`<div class=${"fixed inset-0 z-50 flex"}> <div class=${"flex-1 bg-black/60 backdrop-blur-sm"} onClick=${onClose} /> <div class=${"w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto p-6 flex flex-col gap-6"}> <div class=${"flex items-center justify-between"}> <h2 class=${"text-lg font-semibold text-slate-100"}>Settings</h2> <button onClick=${onClose} class=${"text-slate-400 hover:text-slate-200"}><${LI.X} size=${20} /></button> </div> ${health&&html`<section class=${"flex flex-col gap-2"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Database</h3> <div class=${"grid grid-cols-2 gap-2 text-xs"}> <div class=${"text-slate-500"}>Generations:</div><div class=${"text-slate-300"}>${fmtNum(health.total_generations)}</div> <div class=${"text-slate-500"}>DB size:</div><div class=${"text-slate-300"}>${health.db_size_mb} MB</div> <div class=${"text-slate-500"}>Version:</div><div class=${"text-slate-300"}>${health.version}</div> </div> <button onClick=${refreshStats} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}>Refresh Stats</button> <button onClick=${rebuildTimestamps} disabled=${rebuilding} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded disabled:opacity-50"}>${rebuilding?'Rebuilding...':'Rebuild Timestamps'}</button> </section>`} <section class=${"flex flex-col gap-3"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Purge Data</h3> <input type=${"date"} value=${purgeDate} onInput=${e=>setPurgeDate(e.target.value)} class=${"bg-slate-800 text-xs text-slate-200 px-3 py-2 rounded border border-slate-700 outline-none focus:border-blue-500"} /> <button onClick=${purge} class=${"px-3 py-2 text-xs bg-red-700 hover:bg-red-600 text-white rounded"}>Purge Before Date</button> </section> <section class=${"flex flex-col gap-3"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Import</h3> <input type=${"file"} ref=${fileRef} accept=${".csv"} onInput=${importFile} class=${"hidden"} /> <button onClick=${()=>fileRef.current?.click()} disabled=${importing} class=${"flex items-center gap-2 px-3 py-2 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}> ${importing?html`<${Spinner} />`:html`<${LI.Upload} size=${12} />`} Import CSV </button> ${importResult&&html`<div class=${`text-xs p-2 rounded ${importResult.error?'bg-red-900/40 text-red-300':'bg-green-900/40 text-green-300'}`}> ${importResult.error||`Inserted: ${importResult.inserted}, Skipped: ${importResult.skipped}`} </div>`} </section> </div> </div>`;
 }
 
 // ── Shortcuts Modal ───────────────────────────────────────────────────────────
@@ -3030,18 +3854,7 @@ function ShortcutsModal({onClose}) {
     ['/','Focus log search'],['←','Previous time period'],['→','Next time period'],
     ['R','Refresh data'],['Esc','Clear all filters'],['?','Show this help'],
   ];
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-80" onClick={e=>e.stopPropagation()}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-slate-200">Keyboard Shortcuts</h3>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><LI.X size={16}/></button>
-      </div>
-      {shortcuts.map(([k,d])=><div key={k} className="flex items-center justify-between py-1.5 border-b border-slate-800">
-        <span className="text-xs text-slate-400">{d}</span>
-        <kbd className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 font-mono">{k}</kbd>
-      </div>)}
-    </div>
-  </div>;
+  return html`<div class=${"fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"} onClick=${onClose}> <div class=${"bg-slate-900 border border-slate-700 rounded-2xl p-6 w-80"} onClick=${e=>e.stopPropagation()}> <div class=${"flex items-center justify-between mb-4"}> <h3 class=${"text-sm font-semibold text-slate-200"}>Keyboard Shortcuts</h3> <button onClick=${onClose} class=${"text-slate-500 hover:text-slate-300"}><${LI.X} size=${16} /></button> </div> ${shortcuts.map(([k,d])=>html`<div key=${k} class=${"flex items-center justify-between py-1.5 border-b border-slate-800"}> <span class=${"text-xs text-slate-400"}>${d}</span> <kbd class=${"bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 font-mono"}>${k}</kbd> </div>`)} </div> </div>`;
 }
 
 // ── Saved Views ───────────────────────────────────────────────────────────────
@@ -3052,32 +3865,7 @@ function SavedViewsDropdown({views,onSelect,onSave,onDelete}) {
   const ref=useRef();
   useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
-  return <div ref={ref} className="relative">
-    <button onClick={()=>setOpen(!open)} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:border-slate-500 hover:text-slate-300">
-      <LI.Bookmark size={12}/> Views <LI.ChevronDown size={10}/>
-    </button>
-    {open&&<div className="absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-56 py-2">
-      {saving?<div className="px-3 py-2">
-        <input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="View name..."
-          autoFocus onKeyDown={e=>{if(e.key==='Enter'&&name){onSave(name);setSaving(false);setName('');setOpen(false);}if(e.key==='Escape') setSaving(false);}}
-          className="w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none mb-2"/>
-        <div className="flex gap-2">
-          <button onClick={()=>setSaving(false)} className="flex-1 py-1 text-xs text-slate-400 border border-slate-700 rounded">Cancel</button>
-          <button onClick={()=>{if(name){onSave(name);setSaving(false);setName('');setOpen(false);}}} className="flex-1 py-1 text-xs bg-blue-600 text-white rounded">Save</button>
-        </div>
-      </div>:<>
-        <button onClick={()=>setSaving(true)} className="w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-700 flex items-center gap-2">
-          <LI.Plus size={12}/> Save current view
-        </button>
-        {views.length>0&&<div className="border-t border-slate-700 mt-1 pt-1">
-          {views.map(v=><div key={v.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-slate-700 group">
-            <button onClick={()=>{onSelect(v);setOpen(false);}} className="text-xs text-slate-300 truncate flex-1 text-left">{v.name}</button>
-            <button onClick={()=>onDelete(v.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-2"><LI.Trash2 size={10}/></button>
-          </div>)}
-        </div>}
-      </>}
-    </div>}
-  </div>;
+  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:border-slate-500 hover:text-slate-300"}> <${LI.Bookmark} size=${12} /> Views <${LI.ChevronDown} size=${10} /> </button> ${open&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-56 py-2"}> ${saving?html`<div class=${"px-3 py-2"}> <input type=${"text"} value=${name} onInput=${e=>setName(e.target.value)} placeholder=${"View name..."} ref=${focusOnMount} onKeyDown=${e=>{if(e.key==='Enter'&&name){onSave(name);setSaving(false);setName('');setOpen(false);}if(e.key==='Escape') setSaving(false);}} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none mb-2"} /> <div class=${"flex gap-2"}> <button onClick=${()=>setSaving(false)} class=${"flex-1 py-1 text-xs text-slate-400 border border-slate-700 rounded"}>Cancel</button> <button onClick=${()=>{if(name){onSave(name);setSaving(false);setName('');setOpen(false);}}} class=${"flex-1 py-1 text-xs bg-blue-600 text-white rounded"}>Save</button> </div> </div>`:html` <button onClick=${()=>setSaving(true)} class=${"w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-700 flex items-center gap-2"}> <${LI.Plus} size=${12} /> Save current view </button> ${views.length>0&&html`<div class=${"border-t border-slate-700 mt-1 pt-1"}> ${views.map(v=>html`<div key=${v.id} class=${"flex items-center justify-between px-3 py-1.5 hover:bg-slate-700 group"}> <button onClick=${()=>{onSelect(v);setOpen(false);}} class=${"text-xs text-slate-300 truncate flex-1 text-left"}>${v.name}</button> <button onClick=${()=>onDelete(v.id)} class=${"opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-2"}><${LI.Trash2} size=${10} /></button> </div>`)} </div>`} `} </div>`} </div>`;
 }
 
 // ── Header ────────────────────────────────────────────────────────────────────
@@ -3107,86 +3895,15 @@ function Header({timeRange,setTimeRange,customFrom,setCustomFrom,customTo,setCus
   const activeRangeLabel = RANGE_OPTS.find(o=>o.v===timeRange)?.l||'Custom Range';
   const resolvedRange = summary?.from&&summary?.to ? formatResolvedRange(summary.from, summary.to, tz) : null;
 
-  return <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-col gap-2 sticky top-0 z-30">
-    <div className="flex items-center gap-3 flex-wrap">
-      <span className="font-bold text-blue-400 text-sm tracking-wide shrink-0">RouterView</span>
-
-      <select value={timeRange} onChange={e=>setTimeRange(e.target.value)}
-        className="bg-slate-800 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-700 outline-none focus:border-blue-500 cursor-pointer">
-        {RANGE_OPTS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-      </select>
-
-      {timeRange==='custom'&&<>
-        <input type="datetime-local" value={customFrom||''} onChange={e=>setCustomFrom(e.target.value)}
-          className="bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"/>
-        <span className="text-slate-600 text-xs">to</span>
-        <input type="datetime-local" value={customTo||''} onChange={e=>setCustomTo(e.target.value)}
-          className="bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"/>
-      </>}
-
-      <div className="flex items-center gap-1.5">
-        <label className="flex items-center gap-1.5 cursor-pointer">
-          <div onClick={()=>setCompareEnabled(!compareEnabled)} className={`w-8 h-4 rounded-full transition-colors cursor-pointer relative ${compareEnabled?'bg-blue-600':'bg-slate-700'}`}>
-            <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${compareEnabled?'left-4.5':'left-0.5'}`} style={{left:compareEnabled?18:2}}/>
-          </div>
-          <span className="text-xs text-slate-400">Compare</span>
-        </label>
-        {compareEnabled&&<select value={compareMode} onChange={e=>setCompareMode(e.target.value)}
-          className="bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 outline-none">
-          {COMPARE_OPTS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>}
-      </div>
-
-      <div className="flex items-center gap-1 ml-auto">
-        <select value={chartType} onChange={e=>setChartType(e.target.value)}
-          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
-          {CHART_TYPES.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>
-        <select value={metric} onChange={e=>setMetric(e.target.value)}
-          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
-          {METRICS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>
-        <select value={groupBy} onChange={e=>setGroupBy(e.target.value)}
-          className="bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none">
-          {GROUPS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>
-        <SavedViewsDropdown views={views} onSelect={onSelectView} onSave={onSaveView} onDelete={onDeleteView}/>
-        <button onClick={onSettings} className="p-1.5 text-slate-400 hover:text-slate-200 rounded"><LI.Settings size={14}/></button>
-      </div>
-    </div>
-
-    {resolvedRange&&<div className="text-xs text-slate-500">
-      {activeRangeLabel}: {resolvedRange}
-    </div>}
-
-    {dimensions&&<div className="flex items-center gap-2 flex-wrap">
-      <FilterDropdown label="Model" options={dimensions.models||[]} selected={filters.model} onChange={v=>setFilters(f=>({...f,model:v}))}/>
-      <FilterDropdown label="Provider" options={dimensions.providers||[]} selected={filters.provider} onChange={v=>setFilters(f=>({...f,provider:v}))}/>
-      <FilterDropdown label="API Key" options={dimensions.api_keys||[]} selected={filters.api_key} onChange={v=>setFilters(f=>({...f,api_key:v}))}/>
-      <FilterDropdown label="Origin" options={dimensions.origins||[]} selected={filters.origin} onChange={v=>setFilters(f=>({...f,origin:v}))}/>
-      <FilterDropdown label="Finish" options={dimensions.finish_reasons||[]} selected={filters.finish_reason} onChange={v=>setFilters(f=>({...f,finish_reason:v}))}/>
-      {hasFilters&&<button onClick={clearAll} className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"><LI.X size={10}/> Clear all</button>}
-    </div>}
-
-    {hasFilters&&<div className="flex flex-wrap gap-1.5">
-      {Object.entries(filters).flatMap(([k,vals])=>vals.map(v=><span key={k+v} className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full">
-        {k}:{v}
-        <button onClick={()=>setFilters(f=>({...f,[k]:f[k].filter(x=>x!==v)}))} className="hover:text-blue-100"><LI.X size={9}/></button>
-      </span>))}
-    </div>}
-  </div>;
+  return html`<div class=${"bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-col gap-2 sticky top-0 z-30"}> <div class=${"flex items-center gap-3 flex-wrap"}> <span class=${"font-bold text-blue-400 text-sm tracking-wide shrink-0"}>RouterView</span> <select value=${timeRange} onInput=${e=>setTimeRange(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-700 outline-none focus:border-blue-500 cursor-pointer"}> ${RANGE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> ${timeRange==='custom'&&html` <input type=${"datetime-local"} value=${customFrom||''} onInput=${e=>setCustomFrom(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} /> <span class=${"text-slate-600 text-xs"}>to</span> <input type=${"datetime-local"} value=${customTo||''} onInput=${e=>setCustomTo(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} /> `} <div class=${"flex items-center gap-1.5"}> <label class=${"flex items-center gap-1.5 cursor-pointer"}> <div onClick=${()=>setCompareEnabled(!compareEnabled)} class=${`w-8 h-4 rounded-full transition-colors cursor-pointer relative ${compareEnabled?'bg-blue-600':'bg-slate-700'}`}> <span class=${`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${compareEnabled?'left-4.5':'left-0.5'}`} style=${{left:compareEnabled?18:2}} /> </div> <span class=${"text-xs text-slate-400"}>Compare</span> </label> ${compareEnabled&&html`<select value=${compareMode} onInput=${e=>setCompareMode(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 outline-none"}> ${COMPARE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select>`} </div> <div class=${"flex items-center gap-1 ml-auto"}> <select value=${chartType} onInput=${e=>setChartType(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${CHART_TYPES.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <select value=${metric} onInput=${e=>setMetric(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${METRICS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <select value=${groupBy} onInput=${e=>setGroupBy(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${GROUPS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <${SavedViewsDropdown} views=${views} onSelect=${onSelectView} onSave=${onSaveView} onDelete=${onDeleteView} /> <button onClick=${onSettings} class=${"p-1.5 text-slate-400 hover:text-slate-200 rounded"}><${LI.Settings} size=${14} /></button> </div> </div> ${resolvedRange&&html`<div class=${"text-xs text-slate-500"}> ${activeRangeLabel}: ${resolvedRange} </div>`} ${dimensions&&html`<div class=${"flex items-center gap-2 flex-wrap"}> <${FilterDropdown} label=${"Model"} options=${dimensions.models||[]} selected=${filters.model} onChange=${v=>setFilters(f=>({...f,model:v}))} /> <${FilterDropdown} label=${"Provider"} options=${dimensions.providers||[]} selected=${filters.provider} onChange=${v=>setFilters(f=>({...f,provider:v}))} /> <${FilterDropdown} label=${"API Key"} options=${dimensions.api_keys||[]} selected=${filters.api_key} onChange=${v=>setFilters(f=>({...f,api_key:v}))} /> <${FilterDropdown} label=${"Origin"} options=${dimensions.origins||[]} selected=${filters.origin} onChange=${v=>setFilters(f=>({...f,origin:v}))} /> <${FilterDropdown} label=${"Finish"} options=${dimensions.finish_reasons||[]} selected=${filters.finish_reason} onChange=${v=>setFilters(f=>({...f,finish_reason:v}))} /> ${hasFilters&&html`<button onClick=${clearAll} class=${"text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"}><${LI.X} size=${10} /> Clear all</button>`} </div>`} ${hasFilters&&html`<div class=${"flex flex-wrap gap-1.5"}> ${Object.entries(filters).flatMap(([k,vals])=>vals.map(v=>html`<span key=${k+v} class=${"flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full"}> ${k}:${v} <button onClick=${()=>setFilters(f=>({...f,[k]:f[k].filter(x=>x!==v)}))} class=${"hover:text-blue-100"}><${LI.X} size=${9} /></button> </span>`))} </div>`} </div>`;
 }
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
-class ErrorBoundary extends React.Component {
+class ErrorBoundary extends preact.Component {
   constructor(p){super(p);this.state={error:null};}
   static getDerivedStateFromError(e){return{error:e};}
   render(){
-    if(this.state.error) return <div className="p-8 text-red-400 text-sm">
-      <h2 className="font-bold mb-2">Something went wrong</h2>
-      <pre className="text-xs opacity-70 overflow-auto">{this.state.error.message}</pre>
-      <button onClick={()=>this.setState({error:null})} className="mt-4 px-3 py-1 border border-red-700 rounded text-xs hover:bg-red-900/30">Retry</button>
-    </div>;
+    if(this.state.error) return html`<div class=${"p-8 text-red-400 text-sm"}> <h2 class=${"font-bold mb-2"}>Something went wrong</h2> <pre class=${"text-xs opacity-70 overflow-auto"}>${this.state.error.message}</pre> <button onClick=${()=>this.setState({error:null})} class=${"mt-4 px-3 py-1 border border-red-700 rounded text-xs hover:bg-red-900/30"}>Retry</button> </div>`;
     return this.props.children;
   }
 }
@@ -3412,72 +4129,642 @@ function App() {
   const exportLog=()=>window.open(`/api/export/csv?view=generations&${buildQS()}`);
   const exportTimeseries=()=>window.open(`/api/export/csv?view=timeseries&${buildQS()}`);
 
-  return <div className="min-h-screen bg-slate-950">
-    <ErrorBanner error={error} onRetry={()=>{fetchData();fetchLog();}}/>
-    <Header
-      timeRange={timeRange} setTimeRange={setTimeRange}
-      customFrom={customFrom} setCustomFrom={setCustomFrom}
-      customTo={customTo} setCustomTo={setCustomTo}
-      filters={filters} setFilters={setFilters}
-      dimensions={dimensions}
-      summary={summary}
-      tz={tz}
-      onSettings={()=>setShowSettings(true)}
-      compareEnabled={compareEnabled} setCompareEnabled={setCompareEnabled}
-      compareMode={compareMode} setCompareMode={setCompareMode}
-      views={views} onSelectView={selectView} onSaveView={saveView} onDeleteView={deleteView}
-      chartType={chartType} setChartType={setChartType}
-      metric={metric} setMetric={setMetric}
-      groupBy={groupBy} setGroupBy={setGroupBy}
-    />
-
-    <div className="p-4 flex flex-col gap-4 max-w-[1600px] mx-auto">
-      <KPICards summary={summary} costCycle={costCycle} setCostCycle={setCostCycle} latCycle={latCycle} setLatCycle={setLatCycle}/>
-
-      <div ref={mainChartRef}>
-        {chartType==='heatmap'
-          ?<HeatmapView data={heatmapData}/>
-          :<MainChart data={timeseries} chartType={chartType} metric={metric} groupBy={groupBy} comparison={compareEnabled} onExport={exportTimeseries}/>
-        }
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {panelOrder.map(key=>{
+  return html`<div class=${"min-h-screen bg-slate-950"}> <${ErrorBanner} error=${error} onRetry=${()=>{fetchData();fetchLog();}} /> <${Header} timeRange=${timeRange} setTimeRange=${setTimeRange} customFrom=${customFrom} setCustomFrom=${setCustomFrom} customTo=${customTo} setCustomTo=${setCustomTo} filters=${filters} setFilters=${setFilters} dimensions=${dimensions} summary=${summary} tz=${tz} onSettings=${()=>setShowSettings(true)} compareEnabled=${compareEnabled} setCompareEnabled=${setCompareEnabled} compareMode=${compareMode} setCompareMode=${setCompareMode} views=${views} onSelectView=${selectView} onSaveView=${saveView} onDeleteView=${deleteView} chartType=${chartType} setChartType=${setChartType} metric=${metric} setMetric=${setMetric} groupBy=${groupBy} setGroupBy=${setGroupBy} /> <div class=${"p-4 flex flex-col gap-4 max-w-[1600px] mx-auto"}> <${KPICards} summary=${summary} costCycle=${costCycle} setCostCycle=${setCostCycle} latCycle=${latCycle} setLatCycle=${setLatCycle} /> <div ref=${mainChartRef}> ${chartType==='heatmap'
+          ?html`<${HeatmapView} data=${heatmapData} />`
+          :html`<${MainChart} data=${timeseries} chartType=${chartType} metric=${metric} groupBy=${groupBy} comparison=${compareEnabled} onExport=${exportTimeseries} />`} </div> <div class=${"grid grid-cols-1 md:grid-cols-3 gap-4"}> ${panelOrder.map(key=>{
           const def=panelDefs[key]; if(!def) return null;
-          return <BreakdownPanel key={key}
-            title={def.title} data={breakdown[key]} type={def.type} metric={def.metric}
-            onFilter={val=>onPanelFilter(def.dim,val)}
-            chartRef={panelRefs[key]} panelKey={key} exportQS={buildQS()}
-            dragProps={{
+          return html`<${BreakdownPanel} key=${key} title=${def.title} data=${breakdown[key]} type=${def.type} metric=${def.metric} onFilter=${val=>onPanelFilter(def.dim,val)} chartRef=${panelRefs[key]} panelKey=${key} exportQS=${buildQS()} dragProps=${{
               draggable:true,
               onDragStart:e=>dragStart(e,key),
               onDragOver:dragOver, onDragLeave:dragLeave,
               onDrop:e=>drop(e,key),
-            }}/>;
-        })}
-      </div>
-
-      <LogViewer logData={logData} logSort={logSort} setLogSort={setLogSort}
-        logSearch={logSearch} setLogSearch={setLogSearch}
-        logPage={logPage} setLogPage={setLogPage}
-        logPageSize={logPageSize} setLogPageSize={setLogPageSize}
-        visibleCols={visibleCols} setVisibleCols={setVisibleCols}
-        expandedRow={expandedRow} setExpandedRow={setExpandedRow}
-        onExportCSV={exportLog}/>
-    </div>
-
-    {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onImportComplete={()=>{fetchData();fetchLog();}}/>}
-    {showShortcuts&&<ShortcutsModal onClose={()=>setShowShortcuts(false)}/>}
-  </div>;
+            }} />`;
+        })} </div> <${LogViewer} logData=${logData} logSort=${logSort} setLogSort=${setLogSort} logSearch=${logSearch} setLogSearch=${setLogSearch} logPage=${logPage} setLogPage=${setLogPage} logPageSize=${logPageSize} setLogPageSize=${setLogPageSize} visibleCols=${visibleCols} setVisibleCols=${setVisibleCols} expandedRow=${expandedRow} setExpandedRow=${setExpandedRow} onExportCSV=${exportLog} /> </div> ${showSettings&&html`<${SettingsPanel} onClose=${()=>setShowSettings(false)} onImportComplete=${()=>{fetchData();fetchLog();}} />`} ${showShortcuts&&html`<${ShortcutsModal} onClose=${()=>setShowShortcuts(false)} />`} </div>`;
 }
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
-ReactDOMClient.createRoot(document.getElementById('root')).render(
-  React.createElement(ErrorBoundary, null, React.createElement(App))
-);
+preact.render(preact.h(ErrorBoundary, null, preact.h(App)), document.getElementById('root'));
 </script>
 </body>
 </html>"""
+
+# frontend-vendor:begin preact hooks htm kit svg-charts
+FRONTEND_VENDOR_HTML = r"""<!--
+The MIT License (MIT)
+
+Copyright (c) 2015-present Jason Miller
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-->
+<!--
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2018 Google Inc.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((n||self).preact={})}(this,function(n){var t,i,e,r,f,o,u,c,s,a,h,l,p,y,v,d,w="http://www.w3.org/2000/svg",_="http://www.w3.org/1999/xhtml",g=null,m=void 0,b={},k=[],x=/acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i,M=Array.isArray;function S(n,t){for(var i in t)n[i]=t[i];return n}function T(n){n&&n.parentNode&&n.parentNode.removeChild(n)}function $(n,i,e){var r,f,o,u={};for(o in i)"key"==o?r=i[o]:"ref"==o?f=i[o]:u[o]=i[o];if(arguments.length>2&&(u.children=arguments.length>3?t.call(arguments,2):e),"function"==typeof n&&n.defaultProps!=g)for(o in n.defaultProps)u[o]===m&&(u[o]=n.defaultProps[o]);return C(n,u,r,f,g)}function C(n,t,r,f,o){var u={type:n,props:t,key:r,ref:f,__k:g,__:g,__b:0,__e:g,__c:g,constructor:m,__v:o==g?++e:o,__i:-1,__u:0};return o==g&&i.vnode!=g&&i.vnode(u),u}function I(n){return n.children}function P(n,t){this.props=n,this.context=t}function j(n,t){if(t==g)return n.__?j(n.__,n.__i+1):g;for(var i;t<n.__k.length;t++)if((i=n.__k[t])!=g&&i.__e!=g)return i.__e;return"function"==typeof n.type?j(n):g}function A(n){if(n.__P&&n.__d){var t=n.__v,e=t.__e,r=[],f=[],o=S({},t);o.__v=t.__v+1,i.vnode&&i.vnode(o),E(n.__P,o,t,n.__n,n.__P.namespaceURI,32&t.__u?[e]:g,r,e==g?j(t):e,!!(32&t.__u),f),o.__v=t.__v,o.__.__k[o.__i]=o,J(r,o,f),t.__e=t.__=null,o.__e!=e&&H(o)}}function H(n){if((n=n.__)!=g&&n.__c!=g)return n.__e=n.__c.base=g,n.__k.some(function(t){if(t!=g&&t.__e!=g)return n.__e=n.__c.base=t.__e}),H(n)}function L(n){(!n.__d&&(n.__d=!0)&&f.push(n)&&!F.__r++||o!=i.debounceRendering)&&((o=i.debounceRendering)||u)(F)}function F(){try{for(var n,t=1;f.length;)f.length>t&&f.sort(c),n=f.shift(),t=f.length,A(n)}finally{f.length=F.__r=0}}function O(n,t,i,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w=e&&e.__k||k,_=t.length;for(c=z(i,t,w,c,_),h=0;h<_;h++)(p=i.__k[h])!=g&&(l=-1!=p.__i&&w[p.__i]||b,p.__i=h,d=E(n,p,l,r,f,o,u,c,s,a),y=p.__e,p.ref&&l.ref!=p.ref&&(l.ref&&R(l.ref,g,p),a.push(p.ref,p.__c||y,p)),v==g&&y!=g&&(v=y),4&p.__u?(c=N(p,c,n),l.__e&&(l.__e=g)):"function"==typeof p.type&&d!==m?c=d:y&&(c=y.nextSibling),p.__u&=-7);return i.__e=v,c}function z(n,t,i,e,r){var f,o,u,c,s,a=i.length,h=a,l=0;for(n.__k=new Array(r),f=0;f<r;f++)(o=t[f])!=g&&"boolean"!=typeof o&&"function"!=typeof o?("string"==typeof o||"number"==typeof o||"bigint"==typeof o||o.constructor==String?o=n.__k[f]=C(g,o,g,g,g):M(o)?o=n.__k[f]=C(I,{children:o},g,g,g):o.constructor===m&&o.__b>0?o=n.__k[f]=C(o.type,o.props,o.key,o.ref?o.ref:g,o.__v):n.__k[f]=o,c=f+l,o.__=n,o.__b=n.__b+1,s=o.__i=V(o,i,c,h),u=g,-1!=s&&(h--,(u=i[s])&&(u.__u|=2)),u==g||u.__v==g?(-1==s&&(r>a?l--:r<a&&l++),"function"!=typeof o.type&&(o.__u|=4)):s!=c&&(s==c-1?l--:s==c+1?l++:(s>c?l--:l++,o.__u|=4))):n.__k[f]=g;if(h)for(f=0;f<a;f++)(u=i[f])!=g&&0==(2&u.__u)&&(u.__e==e&&(e=j(u)),U(u,u));return e}function N(n,t,i){var e,r;if("function"==typeof n.type){for(e=n.__k,r=0;e&&r<e.length;r++)e[r]&&(e[r].__=n,t=N(e[r],t,i));return t}n.__e!=t&&(t&&n.type&&!t.parentNode&&(t=j(n)),t=i.insertBefore(n.__e,t||g));do{t=t&&t.nextSibling}while(t!=g&&8==t.nodeType);return t}function V(n,t,i,e){var r,f,o,u=n.key,c=n.type,s=t[i],a=s!=g&&0==(2&s.__u);if(s===g&&null==u||a&&u==s.key&&c==s.type)return i;if(e>(a?1:0))for(r=i-1,f=i+1;r>=0||f<t.length;)if((s=t[o=r>=0?r--:f++])!=g&&0==(2&s.__u)&&u==s.key&&c==s.type)return o;return-1}function q(n,t,i){"-"==t[0]?n.setProperty(t,i==g?"":i):n[t]=i==g?"":"number"!=typeof i||x.test(t)?i:i+"px"}function B(n,t,i,e,r){var f,o;n:if("style"==t)if("string"==typeof i)n.style.cssText=i;else{if("string"==typeof e&&(n.style.cssText=e=""),e)for(t in e)i&&t in i||q(n.style,t,"");if(i)for(t in i)e&&i[t]==e[t]||q(n.style,t,i[t])}else if("o"==t[0]&&"n"==t[1])f=t!=(t=t.replace(l,"$1")),o=t.toLowerCase(),t=o in n||"onFocusOut"==t||"onFocusIn"==t?o.slice(2):t.slice(2),n.l||(n.l={}),n.l[t+f]=i,i?e?i[h]=e[h]:(i[h]=p,n.addEventListener(t,f?v:y,f)):n.removeEventListener(t,f?v:y,f);else{if(r==w)t=t.replace(/xlink(H|:h)/,"h").replace(/sName$/,"s");else if("width"!=t&&"height"!=t&&"href"!=t&&"list"!=t&&"form"!=t&&"tabIndex"!=t&&"download"!=t&&"rowSpan"!=t&&"colSpan"!=t&&"role"!=t&&"popover"!=t&&t in n)try{n[t]=i==g?"":i;break n}catch(n){}"function"==typeof i||(i==g||!1===i&&"-"!=t[4]?n.removeAttribute(t):n.setAttribute(t,"popover"==t&&1==i?"":i))}}function D(n){return function(t){if(this.l){var e=this.l[t.type+n];if(t[a]==g)t[a]=p++;else if(t[a]<e[h])return;return e(i.event?i.event(t):t)}}}function E(n,t,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w,_,b,x,$,C,A,H,L,F,z=t.type;if(t.constructor!==m)return g;128&e.__u&&(s=!!(32&e.__u),o=[c=t.__e=e.__e]),(h=i.__b)&&h(t);n:if("function"==typeof z){l=u.length;try{if(b=t.props,x=z.prototype&&z.prototype.render,$=(h=z.contextType)&&r[h.__c],C=h?$?$.props.value:h.__:r,e.__c?_=(p=t.__c=e.__c).__=p.__E:(x?t.__c=p=new z(b,C):(t.__c=p=new P(b,C),p.constructor=z,p.render=W),$&&$.sub(p),p.state||(p.state={}),p.__n=r,y=p.__d=!0,p.__h=[],p._sb=[]),x&&p.__s==g&&(p.__s=p.state),x&&z.getDerivedStateFromProps!=g&&(p.__s==p.state&&(p.__s=S({},p.__s)),S(p.__s,z.getDerivedStateFromProps(b,p.__s))),v=p.props,d=p.state,p.__v=t,y)x&&z.getDerivedStateFromProps==g&&p.componentWillMount!=g&&p.componentWillMount(),x&&p.componentDidMount!=g&&p.__h.push(p.componentDidMount);else{if(x&&z.getDerivedStateFromProps==g&&b!==v&&p.componentWillReceiveProps!=g&&p.componentWillReceiveProps(b,C),t.__v==e.__v||!p.__e&&p.shouldComponentUpdate!=g&&!1===p.shouldComponentUpdate(b,p.__s,C)){t.__v!=e.__v&&(p.props=b,p.state=p.__s,p.__d=!1),t.__e=e.__e,t.__k=e.__k,t.__k.some(function(n){n&&(n.__=t)}),k.push.apply(p.__h,p._sb),p._sb=[],p.__h.length&&u.push(p),c=j(e);break n}p.componentWillUpdate!=g&&p.componentWillUpdate(b,p.__s,C),x&&p.componentDidUpdate!=g&&p.__h.push(function(){p.componentDidUpdate(v,d,w)})}if(p.context=C,p.props=b,p.__P=n,p.__e=!1,A=i.__r,H=0,x)p.state=p.__s,p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),k.push.apply(p.__h,p._sb),p._sb=[];else do{p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),p.state=p.__s}while(p.__d&&++H<25);p.state=p.__s,p.getChildContext!=g&&(r=S(S({},r),p.getChildContext())),x&&!y&&p.getSnapshotBeforeUpdate!=g&&(w=p.getSnapshotBeforeUpdate(v,d)),L=h!=g&&h.type===I&&h.key==g?K(h.props.children):h,c=O(n,M(L)?L:[L],t,e,r,f,o,u,c,s,a),p.base=t.__e,t.__u&=-161,p.__h.length&&u.push(p),_&&(p.__E=p.__=g)}catch(n){if(u.length=l,t.__v=g,s||o!=g){if(n.then){for(t.__u|=s?160:128;c&&8==c.nodeType&&c.nextSibling;)c=c.nextSibling;o!=g&&(o[o.indexOf(c)]=g),t.__e=c}else if(o!=g)for(F=o.length;F--;)T(o[F])}else t.__e=e.__e;t.__k==g&&(t.__k=e.__k||[]),n.then||G(t),i.__e(n,t,e)}}else o==g&&t.__v==e.__v?(t.__k=e.__k,t.__e=e.__e):c=t.__e=Q(e.__e,t,e,r,f,o,u,s,a);return(h=i.diffed)&&h(t),128&t.__u?void 0:c}function G(n){n&&(n.__c&&(n.__c.__e=!0),n.__k&&n.__k.some(G))}function J(n,t,e){for(var r=0;r<e.length;r++)R(e[r],e[++r],e[++r]);i.__c&&i.__c(t,n),n.some(function(t){try{n=t.__h,t.__h=[],n.some(function(n){n.call(t)})}catch(n){i.__e(n,t.__v)}})}function K(n){return"object"!=typeof n||n==g||n.__b>0?n:M(n)?n.map(K):n.constructor!==m?null:S({},n)}function Q(n,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,k,x=r.props||b,S=e.props,$=e.type;if("svg"==$?o=w:"math"==$?o="http://www.w3.org/1998/Math/MathML":o||(o=_),u!=g)for(h=0;h<u.length;h++)if((v=u[h])&&"setAttribute"in v==!!$&&($?v.localName==$:3==v.nodeType)){n=v,u[h]=g;break}if(n==g){if($==g)return document.createTextNode(S);n=document.createElementNS(o,$,S.is&&S),s&&(i.__m&&i.__m(e,u),s=!1),u=g}if($==g)x===S||s&&n.data==S||(n.data=S);else{if(u="textarea"==$&&S.defaultValue!=g?g:u&&t.call(n.childNodes),!s&&u!=g)for(x={},h=0;h<n.attributes.length;h++)x[(v=n.attributes[h]).name]=v.value;for(h in x)v=x[h],"dangerouslySetInnerHTML"==h?p=v:"children"==h||h in S||"value"==h&&"defaultValue"in S||"checked"==h&&"defaultChecked"in S||B(n,h,g,v,o);for(h in S)v=S[h],"children"==h?y=v:"dangerouslySetInnerHTML"==h?l=v:"value"==h?d=v:"checked"==h?k=v:s&&"function"!=typeof v||x[h]===v||B(n,h,v,x[h],o);if(l)s||p&&(l.__html==p.__html||l.__html==n.innerHTML)||(n.innerHTML=l.__html),e.__k=[];else if(p&&(n.innerHTML=""),O("template"==e.type?n.content:n,M(y)?y:[y],e,r,f,"foreignObject"==$?_:o,u,c,u?u[0]:r.__k&&j(r,0),s,a),u!=g)for(h=u.length;h--;)T(u[h]);s&&"textarea"!=$||(h="value","progress"==$&&d==g?n.removeAttribute("value"):d!=m&&(d!==n[h]||"progress"==$&&!d||"option"==$&&d!=x[h])&&B(n,h,d,x[h],o),h="checked",k!=m&&k!=n[h]&&B(n,h,k,x[h],o))}return n}function R(n,t,e){try{if("function"==typeof n){var r="function"==typeof n.__u;r&&n.__u(),r&&t==g||(n.__u=n(t))}else n.current=t}catch(n){i.__e(n,e)}}function U(n,t,e){var r,f;if(i.unmount&&i.unmount(n),(r=n.ref)&&(r.current&&r.current!=n.__e||R(r,g,t)),(r=n.__c)!=g){if(r.componentWillUnmount)try{r.componentWillUnmount()}catch(n){i.__e(n,t)}r.base=r.__P=r.__n=g}if(r=n.__k)for(f=0;f<r.length;f++)r[f]&&U(r[f],t,e||"function"!=typeof n.type);e||T(n.__e),n.__c=n.__=n.__e=m}function W(n,t,i){return this.constructor(n,i)}function X(n,e,r){var f,o,u,c;e==document&&(e=document.documentElement),i.__&&i.__(n,e),o=(f="function"==typeof r)?g:r&&r.__k||e.__k,u=[],c=[],E(e,n=(!f&&r||e).__k=$(I,g,[n]),o||b,b,e.namespaceURI,!f&&r?[r]:o?g:e.firstChild?t.call(e.childNodes):g,u,!f&&r?r:o?o.__e:e.firstChild,f,c),J(u,n,c),n.props.children=g}t=k.slice,i={__e:function(n,t,i,e){for(var r,f,o;t=t.__;)if((r=t.__c)&&!r.__)try{if((f=r.constructor)&&f.getDerivedStateFromError!=g&&(r.setState(f.getDerivedStateFromError(n)),o=r.__d),r.componentDidCatch!=g&&(r.componentDidCatch(n,e||{}),o=r.__d),o)return r.__E=r}catch(t){n=t}throw n}},e=0,r=function(n){return n!=g&&n.constructor===m},P.prototype.setState=function(n,t){var i;i=this.__s!=g&&this.__s!=this.state?this.__s:this.__s=S({},this.state),"function"==typeof n&&(n=n(S({},i),this.props)),n&&S(i,n),n!=g&&this.__v&&(t&&this._sb.push(t),L(this))},P.prototype.forceUpdate=function(n){this.__v&&(this.__e=!0,n&&this.__h.push(n),L(this))},P.prototype.render=I,f=[],u="function"==typeof Promise?Promise.prototype.then.bind(Promise.resolve()):setTimeout,c=function(n,t){return n.__v.__b-t.__v.__b},F.__r=0,s=Math.random().toString(8),a="__d"+s,h="__a"+s,l=/(PointerCapture)$|Capture$/i,p=0,y=D(!1),v=D(!0),d=0,n.Component=P,n.Fragment=I,n.cloneElement=function(n,i,e){var r,f,o,u,c=S({},n.props);for(o in n.type&&n.type.defaultProps&&(u=n.type.defaultProps),i)"key"==o?r=i[o]:"ref"==o?f=i[o]:c[o]=i[o]===m&&u!=m?u[o]:i[o];return arguments.length>2&&(c.children=arguments.length>3?t.call(arguments,2):e),C(n.type,c,r||n.key,f||n.ref,g)},n.createContext=function(n){function t(n){var i,e;return this.getChildContext||(i=new Set,(e={})[t.__c]=this,this.getChildContext=function(){return e},this.componentWillUnmount=function(){i=g},this.shouldComponentUpdate=function(n){this.props.value!=n.value&&i.forEach(function(n){n.__e=!0,L(n)})},this.sub=function(n){i.add(n);var t=n.componentWillUnmount;n.componentWillUnmount=function(){i&&i.delete(n),t&&t.call(n)}}),n.children}return t.__c="__cC"+d++,t.__=n,t.Provider=t.__l=(t.Consumer=function(n,t){return n.children(t)}).contextType=t,t},n.createElement=$,n.createRef=function(){return{current:g}},n.h=$,n.hydrate=function n(t,i){X(t,i,n)},n.isValidElement=r,n.options=i,n.render=X,n.toChildArray=function n(t,i){return i=i||[],t==g||"boolean"==typeof t||(M(t)?t.some(function(t){n(t,i)}):i.push(t)),i}});
+//# sourceMappingURL=preact.umd.js.map
+
+</script>
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("preact")):"function"==typeof define&&define.amd?define(["exports","preact"],t):t((n||self).preactHooks={},n.preact)}(this,function(n,t){var u,i,r,o,f=0,c=[],e=t.options,a=e.__b,v=e.__r,l=e.diffed,d=e.__c,p=e.unmount,s=e.__;function y(n,t){e.__h&&e.__h(i,n,f||t),f=0;var u=i.__H||(i.__H={__:[],__h:[]});return n>=u.__.length&&u.__.push({}),u.__[n]}function h(n){return f=1,m(j,n)}function m(n,t,r){var o=y(u++,2);if(o.t=n,!o.__c&&(o.__=[r?r(t):j(void 0,t),function(n){var t=o.__N?o.__N[0]:o.__[0],u=o.t(t,n);t!==u&&(o.__N=[u,o.__[1]],o.__c.setState({}))}],o.__c=i,!i.__f)){var f=function(n,t,u){if(!o.__c.__H)return!0;var i=!1,r=o.__c.props!==n;if(o.__c.__H.__.some(function(n){if(n.__N){i=!0;var t=n.__[0];n.__=n.__N,n.__N=void 0,t!==n.__[0]&&(r=!0)}}),c){var f=c.call(this,n,t,u);return i?f||r:f}return!i||r};i.__f=!0;var c=i.shouldComponentUpdate,e=i.componentWillUpdate;i.componentWillUpdate=function(n,t,u){if(this.__e){var i=c;c=void 0,f(n,t,u),c=i}e&&e.call(this,n,t,u)},i.shouldComponentUpdate=f}return o.__N||o.__}function T(n,t){var r=y(u++,4);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__h.push(r))}function _(n,t){var i=y(u++,7);return g(i.__H,t)&&(i.__=n(),i.__H=t,i.__h=n),i.__}function b(){for(var n;n=c.shift();){var t=n.__H;if(n.__P&&t)try{t.__h.some(A),t.__h.some(F),t.__h=[]}catch(u){t.__h=[],e.__e(u,n.__v)}}}e.__b=function(n){i=null,a&&a(n)},e.__=function(n,t){n&&t.__k&&t.__k.__m&&(n.__m=t.__k.__m),s&&s(n,t)},e.__r=function(n){v&&v(n),u=0;var t=(i=n.__c).__H;t&&(r===i?(t.__h=[],i.__h=[],t.__.some(function(n){n.__N&&(n.__=n.__N),n.u=n.__N=void 0})):(t.__h.some(A),t.__h.some(F),t.__h=[],u=0)),r=i},e.diffed=function(n){l&&l(n);var t=n.__c;t&&t.__H&&(t.__H.__h.length&&(1!==c.push(t)&&o===e.requestAnimationFrame||((o=e.requestAnimationFrame)||x)(b)),t.__H.__.some(function(n){n.u&&(n.__H=n.u,n.u=void 0)})),r=i=null},e.__c=function(n,t){t.some(function(n){try{n.__h.some(A),n.__h=n.__h.filter(function(n){return!n.__||F(n)})}catch(u){t.some(function(n){n.__h&&(n.__h=[])}),t=[],e.__e(u,n.__v)}}),d&&d(n,t)},e.unmount=function(n){p&&p(n);var t,u=n.__c;u&&u.__H&&(u.__H.__.some(function(n){try{A(n)}catch(n){t=n}}),u.__H=void 0,t&&e.__e(t,u.__v))};var q="function"==typeof requestAnimationFrame;function x(n){var t,u=function(){clearTimeout(i),q&&cancelAnimationFrame(t),setTimeout(n)},i=setTimeout(u,35);q&&(t=requestAnimationFrame(u))}function A(n){var t=i,u=n.__c;"function"==typeof u&&(n.__c=void 0,u()),i=t}function F(n){var t=i;n.__c=n.__(),i=t}function g(n,t){return!n||n.length!==t.length||t.some(function(t,u){return t!==n[u]})}function j(n,t){return"function"==typeof t?t(n):t}n.useCallback=function(n,t){return f=8,_(function(){return n},t)},n.useContext=function(n){var t=i.context[n.__c],r=y(u++,9);return r.c=n,t?(null==r.__&&(r.__=!0,t.sub(i)),t.props.value):n.__},n.useDebugValue=function(n,t){e.useDebugValue&&e.useDebugValue(t?t(n):n)},n.useEffect=function(n,t){var r=y(u++,3);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__H.__h.push(r))},n.useErrorBoundary=function(n){var t=y(u++,10),r=h();return t.__=n,i.componentDidCatch||(i.componentDidCatch=function(n,u){t.__&&t.__(n,u),r[1](n)}),[r[0],function(){r[1](void 0)}]},n.useId=function(){var n=y(u++,11);if(!n.__){for(var t=i.__v;null!==t&&!t.__m&&null!==t.__;)t=t.__;var r=t.__m||(t.__m=[0,0]);n.__="P"+r[0]+"-"+r[1]++}return n.__},n.useImperativeHandle=function(n,t,u){f=6,T(function(){if("function"==typeof n){var u=n(t());return function(){n(null),u&&"function"==typeof u&&u()}}if(n)return n.current=t(),function(){return n.current=null}},null==u?u:u.concat(n))},n.useLayoutEffect=T,n.useMemo=_,n.useReducer=m,n.useRef=function(n){return f=5,_(function(){return{current:n}},[])},n.useState=h});
+//# sourceMappingURL=hooks.umd.js.map
+
+</script>
+<script>
+!function(n,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):n.htm=e()}(this,function(){var n=function(e,t,u,s){var r;t[0]=0;for(var p=1;p<t.length;p++){var h=t[p++],o=t[p]?(t[0]|=h?1:2,u[t[p++]]):t[++p];3===h?s[0]=o:4===h?s[1]=Object.assign(s[1]||{},o):5===h?(s[1]=s[1]||{})[t[++p]]=o:6===h?s[1][t[++p]]+=o+"":h?(r=e.apply(o,n(e,o,u,["",null])),s.push(r),o[0]?t[0]|=2:(t[p-2]=0,t[p]=r)):s.push(o)}return s},e=new Map;return function(t){var u=e.get(this);return u||(u=new Map,e.set(this,u)),(u=n(this,u.get(t)||(u.set(t,u=function(n){for(var e,t,u=1,s="",r="",p=[0],h=function(n){1===u&&(n||(s=s.replace(/^\s*\n\s*|\s*\n\s*$/g,"")))?p.push(0,n,s):3===u&&(n||s)?(p.push(3,n,s),u=2):2===u&&"..."===s&&n?p.push(4,n,0):2===u&&s&&!n?p.push(5,0,!0,s):u>=5&&((s||!n&&5===u)&&(p.push(u,0,s,t),u=6),n&&(p.push(u,n,0,t),u=6)),s=""},o=0;o<n.length;o++){o&&(1===u&&h(),h(o));for(var f=0;f<n[o].length;f++)e=n[o][f],1===u?"<"===e?(h(),p=[p],u=3):s+=e:4===u?"--"===s&&">"===e?(u=1,s=""):s=e+s[0]:r?e===r?r="":s+=e:'"'===e||"'"===e?r=e:">"===e?(h(),u=1):u&&("="===e?(u=5,t=s,s=""):"/"===e&&(u<5||">"===n[o][f+1])?(h(),3===u&&(p=p[0]),u=p,(p=p[0]).push(2,0,u),u=0):" "===e||"\t"===e||"\n"===e||"\r"===e?(h(),u=2):s+=e),3===u&&"!--"===s&&(u=4,p=p[0])}return h(),p}(t)),u),arguments,[])).length>1?u:u[0]}});
+
+</script>
+<script>
+(function () {
+  const { h, render, Component } = window.preact;
+  const { useMemo, useLayoutEffect } = window.preactHooks;
+  function Icon({ name, size = 16, strokeWidth = 2, ...rest }) {
+    const nodes = Object.hasOwn(window.lucideIcons || {}, name) ? window.lucideIcons[name] : null;
+    if (!nodes) { console.error(`Unknown Lucide icon: ${name}`); return null; }
+    return h('svg', { xmlns: 'http://www.w3.org/2000/svg', width: size, height: size,
+      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      'stroke-width': strokeWidth, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...rest },
+      nodes.map(([tag, attrs]) => h(tag, attrs)));
+  }
+  function Portal({ children }) {
+    const host = useMemo(() => document.createElement('div'), []);
+    useLayoutEffect(() => {
+      document.body.appendChild(host);
+      return () => { render(null, host); host.remove(); };
+    }, [host]);
+    useLayoutEffect(() => { render(children, host); }, [children, host]);
+    return null;
+  }
+  function shallowEqual(a, b) {
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every(key => Object.is(a[key], b[key]));
+  }
+  function memo(Inner, areEqual = shallowEqual) {
+    return class extends Component {
+      shouldComponentUpdate(next) { return !areEqual(this.props, next); }
+      render(props) { return h(Inner, props); }
+    };
+  }
+  function focusOnMount(element) { if (element) element.focus(); }
+  window.frontendKit = { Icon, Portal, memo, focusOnMount };
+})();
+
+</script>
+<script>
+(function () {
+  'use strict';
+  const {h} = window.preact;
+  const {useState, useRef, useEffect, useLayoutEffect} = window.preactHooks;
+  const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+  function linearScale(domain, range) {
+    const [a,b]=domain.map(number), [c,d]=range.map(number);
+    return value => a===b ? (c+d)/2 : c+(number(value)-a)*(d-c)/(b-a);
+  }
+  function niceTicks(min,max,count=5) {
+    min=number(min); max=number(max); count=Math.max(1,number(count));
+    if(min>max) [min,max]=[max,min];
+    if(min===max) {const pad=Math.abs(min)*0.1||1;min-=pad;max+=pad;}
+    const raw=(max-min)/count, magnitude=10**Math.floor(Math.log10(raw));
+    const factor=raw/magnitude, step=(factor<=1?1:factor<=2?2:factor<=5?5:10)*magnitude;
+    const start=Math.floor(min/step), end=Math.ceil(max/step), result=[];
+    for(let i=start;i<=end && result.length<1000;i++) result.push(Number((i*step).toPrecision(14)));
+    return result;
+  }
+  function stack(rows,keys,offset='none') {
+    const result=keys.map(()=>[]);
+    rows.forEach(row=>{let pos=0,neg=0,total=0;keys.forEach((key,i)=>{
+      const value=number(row[key]);let start;
+      if(offset==='sign') {start=value<0?neg:pos;if(value<0)neg+=value;else pos+=value;}
+      else {start=total;total+=value;}
+      result[i].push([start,start+value]);
+    });});return result;
+  }
+  const xy=p=>Array.isArray(p)?[number(p[0]),number(p[1])]:[number(p.x),number(p.y)];
+  function monotonePath(points) {
+    const p=points.map(xy);if(!p.length)return '';
+    let path=`M${p[0][0]},${p[0][1]}`;if(p.length===1)return path;
+    const slopes=p.slice(1).map((v,i)=>v[0]===p[i][0]?0:(v[1]-p[i][1])/(v[0]-p[i][0]));
+    const tangents=p.map((_,i)=>i===0?slopes[0]:i===p.length-1?slopes.at(-1):slopes[i-1]*slopes[i]<=0?0:2/(1/slopes[i-1]+1/slopes[i]));
+    for(let i=0;i<p.length-1;i++) {const dx=(p[i+1][0]-p[i][0])/3;path+=`C${p[i][0]+dx},${p[i][1]+dx*tangents[i]} ${p[i+1][0]-dx},${p[i+1][1]-dx*tangents[i+1]} ${p[i+1][0]},${p[i+1][1]}`;}
+    return path;
+  }
+  function areaPath(top,bottom) {if(!top.length||!bottom.length)return '';return monotonePath(top)+monotonePath([...bottom].reverse()).replace(/^M/,'L')+'Z';}
+  function arcPath(cx,cy,inner,outer,start,end) {
+    cx=number(cx);cy=number(cy);inner=Math.max(0,number(inner));outer=Math.max(0,number(outer));start=number(start);end=number(end);
+    const delta=Math.max(-2*Math.PI,Math.min(2*Math.PI,end-start)), sweep=delta>=0?1:0;
+    const point=(r,a)=>`${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`;
+    const arcs=(r,a,d,s)=>{const n=Math.abs(d)>=2*Math.PI-1e-9?2:1;let out='';for(let i=1;i<=n;i++)out+=`A${r},${r} 0 ${Math.abs(d/n)>Math.PI?1:0} ${s} ${point(r,a+d*i/n)}`;return out;};
+    return `M${point(outer,start)}${arcs(outer,start,delta,sweep)}L${point(inner,start+delta)}${arcs(inner,start+delta,-delta,1-sweep)}Z`;
+  }
+  function useWidth(width) {
+    const ref=useRef(null), [measured,setMeasured]=useState(number(width)||400);
+    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(node.getBoundingClientRect().width||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
+    return [ref,number(width)||measured];
+  }
+  const selectable=(item,onSelect)=>onSelect?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
+  const style={position:'relative',width:'100%'};
+  function tooltipPosition(point,size,chart,viewport) {
+    const left=Math.max(chart.left,viewport.left)-chart.left;
+    const top=Math.max(chart.top,viewport.top)-chart.top;
+    const right=Math.max(left,Math.min(chart.right,viewport.right)-chart.left);
+    const bottom=Math.max(top,Math.min(chart.bottom,viewport.bottom)-chart.top);
+    const place=(value,extent,min,max)=>{
+      const forward=value+10, flipped=value-10-extent;
+      const preferred=forward+extent<=max?forward:flipped;
+      return Math.max(min,Math.min(preferred,Math.max(min,max-extent)));
+    };
+    return {left:place(point.x,size.width,left,right),top:place(point.y,size.height,top,bottom)};
+  }
+  function Tooltip({children,position,onDismiss}) {
+    const ref=useRef(null);
+    useLayoutEffect(()=>{
+      const node=ref.current, chart=node?.parentElement;
+      if(!node||!chart) return;
+      const update=()=>{
+        const bounds=chart.getBoundingClientRect();
+        const viewport={left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
+        const availableWidth=Math.max(0,Math.min(bounds.right,viewport.right)-Math.max(bounds.left,viewport.left));
+        const availableHeight=Math.max(0,Math.min(bounds.bottom,viewport.bottom)-Math.max(bounds.top,viewport.top));
+        node.style.maxWidth=`${availableWidth}px`;
+        node.style.maxHeight=`${availableHeight}px`;
+        const size=node.getBoundingClientRect();
+        const constrained=node.scrollWidth>node.clientWidth || node.scrollHeight>node.clientHeight;
+        node.style.pointerEvents=constrained?'auto':'none';
+        if(constrained) {
+          node.setAttribute('tabindex','0');
+          node.setAttribute('role','region');
+          node.setAttribute('aria-label','Chart tooltip');
+        } else {
+          node.removeAttribute('tabindex');
+          node.removeAttribute('role');
+          node.removeAttribute('aria-label');
+        }
+        const placed=tooltipPosition(position,size,bounds,viewport);
+        node.style.left=`${placed.left}px`;
+        node.style.top=`${placed.top}px`;
+        node.style.visibility='visible';
+      };
+      update();
+      const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(update);
+      observer?.observe(chart);
+      window.addEventListener('resize',update);
+      window.addEventListener('scroll',update,true);
+      return ()=>{observer?.disconnect();window.removeEventListener('resize',update);window.removeEventListener('scroll',update,true);};
+    },[position.x,position.y,children]);
+    return h('div',{ref,class:'svgc-tooltip',
+      onMouseMove:event=>event.stopPropagation(),
+      onFocusOut:event=>{if(!event.currentTarget.contains(event.relatedTarget)) onDismiss();}
+    },children);
+  }
+  function tooltipNode(tooltip,payload,position,onDismiss) {
+    if(!tooltip||!payload) return null;
+    return h(Tooltip,{position,onDismiss},typeof tooltip==='function'?tooltip(payload):tooltip);
+  }
+  function spacedTicks(ticks,scale,minSpacing=20) {
+    if(ticks.length<2) return ticks;
+    const first=ticks[0], last=ticks.at(-1);
+    if(Math.abs(scale(first)-scale(last))<minSpacing) return [first];
+    const shown=[first];
+    for(const tick of ticks.slice(1,-1)) {
+      if(Math.abs(scale(tick)-scale(shown.at(-1)))>=minSpacing &&
+         Math.abs(scale(tick)-scale(last))>=minSpacing) shown.push(tick);
+    }
+    return [...shown,last];
+  }
+  const leaveChart=(event,setHover)=>{
+    const tooltip=event.currentTarget.querySelector('.svgc-tooltip');
+    if(!tooltip?.contains(window.document?.activeElement)) setHover(null);
+  };
+  function itemHover(event,item) {
+    const bounds=event.currentTarget?.ownerSVGElement?.parentElement?.getBoundingClientRect();
+    return {item,x:bounds?event.clientX-bounds.left:event.offsetX,
+      y:bounds?event.clientY-bounds.top:event.offsetY};
+  }
+  function CartesianChart({
+    kind='area', data=[], xKey, series=[], stackOffset='none', height=300,
+    width, margin={}, yFormat=String, xFormat=String, tickEvery, yDomain,
+    referenceX, referenceY, referenceOpacity=1, grid=true, xAxisLine=false,
+    yAxisLine=false, plotClass='', tooltip,
+    compact=false
+  }) {
+    const [ref,w]=useWidth(width), [hover,setHover]=useState(null);
+    const m={top:10,right:10,bottom:compact?0:25,left:compact?0:55,...margin};
+    const left=m.left, right=Math.max(left,w-m.right), top=m.top;
+    const bottom=Math.max(top,height-m.bottom), pw=right-left;
+    const stacked=stack(data,series.filter(s=>s.stack).map(s=>s.key),stackOffset);
+    let si=0;
+    const bands=series.map(s=>s.stack?stacked[si++]:data.map(row=>[0,number(row[s.key])]));
+    let slotCount=0, stackSlot;
+    const slots=series.map(s=>{
+      if(!s.stack) return slotCount++;
+      if(stackSlot===undefined) stackSlot=slotCount++;
+      return stackSlot;
+    });
+    const values=bands.flat(2).concat([0]);
+    let lo=Math.min(...values), hi=Math.max(...values);
+    const explicitDomain=Array.isArray(yDomain) && yDomain.length>=2 &&
+      Number.isFinite(yDomain[0]) && Number.isFinite(yDomain[1]);
+    if(Array.isArray(yDomain)) {
+      if(Number.isFinite(yDomain[0])) lo=yDomain[0];
+      if(Number.isFinite(yDomain[1])) hi=yDomain[1];
+    }
+    let ticks=niceTicks(lo,hi,4);
+    if(explicitDomain) {
+      const min=Math.min(lo,hi), max=Math.max(lo,hi);
+      ticks=[min,...ticks.filter(t=>t>min && t<max),...(min===max?[]:[max])];
+    } else if(!yDomain) {
+      lo=ticks[0]; hi=ticks.at(-1);
+    }
+    const y=linearScale([lo,hi],[bottom,top]);
+    const renderedTicks=spacedTicks(ticks,y);
+    const x=i=>data.length<=1?(left+right)/2:kind==='bar'
+      ?left+(i+.5)*pw/data.length:left+i*pw/(data.length-1);
+    const marks=series.map((s,j)=>{
+      const b=bands[j], color=s.color||'currentColor';
+      if(kind==='bar') {
+        const groupWidth=data.length?pw/data.length*.8:0;
+        const barWidth=slotCount?groupWidth/slotCount:0;
+        return b.map((pair,i)=>h('rect',{
+          class:'svgc-bar',x:x(i)-groupWidth/2+slots[j]*barWidth,
+          y:Math.min(y(pair[0]),y(pair[1])),width:barWidth,
+          height:Math.abs(y(pair[1])-y(pair[0])),fill:s.fill||color,
+          'fill-opacity':s.fillOpacity??1,stroke:color,
+          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+          'stroke-dasharray':s.strokeDasharray
+        }));
+      }
+      const upper=b.map((v,i)=>[x(i),y(v[1])]);
+      const lower=b.map((v,i)=>[x(i),y(v[0])]);
+      return h('g',null,
+        kind==='area'&&s.fill!=='none'&&h('path',{
+          class:'svgc-area',d:areaPath(upper,lower),fill:s.fill||color,
+          'fill-opacity':s.fillOpacity??.3
+        }),
+        h('path',{
+          class:'svgc-curve',d:monotonePath(upper),fill:'none',stroke:color,
+          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+          'stroke-dasharray':s.strokeDasharray
+        }),
+        upper.length===1&&h('circle',{class:'svgc-point',cx:upper[0][0],cy:upper[0][1],
+          r:3,fill:color,opacity:s.strokeOpacity??1})
+      );
+    });
+    const move=e=>{
+      if(!data.length) return;
+      const rect=e.currentTarget.getBoundingClientRect(), local=e.clientX-rect.left;
+      const fraction=pw?Math.max(0,Math.min(1,(local-left)/pw)):0;
+      const index=data.length===1?0:kind==='bar'
+        ?Math.min(data.length-1,Math.floor(fraction*data.length))
+        :Math.round(fraction*(data.length-1));
+      setHover({index,x:local,y:e.clientY-rect.top});
+    };
+    const row=hover&&data[hover.index];
+    const payload=row&&{
+      active:true,label:row[xKey],row,index:hover.index,
+      payload:series.map(s=>({dataKey:s.key,name:s.label||s.key,
+        value:row[s.key],color:s.color,payload:row}))
+    };
+    const refIndex=data.findIndex(row=>row[xKey]===referenceX);
+    const options=typeof grid==='object' && grid!==null?grid:{};
+    const horizontal=typeof grid==='object'?options.horizontal!==false:!!grid;
+    const vertical=typeof grid==='object'&&options.vertical===true;
+    const gridStroke=options.stroke??'var(--border-default, #334155)';
+    const gridDash=options.strokeDasharray??'3 3';
+    const xLabels=data.map((row,i)=>({i,label:xFormat(row[xKey])}));
+    const maxLabelWidth=Math.max(0,...xLabels.map(({label})=>Array.from(String(label??'')).length*9+12));
+    const categoryGap=data.length>1?pw/(kind==='bar'?data.length:data.length-1):pw;
+    const interval=Number.isFinite(tickEvery)?Math.max(1,Math.floor(tickEvery)):
+      Math.max(1,categoryGap>0?Math.ceil(maxLabelWidth/categoryGap):data.length);
+    const shownX=xLabels.filter(({i})=>i%interval===0);
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height,width:width||'100%'}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},
+        onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`},
+          h('rect',{class:plotClass,x:left,y:top,width:pw,height:bottom-top,fill:'transparent'}),
+          !compact&&renderedTicks.map(t=>h('g',null,
+            horizontal&&h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
+              y1:y(t),y2:y(t),stroke:gridStroke,'stroke-dasharray':gridDash}),
+            h('text',{x:left-6,y:y(t),fill:'var(--text-muted, #94a3b8)',
+              'text-anchor':'end','font-size':11},yFormat(t))
+          )),
+          !compact&&vertical&&shownX.map(({i})=>h('line',{
+            class:'svgc-grid-vertical',x1:x(i),x2:x(i),y1:top,y2:bottom,
+            stroke:gridStroke,'stroke-dasharray':gridDash
+          })),
+          !compact&&shownX.map(({label,i})=>h('text',{
+            x:x(i),y:height-4,fill:'var(--text-muted, #94a3b8)',
+            'text-anchor':'middle','font-size':11
+          },label)),
+          !compact&&xAxisLine&&h('line',{
+            class:'svgc-x-axis-line',x1:left,x2:right,y1:bottom,y2:bottom,
+            stroke:typeof xAxisLine==='string'?xAxisLine:'var(--border-default, #334155)'
+          }),
+          !compact&&yAxisLine&&h('line',{
+            class:'svgc-y-axis-line',x1:left,x2:left,y1:top,y2:bottom,
+            stroke:typeof yAxisLine==='string'?yAxisLine:'var(--border-default, #334155)'
+          }),
+          marks,
+          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
+            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
+            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
+          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
+            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
+            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity})
+        ),
+        tooltipNode(tooltip,payload,hover||{},()=>setHover(null))
+      )
+    );
+  }
+  function DonutChart({items=[],height=250,innerRadius=50,outerRadius=85,tooltip,onSelect,
+    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth}) {
+    const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const total=items.reduce((sum,item)=>sum+Math.max(0,number(item.value)),0);
+    let angle=number(startAngle);
+    const sectors=items.map(item=>{
+      const start=angle;
+      angle+=total?(clockwise?1:-1)*Math.max(0,number(item.value))/total*2*Math.PI:0;
+      return h('path',{class:'svgc-sector',d:arcPath(w/2,height/2,innerRadius,outerRadius,start,angle),
+        fill:item.color,stroke,'stroke-width':strokeWidth,...selectable(item,onSelect),
+        onMouseMove:e=>setHover(itemHover(e,item))},h('title',null,item.label));
+    });
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},sectors),
+        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+  }
+  function HBarChart({items=[],height=250,valueFormat=String,labelWidth=130,labelMaxChars=Infinity,onSelect,tooltip}) {
+    const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const max=Math.max(0,...items.map(i=>number(i.value)));
+    const plotHeight=Math.max(0,height-24), rowHeight=plotHeight/Math.max(1,items.length);
+    const plotWidth=Math.max(0,w-labelWidth-8);
+    const ticks=max?niceTicks(0,max,4):[0], axisMax=ticks.at(-1);
+    const bars=items.map((item,i)=>{
+      const label=String(item.label??'');
+      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-1))+'…':label;
+      return h('g',null,
+        h('text',{x:labelWidth-6,y:(i+.5)*rowHeight,'text-anchor':'end',
+          'dominant-baseline':'middle',fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
+        h('rect',{class:'svgc-bar',x:labelWidth,y:i*rowHeight+rowHeight*.15,
+          width:axisMax?plotWidth*Math.max(0,number(item.value))/axisMax:0,height:rowHeight*.7,rx:4,
+          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(item.value)}`,
+          ...selectable(item,onSelect),onMouseMove:e=>setHover(itemHover(e,item))})
+      );
+    });
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},bars,
+          h('line',{class:'svgc-hbar-axis',x1:labelWidth,x2:labelWidth+plotWidth,y1:plotHeight,y2:plotHeight,stroke:'var(--border-default, #475569)'}),
+          ticks.map((t,i)=>h('text',{class:'svgc-hbar-tick',x:labelWidth+(axisMax?t/axisMax*plotWidth:0),y:height-4,
+            'text-anchor':i===0?'start':i===ticks.length-1?'end':'middle',
+            fill:'var(--text-muted, #94a3b8)','font-size':11},valueFormat(t)))
+        ),
+        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+  }
+  function Legend({series=[],hidden=new Set(),onToggle,kind='area'}) {
+    return h('div',{class:'svgc-legend'},series.map(s=>{
+      const color=s.color||'currentColor';
+      const symbol=kind==='bar'
+        ?h('rect',{x:1,y:1,width:14,height:8,fill:s.fill||color,stroke:color,'stroke-dasharray':s.strokeDasharray})
+        :[h('line',{x1:1,y1:5,x2:15,y2:5,stroke:color,'stroke-width':2,'stroke-dasharray':s.strokeDasharray}),
+          h('circle',{cx:8,cy:5,r:3,fill:color})];
+      return h('button',{type:'button',class:'svgc-legend-item',
+        'aria-pressed':!hidden.has(s.key),onClick:()=>onToggle?.(s.key),
+        style:{color:s.color,opacity:hidden.has(s.key)?.45:1}},
+        h('svg',{'aria-hidden':'true',width:16,height:10,viewBox:'0 0 16 10'},symbol),s.label||s.key);
+    }));
+  }
+  window.svgCharts={geometry:{linearScale,niceTicks,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
+})();
+
+</script>
+<style>
+/* SVG charts: keep overlays and controls usable in either theme. */
+.svgc-responsive, .svgc-wrapper { min-width: 0; }
+.svgc-tooltip { position: absolute; z-index: 2; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
+.svgc-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; }
+.svgc-legend-item { display: inline-flex; align-items: center; gap: .3em; background: transparent; border: 0; cursor: pointer; font: inherit; }
+.svgc-bar[role="button"], .svgc-sector[role="button"] { cursor: pointer; }
+
+</style>"""
+# frontend-vendor:end
+HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDOR_HTML)
 
 
 @app.get("/", response_class=HTMLResponse)

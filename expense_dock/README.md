@@ -33,8 +33,7 @@ The expense workbook is an Excel file with five worksheets. A schema template is
 Prerequisites:
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
-- A browser that can reach the frontend CDNs used by the embedded UI (esm.sh,
-  unpkg, jsDelivr for Tailwind, and Google Fonts)
+- A modern browser
 
 From this project directory, run the entrypoint directly:
 
@@ -51,35 +50,17 @@ expense_dock
 
 Expense Dock runs via uv using a PEP 723 inline-metadata header. On first run it creates its runtime home at `~/.expense_dock/` and writes a default `config.json`; uv resolves the dependencies (fastapi, uvicorn[standard], python-multipart, httpx, msal, openpyxl) into its shared cache — that first invocation may briefly hit the network. No manual `pip install` and no virtual environment in your home directory are required.
 
-The build-free embedded frontend uses React 19.3.0 and ReactDOM 19.3.0 through
-an exact-version import map. Its six direct ESM entries pin `react`, both JSX
-runtime subpaths, `react-dom`, `react-dom/client`, and react-is 19.3.0;
-ReactDOM and react-is externalize the shared React peer. Babel Standalone 8.0.5
-compiles the module-aware inline JSX. Tailwind CSS 4.3.3 loads through the
-exact-version `@tailwindcss/browser` package, and Lucide 1.46.0 remains an
-exact-version direct script. Tailwind configuration is CSS-first: project
-theme tokens and the class-based dark variant live in a `text/tailwindcss`
-block, while the app's ordinary first-party CSS remains native browser CSS.
-
-The direct top-level package versions in the import map and script URLs are
-exact, which prevents drift in those requested versions. CDN-generated
-transitive dependencies are not fully locked, however, and the interface still
-requires network access at runtime. Exact pins are not byte-immutable delivery
-guarantees; offline or byte-for-byte reproducible use would require a separate
-vendoring or release-artifact flow.
-
-Automated browser coverage uses current Playwright Chromium and
-checks the pinned script graph, a generated custom-theme style, dark-mode
-styling and persistence, a primary navigation interaction, and page/console
-cleanliness. For manual clients, Tailwind 4 requires Chrome 111 or newer,
-Safari 16.4 or newer, or Firefox 128 or newer. Safari and Firefox are not
-covered by the automated browser test.
+The embedded interface uses Preact and htm with locally embedded icons, fonts,
+and CSS. It loads without frontend network access. Microsoft authentication and
+OneDrive operations still require a network connection. Automated Playwright
+Chromium coverage checks offline loading, theme styling and persistence,
+navigation, and browser errors. Safari and Firefox are not covered by that test.
 
 The preferred port is `8420`. If it is occupied, Expense Dock scans through port `8439` and opens the first free port. Use `--port` to choose a different starting port and `--no-browser` to suppress automatic browser launch.
 
 ## App Interface
 
-The UI is an embedded React SPA served by a localhost-only FastAPI backend, organized into workspace views:
+The UI is an embedded Preact SPA served by a localhost-only FastAPI backend, organized into workspace views:
 
 - **Submit** -- the main intake form for logging an expense and attaching a receipt
 - **Setup** -- OneDrive and workbook configuration, Microsoft auth, and default values

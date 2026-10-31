@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "items": {
+    "preact": {
+      "kind": "script",
+      "file": "preact/preact.umd.js",
+      "version": "10.29.8",
+      "url": "https://unpkg.com/preact@10.29.8/dist/preact.umd.js",
+      "sha256": "134b77bc803fa38661dc1b1e44e96eb0bb6a1a00edbb96d34dcde421b2e80b06",
+      "license": "licenses/preact.LICENSE"
+    },
+    "hooks": {
+      "kind": "script",
+      "file": "preact/hooks.umd.js",
+      "version": "10.29.8",
+      "url": "https://unpkg.com/preact@10.29.8/hooks/dist/hooks.umd.js",
+      "sha256": "5c29238e5dc99df306d7f7fff038591a397cfcfabb59f81fbdef43d670aa0566",
+      "license": "licenses/preact.LICENSE"
+    },
+    "htm": {
+      "kind": "script",
+      "file": "htm/htm.umd.js",
+      "version": "3.1.1",
+      "url": "https://unpkg.com/htm@3.1.1/dist/htm.umd.js",
+      "sha256": "7a31776e04bd4afde0d4308177d26f377716fcf7e4bd70be590746d6aa594f08",
+      "license": "licenses/htm.LICENSE"
+    },
+    "d3": {
+      "kind": "script",
+      "file": "d3/d3.js",
+      "version": "7.8.5",
+      "url": "https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js",
+      "sha256": "d6b03aefc9f6c44c7bc78713679c78c295028fa914319119e5cc4b4954855b1c",
+      "license": "licenses/d3.LICENSE"
+    },
+    "chartjs": {
+      "kind": "script",
+      "file": "chartjs/chartjs.js",
+      "version": "4.5.1",
+      "url": "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js",
+      "sha256": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a",
+      "license": "licenses/chartjs.LICENSE"
+    },
+    "js-yaml": {
+      "kind": "script",
+      "file": "js-yaml/js-yaml.js",
+      "version": "5.4.3",
+      "url": "https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js",
+      "sha256": "0a0f83f2efe2c58ef6ee47815b7597e9354c9baa5dd05f17f10ae653983256de",
+      "license": "licenses/js-yaml.LICENSE"
+    },
+    "lucide": {
+      "kind": "script",
+      "file": "lucide/lucide.js",
+      "version": "1.46.0",
+      "url": "https://unpkg.com/lucide@1.46.0/dist/umd/lucide.min.js",
+      "sha256": "621aebb75317335da861ecaaf91faca006e60cdf6230d094804e12dfa8260301",
+      "license": "licenses/lucide.LICENSE"
+    },
+    "toml": {
+      "kind": "script",
+      "file": "toml/toml.iife.js",
+      "version": "3.0.0",
+      "url": "https://cdn.jsdelivr.net/npm/@iarna/toml@3.0.0/+esm",
+      "sha256": "671d03f72986c4c69f0df0fa3880dbb522374d1a5a928d76ee0c39b9daad8396",
+      "source_file": "toml/toml.source.js",
+      "source_sha256": "41296a13e8ec047b266b3e1944eb66626f6a0c72c5dbdc553e472be806fbf872",
+      "transform": "Remove export and source-map directive; wrap in IIFE exposing TOML.parse and TOML.stringify",
+      "license": "licenses/toml.LICENSE"
+    },
+    "font:jetbrains-mono": {
+      "kind": "font",
+      "file": "fonts/jetbrains-mono-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-wght-normal.woff2",
+      "sha256": "18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e",
+      "license": "licenses/jetbrains-mono.LICENSE",
+      "family": "JetBrains Mono",
+      "style": "normal",
+      "weight": "100 800"
+    },
+    "font:dm-sans": {
+      "kind": "font",
+      "file": "fonts/dm-sans-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/dm-sans@5.3.0/files/dm-sans-latin-wght-normal.woff2",
+      "sha256": "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543",
+      "license": "licenses/dm-sans.LICENSE",
+      "family": "DM Sans",
+      "style": "normal",
+      "weight": "100 1000"
+    },
+    "font:inter": {
+      "kind": "font",
+      "file": "fonts/inter-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.3.0/files/inter-latin-wght-normal.woff2",
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+      "license": "licenses/inter.LICENSE",
+      "family": "Inter",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:oswald": {
+      "kind": "font",
+      "file": "fonts/oswald-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/oswald@5.3.0/files/oswald-latin-wght-normal.woff2",
+      "sha256": "bd73278ee0c50041b91b4c03d1229e35b501637f46b6409e7da2d3a758446ea5",
+      "license": "licenses/oswald.LICENSE",
+      "family": "Oswald",
+      "style": "normal",
+      "weight": "200 700"
+    },
+    "font:source-sans-3": {
+      "kind": "font",
+      "file": "fonts/source-sans-3-latin-wght-normal.woff2",
+      "version": "5.3.1",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/source-sans-3@5.3.1/files/source-sans-3-latin-wght-normal.woff2",
+      "sha256": "19143dca075972bc84e3fd9eab7416dd40cc565dccb2435a044bdfabe060c7d5",
+      "license": "licenses/source-sans-3.LICENSE",
+      "family": "Source Sans 3",
+      "style": "normal",
+      "weight": "200 900"
+    },
+    "font:source-sans-3-italic": {
+      "kind": "font",
+      "file": "fonts/source-sans-3-latin-wght-italic.woff2",
+      "version": "5.3.1",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/source-sans-3@5.3.1/files/source-sans-3-latin-wght-italic.woff2",
+      "sha256": "5fbc14d56cea35e60596c72ca969b349443c6a536f74e11748eed8b3a396e61d",
+      "license": "licenses/source-sans-3.LICENSE",
+      "family": "Source Sans 3",
+      "style": "italic",
+      "weight": "200 900"
+    },
+    "font:space-grotesk": {
+      "kind": "font",
+      "file": "fonts/space-grotesk-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/space-grotesk@5.3.0/files/space-grotesk-latin-wght-normal.woff2",
+      "sha256": "0640890476fc1198ab4de571fb658de443c4d85b66466ec09534a8737ab1ce9d",
+      "license": "licenses/space-grotesk.LICENSE",
+      "family": "Space Grotesk",
+      "style": "normal",
+      "weight": "300 700"
+    },
+    "font:hanken-grotesk": {
+      "kind": "font",
+      "file": "fonts/hanken-grotesk-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/hanken-grotesk@5.3.0/files/hanken-grotesk-latin-wght-normal.woff2",
+      "sha256": "e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5",
+      "license": "licenses/hanken-grotesk.LICENSE",
+      "family": "Hanken Grotesk",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:work-sans": {
+      "kind": "font",
+      "file": "fonts/work-sans-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/work-sans@5.3.0/files/work-sans-latin-wght-normal.woff2",
+      "sha256": "1dd49afc07fb2231b2ff686cbf007725fb2742271bb1f28ebd98f22a0d817343",
+      "license": "licenses/work-sans.LICENSE",
+      "family": "Work Sans",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:geist": {
+      "kind": "font",
+      "file": "fonts/geist-latin-wght-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/geist@5.3.0/files/geist-latin-wght-normal.woff2",
+      "sha256": "19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1",
+      "license": "licenses/geist.LICENSE",
+      "family": "Geist",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:fraunces-standard": {
+      "kind": "font",
+      "file": "fonts/fraunces-latin-standard-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/fraunces@5.3.0/files/fraunces-latin-standard-normal.woff2",
+      "sha256": "7234ed860a9cc83045413c4faee63c960a8f2d1917adcf728119307d56e0d783",
+      "license": "licenses/fraunces.LICENSE",
+      "family": "Fraunces",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:fraunces-full": {
+      "kind": "font",
+      "file": "fonts/fraunces-latin-full-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/fraunces@5.3.0/files/fraunces-latin-full-normal.woff2",
+      "sha256": "7e744849028e2219e2aa1bc467dc4032980dc4487c9c3da3010081cd72d3b103",
+      "license": "licenses/fraunces.LICENSE",
+      "family": "Fraunces",
+      "style": "normal",
+      "weight": "100 900"
+    },
+    "font:fraunces-full-italic": {
+      "kind": "font",
+      "file": "fonts/fraunces-latin-full-italic.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/fraunces@5.3.0/files/fraunces-latin-full-italic.woff2",
+      "sha256": "04a14ea380db53a35a3ec651934b21061234685bb604d30aac82663b5d9e539b",
+      "license": "licenses/fraunces.LICENSE",
+      "family": "Fraunces",
+      "style": "italic",
+      "weight": "100 900"
+    },
+    "font:chakra-petch-400": {
+      "kind": "font",
+      "file": "fonts/chakra-petch-latin-400-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/chakra-petch@5.3.0/files/chakra-petch-latin-400-normal.woff2",
+      "sha256": "7d75be85dd1627e27ec151e9a3701e661bc4f8c2a93611bdd92f3a05d6bbd942",
+      "license": "licenses/chakra-petch.LICENSE",
+      "family": "Chakra Petch",
+      "style": "normal",
+      "weight": "400"
+    },
+    "font:chakra-petch-500": {
+      "kind": "font",
+      "file": "fonts/chakra-petch-latin-500-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/chakra-petch@5.3.0/files/chakra-petch-latin-500-normal.woff2",
+      "sha256": "36ad966cb653de70ba37355c41003b02de8940b2df6cbcd46480a6ad8cadd65d",
+      "license": "licenses/chakra-petch.LICENSE",
+      "family": "Chakra Petch",
+      "style": "normal",
+      "weight": "500"
+    },
+    "font:chakra-petch-600": {
+      "kind": "font",
+      "file": "fonts/chakra-petch-latin-600-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/chakra-petch@5.3.0/files/chakra-petch-latin-600-normal.woff2",
+      "sha256": "a5888696e9eb1b4bbbecc8eb3922b8369f49d4bddb72263e033cbd17f399be76",
+      "license": "licenses/chakra-petch.LICENSE",
+      "family": "Chakra Petch",
+      "style": "normal",
+      "weight": "600"
+    },
+    "font:chakra-petch-700": {
+      "kind": "font",
+      "file": "fonts/chakra-petch-latin-700-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/chakra-petch@5.3.0/files/chakra-petch-latin-700-normal.woff2",
+      "sha256": "ce5095dc1cb200aaa939e38067a0677018d10e9f26ec38cdcf1557ac524fc775",
+      "license": "licenses/chakra-petch.LICENSE",
+      "family": "Chakra Petch",
+      "style": "normal",
+      "weight": "700"
+    },
+    "font:ibm-plex-mono-300": {
+      "kind": "font",
+      "file": "fonts/ibm-plex-mono-latin-300-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-300-normal.woff2",
+      "sha256": "d2ce22595d55a52b0c63f837515729bd97706bfa1b833816509f13d93daa59b5",
+      "license": "licenses/ibm-plex-mono.LICENSE",
+      "family": "IBM Plex Mono",
+      "style": "normal",
+      "weight": "300"
+    },
+    "font:ibm-plex-mono-400": {
+      "kind": "font",
+      "file": "fonts/ibm-plex-mono-latin-400-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-400-normal.woff2",
+      "sha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+      "license": "licenses/ibm-plex-mono.LICENSE",
+      "family": "IBM Plex Mono",
+      "style": "normal",
+      "weight": "400"
+    },
+    "font:ibm-plex-mono-500": {
+      "kind": "font",
+      "file": "fonts/ibm-plex-mono-latin-500-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-500-normal.woff2",
+      "sha256": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22",
+      "license": "licenses/ibm-plex-mono.LICENSE",
+      "family": "IBM Plex Mono",
+      "style": "normal",
+      "weight": "500"
+    },
+    "font:ibm-plex-mono-600": {
+      "kind": "font",
+      "file": "fonts/ibm-plex-mono-latin-600-normal.woff2",
+      "version": "5.3.0",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-600-normal.woff2",
+      "sha256": "0d1f0b8d0722224e32e9f28261bdc86c79115be73444ae5eceb73976a1bcdf83",
+      "license": "licenses/ibm-plex-mono.LICENSE",
+      "family": "IBM Plex Mono",
+      "style": "normal",
+      "weight": "600"
+    },
+    "kit": {
+      "kind": "first-party",
+      "file": "kit.js",
+      "version": "1",
+      "url": "./kit.js",
+      "sha256": "5c14aa697a9f2d6ea0dc9c7b27a8561509cd1f14af212a7da557ca0328d9f620",
+      "license": null
+    },
+    "svg-charts": {
+      "kind": "first-party",
+      "file": "svg_charts.js",
+      "css": "svg_charts.css",
+      "version": "1",
+      "url": "./svg_charts.js",
+      "sha256": "376f3103f887246db001cb1917051807e3e3ab8db216938a2b58338fa318f59d",
+      "license": null
+    }
+  }
+}

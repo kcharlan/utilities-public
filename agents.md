@@ -57,11 +57,15 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 
 - Any uv-managed launcher (`jtree`, `editdb`, `tax2`, `routerview`, `storage_monitor`, etc.):
   - After editing a launcher's header or bootstrap region, run the fleet drift guard: `uv run --no-python-downloads --script tools/check_uv_headers.py`.
-  - When an agent runs a uv launcher directly (e.g. `./tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
+  - When an agent runs a uv launcher directly (e.g. `./tax2/tax2`), prefix it with `UV_PYTHON_DOWNLOADS=never` so uv never silently downloads a Python.
 - Registered Python suites: from the repository root run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py <key>` for each affected entry in `tools/project_tests.toml`; also run its non-Python categories and acceptance gates below. Install a missing browser explicitly with `--install-browsers` only when authorized.
 - Shared uv header guard (`tools/check_uv_headers.py`):
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
   - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites, using the registered runner.
+- Shared frontend kit (`tools/frontend_vendor/`, `tools/sync_frontend_vendor.mjs`, and offline helpers in `tools/testkit.py`):
+  - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
+  - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_testkit_offline.py tools/tests/test_sync_frontend_indent.py tools/tests/test_run_project_tests.py tools/tests/test_check_uv_headers.py -q -p no:cacheprovider` and `uv run --no-python-downloads --script tools/check_uv_headers.py`.
+  - Run the complete suites of consumers embedding changed kit items or using changed test helpers.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
   - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
@@ -134,14 +138,14 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
 - `tax2`:
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py tax2` from the repository root.
-  - Run `UV_PYTHON_DOWNLOADS=never ./tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "${TMPDIR:-/tmp}/tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
-  - Repeat the build after warming the same uv cache with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser`. Open its `file://` page in offline Chromium, exercise calculator inputs/state allocations, and verify all three real downloads: QIF, Markdown rate schedule and CSV lookup. Require no page/console errors or external requests. The complete pytest suite includes automated offline browser/download coverage; retain the actual uv smoke build as a separate acceptance check.
-  - Run `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser --output "$tax2_acceptance_home/explicit.html"`. Confirm `explicit.html` exists with mode `0600` (`test -f "$tax2_acceptance_home/explicit.html"` and `stat -f '%Lp' "$tax2_acceptance_home/explicit.html"` on macOS).
+  - Run `UV_PYTHON_DOWNLOADS=never ./tax2/tax2 --help`. Create a fresh private acceptance home outside the checkout with `tax2_acceptance_home=$(mktemp -d "${TMPDIR:-/tmp}/tax2-acceptance.XXXXXX")`, then build with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2/tax2 --no-browser`. Check runtime-home/config/page modes are `0700/0600/0600` (macOS: `stat -f '%Lp' "$tax2_acceptance_home" "$tax2_acceptance_home/config.yaml" "$tax2_acceptance_home/tax2.html"`). Use synthetic preferences only; do not inspect real user config or publish runtime output into Git.
+  - Repeat the build after warming the same uv cache with `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2/tax2 --no-browser`. Open its `file://` page in offline Chromium, exercise calculator inputs/state allocations, and verify all three real downloads: QIF, Markdown rate schedule and CSV lookup. Require no page/console errors or external requests. The complete pytest suite includes automated offline browser/download coverage; retain the actual uv smoke build as a separate acceptance check.
+  - Run `TAX2_HOME="$tax2_acceptance_home" UV_PYTHON_DOWNLOADS=never ./tax2/tax2 --no-browser --output "$tax2_acceptance_home/explicit.html"`. Confirm `explicit.html` exists with mode `0600` (`test -f "$tax2_acceptance_home/explicit.html"` and `stat -f '%Lp' "$tax2_acceptance_home/explicit.html"` on macOS).
   - If rules or payload generation change, verify the bundled expectations and rule-validation/parity/export tests in the full suite; reference exports are outputs, not calculator inputs. After launcher-header edits, also run the fleet header guard above.
   - Finally remove only this run's fresh acceptance home with `rm -r -- "$tax2_acceptance_home"`, after all acceptance checks, while retaining the variable pointing to the directory this run created.
 - `mls-tracker`:
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py mls_tracker` from the repository root.
-  - Run `UV_PYTHON_DOWNLOADS=never ./mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
+  - Run `UV_PYTHON_DOWNLOADS=never ./mls-tracker/mls_tracker --help`, then start `UV_PYTHON_DOWNLOADS=never ./mls-tracker/mls_tracker --no-browser --port <free-port>`, request `/`, and terminate the FastAPI process cleanly.
 - Streamlit app (`transcription`):
   - Run `uv run --no-python-downloads --with pytest --with pip --with httpx --script transcription/transcription self-test` from the repository root. The owner-selected test environment is the Self-test overlay. It exercises both launcher modes and clean server shutdown with synthetic state. Launch with `UV_PYTHON_DOWNLOADS=never transcription/transcription [app|divider]`.
 - Shell utilities (`pdf-split`, `media-dater`, `toggle_wifi`, etc.):
@@ -204,7 +208,7 @@ When this does **not** apply:
 - Libraries or packages meant for `pip install` distribution.
 
 ### UI Shapes
-These rules govern **new projects** unless the user chooses otherwise. Existing projects keep their current shape and front-end stack until the user deliberately ports them; do not change either as part of unrelated work. Existing React CDN apps keep the contracts in `tools/testkit.py` (`assert_react_19_import_map`, `assert_react_esm_graph`).
+These rules govern **new projects** unless the user chooses otherwise. Existing projects keep their current shape and front-end stack until the user deliberately ports them; do not change either as part of unrelated work.
 
 Answer in order and stop at the first match:
 0. **Out of scope.** Delivered as a Docker stack, a library, a browser extension, or a background agent such as a `launchd` job? Follow that delivery model; these rules do not apply.
@@ -238,6 +242,7 @@ Answer in order and stop at the first match:
 **Front-end stack (all three shapes).**
 - Default to Preact with hooks and htm; plain JavaScript is acceptable for small pages. Colophon (`colophon/`) predates this default and uses plain JavaScript; follow it for shape, not stack. No JSX, no CDN, and no npm, bundler, or transpile step.
 - Vendor exact-version UMD or IIFE builds. Built and static pages inline them; a server may serve them from packaged files. Record each file's version, exact source URL, and SHA-256, and keep its license file, as `model_sentinel/model_sentinel/browse/assets/vendor/VERSIONS.md` does; include the required license notices in the page.
+- Reuse `tools/frontend_vendor/` and `tools/sync_frontend_vendor.mjs` for shared embedded assets. Declare required items in frontend-vendor markers, run the sync tool after changes, and use `--all --check` to detect drift. The port's compiled utility CSS is now hand-maintained plain CSS; no compiler is required to edit it.
 - Plain CSS with custom-property color tokens; do not use Tailwind, which needs a runtime compiler or a build step. Use framework-free chart libraries (for example uPlot) or SVG; do not use React-only libraries.
 - Browser tests use Playwright Chromium, open built and static pages from `file://`, and assert that every page, including server pages, makes no external requests. Use `tools/testkit.py`'s `guard_browser_errors` to fail on `pageerror`/`console.error`, and its launcher helpers (`load_launcher`, `run_launcher`, `assert_launcher_help`) for launcher tests.
 - Do not use Streamlit for new projects unless the user explicitly asks for it.

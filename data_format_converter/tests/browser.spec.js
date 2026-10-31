@@ -1,4 +1,57 @@
 const { expect, test } = require('@playwright/test');
+const { execFileSync } = require('node:child_process');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const fileUrl = pathToFileURL(path.resolve(__dirname, '../web/index.html')).href;
+
+test('index.html from file:// works offline and round-trips YAML and TOML', async ({ page }) => {
+  const requests = [], errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.route(/^https?:/, route => { requests.push(route.request().url()); return route.abort(); });
+  await page.goto(fileUrl);
+  await page.locator('#text-yaml').fill('name: synthetic\ncount: 42\n');
+  await page.locator('#btn-yaml').click();
+  await expect(page.locator('#text-toml')).toHaveValue(/name = "synthetic"/);
+  await page.locator('#btn-toml').click();
+  await expect(page.locator('#text-yaml')).toHaveValue(/count: 42/);
+  expect(requests).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('index.html passes the vendor sync check', () => {
+  execFileSync('node', [path.resolve(__dirname, '../../tools/sync_frontend_vendor.mjs'), '--check', path.resolve(__dirname, '../web/index.html')]);
+});
+
+test('panel headings retain the original Inter semibold appearance', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.evaluate(() => document.fonts.ready);
+  await expect(page.locator('.panel-header h3').first()).toHaveCSS('font-weight', '600');
+});
+
+test('theme is saved under data_format_converter.theme', async ({ page }) => {
+  await page.goto('/web/index.html');
+  await page.locator('#theme-select').selectOption('dark');
+  expect(await page.evaluate(() => localStorage.getItem('data_format_converter.theme'))).toBe('dark');
+});
+
+test('theme saved under the old key migrates and removes the old key', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('theme', 'dark'));
+  await page.goto('/web/index.html');
+  await expect(page.locator('#theme-select')).toHaveValue('dark');
+  expect(await page.evaluate(() => [localStorage.getItem('data_format_converter.theme'), localStorage.getItem('theme')])).toEqual(['dark', null]);
+});
+
+test('current theme preference takes precedence over a conflicting old key', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('data_format_converter.theme', 'light');
+    localStorage.setItem('theme', 'dark');
+  });
+  await page.goto('/web/index.html');
+  await expect(page.locator('#theme-select')).toHaveValue('light');
+  expect(await page.evaluate(() => [localStorage.getItem('data_format_converter.theme'), localStorage.getItem('theme')])).toEqual(['light', 'dark']);
+});
 
 const implicitNumberCase = {
   source: 'bin: 0b101\nsep: 1_000\nplain: 1000\n',
@@ -87,7 +140,7 @@ test.describe('YAML compatibility', () => {
   });
 });
 
-test('pinned browser converters initialize and convert synthetic JSON', async ({ page }) => {
+test('browser converters initialize and convert synthetic JSON', async ({ page }) => {
   const browserErrors = [];
   const openAIRequests = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
@@ -108,13 +161,6 @@ test('pinned browser converters initialize and convert synthetic JSON', async ({
 
   await page.goto('/web/index.html');
 
-  await expect(page.locator('script[src*="js-yaml"]')).toHaveAttribute(
-    'src',
-    'https://cdn.jsdelivr.net/npm/js-yaml@5.4.3/dist/browser/js-yaml.umd.min.js',
-  );
-  await expect
-    .poll(() => page.locator('script[type="module"]').textContent())
-    .toContain('https://cdn.jsdelivr.net/npm/@iarna/toml@3.0.0/+esm');
   await expect.poll(() => page.evaluate(() => typeof window.jsyaml?.load)).toBe('function');
   await expect.poll(() => page.evaluate(() => typeof window.TOML?.parse)).toBe('function');
 

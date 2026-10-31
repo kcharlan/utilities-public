@@ -13,6 +13,8 @@ from tools.testkit import ASGISyncClient
 
 import mls_tracker
 
+REAL_FETCH_LOGO_DATA = mls_tracker.fetch_logo_data
+
 
 # ============================================================
 # Fixtures — mock ESPN data
@@ -54,16 +56,16 @@ MOCK_TEAMS_RESPONSE = {
     "sports": [{
         "leagues": [{
             "teams": [
-                _make_team_entry(1, "Team Alpha", "ALP", "C8102E", "1D428A", "https://cdn/alpha.png"),
-                _make_team_entry(2, "Team Bravo", "BRV", "000000", "80FF00", "https://cdn/bravo.png"),
-                _make_team_entry(3, "Team Charlie", "CHR", "ffffff", "FF5733", "https://cdn/charlie.png"),
-                _make_team_entry(4, "Team Delta", "DLT", "1D428A", "", "https://cdn/delta.png"),
+                _make_team_entry(1, "Team Alpha", "ALP", "C8102E", "1D428A", "https://a.espncdn.com/i/teamlogos/soccer/500/alpha.png"),
+                _make_team_entry(2, "Team Bravo", "BRV", "000000", "80FF00", "https://a.espncdn.com/i/teamlogos/soccer/500/bravo.png"),
+                _make_team_entry(3, "Team Charlie", "CHR", "ffffff", "FF5733", "https://a.espncdn.com/i/teamlogos/soccer/500/charlie.png"),
+                _make_team_entry(4, "Team Delta", "DLT", "1D428A", "", "https://a.espncdn.com/i/teamlogos/soccer/500/delta.png"),
                 _make_team_entry(5, "Team Echo", "ECH", "", "", ""),
-                _make_team_entry(6, "Team Foxtrot", "FOX", "3366CC", "AABBCC", "https://cdn/foxtrot.png"),
-                _make_team_entry(7, "Team Golf", "GLF", "228B22", "FFD700", "https://cdn/golf.png"),
-                _make_team_entry(8, "Team Hotel", "HTL", "8B0000", "DC143C", "https://cdn/hotel.png"),
-                _make_team_entry(9, "Team India", "IND", "4B0082", "EE82EE", "https://cdn/india.png"),
-                _make_team_entry(10, "Team Juliet", "JUL", "DAA520", "B8860B", "https://cdn/juliet.png"),
+                _make_team_entry(6, "Team Foxtrot", "FOX", "3366CC", "AABBCC", "https://a.espncdn.com/i/teamlogos/soccer/500/foxtrot.png"),
+                _make_team_entry(7, "Team Golf", "GLF", "228B22", "FFD700", "https://a.espncdn.com/i/teamlogos/soccer/500/golf.png"),
+                _make_team_entry(8, "Team Hotel", "HTL", "8B0000", "DC143C", "https://a.espncdn.com/i/teamlogos/soccer/500/hotel.png"),
+                _make_team_entry(9, "Team India", "IND", "4B0082", "EE82EE", "https://a.espncdn.com/i/teamlogos/soccer/500/india.png"),
+                _make_team_entry(10, "Team Juliet", "JUL", "DAA520", "B8860B", "https://a.espncdn.com/i/teamlogos/soccer/500/juliet.png"),
             ]
         }]
     }]
@@ -100,7 +102,12 @@ def _mock_requests_get(url, **kwargs):
     """Route mocked requests.get to the right fixture."""
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
-    if "teams" in url:
+    if url.startswith("https://a.espncdn.com/i/teamlogos/soccer/"):
+        resp.status_code = 200
+        resp.headers = {"Content-Type": "image/png"}
+        resp.__enter__.return_value = resp
+        resp.raw.read1.side_effect = [b"synthetic-logo", b""]
+    elif "teams" in url:
         resp.json.return_value = MOCK_TEAMS_RESPONSE
     elif "standings" in url:
         resp.json.return_value = MOCK_STANDINGS_RESPONSE
@@ -113,7 +120,9 @@ def _mock_requests_get(url, **kwargs):
 def _patch_espn_and_reset_cache():
     """Patch external HTTP calls and reset the global cache for every test."""
     mls_tracker.cache.invalidate()
-    with patch("mls_tracker.requests.get", side_effect=_mock_requests_get):
+    with patch("mls_tracker.requests.get", side_effect=_mock_requests_get), patch(
+        "mls_tracker.fetch_logo_data", side_effect=mls_tracker._fetch_logo_data
+    ):
         yield
 
 
@@ -594,7 +603,7 @@ class TestDataFlow:
         assert alpha is not None
         # Team Alpha has color=C8102E which is not low-contrast → should be primary
         assert alpha["colors"]["primary"] == "#C8102E"
-        assert alpha["logo"] == "https://cdn/alpha.png"
+        assert alpha["logo"] == "data:image/png;base64,c3ludGhldGljLWxvZ28="
 
     def test_black_primary_team_gets_swapped_colors(self, client):
         """Team Bravo has black primary → should swap to alt color."""
@@ -695,3 +704,120 @@ class TestAuditFinding8_WarningsField:
         data = resp.json()
         assert "warnings" in data, "Response missing 'warnings' field"
         assert data["warnings"] == []
+
+
+def test_logo_is_embedded_and_network_request_is_bounded():
+    logo = b'\x89PNG\r\n\x1a\nsynthetic'
+    response = MagicMock(status_code=200, headers={'Content-Type': 'image/png'})
+    response.__enter__.return_value = response
+    response.raw.read1.side_effect = [logo, b""]
+    with patch('mls_tracker.requests.get', return_value=response) as get:
+        result = mls_tracker._fetch_logo_data('https://a.espncdn.com/i/teamlogos/soccer/500/123.png')
+    assert result == 'data:image/png;base64,iVBORw0KGgpzeW50aGV0aWM='
+    assert get.call_args.kwargs['allow_redirects'] is False
+    assert get.call_args.kwargs['stream'] is True
+    assert get.call_args.kwargs['timeout'] == (3, 5)
+
+
+def test_logo_rejects_untrusted_redirects_oversize_and_errors():
+    with patch('mls_tracker.requests.get') as get:
+        for url in ('http://a.espncdn.com/i/teamlogos/soccer/500/x.png',
+                    'https://a.espncdn.com.example.invalid/i/teamlogos/soccer/500/x.png',
+                    'https://a.espncdn.com:443/i/teamlogos/soccer/500/x.png',
+                    'https://a.espncdn.com/other/x.png'):
+            assert mls_tracker._fetch_logo_data(url) == ''
+        get.assert_not_called()
+        response = MagicMock(status_code=302, headers={'Content-Type': 'image/png'})
+        response.__enter__.return_value = response
+        get.return_value = response
+        url = 'https://a.espncdn.com/i/teamlogos/soccer/500/x.png'
+        assert mls_tracker._fetch_logo_data(url) == ''
+        response.status_code = 200
+        response.headers['Content-Encoding'] = 'gzip'
+        assert mls_tracker._fetch_logo_data(url) == ''
+        del response.headers['Content-Encoding']
+        response.raw.read1.side_effect = [b'x' * (mls_tracker.MAX_LOGO_BYTES + 1)]
+        assert mls_tracker._fetch_logo_data(url) == ''
+        get.side_effect = mls_tracker.requests.exceptions.Timeout('synthetic timeout')
+        assert mls_tracker._fetch_logo_data(url) == ''
+
+
+def test_team_fetch_embeds_logo_using_cached_metadata():
+    payload = {'sports': [{'leagues': [{'teams': [_make_team_entry(
+        1, 'Synthetic Team', 'SYN', '123456', 'abcdef',
+        'https://a.espncdn.com/i/teamlogos/soccer/500/123.png')]}]}]}
+    response = MagicMock()
+    response.json.return_value = payload
+    with patch('mls_tracker.requests.get', return_value=response), patch(
+        'mls_tracker.fetch_logo_data', return_value='data:image/png;base64,c3ludGhldGlj'
+    ) as embed:
+        cache = mls_tracker.DataCache()
+        assert cache.get_teams()[0]['logo'] == 'data:image/png;base64,c3ludGhldGlj'
+        cache.get_teams()
+        embed.assert_called_once()
+
+
+def test_logo_rejects_normalized_and_encoded_path_escape():
+    base = 'https://a.espncdn.com/i/teamlogos/soccer/'
+    with patch('mls_tracker.requests.get') as get:
+        for path in ('../../../other.png', '%2e%2e/%2e%2e/%2e%2e/other.png',
+                     '%2e%2e%2fother.png', '500/%2e%2e/../../other.png'):
+            assert mls_tracker._fetch_logo_data(base + path) == ''
+        get.assert_not_called()
+
+
+def test_logo_slow_trickle_exceeds_total_deadline_and_closes(caplog):
+    response = MagicMock(status_code=200, headers={'Content-Type': 'image/png'})
+    response.__enter__.return_value = response
+    clock = [0.0]
+    def trickle(*args, **kwargs):
+        clock[0] += 2
+        return b'x'
+    response.raw.read1.side_effect = trickle
+    response.iter_content.side_effect = lambda **kwargs: (trickle() for _ in range(6))
+    with patch('mls_tracker.requests.get', return_value=response), patch(
+        'mls_tracker.time.monotonic', side_effect=lambda: clock[0]
+    ):
+        assert mls_tracker._fetch_logo_data('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == ''
+    response.__exit__.assert_called_once()
+    assert 'deadline' in caplog.text.lower()
+
+
+def test_logo_worker_deadline_kills_and_reaps_real_sleeping_child(tmp_path, monkeypatch, caplog):
+    import os
+    pid_file = tmp_path / 'synthetic-worker.pid'
+    code = (f"import os,time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+            "time.sleep(30)")
+    monkeypatch.setattr(mls_tracker, 'LOGO_WORKER_CODE', code)
+    monkeypatch.setattr(mls_tracker, 'LOGO_DEADLINE_SECONDS', 1)
+    start = time.monotonic()
+    assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == ''
+    assert time.monotonic() - start < 5
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    assert 'deadline' in caplog.text.lower()
+
+
+def test_logo_worker_returns_successful_result(monkeypatch):
+    monkeypatch.setattr(mls_tracker, 'LOGO_WORKER_CODE', "print('data:image/png;base64,c3ludGhldGlj', end='')")
+    assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == 'data:image/png;base64,c3ludGhldGlj'
+
+
+def test_logo_worker_runs_transport_on_synthetic_response(monkeypatch):
+    code = (
+        "import runpy,sys; from unittest.mock import MagicMock; "
+        "m=runpy.run_path(sys.argv[1], run_name='mls_logo_worker'); "
+        "r=MagicMock(status_code=200, headers={'Content-Type':'image/png'}); "
+        "r.__enter__.return_value=r; r.raw.read1.side_effect=[b'synthetic',b'']; "
+        "m['_fetch_logo_data'].__globals__['requests'].get=lambda *a,**k:r; "
+        "print(m['_fetch_logo_data'](sys.argv[2]),end='')"
+    )
+    monkeypatch.setattr(mls_tracker, 'LOGO_WORKER_CODE', code)
+    assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == 'data:image/png;base64,c3ludGhldGlj'
+
+
+def test_parent_rejects_unsafe_logo_before_worker():
+    with patch('mls_tracker.subprocess.run') as run:
+        assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/../../../other.png') == ''
+        run.assert_not_called()

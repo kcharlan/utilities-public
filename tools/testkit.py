@@ -10,160 +10,11 @@ import re
 import subprocess
 import sys
 import uuid
-from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Literal
 from urllib.parse import urlsplit
-
-
-REACT_19_IMPORTS = (
-    ("react", "https://esm.sh/react@19.3.0"),
-    ("react/jsx-runtime", "https://esm.sh/react@19.3.0/jsx-runtime"),
-    (
-        "react/jsx-dev-runtime",
-        "https://esm.sh/react@19.3.0/jsx-dev-runtime",
-    ),
-    ("react-dom", "https://esm.sh/react-dom@19.3.0?external=react"),
-    (
-        "react-dom/client",
-        "https://esm.sh/react-dom@19.3.0/client?external=react",
-    ),
-    ("react-is", "https://esm.sh/react-is@19.3.0?external=react"),
-)
-
-# Recharts is the only React peer that imports react-is, and its CDN wrapper
-# pulls es-toolkit through ranged URLs. esm.sh must resolve those URLs and the
-# react-is wrapper on demand, so its build storage can fail them while
-# published exact-version modules keep serving.
-RECHARTS_3_IMPORTS = (
-    *(entry for entry in REACT_19_IMPORTS if entry[0] != "react-is"),
-    ("react-is", "https://esm.sh/react-is@19.3.0/es2022/react-is.mjs"),
-    *(
-        (
-            f"https://esm.sh/es-toolkit@%5E1.39.3/compat/{name}?target=es2022",
-            f"https://esm.sh/es-toolkit@1.53.0/es2022/compat/{name}.mjs",
-        )
-        for name in (
-            "get",
-            "isEqual",
-            "last",
-            "maxBy",
-            "minBy",
-            "omit",
-            "range",
-            "sortBy",
-            "sumBy",
-            "throttle",
-            "uniqBy",
-        )
-    ),
-)
-
-
-def assert_react_19_import_map(
-    imports: Mapping[str, str],
-    *,
-    recharts: bool = False,
-) -> None:
-    """Require the shared React 19 import-map contract exactly.
-
-    Pages that load Recharts use its pinned variant of the six-entry map.
-    """
-    expected = RECHARTS_3_IMPORTS if recharts else REACT_19_IMPORTS
-    assert dict(imports) == dict(expected)
-
-
-def is_react_package_resource(resource_url: str) -> bool:
-    """Match bare and versioned React-family package URL path segments."""
-    path = urlsplit(resource_url).path
-    return re.search(
-        r"(?:^|/)(?:react|react-dom|react-is)(?:@[^/]+)?(?:/|$)",
-        path,
-    ) is not None
-
-
-def assert_react_esm_graph(
-    resource_urls: Sequence[str],
-    *,
-    react_dom_wrapper_policy: Literal[
-        "required",
-        "forbidden",
-        "optional",
-    ] = "required",
-    recharts: bool = False,
-) -> None:
-    """Validate stable esm.sh React peer-graph boundaries.
-
-    Direct wrappers are exact and unique. Generated resources must stay on
-    the selected package versions, but their CDN-owned route layout is opaque.
-    Unrelated transitive dependencies are deliberately outside this helper's
-    contract.
-    """
-    if react_dom_wrapper_policy not in {"required", "forbidden", "optional"}:
-        raise ValueError(
-            "react_dom_wrapper_policy must be required, forbidden, or optional"
-        )
-
-    resources = list(resource_urls)
-    assert len(resources) == len(set(resources)), "duplicate React resource request"
-
-    wrapper_urls = {
-        urlsplit(resource_url).path: resource_url
-        for _specifier, resource_url in REACT_19_IMPORTS
-    }
-    wrapper_counts: Counter[str] = Counter()
-    generated_packages: set[str] = set()
-
-    for resource_url in resources:
-        parsed = urlsplit(resource_url)
-        assert (parsed.scheme, parsed.netloc, parsed.fragment) == (
-            "https",
-            "esm.sh",
-            "",
-        ), f"unexpected React resource origin: {resource_url}"
-
-        if parsed.path in wrapper_urls:
-            assert resource_url == wrapper_urls[parsed.path], (
-                f"unexpected direct React wrapper URL: {resource_url}"
-            )
-            wrapper_counts[parsed.path] += 1
-            continue
-
-        package_match = re.match(
-            r"^/(react(?:-dom|-is)?)@([^/]+)(?:/|$)",
-            parsed.path,
-        )
-        assert package_match is not None, (
-            f"unexpected React package resource: {resource_url}"
-        )
-        package, version = package_match.groups()
-        assert version == "19.3.0", f"unexpected React version: {resource_url}"
-        assert "?" not in resource_url, (
-            f"unexpected generated React resource query: {resource_url}"
-        )
-        generated_packages.add(package)
-
-    assert wrapper_counts["/react@19.3.0"] == 1
-    assert wrapper_counts["/react@19.3.0/jsx-runtime"] == 1
-    assert wrapper_counts["/react@19.3.0/jsx-dev-runtime"] == 0
-    assert wrapper_counts["/react-dom@19.3.0/client"] == 1
-    react_is_wrapper_present = wrapper_counts["/react-is@19.3.0"] == 1
-    if recharts:
-        assert not react_is_wrapper_present
-        assert "react-is" in generated_packages
-    else:
-        assert react_is_wrapper_present == ("react-is" in generated_packages)
-
-    react_dom_wrapper_count = wrapper_counts["/react-dom@19.3.0"]
-    if react_dom_wrapper_policy == "required":
-        assert react_dom_wrapper_count == 1
-    elif react_dom_wrapper_policy == "forbidden":
-        assert react_dom_wrapper_count == 0
-    else:
-        assert react_dom_wrapper_count in {0, 1}
 
 
 def _install_browser_error_listeners(page):
@@ -374,3 +225,100 @@ def assert_launcher_help(
         assert marker in result.stdout
     assert "Traceback" not in result.stderr
     return result
+
+
+class _BlockedRequests(list[str]):
+    def __init__(self, allowed_origins: Sequence[str]) -> None:
+        super().__init__()
+        self.allowed_origins = frozenset(allowed_origins)
+
+
+def block_external_requests(context, allowed_origins: Sequence[str] = ()) -> list[str]:
+    """Block external requests and return the URLs that were blocked."""
+    blocked = _BlockedRequests(allowed_origins)
+
+    def route_request(route):
+        url = route.request.url
+        parsed = urlsplit(url)
+        if parsed.scheme in {"file", "data", "blob", "about"} or (
+            parsed.scheme in {"http", "https"}
+            and f"{parsed.scheme}://{parsed.netloc}" in blocked.allowed_origins
+        ):
+            route.continue_()
+        else:
+            blocked.append(url)
+            route.abort()
+
+    context.route("**/*", route_request)
+    return blocked
+
+
+def assert_no_external_resources(page, blocked: list[str]) -> None:
+    """Check both intercepted requests and the browser's resource timings."""
+    resources = page.evaluate("""() => performance.getEntriesByType('resource')
+        .map(entry => entry.name)
+        .filter(url => /^https?:/i.test(url) && new URL(url).origin !== location.origin)""")
+    allowed = getattr(blocked, "allowed_origins", ())
+    resources = [
+        url for url in resources
+        if f"{urlsplit(url).scheme}://{urlsplit(url).netloc}" not in allowed
+    ]
+    assert not blocked and not resources, f"External resources: blocked={blocked}, timed={resources}"
+
+
+def assert_offline_page_source(html: str) -> None:
+    """Reject remote executable resources and retired runtime compilers."""
+    source = re.sub(r"/\*.*?\*/|<!--.*?-->", "", html, flags=re.S)
+    patterns = (
+        r"<\s*(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*['\"]?(?:https?:)?//",
+        r"\b(?:import|export)\s+(?:[^;\n]*?\s+from\s+)?['\"](?:https?:)?//",
+        r"\bimport\s*\(\s*['\"](?:https?:)?//",
+        r"\b(?:url\s*\(|@import\s+)(?:\s*['\"]?)?(?:https?:)?//",
+        r"\btype\s*=\s*['\"](?:importmap|text/babel|text/tailwindcss)['\"]",
+    )
+    for pattern in patterns:
+        assert not re.search(pattern, source, re.I), f"Offline source contains {pattern}"
+
+
+def assert_frontend_vendor_current(path: str | Path) -> None:
+    script = Path(__file__).resolve().parent / "sync_frontend_vendor.mjs"
+    result = subprocess.run(["node", str(script), "--check", str(path)], capture_output=True, text=True)
+    assert result.returncode == 0, f"{path}: {result.stdout}{result.stderr}"
+
+
+def assert_launcher_compiles_cleanly(path: str | Path) -> None:
+    import warnings
+
+    path = Path(path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        warnings.simplefilter("error", DeprecationWarning)
+        compile(path.read_bytes(), str(path), "exec")
+
+
+def assert_classes_styled(page, ignore: Sequence[str] = ()) -> None:
+    missing = page.evaluate(r"""(ignore) => {
+        const selectors = [];
+        function visit(rules) {
+            for (const rule of rules) {
+                if (rule.selectorText) selectors.push(rule.selectorText);
+                if (rule.cssRules) visit(rule.cssRules);
+            }
+        }
+        for (const sheet of document.styleSheets) visit(sheet.cssRules);
+        const tokens = new Set();
+        for (const element of document.querySelectorAll('[class]'))
+            for (const token of element.classList) tokens.add(token);
+        function containsClass(selector, token) {
+            const needle = '.' + CSS.escape(token);
+            let offset = -1;
+            while ((offset = selector.indexOf(needle, offset + 1)) !== -1) {
+                const next = selector[offset + needle.length];
+                if (next === undefined || !/[\w\-\\\u0080-\uFFFF]/.test(next)) return true;
+            }
+            return false;
+        }
+        return [...tokens].filter(token => !ignore.includes(token) &&
+            !selectors.some(selector => containsClass(selector, token)));
+    }""", list(ignore))
+    assert not missing, f"Unstyled classes: {missing}"

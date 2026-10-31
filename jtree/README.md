@@ -98,23 +98,16 @@ jtree [file.json] [--port 8100] [--readonly]
 - `--readonly` applies to the initial file. Opening another file through the UI creates an editable document; it is not a session-wide restriction.
 - Node paths use `.` as their separator, so object keys containing literal periods cannot be navigated or edited reliably
 - Expand All traverses at most 200 immediate children per container and stops after 5,000 expanded containers
-- The frontend libraries and fonts are loaded from CDNs, so the UI needs network access unless those resources are already cached by the browser
 
 ## Architecture
 
-Single-file Python script (uv-managed via a PEP 723 header) following the embedded React SPA pattern:
+Single-file Python script (uv-managed via a PEP 723 header) serving an embedded SPA:
 
 - **Backend**: FastAPI + uvicorn serving REST API and HTML
-- **Frontend**: React 19.3.0, ReactDOM 19.3.0, and react-is 19.3.0 through an exact-version import map; Babel Standalone 8.0.5 for module-aware inline JSX; Tailwind CSS 4.3.3 through the exact-version `@tailwindcss/browser` package; Lucide Icons 1.46.0; and DM Sans + JetBrains Mono fonts (all CDN)
+- **Frontend**: Embedded Preact, htm, Lucide icons, CSS, and Latin subsets of DM Sans and JetBrains Mono. Other glyphs use system fonts.
 - **No build step**: No `npm install`, no `node_modules`
 
-Tailwind configuration is CSS-first: the embedded `text/tailwindcss` stylesheet
-declares the custom design tokens with `@theme` and registers the class-based
-dark mode through an explicit custom variant. The import map pins the direct
-top-level package versions, while Babel compiles the module-aware inline JSX in
-the browser. CDN-generated transitive dependencies are not fully locked, and
-runtime CDN delivery is not byte-immutable, so the UI still requires network
-access when assets are not cached.
+The browser interface uses no external network resources after the launcher starts.
 
 ### Browser support
 
@@ -126,7 +119,7 @@ so browser-specific behavior on those clients requires manual verification.
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- A modern web browser with access to the CDN-hosted frontend resources
+- A modern web browser
 - Dependencies resolved automatically by uv on first run
 
 ## Tests

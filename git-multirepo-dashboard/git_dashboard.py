@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -3117,35 +3117,7 @@ HTML_TEMPLATE = """\
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Git Fleet</title>
-  <!-- Google Fonts (JetBrains Mono + Geist) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
-  <!-- CDN dependencies (exact direct versions; CDN-generated ESM is network-resolved) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@19.3.0",
-      "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@19.3.0/jsx-dev-runtime",
-      "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
-      "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
-      "react-is": "https://esm.sh/react-is@19.3.0/es2022/react-is.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/get?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/get.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/isEqual?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/isEqual.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/last?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/last.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/maxBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/maxBy.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/minBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/minBy.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/omit?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/omit.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/range?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/range.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/sortBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sortBy.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/sumBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/sumBy.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/throttle?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/throttle.mjs",
-      "https://esm.sh/es-toolkit@%5E1.39.3/compat/uniqBy?target=es2022": "https://esm.sh/es-toolkit@1.53.0/es2022/compat/uniqBy.mjs"
-    }
-  }
-  </script>
-  <script src="https://unpkg.com/@babel/standalone@8.0.5/babel.min.js"></script>
+  <!-- frontend-vendor -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -3390,19 +3362,35 @@ HTML_TEMPLATE = """\
       opacity: 0;
       pointer-events: none;
     }
+    .activity-chart .svgc-wrapper svg text,
+    .allocation-chart .svgc-wrapper svg text {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      fill: var(--text-muted);
+    }
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" data-type="module" data-presets="env,react">
-    import * as React from 'react';
-    import * as ReactDOMClient from 'react-dom/client';
-    import * as Recharts from 'https://esm.sh/recharts@3.10.1?external=react,react-dom,react-is';
-
-    const { useState, useEffect, useRef, useLayoutEffect, useMemo } = React;
+  <script type="module">
+/* Delete button — CSS :hover controls visibility */
+/* Scan-failed badge — CSS :hover hides it when delete button is visible */
+/* Row 1: RuntimeBadge + name (with tooltip) + time */
+/* Row 2: Last commit message or path-not-found error */
+/* Row 3: Status pills + branch + branch count + dep badge */
+/* Month labels */
+/* Day labels (Mon, Wed, Fri only) */
+/* Grid */
+/* Tooltip */
+/* Legend */
+/* KPI summary */
+/* Per-repo dep summaries */
+/* Dependency Overlap */
+const htmlTag = htm.bind(preact.h);
+    const {useState, useEffect, useRef, useLayoutEffect, useMemo} = preactHooks;
 
     // ── ErrorBoundary ────────────────────────────────────────────────────────
-    class ErrorBoundary extends React.Component {
+    class ErrorBoundary extends preact.Component {
       constructor(props) {
         super(props);
         this.state = { hasError: false, error: null };
@@ -3416,17 +3404,12 @@ HTML_TEMPLATE = """\
       render() {
         if (this.state.hasError) {
           return (
-            <div style={{
+            htmlTag`<div style=${{
               padding: '48px',
               textAlign: 'center',
               color: 'var(--status-red)',
               fontFamily: 'var(--font-mono)',
-            }}>
-              <p style={{ fontSize: '16px', marginBottom: '8px' }}>Something went wrong</p>
-              <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                {this.state.error && this.state.error.toString()}
-              </p>
-            </div>
+            }}> <p style=${{ fontSize: '16px', marginBottom: '8px' }}>Something went wrong</p> <p style=${{ fontSize: '13px', color: 'var(--text-muted)' }}> ${this.state.error && this.state.error.toString()} </p> </div>`
           );
         }
         return this.props.children;
@@ -3460,7 +3443,7 @@ HTML_TEMPLATE = """\
     // ── Header ───────────────────────────────────────────────────────────────
     function Header({ onFullScan, onScanDir, scanActive }) {
       return (
-        <header style={{
+        htmlTag`<header style=${{
           position: 'fixed',
           top: 0,
           left: 0,
@@ -3473,19 +3456,12 @@ HTML_TEMPLATE = """\
           justifyContent: 'space-between',
           padding: '0 24px',
           zIndex: 100,
-        }}>
-          <span style={{
+        }}> <span style=${{
             fontFamily: 'var(--font-heading)',
             fontSize: '18px',
             fontWeight: 700,
             color: 'var(--text-primary)',
-          }}>
-            Git Fleet
-          </span>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button
-              onClick={onScanDir}
-              style={{
+          }}> Git Fleet </span> <div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}> <button onClick=${onScanDir} style=${{
                 background: 'transparent',
                 border: '1px solid var(--border-default)',
                 color: 'var(--text-secondary)',
@@ -3496,14 +3472,7 @@ HTML_TEMPLATE = """\
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
                 transition: 'all var(--transition-fast)',
-              }}
-            >
-              Scan Dir
-            </button>
-            <button
-              onClick={onFullScan}
-              disabled={scanActive}
-              style={{
+              }}> Scan Dir </button> <button onClick=${onFullScan} disabled=${scanActive} style=${{
                 background: scanActive ? 'var(--text-muted)' : 'var(--accent-blue)',
                 border: 'none',
                 color: '#fff',
@@ -3515,12 +3484,7 @@ HTML_TEMPLATE = """\
                 cursor: scanActive ? 'not-allowed' : 'pointer',
                 transition: 'all var(--transition-fast)',
                 opacity: scanActive ? 0.6 : 1,
-              }}
-            >
-              Full Scan
-            </button>
-          </div>
-        </header>
+              }}> Full Scan </button> </div> </header>`
       );
     }
 
@@ -3546,7 +3510,7 @@ HTML_TEMPLATE = """\
       }, [activeTab]);
 
       return (
-        <nav style={{
+        htmlTag`<nav style=${{
           position: 'fixed',
           top: '56px',
           left: 0,
@@ -3558,14 +3522,8 @@ HTML_TEMPLATE = """\
           alignItems: 'flex-end',
           padding: '0 24px',
           zIndex: 99,
-        }}>
-          <div style={{ position: 'relative', display: 'flex' }}>
-            {TABS.map((tab, i) => (
-              <a
-                key={tab.id}
-                href={tab.hash}
-                ref={el => tabRefs.current[i] = el}
-                style={{
+        }}> <div style=${{ position: 'relative', display: 'flex' }}> ${TABS.map((tab, i) => (
+              htmlTag`<a key=${tab.id} href=${tab.hash} ref=${el => tabRefs.current[i] = el} style=${{
                   display: 'block',
                   padding: '10px 16px',
                   fontFamily: 'var(--font-heading)',
@@ -3575,14 +3533,8 @@ HTML_TEMPLATE = """\
                   textDecoration: 'none',
                   transition: 'color var(--transition-fast)',
                   whiteSpace: 'nowrap',
-                }}
-              >
-                {tab.label}
-              </a>
-            ))}
-            <div
-              ref={indicatorRef}
-              style={{
+                }}> ${tab.label} </a>`
+            ))} <div ref=${indicatorRef} style=${{
                 position: 'absolute',
                 bottom: 0,
                 height: '3px',
@@ -3591,10 +3543,7 @@ HTML_TEMPLATE = """\
                 transition: 'left var(--transition-normal), width var(--transition-normal)',
                 left: 0,
                 width: 0,
-              }}
-            />
-          </div>
-        </nav>
+              }} /> </div> </nav>`
       );
     }
 
@@ -3627,7 +3576,7 @@ HTML_TEMPLATE = """\
 
       const toolCount = Object.values(status.tools || {}).filter(Boolean).length;
       return (
-        <div style={{
+        htmlTag`<div style=${{
           margin: '16px 24px 0',
           padding: '12px 16px',
           borderRadius: 'var(--radius-sm)',
@@ -3637,25 +3586,14 @@ HTML_TEMPLATE = """\
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '12px',
-        }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <strong style={{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}>
-              Tool status
-            </strong>
-            <span style={{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}>
-              Version {status.version} with {toolCount} detected helper tool{toolCount === 1 ? '' : 's'}.
-            </span>
-          </div>
-          <button
-            onClick={() => {
+        }}> <div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}> <strong style=${{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}> Tool status </strong> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}> Version ${status.version} with ${toolCount} detected helper tool${toolCount === 1 ? '' : 's'}. </span> </div> <button onClick=${() => {
               try {
                 sessionStorage.setItem('git-fleet-status-banner-dismissed', '1');
               } catch (_err) {
                 // Ignore browsers that block sessionStorage.
               }
               setDismissed(true);
-            }}
-            style={{
+            }} style=${{
               background: 'transparent',
               border: '1px solid var(--border-default)',
               color: 'var(--text-secondary)',
@@ -3664,11 +3602,7 @@ HTML_TEMPLATE = """\
               fontFamily: 'var(--font-body)',
               fontSize: '12px',
               padding: '6px 10px',
-            }}
-          >
-            Dismiss
-          </button>
-        </div>
+            }}> Dismiss </button> </div>`
       );
     }
 
@@ -3680,7 +3614,7 @@ HTML_TEMPLATE = """\
       const pct = total > 0 ? Math.min((progress / total) * 100, 100) : (status === 'completed' ? 100 : 0);
       const fillColor = status === 'completed' ? 'var(--status-green)' : 'var(--accent-blue)';
       return (
-        <div style={{
+        htmlTag`<div style=${{
           position: 'fixed',
           top: '100px',   // header(56) + nav(44)
           left: 0,
@@ -3688,14 +3622,12 @@ HTML_TEMPLATE = """\
           height: '3px',
           background: 'var(--border-default)',
           zIndex: 98,
-        }}>
-          <div style={{
+        }}> <div style=${{
             height: '3px',
             width: pct + '%',
             background: fillColor,
             transition: 'width 300ms ease-out, background 300ms ease-out',
-          }} />
-        </div>
+          }} /> </div>`
       );
     }
 
@@ -3778,70 +3710,15 @@ HTML_TEMPLATE = """\
       };
 
       return (
-        <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-          <div style={modalStyle}>
-            <div style={headerStyle}>
-              <span style={{ fontWeight: 600, fontSize: '15px', color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}>
-                Select Directory to Scan
-              </span>
-              <button onClick={onClose} style={{ ...btnBase, background: 'none', color: 'var(--text-muted)', fontSize: '18px', padding: '4px 8px' }}>{'\u00d7'}</button>
-            </div>
-            <div style={inputRowStyle}>
-              <input
-                type="text"
-                value={pathInput}
-                onChange={(e) => setPathInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                style={inputStyle}
-                placeholder="/path/to/directory"
-              />
-              <button onClick={() => browse(pathInput)} style={{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Go</button>
-            </div>
-            <div style={listStyle}>
-              {error && <div style={{ padding: '12px 20px', color: 'var(--status-red)', fontSize: '13px' }}>{error}</div>}
-              {loading && <div style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>}
-              {!loading && !error && (
-                <>
-                  {parentPath && (
-                    <div
-                      onClick={() => browse(parentPath)}
-                      style={{ ...itemStyle(false), color: 'var(--text-muted)' }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-secondary)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      {'\u2190'} ..
-                    </div>
-                  )}
-                  {dirs.length === 0 && !parentPath && (
-                    <div style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>No subdirectories</div>
-                  )}
-                  {dirs.map(d => (
-                    <div
-                      key={d.path}
-                      onClick={() => browse(d.path)}
-                      style={itemStyle(d.is_git)}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-secondary)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <span style={{ fontFamily: 'monospace' }}>{d.is_git ? '[repo]' : '[dir]'}</span>
-                      <span style={{ flex: 1 }}>{d.name}</span>
-                      {d.is_git && <span style={{ fontSize: '11px', color: 'var(--accent-blue)', fontWeight: 500 }}>git</span>}
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-            <div style={footerStyle}>
-              <button onClick={onClose} style={{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Cancel</button>
-              <button
-                onClick={() => { onSelect(currentPath); onClose(); }}
-                style={{ ...btnBase, background: 'var(--accent-blue)', color: '#fff' }}
-              >
-                Scan This Directory
-              </button>
-            </div>
-          </div>
-        </div>
+        htmlTag`<div style=${overlayStyle} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}> <div style=${modalStyle}> <div style=${headerStyle}> <span style=${{ fontWeight: 600, fontSize: '15px', color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}> Select Directory to Scan </span> <button onClick=${onClose} style=${{ ...btnBase, background: 'none', color: 'var(--text-muted)', fontSize: '18px', padding: '4px 8px' }}>${'\u00d7'}</button> </div> <div style=${inputRowStyle}> <input type=${"text"} value=${pathInput} onInput=${(e) => setPathInput(e.target.value)} onKeyDown=${handleKeyDown} style=${inputStyle} placeholder=${"/path/to/directory"} /> <button onClick=${() => browse(pathInput)} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Go</button> </div> <div style=${listStyle}> ${error && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--status-red)', fontSize: '13px' }}>${error}</div>`} ${loading && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>`} ${!loading && !error && (
+                htmlTag` ${parentPath && (
+                    htmlTag`<div onClick=${() => browse(parentPath)} style=${{ ...itemStyle(false), color: 'var(--text-muted)' }} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}> ${'\u2190'} .. </div>`
+                  )} ${dirs.length === 0 && !parentPath && (
+                    htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>No subdirectories</div>`
+                  )} ${dirs.map(d => (
+                    htmlTag`<div key=${d.path} onClick=${() => browse(d.path)} style=${itemStyle(d.is_git)} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}> <span style=${{ fontFamily: 'monospace' }}>${d.is_git ? '[repo]' : '[dir]'}</span> <span style=${{ flex: 1 }}>${d.name}</span> ${d.is_git && htmlTag`<span style=${{ fontSize: '11px', color: 'var(--accent-blue)', fontWeight: 500 }}>git</span>`} </div>`
+                  ))} `
+              )} </div> <div style=${footerStyle}> <button onClick=${onClose} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Cancel</button> <button onClick=${() => { onSelect(currentPath); onClose(); }} style=${{ ...btnBase, background: 'var(--accent-blue)', color: '#fff' }}> Scan This Directory </button> </div> </div> </div>`
       );
     }
 
@@ -3849,10 +3726,10 @@ HTML_TEMPLATE = """\
     // Fixed bottom-right notification showing scan progress.
     function ScanToast({ scanState }) {
       const { active, status, progress, total, currentRepo } = scanState;
-      const [visible, setVisible] = React.useState(false);
-      const [slideOut, setSlideOut] = React.useState(false);
+      const [visible, setVisible] = useState(false);
+      const [slideOut, setSlideOut] = useState(false);
 
-      React.useEffect(() => {
+      useEffect(() => {
         if (active) {
           setVisible(true);
           setSlideOut(false);
@@ -3878,7 +3755,7 @@ HTML_TEMPLATE = """\
         : 'Scanning...';
 
       return (
-        <div style={{
+        htmlTag`<div style=${{
           position: 'fixed',
           bottom: '24px',
           right: '24px',
@@ -3892,18 +3769,14 @@ HTML_TEMPLATE = """\
           animation: slideOut
             ? 'toastSlideOut var(--transition-slow) forwards'
             : 'toastSlideIn var(--transition-slow) forwards',
-        }}>
-          <div style={{
+        }}> <div style=${{
             fontFamily: 'var(--font-heading)',
             fontSize: '13px',
             fontWeight: 600,
             color: 'var(--text-primary)',
             marginBottom: '6px',
-          }}>
-            {heading}
-          </div>
-          {currentRepo && (
-            <div style={{
+          }}> ${heading} </div> ${currentRepo && (
+            htmlTag`<div style=${{
               fontFamily: 'var(--font-mono)',
               fontSize: '12px',
               color: 'var(--text-secondary)',
@@ -3911,34 +3784,23 @@ HTML_TEMPLATE = """\
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-            }}>
-              {currentRepo}
-            </div>
-          )}
-          <div style={{ marginBottom: '4px' }}>
-            <div style={{
+            }}> ${currentRepo} </div>`
+          )} <div style=${{ marginBottom: '4px' }}> <div style=${{
               height: '4px',
               background: 'var(--border-default)',
               borderRadius: '2px',
               overflow: 'hidden',
-            }}>
-              <div style={{
+            }}> <div style=${{
                 height: '4px',
                 width: pct + '%',
                 background: fillColor,
                 transition: 'width 300ms ease-out, background 300ms ease-out',
-              }} />
-            </div>
-          </div>
-          <div style={{
+              }} /> </div> </div> <div style=${{
             fontFamily: 'var(--font-body)',
             fontSize: '12px',
             color: 'var(--text-muted)',
             textAlign: 'right',
-          }}>
-            {progress} / {total || '?'}
-          </div>
-        </div>
+          }}> ${progress} / ${total || '?'} </div> </div>`
       );
     }
 
@@ -3995,7 +3857,7 @@ HTML_TEMPLATE = """\
       const label = RUNTIME_LABELS[type] || '??';
       const color = `var(--runtime-${type}, var(--text-muted))`;
       return (
-        <span style={{
+        htmlTag`<span style=${{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           width: '24px', height: '24px', flexShrink: 0,
           borderRadius: '4px',
@@ -4003,9 +3865,7 @@ HTML_TEMPLATE = """\
           color: color,
           fontFamily: 'var(--font-heading)',
           fontSize: '11px', fontWeight: 700,
-        }}>
-          {label}
-        </span>
+        }}> ${label} </span>`
       );
     }
 
@@ -4014,11 +3874,11 @@ HTML_TEMPLATE = """\
       const { has_uncommitted, modified_count, untracked_count, staged_count } = repo;
       if (!has_uncommitted) {
         return (
-          <span style={{
+          htmlTag`<span style=${{
             fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500,
             padding: '2px 8px', borderRadius: '4px',
             color: 'var(--status-green)', background: 'var(--status-green-bg)',
-          }}>Clean</span>
+          }}>Clean</span>`
         );
       }
       const pills = [];
@@ -4032,15 +3892,13 @@ HTML_TEMPLATE = """\
         label: `${staged_count} staged`, color: 'var(--accent-blue)', bg: 'var(--accent-blue-dim)'
       });
       return (
-        <span style={{ display: 'inline-flex', gap: '4px', flexWrap: 'wrap' }}>
-          {pills.map(p => (
-            <span key={p.label} style={{
+        htmlTag`<span style=${{ display: 'inline-flex', gap: '4px', flexWrap: 'wrap' }}> ${pills.map(p => (
+            htmlTag`<span key=${p.label} style=${{
               fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500,
               padding: '2px 8px', borderRadius: '4px',
               color: p.color, background: p.bg,
-            }}>{p.label}</span>
-          ))}
-        </span>
+            }}>${p.label}</span>`
+          ))} </span>`
       );
     }
 
@@ -4060,62 +3918,46 @@ HTML_TEMPLATE = """\
 
       let label = null;
       if (vulnerable > 0) {
-        label = <span style={{
+        label = htmlTag`<span style=${{
           fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: 400,
           color: 'var(--status-red)',
-        }}>{vulnerable} vuln</span>;
+        }}>${vulnerable} vuln</span>`;
       } else if (outdated > 0) {
-        label = <span style={{
+        label = htmlTag`<span style=${{
           fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: 400,
           color: 'var(--status-yellow)',
-        }}>{outdated} out</span>;
+        }}>${outdated} out</span>`;
       } else if (total > 0) {
-        label = <span style={{
+        label = htmlTag`<span style=${{
           fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: 400,
           color: 'var(--text-muted)',
-        }}>{total} deps</span>;
+        }}>${total} deps</span>`;
       }
-      if (!label && hasMissing) label = <span>Missing tools</span>;
-      if (!label && analysisError) label = <span>Analysis error</span>;
+      if (!label && hasMissing) label = htmlTag`<span>Missing tools</span>`;
+      if (!label && analysisError) label = htmlTag`<span>Analysis error</span>`;
       if (!label) return null;
 
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-          <span
-            title={dotTitle}
-            style={{
+        htmlTag`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}> <span title=${dotTitle} style=${{
               display: 'inline-block', width: '6px', height: '6px',
               borderRadius: '50%', background: dotColor, flexShrink: 0,
-            }}
-          />
-          {label}
-          {total > 0 && analysisError && <span style={{color: 'var(--status-orange)'}}>Analysis error</span>}
-        </span>
+            }} /> ${label} ${total > 0 && analysisError && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Analysis error</span>`} </span>`
       );
     }
 
     // SparklineOverlay — slides up from bottom on card hover
     function SparklineOverlay({ sparkline, visible }) {
-      const { AreaChart, Area } = Recharts;
       const data = (sparkline || []).map((v, i) => ({ i, v }));
       return (
-        <div style={{
+        htmlTag`<div style=${{
           position: 'absolute', bottom: 0, left: 0, right: 0, height: '32px',
           overflow: 'hidden', pointerEvents: 'none',
           transform: visible ? 'translateY(0)' : 'translateY(100%)',
           transition: visible ? '150ms ease-out' : '100ms ease-in',
           background: 'linear-gradient(transparent, var(--bg-card) 30%)',
-        }}>
-          {data.length > 0 && (
-            <AreaChart width={400} height={28} data={data}
-              style={{ width: '100%' }}
-              margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-              <Area type="monotone" dataKey="v"
-                fill="var(--accent-blue-dim)" stroke="var(--accent-blue)"
-                dot={false} isAnimationActive={false} />
-            </AreaChart>
-          )}
-        </div>
+        }}> ${data.length > 0 && (
+            htmlTag`<${svgCharts.CartesianChart} kind=${"area"} compact=${true} height=${28} data=${data} xKey=${"i"} margin=${{ top: 0, right: 0, bottom: 0, left: 0 }} series=${[{key:'v', color:'var(--accent-blue)', fill:'var(--accent-blue-dim)', strokeWidth:1}]} />`
+          )} </div>`
       );
     }
 
@@ -4154,71 +3996,33 @@ HTML_TEMPLATE = """\
       }
 
       return (
-        <div
-          className="project-card"
-          style={cardStyle}
-          tabIndex={0}
-          role="button"
-          aria-label={`View ${repo.name} details`}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onClick={() => { window.location.hash = '#/repo/' + repo.id; }}
-          onKeyDown={(e) => {
+        htmlTag`<div class=${"project-card"} style=${cardStyle} tabIndex=${0} role=${"button"} aria-label=${`View ${repo.name} details`} onMouseEnter=${() => setHovered(true)} onMouseLeave=${() => setHovered(false)} onFocusIn=${() => setFocused(true)} onFocusOut=${e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }} onClick=${() => { window.location.hash = '#/repo/' + repo.id; }} onKeyDown=${(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               window.location.hash = '#/repo/' + repo.id;
             }
-          }}
-        >
-          {/* Delete button — CSS :hover controls visibility */}
-          <button
-            className="card-delete-btn"
-            onClick={handleDelete}
-            title={`Remove ${repo.name}`}
-            aria-label={`Remove ${repo.name}`}
-            style={{
+          }}>  <button class=${"card-delete-btn"} onClick=${handleDelete} title=${`Remove ${repo.name}`} aria-label=${`Remove ${repo.name}`} style=${{
               position: 'absolute', top: '8px', right: '8px', zIndex: 5,
               background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
               color: 'var(--text-muted)', cursor: 'pointer',
               width: '22px', height: '22px', borderRadius: '4px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '14px', lineHeight: 1, padding: 0,
-            }}
-          >{'\u00d7'}</button>
-
-          {/* Scan-failed badge — CSS :hover hides it when delete button is visible */}
-          {repo.scan_error && (
-            <div className="scan-failed-badge" style={{
+            }}>${'\u00d7'}</button>  ${repo.scan_error && (
+            htmlTag`<div class=${"scan-failed-badge"} style=${{
               position: 'absolute', top: '8px', right: '8px',
               fontSize: '10px', fontFamily: 'var(--font-body)', fontWeight: 600,
               color: 'var(--status-red)', background: 'var(--status-red-bg)',
               padding: '2px 6px', borderRadius: '3px',
-            }}>
-              scan failed
-            </div>
-          )}
-
-          {/* Row 1: RuntimeBadge + name (with tooltip) + time */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <RuntimeBadge runtime={repo.runtime} />
-            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-              <span
-                style={{
+            }}> scan failed </div>`
+          )}  <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}> <${RuntimeBadge} runtime=${repo.runtime} /> <div style=${{ position: 'relative', flex: 1, minWidth: 0 }}> <span style=${{
                   display: 'block',
                   fontFamily: 'var(--font-heading)', fontSize: '16px', fontWeight: 600,
                   color: 'var(--text-primary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   cursor: 'pointer',
-                }}
-                onMouseEnter={() => setTooltipVisible(true)}
-                onMouseLeave={() => setTooltipVisible(false)}
-              >
-                {repo.name}
-              </span>
-              {tooltipVisible && (
-                <div style={{
+                }} onMouseEnter=${() => setTooltipVisible(true)} onMouseLeave=${() => setTooltipVisible(false)}> ${repo.name} </span> ${tooltipVisible && (
+                htmlTag`<div style=${{
                   position: 'absolute', bottom: '100%', left: 0, zIndex: 10,
                   background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
                   borderRadius: 'var(--radius-sm)', padding: '6px 10px',
@@ -4226,82 +4030,48 @@ HTML_TEMPLATE = """\
                   color: 'var(--text-secondary)', maxWidth: '500px',
                   whiteSpace: 'nowrap', pointerEvents: 'none',
                   marginBottom: '4px',
-                }}>
-                  {repo.path}
-                </div>
-              )}
-            </div>
-            <span style={{
+                }}> ${repo.path} </div>`
+              )} </div> <span style=${{
               flexShrink: 0, fontSize: '13px',
               fontFamily: 'var(--font-body)', color: 'var(--text-secondary)',
-            }}>
-              {timeAgo(repo.last_commit_date)}
-            </span>
-          </div>
-
-          {/* Row 2: Last commit message or path-not-found error */}
-          <div style={{
+            }}> ${timeAgo(repo.last_commit_date)} </span> </div>  <div style=${{
             fontSize: '13px', fontFamily: 'var(--font-body)',
             color: pathMissing ? 'var(--status-red)' : 'var(--text-secondary)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             marginBottom: '8px', marginLeft: '32px',
             fontWeight: pathMissing ? 600 : 400,
-          }}>
-            {pathMissing
+          }}> ${pathMissing
               ? 'Path not found'
-              : (repo.last_commit_message || <span style={{ color: 'var(--text-muted)' }}>—</span>)}
-          </div>
-
-          {/* Row 3: Status pills + branch + branch count + dep badge */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <StatusPills repo={repo} />
-            <span style={{ flex: 1 }} />
-            <span style={{
+              : (repo.last_commit_message || htmlTag`<span style=${{ color: 'var(--text-muted)' }}>—</span>`)} </div>  <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}> <${StatusPills} repo=${repo} /> <span style=${{ flex: 1 }} /> <span style=${{
               fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 400,
               color: 'var(--text-secondary)',
-            }}>
-              {repo.current_branch}
-            </span>
-            <span style={{
+            }}> ${repo.current_branch} </span> <span style=${{
               fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 400,
               color: branchColor,
-            }}>
-              {repo.branch_count || 0}br
-            </span>
-            <DepBadge dep={repo.dep_summary} missingTools={repo.missing_dep_tools} analysisError={repo.dep_check_error} />
-          </div>
-
-          <SparklineOverlay sparkline={repo.sparkline} visible={hovered} />
-        </div>
+            }}> ${repo.branch_count || 0}br </span> <${DepBadge} dep=${repo.dep_summary} missingTools=${repo.missing_dep_tools} analysisError=${repo.dep_check_error} /> </div> <${SparklineOverlay} sparkline=${repo.sparkline} visible=${active} /> </div>`
       );
     }
 
     // KpiCard — single stat card
     function KpiCard({ value, label, color, tooltip }) {
       return (
-        <div
-          title={tooltip || ''}
-          style={{
+        htmlTag`<div title=${tooltip || ''} style=${{
             flex: '1 1 140px',
             background: 'var(--bg-card)',
             border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-md)',
             padding: '16px 20px',
             cursor: tooltip ? 'help' : undefined,
-          }}
-        >
-          <div style={{
+          }}> <div style=${{
             fontFamily: 'var(--font-heading)', fontSize: '28px', fontWeight: 700,
             color: color || 'var(--text-primary)',
             lineHeight: 1.1,
-          }}>{value}</div>
-          <div style={{
+          }}>${value}</div> <div style=${{
             fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 500,
             color: 'var(--text-secondary)',
             textTransform: 'uppercase', letterSpacing: '0.5px',
             marginTop: '4px',
-          }}>{label}</div>
-        </div>
+          }}>${label}</div> </div>`
       );
     }
 
@@ -4317,15 +4087,7 @@ HTML_TEMPLATE = """\
         : String(kpis.net_lines_this_week ?? 0);
       const vulnValue = `${kpis.vulnerable_deps ?? 0} / ${kpis.outdated_deps ?? 0}`;
       return (
-        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-          <KpiCard value={kpis.total_repos ?? 0} label="Repos" tooltip="Total repositories tracked" />
-          <KpiCard value={kpis.repos_with_changes ?? 0} label="Dirty" color={dirtyColor} tooltip="Repos with uncommitted changes (modified, untracked, or staged files)" />
-          <KpiCard value={commitValue} label="Commits" tooltip="Commits this week / this month (across all repos)" />
-          <KpiCard value={locValue} label="Net LOC" tooltip="Net lines of code changed this week (insertions minus deletions, across all repos)" />
-          <KpiCard value={kpis.stale_branches ?? 0} label="Stale Branches" color={staleColor} tooltip="Branches with no commits in the last 30 days (across all repos)" />
-          <KpiCard value={vulnValue} label="Vuln / Outdated" color={vulnColor} tooltip="Vulnerable dependencies / outdated dependencies (across all repos)" />
-          <KpiCard value={kpis.unchecked_deps ?? 0} label="Not Checked" color={kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip="Declarations with incomplete outdated or vulnerability coverage, including those with findings" />
-        </div>
+        htmlTag`<div style=${{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}> <${KpiCard} value=${kpis.total_repos ?? 0} label=${"Repos"} tooltip=${"Total repositories tracked"} /> <${KpiCard} value=${kpis.repos_with_changes ?? 0} label=${"Dirty"} color=${dirtyColor} tooltip=${"Repos with uncommitted changes (modified, untracked, or staged files)"} /> <${KpiCard} value=${commitValue} label=${"Commits"} tooltip=${"Commits this week / this month (across all repos)"} /> <${KpiCard} value=${locValue} label=${"Net LOC"} tooltip=${"Net lines of code changed this week (insertions minus deletions, across all repos)"} /> <${KpiCard} value=${kpis.stale_branches ?? 0} label=${"Stale Branches"} color=${staleColor} tooltip=${"Branches with no commits in the last 30 days (across all repos)"} /> <${KpiCard} value=${vulnValue} label=${"Vuln / Outdated"} color=${vulnColor} tooltip=${"Vulnerable dependencies / outdated dependencies (across all repos)"} /> <${KpiCard} value=${kpis.unchecked_deps ?? 0} label=${"Not Checked"} color=${kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip=${"Declarations with incomplete outdated or vulnerability coverage, including those with findings"} /> </div>`
       );
     }
 
@@ -4351,92 +4113,48 @@ HTML_TEMPLATE = """\
       }, [open]);
 
       return (
-        <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
-          <button
-            onClick={() => setOpen(o => !o)}
-            style={{
+        htmlTag`<div ref=${ref} style=${{ position: 'relative', display: 'inline-block' }}> <button onClick=${() => setOpen(o => !o)} style=${{
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', padding: '6px 12px',
               color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: '13px',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
               whiteSpace: 'nowrap',
-            }}
-          >
-            {current.label}
-            <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
-              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-          {open && (
-            <div style={{
+            }}> ${current.label} <svg width=${"10"} height=${"6"} viewBox=${"0 0 10 6"} fill=${"none"}> <path d=${"M1 1l4 4 4-4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /> </svg> </button> ${open && (
+            htmlTag`<div style=${{
               position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: '4px',
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', minWidth: '180px', overflow: 'hidden',
-            }}>
-              {options.map(opt => (
-                <div
-                  key={opt.value}
-                  onClick={() => { onChange(opt.value); setOpen(false); }}
-                  style={{
+            }}> ${options.map(opt => (
+                htmlTag`<div key=${opt.value} onClick=${() => { onChange(opt.value); setOpen(false); }} style=${{
                     padding: '8px 12px', cursor: 'pointer',
                     fontFamily: 'var(--font-body)', fontSize: '13px',
                     color: opt.value === value ? 'var(--accent-blue)' : 'var(--text-primary)',
                     background: opt.value === value ? 'var(--accent-blue-dim)' : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (opt.value !== value) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                  onMouseLeave={e => { if (opt.value !== value) e.currentTarget.style.background = 'transparent'; }}
-                >
-                  {opt.label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                  }} onMouseEnter=${e => { if (opt.value !== value) e.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave=${e => { if (opt.value !== value) e.currentTarget.style.background = 'transparent'; }}> ${opt.label} </div>`
+              ))} </div>`
+          )} </div>`
       );
     }
 
     // GridControls — sort dropdown + filter input
     function GridControls({ sortBy, filterText, onSortChange, onFilterChange }) {
       return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-          <SortDropdown value={sortBy} onChange={onSortChange} />
-          <input
-            type="text"
-            placeholder="Filter projects..."
-            value={filterText}
-            onChange={e => onFilterChange(e.target.value)}
-            style={{
+        htmlTag`<div style=${{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}> <${SortDropdown} value=${sortBy} onChange=${onSortChange} /> <input type=${"text"} placeholder=${"Filter projects..."} value=${filterText} onInput=${e => onFilterChange(e.target.value)} style=${{
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', padding: '6px 12px',
               fontFamily: 'var(--font-body)', fontSize: '13px',
               color: 'var(--text-primary)', outline: 'none', width: '220px',
-            }}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border-default)'; }}
-          />
-        </div>
+            }} onFocus=${e => { e.target.style.borderColor = 'var(--accent-blue)'; }} onBlur=${e => { e.target.style.borderColor = 'var(--border-default)'; }} /> </div>`
       );
     }
 
     // EmptyState — shown when no repos are registered
     function EmptyState() {
       return (
-        <div style={{
+        htmlTag`<div style=${{
           textAlign: 'center', padding: '64px 24px',
           color: 'var(--text-muted)',
-        }}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
-            style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>
-            <path d="M3 3h18v18H3zM9 9h6M9 12h6M9 15h4"
-              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <p style={{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '8px' }}>
-            No repositories registered
-          </p>
-          <p style={{ fontFamily: 'var(--font-body)', fontSize: '14px' }}>
-            Use "Scan Dir" in the header to add repositories.
-          </p>
-        </div>
+        }}> <svg width=${"48"} height=${"48"} viewBox=${"0 0 24 24"} fill=${"none"} style=${{ color: 'var(--text-muted)', marginBottom: '16px' }}> <path d=${"M3 3h18v18H3zM9 9h6M9 12h6M9 15h4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /> </svg> <p style=${{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '8px' }}> No repositories registered </p> <p style=${{ fontFamily: 'var(--font-body)', fontSize: '14px' }}> Use "Scan Dir" in the header to add repositories. </p> </div>`
       );
     }
 
@@ -4474,7 +4192,7 @@ HTML_TEMPLATE = """\
         animation: 'pulse 1.5s ease-in-out infinite',
       });
       return (
-        <div style={{
+        htmlTag`<div style=${{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-default)',
           borderRadius: 'var(--radius-md)',
@@ -4482,11 +4200,7 @@ HTML_TEMPLATE = """\
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
-        }}>
-          <div style={barStyle('60%')} />
-          <div style={barStyle('80%')} />
-          <div style={barStyle('50%')} />
-        </div>
+        }}> <div style=${barStyle('60%')} /> <div style=${barStyle('80%')} /> <div style=${barStyle('50%')} /> </div>`
       );
     }
 
@@ -4505,16 +4219,12 @@ HTML_TEMPLATE = """\
 
       if (!data) {
         return (
-          <div style={{
+          htmlTag`<div style=${{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
             gap: '16px',
             marginTop: '24px',
-          }}>
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </div>
+          }}> <${SkeletonCard} /> <${SkeletonCard} /> <${SkeletonCard} /> </div>`
         );
       }
 
@@ -4527,31 +4237,17 @@ HTML_TEMPLATE = """\
       const sorted = sortRepos(filtered, sortBy);
 
       return (
-        <div>
-          <KpiRow kpis={kpis} />
-          <div style={{ marginTop: '24px' }}>
-            <GridControls
-              sortBy={sortBy}
-              filterText={filterText}
-              onSortChange={setSortBy}
-              onFilterChange={setFilterText}
-            />
-            {repos.length === 0
-              ? <EmptyState />
+        htmlTag`<div> <${KpiRow} kpis=${kpis} /> <div style=${{ marginTop: '24px' }}> <${GridControls} sortBy=${sortBy} filterText=${filterText} onSortChange=${setSortBy} onFilterChange=${setFilterText} /> ${repos.length === 0
+              ? htmlTag`<${EmptyState} />`
               : (
-                <div style={{
+                htmlTag`<div style=${{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
                   gap: '16px',
-                }}>
-                  {sorted.map(repo => <ProjectCard key={repo.id} repo={repo} onDelete={(id) => {
+                }}> ${sorted.map(repo => htmlTag`<${ProjectCard} key=${repo.id} repo=${repo} onDelete=${(id) => {
                     setData(prev => prev ? { ...prev, repos: prev.repos.filter(r => r.id !== id) } : prev);
-                  }} />)}
-                </div>
-              )
-            }
-          </div>
-        </div>
+                  }} />`)} </div>`
+              )} </div> </div>`
       );
     }
 
@@ -4595,79 +4291,16 @@ HTML_TEMPLATE = """\
       }
 
       return (
-        <div className="detail-header">
-          <div>
-            <button
-              className="detail-back-btn"
-              onClick={() => { window.location.hash = '#/fleet'; }}
-              aria-label="Back to fleet"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path d="M9 2L4 7L9 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Back
-            </button>
-            <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
-              {repo.name}
-            </h1>
-            <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}>
-              {repo.path}{pathMissing && ' — Path not found'}
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-              <RuntimeBadge runtime={repo.runtime} />
-              <span
-                onClick={onGoToBranches}
-                style={{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }}
-                title="Switch branch"
-              >
-                {selectedBranch || repo.default_branch}
-              </span>
-              <span>·</span>
-              <span>Last scanned {scanAge}</span>
-            </div>
-            {pathMissing && (
-              <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-secondary"
-                  style={{ color: 'var(--status-red)' }}
-                  onClick={handleRemove}
-                >
-                  Remove
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowUpdatePath(v => !v)}
-                >
-                  Update Path
-                </button>
-                {showUpdatePath && (
-                  <>
-                    <input
-                      type="text"
-                      value={newPath}
-                      onChange={e => setNewPath(e.target.value)}
-                      placeholder="New absolute path…"
-                      style={{
+        htmlTag`<div class=${"detail-header"}> <div> <button class=${"detail-back-btn"} onClick=${() => { window.location.hash = '#/fleet'; }} aria-label=${"Back to fleet"}> <svg width=${"14"} height=${"14"} viewBox=${"0 0 14 14"} fill=${"none"} aria-hidden=${"true"}> <path d=${"M9 2L4 7L9 12"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /> </svg> Back </button> <h1 style=${{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}> ${repo.name} </h1> <p style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}> ${repo.path}${pathMissing && ' — Path not found'} </p> <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}> <${RuntimeBadge} runtime=${repo.runtime} /> <span onClick=${onGoToBranches} style=${{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }} title=${"Switch branch"}> ${selectedBranch || repo.default_branch} </span> <span>·</span> <span>Last scanned ${scanAge}</span> </div> ${pathMissing && (
+              htmlTag`<div style=${{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' }}> <button class=${"btn btn-secondary"} style=${{ color: 'var(--status-red)' }} onClick=${handleRemove}> Remove </button> <button class=${"btn btn-secondary"} onClick=${() => setShowUpdatePath(v => !v)}> Update Path </button> ${showUpdatePath && (
+                  htmlTag` <input type=${"text"} value=${newPath} onInput=${e => setNewPath(e.target.value)} placeholder=${"New absolute path…"} style=${{
                         fontFamily: 'var(--font-mono)', fontSize: '13px',
                         background: 'var(--bg-input)', border: '1px solid var(--border-default)',
                         borderRadius: 'var(--radius-sm)', padding: '5px 10px',
                         color: 'var(--text-primary)', width: '320px',
-                      }}
-                    />
-                    <button
-                      className="btn btn-secondary"
-                      onClick={handleSavePath}
-                      disabled={saving}
-                    >
-                      {saving ? 'Saving…' : 'Save'}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          <button
-            style={{
+                      }} /> <button class=${"btn btn-secondary"} onClick=${handleSavePath} disabled=${saving}> ${saving ? 'Saving…' : 'Save'} </button> `
+                )} </div>`
+            )} </div> <button style=${{
               background: 'none',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)',
@@ -4678,13 +4311,7 @@ HTML_TEMPLATE = """\
               padding: '6px 14px',
               transition: 'border-color var(--transition-fast), color var(--transition-fast)',
               marginTop: '24px',
-            }}
-            onClick={() => {}}
-            title="Scan Now (not yet wired)"
-          >
-            Scan Now
-          </button>
-        </div>
+            }} onClick=${() => {}} title=${"Scan Now (not yet wired)"}> Scan Now </button> </div>`
       );
     }
 
@@ -4697,19 +4324,9 @@ HTML_TEMPLATE = """\
 
     function SubTabNav({ active, onChange }) {
       return (
-        <nav className="sub-tab-nav" role="tablist">
-          {SUB_TABS.map(t => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active === t.id}
-              className={'sub-tab-btn' + (active === t.id ? ' active' : '')}
-              onClick={() => onChange(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        htmlTag`<nav class=${"sub-tab-nav"} role=${"tablist"}> ${SUB_TABS.map(t => (
+            htmlTag`<button key=${t.id} role=${"tab"} aria-selected=${active === t.id} class=${'sub-tab-btn' + (active === t.id ? ' active' : '')} onClick=${() => onChange(t.id)}> ${t.label} </button>`
+          ))} </nav>`
       );
     }
 
@@ -4723,17 +4340,9 @@ HTML_TEMPLATE = """\
 
     function TimeRangeSelector({ selected, onChange }) {
       return (
-        <div className="time-range-group" role="group" aria-label="Time range">
-          {TIME_RANGES.map(r => (
-            <button
-              key={r.days}
-              className={'time-range-btn' + (selected === r.days ? ' active' : '')}
-              onClick={() => onChange(r.days)}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
+        htmlTag`<div class=${"time-range-group"} role=${"group"} aria-label=${"Time range"}> ${TIME_RANGES.map(r => (
+            htmlTag`<button key=${r.days} class=${'time-range-btn' + (selected === r.days ? ' active' : '')} onClick=${() => onChange(r.days)}> ${r.label} </button>`
+          ))} </div>`
       );
     }
 
@@ -4771,13 +4380,10 @@ HTML_TEMPLATE = """\
     }
 
     function ActivityChart({ data }) {
-      const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = Recharts;
 
       if (!data || data.length === 0) {
         return (
-          <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>
-            No activity data for this period
-          </div>
+          htmlTag`<div style=${{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}> No activity data for this period </div>`
         );
       }
 
@@ -4799,18 +4405,12 @@ HTML_TEMPLATE = """\
         const rawDel = del ? Math.abs(del.value) : 0;
         const netVal = net ? net.value : 0;
         return (
-          <div style={{
+          htmlTag`<div style=${{
             background: 'var(--bg-card)', border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-sm)', padding: '10px 14px',
             fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)',
             lineHeight: '1.7',
-          }}>
-            <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '4px' }}>{label}</div>
-            <div style={{ color: 'var(--status-green)' }}>+{ins ? ins.value : 0} insertions</div>
-            <div style={{ color: 'var(--status-red)' }}>-{rawDel} deletions</div>
-            <div style={{ color: 'var(--accent-blue)' }}>net {netVal >= 0 ? '+' : ''}{netVal}</div>
-            <div>{commits} commits</div>
-          </div>
+          }}> <div style=${{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '4px' }}>${label}</div> <div style=${{ color: 'var(--status-green)' }}>+${ins ? ins.value : 0} insertions</div> <div style=${{ color: 'var(--status-red)' }}>-${rawDel} deletions</div> <div style=${{ color: 'var(--accent-blue)' }}>net ${netVal >= 0 ? '+' : ''}${netVal}</div> <div>${commits} commits</div> </div>`
         );
       }
 
@@ -4818,54 +4418,11 @@ HTML_TEMPLATE = """\
       const tickInterval = Math.max(Math.floor(chartData.length / 10), 6);
 
       return (
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={chartData} stackOffset="sign" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" vertical={false} />
-            <XAxis
-              dataKey="date"
-              tick={{ fontFamily: 'var(--font-mono)', fontSize: 11, fill: 'var(--text-muted)' }}
-              interval={tickInterval}
-              tickLine={false}
-              axisLine={{ stroke: 'var(--border-default)' }}
-            />
-            <YAxis
-              tick={{ fontFamily: 'var(--font-mono)', fontSize: 11, fill: 'var(--text-muted)' }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={v => v < 0 ? String(-v) : String(v)}
-            />
-            <ReferenceLine y={0} stroke="var(--border-default)" strokeWidth={1} />
-            <Tooltip content={<CustomTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="insertions"
-              stackId="stack"
-              fill="var(--status-green)"
-              fillOpacity={0.2}
-              stroke="var(--status-green)"
-              strokeWidth={1.5}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="deletions"
-              stackId="stack"
-              fill="var(--status-red)"
-              fillOpacity={0.2}
-              stroke="var(--status-red)"
-              strokeWidth={1.5}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="net"
-              fill="none"
-              stroke="var(--accent-blue)"
-              strokeWidth={2}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        htmlTag`<div class="activity-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${300} margin=${{top:10, right:40, bottom:30, left:60}} grid=${{horizontal:true, vertical:false}} xAxisLine=${true} stackOffset=${"sign"} tickEvery=${tickInterval + 1} yDomain=${chartData.every(d => d.insertions === 0 && d.deletions === 0) ? [0, 4] : undefined} yFormat=${v => String(Math.abs(v))} referenceY=${0} tooltip=${props => htmlTag`<${CustomTooltip} ...${props} />`} series=${[
+          {key:'insertions', stack:true, color:'var(--status-green)', fillOpacity:0.2, strokeWidth:1.5},
+          {key:'deletions', stack:true, color:'var(--status-red)', fillOpacity:0.2, strokeWidth:1.5},
+          {key:'net', color:'var(--accent-blue)', fill:'none', strokeWidth:2},
+        ]} /></div>`
       );
     }
 
@@ -4885,13 +4442,9 @@ HTML_TEMPLATE = """\
       }, [repoId, selectedDays]);
 
       return (
-        <div>
-          <TimeRangeSelector selected={selectedDays} onChange={setSelectedDays} />
-          {historyData === null
-            ? <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>Loading…</div>
-            : <ActivityChart data={historyData} />
-          }
-        </div>
+        htmlTag`<div> <${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} /> ${historyData === null
+            ? htmlTag`<div style=${{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>Loading…</div>`
+            : htmlTag`<${ActivityChart} data=${historyData} />`} </div>`
       );
     }
 
@@ -4926,72 +4479,25 @@ HTML_TEMPLATE = """\
       }
 
       if (loading) {
-        return <div className="table-empty">Loading…</div>;
+        return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
       }
 
       return (
-        <div>
-          {branch && (
-            <div style={{
+        htmlTag`<div> ${branch && (
+            htmlTag`<div style=${{
               fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
               color: 'var(--accent-blue)', marginBottom: '10px',
               textTransform: 'uppercase', letterSpacing: '0.5px',
               display: 'flex', alignItems: 'center', gap: '6px',
-            }}>
-              <span style={{ color: 'var(--text-muted)' }}>Branch:</span>
-              {branch}
-              <span style={{
+            }}> <span style=${{ color: 'var(--text-muted)' }}>Branch:</span> ${branch} <span style=${{
                 fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
                 color: 'var(--text-muted)', textTransform: 'none',
-              }}>
-                ({total} {total === 1 ? 'commit' : 'commits'})
-              </span>
-            </div>
-          )}
-          <div className="table-container">
-            <div className="table-header" style={{ gridTemplateColumns: '120px 1fr 110px 70px' }}>
-              <span>Date</span>
-              <span>Message</span>
-              <span>+/-</span>
-              <span>Files</span>
-            </div>
-            {commits.length === 0 ? (
-              <div className="table-empty">No commits found</div>
+              }}> (${total} ${total === 1 ? 'commit' : 'commits'}) </span> </div>`
+          )} <div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}> <span>Date</span> <span>Message</span> <span>+/-</span> <span>Files</span> </div> ${commits.length === 0 ? (
+              htmlTag`<div class=${"table-empty"}>No commits found</div>`
             ) : commits.map(c => (
-              <div key={c.hash} className="table-row" style={{ gridTemplateColumns: '120px 1fr 110px 70px' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  {fmtDate(c.date)}
-                </span>
-                <span style={{ fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {c.message && c.message.length > 80 ? c.message.slice(0, 80) + '…' : (c.message || '')}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
-                  <span style={{ color: 'var(--status-green)' }}>+{c.insertions}</span>
-                  {' '}
-                  <span style={{ color: 'var(--status-red)' }}>-{c.deletions}</span>
-                </span>
-                <span style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)' }}>
-                  {c.files_changed}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
-            <button
-              className="btn btn-secondary"
-              disabled={page <= 1}
-              onClick={() => setPage(p => p - 1)}
-            >Prev</button>
-            <span style={{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}>
-              Page {page} of {totalPages}
-            </span>
-            <button
-              className="btn btn-secondary"
-              disabled={page >= totalPages}
-              onClick={() => setPage(p => p + 1)}
-            >Next</button>
-          </div>
-        </div>
+              htmlTag`<div key=${c.hash} class=${"table-row"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${fmtDate(c.date)} </span> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}> ${c.message && c.message.length > 80 ? c.message.slice(0, 80) + '…' : (c.message || '')} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}> <span style=${{ color: 'var(--status-green)' }}>+${c.insertions}</span> ${' '} <span style=${{ color: 'var(--status-red)' }}>-${c.deletions}</span> </span> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)' }}> ${c.files_changed} </span> </div>`
+            ))} </div> <div style=${{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}> <button class=${"btn btn-secondary"} disabled=${page <= 1} onClick=${() => setPage(p => p - 1)}>Prev</button> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}> Page ${page} of ${totalPages} </span> <button class=${"btn btn-secondary"} disabled=${page >= totalPages} onClick=${() => setPage(p => p + 1)}>Next</button> </div> </div>`
       );
     }
 
@@ -5027,87 +4533,42 @@ HTML_TEMPLATE = """\
       }
 
       if (loading) {
-        return <div className="table-empty">Loading…</div>;
+        return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
       }
 
       const gridCols = '1fr 80px 110px 70px 120px 130px';
 
       return (
-        <div className="table-container">
-          <div className="table-header" style={{ gridTemplateColumns: gridCols }}>
-            <span>Branch</span>
-            <span>Commits</span>
-            <span>+/\u2212</span>
-            <span>Files</span>
-            <span>Last Commit</span>
-            <span>Status</span>
-          </div>
-          {branches.length === 0 ? (
-            <div className="table-empty">No branches found</div>
+        htmlTag`<div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: gridCols }}> <span>Branch</span> <span>Commits</span> <span>+/−</span> <span>Files</span> <span>Last Commit</span> <span>Status</span> </div> ${branches.length === 0 ? (
+            htmlTag`<div class=${"table-empty"}>No branches found</div>`
           ) : branches.map(b => {
             const isSelected = selectedBranch === b.name;
             return (
-              <div
-                key={b.name}
-                className="table-row"
-                style={{
+              htmlTag`<div key=${b.name} class=${"table-row"} style=${{
                   gridTemplateColumns: gridCols,
                   cursor: 'pointer',
                   borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent',
                   background: isSelected ? 'var(--accent-blue-dim)' : undefined,
-                }}
-                onClick={() => onSelectBranch(b.name)}
-                title={'View commits for ' + b.name}
-              >
-                <span style={{
+                }} onClick=${() => onSelectBranch(b.name)} title=${'View commits for ' + b.name}> <span style=${{
                   fontFamily: 'var(--font-mono)', fontSize: '14px',
                   color: isSelected ? 'var(--accent-blue)' : 'var(--text-primary)',
                   fontWeight: isSelected ? 600 : 400,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {b.name}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  {b.is_default ? '\u2014' : (b.commits_ahead || 0)}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
-                  {b.is_default ? (
-                    <span style={{ color: 'var(--text-muted)' }}>\u2014</span>
+                }}> ${b.name} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${b.is_default ? '\u2014' : (b.commits_ahead || 0)} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}> ${b.is_default ? (
+                    htmlTag`<span style=${{ color: 'var(--text-muted)' }}>—</span>`
                   ) : (b.insertions || b.deletions) ? (
-                    <>
-                      <span style={{ color: 'var(--status-green)' }}>+{b.insertions || 0}</span>
-                      {' '}
-                      <span style={{ color: 'var(--status-red)' }}>\u2212{b.deletions || 0}</span>
-                    </>
+                    htmlTag` <span style=${{ color: 'var(--status-green)' }}>+${b.insertions || 0}</span> ${' '} <span style=${{ color: 'var(--status-red)' }}>−${b.deletions || 0}</span> `
                   ) : (
-                    <span style={{ color: 'var(--text-muted)' }}>0</span>
-                  )}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  {b.is_default ? '\u2014' : (b.files_changed || 0)}
-                </span>
-                <span style={{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}>
-                  {fmtDate(b.last_commit_date)}
-                </span>
-                <span>
-                  {b.is_default ? (
-                    <span style={{ color: 'var(--accent-blue)', background: 'var(--accent-blue-dim)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}>
-                      default
-                    </span>
+                    htmlTag`<span style=${{ color: 'var(--text-muted)' }}>0</span>`
+                  )} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${b.is_default ? '\u2014' : (b.files_changed || 0)} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}> ${fmtDate(b.last_commit_date)} </span> <span> ${b.is_default ? (
+                    htmlTag`<span style=${{ color: 'var(--accent-blue)', background: 'var(--accent-blue-dim)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}> default </span>`
                   ) : isStale(b.last_commit_date) ? (
-                    <span style={{ color: 'var(--status-orange)', background: 'var(--status-orange-bg)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}>
-                      stale ({staleDays(b.last_commit_date)}d)
-                    </span>
+                    htmlTag`<span style=${{ color: 'var(--status-orange)', background: 'var(--status-orange-bg)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}> stale (${staleDays(b.last_commit_date)}d) </span>`
                   ) : (
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-muted)' }}>
-                      active
-                    </span>
-                  )}
-                </span>
-              </div>
+                    htmlTag`<span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-muted)' }}> active </span>`
+                  )} </span> </div>`
             );
-          })}
-        </div>
+          })} </div>`
       );
     }
 
@@ -5221,46 +4682,16 @@ HTML_TEMPLATE = """\
         downloadBlob(md, 'deps-export.md', 'text/markdown');
       }
       function dependencyTable(rows) {
-        return <div className="table-container" style={{overflowX: 'auto'}}>
-          <table className="data-table" style={{width: '100%', textAlign: 'left', fontSize: '13px'}}>
-            <thead><tr>{['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => <th key={h} style={{padding: '8px'}}>{h}</th>)}</tr></thead>
-            <tbody>{rows.map(pkg => <tr key={JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}>
-              <td style={{padding: '8px'}}>{pkg.name}</td><td>{pkg.declared_spec || '—'}</td><td>{currentText(pkg)}</td><td>{pkg.latest_version || '—'}</td>
-              <td style={{color: severityColor(pkg.severity)}}>{statusText(pkg)}<br/><small>outdated: {pkg.outdated_state || 'unchecked'}; vulnerability: {pkg.vuln_state || 'unchecked'}</small></td>
-              <td>{pkg._label}<br/>{pkg.check_note}</td>
-            </tr>)}</tbody>
-          </table>
-        </div>;
+        return htmlTag`<div class=${"table-container"} style=${{overflowX: 'auto'}}> <table class=${"data-table"} style=${{width: '100%', textAlign: 'left', fontSize: '13px'}}> <thead><tr>${['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => htmlTag`<th key=${h} style=${{padding: '8px'}}>${h}</th>`)}</tr></thead> <tbody>${rows.map(pkg => htmlTag`<tr key=${JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}> <td style=${{padding: '8px'}}>${pkg.name}</td><td>${pkg.declared_spec || '—'}</td><td>${currentText(pkg)}</td><td>${pkg.latest_version || '—'}</td> <td style=${{color: severityColor(pkg.severity)}}>${statusText(pkg)}<br /><small>outdated: ${pkg.outdated_state || 'unchecked'}; vulnerability: ${pkg.vuln_state || 'unchecked'}</small></td> <td>${pkg._label}<br />${pkg.check_note}</td> </tr>`)}</tbody> </table> </div>`;
       }
-      if (loading) return <div className="table-empty">Loading…</div>;
-      return <div>
-        <div style={{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}>
-          <button className="btn btn-secondary" onClick={handleExportMD} disabled={!repo || !appStatus}>Export MD</button>
-          <button className="btn btn-secondary" onClick={handleExportJSON} disabled={!repo || !appStatus}>Export JSON</button>
-          <button className="btn btn-secondary" onClick={() => fetchDeps(true)} disabled={scanning}>{scanning ? 'Checking…' : 'Check Now'}</button>
-        </div>
-        {error && <div role="alert">{error}</div>}
-        <div data-testid="dep-coverage" style={{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}>
-          {incomplete && <strong>Incomplete coverage — </strong>}{summary.declarations} declarations; {summary.manifests} manifests; {summary.fullyChecked} fully checked; {summary.unchecked} not checked.
-          {missingTools.map(t => <div key={t.tool}>{t.tool} — {t.description}</div>)}
-        </div>
-        {issues.length > 0 && <section><h3>Attention Required</h3>{dependencyTable(issues)}</section>}
-        {unchecked.length > 0 && <section data-testid="dep-not-checked"><h3>Not Checked</h3>{dependencyTable(unchecked)}</section>}
-        {summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
-          <div style={{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>}
-        <section data-testid="dep-all"><h3>All Dependencies</h3>{managerGroups.map(group => <div key={JSON.stringify([group.manager, group.source_path])} style={{marginBottom: '16px'}}>
-          <h4>{group.label || group.manager}</h4>{dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}
-        </div>)}{!packages.length && <div>No dependencies detected</div>}</section>
-        <section><h3>Manifests Scanned</h3>{manifests.map(m => <div key={m.path}>{m.path} — {m.kind} — {m.dependencies} declarations{m.error ? ' — ' + m.error : ''}</div>)}</section>
-        <div style={{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: {newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet {appStatus?.version}</div>
-      </div>;
+      if (loading) return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
+      return htmlTag`<div> <div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}> <button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button> <button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button> <button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button> </div> ${error && htmlTag`<div role=${"alert"}>${error}</div>`} <div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}> ${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked. ${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)} </div> ${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`} ${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`} ${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+          htmlTag`<div style=${{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>`} <section data-testid=${"dep-all"}><h3>All Dependencies</h3>${managerGroups.map(group => htmlTag`<div key=${JSON.stringify([group.manager, group.source_path])} style=${{marginBottom: '16px'}}> <h4>${group.label || group.manager}</h4>${dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))} </div>`)}${!packages.length && htmlTag`<div>No dependencies detected</div>`}</section> <section><h3>Manifests Scanned</h3>${manifests.map(m => htmlTag`<div key=${m.path}>${m.path} — ${m.kind} — ${m.dependencies} declarations${m.error ? ' — ' + m.error : ''}</div>`)}</section> <div style=${{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: ${newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet ${appStatus?.version}</div> </div>`;
     }
 
     function PlaceholderTab({ text }) {
       return (
-        <div className="table-container">
-          <div className="table-empty">{text} — coming in a later packet</div>
-        </div>
+        htmlTag`<div class=${"table-container"}> <div class=${"table-empty"}>${text} — coming in a later packet</div> </div>`
       );
     }
 
@@ -5309,23 +4740,12 @@ HTML_TEMPLATE = """\
 
       if (!repo) {
         return (
-          <div style={{ padding: '48px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>
-            Loading…
-          </div>
+          htmlTag`<div style=${{ padding: '48px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}> Loading… </div>`
         );
       }
 
       return (
-        <div className="detail-view">
-          <DetailHeader repo={repo} selectedBranch={selectedBranch} onGoToBranches={() => handleSubTabChange('branches')} />
-          <SubTabNav active={activeSubTab} onChange={handleSubTabChange} />
-          <div className="detail-content">
-            {activeSubTab === 'activity'  && <ActivityTab repoId={repoId} />}
-            {activeSubTab === 'deps'      && <DepsTab repoId={repoId} />}
-            {activeSubTab === 'branches'  && <BranchesTab repoId={repoId} selectedBranch={selectedBranch} onSelectBranch={handleSelectBranch} />}
-            {activeSubTab === 'commits'   && <CommitsTab repoId={repoId} branch={selectedBranch} />}
-          </div>
-        </div>
+        htmlTag`<div class=${"detail-view"}> <${DetailHeader} repo=${repo} selectedBranch=${selectedBranch} onGoToBranches=${() => handleSubTabChange('branches')} /> <${SubTabNav} active=${activeSubTab} onChange=${handleSubTabChange} /> <div class=${"detail-content"}> ${activeSubTab === 'activity'  && htmlTag`<${ActivityTab} repoId=${repoId} />`} ${activeSubTab === 'deps'      && htmlTag`<${DepsTab} repoId=${repoId} />`} ${activeSubTab === 'branches'  && htmlTag`<${BranchesTab} repoId=${repoId} selectedBranch=${selectedBranch} onSelectBranch=${handleSelectBranch} />`} ${activeSubTab === 'commits'   && htmlTag`<${CommitsTab} repoId=${repoId} branch=${selectedBranch} />`} </div> </div>`
       );
     }
 
@@ -5364,7 +4784,7 @@ HTML_TEMPLATE = """\
       }, [data, maxCount]);
 
       if (isLoading) {
-        return <div style={{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading…</div>;
+        return htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading…</div>`;
       }
 
       // Build a Map<dateString, count> for O(1) lookups
@@ -5426,44 +4846,23 @@ HTML_TEMPLATE = """\
       };
 
       return (
-        <div data-heatmap-root style={{ position: 'relative', display: 'inline-block' }}>
-          {/* Month labels */}
-          <div style={{ display: 'flex', marginLeft: '36px', marginBottom: '4px', position: 'relative', height: '16px' }}>
-            {monthLabels.map(({ col, label }) => (
-              <span
-                key={col + '-' + label}
-                style={{
+        htmlTag`<div data-heatmap-root style=${{ position: 'relative', display: 'inline-block' }}>  <div style=${{ display: 'flex', marginLeft: '36px', marginBottom: '4px', position: 'relative', height: '16px' }}> ${monthLabels.map(({ col, label }) => (
+              htmlTag`<span key=${col + '-' + label} style=${{
                   position: 'absolute',
                   left: `${col * step}px`,
                   fontFamily: 'var(--font-body)',
                   fontSize: '11px',
                   color: 'var(--text-muted)',
                   userSelect: 'none',
-                }}
-              >{label}</span>
-            ))}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-            {/* Day labels (Mon, Wed, Fri only) */}
-            <div style={{ width: '30px', marginRight: '6px', flexShrink: 0 }}>
-              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name, idx) => (
-                <div key={idx} style={{ ...dayLabelStyle, visibility: (name === 'Mon' || name === 'Wed' || name === 'Fri') ? 'visible' : 'hidden' }}>
-                  {name}
-                </div>
-              ))}
-            </div>
-
-            {/* Grid */}
-            <div
-              style={{
+                }}>${label}</span>`
+            ))} </div> <div style=${{ display: 'flex', alignItems: 'flex-start' }}>  <div style=${{ width: '30px', marginRight: '6px', flexShrink: 0 }}> ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name, idx) => (
+                htmlTag`<div key=${idx} style=${{ ...dayLabelStyle, visibility: (name === 'Mon' || name === 'Wed' || name === 'Fri') ? 'visible' : 'hidden' }}> ${name} </div>`
+              ))} </div>  <div style=${{
                 display: 'grid',
                 gridTemplateColumns: `repeat(52, ${CELL}px)`,
                 gridTemplateRows: `repeat(7, ${CELL}px)`,
                 gap: `${GAP}px`,
-              }}
-            >
-              {cells.map((week, col) =>
+              }}> ${cells.map((week, col) =>
                 week.map((cellDate, row) => {
                   const iso = cellDate.toISOString().slice(0, 10);
                   const count = countMap.get(iso) || 0;
@@ -5472,9 +4871,7 @@ HTML_TEMPLATE = """\
                   const bgColor = heatmapColor(cellCount, internalMax);
                   const isHovered = tooltip && tooltip.iso === iso;
                   return (
-                    <div
-                      key={iso}
-                      style={{
+                    htmlTag`<div key=${iso} style=${{
                         width: `${CELL}px`,
                         height: `${CELL}px`,
                         backgroundColor: bgColor,
@@ -5482,24 +4879,15 @@ HTML_TEMPLATE = """\
                         cursor: 'default',
                         outline: isHovered ? '2px solid var(--accent-blue)' : 'none',
                         outlineOffset: '-1px',
-                      }}
-                      onMouseEnter={(e) => {
+                      }} onMouseEnter=${(e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         const containerRect = e.currentTarget.closest('[data-heatmap-root]')?.getBoundingClientRect() || rect;
                         setTooltip({ iso, count: cellCount, x: rect.left - containerRect.left, y: rect.top - containerRect.top });
-                      }}
-                      onMouseLeave={() => setTooltip(null)}
-                    />
+                      }} onMouseLeave=${() => setTooltip(null)} />`
                   );
                 })
-              )}
-            </div>
-          </div>
-
-          {/* Tooltip */}
-          {tooltip && (
-            <div
-              style={{
+              )} </div> </div>  ${tooltip && (
+            htmlTag`<div style=${{
                 position: 'fixed',
                 left: tooltip.x + 16,
                 top: tooltip.y,
@@ -5513,12 +4901,8 @@ HTML_TEMPLATE = """\
                 fontFamily: 'var(--font-body)',
                 color: 'var(--text-primary)',
                 whiteSpace: 'nowrap',
-              }}
-            >
-              {new Date(tooltip.iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}: {tooltip.count} commits
-            </div>
-          )}
-        </div>
+              }}> ${new Date(tooltip.iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}: ${tooltip.count} commits </div>`
+          )} </div>`
       );
     }
 
@@ -5562,7 +4946,7 @@ HTML_TEMPLATE = """\
       }, [selectedDays]);
 
       // Process series: weekly aggregation when days >= 90
-      const processedSeries = React.useMemo(() => {
+      const processedSeries = useMemo(() => {
         let s = series.map(repo => ({
           ...repo,
           data: selectedDays >= 90 ? aggregateWeekly(repo.data) : repo.data,
@@ -5594,8 +4978,8 @@ HTML_TEMPLATE = """\
         return s;
       }, [series, selectedDays]);
 
-      // Build merged chart data array for Recharts
-      const chartData = React.useMemo(() => {
+      // Build merged chart data array for the allocation chart
+      const chartData = useMemo(() => {
         if (processedSeries.length === 0) return [];
         const allDates = new Set();
         processedSeries.forEach(s => s.data.forEach(d => allDates.add(d.date)));
@@ -5618,77 +5002,25 @@ HTML_TEMPLATE = """\
         });
       }
 
-      const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = Recharts;
-
-      const axisTickStyle = { fontSize: 11, fontFamily: 'var(--font-mono)', fill: 'var(--text-muted)' };
-
       if (loading) {
         return (
-          <div style={{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
-            Loading…
-          </div>
+          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> Loading… </div>`
         );
       }
 
       return (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>
-              Time Allocation
-            </h3>
-            <TimeRangeSelector selected={selectedDays} onChange={setSelectedDays} />
-          </div>
-
-          {chartData.length === 0 ? (
-            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
-              No commit data in this range.
-            </div>
+        htmlTag`<div> <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}> <h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}> Time Allocation </h3> <${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} /> </div> ${chartData.length === 0 ? (
+            htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No commit data in this range. </div>`
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={chartData} stackOffset="none" margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
-                <XAxis dataKey="date" tick={axisTickStyle} tickLine={false} axisLine={false} />
-                <YAxis tick={axisTickStyle} tickLine={false} axisLine={false} width={36} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--bg-card)',
-                    border: '1px solid var(--border-default)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '8px 12px',
-                    fontSize: '12px',
-                    fontFamily: 'var(--font-body)',
-                  }}
-                />
-                {processedSeries.map((s, i) => {
-                  const color = s.name === 'Other' ? 'var(--text-muted)' : ALLOC_COLORS[i % ALLOC_COLORS.length];
-                  return (
-                    <Area
-                      key={s.name}
-                      type="monotone"
-                      dataKey={s.name}
-                      stackId="1"
-                      stroke={color}
-                      fill={color}
-                      fillOpacity={hidden.has(s.name) ? 0 : 0.75}
-                      strokeOpacity={hidden.has(s.name) ? 0 : 1}
-                      isAnimationActive={false}
-                    />
-                  );
-                })}
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-
-          {/* Legend */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', marginTop: '12px' }}>
-            {processedSeries.map((s, i) => {
+            htmlTag`<div class="allocation-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${260} margin=${{top:10, right:40, bottom:30, left:36}} grid=${{horizontal:true, vertical:true}} tickEvery=${Math.max(1, Math.ceil(chartData.length / 10))} yDomain=${[0, Math.max(1, ...chartData.map(row => processedSeries.reduce((sum, s) => sum + (row[s.name] || 0), 0)))]} series=${processedSeries.map((s, i) => ({
+              key:s.name, stack:true, color:s.name === 'Other' ? 'var(--text-muted)' : ALLOC_COLORS[i % ALLOC_COLORS.length],
+              fillOpacity:hidden.has(s.name) ? 0 : 0.75, strokeOpacity:hidden.has(s.name) ? 0 : 1,
+            }))} tooltip=${({label, payload}) => htmlTag`<div style=${{background:'var(--bg-card)', border:'1px solid var(--border-default)', borderRadius:'var(--radius-sm)', padding:'8px 12px', fontSize:'12px', fontFamily:'var(--font-body)'}}><div>${label}</div>${payload.filter(p => !hidden.has(p.dataKey)).map(p => htmlTag`<div style=${{color:p.color}}>${p.name}: ${p.value}</div>`)}</div>`} /></div>`
+          )}  <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', marginTop: '12px' }}> ${processedSeries.map((s, i) => {
               const color = s.name === 'Other' ? 'var(--text-muted)' : ALLOC_COLORS[i % ALLOC_COLORS.length];
               const isHidden = hidden.has(s.name);
               return (
-                <button
-                  key={s.name}
-                  onClick={() => toggleSeries(s.name)}
-                  style={{
+                htmlTag`<button key=${s.name} onClick=${() => toggleSeries(s.name)} style=${{
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
@@ -5700,22 +5032,16 @@ HTML_TEMPLATE = """\
                     fontFamily: 'var(--font-body)',
                     color: isHidden ? 'var(--text-muted)' : 'var(--text-primary)',
                     opacity: isHidden ? 0.5 : 1,
-                  }}
-                >
-                  <span style={{
+                  }}> <span style=${{
                     display: 'inline-block',
                     width: '8px',
                     height: '8px',
                     borderRadius: '50%',
                     backgroundColor: color,
                     flexShrink: 0,
-                  }} />
-                  {s.name}
-                </button>
+                  }} /> ${s.name} </button>`
               );
-            })}
-          </div>
-        </div>
+            })} </div> </div>`
       );
     }
 
@@ -5747,76 +5073,28 @@ HTML_TEMPLATE = """\
 
       if (loading) {
         return (
-          <div style={{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
-            Loading…
-          </div>
+          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> Loading… </div>`
         );
       }
 
       if (packages.length === 0) {
         return (
-          <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
-            No shared dependencies found across repos.
-          </div>
+          htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No shared dependencies found across repos. </div>`
         );
       }
 
       return (
-        <div>
-          <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: '0 0 12px 0' }}>
-            Dependency Overlap
-          </h3>
-          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Package</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Manager</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Used In</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Version Spread</th>
-              </tr>
-            </thead>
-            <tbody>
-              {packages.map(pkg => {
+        htmlTag`<div> <h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: '0 0 12px 0' }}> Dependency Overlap </h3> <table class=${"data-table"} style=${{ width: '100%', borderCollapse: 'collapse' }}> <thead> <tr> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Package</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Manager</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Used In</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Version Spread</th> </tr> </thead> <tbody> ${packages.map(pkg => {
                 const key = pkg.name + ':' + pkg.manager;
                 const isExpanded = expanded.has(key);
                 return (
-                  <React.Fragment key={key}>
-                    <tr style={{ borderTop: '1px solid var(--border-default)' }}>
-                      <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>
-                        {pkg.name}
-                      </td>
-                      <td style={{ padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                        {pkg.manager}
-                      </td>
-                      <td style={{ padding: '8px 12px' }}>
-                        <span
-                          onClick={() => toggleExpanded(key)}
-                          style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}
-                        >
-                          {isExpanded ? '▾' : '▸'} {pkg.count} uses in {pkg.repo_count} repos
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        {pkg.version_spread}
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr style={{ borderTop: '1px solid var(--border-default)' }}>
-                        <td colSpan={4} style={{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}>
-                          {pkg.repos.map(repo => (
-                            <div key={JSON.stringify([repo.repo_id, repo.source_path])} style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                              {repo.name} — {repo.source_path} — {repo.version !== null ? repo.version : '(unknown)'}
-                            </div>
-                          ))}
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
+                  htmlTag`<${preact.Fragment} key=${key}> <tr style=${{ borderTop: '1px solid var(--border-default)' }}> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}> ${pkg.name} </td> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase' }}> ${pkg.manager} </td> <td style=${{ padding: '8px 12px' }}> <span onClick=${() => toggleExpanded(key)} style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}> ${isExpanded ? '▾' : '▸'} ${pkg.count} uses in ${pkg.repo_count} repos </span> </td> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${pkg.version_spread} </td> </tr> ${isExpanded && (
+                      htmlTag`<tr style=${{ borderTop: '1px solid var(--border-default)' }}> <td colSpan=${4} style=${{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}> ${pkg.repos.map(repo => (
+                            htmlTag`<div key=${JSON.stringify([repo.repo_id, repo.source_path])} style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}> ${repo.name} — ${repo.source_path} — ${repo.version !== null ? repo.version : '(unknown)'} </div>`
+                          ))} </td> </tr>`
+                    )} <//>`
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
+              })} </tbody> </table> </div>`
       );
     }
 
@@ -5852,67 +5130,15 @@ HTML_TEMPLATE = """\
       const totalUnchecked = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.unchecked || 0), 0);
 
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-          {/* KPI summary */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
-            <KpiCard label="Total Deps" value={loading ? '...' : totalDeps} tooltip="Total dependencies detected across all repos" />
-            <KpiCard label="Outdated" value={loading ? '...' : totalOutdated} tooltip="Dependencies with newer versions available (minor or major)" />
-            <KpiCard label="Vulnerable" value={loading ? '...' : totalVuln} tooltip="Dependencies with known security vulnerabilities" />
-            <KpiCard label="Not Checked" value={loading ? '...' : totalUnchecked} tooltip="Declarations with incomplete check coverage, including findings" />
-            <KpiCard label="Repos w/ Deps" value={loading ? '...' : reposWithDeps.length} tooltip="Repos where at least one dependency manifest was detected" />
-          </div>
-
-          {/* Per-repo dep summaries */}
-          <section>
-            <h2 style={sectionHeaderStyle}>Per-Repo Health</h2>
-            {loading ? (
-              <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>
+        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}>  <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}> <${KpiCard} label=${"Total Deps"} value=${loading ? '...' : totalDeps} tooltip=${"Total dependencies detected across all repos"} /> <${KpiCard} label=${"Outdated"} value=${loading ? '...' : totalOutdated} tooltip=${"Dependencies with newer versions available (minor or major)"} /> <${KpiCard} label=${"Vulnerable"} value=${loading ? '...' : totalVuln} tooltip=${"Dependencies with known security vulnerabilities"} /> <${KpiCard} label=${"Not Checked"} value=${loading ? '...' : totalUnchecked} tooltip=${"Declarations with incomplete check coverage, including findings"} /> <${KpiCard} label=${"Repos w/ Deps"} value=${loading ? '...' : reposWithDeps.length} tooltip=${"Repos where at least one dependency manifest was detected"} /> </div>  <section> <h2 style=${sectionHeaderStyle}>Per-Repo Health</h2> ${loading ? (
+              htmlTag`<div style=${{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>`
             ) : reposWithCoverage.length === 0 ? (
-              <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>
-                No dependencies detected. Run a Full Scan to discover dependencies in your repos.
-              </div>
+              htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No dependencies detected. Run a Full Scan to discover dependencies in your repos. </div>`
             ) : (
-              <div className="table-container">
-                <div className="table-header" style={{ gridTemplateColumns: '1fr repeat(4, 100px)' }}>
-                  <span>Repo</span>
-                  <span>Total</span>
-                  <span>Outdated</span>
-                  <span>Vulnerable</span>
-                  <span>Not Checked</span>
-                </div>
-                {reposWithCoverage.map(r => (
-                  <div
-                    key={r.id}
-                    className="table-row"
-                    style={{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }}
-                    onClick={() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}
-                  >
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>
-                      <span>{r.name}</span>
-                      <span style={{display: 'block', fontSize: '11px'}}><DepBadge dep={r.dep_summary} missingTools={r.missing_dep_tools} analysisError={r.dep_check_error} /></span>
-                    </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                      {r.dep_summary?.total || 0}
-                    </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>
-                      {r.dep_summary?.outdated || 0}
-                    </span>
-                    <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>
-                      {r.dep_summary?.vulnerable || 0}
-                    </span>
-                    <span style={{color: 'var(--status-orange)'}}>{r.dep_summary?.unchecked || 0}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* Dependency Overlap */}
-          <section>
-            <h2 style={sectionHeaderStyle}>Dependency Overlap</h2>
-            <DepOverlap />
-          </section>
-        </div>
+              htmlTag`<div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)' }}> <span>Repo</span> <span>Total</span> <span>Outdated</span> <span>Vulnerable</span> <span>Not Checked</span> </div> ${reposWithCoverage.map(r => (
+                  htmlTag`<div key=${r.id} class=${"table-row"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }} onClick=${() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}> <span>${r.name}</span> <span style=${{display: 'block', fontSize: '11px'}}><${DepBadge} dep=${r.dep_summary} missingTools=${r.missing_dep_tools} analysisError=${r.dep_check_error} /></span> </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}> ${r.dep_summary?.total || 0} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}> ${r.dep_summary?.outdated || 0} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}> ${r.dep_summary?.vulnerable || 0} </span> <span style=${{color: 'var(--status-orange)'}}>${r.dep_summary?.unchecked || 0}</span> </div>`
+                ))} </div>`
+            )} </section>  <section> <h2 style=${sectionHeaderStyle}>Dependency Overlap</h2> <${DepOverlap} /> </section> </div>`
       );
     }
 
@@ -5927,20 +5153,7 @@ HTML_TEMPLATE = """\
       };
 
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-          <section>
-            <h2 style={sectionHeaderStyle}>Activity Heatmap</h2>
-            <Heatmap />
-          </section>
-          <section>
-            <h2 style={sectionHeaderStyle}>Time Allocation</h2>
-            <TimeAllocation />
-          </section>
-          <section>
-            <h2 style={sectionHeaderStyle}>Dependency Overlap</h2>
-            <DepOverlap />
-          </section>
-        </div>
+        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}> <section> <h2 style=${sectionHeaderStyle}>Activity Heatmap</h2> <${Heatmap} /> </section> <section> <h2 style=${sectionHeaderStyle}>Time Allocation</h2> <${TimeAllocation} /> </section> <section> <h2 style=${sectionHeaderStyle}>Dependency Overlap</h2> <${DepOverlap} /> </section> </div>`
       );
     }
 
@@ -5966,16 +5179,16 @@ HTML_TEMPLATE = """\
 
       let content;
       if (tab === 'repo' && repoId) {
-        content = <ProjectDetail key={repoId} repoId={repoId} initialSubTab={route.subTab} />;
+        content = htmlTag`<${ProjectDetail} key=${repoId} repoId=${repoId} initialSubTab=${route.subTab} />`;
       } else if (tab === 'analytics') {
-        content = <AnalyticsTab />;
+        content = htmlTag`<${AnalyticsTab} />`;
       } else if (tab === 'deps') {
-        content = <FleetDepsTab />;
+        content = htmlTag`<${FleetDepsTab} />`;
       } else {
-        content = <FleetOverview refetchKey={refetchKey} />;
+        content = htmlTag`<${FleetOverview} refetchKey=${refetchKey} />`;
       }
 
-      return <div style={areaStyle}>{content}</div>;
+      return htmlTag`<div style=${areaStyle}>${content}</div>`;
     }
 
     // ── App ──────────────────────────────────────────────────────────────────
@@ -6070,14 +5283,8 @@ HTML_TEMPLATE = """\
       }
 
       return (
-        <div>
-          <Header onFullScan={handleFullScan} onScanDir={handleScanDir} scanActive={scanState.active} />
-          <NavTabs activeTab={navTab} />
-          <ScanProgressBar scanState={scanState} />
-          <ScanToast scanState={scanState} />
-          <DirectoryBrowser open={browseOpen} onClose={() => setBrowseOpen(false)} onSelect={handleSelectDir} />
-          {scanResult && (
-            <div style={{
+        htmlTag`<div> <${Header} onFullScan=${handleFullScan} onScanDir=${handleScanDir} scanActive=${scanState.active} /> <${NavTabs} activeTab=${navTab} /> <${ScanProgressBar} scanState=${scanState} /> <${ScanToast} scanState=${scanState} /> <${DirectoryBrowser} open=${browseOpen} onClose=${() => setBrowseOpen(false)} onSelect=${handleSelectDir} /> ${scanResult && (
+            htmlTag`<div style=${{
               position: 'fixed', bottom: '24px', right: '24px', zIndex: 300,
               padding: '12px 20px', borderRadius: 'var(--radius-sm)',
               background: scanResult.ok ? 'var(--status-green-bg)' : 'var(--status-red-bg)',
@@ -6085,28 +5292,829 @@ HTML_TEMPLATE = """\
               fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500,
               border: scanResult.ok ? '1px solid var(--status-green)' : '1px solid var(--status-red)',
               boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-            }}>
-              {scanResult.message}
-            </div>
-          )}
-          <main style={{ paddingTop: '100px' }}>
-            <ToolStatusBanner />
-            <ContentArea route={route} refetchKey={refetchKey} />
-          </main>
-        </div>
+            }}> ${scanResult.message} </div>`
+          )} <main style=${{ paddingTop: '100px' }}> <${ToolStatusBanner} /> <${ContentArea} route=${route} refetchKey=${refetchKey} /> </main> </div>`
       );
     }
 
     // ── Mount ────────────────────────────────────────────────────────────────
-    ReactDOMClient.createRoot(document.getElementById('root')).render(
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    );
+    preact.render(htmlTag`<${ErrorBoundary}> <${App} /> <//>`, document.getElementById('root'));
   </script>
 </body>
 </html>
 """
+
+# frontend-vendor:begin preact hooks htm kit svg-charts font:jetbrains-mono font:geist
+FRONTEND_VENDOR_HTML = r"""<!--
+The MIT License (MIT)
+
+Copyright (c) 2015-present Jason Miller
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-->
+<!--
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2018 Google Inc.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!--
+Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) JetBrainsMono-Italic[wght].ttf: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+-->
+<!--
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font) Geist-Italic[wght].ttf: Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+-->
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((n||self).preact={})}(this,function(n){var t,i,e,r,f,o,u,c,s,a,h,l,p,y,v,d,w="http://www.w3.org/2000/svg",_="http://www.w3.org/1999/xhtml",g=null,m=void 0,b={},k=[],x=/acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i,M=Array.isArray;function S(n,t){for(var i in t)n[i]=t[i];return n}function T(n){n&&n.parentNode&&n.parentNode.removeChild(n)}function $(n,i,e){var r,f,o,u={};for(o in i)"key"==o?r=i[o]:"ref"==o?f=i[o]:u[o]=i[o];if(arguments.length>2&&(u.children=arguments.length>3?t.call(arguments,2):e),"function"==typeof n&&n.defaultProps!=g)for(o in n.defaultProps)u[o]===m&&(u[o]=n.defaultProps[o]);return C(n,u,r,f,g)}function C(n,t,r,f,o){var u={type:n,props:t,key:r,ref:f,__k:g,__:g,__b:0,__e:g,__c:g,constructor:m,__v:o==g?++e:o,__i:-1,__u:0};return o==g&&i.vnode!=g&&i.vnode(u),u}function I(n){return n.children}function P(n,t){this.props=n,this.context=t}function j(n,t){if(t==g)return n.__?j(n.__,n.__i+1):g;for(var i;t<n.__k.length;t++)if((i=n.__k[t])!=g&&i.__e!=g)return i.__e;return"function"==typeof n.type?j(n):g}function A(n){if(n.__P&&n.__d){var t=n.__v,e=t.__e,r=[],f=[],o=S({},t);o.__v=t.__v+1,i.vnode&&i.vnode(o),E(n.__P,o,t,n.__n,n.__P.namespaceURI,32&t.__u?[e]:g,r,e==g?j(t):e,!!(32&t.__u),f),o.__v=t.__v,o.__.__k[o.__i]=o,J(r,o,f),t.__e=t.__=null,o.__e!=e&&H(o)}}function H(n){if((n=n.__)!=g&&n.__c!=g)return n.__e=n.__c.base=g,n.__k.some(function(t){if(t!=g&&t.__e!=g)return n.__e=n.__c.base=t.__e}),H(n)}function L(n){(!n.__d&&(n.__d=!0)&&f.push(n)&&!F.__r++||o!=i.debounceRendering)&&((o=i.debounceRendering)||u)(F)}function F(){try{for(var n,t=1;f.length;)f.length>t&&f.sort(c),n=f.shift(),t=f.length,A(n)}finally{f.length=F.__r=0}}function O(n,t,i,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w=e&&e.__k||k,_=t.length;for(c=z(i,t,w,c,_),h=0;h<_;h++)(p=i.__k[h])!=g&&(l=-1!=p.__i&&w[p.__i]||b,p.__i=h,d=E(n,p,l,r,f,o,u,c,s,a),y=p.__e,p.ref&&l.ref!=p.ref&&(l.ref&&R(l.ref,g,p),a.push(p.ref,p.__c||y,p)),v==g&&y!=g&&(v=y),4&p.__u?(c=N(p,c,n),l.__e&&(l.__e=g)):"function"==typeof p.type&&d!==m?c=d:y&&(c=y.nextSibling),p.__u&=-7);return i.__e=v,c}function z(n,t,i,e,r){var f,o,u,c,s,a=i.length,h=a,l=0;for(n.__k=new Array(r),f=0;f<r;f++)(o=t[f])!=g&&"boolean"!=typeof o&&"function"!=typeof o?("string"==typeof o||"number"==typeof o||"bigint"==typeof o||o.constructor==String?o=n.__k[f]=C(g,o,g,g,g):M(o)?o=n.__k[f]=C(I,{children:o},g,g,g):o.constructor===m&&o.__b>0?o=n.__k[f]=C(o.type,o.props,o.key,o.ref?o.ref:g,o.__v):n.__k[f]=o,c=f+l,o.__=n,o.__b=n.__b+1,s=o.__i=V(o,i,c,h),u=g,-1!=s&&(h--,(u=i[s])&&(u.__u|=2)),u==g||u.__v==g?(-1==s&&(r>a?l--:r<a&&l++),"function"!=typeof o.type&&(o.__u|=4)):s!=c&&(s==c-1?l--:s==c+1?l++:(s>c?l--:l++,o.__u|=4))):n.__k[f]=g;if(h)for(f=0;f<a;f++)(u=i[f])!=g&&0==(2&u.__u)&&(u.__e==e&&(e=j(u)),U(u,u));return e}function N(n,t,i){var e,r;if("function"==typeof n.type){for(e=n.__k,r=0;e&&r<e.length;r++)e[r]&&(e[r].__=n,t=N(e[r],t,i));return t}n.__e!=t&&(t&&n.type&&!t.parentNode&&(t=j(n)),t=i.insertBefore(n.__e,t||g));do{t=t&&t.nextSibling}while(t!=g&&8==t.nodeType);return t}function V(n,t,i,e){var r,f,o,u=n.key,c=n.type,s=t[i],a=s!=g&&0==(2&s.__u);if(s===g&&null==u||a&&u==s.key&&c==s.type)return i;if(e>(a?1:0))for(r=i-1,f=i+1;r>=0||f<t.length;)if((s=t[o=r>=0?r--:f++])!=g&&0==(2&s.__u)&&u==s.key&&c==s.type)return o;return-1}function q(n,t,i){"-"==t[0]?n.setProperty(t,i==g?"":i):n[t]=i==g?"":"number"!=typeof i||x.test(t)?i:i+"px"}function B(n,t,i,e,r){var f,o;n:if("style"==t)if("string"==typeof i)n.style.cssText=i;else{if("string"==typeof e&&(n.style.cssText=e=""),e)for(t in e)i&&t in i||q(n.style,t,"");if(i)for(t in i)e&&i[t]==e[t]||q(n.style,t,i[t])}else if("o"==t[0]&&"n"==t[1])f=t!=(t=t.replace(l,"$1")),o=t.toLowerCase(),t=o in n||"onFocusOut"==t||"onFocusIn"==t?o.slice(2):t.slice(2),n.l||(n.l={}),n.l[t+f]=i,i?e?i[h]=e[h]:(i[h]=p,n.addEventListener(t,f?v:y,f)):n.removeEventListener(t,f?v:y,f);else{if(r==w)t=t.replace(/xlink(H|:h)/,"h").replace(/sName$/,"s");else if("width"!=t&&"height"!=t&&"href"!=t&&"list"!=t&&"form"!=t&&"tabIndex"!=t&&"download"!=t&&"rowSpan"!=t&&"colSpan"!=t&&"role"!=t&&"popover"!=t&&t in n)try{n[t]=i==g?"":i;break n}catch(n){}"function"==typeof i||(i==g||!1===i&&"-"!=t[4]?n.removeAttribute(t):n.setAttribute(t,"popover"==t&&1==i?"":i))}}function D(n){return function(t){if(this.l){var e=this.l[t.type+n];if(t[a]==g)t[a]=p++;else if(t[a]<e[h])return;return e(i.event?i.event(t):t)}}}function E(n,t,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w,_,b,x,$,C,A,H,L,F,z=t.type;if(t.constructor!==m)return g;128&e.__u&&(s=!!(32&e.__u),o=[c=t.__e=e.__e]),(h=i.__b)&&h(t);n:if("function"==typeof z){l=u.length;try{if(b=t.props,x=z.prototype&&z.prototype.render,$=(h=z.contextType)&&r[h.__c],C=h?$?$.props.value:h.__:r,e.__c?_=(p=t.__c=e.__c).__=p.__E:(x?t.__c=p=new z(b,C):(t.__c=p=new P(b,C),p.constructor=z,p.render=W),$&&$.sub(p),p.state||(p.state={}),p.__n=r,y=p.__d=!0,p.__h=[],p._sb=[]),x&&p.__s==g&&(p.__s=p.state),x&&z.getDerivedStateFromProps!=g&&(p.__s==p.state&&(p.__s=S({},p.__s)),S(p.__s,z.getDerivedStateFromProps(b,p.__s))),v=p.props,d=p.state,p.__v=t,y)x&&z.getDerivedStateFromProps==g&&p.componentWillMount!=g&&p.componentWillMount(),x&&p.componentDidMount!=g&&p.__h.push(p.componentDidMount);else{if(x&&z.getDerivedStateFromProps==g&&b!==v&&p.componentWillReceiveProps!=g&&p.componentWillReceiveProps(b,C),t.__v==e.__v||!p.__e&&p.shouldComponentUpdate!=g&&!1===p.shouldComponentUpdate(b,p.__s,C)){t.__v!=e.__v&&(p.props=b,p.state=p.__s,p.__d=!1),t.__e=e.__e,t.__k=e.__k,t.__k.some(function(n){n&&(n.__=t)}),k.push.apply(p.__h,p._sb),p._sb=[],p.__h.length&&u.push(p),c=j(e);break n}p.componentWillUpdate!=g&&p.componentWillUpdate(b,p.__s,C),x&&p.componentDidUpdate!=g&&p.__h.push(function(){p.componentDidUpdate(v,d,w)})}if(p.context=C,p.props=b,p.__P=n,p.__e=!1,A=i.__r,H=0,x)p.state=p.__s,p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),k.push.apply(p.__h,p._sb),p._sb=[];else do{p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),p.state=p.__s}while(p.__d&&++H<25);p.state=p.__s,p.getChildContext!=g&&(r=S(S({},r),p.getChildContext())),x&&!y&&p.getSnapshotBeforeUpdate!=g&&(w=p.getSnapshotBeforeUpdate(v,d)),L=h!=g&&h.type===I&&h.key==g?K(h.props.children):h,c=O(n,M(L)?L:[L],t,e,r,f,o,u,c,s,a),p.base=t.__e,t.__u&=-161,p.__h.length&&u.push(p),_&&(p.__E=p.__=g)}catch(n){if(u.length=l,t.__v=g,s||o!=g){if(n.then){for(t.__u|=s?160:128;c&&8==c.nodeType&&c.nextSibling;)c=c.nextSibling;o!=g&&(o[o.indexOf(c)]=g),t.__e=c}else if(o!=g)for(F=o.length;F--;)T(o[F])}else t.__e=e.__e;t.__k==g&&(t.__k=e.__k||[]),n.then||G(t),i.__e(n,t,e)}}else o==g&&t.__v==e.__v?(t.__k=e.__k,t.__e=e.__e):c=t.__e=Q(e.__e,t,e,r,f,o,u,s,a);return(h=i.diffed)&&h(t),128&t.__u?void 0:c}function G(n){n&&(n.__c&&(n.__c.__e=!0),n.__k&&n.__k.some(G))}function J(n,t,e){for(var r=0;r<e.length;r++)R(e[r],e[++r],e[++r]);i.__c&&i.__c(t,n),n.some(function(t){try{n=t.__h,t.__h=[],n.some(function(n){n.call(t)})}catch(n){i.__e(n,t.__v)}})}function K(n){return"object"!=typeof n||n==g||n.__b>0?n:M(n)?n.map(K):n.constructor!==m?null:S({},n)}function Q(n,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,k,x=r.props||b,S=e.props,$=e.type;if("svg"==$?o=w:"math"==$?o="http://www.w3.org/1998/Math/MathML":o||(o=_),u!=g)for(h=0;h<u.length;h++)if((v=u[h])&&"setAttribute"in v==!!$&&($?v.localName==$:3==v.nodeType)){n=v,u[h]=g;break}if(n==g){if($==g)return document.createTextNode(S);n=document.createElementNS(o,$,S.is&&S),s&&(i.__m&&i.__m(e,u),s=!1),u=g}if($==g)x===S||s&&n.data==S||(n.data=S);else{if(u="textarea"==$&&S.defaultValue!=g?g:u&&t.call(n.childNodes),!s&&u!=g)for(x={},h=0;h<n.attributes.length;h++)x[(v=n.attributes[h]).name]=v.value;for(h in x)v=x[h],"dangerouslySetInnerHTML"==h?p=v:"children"==h||h in S||"value"==h&&"defaultValue"in S||"checked"==h&&"defaultChecked"in S||B(n,h,g,v,o);for(h in S)v=S[h],"children"==h?y=v:"dangerouslySetInnerHTML"==h?l=v:"value"==h?d=v:"checked"==h?k=v:s&&"function"!=typeof v||x[h]===v||B(n,h,v,x[h],o);if(l)s||p&&(l.__html==p.__html||l.__html==n.innerHTML)||(n.innerHTML=l.__html),e.__k=[];else if(p&&(n.innerHTML=""),O("template"==e.type?n.content:n,M(y)?y:[y],e,r,f,"foreignObject"==$?_:o,u,c,u?u[0]:r.__k&&j(r,0),s,a),u!=g)for(h=u.length;h--;)T(u[h]);s&&"textarea"!=$||(h="value","progress"==$&&d==g?n.removeAttribute("value"):d!=m&&(d!==n[h]||"progress"==$&&!d||"option"==$&&d!=x[h])&&B(n,h,d,x[h],o),h="checked",k!=m&&k!=n[h]&&B(n,h,k,x[h],o))}return n}function R(n,t,e){try{if("function"==typeof n){var r="function"==typeof n.__u;r&&n.__u(),r&&t==g||(n.__u=n(t))}else n.current=t}catch(n){i.__e(n,e)}}function U(n,t,e){var r,f;if(i.unmount&&i.unmount(n),(r=n.ref)&&(r.current&&r.current!=n.__e||R(r,g,t)),(r=n.__c)!=g){if(r.componentWillUnmount)try{r.componentWillUnmount()}catch(n){i.__e(n,t)}r.base=r.__P=r.__n=g}if(r=n.__k)for(f=0;f<r.length;f++)r[f]&&U(r[f],t,e||"function"!=typeof n.type);e||T(n.__e),n.__c=n.__=n.__e=m}function W(n,t,i){return this.constructor(n,i)}function X(n,e,r){var f,o,u,c;e==document&&(e=document.documentElement),i.__&&i.__(n,e),o=(f="function"==typeof r)?g:r&&r.__k||e.__k,u=[],c=[],E(e,n=(!f&&r||e).__k=$(I,g,[n]),o||b,b,e.namespaceURI,!f&&r?[r]:o?g:e.firstChild?t.call(e.childNodes):g,u,!f&&r?r:o?o.__e:e.firstChild,f,c),J(u,n,c),n.props.children=g}t=k.slice,i={__e:function(n,t,i,e){for(var r,f,o;t=t.__;)if((r=t.__c)&&!r.__)try{if((f=r.constructor)&&f.getDerivedStateFromError!=g&&(r.setState(f.getDerivedStateFromError(n)),o=r.__d),r.componentDidCatch!=g&&(r.componentDidCatch(n,e||{}),o=r.__d),o)return r.__E=r}catch(t){n=t}throw n}},e=0,r=function(n){return n!=g&&n.constructor===m},P.prototype.setState=function(n,t){var i;i=this.__s!=g&&this.__s!=this.state?this.__s:this.__s=S({},this.state),"function"==typeof n&&(n=n(S({},i),this.props)),n&&S(i,n),n!=g&&this.__v&&(t&&this._sb.push(t),L(this))},P.prototype.forceUpdate=function(n){this.__v&&(this.__e=!0,n&&this.__h.push(n),L(this))},P.prototype.render=I,f=[],u="function"==typeof Promise?Promise.prototype.then.bind(Promise.resolve()):setTimeout,c=function(n,t){return n.__v.__b-t.__v.__b},F.__r=0,s=Math.random().toString(8),a="__d"+s,h="__a"+s,l=/(PointerCapture)$|Capture$/i,p=0,y=D(!1),v=D(!0),d=0,n.Component=P,n.Fragment=I,n.cloneElement=function(n,i,e){var r,f,o,u,c=S({},n.props);for(o in n.type&&n.type.defaultProps&&(u=n.type.defaultProps),i)"key"==o?r=i[o]:"ref"==o?f=i[o]:c[o]=i[o]===m&&u!=m?u[o]:i[o];return arguments.length>2&&(c.children=arguments.length>3?t.call(arguments,2):e),C(n.type,c,r||n.key,f||n.ref,g)},n.createContext=function(n){function t(n){var i,e;return this.getChildContext||(i=new Set,(e={})[t.__c]=this,this.getChildContext=function(){return e},this.componentWillUnmount=function(){i=g},this.shouldComponentUpdate=function(n){this.props.value!=n.value&&i.forEach(function(n){n.__e=!0,L(n)})},this.sub=function(n){i.add(n);var t=n.componentWillUnmount;n.componentWillUnmount=function(){i&&i.delete(n),t&&t.call(n)}}),n.children}return t.__c="__cC"+d++,t.__=n,t.Provider=t.__l=(t.Consumer=function(n,t){return n.children(t)}).contextType=t,t},n.createElement=$,n.createRef=function(){return{current:g}},n.h=$,n.hydrate=function n(t,i){X(t,i,n)},n.isValidElement=r,n.options=i,n.render=X,n.toChildArray=function n(t,i){return i=i||[],t==g||"boolean"==typeof t||(M(t)?t.some(function(t){n(t,i)}):i.push(t)),i}});
+//# sourceMappingURL=preact.umd.js.map
+
+</script>
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("preact")):"function"==typeof define&&define.amd?define(["exports","preact"],t):t((n||self).preactHooks={},n.preact)}(this,function(n,t){var u,i,r,o,f=0,c=[],e=t.options,a=e.__b,v=e.__r,l=e.diffed,d=e.__c,p=e.unmount,s=e.__;function y(n,t){e.__h&&e.__h(i,n,f||t),f=0;var u=i.__H||(i.__H={__:[],__h:[]});return n>=u.__.length&&u.__.push({}),u.__[n]}function h(n){return f=1,m(j,n)}function m(n,t,r){var o=y(u++,2);if(o.t=n,!o.__c&&(o.__=[r?r(t):j(void 0,t),function(n){var t=o.__N?o.__N[0]:o.__[0],u=o.t(t,n);t!==u&&(o.__N=[u,o.__[1]],o.__c.setState({}))}],o.__c=i,!i.__f)){var f=function(n,t,u){if(!o.__c.__H)return!0;var i=!1,r=o.__c.props!==n;if(o.__c.__H.__.some(function(n){if(n.__N){i=!0;var t=n.__[0];n.__=n.__N,n.__N=void 0,t!==n.__[0]&&(r=!0)}}),c){var f=c.call(this,n,t,u);return i?f||r:f}return!i||r};i.__f=!0;var c=i.shouldComponentUpdate,e=i.componentWillUpdate;i.componentWillUpdate=function(n,t,u){if(this.__e){var i=c;c=void 0,f(n,t,u),c=i}e&&e.call(this,n,t,u)},i.shouldComponentUpdate=f}return o.__N||o.__}function T(n,t){var r=y(u++,4);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__h.push(r))}function _(n,t){var i=y(u++,7);return g(i.__H,t)&&(i.__=n(),i.__H=t,i.__h=n),i.__}function b(){for(var n;n=c.shift();){var t=n.__H;if(n.__P&&t)try{t.__h.some(A),t.__h.some(F),t.__h=[]}catch(u){t.__h=[],e.__e(u,n.__v)}}}e.__b=function(n){i=null,a&&a(n)},e.__=function(n,t){n&&t.__k&&t.__k.__m&&(n.__m=t.__k.__m),s&&s(n,t)},e.__r=function(n){v&&v(n),u=0;var t=(i=n.__c).__H;t&&(r===i?(t.__h=[],i.__h=[],t.__.some(function(n){n.__N&&(n.__=n.__N),n.u=n.__N=void 0})):(t.__h.some(A),t.__h.some(F),t.__h=[],u=0)),r=i},e.diffed=function(n){l&&l(n);var t=n.__c;t&&t.__H&&(t.__H.__h.length&&(1!==c.push(t)&&o===e.requestAnimationFrame||((o=e.requestAnimationFrame)||x)(b)),t.__H.__.some(function(n){n.u&&(n.__H=n.u,n.u=void 0)})),r=i=null},e.__c=function(n,t){t.some(function(n){try{n.__h.some(A),n.__h=n.__h.filter(function(n){return!n.__||F(n)})}catch(u){t.some(function(n){n.__h&&(n.__h=[])}),t=[],e.__e(u,n.__v)}}),d&&d(n,t)},e.unmount=function(n){p&&p(n);var t,u=n.__c;u&&u.__H&&(u.__H.__.some(function(n){try{A(n)}catch(n){t=n}}),u.__H=void 0,t&&e.__e(t,u.__v))};var q="function"==typeof requestAnimationFrame;function x(n){var t,u=function(){clearTimeout(i),q&&cancelAnimationFrame(t),setTimeout(n)},i=setTimeout(u,35);q&&(t=requestAnimationFrame(u))}function A(n){var t=i,u=n.__c;"function"==typeof u&&(n.__c=void 0,u()),i=t}function F(n){var t=i;n.__c=n.__(),i=t}function g(n,t){return!n||n.length!==t.length||t.some(function(t,u){return t!==n[u]})}function j(n,t){return"function"==typeof t?t(n):t}n.useCallback=function(n,t){return f=8,_(function(){return n},t)},n.useContext=function(n){var t=i.context[n.__c],r=y(u++,9);return r.c=n,t?(null==r.__&&(r.__=!0,t.sub(i)),t.props.value):n.__},n.useDebugValue=function(n,t){e.useDebugValue&&e.useDebugValue(t?t(n):n)},n.useEffect=function(n,t){var r=y(u++,3);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__H.__h.push(r))},n.useErrorBoundary=function(n){var t=y(u++,10),r=h();return t.__=n,i.componentDidCatch||(i.componentDidCatch=function(n,u){t.__&&t.__(n,u),r[1](n)}),[r[0],function(){r[1](void 0)}]},n.useId=function(){var n=y(u++,11);if(!n.__){for(var t=i.__v;null!==t&&!t.__m&&null!==t.__;)t=t.__;var r=t.__m||(t.__m=[0,0]);n.__="P"+r[0]+"-"+r[1]++}return n.__},n.useImperativeHandle=function(n,t,u){f=6,T(function(){if("function"==typeof n){var u=n(t());return function(){n(null),u&&"function"==typeof u&&u()}}if(n)return n.current=t(),function(){return n.current=null}},null==u?u:u.concat(n))},n.useLayoutEffect=T,n.useMemo=_,n.useReducer=m,n.useRef=function(n){return f=5,_(function(){return{current:n}},[])},n.useState=h});
+//# sourceMappingURL=hooks.umd.js.map
+
+</script>
+<script>
+!function(n,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):n.htm=e()}(this,function(){var n=function(e,t,u,s){var r;t[0]=0;for(var p=1;p<t.length;p++){var h=t[p++],o=t[p]?(t[0]|=h?1:2,u[t[p++]]):t[++p];3===h?s[0]=o:4===h?s[1]=Object.assign(s[1]||{},o):5===h?(s[1]=s[1]||{})[t[++p]]=o:6===h?s[1][t[++p]]+=o+"":h?(r=e.apply(o,n(e,o,u,["",null])),s.push(r),o[0]?t[0]|=2:(t[p-2]=0,t[p]=r)):s.push(o)}return s},e=new Map;return function(t){var u=e.get(this);return u||(u=new Map,e.set(this,u)),(u=n(this,u.get(t)||(u.set(t,u=function(n){for(var e,t,u=1,s="",r="",p=[0],h=function(n){1===u&&(n||(s=s.replace(/^\s*\n\s*|\s*\n\s*$/g,"")))?p.push(0,n,s):3===u&&(n||s)?(p.push(3,n,s),u=2):2===u&&"..."===s&&n?p.push(4,n,0):2===u&&s&&!n?p.push(5,0,!0,s):u>=5&&((s||!n&&5===u)&&(p.push(u,0,s,t),u=6),n&&(p.push(u,n,0,t),u=6)),s=""},o=0;o<n.length;o++){o&&(1===u&&h(),h(o));for(var f=0;f<n[o].length;f++)e=n[o][f],1===u?"<"===e?(h(),p=[p],u=3):s+=e:4===u?"--"===s&&">"===e?(u=1,s=""):s=e+s[0]:r?e===r?r="":s+=e:'"'===e||"'"===e?r=e:">"===e?(h(),u=1):u&&("="===e?(u=5,t=s,s=""):"/"===e&&(u<5||">"===n[o][f+1])?(h(),3===u&&(p=p[0]),u=p,(p=p[0]).push(2,0,u),u=0):" "===e||"\t"===e||"\n"===e||"\r"===e?(h(),u=2):s+=e),3===u&&"!--"===s&&(u=4,p=p[0])}return h(),p}(t)),u),arguments,[])).length>1?u:u[0]}});
+
+</script>
+<script>
+(function () {
+  const { h, render, Component } = window.preact;
+  const { useMemo, useLayoutEffect } = window.preactHooks;
+  function Icon({ name, size = 16, strokeWidth = 2, ...rest }) {
+    const nodes = Object.hasOwn(window.lucideIcons || {}, name) ? window.lucideIcons[name] : null;
+    if (!nodes) { console.error(`Unknown Lucide icon: ${name}`); return null; }
+    return h('svg', { xmlns: 'http://www.w3.org/2000/svg', width: size, height: size,
+      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      'stroke-width': strokeWidth, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...rest },
+      nodes.map(([tag, attrs]) => h(tag, attrs)));
+  }
+  function Portal({ children }) {
+    const host = useMemo(() => document.createElement('div'), []);
+    useLayoutEffect(() => {
+      document.body.appendChild(host);
+      return () => { render(null, host); host.remove(); };
+    }, [host]);
+    useLayoutEffect(() => { render(children, host); }, [children, host]);
+    return null;
+  }
+  function shallowEqual(a, b) {
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every(key => Object.is(a[key], b[key]));
+  }
+  function memo(Inner, areEqual = shallowEqual) {
+    return class extends Component {
+      shouldComponentUpdate(next) { return !areEqual(this.props, next); }
+      render(props) { return h(Inner, props); }
+    };
+  }
+  function focusOnMount(element) { if (element) element.focus(); }
+  window.frontendKit = { Icon, Portal, memo, focusOnMount };
+})();
+
+</script>
+<script>
+(function () {
+  'use strict';
+  const {h} = window.preact;
+  const {useState, useRef, useEffect, useLayoutEffect} = window.preactHooks;
+  const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+  function linearScale(domain, range) {
+    const [a,b]=domain.map(number), [c,d]=range.map(number);
+    return value => a===b ? (c+d)/2 : c+(number(value)-a)*(d-c)/(b-a);
+  }
+  function niceTicks(min,max,count=5) {
+    min=number(min); max=number(max); count=Math.max(1,number(count));
+    if(min>max) [min,max]=[max,min];
+    if(min===max) {const pad=Math.abs(min)*0.1||1;min-=pad;max+=pad;}
+    const raw=(max-min)/count, magnitude=10**Math.floor(Math.log10(raw));
+    const factor=raw/magnitude, step=(factor<=1?1:factor<=2?2:factor<=5?5:10)*magnitude;
+    const start=Math.floor(min/step), end=Math.ceil(max/step), result=[];
+    for(let i=start;i<=end && result.length<1000;i++) result.push(Number((i*step).toPrecision(14)));
+    return result;
+  }
+  function stack(rows,keys,offset='none') {
+    const result=keys.map(()=>[]);
+    rows.forEach(row=>{let pos=0,neg=0,total=0;keys.forEach((key,i)=>{
+      const value=number(row[key]);let start;
+      if(offset==='sign') {start=value<0?neg:pos;if(value<0)neg+=value;else pos+=value;}
+      else {start=total;total+=value;}
+      result[i].push([start,start+value]);
+    });});return result;
+  }
+  const xy=p=>Array.isArray(p)?[number(p[0]),number(p[1])]:[number(p.x),number(p.y)];
+  function monotonePath(points) {
+    const p=points.map(xy);if(!p.length)return '';
+    let path=`M${p[0][0]},${p[0][1]}`;if(p.length===1)return path;
+    const slopes=p.slice(1).map((v,i)=>v[0]===p[i][0]?0:(v[1]-p[i][1])/(v[0]-p[i][0]));
+    const tangents=p.map((_,i)=>i===0?slopes[0]:i===p.length-1?slopes.at(-1):slopes[i-1]*slopes[i]<=0?0:2/(1/slopes[i-1]+1/slopes[i]));
+    for(let i=0;i<p.length-1;i++) {const dx=(p[i+1][0]-p[i][0])/3;path+=`C${p[i][0]+dx},${p[i][1]+dx*tangents[i]} ${p[i+1][0]-dx},${p[i+1][1]-dx*tangents[i+1]} ${p[i+1][0]},${p[i+1][1]}`;}
+    return path;
+  }
+  function areaPath(top,bottom) {if(!top.length||!bottom.length)return '';return monotonePath(top)+monotonePath([...bottom].reverse()).replace(/^M/,'L')+'Z';}
+  function arcPath(cx,cy,inner,outer,start,end) {
+    cx=number(cx);cy=number(cy);inner=Math.max(0,number(inner));outer=Math.max(0,number(outer));start=number(start);end=number(end);
+    const delta=Math.max(-2*Math.PI,Math.min(2*Math.PI,end-start)), sweep=delta>=0?1:0;
+    const point=(r,a)=>`${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`;
+    const arcs=(r,a,d,s)=>{const n=Math.abs(d)>=2*Math.PI-1e-9?2:1;let out='';for(let i=1;i<=n;i++)out+=`A${r},${r} 0 ${Math.abs(d/n)>Math.PI?1:0} ${s} ${point(r,a+d*i/n)}`;return out;};
+    return `M${point(outer,start)}${arcs(outer,start,delta,sweep)}L${point(inner,start+delta)}${arcs(inner,start+delta,-delta,1-sweep)}Z`;
+  }
+  function useWidth(width) {
+    const ref=useRef(null), [measured,setMeasured]=useState(number(width)||400);
+    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(node.getBoundingClientRect().width||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
+    return [ref,number(width)||measured];
+  }
+  const selectable=(item,onSelect)=>onSelect?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
+  const style={position:'relative',width:'100%'};
+  function tooltipPosition(point,size,chart,viewport) {
+    const left=Math.max(chart.left,viewport.left)-chart.left;
+    const top=Math.max(chart.top,viewport.top)-chart.top;
+    const right=Math.max(left,Math.min(chart.right,viewport.right)-chart.left);
+    const bottom=Math.max(top,Math.min(chart.bottom,viewport.bottom)-chart.top);
+    const place=(value,extent,min,max)=>{
+      const forward=value+10, flipped=value-10-extent;
+      const preferred=forward+extent<=max?forward:flipped;
+      return Math.max(min,Math.min(preferred,Math.max(min,max-extent)));
+    };
+    return {left:place(point.x,size.width,left,right),top:place(point.y,size.height,top,bottom)};
+  }
+  function Tooltip({children,position,onDismiss}) {
+    const ref=useRef(null);
+    useLayoutEffect(()=>{
+      const node=ref.current, chart=node?.parentElement;
+      if(!node||!chart) return;
+      const update=()=>{
+        const bounds=chart.getBoundingClientRect();
+        const viewport={left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
+        const availableWidth=Math.max(0,Math.min(bounds.right,viewport.right)-Math.max(bounds.left,viewport.left));
+        const availableHeight=Math.max(0,Math.min(bounds.bottom,viewport.bottom)-Math.max(bounds.top,viewport.top));
+        node.style.maxWidth=`${availableWidth}px`;
+        node.style.maxHeight=`${availableHeight}px`;
+        const size=node.getBoundingClientRect();
+        const constrained=node.scrollWidth>node.clientWidth || node.scrollHeight>node.clientHeight;
+        node.style.pointerEvents=constrained?'auto':'none';
+        if(constrained) {
+          node.setAttribute('tabindex','0');
+          node.setAttribute('role','region');
+          node.setAttribute('aria-label','Chart tooltip');
+        } else {
+          node.removeAttribute('tabindex');
+          node.removeAttribute('role');
+          node.removeAttribute('aria-label');
+        }
+        const placed=tooltipPosition(position,size,bounds,viewport);
+        node.style.left=`${placed.left}px`;
+        node.style.top=`${placed.top}px`;
+        node.style.visibility='visible';
+      };
+      update();
+      const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(update);
+      observer?.observe(chart);
+      window.addEventListener('resize',update);
+      window.addEventListener('scroll',update,true);
+      return ()=>{observer?.disconnect();window.removeEventListener('resize',update);window.removeEventListener('scroll',update,true);};
+    },[position.x,position.y,children]);
+    return h('div',{ref,class:'svgc-tooltip',
+      onMouseMove:event=>event.stopPropagation(),
+      onFocusOut:event=>{if(!event.currentTarget.contains(event.relatedTarget)) onDismiss();}
+    },children);
+  }
+  function tooltipNode(tooltip,payload,position,onDismiss) {
+    if(!tooltip||!payload) return null;
+    return h(Tooltip,{position,onDismiss},typeof tooltip==='function'?tooltip(payload):tooltip);
+  }
+  function spacedTicks(ticks,scale,minSpacing=20) {
+    if(ticks.length<2) return ticks;
+    const first=ticks[0], last=ticks.at(-1);
+    if(Math.abs(scale(first)-scale(last))<minSpacing) return [first];
+    const shown=[first];
+    for(const tick of ticks.slice(1,-1)) {
+      if(Math.abs(scale(tick)-scale(shown.at(-1)))>=minSpacing &&
+         Math.abs(scale(tick)-scale(last))>=minSpacing) shown.push(tick);
+    }
+    return [...shown,last];
+  }
+  const leaveChart=(event,setHover)=>{
+    const tooltip=event.currentTarget.querySelector('.svgc-tooltip');
+    if(!tooltip?.contains(window.document?.activeElement)) setHover(null);
+  };
+  function itemHover(event,item) {
+    const bounds=event.currentTarget?.ownerSVGElement?.parentElement?.getBoundingClientRect();
+    return {item,x:bounds?event.clientX-bounds.left:event.offsetX,
+      y:bounds?event.clientY-bounds.top:event.offsetY};
+  }
+  function CartesianChart({
+    kind='area', data=[], xKey, series=[], stackOffset='none', height=300,
+    width, margin={}, yFormat=String, xFormat=String, tickEvery, yDomain,
+    referenceX, referenceY, referenceOpacity=1, grid=true, xAxisLine=false,
+    yAxisLine=false, plotClass='', tooltip,
+    compact=false
+  }) {
+    const [ref,w]=useWidth(width), [hover,setHover]=useState(null);
+    const m={top:10,right:10,bottom:compact?0:25,left:compact?0:55,...margin};
+    const left=m.left, right=Math.max(left,w-m.right), top=m.top;
+    const bottom=Math.max(top,height-m.bottom), pw=right-left;
+    const stacked=stack(data,series.filter(s=>s.stack).map(s=>s.key),stackOffset);
+    let si=0;
+    const bands=series.map(s=>s.stack?stacked[si++]:data.map(row=>[0,number(row[s.key])]));
+    let slotCount=0, stackSlot;
+    const slots=series.map(s=>{
+      if(!s.stack) return slotCount++;
+      if(stackSlot===undefined) stackSlot=slotCount++;
+      return stackSlot;
+    });
+    const values=bands.flat(2).concat([0]);
+    let lo=Math.min(...values), hi=Math.max(...values);
+    const explicitDomain=Array.isArray(yDomain) && yDomain.length>=2 &&
+      Number.isFinite(yDomain[0]) && Number.isFinite(yDomain[1]);
+    if(Array.isArray(yDomain)) {
+      if(Number.isFinite(yDomain[0])) lo=yDomain[0];
+      if(Number.isFinite(yDomain[1])) hi=yDomain[1];
+    }
+    let ticks=niceTicks(lo,hi,4);
+    if(explicitDomain) {
+      const min=Math.min(lo,hi), max=Math.max(lo,hi);
+      ticks=[min,...ticks.filter(t=>t>min && t<max),...(min===max?[]:[max])];
+    } else if(!yDomain) {
+      lo=ticks[0]; hi=ticks.at(-1);
+    }
+    const y=linearScale([lo,hi],[bottom,top]);
+    const renderedTicks=spacedTicks(ticks,y);
+    const x=i=>data.length<=1?(left+right)/2:kind==='bar'
+      ?left+(i+.5)*pw/data.length:left+i*pw/(data.length-1);
+    const marks=series.map((s,j)=>{
+      const b=bands[j], color=s.color||'currentColor';
+      if(kind==='bar') {
+        const groupWidth=data.length?pw/data.length*.8:0;
+        const barWidth=slotCount?groupWidth/slotCount:0;
+        return b.map((pair,i)=>h('rect',{
+          class:'svgc-bar',x:x(i)-groupWidth/2+slots[j]*barWidth,
+          y:Math.min(y(pair[0]),y(pair[1])),width:barWidth,
+          height:Math.abs(y(pair[1])-y(pair[0])),fill:s.fill||color,
+          'fill-opacity':s.fillOpacity??1,stroke:color,
+          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+          'stroke-dasharray':s.strokeDasharray
+        }));
+      }
+      const upper=b.map((v,i)=>[x(i),y(v[1])]);
+      const lower=b.map((v,i)=>[x(i),y(v[0])]);
+      return h('g',null,
+        kind==='area'&&s.fill!=='none'&&h('path',{
+          class:'svgc-area',d:areaPath(upper,lower),fill:s.fill||color,
+          'fill-opacity':s.fillOpacity??.3
+        }),
+        h('path',{
+          class:'svgc-curve',d:monotonePath(upper),fill:'none',stroke:color,
+          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+          'stroke-dasharray':s.strokeDasharray
+        }),
+        upper.length===1&&h('circle',{class:'svgc-point',cx:upper[0][0],cy:upper[0][1],
+          r:3,fill:color,opacity:s.strokeOpacity??1})
+      );
+    });
+    const move=e=>{
+      if(!data.length) return;
+      const rect=e.currentTarget.getBoundingClientRect(), local=e.clientX-rect.left;
+      const fraction=pw?Math.max(0,Math.min(1,(local-left)/pw)):0;
+      const index=data.length===1?0:kind==='bar'
+        ?Math.min(data.length-1,Math.floor(fraction*data.length))
+        :Math.round(fraction*(data.length-1));
+      setHover({index,x:local,y:e.clientY-rect.top});
+    };
+    const row=hover&&data[hover.index];
+    const payload=row&&{
+      active:true,label:row[xKey],row,index:hover.index,
+      payload:series.map(s=>({dataKey:s.key,name:s.label||s.key,
+        value:row[s.key],color:s.color,payload:row}))
+    };
+    const refIndex=data.findIndex(row=>row[xKey]===referenceX);
+    const options=typeof grid==='object' && grid!==null?grid:{};
+    const horizontal=typeof grid==='object'?options.horizontal!==false:!!grid;
+    const vertical=typeof grid==='object'&&options.vertical===true;
+    const gridStroke=options.stroke??'var(--border-default, #334155)';
+    const gridDash=options.strokeDasharray??'3 3';
+    const xLabels=data.map((row,i)=>({i,label:xFormat(row[xKey])}));
+    const maxLabelWidth=Math.max(0,...xLabels.map(({label})=>Array.from(String(label??'')).length*9+12));
+    const categoryGap=data.length>1?pw/(kind==='bar'?data.length:data.length-1):pw;
+    const interval=Number.isFinite(tickEvery)?Math.max(1,Math.floor(tickEvery)):
+      Math.max(1,categoryGap>0?Math.ceil(maxLabelWidth/categoryGap):data.length);
+    const shownX=xLabels.filter(({i})=>i%interval===0);
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height,width:width||'100%'}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},
+        onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`},
+          h('rect',{class:plotClass,x:left,y:top,width:pw,height:bottom-top,fill:'transparent'}),
+          !compact&&renderedTicks.map(t=>h('g',null,
+            horizontal&&h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
+              y1:y(t),y2:y(t),stroke:gridStroke,'stroke-dasharray':gridDash}),
+            h('text',{x:left-6,y:y(t),fill:'var(--text-muted, #94a3b8)',
+              'text-anchor':'end','font-size':11},yFormat(t))
+          )),
+          !compact&&vertical&&shownX.map(({i})=>h('line',{
+            class:'svgc-grid-vertical',x1:x(i),x2:x(i),y1:top,y2:bottom,
+            stroke:gridStroke,'stroke-dasharray':gridDash
+          })),
+          !compact&&shownX.map(({label,i})=>h('text',{
+            x:x(i),y:height-4,fill:'var(--text-muted, #94a3b8)',
+            'text-anchor':'middle','font-size':11
+          },label)),
+          !compact&&xAxisLine&&h('line',{
+            class:'svgc-x-axis-line',x1:left,x2:right,y1:bottom,y2:bottom,
+            stroke:typeof xAxisLine==='string'?xAxisLine:'var(--border-default, #334155)'
+          }),
+          !compact&&yAxisLine&&h('line',{
+            class:'svgc-y-axis-line',x1:left,x2:left,y1:top,y2:bottom,
+            stroke:typeof yAxisLine==='string'?yAxisLine:'var(--border-default, #334155)'
+          }),
+          marks,
+          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
+            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
+            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
+          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
+            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
+            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity})
+        ),
+        tooltipNode(tooltip,payload,hover||{},()=>setHover(null))
+      )
+    );
+  }
+  function DonutChart({items=[],height=250,innerRadius=50,outerRadius=85,tooltip,onSelect,
+    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth}) {
+    const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const total=items.reduce((sum,item)=>sum+Math.max(0,number(item.value)),0);
+    let angle=number(startAngle);
+    const sectors=items.map(item=>{
+      const start=angle;
+      angle+=total?(clockwise?1:-1)*Math.max(0,number(item.value))/total*2*Math.PI:0;
+      return h('path',{class:'svgc-sector',d:arcPath(w/2,height/2,innerRadius,outerRadius,start,angle),
+        fill:item.color,stroke,'stroke-width':strokeWidth,...selectable(item,onSelect),
+        onMouseMove:e=>setHover(itemHover(e,item))},h('title',null,item.label));
+    });
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},sectors),
+        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+  }
+  function HBarChart({items=[],height=250,valueFormat=String,labelWidth=130,labelMaxChars=Infinity,onSelect,tooltip}) {
+    const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const max=Math.max(0,...items.map(i=>number(i.value)));
+    const plotHeight=Math.max(0,height-24), rowHeight=plotHeight/Math.max(1,items.length);
+    const plotWidth=Math.max(0,w-labelWidth-8);
+    const ticks=max?niceTicks(0,max,4):[0], axisMax=ticks.at(-1);
+    const bars=items.map((item,i)=>{
+      const label=String(item.label??'');
+      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-1))+'…':label;
+      return h('g',null,
+        h('text',{x:labelWidth-6,y:(i+.5)*rowHeight,'text-anchor':'end',
+          'dominant-baseline':'middle',fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
+        h('rect',{class:'svgc-bar',x:labelWidth,y:i*rowHeight+rowHeight*.15,
+          width:axisMax?plotWidth*Math.max(0,number(item.value))/axisMax:0,height:rowHeight*.7,rx:4,
+          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(item.value)}`,
+          ...selectable(item,onSelect),onMouseMove:e=>setHover(itemHover(e,item))})
+      );
+    });
+    return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
+      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},bars,
+          h('line',{class:'svgc-hbar-axis',x1:labelWidth,x2:labelWidth+plotWidth,y1:plotHeight,y2:plotHeight,stroke:'var(--border-default, #475569)'}),
+          ticks.map((t,i)=>h('text',{class:'svgc-hbar-tick',x:labelWidth+(axisMax?t/axisMax*plotWidth:0),y:height-4,
+            'text-anchor':i===0?'start':i===ticks.length-1?'end':'middle',
+            fill:'var(--text-muted, #94a3b8)','font-size':11},valueFormat(t)))
+        ),
+        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+  }
+  function Legend({series=[],hidden=new Set(),onToggle,kind='area'}) {
+    return h('div',{class:'svgc-legend'},series.map(s=>{
+      const color=s.color||'currentColor';
+      const symbol=kind==='bar'
+        ?h('rect',{x:1,y:1,width:14,height:8,fill:s.fill||color,stroke:color,'stroke-dasharray':s.strokeDasharray})
+        :[h('line',{x1:1,y1:5,x2:15,y2:5,stroke:color,'stroke-width':2,'stroke-dasharray':s.strokeDasharray}),
+          h('circle',{cx:8,cy:5,r:3,fill:color})];
+      return h('button',{type:'button',class:'svgc-legend-item',
+        'aria-pressed':!hidden.has(s.key),onClick:()=>onToggle?.(s.key),
+        style:{color:s.color,opacity:hidden.has(s.key)?.45:1}},
+        h('svg',{'aria-hidden':'true',width:16,height:10,viewBox:'0 0 16 10'},symbol),s.label||s.key);
+    }));
+  }
+  window.svgCharts={geometry:{linearScale,niceTicks,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
+})();
+
+</script>
+<style>
+/* SVG charts: keep overlays and controls usable in either theme. */
+.svgc-responsive, .svgc-wrapper { min-width: 0; }
+.svgc-tooltip { position: absolute; z-index: 2; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
+.svgc-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; }
+.svgc-legend-item { display: inline-flex; align-items: center; gap: .3em; background: transparent; border: 0; cursor: pointer; font: inherit; }
+.svgc-bar[role="button"], .svgc-sector[role="button"] { cursor: pointer; }
+
+</style>
+<style>@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:100 800;src:url(data:font/woff2;base64,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) format('woff2');}</style>
+<style>@font-face{font-family:"Geist";font-style:normal;font-weight:100 900;src:url(data:font/woff2;base64,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) format('woff2');}</style>"""
+# frontend-vendor:end
+HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDOR_HTML)
 
 
 # ── FastAPI application ───────────────────────────────────────────────────────
