@@ -1099,10 +1099,9 @@ def read_source(
                     validate_cooked_source_row(
                         headers, cooked_row, path, row_number
                     )
-                    cooked_rows.append(cooked_row)
                     print(
                         f"WARNING: {path}: row {row_number}: Skipped action "
-                        f"{extracted.source_action!r}; it does not produce an output transaction.",
+                        f"{extracted.source_action!r}; excluded from cooked CSV and QIF output.",
                         file=sys.stderr,
                     )
                     continue
