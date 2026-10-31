@@ -5,7 +5,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile,
-  parseIndexSnapshot, parseStagedListing, normalizeEntries, hashInventory} from './deployment_files.mjs';
+  parseIndexSnapshot, parseStagedListing, normalizeEntries, hashInventory, pruneBackups} from './deployment_files.mjs';
 
 const launcherName = 'storage_monitor/storage_monitor';
 const nativeInput = name => name === 'storage_monitor/native/Makefile' || name.startsWith('storage_monitor/native/src/');
@@ -170,6 +170,7 @@ export function main(argv=process.argv.slice(2)) {
     atomicFile(receipt,receiptBytes,0o600,'.storage-monitor-stage-');
     if (version(walker,expectedProtocol)!==built.walkerVersion) throw new Error('Walker version activation check failed');
   } catch(error) { restore(readBackup(saved),scripts); throw error; }
+  pruneBackups(path.dirname(saved));
   console.log('Storage Monitor deployed; rollback backup: '+saved);
 }
 if (process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {

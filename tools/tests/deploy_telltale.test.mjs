@@ -155,8 +155,10 @@ test('failed activated signature restores prior bundle and receipt; upgrades per
 
 test('cleanup failure restores prior deployment and retains verified backups',t=>{
   const f=fixture(t);ok(f.run());const before=state(f);f.release('cleanup-failure');const hook=path.join(f.base,'synthetic-cleanup.cjs');
+  const old=path.join(f.home,'.utilities-deploy-backups','telltale','copy-old');fs.mkdirSync(old);fs.writeFileSync(path.join(old,'payload'),'invented');fs.utimesSync(old,1,1);
   fs.writeFileSync(hook,`const fs=require('node:fs'),path=require('node:path');const rm=fs.rmSync;let failed=false;fs.rmSync=(p,...args)=>{if(!failed&&path.basename(p).startsWith('telltale-build-')){failed=true;throw Error('synthetic cleanup failure');}return rm(p,...args);};`);f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
   const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/cleanup failure/);assert.deepEqual(state(f),before);const saved=/Recovery backup: (.+)/.exec(r.stdout)[1];assert.equal(appTreeHash(path.join(saved,'Telltale.app')),before[0]);
+  assert.equal(fs.readFileSync(path.join(old,'payload'),'utf8'),'invented');
 });
 
 test('rollback receipt failure restores displaced release and retained backup is independent',t=>{
@@ -191,4 +193,21 @@ for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release bu
   const f=fixture(t);
   assertReleaseTempHygiene({...f,run:fail=>{f.write('Makefile',releaseTempMakefile(fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),fail));f.git('add','.');return f.run();}},'telltale-build-',fail);
   assert.deepEqual(fs.readdirSync(f.base).filter(name=>/telltale/i.test(name)),[]);
+});
+
+test('forward deployment prunes older backups while rollback and dry run preserve them', t => {
+  const f = fixture(t); ok(f.run());
+  const root = path.join(f.home, '.utilities-deploy-backups', 'telltale');
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) { const dir=path.join(root,name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir,'payload'),'invented'); fs.utimesSync(dir,1,1); }
+  f.release('next'); ok(f.run('--dry-run'));
+  const beforeFailure=fs.readdirSync(root).sort();
+  fs.appendFileSync(path.join(f.project,'Makefile'),'\\n# invented unstaged change\\n');
+  assert.equal(f.run().status,1); f.git('checkout','--','.');
+  assert.deepEqual(fs.readdirSync(root).sort(),beforeFailure);
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
+  const result=f.run(); ok(result); const saved=/rollback backup: (.+)/.exec(result.stdout)[1];
+  const names=fs.readdirSync(root); assert.equal(names.length,2); assert.ok(names.includes(path.basename(saved)));
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
+  const before=fs.readdirSync(root).sort(); ok(f.run('--rollback',saved));
+  for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
 });

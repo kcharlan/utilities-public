@@ -13,6 +13,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from tests.browse_fixtures import build_fixture_db
 from tests.credential_fixtures import (
     assert_synthetic_saved_snapshot, synthetic_provider_server, write_credential_config,
@@ -50,8 +52,130 @@ def _copy_installer_project(tmp_path: Path) -> Path:
 def _installer_env(tmp_path: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["MODEL_SENTINEL_HOME"] = str(tmp_path / "synthetic-runtime-home")
+    env["MODEL_SENTINEL_BACKUP_ROOT"] = str(tmp_path / "synthetic-backups")
     env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
     return env
+
+
+def test_reinstall_backs_up_target_and_keeps_two(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin/model-sentinel"
+    root = Path(env["MODEL_SENTINEL_BACKUP_ROOT"])
+    assert _run_installer(project, env, str(target)).returncode == 0
+    assert _run_installer(project, env, "--check", str(target)).returncode == 0
+    assert not root.exists()
+    previous = target.read_bytes()
+    for name in ("copy-old one", "copy-old two"):
+        directory = root / name
+        directory.mkdir(parents=True)
+        (directory / "model-sentinel").write_bytes(name.encode())
+        os.utime(directory, (1, 1))
+    readonly = root / "copy-old one" / "readonly"
+    readonly.mkdir()
+    (readonly / "data").write_text("synthetic")
+    readonly.chmod(0o500)
+    outside = tmp_path / "synthetic-outside"
+    outside.mkdir(mode=0o500)
+    (root / "copy-old one" / "outside").symlink_to(outside, target_is_directory=True)
+    os.utime(root / "copy-old one", (1, 1))
+    link = root / "copy-link"
+    link.symlink_to(root / "copy-old one", target_is_directory=True)
+    (root / "copy-regular").write_text("synthetic")
+    assert _run_installer(project, env, str(target)).returncode == 0
+    backups = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink()]
+    assert len(backups) == 2
+    assert (root / "copy-old two").exists()
+    assert not (root / "copy-old one").exists()
+    assert link.is_symlink()
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o500
+    assert (root / "copy-regular").read_text() == "synthetic"
+    newest = next(p for p in backups if p.name.startswith("copy-") and "old" not in p.name)
+    assert (newest / "model-sentinel").read_bytes() == previous
+
+
+def test_reinstall_refuses_unsafe_backup_roots_without_changing_target(tmp_path: Path) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin/model-sentinel"
+    assert _run_installer(project, env, str(target)).returncode == 0
+    before = target.read_bytes()
+    root = Path(env["MODEL_SENTINEL_BACKUP_ROOT"])
+    external = tmp_path / "external"
+    external.mkdir()
+    marker = external / "marker"
+    marker.write_text("synthetic")
+    root.symlink_to(external, target_is_directory=True)
+    result = _run_installer(project, env, str(target))
+    assert result.returncode != 0
+    assert target.read_bytes() == before and marker.read_text() == "synthetic"
+    env["MODEL_SENTINEL_BACKUP_ROOT"] = str(root) + "/"
+    result = _run_installer(project, env, str(target))
+    assert result.returncode != 0
+    assert target.read_bytes() == before and list(external.iterdir()) == [marker]
+    env["MODEL_SENTINEL_BACKUP_ROOT"] = str(root)
+    root.unlink()
+    root.mkdir(mode=0o500)
+    try:
+        result = _run_installer(project, env, str(target))
+        assert result.returncode != 0
+        assert target.read_bytes() == before and list(root.iterdir()) == []
+    finally:
+        root.chmod(0o700)
+
+
+@pytest.mark.parametrize("failure", ["chmod", "cleanup"])
+def test_final_setup_failure_preserves_old_backups(tmp_path: Path, failure: str) -> None:
+    project = _copy_installer_project(tmp_path)
+    env = _installer_env(tmp_path)
+    target = tmp_path / "synthetic-bin/model-sentinel"
+    assert _run_installer(project, env, str(target)).returncode == 0
+    previous = target.read_bytes()
+    home = Path(env["MODEL_SENTINEL_HOME"])
+    bootstrap = home / "launchd.env"
+    bootstrap.write_text("# synthetic bootstrap preserved\n")
+    root = Path(env["MODEL_SENTINEL_BACKUP_ROOT"])
+    originals = {}
+    for name in ("copy-old-a", "copy-old-b", "copy-old-c"):
+        folder = root / name
+        folder.mkdir(parents=True)
+        payload = f"synthetic {name}".encode()
+        (folder / "model-sentinel").write_bytes(payload)
+        os.utime(folder, (1, 1))
+        originals[name] = payload
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    marker = tmp_path / "injected-failure"
+    env["SYNTHETIC_FAILURE_MARKER"] = str(marker)
+    env["SYNTHETIC_LAUNCHD_ENV"] = str(bootstrap)
+    env["TMPDIR"] = str(tmp_path)
+    env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
+    if failure == "chmod":
+        command = stubs / "chmod"
+        command.write_text(
+            '#!/bin/sh\nif [ "$2" = "$SYNTHETIC_LAUNCHD_ENV" ]; then\n'
+            '  echo "synthetic final chmod failure" >&2; exit 9\nfi\nexec /bin/chmod "$@"\n'
+        )
+    else:
+        command = stubs / "rm"
+        command.write_text(
+            '#!/bin/sh\ncase "${2:-}" in */model-sentinel-zipapp.*)\n'
+            '  if [ ! -e "$SYNTHETIC_FAILURE_MARKER" ]; then\n'
+            '    : > "$SYNTHETIC_FAILURE_MARKER"\n'
+            '    echo "synthetic final cleanup failure" >&2; exit 9\n'
+            '  fi;;\nesac\nexec /bin/rm "$@"\n'
+        )
+    command.chmod(0o755)
+    result = _run_installer(project, env, str(target))
+    assert result.returncode != 0
+    assert f"synthetic final {failure} failure" in result.stderr
+    assert not list(tmp_path.glob("model-sentinel-zipapp.*"))
+    assert bootstrap.read_text() == "# synthetic bootstrap preserved\n"
+    assert {p.name for p in root.iterdir()} >= set(originals)
+    for name, payload in originals.items():
+        assert (root / name / "model-sentinel").read_bytes() == payload
+    new = [p for p in root.iterdir() if p.name not in originals]
+    assert len(new) == 1 and (new[0] / "model-sentinel").read_bytes() == previous
 
 
 def _run_command(command: list[str], env: dict[str, str], cwd: Path):
@@ -394,6 +518,9 @@ def test_failed_candidate_smoke_check_preserves_existing_target(tmp_path: Path) 
     target.chmod(0o755)
     original_bytes = target.read_bytes()
     original_mode = stat.S_IMODE(target.stat().st_mode)
+    old = Path(env["MODEL_SENTINEL_BACKUP_ROOT"]) / "copy-old"
+    old.mkdir(parents=True)
+    (old / "model-sentinel").write_bytes(b"synthetic backup")
 
     cli_path = project / "model_sentinel" / "cli.py"
     cli_path.write_text(
@@ -409,3 +536,5 @@ def test_failed_candidate_smoke_check_preserves_existing_target(tmp_path: Path) 
     assert "verification" in (result.stdout + result.stderr).lower()
     assert target.read_bytes() == original_bytes
     assert stat.S_IMODE(target.stat().st_mode) == original_mode
+    assert (old / "model-sentinel").read_bytes() == b"synthetic backup"
+    assert list(old.parent.iterdir()) == [old]

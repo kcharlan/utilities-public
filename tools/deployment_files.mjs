@@ -97,3 +97,45 @@ export function externalDirectory(directory, repo) {
   if (canonical === repo || canonical.startsWith(repo + path.sep)) throw new Error('Destination must be outside the repository');
   return canonical;
 }
+
+// Keep the newest eligible directories; pruning must never fail a deployment.
+export function pruneBackups(root, options = {}) {
+  const removed = [];
+  const warn = (file, error) => console.warn('Backup pruning failed for ' + file + ': ' + error.message);
+  try {
+    // lstat follows a linked directory when its path ends with a separator.
+    if (typeof root === 'string') while (root.length > path.parse(root).root.length && root.endsWith(path.sep)) root = root.slice(0, -1);
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('Invalid retention options');
+    const {keep = 2, isBackup = name => /^copy[-.]/.test(name)} = options;
+    if (!Number.isInteger(keep) || keep < 0 || typeof isBackup !== 'function') throw new Error('Invalid retention options');
+    inspectAncestors(root);
+    const stat = fs.statSync(root);
+    if (!stat.isDirectory() || !(stat.mode & 0o222) || !(stat.mode & 0o111)) throw new Error('Backup root is not writable/searchable');
+    fs.accessSync(root, fs.constants.W_OK | fs.constants.X_OK);
+    const candidates = [];
+    for (const name of fs.readdirSync(root)) {
+      const file = path.join(root, name);
+      try {
+        if (!isBackup(name)) continue;
+        const entry = fs.lstatSync(file);
+        if (entry.isDirectory() && !entry.isSymbolicLink()) candidates.push({name, file, mtime: entry.mtimeMs});
+      } catch (error) { warn(file, error); return removed; }
+    }
+    candidates.sort((a, b) => b.mtime - a.mtime || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+    function writable(directory) {
+      let names;
+      try {
+        const entry = fs.lstatSync(directory);
+        if (!entry.isDirectory() || entry.isSymbolicLink()) return;
+        fs.chmodSync(directory, (entry.mode & 0o7777) | 0o700);
+        names = fs.readdirSync(directory);
+      } catch (error) { throw new Error(directory + ': ' + error.message, {cause: error}); }
+      for (const name of names) writable(path.join(directory, name));
+    }
+    for (const {file} of candidates.slice(keep)) {
+      try { writable(file); fs.rmSync(file, {recursive: true}); removed.push(file); }
+      catch (error) { warn(file, error); }
+    }
+  } catch (error) { warn(root, error); }
+  return removed;
+}

@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups} from './deployment_files.mjs';
 
 export const buildInput = name => ['brew_version/Package.swift','brew_version/Makefile'].includes(name) || /^brew_version\/(Resources|Sources|Tests)\//.test(name);
 export function sourceInventory(repo, snapshot, requireStaged = false) {
@@ -250,6 +250,7 @@ export function main(argv=process.argv.slice(2)) {
   } catch(error) {primary=error;}
   finally {cleanupErrors.push(...cleanupDirectories([...(staged?[staged.directory]:[]),scratch]));}
   finishOperation(primary,cleanupErrors,'Deployment completed, but cleanup failed',saved);
+  if(saved) pruneBackups(path.dirname(saved));
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   try {main();} catch(error) {console.error((error.deploymentCompleted?'Brew Version operation completed with cleanup failures: ':'Brew Version deployment failed: ')+error.message);process.exitCode=1;}

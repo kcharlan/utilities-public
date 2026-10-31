@@ -4,17 +4,11 @@ This list holds real repairs and features only. Anything that needs the owner go
 here with its reason, not in a plan or the PKM. Sign-offs, acceptance checks and
 evidence gaps are not tracked; breakage found in use gets fixed then.
 
-- [ ] Repair Model Sentinel's scheduled scan so it runs the deployed zipapp
-  (`~/Library/Scripts/model-sentinel`) instead of the checkout. The runner generated
-  by [`install_launchd.template.sh`](../model_sentinel/install_launchd.template.sh)
-  changes into `PROJECT_DIR` and executes its `model-sentinel`, so scheduled scans run
-  whatever the checkout holds. Change the template and
-  [LAUNCHD.md](../model_sentinel/docs/LAUNCHD.md), then reseed and reinstall the job:
-  `setup_launchd.sh` does not overwrite an existing runtime-home installer.
-- [ ] Make deployers keep only the newest two rollback backups per tool, so
-  `~/.utilities-deploy-backups` needs no manual pruning. They never prune today, and
-  older copies are a restore hazard. Writers include `tools/deploy_*.mjs`,
-  `tools/calculator_page_deployment.mjs` and `docker/propagate-updates.zsh`.
+- [x] Repair Model Sentinel's scheduled scan to use the deployed zipapp.
+  See [launchd setup and migration](../model_sentinel/docs/LAUNCHD.md).
+- [x] Retain the newest two eligible rollback backups after successful forward
+  deployment, preserving backups on failure, rollback, unchanged and dry runs.
+  See [deployment recovery](local_deployment_sync.md#rollback).
 - [ ] Port the 14 CDN-backed tools to vendored assets so they work offline and an
   outage can't break them, as esm.sh did to Git Fleet and RouterView on 2026-10-30.
   Follow the front-end rules in [agents.md](../agents.md), with no exceptions.
@@ -30,10 +24,11 @@ evidence gaps are not tracked; breakage found in use gets fixed then.
     or SVG), and `@xyflow/react` in Cognitive Switchyard.
   - Remove the React and Recharts contracts from `tools/testkit.py` once the last
     app is ported.
-- [ ] Move the two exact image tags onto the normal refresh: `ghcr.io/astral-sh/uv`
-  in `docker/llm_proxy/Dockerfile` and `n8nio/n8n` in `docker/n8n-poc`. Neither
-  receives updates today, and n8n-poc also needs an `update.sh` for propagation to
-  refresh it.
+- [x] Move uv and n8n image tags onto normal refresh and add the n8n updater.
+  See [Docker propagation](../docker/README.md#propagating-dependency-updates).
+- [x] Replace hand deployment with the manifest-driven copy deployer, including
+  the Apple Health wrapper, and back up Model Sentinel zipapp replacements.
+  See [deployment guidance](local_deployment_sync.md).
 - [ ] Add Colophon's Continue in CLI action for OpenCode sessions, which Codex and
   Claude rows already have. Try the command against a disposable database first:
   `opencode --session` creates a session when the ID isn't found, and `--standalone`

@@ -4,7 +4,6 @@ set -euo pipefail
 
 ACTION="${1:-install}"
 RUNTIME_HOME="${MODEL_SENTINEL_HOME:-$HOME/.model_sentinel}"
-PROJECT_DIR="__MODEL_SENTINEL_PROJECT_DIR__"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 LAUNCHD_ENV_FILE="$RUNTIME_HOME/launchd.env"
 RUNNER_SCRIPT="$RUNTIME_HOME/run_model_sentinel_launchd.sh"
@@ -17,6 +16,8 @@ START_HOUR=9
 START_MINUTE=5
 
 # Editable command. Re-run this script after changes.
+# Built by install_standalone.sh.
+MODEL_SENTINEL_BIN="$HOME/Library/Scripts/model-sentinel"
 MODEL_SENTINEL_ARGS=(
   scan
   --save
@@ -42,6 +43,7 @@ Edit this file in $RUNTIME_HOME and re-run it whenever you want to change:
   - JOB_LABEL
   - START_HOUR / START_MINUTE
   - MODEL_SENTINEL_ARGS
+  - MODEL_SENTINEL_BIN
   - stdout/stderr log paths
 
 Secrets/bootstrap lines belong in:
@@ -59,7 +61,7 @@ render_runner() {
 set -euo pipefail
 
 RUNTIME_HOME="${RUNTIME_HOME}"
-PROJECT_DIR="${PROJECT_DIR}"
+MODEL_SENTINEL_BIN="${MODEL_SENTINEL_BIN}"
 LAUNCHD_ENV_FILE="${LAUNCHD_ENV_FILE}"
 
 if [ ! -f "\$LAUNCHD_ENV_FILE" ]; then
@@ -67,12 +69,17 @@ if [ ! -f "\$LAUNCHD_ENV_FILE" ]; then
   exit 2
 fi
 
+if [ ! -f "\$MODEL_SENTINEL_BIN" ] || [ ! -x "\$MODEL_SENTINEL_BIN" ]; then
+  echo "Missing or non-executable Model Sentinel; run install_standalone.sh: \$MODEL_SENTINEL_BIN" >&2
+  exit 2
+fi
+
 export MODEL_SENTINEL_HOME="\$RUNTIME_HOME"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
 source "\$LAUNCHD_ENV_FILE"
 
-cd "\$PROJECT_DIR"
-exec "\$PROJECT_DIR/model-sentinel" $(printf '%q ' "${MODEL_SENTINEL_ARGS[@]}")
+cd "\$RUNTIME_HOME"
+exec "\$MODEL_SENTINEL_BIN" $(printf '%q ' "${MODEL_SENTINEL_ARGS[@]}")
 EOF
   chmod +x "$RUNNER_SCRIPT"
 }
@@ -91,7 +98,7 @@ render_plist() {
     <string>${RUNNER_SCRIPT}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${PROJECT_DIR}</string>
+  <string>${RUNTIME_HOME}</string>
   <key>RunAtLoad</key>
   <false/>
   <key>StartCalendarInterval</key>
@@ -112,6 +119,10 @@ EOF
 }
 
 install_job() {
+  if [ ! -f "$MODEL_SENTINEL_BIN" ] || [ ! -x "$MODEL_SENTINEL_BIN" ]; then
+    echo "Missing or non-executable Model Sentinel; run install_standalone.sh: $MODEL_SENTINEL_BIN" >&2
+    exit 2
+  fi
   ensure_dirs
   render_runner
   render_plist
@@ -153,7 +164,7 @@ status_job() {
   cat <<EOF
 Job label: $JOB_LABEL
 Runtime home: $RUNTIME_HOME
-Project dir: $PROJECT_DIR
+Command: $MODEL_SENTINEL_BIN
 LaunchAgent plist: $INSTALLED_PLIST
 Runner script: $RUNNER_SCRIPT
 launchd env file: $LAUNCHD_ENV_FILE

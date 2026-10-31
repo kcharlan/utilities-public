@@ -1,0 +1,124 @@
+{
+  "scripts": [
+    {
+      "name": "de-abacus.py",
+      "source": "abacus usage/de-abacus.py"
+    },
+    {
+      "name": "div_conv",
+      "source": "div_conv/div_conv",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "dloc",
+      "source": "dloc/dloc"
+    },
+    {
+      "name": "docker-disk-compact.zsh",
+      "source": "docker/docker-disk-compact/docker-disk-compact.zsh"
+    },
+    {
+      "name": "editdb",
+      "source": "editdb/editdb",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "etf_montecarlo",
+      "source": "etf_montecarlo/etf_montecarlo"
+    },
+    {
+      "name": "expense_dock",
+      "source": "expense_dock/expense_dock"
+    },
+    {
+      "name": "harscope",
+      "source": "harscope/harscope"
+    },
+    {
+      "name": "jtree",
+      "source": "jtree/jtree",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "launchmaster",
+      "source": "launchmaster/launchmaster"
+    },
+    {
+      "name": "media-dater",
+      "source": "media-dater/media-dater"
+    },
+    {
+      "name": "moneydance_rotate_backups.sh",
+      "source": "moneydance backup rotation/moneydance_rotate_backups.sh"
+    },
+    {
+      "name": "router_log_analyze.py",
+      "source": "router-log-analyzer/router_log_analyze.py"
+    },
+    {
+      "name": "routerview",
+      "source": "routerview/routerview"
+    },
+    {
+      "name": "trim_last",
+      "source": "trim_last/trim_last"
+    },
+    {
+      "name": "usage-monthly-csv",
+      "source": "usage-monthly-csv/usage-monthly-csv"
+    },
+    {
+      "name": "worktree",
+      "source": "worktree-helper/worktree"
+    },
+    {
+      "name": "apple-health-extract-wrapper",
+      "source": "apple-health-extract/run.sh",
+      "target": "apple-health-extract",
+      "smoke": [
+        "--help"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "apple-health-extract"
+    },
+    {
+      "name": "mem_snapshots"
+    },
+    {
+      "name": "mls-tracker",
+      "entrypoint": "mls_tracker",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "tax2",
+      "entrypoint": "tax2",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "transcription",
+      "entrypoint": "transcription",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
+      "name": "vid-compiler"
+    },
+    {
+      "name": "video-scenes"
+    }
+  ]
+}

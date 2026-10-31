@@ -95,7 +95,8 @@ exactly `calculators/backtest`. Dry-run writes nothing. Installation moves the
 whole prior app into a timestamped private container beneath
 `~/.utilities-deploy-backups/backtest/`, then copies twelve runtime files.
 Brief downtime is acceptable. Copy/verification failures restore the saved tree
-by ordinary moves and report any recovery errors. Backups are never pruned.
+by ordinary moves and report any recovery errors. Successful updates apply the
+[deployment backup retention rule](../../docs/local_deployment_sync.md#deployment-backup-retention).
 Legacy files and symlinks remain in the private backup; other calculators are
 untouched. Existing `com.apple.macl` is accepted, without stripping attributes
 or changing shared ancestor permissions. Exact metadata restoration is not promised.

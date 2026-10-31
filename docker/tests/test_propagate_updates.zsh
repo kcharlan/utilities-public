@@ -178,6 +178,7 @@ new_case() {
   write_updater actual-data actual-data/update.sh
   write_updater mermaid mermaid/update.sh
   write_file "$REPO/docker/n8n-poc/docker-compose.yml" "services: {}"
+  write_updater n8n-poc n8n-poc/update.sh
 
   fixture_git add -A
   fixture_git commit -q -m "Synthetic fixture"
@@ -491,12 +492,130 @@ test_deploy_rejects_unknown_project() {
 
 test_deploy_reports_running_stack_without_updater() {
   new_case deploy_n8n
+  sed -i '' '/^  n8n-poc n8n-poc\/update.sh$/d' "$REPO/docker/propagate-updates.zsh"
+  fixture_git commit -q -am 'Remove updater mapping'
   cat > "$STATE/compose.json" <<EOF
 [{"Name":"n8n-poc","Status":"running(1)","ConfigFiles":"$DEPLOY/n8n-poc/docker-compose.yml"}]
 EOF
   run_script deploy --stack n8n-poc
   assert_status 1
   assert_contains "$CASE/out" "no update.sh"
+}
+
+test_deploy_updates_running_n8n() {
+  new_case deploy_n8n_running
+  print -r -- "[{\"Name\":\"n8n-poc\",\"Status\":\"running(1)\",\"ConfigFiles\":\"$DEPLOY/n8n-poc/docker-compose.yml\"}]" > "$STATE/compose.json"
+  run_script deploy --stack n8n-poc
+  assert_status 0
+  assert_contains "$CASE/calls.log" "update n8n-poc $DEPLOY/n8n-poc/update.sh"
+}
+
+test_real_n8n_updater_stops_when_up_fails() {
+  new_case n8n_real
+  local dir="$CASE/n8n"
+  mkdir "$dir"
+  cp "$TEST_SCRIPT_DIR:h/n8n-poc/"{up.sh,update.sh} "$dir/"
+  : > "$dir/.env"
+  (cd "$dir" && PATH="$CASE/bin:$PATH" CALL_LOG="$CASE/calls.log" STATE_DIR="$STATE" ./update.sh) > "$CASE/out" 2>&1 || fail "updater failed with config"
+  assert_contains "$CASE/calls.log" "compose ps"
+  : > "$CASE/calls.log"
+  rm "$dir/.env"
+  local rc=0
+  (cd "$dir" && PATH="$CASE/bin:$PATH" CALL_LOG="$CASE/calls.log" STATE_DIR="$STATE" ./update.sh) > "$CASE/out" 2>&1 || rc=$?
+  [[ "$rc" == 2 ]] || fail "missing config returned $rc"
+  assert_contains "$CASE/out" "Missing private config"
+  assert_not_contains "$CASE/calls.log" "compose ps"
+}
+
+test_deploy_keeps_two_newest_backups() {
+  new_case deploy_retention
+  local root="$HOME_DIR/.utilities-deploy-backups" name
+  for name in docker-20200101-010101 docker-20200102-010101 docker-20200103-010101 docker-20200103-010101-123 docker-20200104-010101-extra unrelated; do
+    write_file "$root/$name/marker" "$name"
+    touch -t 202001010101 "$root/$name"
+  done
+  mkdir "$root/docker-20200101-010101/readonly"
+  chmod 500 "$root/docker-20200101-010101/readonly"
+  ln -s "$CASE" "$root/docker-20200105-010101"
+  commit_change webserver/index/package-lock.json '// changed'
+  FAKE_FAIL_UPDATE=webserver run_script deploy --stack webserver
+  assert_status 1
+  [[ -f "$root/docker-20200101-010101/marker" ]] || fail 'failed deploy pruned backups'
+  for name in "$root"/docker-20*(N/); do touch -t 201901010101 "$name"; done
+  touch -t 202001010101 "$root"/docker-202001*(N/)
+  run_script deploy --stack webserver --dry-run
+  assert_status 0
+  [[ -f "$root/docker-20200101-010101/marker" ]] || fail 'dry run pruned backups'
+  commit_change webserver/index/package-lock.json '// changed again'
+  run_script deploy --stack webserver
+  assert_status 0
+  [[ ! -e "$root/docker-20200101-010101" && ! -e "$root/docker-20200102-010101" && ! -e "$root/docker-20200103-010101" ]] || fail 'old backups survived'
+  [[ -f "$root/docker-20200103-010101-123/marker" && -f "$root/docker-20200104-010101-extra/marker" && -f "$root/unrelated/marker" && -L "$root/docker-20200105-010101" ]] || fail 'protected entries removed'
+}
+
+test_prune_refuses_linked_root() {
+  new_case linked_backup_root
+  local root="$HOME_DIR/.utilities-deploy-backups" target="$CASE/backups" name
+  mkdir "$target"
+  ln -s "$target" "$root"
+  for name in docker-20200101-010101 docker-20200102-010101 docker-20200103-010101; do
+    write_file "$target/$name/marker" safe
+  done
+  commit_change webserver/index/package-lock.json '// changed'
+  run_script deploy --stack webserver
+  assert_status 0
+  assert_contains "$CASE/out" 'cannot prune backups through linked path'
+  [[ -f "$target/docker-20200101-010101/marker" ]] || fail 'linked root contents changed'
+}
+
+test_prune_orders_fractional_mtimes_before_names() {
+  new_case fractional_backup_times
+  local root="$HOME_DIR/.utilities-deploy-backups"
+  write_file "$root/docker-20200101-010101/marker" newer
+  write_file "$root/docker-20200102-010101/marker" older
+  perl -MTime::HiRes=utime -e 'utime 1577836800.9, 1577836800.9, $ARGV[0] or die $!; utime 1577836800.1, 1577836800.1, $ARGV[1] or die $!' \
+    "$root/docker-20200101-010101" "$root/docker-20200102-010101"
+  commit_change webserver/index/package-lock.json '// changed'
+  run_script deploy --stack webserver
+  assert_status 0
+  [[ -f "$root/docker-20200101-010101/marker" && ! -e "$root/docker-20200102-010101" ]] ||
+    fail 'fractional modification times did not take precedence over names'
+}
+
+test_prune_refuses_unwritable_root() {
+  new_case unwritable_backup_root
+  local root="$HOME_DIR/.utilities-deploy-backups" name
+  for name in docker-20200101-010101 docker-20200102-010101 docker-20200103-010101; do
+    write_file "$root/$name/marker" safe
+  done
+  commit_change webserver/index/package-lock.json '// changed'
+  # The updater runs after backup creation; simulate permissions changing then.
+  sed -i '' '/^exit 0/i\
+chmod 500 "$HOME/.utilities-deploy-backups"\
+' "$DEPLOY/webserver/update.sh"
+  # Keep the deployed updater in sync with the fixture's source so it is run.
+  cp -p "$DEPLOY/webserver/update.sh" "$REPO/docker/webserver/update.sh"
+  fixture_git commit -q -am 'Change updater permissions fixture'
+  run_script deploy --stack webserver
+  chmod 700 "$root"
+  assert_status 0
+  assert_contains "$CASE/out" 'not writable and searchable'
+  [[ -f "$root/docker-20200101-010101/marker" ]] || fail 'unwritable root contents changed'
+}
+
+test_prune_warns_and_preserves_contents_on_removal_error() {
+  new_case prune_failure
+  local root="$HOME_DIR/.utilities-deploy-backups" name
+  for name in docker-20200101-010101 docker-20200102-010101 docker-20200103-010101; do
+    write_file "$root/$name/marker" safe
+    touch -t 202001010101 "$root/$name"
+  done
+  write_stub rm 'exit 1'
+  commit_change webserver/index/package-lock.json '// changed'
+  run_script deploy --stack webserver
+  assert_status 0
+  assert_contains "$CASE/out" 'cannot remove backup'
+  [[ -f "$root/docker-20200101-010101/marker" ]] || fail 'failed removal lost contents'
 }
 
 tests=(${(ok)functions[(I)test_*]})

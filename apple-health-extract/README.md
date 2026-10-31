@@ -62,9 +62,7 @@ mkdir -p "$HOME/.apple-health-extract"
 chmod 700 "$HOME/.apple-health-extract"
 printf '%s\n' "$(pwd -P)" > "$HOME/.apple-health-extract/project-dir"
 chmod 600 "$HOME/.apple-health-extract/project-dir"
-mkdir -p "$HOME/Library/Scripts"
-cp run.sh "$HOME/Library/Scripts/apple-health-extract"
-chmod 755 "$HOME/Library/Scripts/apple-health-extract"
+node "$HOME/source/utilities-public/tools/deploy_copies.mjs" --only apple-health-extract-wrapper
 "$HOME/Library/Scripts/apple-health-extract" --check
 ```
 

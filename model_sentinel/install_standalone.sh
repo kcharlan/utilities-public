@@ -55,6 +55,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_HOME="${MODEL_SENTINEL_HOME:-$HOME/.model_sentinel}"
 TARGET_PATH="${1:-$HOME/Library/Scripts/model-sentinel}"
+BACKUP_ROOT="${MODEL_SENTINEL_BACKUP_ROOT:-$HOME/.utilities-deploy-backups/model-sentinel}"
 
 if [ -d "$TARGET_PATH" ]; then
   TARGET_PATH="$TARGET_PATH/model-sentinel"
@@ -68,7 +69,9 @@ cleanup() {
   if [ -n "$TMP_TARGET" ]; then
     rm -f "$TMP_TARGET"
   fi
-  rm -rf "$STAGING_DIR"
+  if [ -n "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
+  fi
 }
 
 trap cleanup EXIT
@@ -192,6 +195,80 @@ if ! version_has_expected_hash "$VERSION_OUTPUT"; then
   exit 1
 fi
 
+# Refuse linked ancestors, except macOS's standard system aliases.
+safe_backup_path() {
+  local path="$1"
+  while [ "$path" != / ] && [ "${path%/}" != "$path" ]; do path="${path%/}"; done
+  case "$path" in /*) ;; *) return 1 ;; esac
+  case "/$path/" in */../*|*/./*) return 1 ;; esac
+  while [ "$path" != / ]; do
+    if [ -L "$path" ]; then
+      case "$path" in /tmp|/var) [ "$(uname -s)" = Darwin ] && [ -d "$path" ] || return 1 ;; *) return 1 ;; esac
+    elif [ -e "$path" ] && [ ! -d "$path" ]; then
+      return 1
+    fi
+    path="$(dirname "$path")"
+  done
+}
+
+prune_backups() {
+  local path candidate stamp best_stamp best index i mode
+  local LC_ALL=C
+  local -a candidates stamps
+  candidates=() stamps=()
+  if ! safe_backup_path "$BACKUP_ROOT" || [ ! -d "$BACKUP_ROOT" ]; then
+    echo "Warning: unsafe backup root: $BACKUP_ROOT" >&2; return
+  fi
+  mode=$(stat -f '%Lp' "$BACKUP_ROOT") || { echo "Warning: cannot stat $BACKUP_ROOT" >&2; return; }
+  if [ $((8#$mode & 0300)) -ne 192 ] || [ ! -w "$BACKUP_ROOT" ] || [ ! -x "$BACKUP_ROOT" ]; then
+    echo "Warning: backup root is not writable/searchable: $BACKUP_ROOT" >&2; return
+  fi
+  if [ $((8#$mode & 0400)) -eq 0 ] || [ ! -r "$BACKUP_ROOT" ]; then
+    echo "Warning: cannot enumerate backup root: $BACKUP_ROOT" >&2; return
+  fi
+  for path in "$BACKUP_ROOT"/copy-*; do
+    [ -d "$path" ] && [ ! -L "$path" ] || continue
+    stamp=$(perl -MTime::HiRes=stat -e '@s = stat($ARGV[0]); @s or exit 1; printf "%020.9f", $s[9]' "$path") || { echo "Warning: cannot stat $path" >&2; continue; }
+    candidates+=("$path") stamps+=("$stamp")
+  done
+  # Select newest twice, using descending name to break equal-mtime ties.
+  for i in 1 2; do
+    best=-1; best_stamp=""
+    for ((index=0; index<${#candidates[@]}; index++)); do
+      candidate="${candidates[$index]}"; [ -n "$candidate" ] || continue
+      stamp="${stamps[$index]}"
+      if [[ "$stamp" > "$best_stamp" ]] || { [ "$stamp" = "$best_stamp" ] && [[ "$candidate" > "${candidates[$best]}" ]]; }; then
+        best=$index; best_stamp=$stamp
+      fi
+    done
+    [ "$best" -ge 0 ] && candidates[$best]=""
+  done
+  for path in "${candidates[@]}"; do
+    [ -n "$path" ] || continue
+    if ! find -P "$path" -type d -exec chmod u+rwx {} + || ! rm -rf -- "$path"; then
+      echo "Warning: could not prune backup: $path" >&2
+    fi
+  done
+}
+
+BACKUP_CREATED=""
+if [ -e "$TARGET_PATH" ] || [ -L "$TARGET_PATH" ]; then
+  if ! safe_backup_path "$BACKUP_ROOT"; then
+    echo "Unsafe backup root: $BACKUP_ROOT" >&2; exit 1
+  fi
+  if [ -d "$BACKUP_ROOT" ]; then
+    root_mode=$(stat -f '%Lp' "$BACKUP_ROOT")
+    if [ $((8#$root_mode & 0300)) -ne 192 ] || [ ! -w "$BACKUP_ROOT" ] || [ ! -x "$BACKUP_ROOT" ]; then
+      echo "Backup root is not writable/searchable: $BACKUP_ROOT" >&2; exit 1
+    fi
+  fi
+  (umask 077; mkdir -p "$BACKUP_ROOT")
+  chmod 700 "$BACKUP_ROOT"
+  BACKUP_CREATED=$(mktemp -d "$BACKUP_ROOT/copy-XXXXXX")
+  cp "$TARGET_PATH" "$BACKUP_CREATED/model-sentinel"
+  chmod 600 "$BACKUP_CREATED/model-sentinel"
+fi
+
 mv "$TMP_TARGET" "$TARGET_PATH"
 TMP_TARGET=""
 
@@ -213,7 +290,18 @@ copy_if_missing "$SCRIPT_DIR/providers.env.template" "$RUNTIME_HOME/providers.en
 copy_if_missing "$SCRIPT_DIR/settings.env.template" "$RUNTIME_HOME/settings.env" "settings config"
 copy_if_missing "$SCRIPT_DIR/launchd.env.template" "$RUNTIME_HOME/launchd.env" "launchd env file"
 
-chmod 600 "$RUNTIME_HOME/launchd.env" || true
+chmod 600 "$RUNTIME_HOME/launchd.env"
+
+cleanup
+if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+  echo "Failed to remove standalone staging directory: $STAGING_DIR" >&2
+  exit 1
+fi
+STAGING_DIR=""
+
+if [ -n "$BACKUP_CREATED" ]; then
+  prune_backups
+fi
 
 cat <<EOF
 

@@ -50,7 +50,8 @@ The installer is safe to rerun. It validates and copies the project into:
 ```
 
 If that installed source tree changed, the installer first moves the previous
-copy into a private directory beneath `~/.utilities-deploy-backups/`. It then
+copy into a private directory beneath `~/.utilities-deploy-backups/`. Successful
+updates apply the [deployment backup retention rule](../docs/local_deployment_sync.md#deployment-backup-retention). It then
 creates or refreshes:
 
 - Public command: `~/Library/Scripts/tm-snapshot-monitor`

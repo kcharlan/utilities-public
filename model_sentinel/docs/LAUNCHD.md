@@ -34,21 +34,15 @@ From the project directory:
 
 ```bash
 cd model_sentinel
+./install_standalone.sh
 ./setup_launchd.sh
 ```
 
 This does not overwrite existing runtime-home launchd files.
 
-The seeded installer captures the absolute repository path at this moment, and
-the generated runner executes the repo-local `model-sentinel` launcher from
-that path. Keep the checkout there. If it moves, edit `PROJECT_DIR` in the
-runtime installer or remove the seeded installer and rerun
-`./setup_launchd.sh` from the new checkout.
-
-The standalone zipapp installer does not change this LaunchAgent target or
-seed `install_launchd.sh`; using the standalone executable for scheduled runs
-requires setting `PROJECT_DIR`/the runner command accordingly. A standalone
-target is a point-in-time copy and must be rebuilt after repository updates.
+The runner executes the standalone zipapp at `~/Library/Scripts/model-sentinel`.
+Set `MODEL_SENTINEL_BIN` in the runtime installer if installed elsewhere. A
+standalone target is a point-in-time copy and must be rebuilt after repository updates.
 Replacing the same target path with `install_standalone.sh` is atomic and does
 not require reloading launchd; the generated runner resolves the path on every
 invocation.
@@ -123,6 +117,7 @@ The editable block includes:
 - `START_HOUR`
 - `START_MINUTE`
 - `MODEL_SENTINEL_ARGS`
+- `MODEL_SENTINEL_BIN`
 - launchd stdout/stderr log paths
 
 Default scheduled command:
@@ -201,11 +196,8 @@ That removes the LaunchAgent from `~/Library/LaunchAgents/` but keeps the runtim
 ## Notes
 
 - The scheduled job uses `MODEL_SENTINEL_HOME` pointing at `~/.model_sentinel/`.
-- The generated runner depends on the repository path captured when
-  `setup_launchd.sh` seeded the runtime installer, unless the runtime installer
-  was explicitly customized to target a standalone directory.
-- A customized standalone target remains independent of the checkout at run
-  time, but repository updates do not update that target. Rebuild it with
+- The standalone target is independent of the checkout at run time, but
+  repository updates do not update that target. Rebuild it with
   `install_standalone.sh` and verify it with `install_standalone.sh --check`.
 - Missing or invalid selected credentials cause the run to fail just like a manual invocation, whether supplied by the environment or private cache.
 - Notifications behave the same as manual runs.

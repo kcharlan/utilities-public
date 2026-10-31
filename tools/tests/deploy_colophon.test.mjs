@@ -175,3 +175,20 @@ test('pre-cutover receipt drifts after relocation; redeploy and rollback preserv
   assert.deepEqual(fs.readFileSync(f.target), launcher); assert.equal(fs.existsSync(f.receipt), false);
   assert.equal(fs.statSync(f.target).mode & 0o7777, 0o755);
 });
+
+test('forward deployment prunes older backups while rollback and dry run preserve them', t => {
+  const f = fixture(t); succeeds(f.run());
+  const root = path.join(f.home, '.utilities-deploy-backups', 'colophon-native');
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) { const dir=path.join(root,name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir,'payload'),'invented'); fs.utimesSync(dir,1,1); }
+  f.release('next'); succeeds(f.run('--dry-run'));
+  const beforeFailure=fs.readdirSync(root).sort();
+  fs.appendFileSync(path.join(f.project,'Makefile'),'\\n# invented unstaged change\\n');
+  assert.equal(f.run().status,1); f.git('checkout','--','.');
+  assert.deepEqual(fs.readdirSync(root).sort(),beforeFailure);
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
+  const result=f.run(); succeeds(result); const saved=/rollback backup: (.+)/.exec(result.stdout)[1];
+  const names=fs.readdirSync(root); assert.equal(names.length,2); assert.ok(names.includes(path.basename(saved)));
+  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
+  const before=fs.readdirSync(root).sort(); succeeds(f.run('--rollback',saved));
+  for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
+});

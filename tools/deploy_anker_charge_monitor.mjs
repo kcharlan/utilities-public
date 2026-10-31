@@ -5,7 +5,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups} from './deployment_files.mjs';
 import {appTreeHash,makeRelease} from './deploy_brew_version.mjs';
 
 const project='anker_charge_monitor', appName='Anker Charge Monitor.app', legacyName='Prime Monitor.app';
@@ -159,6 +159,7 @@ export function main(argv=process.argv.slice(2)) {
     finishCleanup(primary,cleanupErrors,'Deployment cleanup failed; previous deployment restored',saved);
   }
   finishCleanup(primary,cleanupErrors,'Deployment cleanup failed',saved);
+  if(activated && !rollback && saved) pruneBackups(path.dirname(saved));
   if(activated) console.log('Anker Charge Monitor '+(rollback?'rollback restored':'deployed')+'; rollback backup: '+saved+'\nQuit and reopen Anker Charge Monitor when convenient; the current process remains running.');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {

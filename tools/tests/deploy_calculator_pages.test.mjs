@@ -4,6 +4,92 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
+import {pruneBackups} from '../deployment_files.mjs';
+
+function retentionFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synthetic-retention-'));
+  t.after(() => { fs.chmodSync(root, 0o700); fs.rmSync(root, {recursive: true, force: true}); });
+  const add = (name, time = 1) => {
+    const dir = path.join(root, name); fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'payload'), name);
+    fs.utimesSync(dir, time, time); return dir;
+  };
+  return {root, add};
+}
+
+test('backup retention sorts by mtime then descending name and returns removed paths', t => {
+  const {root, add} = retentionFixture(t);
+  const old = add('copy-old'); const a = add('copy-a', 2); add('copy-z', 2); add('copy-new', 3);
+  const other = add('unrelated'); fs.writeFileSync(path.join(root, 'copy-file'), 'keep');
+  fs.symlinkSync(other, path.join(root, 'copy-link'));
+  assert.deepEqual(pruneBackups(root), [a, old]);
+  assert.equal(fs.readFileSync(path.join(other, 'payload'), 'utf8'), 'unrelated');
+  assert.equal(fs.lstatSync(path.join(root, 'copy-link')).isSymbolicLink(), true);
+  assert.equal(fs.readFileSync(path.join(root, 'copy-file'), 'utf8'), 'keep');
+  assert.deepEqual(pruneBackups(root), []);
+});
+
+test('backup retention removes read-only descendants without following nested links', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const outside = add('protected'); fs.chmodSync(path.join(outside, 'payload'), 0o400);
+  const child = path.join(old, 'nested'); fs.mkdirSync(child); fs.writeFileSync(path.join(child, 'data'), 'old');
+  fs.symlinkSync(outside, path.join(old, 'link')); fs.chmodSync(child, 0o500); fs.chmodSync(old, 0o500);
+  assert.deepEqual(pruneBackups(root, {keep: 0}), [old]);
+  assert.equal(fs.statSync(path.join(outside, 'payload')).mode & 0o777, 0o400);
+});
+
+test('backup retention refuses missing, read-only and linked roots and invalid options', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const warnings = []; const original = console.warn; console.warn = msg => warnings.push(msg);
+  t.after(() => { console.warn = original; });
+  assert.deepEqual(pruneBackups(path.join(root, 'absent')), []);
+  fs.chmodSync(root, 0o500); assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync(root, 0o700);
+  const link = path.join(root, 'alias'); fs.symlinkSync(root, link);
+  assert.deepEqual(pruneBackups(link, {keep: 0}), []);
+  assert.deepEqual(pruneBackups(link + '/', {keep: 0}), []);
+  assert.deepEqual(pruneBackups(path.join(link, 'copy-old'), {keep: 0}), []);
+  for (const options of [{keep: -1}, {keep: 1.5}, {isBackup: null}, null]) assert.deepEqual(pruneBackups(root, options), []);
+  assert.deepEqual(pruneBackups(root, {isBackup: () => { throw new Error('invented predicate error'); }}), []);
+  assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old');
+  assert.ok(warnings.length >= 9);
+});
+
+test('backup retention admits custom names and supported system aliases', t => {
+  const {root, add} = retentionFixture(t); const old = add('snapshot-old'); add('copy-keep');
+  assert.deepEqual(pruneBackups(root, {keep: 0, isBackup: name => name.startsWith('snapshot-')}), [old]);
+  if (process.platform === 'darwin' && root.startsWith('/var/')) {
+    add('copy-new', 2); assert.equal(pruneBackups(root, {keep: 1}).length, 1);
+  }
+});
+
+test('backup retention warns and preserves payloads on injected stat and removal errors', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
+  const stat = fs.lstatSync, rm = fs.rmSync;
+  try {
+    fs.lstatSync = file => { if (file === old) throw new Error('invented stat error'); return stat(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.lstatSync = stat;
+    fs.rmSync = file => { if (file === old) throw new Error('invented removal error'); return rm(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
+  } finally { fs.lstatSync = stat; fs.rmSync = rm; console.warn = warn; }
+  assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old'); assert.equal(warnings.length, 2);
+});
+
+test('backup retention reports the affected nested path on chmod and enumeration errors', t => {
+  const {root, add} = retentionFixture(t); const old = add('copy-old');
+  const nested = path.join(old, 'nested'); fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'payload'), 'invented protected contents');
+  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
+  const chmod = fs.chmodSync, read = fs.readdirSync;
+  try {
+    fs.chmodSync = (file, mode) => { if (file === nested) throw new Error('invented chmod error'); return chmod(file, mode); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync = chmod;
+    fs.readdirSync = file => { if (file === nested) throw new Error('invented enumeration error'); return read(file); };
+    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
+  } finally { fs.chmodSync = chmod; fs.readdirSync = read; console.warn = warn; }
+  assert.equal(fs.readFileSync(path.join(nested, 'payload'), 'utf8'), 'invented protected contents');
+  assert.equal(warnings.length, 2); for (const warning of warnings) assert.ok(warning.includes(nested));
+});
 
 // Each single-page calculator installer shares one lifecycle; run it against every page.
 const pages = [
@@ -36,6 +122,22 @@ for (const page of pages) {
     }
     return {base, repo, home, webroot, source, target, git, run};
   }
+
+  test(`${page.filename}: successful update prunes older backups; dry run and failure preserve them`, t => {
+    const f = fixture(t); assert.equal(f.run().status, 0);
+    const root = path.join(f.home, '.utilities-deploy-backups', page.backups);
+    for (const name of ['copy-old-a', 'copy-old-b', 'copy-old-c']) {
+      const dir = path.join(root, name); fs.mkdirSync(dir, {recursive: true});
+      fs.writeFileSync(path.join(dir, 'payload'), 'invented'); fs.utimesSync(dir, 1, 1);
+    }
+    fs.writeFileSync(f.source, html('B')); f.git('add', '.');
+    assert.equal(f.run('--dry-run').status, 0);
+    fs.writeFileSync(f.source, html('unstaged')); assert.equal(f.run().status, 1);
+    for (const name of ['copy-old-a', 'copy-old-b', 'copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
+    fs.writeFileSync(f.source, html('B')); assert.equal(f.run().status, 0);
+    const names = fs.readdirSync(root); assert.equal(names.length, 2); assert.ok(names.includes('copy-old-c'));
+    const saved = names.find(name => name !== 'copy-old-c'); assert.equal(fs.readFileSync(path.join(root,saved,page.filename),'utf8'),html('A'));
+  });
 
   test(`${page.filename}: dry run, first install and backed-up update without touching neighbors`, t => {
     const f = fixture(t);

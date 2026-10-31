@@ -129,35 +129,29 @@ compare_bytes() {
 copy_mappings=(
   'Calculation tools/ai-model-timeline.html|calculators/ai-model-timeline.html'
   'Calculation tools/drawdown.html|calculators/drawdown.html'
-  'abacus usage/de-abacus.py|de-abacus.py'
-  'div_conv/div_conv|div_conv'
-  'dloc/dloc|dloc'
-  'docker/docker-disk-compact/docker-disk-compact.zsh|docker-disk-compact.zsh'
-  'editdb/editdb|editdb'
-  'etf_montecarlo/etf_montecarlo|etf_montecarlo'
-  'expense_dock/expense_dock|expense_dock'
-  'harscope/harscope|harscope'
-  'jtree/jtree|jtree'
-  'launchmaster/launchmaster|launchmaster'
-  'media-dater/media-dater|media-dater'
-  'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
-  'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
-  'routerview/routerview|routerview'
-  'trim_last/trim_last|trim_last'
-  'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
-  'worktree-helper/worktree|worktree'
 )
 
-home_projects=(
-  apple-health-extract
-  docker
-  mem_snapshots
-  mls-tracker
-  tax2
-  transcription
-  vid-compiler
-  video-scenes
-)
+manifest="$REPO_ROOT/tools/deployment_copies.json"
+if [[ -L "$manifest" || ! -f "$manifest" ]] ||
+   [[ -L "$REPO_ROOT/tools/deploy_copies.mjs" || ! -f "$REPO_ROOT/tools/deploy_copies.mjs" ]] ||
+   ! git -C "$REPO_ROOT" diff --quiet HEAD -- tools/deployment_copies.json tools/deploy_copies.mjs ||
+   ! git -C "$REPO_ROOT" ls-files --error-unmatch -- tools/deployment_copies.json tools/deploy_copies.mjs >/dev/null 2>&1 ||
+   ! jq -e '
+     def component: type == "string" and (test("[^[:space:]]")) and . != "." and . != ".." and (test("[/\\\\|[:cntrl:]]")|not);
+     def rel: type == "string" and (split("/") | length > 0 and all(.[]; component));
+     type == "object" and (keys == ["projects", "scripts"]) and
+     (.scripts|type == "array") and (.projects|type == "array") and
+     ((.scripts|length) + (.projects|length) > 0) and
+     all(.scripts[]; ((keys - ["name","source","target","smoke"])|length == 0) and (.name|component) and (.source|rel) and (if has("target") then (.target|component) else true end) and (if has("smoke") then (.smoke|type == "array" and length > 0 and all(.[]; type == "string" and length > 0)) else true end)) and
+     all(.projects[]; ((keys - ["name","entrypoint","smoke"])|length == 0) and (.name|component) and (if has("entrypoint") then (.entrypoint|rel) else true end) and (if has("smoke") then has("entrypoint") and (.smoke|type == "array" and length > 0 and all(.[]; type == "string" and length > 0)) else true end)) and
+     ([.scripts[].name, .projects[].name] | length == (unique|length)) and
+     ([.scripts[] | .target // .name] | length == (unique|length))
+   ' "$manifest" >/dev/null 2>&1; then
+  print -u2 -- "FAIL: deployment copy manifest is unreadable, invalid, or modified"
+  exit 1
+fi
+copy_mappings+=("${(@f)$(jq -r '.scripts[] | .source + "|" + (.target // .name)' "$manifest")}")
+home_projects=(docker "${(@f)$(jq -r '.projects[].name' "$manifest")}")
 
 scripts_projects=(
   time_machine_snapshot_monitor
@@ -297,6 +291,8 @@ audited_scopes=(
   storage_monitor
   tools/deploy_storage_monitor.mjs
   tools/deployment_files.mjs
+  tools/deploy_copies.mjs
+  tools/deployment_copies.json
   ':(glob)**/.gitignore'
   "${all_projects[@]}"
 )

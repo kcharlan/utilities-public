@@ -72,7 +72,7 @@ Define the deployment form before building its installer or audit:
 | Maintained source tree | An explicit inventory of maintained files; updates preserve local-only configuration and runtime state. |
 | Generated static artifact | A declared source/data inventory and build recipe; verify the built runtime inventory and installed bytes independently of source tests. |
 
-Direct copies and maintained source trees retain the tracked-copy rules above.
+Add each new direct copy or home project to [`tools/deployment_copies.json`](../tools/deployment_copies.json). Direct copies and maintained source trees retain the tracked-copy rules above.
 Generated artifacts use their explicitly admitted inputs and runtime inventory;
 Market Atlas follows the installer-only exception in rule 3. All forms preserve
 local state.
@@ -131,8 +131,8 @@ tree into a timestamped private container under
 `~/.utilities-deploy-backups/backtest/` and copies twelve files to
 `<WEBROOT>/calculators/backtest`. A brief unavailable route is acceptable.
 A copy or verification error restores the saved tree using ordinary moves;
-backups are never automatically pruned. Recovery commands are in the project
-guide. Existing attributes, including `com.apple.macl`, are not admission
+backups follow the [retention rule](#deployment-backup-retention). Recovery
+commands are in the project guide. Existing attributes, including `com.apple.macl`, are not admission
 failures and shared ancestor permissions are not changed.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`;
@@ -157,6 +157,14 @@ state; agents never run data acquisition (see the project guide). The
 [isolated tests](../tools/tests/check_static_deployments.test.mjs) use invented
 history. No release manifests, receipts, parser or metadata restoration
 framework is required for this single-owner localhost deployment.
+
+### Deployment backup retention
+
+After a successful forward deployment and cleanup, the deployers keep the
+newest two eligible backup directories per tool, by directory modification
+time descending and name descending for ties. Failed, unchanged, dry-run and
+rollback operations do not prune. Pruning failures warn without changing the
+successful deployment result. Save any backup needed longer elsewhere.
 
 ## Calculator page direct-copy deployments
 
@@ -197,7 +205,8 @@ file is saved at `~/.utilities-deploy-backups/<namespace>/copy-*/<page>.html`
 in a new `0700` directory, with backup file mode `0600`. It verifies a temporary
 candidate's bytes and complete permission mode before atomically renaming it
 over the destination. Copy, validation or activation failure leaves the prior
-installed file in place and removes the candidate. Backups are retained.
+installed file in place and removes the candidate. Backups follow the
+[retention rule](#deployment-backup-retention).
 To roll back, copy the chosen backup over the installed file and restore its
 desired serving mode (normally `0644`); audit will flag that older copy until
 source and deployment match again. Neighboring calculators and local state are
@@ -358,7 +367,8 @@ executable remain valid; installers never quit or launch the app.
 Activation, receipt publication, rollback and cleanup failures return nonzero
 and restore the previous app/receipt, including an initially absent app.
 Rollback validates the saved hashes before backing up and displacing the
-current release. Both backup generations remain independent and retained.
+current release. Both backup generations remain independent; later successful
+forward deployments apply the [retention rule](#deployment-backup-retention).
 Errors report the retained recovery location, and include restoration failures
 if recovery cannot finish. A rollback to an older source intentionally causes
 the current-source audit to report drift until that source is deployed again.
@@ -530,7 +540,8 @@ an absent prior app. Rollback validates the backup before saving the displaced
 release and restores prior bytes and modes. If activation and restoration both
 fail, the error includes both failures and the retained backup path. Stop and
 recover from that backup after resolving the reported filesystem problem; do
-not discard it or repeatedly deploy over the unresolved state. Backups are retained.
+not discard it or repeatedly deploy over the unresolved state. Later successful
+forward deployments apply the [retention rule](#deployment-backup-retention).
 
 Cleanup attempts cover every owned staging and build directory even if another
 cleanup fails. Reported errors retain the original activation/restoration
@@ -595,7 +606,8 @@ toolchain changes or cryptographic authenticity.
 Before replacement, the previous launcher, walker and receipt are saved under
 `~/.utilities-deploy-backups/storage_monitor/copy-*/`, in a mode-0700 directory
 with mode-0600 backup files and metadata recording original modes and digests.
-Activation failure restores the previous files. Backups are retained. Roll back
+Activation failure restores the previous files. Backups follow the
+[retention rule](#deployment-backup-retention). Roll back
 using the exact backup directory printed by the installer:
 
 ```sh
@@ -619,25 +631,7 @@ zsh tools/tests/test_check_local_deployments.zsh
 
 ## `~/Library/Scripts`
 
-These files are direct copies of tracked source and should remain byte-for-byte identical:
-
-- `de-abacus.py` <- `abacus usage/de-abacus.py`
-- `div_conv` <- `div_conv/div_conv`
-- `dloc` <- `dloc/dloc`
-- `docker-disk-compact.zsh` <- `docker/docker-disk-compact/docker-disk-compact.zsh`
-- `editdb` <- `editdb/editdb`
-- `etf_montecarlo` <- `etf_montecarlo/etf_montecarlo`
-- `expense_dock` <- `expense_dock/expense_dock`
-- `harscope` <- `harscope/harscope`
-- `jtree` <- `jtree/jtree`
-- `launchmaster` <- `launchmaster/launchmaster`
-- `media-dater` <- `media-dater/media-dater`
-- `moneydance_rotate_backups.sh` <- `moneydance backup rotation/moneydance_rotate_backups.sh`
-- `router_log_analyze.py` <- `router-log-analyzer/router_log_analyze.py`
-- `routerview` <- `routerview/routerview`
-- `trim_last` <- `trim_last/trim_last`
-- `usage-monthly-csv` <- `usage-monthly-csv/usage-monthly-csv`
-- `worktree` <- `worktree-helper/worktree`
+Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` to select an entry and `--dry-run` to inspect changes without writing. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
 
 `model-sentinel` is intentionally different: it is a generated zipapp. Rebuild
 it with `model_sentinel/install_standalone.sh`. The audit derives its exact
@@ -648,7 +642,7 @@ also validates the generated `model_sentinel/_packaged_build.py` provenance
 file, including its bounded size, exact structure, and source hash. The
 installer builds through uv (`uv run --no-python-downloads --script
 model_sentinel/build_standalone.py`), so it needs uv on `PATH` but no project
-venv or particular `python3`; run it as is.
+venv or particular `python3`; run it as is. The installer retains the newest two eligible backups after a successful forward deployment; see [Model Sentinel’s README](../model_sentinel/README.md) for restoration.
 
 `time_machine_snapshot_monitor` is a maintained multi-file copy under
 `~/Library/Scripts/time_machine_snapshot_monitor`. Deploy or update it from the
@@ -662,7 +656,8 @@ The installer copies only the six documented project files, verifies staged
 bytes before activation, backs up a changed prior source tree under
 `~/.utilities-deploy-backups/`, refreshes the
 `~/Library/Scripts/tm-snapshot-monitor` command symlink, and installs the
-hourly user LaunchAgent. Mutable counters and bounded logs remain under
+hourly user LaunchAgent. Successful updates apply the
+[retention rule](#deployment-backup-retention). Mutable counters and bounded logs remain under
 `~/Library/Application Support/TimeMachineSnapshotMonitor`, outside both source
 trees. The read-only deployment audit compares the installed project tree
 byte-for-byte and mode-for-mode and verifies the stable command link target.
@@ -670,42 +665,7 @@ Use the project README for setup, repair, and removal behavior.
 
 ## Top-level home project copies
 
-The maintained runtime/source copies are:
-
-- `~/apple-health-extract`
-- `~/docker`
-- `~/mem_snapshots`
-- `~/mls-tracker`
-- `~/tax2`
-- `~/transcription`
-- `~/vid-compiler`
-- `~/video-scenes`
-
-`~/docs` is an unrelated name collision. Do not synchronize the repository's `docs/` directory into it.
-Transcription is a maintained source copy at `~/transcription`; run its
-`transcription` launcher in place.
-
-Copy tracked files without deleting local-only files. The following pattern is safe for one project after a rollback directory has been created:
-
-```zsh
-repo="$HOME/source/utilities-public"
-project="tax2"
-backup="$HOME/.utilities-deploy-backups/manual-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$backup"
-chmod 700 "$backup"
-
-git -C "$repo" ls-files -z -- "$project" | while IFS= read -r -d '' relative; do
-  source_file="$repo/$relative"
-  destination="$HOME/$relative"
-  relative_destination="${destination#$HOME/}"
-  if [[ -e "$destination" ]] && ! cmp -s "$source_file" "$destination"; then
-    mkdir -p "$backup/${relative_destination:h}"
-    cp -p "$destination" "$backup/$relative_destination"
-  fi
-  mkdir -p "${destination:h}"
-  cp -p "$source_file" "$destination"
-done
-```
+The maintained home project copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json); `~/docker` is owned by Docker propagation. Use `node tools/deploy_copies.mjs` to install or update tracked files while preserving local-only files. `~/docs` is an unrelated name collision and is not synchronized. Transcription runs in place from its maintained copy.
 
 Do not treat local-only files as drift. Important examples include:
 
@@ -784,9 +744,15 @@ Validate Compose configuration before starting. Rebuild/start only the projects 
 
 `docker/propagate-updates.zsh deploy` applies these rules to `~/docker`: it copies only committed tracked files, backs up replaced files under `~/.utilities-deploy-backups/docker-<timestamp>/`, reruns `update.sh` only for stacks that were running, and verifies they are running again. Its `refresh` phase updates and audits the Docker lockfiles beforehand. See [docker/README.md](../docker/README.md#propagating-dependency-updates).
 
+After a successful deploy that creates a backup, it keeps the two newest eligible
+Docker backup directories by modification time, with descending name as the
+tie-break. Failed, unchanged and dry runs leave backups untouched.
+
 ## Rollback
 
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
+
+Restore a copy-deployer backup with `node tools/deploy_copies.mjs --rollback BACKUP`. Hand-made backups have no `state.json` and cannot be used with this command.
 
 Market Atlas moves the entire prior app into a new private backup container,
 without normalizing the saved tree or promising exact metadata restoration.
