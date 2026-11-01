@@ -31,7 +31,7 @@ A built-in control panel for creating and managing reverse-proxy endpoints witho
 
 ### Dynamic Reverse Proxy
 
-*   **Transparent proxying:** Proxies requests matching configured endpoint paths to upstream targets using `@fastify/reply-from`. Common request bodies (including `application/x-www-form-urlencoded`) are streamed through without server-side parsing.
+*   **Transparent proxying:** Proxies requests matching configured endpoint paths to upstream targets using `@fastify/reply-from`. Request bodies are forwarded as bytes, up to 100 MiB. WebSocket upgrades for configured endpoints require a same-origin `Origin` and are forwarded to the upstream.
 *   **Strip path option:** Each endpoint can strip or preserve the public prefix when forwarding traffic.
 *   **Host access:** Targets using `localhost` or `127.0.0.1` are automatically rewritten to `host.docker.internal` (or the value of `HOST_DOCKER_GATEWAY`) so containers can reach host-side services.
 *   **Absolute paths:** A same-origin Referer under a stripped-path alias routes

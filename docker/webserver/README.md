@@ -224,14 +224,14 @@ Simply place your HTML, CSS, JavaScript, images, and other static assets directl
 
 ### Routing regression checks
 
-Run `node --test docker/webserver/tests/nginx-routing.test.mjs` from the repository
+Run `node --test docker/webserver/tests/nginx-routing.test.mjs docker/webserver/tests/index-server.test.mjs` from the repository
 root with Docker running and locally available `nginx:stable-alpine` and
 `node:24-alpine` images. The test never pulls images. `NGINX_TEST_IMAGE` and
 `NGINX_TEST_NODE_IMAGE` can select compatible cached images (the Node image must
 provide the `node` executable). It starts real Nginx with this project's config,
-an external synthetic webroot and backend stubs on an isolated Docker network.
+an external synthetic webroot, backend fixtures and the real index on isolated Docker networks.
 It checks cache headers, static-first delivery, fallback, `/files`, `/configure`
-and both API routes, then removes its containers, network and temporary files.
+both API routes, proxy bodies and dynamic WebSocket upgrades, then removes its containers, networks and temporary files.
 It does not mount the live webroot or operational configuration.
 
 After an authorized live update, also run `docker compose exec web nginx -t`

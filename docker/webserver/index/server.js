@@ -3,6 +3,8 @@ import replyFrom from '@fastify/reply-from';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
 import { load as loadHTML } from 'cheerio';
 
 const WEBROOT = process.env.WEBROOT || '/mnt/webroot';
@@ -1334,6 +1336,7 @@ async function maybeProxyDynamicEndpoint(req, reply, store, pathname = getReques
   const forwardedProto = req.headers['x-forwarded-proto'] || req.protocol;
   try {
     await reply.from(targetUrl, {
+      ...(Buffer.isBuffer(req.body) ? { body: req.body, contentType: req.headers['content-type'] || 'application/octet-stream' } : {}),
       rewriteRequestHeaders: (request, headers) => ({
         ...headers,
         'x-forwarded-host': request.headers.host || '',
@@ -1354,29 +1357,62 @@ async function maybeProxyDynamicEndpoint(req, reply, store, pathname = getReques
   return true;
 }
 
-const app = Fastify({ logger: false });
-app.addHook('onRequest', async (req, reply) => {
+function allowedRequest(raw, requireOrigin = false) {
   const port = process.env.PUBLIC_PORT ?? '7711';
-  const host = req.headers.host;
-  const raw = req.raw.rawHeaders || [];
-  const hosts = raw.filter((_, i) => i % 2 === 0 && raw[i].toLowerCase() === 'host').length;
-  const origins = raw.filter((_, i) => i % 2 === 0 && raw[i].toLowerCase() === 'origin').length;
-  if (!/^[1-9]\d*$/.test(port) || Number(port) > 65535 || hosts !== 1 || ![`localhost:${port}`, `127.0.0.1:${port}`].includes(host) ||
-      (!['GET', 'HEAD'].includes(req.method) && (origins !== 1 || req.headers.origin !== `http://${host}`))) {
+  const host = raw.headers.host;
+  const headers = raw.rawHeaders || [];
+  const hosts = headers.filter((_, i) => i % 2 === 0 && headers[i].toLowerCase() === 'host').length;
+  const origins = headers.filter((_, i) => i % 2 === 0 && headers[i].toLowerCase() === 'origin').length;
+  return /^[1-9]\d*$/.test(port) && Number(port) <= 65535 && hosts === 1 && [`localhost:${port}`, `127.0.0.1:${port}`].includes(host) &&
+    (!(requireOrigin || !['GET', 'HEAD'].includes(raw.method)) || (origins === 1 && raw.headers.origin === `http://${host}`));
+}
+const app = Fastify({ logger: false, bodyLimit: 100 * 1024 * 1024 });
+app.addHook('onRequest', async (req, reply) => {
+  if (!allowedRequest(req.raw)) {
     return reply.code(403).send({ error: 'Forbidden' });
   }
 });
-const RAW_PROXY_CONTENT_TYPES = [
-  /^application\/x-www-form-urlencoded(?:;.*)?$/i
-];
-RAW_PROXY_CONTENT_TYPES.forEach((pattern) => {
-  app.addContentTypeParser(pattern, { parseAs: 'buffer' }, (_req, payload, done) => {
-    done(null, payload);
-  });
+app.removeContentTypeParser('application/json');
+app.removeContentTypeParser('text/plain');
+app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, payload, done) => {
+  if (req.raw.url.split('?')[0].startsWith('/configure/api/endpoints')) {
+    try { done(null, JSON.parse(payload.toString('utf8'))); } catch (err) { err.statusCode = 400; done(err); }
+  } else done(null, payload);
 });
+app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
 await app.register(replyFrom);
 const store = new EndpointStore(CONFIG_FILE);
 await store.init();
+
+app.server.on('upgrade', (raw, socket, head) => {
+  const reject = (status, reason) => socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  if (!allowedRequest(raw, true)) return reject(403, 'Forbidden');
+  const req = { raw, headers: raw.headers, ip: raw.socket.remoteAddress, protocol: 'http' };
+  const pathname = getRequestPath(req);
+  let canonical;
+  try { canonical = decodeURIComponent(pathname); } catch { return reject(400, 'Bad Request'); }
+  if (RESERVED_PREFIXES.some(prefix => pathMatches(canonical, prefix))) return reject(404, 'Not Found');
+  const match = resolveEndpointForRequest(normalizeRequestPath(pathname), req, store);
+  if (!match) return reject(404, 'Not Found');
+  const target = new URL(buildUpstreamUrl(match.endpoint, match.remainder, raw.url));
+  const transport = target.protocol === 'https:' ? https : http;
+  const upstream = transport.request(target, { headers: { ...raw.headers, 'x-forwarded-host': raw.headers.host, 'x-forwarded-proto': raw.headers['x-forwarded-proto'] || 'http', 'x-forwarded-for': buildForwardedFor(req), 'x-endpoint-id': match.endpoint.id } });
+  socket.on('error', () => upstream.destroy());
+  upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
+    socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n` + response.rawHeaders.reduce((result, value, i, values) => i % 2 ? result : result + `${value}: ${values[i + 1]}\r\n`, '') + '\r\n');
+    if (head.length) upstreamSocket.write(head);
+    if (upstreamHead.length) socket.write(upstreamHead);
+    socket.pipe(upstreamSocket).pipe(socket);
+    socket.on('error', () => upstreamSocket.destroy());
+    upstreamSocket.on('error', () => socket.destroy());
+    socket.on('close', () => upstreamSocket.destroy());
+    upstreamSocket.on('close', () => socket.destroy());
+  });
+  upstream.on('response', response => { response.resume(); reject(502, 'Bad Gateway'); });
+  upstream.on('error', () => reject(502, 'Bad Gateway'));
+  socket.on('close', () => upstream.destroy());
+  upstream.end();
+});
 
 app.get('/configure', async (req, reply) => {
   await serveConfigureUi(reply, store);

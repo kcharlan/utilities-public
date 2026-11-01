@@ -15,12 +15,12 @@ process.env.WEBROOT = webroot;
 process.env.CONFIG_ROOT = config;
 process.env.CONFIG_FILE = path.join(config, 'endpoints.json');
 process.env.FASTIFY_DISABLE_LISTEN = 'true';
-process.env.PUBLIC_PORT = '3000';
+process.env.PUBLIC_PORT = '17711';
 process.env.HOST_DOCKER_GATEWAY = '127.0.0.1';
 const serverUrl = pathToFileURL(path.resolve('docker/webserver/index/server.js')).href;
 const { app } = await import(serverUrl);
 after(async () => { if (app) await app.close(); await fs.rm(scratch, { recursive: true }); });
-const host = 'localhost:3000';
+const host = 'localhost:17711';
 const get = (url, headers = {}) => app.inject({ method: 'GET', url, headers: { host, ...headers } });
 const post = (payload, headers = {}) => app.inject({ method: 'POST', url: '/configure/api/endpoints', headers: { host, origin: `http://${host}`, ...headers }, payload });
 async function importWithWarning(url, expected) {
@@ -37,7 +37,7 @@ async function importWithWarning(url, expected) {
 test('exports an injectable application', () => assert.ok(app));
 
 test('rejects foreign Host and foreign or missing Origin on mutations', async () => {
-  assert.equal((await get('/configure', { host: 'evil.example:3000' })).statusCode, 403);
+  assert.equal((await get('/configure', { host: 'evil.example:17711' })).statusCode, 403);
   const payload = { name: 'Synthetic', path: '/synthetic', target: 'http://example.invalid' };
   assert.equal((await post(payload, { origin: 'http://evil.example' })).statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/configure/api/endpoints', headers: { host }, payload })).statusCode, 403);
@@ -63,9 +63,9 @@ test('reserved file browser never proxies through sticky endpoint', async () => 
 });
 
 test('invalid configured public port fails closed', async () => {
-  process.env.PUBLIC_PORT = '3000evil';
-  try { assert.equal((await get('/configure', { host: 'localhost:3000evil' })).statusCode, 403); }
-  finally { process.env.PUBLIC_PORT = '3000'; }
+  process.env.PUBLIC_PORT = '17711evil';
+  try { assert.equal((await get('/configure', { host: 'localhost:17711evil' })).statusCode, 403); }
+  finally { process.env.PUBLIC_PORT = '17711'; }
 });
 
 test('explicit and same-origin referer proxy routes work without cross-app fallback', async () => {
@@ -89,6 +89,26 @@ test('explicit and same-origin referer proxy routes work without cross-app fallb
     await get('/unrelated', { referer: 'http://evil.example/fixture/page', cookie: 'other-app=synthetic' });
     assert.equal(requests.length, before);
     assert.deepEqual(requests.map(req => req.url), ['/asset.js', '/asset.js', '/a%2Fb%3Fc%23d%25e?x=one%26two']);
+  } finally { await new Promise(resolve => upstream.close(resolve)); }
+});
+
+test('dynamic proxy preserves JSON and binary request bytes', async () => {
+  const seen = [];
+  const upstream = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    seen.push(Buffer.concat(chunks));
+    res.end('ok');
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  try {
+    const created = await post({ name: 'Byte fixture', path: '/bytes', target: `http://127.0.0.1:${upstream.address().port}` });
+    assert.equal(created.statusCode, 201);
+    for (const [type, bytes] of [['application/json', Buffer.from('{ "x" : 1 }')], ['application/octet-stream', Buffer.from([0, 255, 128, 10])], ['text/plain', Buffer.from([0, 255, 128, 10])], ['multipart/form-data; boundary=synthetic', Buffer.from('--synthetic\r\nopaque\r\n--synthetic--\r\n')]]) {
+      const result = await app.inject({ method: 'POST', url: '/bytes', headers: { host, origin: `http://${host}`, 'content-type': type }, payload: bytes });
+      assert.equal(result.statusCode, 200);
+    }
+    assert.deepEqual(seen, [Buffer.from('{ "x" : 1 }'), Buffer.from([0, 255, 128, 10]), Buffer.from([0, 255, 128, 10]), Buffer.from('--synthetic\r\nopaque\r\n--synthetic--\r\n')]);
   } finally { await new Promise(resolve => upstream.close(resolve)); }
 });
 
