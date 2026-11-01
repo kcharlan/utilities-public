@@ -981,12 +981,15 @@ class StateStore:
         workspace_path: Path,
         pid: int | None,
     ) -> WorkerRecoveryMetadata:
+        from .process_identity import process_identity
+
         metadata = WorkerRecoveryMetadata(
             session_id=session_id,
             slot_number=slot_number,
             task_id=task_id,
             workspace_path=workspace_path.resolve(),
             pid=pid,
+            process_identity=process_identity(pid) if pid is not None else None,
         )
         recovery_path = self.runtime_paths.session_paths(session_id).worker_recovery_path(slot_number)
         # Use _atomic_write_text so a crash mid-write leaves the old file intact
@@ -998,6 +1001,7 @@ class StateStore:
                     "task_id": metadata.task_id,
                     "workspace_path": str(metadata.workspace_path),
                     "pid": metadata.pid,
+                    "process_identity": metadata.process_identity,
                 }
             )
             + "\n",
@@ -1020,6 +1024,7 @@ class StateStore:
             task_id=payload["task_id"],
             workspace_path=Path(payload["workspace_path"]),
             pid=payload.get("pid"),
+            process_identity=payload.get("process_identity"),
         )
 
     def clear_worker_recovery_metadata(self, session_id: str, *, slot_number: int) -> None:
