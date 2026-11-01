@@ -161,17 +161,17 @@ Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows un
 
 ### Full history
 
-The history scanner parses `git log --all` with ISO dates and short statistics, aggregates commits and line changes by day, and upserts `daily_stats`. After the initial scan it passes `last_full_scan_at` as the incremental lower bound and updates that timestamp after the scan.
+The history scanner parses `git log --all` with ISO dates and short statistics and aggregates commits and line changes by day. Each successful scan atomically replaces the repository's `daily_stats` snapshot and updates `last_full_scan_at`; a failed command or write leaves the previous snapshot and timestamp intact.
 
 ### Branches
 
-The branch scanner replaces the stored local-branch snapshot. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics live against the configured default branch.
+The branch scanner replaces the stored local-branch snapshot after a successful Git command. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics live against the configured default branch.
 
 ### Fleet orchestration
 
 `POST /api/fleet/scan` accepts `{"type": "full"}` or `{"type": "deps"}` and returns a scan ID immediately. A module-level guard and a persisted `running` scan-log check reject overlap with HTTP 409.
 
-The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`. The active scan marker is cleared in a `finally` block.
+The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`, which closes after 60 seconds without an event. The active scan marker is cleared in a `finally` block; startup marks interrupted running scans as failed.
 
 Missing repository paths and per-repository failures are recorded and do not prevent remaining repositories from being attempted. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
 

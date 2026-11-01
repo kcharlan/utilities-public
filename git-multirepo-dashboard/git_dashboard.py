@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -324,6 +324,15 @@ def init_schema(db_path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def recover_interrupted_scans(db_path: Path) -> None:
+    """Mark scans from a previous server process as failed."""
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "UPDATE scan_log SET status = 'failed', finished_at = ? WHERE status = 'running'",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
 
 
 _MIGRATION_SQL = [
@@ -726,7 +735,9 @@ async def scan_full_history(repo_path: str, since: str | None = None) -> list:
     if since is not None:
         cmd.append(f"--after={since}")
 
-    stdout, _stderr, _rc = await run_git(repo_path, *cmd)
+    stdout, stderr, rc = await run_git(repo_path, *cmd)
+    if rc != 0:
+        raise RuntimeError(f"Git history scan failed: {stderr or rc}")
     return parse_git_log(stdout)
 
 
@@ -783,26 +794,30 @@ async def compute_sparklines(db) -> dict:
 async def run_full_history_scan(db, repo_id: str, repo_path: str) -> int:
     """Orchestrate a full history scan for one repo.
 
-    Reads last_full_scan_at from DB (used as --after for incremental scan),
-    runs scan_full_history, aggregates, upserts daily_stats, and updates
-    last_full_scan_at. Returns count of commits parsed.
+    Recomputes the complete history and atomically replaces the stored snapshot.
+    Returns count of commits parsed.
     """
-    cursor = await db.execute(
-        "SELECT last_full_scan_at FROM repositories WHERE id = ?",
-        (repo_id,),
-    )
-    row = await cursor.fetchone()
-    since = row[0] if row else None
-
-    commits = await scan_full_history(repo_path, since=since)
+    commits = await scan_full_history(repo_path)
     daily_data = aggregate_daily_stats(commits)
-    await upsert_daily_stats(db, repo_id, daily_data)
-
-    await db.execute(
-        "UPDATE repositories SET last_full_scan_at = ? WHERE id = ?",
-        (datetime.now(timezone.utc).isoformat(), repo_id),
-    )
-    await db.commit()
+    await db.execute("SAVEPOINT history_snapshot")
+    try:
+        await db.execute("DELETE FROM daily_stats WHERE repo_id = ?", (repo_id,))
+        await db.executemany(
+            "INSERT INTO daily_stats (repo_id, date, commits, insertions, deletions, files_changed) VALUES (?, ?, ?, ?, ?, ?)",
+            [(repo_id, day, v['commits'], v['insertions'], v['deletions'], v['files_changed'])
+             for day, v in daily_data.items()],
+        )
+        await db.execute(
+            "UPDATE repositories SET last_full_scan_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), repo_id),
+        )
+    except BaseException:
+        await db.execute("ROLLBACK TO SAVEPOINT history_snapshot")
+        await db.execute("RELEASE SAVEPOINT history_snapshot")
+        raise
+    else:
+        await db.execute("RELEASE SAVEPOINT history_snapshot")
+        await db.commit()
 
     return len(commits)
 
@@ -872,11 +887,13 @@ async def scan_branches(repo_path: str, default_branch: str) -> list[dict]:
     Uses %(refname:short)%09%(committerdate:iso-strict) format with tab
     delimiter. Git interprets %09 as a real tab character.
     """
-    stdout, _stderr, _rc = await run_git(
+    stdout, stderr, rc = await run_git(
         repo_path,
         "branch",
         "--format=%(refname:short)%09%(committerdate:iso-strict)",
     )
+    if rc != 0:
+        raise RuntimeError(f"Git branch scan failed: {stderr or rc}")
     return parse_branches(stdout, default_branch)
 
 
@@ -1062,6 +1079,7 @@ async def run_fleet_scan(scan_id: int, scan_type: str) -> None:
     global _active_scan_id
     try:
         async with aiosqlite.connect(str(DB_PATH)) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             if scan_type == "deps":
                 # Iterate all repos sequentially, running dep scans only
                 cursor = await db.execute("SELECT id, name, path FROM repositories")
@@ -6561,7 +6579,10 @@ async def scan_progress_sse(scan_id: int):
     async def event_generator():
         try:
             while True:
-                event = await q.get()
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=60)
+                except asyncio.TimeoutError:
+                    break
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("completed", "failed"):
                     break
@@ -7138,6 +7159,7 @@ def main() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     init_schema(DB_PATH)
     run_migrations(DB_PATH)
+    recover_interrupted_scans(DB_PATH)
 
     if args.scan:
         scan_path = Path(args.scan).expanduser().resolve()

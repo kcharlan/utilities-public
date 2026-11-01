@@ -60,11 +60,11 @@ The **Scan Dir** browser can navigate local directories and register repositorie
 
 A full scan processes registered repositories sequentially and stores three kinds of data:
 
-1. Commit history, aggregated by day. Later scans are incremental from `last_full_scan_at`.
+1. Commit history, recomputed from all refs and aggregated by day on each scan. The stored snapshot and scan timestamp change together only after a successful history scan.
 2. Local branches, including default/stale status. A non-default branch is stale after 30 days without a commit.
 3. Dependencies and health results for supported manifests.
 
-Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state.
+Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state. A scan interrupted by server shutdown is marked failed on the next startup.
 
 ### Repository detail
 
