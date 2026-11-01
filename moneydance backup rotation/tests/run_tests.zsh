@@ -272,6 +272,62 @@ test_root="$(mktemp -d -t moneydance-rotation-tests.XXXXXX)"
 test_root="${test_root:A}"
 trap 'rm -rf -- "${test_root}"' EXIT
 
+retention_mount="${test_root}/retention-mount"
+retention_dir="${retention_mount}/SYNTHETIC_BACKUPS"
+mkdir -p "${retention_dir}" "${test_root}/empty-home"
+retention_mock="${test_root}/retention-mount-mock"
+make_mount_mock "${retention_mock}" "${retention_mount}" "${test_root}/retention-marker"
+retention_config="${test_root}/retention-config"
+make_config "${retention_config}"
+MONEYDANCE_MAX_DAYS_TO_KEEP=4
+export MONEYDANCE_MAX_DAYS_TO_KEEP
+for scenario in empty future undersized; do
+  for file in "${retention_dir}"/*(N); do
+    /bin/rm -f -- "${file:?}"
+  done
+  typeset -a good_files=()
+  for day in {1..6}; do
+    file="${retention_dir}/GOOD-${day}.SYNTHETIC-BACKUP"
+    /usr/bin/head -c 1000 /dev/zero > "${file}"
+    touch -t "2020010${day}0101" "${file}"
+    good_files+=("${file}")
+  done
+  for day in {1..4}; do
+    file="${retention_dir}/BAD-${day}.SYNTHETIC-BACKUP"
+    case "${scenario}" in
+      empty) : > "${file}"; touch -t "2020020${day}0101" "${file}" ;;
+      future) /usr/bin/head -c 1000 /dev/zero > "${file}"; touch -t "2099010${day}0101" "${file}" ;;
+      undersized) print -n x > "${file}"; touch -t "2020020${day}0101" "${file}" ;;
+    esac
+  done
+  retention_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${retention_mock}" "${SCRIPT}" --config "${retention_config}" 2>&1)"
+  retention_status=$?
+  assert_status "${scenario} exports stop pruning" 1 "${retention_status}"
+  for file in "${good_files[@]}"; do
+    assert_file_exists "${scenario} exports preserve each good backup" "${file}"
+  done
+done
+unset MONEYDANCE_MAX_DAYS_TO_KEEP
+for signal in INT TERM; do
+  signal_find="${test_root}/signal-find-${signal}"
+  cat > "${signal_find}" <<EOF
+#!/bin/zsh
+/bin/kill -${signal} "\$PPID"
+exit 0
+EOF
+  chmod 755 "${signal_find}"
+  signal_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${retention_mock}" MONEYDANCE_FIND_BIN="${signal_find}" "${SCRIPT}" --config "${retention_config}" 2>&1)"
+  signal_status=$?
+  expected_signal_status=143
+  [[ "${signal}" == INT ]] && expected_signal_status=130
+  assert_status "${signal} during scan stops cleanup" "${expected_signal_status}" "${signal_status}"
+done
+if [[ "${1:-}" == --retention-regressions ]]; then
+  printf '\n%d passed; %d failed\n' "${passed}" "${failed}"
+  (( failed == 0 ))
+  exit $?
+fi
+
 run_with_pty 5 both /bin/zsh -c 'exit 37'
 pty_nonzero_helper_status=$?
 assert_status "PTY helper itself succeeds for a completed nonzero child" 0 "${pty_nonzero_helper_status}"
@@ -572,6 +628,17 @@ else
 fi
 assert_not_contains "mount failure does not print configured host" "${failed_mount_output}" "synthetic-nas"
 
+fixture_touch() {
+  local timestamp="$2" file
+  shift 2
+  for file in "$@"; do
+    if [[ "${file}" == *.SYNTHETIC-BACKUP && ! -s "${file}" ]]; then
+      print -n x > "${file}"
+    fi
+  done
+  /usr/bin/touch -t "${timestamp}" "$@"
+}
+
 mount_point="${test_root}/mount with spaces"
 backup_dir="${mount_point}/SYNTHETIC_BACKUPS"
 mkdir -p "${backup_dir}"
@@ -580,10 +647,10 @@ old_file="${backup_dir}/${private_name}"
 middle_file="${backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
 new_file="${backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
 nonmatching_file="${backup_dir}/MUST-SURVIVE.txt"
-touch -t 203701010101 "${old_file}"
-touch -t 203701020101 "${middle_file}"
-touch -t 203701030101 "${new_file}"
-touch -t 203601010101 "${nonmatching_file}"
+fixture_touch -t 202001010101 "${old_file}"
+fixture_touch -t 202001020101 "${middle_file}"
+fixture_touch -t 202001030101 "${new_file}"
+fixture_touch -t 201901010101 "${nonmatching_file}"
 
 mount_marker="${test_root}/mount-called"
 mount_mock="${test_root}/mount-mock"
@@ -596,13 +663,13 @@ mkdir -p "${inventory_backup_dir}" "${inventory_companion_mount_point}"
 inventory_old_file="${inventory_backup_dir}/SYNTHETIC-OLD.SYNTHETIC-BACKUP"
 inventory_middle_file="${inventory_backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
 inventory_new_file="${inventory_backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
-touch -t 203701020101 "${inventory_middle_file}"
-touch -t 203701030101 "${inventory_new_file}"
+fixture_touch -t 202001020101 "${inventory_middle_file}"
+fixture_touch -t 202001030101 "${inventory_new_file}"
 escaped_inventory_mount_point="${inventory_mount_point// /\\040}"
 escaped_inventory_companion_mount_point="${inventory_companion_mount_point// /\\040}"
 
 reset_inventory_candidate() {
-  touch -t 203701010101 "${inventory_old_file}"
+  fixture_touch -t 202001010101 "${inventory_old_file}"
 }
 
 inventory_config="${test_root}/inventory-config"
@@ -654,7 +721,7 @@ mkdir -p \
 candidate_one_backup_file="${candidate_one_backup_dir}/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
 candidate_two_backup_file="${candidate_two_backup_dir}/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
 partial_backup_file="${partial_candidate_primary}/SYNTHETIC-PRIVATE-BACKUPS/SYNTHETIC-PRIVATE-OLD.SYNTHETIC-BACKUP"
-touch -t 203701010101 "${candidate_one_backup_file}" "${candidate_two_backup_file}" "${partial_backup_file}"
+fixture_touch -t 202001010101 "${candidate_one_backup_file}" "${candidate_two_backup_file}" "${partial_backup_file}"
 
 candidate_rm_marker="${test_root}/candidate-rm-called"
 candidate_rm="${test_root}/candidate-rm"
@@ -2164,9 +2231,9 @@ companion_backup_dir="${companion_backup_mount_point}/SYNTHETIC_BACKUPS"
 primary_without_backup="${test_root}/primary-without-backup"
 mkdir -p "${companion_backup_dir}" "${primary_without_backup}"
 companion_backup_candidate="${companion_backup_dir}/SYNTHETIC-OLD.SYNTHETIC-BACKUP"
-touch -t 203701010101 "${companion_backup_candidate}"
-touch -t 203701020101 "${companion_backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
-touch -t 203701030101 "${companion_backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
+fixture_touch -t 202001010101 "${companion_backup_candidate}"
+fixture_touch -t 202001020101 "${companion_backup_dir}/SYNTHETIC-MIDDLE.SYNTHETIC-BACKUP"
+fixture_touch -t 202001030101 "${companion_backup_dir}/SYNTHETIC-NEW.SYNTHETIC-BACKUP"
 primary_binding_marker="${test_root}/primary-binding-called"
 primary_binding_mount="${test_root}/primary-binding-mount"
 make_mount_inventory_mock \
@@ -2293,7 +2360,7 @@ fi
 linked_backup_target="${test_root}/misconfigured-outside"
 mkdir -p "${linked_backup_target}"
 linked_backup_file="${linked_backup_target}/OUTSIDE.SYNTHETIC-BACKUP"
-touch -t 203501010101 "${linked_backup_file}"
+fixture_touch -t 201801010101 "${linked_backup_file}"
 ln -s "${linked_backup_target}" "${mount_point}/SYNTHETIC_LINK"
 linked_config="${test_root}/linked-config"
 cat > "${linked_config}" <<'EOF'
@@ -2509,7 +2576,7 @@ cat > "${race_stat}" <<EOF
 #!/bin/zsh
 if [[ "\${3:-}" == "${old_file}" ]]; then
   if [[ -e "${race_seen}" ]]; then
-    /usr/bin/touch -t 203701030101 "${old_file}"
+    /usr/bin/touch -t 202001030101 "${old_file}"
   else
     /usr/bin/touch "${race_seen}"
   fi
@@ -2522,7 +2589,7 @@ race_status=$?
 assert_status "candidate eligibility is revalidated before deletion" 0 "${race_status}"
 assert_file_exists "candidate moved into a retained day is not deleted" "${old_file}"
 assert_contains "changed purge-day candidate is visibly skipped" "${race_output}" "Skipped 1 candidate"
-touch -t 203701010101 "${old_file}"
+fixture_touch -t 202001010101 "${old_file}"
 
 deletion_log="${test_root}/SYNTHETIC-DELETION-LOG"
 deletion_syslog="${test_root}/SYNTHETIC-DELETION-SYSLOG"
@@ -2534,7 +2601,7 @@ EOF
 chmod 755 "${deletion_logger}"
 escaped_name_file="${backup_dir}/"$'SYNTHETIC SPACE\n\e[31m.SYNTHETIC-BACKUP'
 for deletion_mode in dry-run failure both-stderr-file stdout-only stdin-only; do
-  touch -t 203701010101 "${old_file}" "${escaped_name_file}"
+  fixture_touch -t 202001010101 "${old_file}" "${escaped_name_file}"
   : > "${deletion_log}"
   : > "${deletion_syslog}"
   typeset -a deletion_options=()
@@ -2575,12 +2642,12 @@ for deletion_mode in dry-run failure both-stderr-file stdout-only stdin-only; do
   assert_not_contains "${deletion_mode} persistent sinks omit backup directory" "${deletion_persistent}" "SYNTHETIC_BACKUPS"
 done
 /bin/rm -f -- "${escaped_name_file}"
-touch -t 203701010101 "${old_file}"
+fixture_touch -t 202001010101 "${old_file}"
 
 outside_dir="${test_root}/outside-backup-tree"
 mkdir -p "${outside_dir}"
 outside_file="${outside_dir}/OUTSIDE.SYNTHETIC-BACKUP"
-touch -t 203501010101 "${outside_file}"
+fixture_touch -t 201801010101 "${outside_file}"
 linked_dir="${backup_dir}/LINKED-DIRECTORY"
 ln -s "${outside_dir}" "${linked_dir}"
 linked_file="${backup_dir}/LINKED-FILE.SYNTHETIC-BACKUP"

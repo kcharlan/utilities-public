@@ -212,16 +212,20 @@ cleanup.
    names end in the exact configured `BACKUP_FILENAME_SUFFIX` are eligible;
    every other file is ignored and can never be deleted by this utility.
 5. Group eligible files recursively by modification day and fail without
-   deletion if any eligible file cannot be classified.
+   deletion if any eligible file cannot be classified, is empty, or is dated
+   in the future.
 6. Retain every eligible file from the newest `MAX_DAYS_TO_KEEP` distinct days.
-7. Report the candidate count in dry-run mode, or remove those files only when
+7. Before pruning, compare each retained export with the median size of the
+   older candidates. If any is smaller than 10% of that median, stop without
+   deleting anything. This is a size heuristic, not a backup integrity check.
+8. Report the candidate count in dry-run mode, or remove those files only when
    a private config or explicit `MONEYDANCE_DRY_RUN=0` environment setting
    permits deletion. The `--dry-run` option always overrides either setting.
-8. Immediately before each removal, verify again that the candidate is a
+9. Immediately before each removal, verify again that the candidate is a
    regular, non-symlink file beneath the backup directory, still has the exact
    configured suffix, and still belongs to a purge day. Changed candidates are
    skipped.
-9. After each successful deletion, show its escaped path on an interactive
+10. After each successful deletion, show its escaped path on an interactive
    terminal. Dry runs, failed removals, and skipped candidates do not produce
    individual `Removed:` messages. Redirected output, configured file logs,
    and syslog retain aggregate counts only.
