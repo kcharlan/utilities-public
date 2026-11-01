@@ -3,9 +3,7 @@
 remove_fixture_paths() {
     for fixture_path do
         case "$fixture_path" in
-            '') return 1 ;;
-            *[!./]*) ;;
-            *) return 1 ;;
+            ''|.|..|./*|../*|*/./*|*/../*|*/.|*/..|*/) return 1 ;;
         esac
         if [ -L "$fixture_path" ] || [ -f "$fixture_path" ]; then
             rm -- "${fixture_path:?}" || return

@@ -12,7 +12,9 @@ checker="$repo/tools/check_no_temp_leaks.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/no-temp-leaks-test.XXXXXX")
 chmod 700 "$scratch"
 trap 'remove_fixture_paths "$scratch"' EXIT
-for unsafe in '' / . .. ./ ../; do
+mkdir "$scratch/alias-child"
+ln -s / "$scratch/root-link"
+for unsafe in '' / . .. ./ ../ /dev/../ "$scratch/alias-child/.." "$scratch/root-link/"; do
     if (rm() { : > "$scratch/unexpected-remove"; }; remove_fixture_paths "$unsafe"); then
         echo "FAIL: fixture cleanup accepted an unsafe path"; exit 1
     fi
