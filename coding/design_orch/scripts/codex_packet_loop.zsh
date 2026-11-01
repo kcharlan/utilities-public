@@ -1027,46 +1027,23 @@ for path in sorted(selected):
 PY
 }
 
-durable_repo_paths() {
-  python3 - "$ROOT_DIR" <<'PY'
-from __future__ import annotations
-
-import fnmatch
-import subprocess
+new_packet_docs() {
+  python3 - "$ROOT_DIR" "$PLANS_DIR" "$1" "$STATUS_JSON" <<'PY'
+import json
 import sys
 from pathlib import Path
 
-root = Path(sys.argv[1])
-patterns = [
-    "docs/implementation_packet_playbook.md",
-    "plans/packet_status.md",
-    "plans/packet_status.json",
-    "plans/packet_*.md",
-    "audits/*.md",
-    "audits/*.json",
-]
+root, plans, before_path, after_path = map(Path, sys.argv[1:])
+root, plans = root.resolve(), plans.resolve()
+def docs(path):
+    if not path.exists():
+        return set()
+    return {p.get("doc") for p in json.loads(path.read_text()).get("packets", []) if p.get("doc")}
 
-def git_lines(args: list[str]) -> list[str]:
-    proc = subprocess.run(
-        ["git", "-C", str(root), *args],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-
-changed = set(git_lines(["diff", "--name-only", "--relative"]))
-changed.update(git_lines(["diff", "--cached", "--name-only", "--relative"]))
-changed.update(git_lines(["ls-files", "--others", "--exclude-standard"]))
-
-selected = set()
-for path in changed:
-    if any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
-        selected.add(path)
-
-for path in sorted(selected):
-    print(path)
+for name in sorted(docs(after_path) - docs(before_path)):
+    path = (root / name).resolve()
+    if path.is_file() and path.is_relative_to(plans) and path.is_relative_to(root):
+        print(path.relative_to(root))
 PY
 }
 
@@ -1197,7 +1174,9 @@ commit_selected_paths() {
 
 auto_commit_durable_artifacts() {
   local commit_message="$1"
-  local -a commit_paths
+  shift
+  local -a commit_paths=()
+  local artifact_path relative
 
   [[ "$AUTO_COMMIT_VALIDATED" == "true" ]] || return 0
   git_repo_available || {
@@ -1205,7 +1184,18 @@ auto_commit_durable_artifacts() {
     return 0
   }
 
-  commit_paths=("${(@f)$(durable_repo_paths)}")
+  for artifact_path in "$@"; do
+    [[ -n "$artifact_path" ]] || continue
+    if [[ "$artifact_path" == /* ]]; then
+      relative="$(repo_rel_path "$artifact_path")"
+      [[ "$relative" != /* ]] || continue
+    else
+      relative="$artifact_path"
+    fi
+    if [[ -e "$ROOT_DIR/$relative" ]] || git -C "$ROOT_DIR" --literal-pathspecs ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
+      commit_paths+=("$relative")
+    fi
+  done
   if (( ${#commit_paths[@]} == 0 )); then
     return 0
   fi
@@ -1637,13 +1627,13 @@ run_full_suite_verification() {
   write_full_suite_report "$label" "$report_md" "$report_json" "$log_file" "$FULL_TEST_COMMAND" "$exit_code" "$start_epoch" "$end_epoch" "$is_final"
 
   if [[ "$exit_code" -ne 0 ]]; then
-    auto_commit_durable_artifacts "Record failed $label"
+    auto_commit_durable_artifacts "Record failed $label" "$report_md" "$report_json"
     die "$label failed with exit code $exit_code. See $(repo_rel_path "$report_md")"
   fi
 
   update_full_suite_state "$(repo_rel_path "$report_json")" "$(repo_rel_path "$log_file")" "$is_final"
   log "$label passed"
-  auto_commit_durable_artifacts "Record $label"
+  auto_commit_durable_artifacts "Record $label" "$report_md" "$report_json" "$FULL_TEST_STATE_JSON"
   honor_stop_request "$label" && return 0
 }
 
@@ -1824,13 +1814,18 @@ run_bootstrap() {
 
   local prompt_file="$RUN_DIR/bootstrap.prompt.txt"
   local output_file="$RUN_DIR/bootstrap.last_message.txt"
+  local before_status="$RUN_DIR/bootstrap.before.json"
+  local -a packet_docs
+
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
 
   write_bootstrap_prompt "$prompt_file"
   run_agent_exec "bootstrap" "$BOOTSTRAP_EFFORT" "$prompt_file" "$output_file"
 
   require_file "$IMPLEMENTATION_PLAYBOOK"
   require_file "$STATUS_JSON"
-  auto_commit_durable_artifacts "Bootstrap packet orchestration artifacts"
+  packet_docs=("${(@f)$(new_packet_docs "$before_status")}")
+  auto_commit_durable_artifacts "Bootstrap packet orchestration artifacts" "$IMPLEMENTATION_PLAYBOOK" "$STATUS_MD" "$STATUS_JSON" "${packet_docs[@]}"
   honor_stop_request "bootstrap" && return 0
 }
 
@@ -1839,12 +1834,17 @@ run_planner() {
 
   local prompt_file="$RUN_DIR/planner.prompt.txt"
   local output_file="$RUN_DIR/planner.last_message.txt"
+  local before_status="$RUN_DIR/planner.before.json"
+  local -a packet_docs
+
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
 
   write_planner_prompt "$prompt_file"
   run_agent_exec "planner" "$PLANNER_EFFORT" "$prompt_file" "$output_file"
 
   require_file "$STATUS_JSON"
-  auto_commit_durable_artifacts "Plan next packet horizon"
+  packet_docs=("${(@f)$(new_packet_docs "$before_status")}")
+  auto_commit_durable_artifacts "Plan next packet horizon" "$STATUS_MD" "$STATUS_JSON" "${packet_docs[@]}"
   honor_stop_request "planner" && return 0
 }
 
@@ -1962,12 +1962,16 @@ run_drift_audit() {
       log "Drift audit created repair packet $repair_packet_id: $(drift_audit_result_field "$audit_json" "summary")"
       ;;
     halt)
-      auto_commit_durable_artifacts "Record halted $audit_label"
+      auto_commit_durable_artifacts "Record halted $audit_label" "$audit_md" "$audit_json" "$DRIFT_AUDIT_STATE_JSON"
       die "Drift audit halted the run: $(drift_audit_result_field "$audit_json" "summary"). See $(repo_rel_path "$audit_md")"
       ;;
   esac
 
-  auto_commit_durable_artifacts "Record $audit_label"
+  local -a audit_paths=("$audit_md" "$audit_json" "$DRIFT_AUDIT_STATE_JSON")
+  if [[ "$result_status" == "repair_packet" ]]; then
+    audit_paths+=("$STATUS_MD" "$STATUS_JSON" "$repair_packet_doc")
+  fi
+  auto_commit_durable_artifacts "Record $audit_label" "${audit_paths[@]}"
   honor_stop_request "$audit_label" && return 0
 }
 

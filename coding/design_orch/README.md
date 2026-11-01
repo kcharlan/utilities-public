@@ -73,8 +73,9 @@ By default, `ROOT_DIR` is the parent of `scripts/`, so this snapshot's
 root. Override `ROOT_DIR` when the script remains elsewhere.
 
 `orch_launch.sh` is deliberately sample-project-specific: it selects Claude,
-enables automatic commits and profiling, and points to
+enables profiling, and points to
 `docs/git_dashboard_final_spec.md`. That design document is not included.
 Supply it or replace `DESIGN_DOC` before using the launcher. The packet loop's
 own default design path (`docs/cognitive_switchyard_design.md`) is also only a
 placeholder in this stripped snapshot.
+Automatic commits remain opt-in via `AUTO_COMMIT_VALIDATED=true`.
