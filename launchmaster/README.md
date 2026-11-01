@@ -31,17 +31,15 @@ the interface in the default browser. If port `8200` is occupied, it tries the
 next 19 ports in sequence.
 
 ```text
-usage: launchmaster [-h] [-p PORT] [--host HOST] [--no-browser] [--debug]
+usage: launchmaster [-h] [-p PORT] [--no-browser] [--debug]
 ```
 
 - `-p`, `--port`: preferred starting port
-- `--host`: address to bind (default: `127.0.0.1`)
 - `--no-browser`: do not open a browser automatically
 - `--debug`: enable debug logging
 
-The server has no authentication. Keep the default loopback binding unless
-every device that can reach the chosen address should be allowed to inspect
-and operate this Mac's launchd jobs.
+The server binds to loopback and checks Host and Origin on requests and
+WebSocket connections. It has no separate user authentication.
 
 ## Features
 

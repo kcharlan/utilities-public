@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import unquote
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
@@ -3795,7 +3795,39 @@ async def lifespan(application):
         _poll_task.cancel()
 
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="launchmaster", version=VERSION, lifespan=lifespan)
+app.add_middleware(LocalOriginGuard)
 
 
 # --- SPA ---
@@ -3956,12 +3988,11 @@ async def api_get_plist(label: str):
 
 
 @app.put("/api/jobs/{label:path}/plist")
-async def api_save_plist(label: str, request: Request):
+async def api_save_plist(label: str, body: Dict[str, Any]):
     label = unquote(label)
     job = _find_job(label)
     if not job:
         return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
-    body = await request.json()
     content = body.get("content", "")
     plist_path = job.get("plist_path")
     if not plist_path:
@@ -4008,8 +4039,7 @@ async def api_delete_job(label: str):
 # --- Create / Import ---
 
 @app.post("/api/jobs")
-async def api_create_job(request: Request):
-    body = await request.json()
+async def api_create_job(body: Dict[str, Any]):
     plist_data = body.get("plist_data", {})
     domain = body.get("domain", "user-agent")
     result = await create_job(plist_data, domain)
@@ -4019,8 +4049,7 @@ async def api_create_job(request: Request):
 
 
 @app.post("/api/jobs/import")
-async def api_import_job(request: Request):
-    body = await request.json()
+async def api_import_job(body: Dict[str, Any]):
     content = body.get("content", "")
     domain = body.get("domain", "user-agent")
     result = await import_job(content, domain)
@@ -4129,8 +4158,7 @@ async def api_get_settings():
 
 
 @app.put("/api/settings")
-async def api_put_settings(request: Request):
-    body = await request.json()
+async def api_put_settings(body: Dict[str, Any]):
     _config.update(body)
     await asyncio.to_thread(_save_config, _config)
     return {"success": True, "message": "Settings saved"}
@@ -4190,10 +4218,6 @@ def parse_args():
         help=f"Preferred port (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
-        "--host", type=str, default="127.0.0.1",
-        help="Host to bind to (default: 127.0.0.1)",
-    )
-    parser.add_argument(
         "--no-browser", action="store_true",
         help="Don't open browser on startup",
     )
@@ -4219,7 +4243,7 @@ def main():
     if port != args.port:
         logger.warning("Port %d is in use; using port %d instead.", args.port, port)
 
-    url = f"http://{args.host}:{port}"
+    url = f"http://127.0.0.1:{port}"
     print(f"launchmaster v{VERSION} starting at {url}")
 
     if not args.no_browser and not os.environ.get("UTILITIES_TESTING"):
@@ -4227,7 +4251,7 @@ def main():
 
     uvicorn.run(
         app,
-        host=args.host,
+        host="127.0.0.1",
         port=port,
         log_level="debug" if args.debug else "warning",
     )
