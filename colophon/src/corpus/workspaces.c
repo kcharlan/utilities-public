@@ -264,7 +264,7 @@ static Err read_text(Arena *arena, Str path, Str *out) {
   *out = (Str){0};
   char *bytes = NULL;
   size_t n = 0;
-  Err e = file_read_all(path.p, &bytes, &n);
+  Err e = file_read_limited(path.p, 64 * 1024, &bytes, &n);
   if (e.code)
     return e.code == ERR_NOMEM ? e : ERR_SUCCESS;
   if (n <= UINT32_MAX)
@@ -529,7 +529,7 @@ Err workspace_aliases_decode(yyjson_val *root, bool file_schema,
 Err workspace_aliases_load(const char *path, WorkspaceAliases *out) {
   char *bytes = NULL;
   size_t n = 0;
-  Err e = file_read_all(path, &bytes, &n);
+  Err e = file_read_limited(path, 64 * 1024, &bytes, &n);
   if (e.code) {
     if (e.code == ERR_NOMEM)
       return e;

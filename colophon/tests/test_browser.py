@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from test_opencode import database, CLOCK, SESSION as OPENCODE_SESSION
 import sqlite3
 import os
+from urllib.parse import quote
 from test_antigravity import database as ag_database, ID as AG_ID, cached_pricing as ag_cached_pricing
 
 
@@ -239,10 +240,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.5.2"
+    assert payload["meta"]["version"] == "0.5.3"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.2")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.3")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -436,7 +437,7 @@ def test_opencode_native_database_archive_reader_and_estimates(page, native, ses
         expect(reader.get_by_role("link", name="Open in Codex")).to_have_count(0)
         expect(reader.get_by_role("button", name="Copy session ID", exact=True)).to_have_count(1)
         page.set_viewport_size({"width": 375, "height": 812})
-        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth")
+        page.wait_for_function("() => document.documentElement.scrollWidth <= innerWidth")
         assert page.locator('[data-turn-card]').evaluate_all("nodes => nodes.every(e => e.getBoundingClientRect().right <= innerWidth)")
         page.get_by_role('button', name='archived: shown', exact=True).click()
         expect(page.locator('[data-list-row]')).to_have_count(0)
@@ -1470,3 +1471,29 @@ def test_period_offsets_normalize_and_cross_year_boundaries(zoned_page, native):
             "30d-1": [["2025-12-12", "2026-01-10"], ["2025-11-12", "2025-12-11"]],
         }
         assert requests == []
+
+
+def test_untrusted_identifiers_do_not_resolve_prototypes_and_actions_are_escaped(page, native):
+    hostile = "constructor'; echo synthetic; #"
+    def mutate(payload):
+        row = next(row for row in payload['sessions'] if row['provider'] == 'codex')
+        row['id'] = hostile
+        row['children'] = ['constructor']
+        row['workspace'] = 'constructor'
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#v=session&p=all&s=' + quote(hostile))
+        reader = page.locator('[data-reader]')
+        expect(reader).to_be_visible()
+        page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.syntheticCopied = text}, configurable: true})")
+        reader.get_by_role('button', name='Copy Continue in CLI').click()
+        assert page.evaluate('window.syntheticCopied') == "codex resume 'constructor'\\''; echo synthetic; #'"
+        assert reader.get_by_role('link', name='Open in Codex').get_attribute('href') == 'codex://threads/' + quote(hostile, safe="~()*!.'-")
+        page.goto(native.page.as_uri() + '#v=session&p=all&s=constructor')
+        expect(page.locator('[data-reader]')).to_have_count(0)
+
+
+def test_page_sets_content_security_policy(native):
+    source_page(native)
+    assert 'http-equiv="Content-Security-Policy"' in native.page.read_text()

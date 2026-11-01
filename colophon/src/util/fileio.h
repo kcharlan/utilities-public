@@ -6,6 +6,7 @@
 /* Returned strings/buffers are malloc-owned and NUL terminated. Byte count
  * excludes the terminator; embedded NUL bytes are preserved. */
 Err file_read_all(const char *path, char **bytes, size_t *length);
+Err file_read_limited(const char *path, size_t limit, char **bytes, size_t *length);
 Err runtime_home(char **path);
 /* pathlib POSIX lexical normalization and expanduser, shared by CLI paths. */
 Err file_expand_path(const char *raw, char **path);

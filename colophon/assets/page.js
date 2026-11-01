@@ -4,6 +4,7 @@
   // --- data
   let data, currentState, searchTimer, earliestMs = null, dialShown = null;
   const controls = {};
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined;
   const PROVIDERS = ["codex", "claude", "opencode", "antigravity"];
   const PROVIDER_NAMES = {codex: "Codex", claude: "Claude", opencode: "OpenCode", antigravity: "Antigravity"};
   const usageProviders = new WeakMap();
@@ -149,7 +150,7 @@
   }
   function writeState(next, {replace = false} = {}) {
     currentState = normalizeState(next);
-    const selected = data.sessions.find(row => row.id === currentState.s) || data.subagents[currentState.s];
+    const selected = data.sessions.find(row => row.id === currentState.s) || own(data.subagents, currentState.s);
     if (selected && !providerMatch(selected, currentState)) {
       delete currentState.s;
       if (currentState.v === "session") currentState.v = "list";
@@ -172,7 +173,7 @@
     if (seen.has(row.id) || !providerMatch(row, state) || (state.a === "0" && row.archived) || (state.h === "0" && row.history_only)) return false;
     seen.add(row.id);
     const query = (state.q || "").toLowerCase();
-    return ownSearch(row, query) || row.children.some(id => byId[id] && searchMatch(byId[id], state, byId, seen));
+    return ownSearch(row, query) || row.children.some(id => own(byId, id) && searchMatch(own(byId, id), state, byId, seen));
   }
   const filters = {searchMatch};
   // --- aggregates
@@ -180,7 +181,7 @@
   function descendants(row, byId, state) {
     const rows = [], seen = new Set([row.id]), pending = [...row.children];
     for (let n = 0; n < pending.length; n++) {
-      const id = pending[n], child = byId[id];
+      const id = pending[n], child = own(byId, id);
       if (seen.has(id) || !child) continue;
       seen.add(id);
       if (!providerMatch(child, state) || (state.a === "0" && child.archived) || (state.h === "0" && child.history_only)) continue;
@@ -688,7 +689,7 @@
     check(currentState, currentState.src === "all" ? "all providers" : PROVIDER_NAMES[currentState.src]);
     if (currentState.src === "all") for (const src of PROVIDERS) check({...currentState, src}, PROVIDER_NAMES[src]);
     if (currentState.s) {
-      const row = data.sessions.find(row => row.id === currentState.s) || data.subagents[currentState.s];
+      const row = data.sessions.find(row => row.id === currentState.s) || own(data.subagents, currentState.s);
       if (row && evidenceSum([row, ...descendants(row, data.subagents, currentState)].map(item => item.own_usage.cost_usd).filter(value => value !== null), true) === null) failures.push("reader " + row.id);
     }
     return failures;
@@ -785,7 +786,7 @@
     return panel("hour × weekday", grid);
   }
   const WORKSPACE_PREVIEW = 6;
-  const workspaceName = key => (data.workspaces[key] || {}).name || key || "unknown workspace";
+  const workspaceName = key => (own(data.workspaces, key) || {}).name || key || "unknown workspace";
   function renderWorkspaces(now) {
     const rows = workspaces(data.sessions, currentState, now).sort((a, b) => b[workspaceMetric] - a[workspaceMetric] || String(a.key).localeCompare(String(b.key)));
     const byProvider = Object.fromEntries(PROVIDERS.map(src => [src, new Map(workspaces(data.sessions, {...currentState, src}, now).map(row => [row.key, row]))]));
@@ -834,7 +835,7 @@
       const recorded = row.own_usage.priced_by;
       if (!recorded.length) unknown = true;
       for (const ref of recorded) {
-        const [key, index, role] = ref, pricing = data.models[key];
+        const [key, index, role] = ref, pricing = own(data.models, key);
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
         if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const override = /^catalog:([^|]+)\|([^|]+)$/.exec(key);
@@ -1025,7 +1026,7 @@
       rateBased = true;
       if (usageTokens(usage) > 0 && !usage.priced_by.length) unknown = true;
       for (const ref of usage.priced_by) {
-        const [key, index, role] = ref, pricing = data.models[key];
+        const [key, index, role] = ref, pricing = own(data.models, key);
         const period = pricing && Number.isInteger(index) && index >= 0 ? pricing.periods[index] : null;
         if (!period || !["rates", "priority", "fast"].includes(role) || (period.effective_from_ms !== null && !validMs(period.effective_from_ms))) {unknown = true; continue;}
         const effective = period.effective_from_ms === null ? (period.source === "curated" ? "initial" : "unknown") : new Date(period.effective_from_ms).toISOString();
@@ -1222,9 +1223,9 @@
     // Claude CLI searches from cwd; CLAUDE_CONFIG_DIR chooses its session store.
     // https://code.claude.com/docs/en/cli-reference (--resume)
     // https://code.claude.com/docs/en/settings (CLAUDE_CONFIG_DIR)
-    const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : opencode ? "cd " + shellArgument(row.cwd) + " && OPENCODE_DB=" + shellArgument(row.opencode_database) + " opencode --standalone --session " + shellArgument(row.id) : "codex resume " + row.id;
+    const continuation = () => claude ? "cd " + shellArgument(row.cwd) + " && CLAUDE_CONFIG_DIR=" + shellArgument(row.resume_config_dir) + " claude --resume " + shellArgument(row.id) : opencode ? "cd " + shellArgument(row.cwd) + " && OPENCODE_DB=" + shellArgument(row.opencode_database) + " opencode --standalone --session " + shellArgument(row.id) : "codex resume " + shellArgument(row.id);
     header.append(el("div", {class: "reader-buttons"},
-      ...(codex && capable("open_in_codex") && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + row.id, text: "Open in Codex",
+      ...(codex && capable("open_in_codex") && supports(data.meta.links.open_in_codex) ? [el("a", {href: "codex://threads/" + encodeURIComponent(row.id), text: "Open in Codex",
         onkeydown: event => {if (event.key === " ") {event.preventDefault(); event.currentTarget.click();}}})] : []),
       ...(canContinue ? [el("button", {type: "button", text: "Copy Continue in CLI — continues this session", onclick: () => copy(continuation())})] : []),
       ...(capable("copy_session_id") ? [el("button", {type: "button", text: "Copy session ID", onclick: () => copy(row.id)})] : []),
@@ -1260,7 +1261,7 @@
       app.replaceChildren(...renderOverview());
       fitCalendar();
     } else {
-      const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || data.subagents[currentState.s] : null;
+      const selected = currentState.v === "session" && currentState.s ? rows.find(row => row.id === currentState.s) || own(data.subagents, currentState.s) : null;
       const visible = selected && providerMatch(selected, currentState) && !(currentState.a === "0" && selected.archived) && !(currentState.h === "0" && selected.history_only);
       const layout = el("div", {class: "session-layout" + (visible ? " has-reader" : "")}, renderSessionList(rows), ...(visible ? [renderSplitter(), renderReader(selected)] : []));
       if (visible) applyListWidth(layout);

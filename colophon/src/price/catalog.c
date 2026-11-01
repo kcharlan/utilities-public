@@ -546,7 +546,7 @@ static Err catalog_message(CatalogResult *out,Str text) {
 Err catalog_load_offline(const char *path,Str configured_url,CatalogResult *out) {
     out->status="unavailable";struct stat stat;
     if(lstat(path,&stat)&&errno==ENOENT)return ERR_SUCCESS;
-    char *bytes=NULL;size_t length=0;Err error=file_read_all(path,&bytes,&length);
+    char *bytes=NULL;size_t length=0;Err error=file_read_limited(path,32u*1024u*1024u,&bytes,&length);
     if(error.code) {
         if(error.code==ERR_NOMEM)return error;
         JsonWriter diagnostic={0};jsonw_raw(&diagnostic,"pricing-cache.json: unavailable: ");jsonw_raw(&diagnostic,error.message);
@@ -611,7 +611,7 @@ static bool fetch_cancelled(CatalogFetch *fetch) {
 static size_t fetch_body(char *bytes,size_t size,size_t count,void *context) {
     Transfer *transfer=context;if(size&&count>SIZE_MAX/size)return 0;size_t length=size*count;
     transfer->last_byte=monotonic_ms();
-    if(length>UINT32_MAX-transfer->body.length)return 0;
+    if(length>32u*1024u*1024u-transfer->body.length)return 0;
     jsonw_bytes(&transfer->body,bytes,length);return transfer->body.error.code?0:length;
 }
 static void header_latin1(JsonWriter *writer,const char *bytes,size_t length) {

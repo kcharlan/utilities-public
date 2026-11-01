@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 MetadataColumn metadata_thread_column(const MetadataThread *row, size_t position) {
@@ -61,6 +62,19 @@ static Err join(const char *home, const char *name, char **path) {
     free(raw);
     if (!e.code) *path = (char *)normalized.p;
     return e;
+}
+Err metadata_sidecars_admit(const char *path, Str root, bool (*safe_path)(Str, const char *)) {
+    const char *suffixes[]={"-wal","-shm","-journal"};
+    for(size_t i=0;i<sizeof suffixes/sizeof *suffixes;i++) {
+        size_t n=strlen(path)+strlen(suffixes[i])+1;char *p=malloc(n);
+        if(!p)return err_make(ERR_NOMEM,"SQLite sidecar path allocation failed");
+        snprintf(p,n,"%s%s",path,suffixes[i]);bool safe=!safe_path||safe_path(root,p);
+        struct stat st;int result=safe?lstat(p,&st):-1,saved=errno;free(p);
+        if(!safe)return err_make(ERR_IO,"SQLite sidecar symlink excluded");
+        if(result&&saved!=ENOENT)return err_make(ERR_IO,"SQLite sidecar inaccessible");
+        if(!result&&!S_ISREG(st.st_mode))return err_make(ERR_IO,"SQLite sidecar is not a regular file");
+    }
+    return ERR_SUCCESS;
 }
 Err metadata_database_uri(const char *path, char **uri) {
     char *absolute = NULL;
@@ -201,7 +215,8 @@ done:
 }
 static Err read_database(const char *path, const char *name, CodexMetadata *m) {
     char *uri = NULL; sqlite3 *db = NULL;
-    Err e = metadata_database_uri(path, &uri);
+    Err e = metadata_sidecars_admit(path, (Str){0}, NULL);
+    if (!e.code) e = metadata_database_uri(path, &uri);
     if (!e.code && sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, NULL) != SQLITE_OK) e = sqlite_error(db);
     free(uri);
     if (!e.code && sqlite3_busy_timeout(db, 1000) != SQLITE_OK) e = sqlite_error(db);
