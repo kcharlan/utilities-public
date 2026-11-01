@@ -58,6 +58,22 @@ import TelltaleTestSupport
 
     // MARK: Composition
 
+    @Test func rotatedLogsReadAllRowsEvenWhenNewIDsExceedOldCursor() throws {
+        try withScratchDirectory { home in
+            let old = try CodexDatabase.logs(codexHome: home, number: 2)
+            try old.addLog(at: Self.at(1), body: Self.disconnect)
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            let fresh = try CodexDatabase.logs(codexHome: home, number: 3)
+            try fresh.addLog(at: Self.at(2), body: Self.disconnect)
+            try fresh.addLog(at: Self.at(3), body: Self.disconnect)
+            let second = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(second.batch.connectionEvents.map(\.sourceID) == ["logs_3:1", "logs_3:2"])
+            let third = source.ingest(cursor: second.cursor, backfillFrom: .distantPast, now: Self.at(300))
+            #expect(third.batch.connectionEvents.isEmpty)
+        }
+    }
+
     @Test func composesAllReaders() throws {
         try withScratchDirectory { home in
             try Self.session(1).writePlain(codexHome: home)

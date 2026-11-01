@@ -39,6 +39,26 @@ private struct WorkloadSeed {
 }
 
 @Suite struct WorkloadTests {
+    @Test func extremeStoredTokenCountsDoNotOverflow() throws {
+        try withBaseline { h in
+            var seed = WorkloadSeed(h)
+            let now = h.at(9, 4, 12)
+            let records = (0..<2).map { _ in seed.response(now, input: Int.max, cached: Int.max, output: Int.max, reasoning: Int.max) }
+            try h.store.upsert(responses: records)
+            let value = try seed.load(at: now)
+            #expect(value.cachedShare.now == 1)
+            #expect(value.reasoningShare.now == 1)
+        }
+    }
+    @Test func extremeCompactionTokensDoNotCrash() throws {
+        try withBaseline { h in
+            let now = h.at(9, 4, 12)
+            let record = CompactionRecord(provider: .codex, lineID: "synthetic", sessionID: "synthetic", agentID: nil, at: now, trigger: .auto, tokensBefore: Int.max, tokensAfter: nil, duration: 1, precomputed: false)
+            try h.store.upsert(compactions: [record])
+            let value = try Workload.load(store: h.store, provider: .codex, model: Synth.model, now: now, calendar: h.calendar, supportedRules: [.compactions])
+            #expect(value.compactions?.latestPoint != nil)
+        }
+    }
     @Test func unsupportedCompactionsAreHidden() throws {
         try withBaseline { h in
             let result = try Workload.load(store: h.store, provider: .codex, model: Synth.model, now: h.at(9, 4, 12), calendar: h.calendar, supportedRules: [])

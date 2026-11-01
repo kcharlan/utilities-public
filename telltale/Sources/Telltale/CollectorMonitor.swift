@@ -48,10 +48,12 @@ import UserNotifications
     private var awakeSince: Date?
     /// The previous check found the notify condition: one more makes an episode.
     private var unconfirmed = false
-    /// A notice change made while the database doesn't exist yet (ruling R27: the app never creates
-    /// it): held here, read in place of the stored notice, and written once the collector has
-    /// created the database. `.some(nil)` holds a cleared notice.
+    /// A notice change made while the database is missing or unreadable is held here, read in place
+    /// of the stored notice, and written once storage is available. The app never creates the
+    /// database (ruling R27). `.some(nil)` holds a cleared notice.
     private var heldNotice: HealthNoticeState??
+    private var lastInputs: Inputs?
+    private var databaseUnreadable = false
     private var loop: Task<Void, Never>?
 
     /// The latest report, for the UI.
@@ -90,16 +92,17 @@ import UserNotifications
         loop = nil
     }
 
-    /// One health check: evaluates, posts what the episode calls for, and returns the report (nil
-    /// when the database couldn't be read).
+    /// One health check: evaluates, posts what the episode calls for, and returns the report,
+    /// including a fallback report when the database couldn't be read.
     @discardableResult func check() async -> CollectorHealthReport? {
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
             if report.lamp != .red, !report.heldAfterWake {
-                do { try Store.open(paths.database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }
+                let database = paths.database
+                do { try await Task.detached { try Store.open(database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }.value }
                 catch StoreError.notInitialized { }
             }
-            if let held = heldNotice { try save(held) }
+            if !databaseUnreadable, let held = heldNotice { try await save(held) }
             try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {
             lastError = error.localizedDescription
@@ -120,9 +123,22 @@ import UserNotifications
         do {
             inputs = try readInputs()
         } catch {
+            let at = now()
+            noteSleep(at: at)
             lastError = error.localizedDescription
-            return nil
+            databaseUnreadable = true
+            var fallback = lastInputs ?? Inputs(
+                enabled: SettingKey.collectorEnabled.defaultValue, intervalMinutes: SettingKey.intervalMinutes.defaultValue,
+                rule: RuleSettings.defaults.collectorHealth, runs: [], sourceStates: [], notice: nil)
+            fallback.notice = heldNotice ?? fallback.notice
+            let message = "Telltale can't read the collector database. Open the Collector view for details."
+            let report = CollectorHealthReport(installed: .red, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit,
+                problems: [message], needsRepair: false, footer: "", notice: message, problemKeys: ["databaseUnreadable"])
+            lastReport = report
+            return (report, fallback, at)
         }
+        databaseUnreadable = false
+        lastInputs = inputs
         let manager = manager
         let (installed, installedAt, loaded) = await Task.detached {
             (manager.installedExecutable(), manager.installedAt(), manager.isLoaded())
@@ -157,13 +173,13 @@ import UserNotifications
         // The collector off by choice, or the rule off, ends an open episode silently: neither is a recovery.
         guard enabled, rule.enabled else {
             unconfirmed = false
-            if notice != nil { try save(nil) }
+            if notice != nil { try await save(nil) }
             return
         }
         guard let text = report.notice else {
             unconfirmed = false
             guard let notice, !report.heldAfterWake else { return }
-            try save(nil)
+            try await save(nil)
             if rule.notifyOnClear {
                 try await post(
                     id: Self.identifier(notice, "cleared"), title: Copy.clearedTitle(CollectorHealth.title), body: Copy.collectorRecovered, restoring: notice)
@@ -176,7 +192,7 @@ import UserNotifications
             return
         }
         let opened = HealthNoticeState(problem: text, notifiedAt: at)
-        try save(opened)
+        try await save(opened)
         if rule.notify {
             try await post(
                 id: Self.identifier(opened, "fired"), title: Copy.alertTitle(CollectorHealth.title, lamp: .red), body: opened.problem, restoring: nil)
@@ -194,7 +210,7 @@ import UserNotifications
         do {
             try await service.post(NativeNotificationPoster.request(for: notification))
         } catch {
-            try? save(previous)
+            try? await save(previous)
             throw error
         }
     }
@@ -229,13 +245,19 @@ import UserNotifications
     }
 
     /// Writes the notice through a short-lived connection to the existing database, as the app does
-    /// for settings; before the collector has created it, holds the notice in memory instead.
-    private func save(_ notice: HealthNoticeState?) throws {
+    /// for settings; while storage is missing or unreadable, holds the notice in memory instead.
+    private func save(_ notice: HealthNoticeState?) async throws {
+        if databaseUnreadable {
+            heldNotice = .some(notice)
+            return
+        }
         do {
-            try Store.open(paths.database, mode: .readWriteExisting).set(.collectorHealthNotice, notice)
+            let database = paths.database
+            try await Task.detached { try Store.open(database, mode: .readWriteExisting).set(.collectorHealthNotice, notice) }.value
             heldNotice = nil
         } catch StoreError.notInitialized {
             heldNotice = .some(notice)
         }
+        lastInputs?.notice = notice
     }
 }

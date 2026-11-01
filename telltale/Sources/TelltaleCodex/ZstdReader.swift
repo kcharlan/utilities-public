@@ -28,6 +28,10 @@ public enum ZstdReader {
     /// Size of each read from the file. It exceeds `3 * outputBufferSize`, so a small frame is
     /// decoded from one read and its last decode call can fill the output buffer exactly.
     public static let inputBufferSize = 262_144
+    /// Resource limits apply across concatenated frames and to skipped lines too.
+    public static let maximumLineBytes = 4 * 1024 * 1024
+    public static let maximumOutputBytes = 64 * 1024 * 1024
+    public static let maximumWindowLog = 27 // 128 MiB
 
     /// Calls `body` with each line of the decompressed file, in order, without its newline.
     /// A final line without a newline is yielded too, because compressed rollouts are complete.
@@ -55,11 +59,7 @@ public enum ZstdReader {
 
         guard let decoder = ZSTD_createDCtx() else { throw ZstdError.io("zstd decoder allocation failed") }
         defer { ZSTD_freeDCtx(decoder) }
-        // Codex writes single-segment frames whose window equals the log size, so the default
-        // 128 MiB window limit would reject large logs. Allow the decoder's maximum.
-        let bounds = ZSTD_dParam_getBounds(ZSTD_d_windowLogMax)
-        if ZSTD_isError(bounds.error) != 0 { throw failure(bounds.error, "setup") }
-        let configured = ZSTD_DCtx_setParameter(decoder, ZSTD_d_windowLogMax, bounds.upperBound)
+        let configured = ZSTD_DCtx_setParameter(decoder, ZSTD_d_windowLogMax, Int32(maximumWindowLog))
         if ZSTD_isError(configured) != 0 { throw failure(configured, "setup") }
 
         var splitter = LineSplitter(startingAfterLine: startingAfterLine)
@@ -69,6 +69,7 @@ public enum ZstdReader {
         var inputPosition = 0
         var offset = 0
         var remaining = 1  // Nonzero until the decoder ends a frame and flushes it.
+        var totalOutput = 0
 
         while true {
             if inputPosition == inputSize && offset < expectedSize {
@@ -94,6 +95,8 @@ public enum ZstdReader {
             if ZSTD_isError(result) != 0 { throw failure(result, "decode") }
             remaining = result
             if produced > 0 {
+                guard produced <= maximumOutputBytes - totalOutput else { throw ZstdError.corrupt("decompressed output exceeds limit") }
+                totalOutput += produced
                 try output.withUnsafeBytes { try splitter.feed(UnsafeRawBufferPointer(rebasing: $0[0..<produced]), body) }
             }
             // A completed frame is drained even when it exactly fills the output buffer.
@@ -120,6 +123,7 @@ private struct LineSplitter {
     private var pending = Data()
     private var completedLines = 0
     private var hasPartialLine = false
+    private var lineBytes = 0
 
     init(startingAfterLine: Int) {
         self.startingAfterLine = startingAfterLine
@@ -132,11 +136,13 @@ private struct LineSplitter {
             let rest = bytes.count - start
             if let found = memchr(base + start, 0x0A, rest) {
                 let length = found - UnsafeMutableRawPointer(mutating: base + start)
+                try countLineBytes(length)
                 try complete(UnsafeRawBufferPointer(start: base + start, count: length), body)
                 start += length + 1
             } else {
                 // The rest of this chunk starts, or continues, a line that is not finished yet.
                 hasPartialLine = true
+                try countLineBytes(rest)
                 if completedLines >= startingAfterLine {
                     pending.append(UnsafeBufferPointer(start: (base + start).assumingMemoryBound(to: UInt8.self), count: rest))
                 }
@@ -154,9 +160,15 @@ private struct LineSplitter {
     private mutating func complete(_ tail: UnsafeRawBufferPointer, _ body: (Int, Data) throws -> Void) throws {
         completedLines += 1
         hasPartialLine = false
+        lineBytes = 0
         defer { pending.removeAll(keepingCapacity: true) }
         guard completedLines > startingAfterLine else { return }
         pending.append(contentsOf: tail)
         try body(completedLines, pending)
+    }
+
+    private mutating func countLineBytes(_ count: Int) throws {
+        guard count <= ZstdReader.maximumLineBytes - lineBytes else { throw ZstdError.corrupt("decompressed line exceeds limit") }
+        lineBytes += count
     }
 }

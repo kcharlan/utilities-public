@@ -70,8 +70,8 @@ private struct SpeedSection: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 28) {
                 Readout(
-                    value: detail.lastHour.tps.map { String(Int($0.rounded())) } ?? "–", unit: "tok/s",
-                    label: detail.lastHour.usualTPS.map { "Last hour, usual \(Int($0.rounded())) for this prompt size" } ?? "Last hour",
+                    value: detail.lastHour.tps.map(DashboardFormat.whole) ?? "–", unit: "tok/s",
+                    label: detail.lastHour.usualTPS.map { "Last hour, usual \(DashboardFormat.whole($0)) for this prompt size" } ?? "Last hour",
                     color: color, size: 34)
                 Readout(
                     value: detail.lastHour.medianSeconds.map(DashboardFormat.seconds) ?? "–", unit: "s",
@@ -284,7 +284,7 @@ private struct WorkloadGrid: View {
                 }
             }
             if let compact = workload.compactions {
-                Text("\(compact.lastThreeHours) automatic compactions · \(Int(compact.blocked)) s blocked · latest point \(compact.latestPoint.map { DashboardFormat.tokens(Double($0)) } ?? "–")")
+                Text("\(compact.lastThreeHours) automatic compactions · \(DashboardFormat.whole(compact.blocked.rounded(.towardZero))) s blocked · latest point \(compact.latestPoint.map { DashboardFormat.tokens(Double($0)) } ?? "–")")
                     .font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
                 Text("Across all sessions and subagents for this provider").font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
             }
@@ -377,7 +377,7 @@ private struct EventList: View {
         } else if let undone = event.undoneAt {
             Text("Undone \(DashboardFormat.when(undone, now: model.now(), calendar: model.calendar))")
                 .font(.system(size: 12)).foregroundStyle(Theme.swiftUI(Theme.dim))
-        } else if let link = event.link {
+        } else if let link = event.link, StatusLink.isSafe(link) {
             Link("Status page", destination: link).font(.system(size: 12))
         }
     }
@@ -479,9 +479,9 @@ private struct Legend: View {
 /// The dashboard's number and time formats: English, tabular, as the visual doc's mockup.
 enum DashboardFormat {
     static func seconds(_ value: Double) -> String { String(format: "%.1f", value) }
-    static func whole(_ value: Double) -> String { String(Int(value.rounded())) }
+    static func whole(_ value: Double) -> String { value.isFinite ? String(format: "%.0f", value.rounded()) : "–" }
     static func sessions(_ value: Double) -> String { value < 10 && value != value.rounded() ? String(format: "%.1f", value) : whole(value) }
-    static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
+    static func percent(_ share: Double) -> String { "\(whole(share * 100))%" }
 
     /// 286000 is "286k", 1200000 is "1.2M", under 1000 in full.
     static func tokens(_ value: Double) -> String {

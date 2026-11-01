@@ -142,11 +142,15 @@ enum TranscriptParser {
             result.cursor.model = p.model
             if p.excluded { result.excluded += 1; return }
             guard let start = p.start, let usage = p.usage, let output = p.output, (p.end.timeIntervalSince(start) * 1000).rounded() >= 300 else { return }
+            // Token counts are nonnegative. Saturate the sum before storing it.
+            func count(_ value: Int?) -> Int { max(0, value ?? 0) }
+            func add(_ a: Int, _ b: Int) -> Int { a > Int.max - b ? Int.max : a + b }
+            let cached = count(usage.cache_read_input_tokens)
+            let input = add(add(count(usage.input_tokens), count(usage.cache_creation_input_tokens)), cached)
             result.responses.append(ResponseRecord(provider: .claude, model: p.model, effort: p.effort, serviceTier: p.tier,
                 sessionID: file.sessionID, isSubagent: p.subagent, responseID: p.id, start: start, end: p.end,
-                inputTokens: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
-                cachedInputTokens: usage.cache_read_input_tokens ?? 0, outputTokens: output,
-                reasoningTokens: usage.output_tokens_details?.thinking_tokens))
+                inputTokens: input, cachedInputTokens: cached, outputTokens: count(output),
+                reasoningTokens: usage.output_tokens_details?.thinking_tokens.map { count($0) }))
         }
         let end = try LineReader.completeLines(of: file.url, from: cursor.offset) { data in
             let lineStart = position

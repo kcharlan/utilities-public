@@ -69,7 +69,7 @@ extension Store {
             FROM incidents WHERE source = ? \(whereClause) ORDER BY published_at, incident_id
             """, [.text(source)]
         ) { row in
-            guard let link = URL(string: row.text(5)) else {
+            guard let link = URL(string: row.text(5)), StatusLink.isSafe(link) else {
                 throw StoreError.invalidData("Unreadable link for incident \(row.text(0))")
             }
             do {

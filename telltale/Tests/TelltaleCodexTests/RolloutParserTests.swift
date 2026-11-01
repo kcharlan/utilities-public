@@ -438,6 +438,24 @@ import TelltaleTestSupport
 
     // MARK: Usage limit
 
+    @Test func maximumSavedOrdinalDoesNotOverflow() throws {
+        try withScratchDirectory { home in
+            var builder = Self.session()
+            builder.userMessage(at: 1)
+            try builder.writePlain(codexHome: home)
+            let parsed = try Self.parse(home, cursor: SessionCursor(lastOrdinal: Int.max))
+            #expect(parsed.cursor.lastOrdinal == Int.max)
+        }
+    }
+    @Test func usageLimitPercentIsBounded() throws {
+        try withScratchDirectory { home in
+            var builder = Self.session()
+            builder.tokenCount(at: 3, usedPercent: 1e100, windowMinutes: 300, resetsAt: builder.date(3600))
+            try builder.writePlain(codexHome: home)
+            let limit = try #require(Self.parse(home).usageLimit)
+            #expect((0...100).contains(limit.usedPercent))
+        }
+    }
     @Test func usageLimitSnapshotFromTokenCount() throws {
         try withScratchDirectory { home in
             var builder = Self.session()
