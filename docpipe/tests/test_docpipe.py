@@ -158,11 +158,19 @@ def test_pdf_without_text_extractor_is_failure(monkeypatch, tmp_path):
 
 
 def test_invalid_docx_without_fallback_is_failure(monkeypatch, tmp_path):
+    import zipfile
     module = load_docpipe_module()
     monkeypatch.setattr(module, 'HAS_PANDOC', False)
     source = tmp_path / 'sample.docx'
-    source.write_bytes(b'synthetic')
+    with zipfile.ZipFile(source, 'w') as archive:
+        archive.writestr('synthetic.txt', 'not a document')
+    attempted = []
+    def fail_document(path):
+        attempted.append(path)
+        raise ValueError('synthetic parse failure')
+    monkeypatch.setattr(module.docx, 'Document', fail_document)
     assert module.run_convert(make_args(source, tmp_path / 'out', False)) != 0
+    assert attempted
 
 
 def test_rejects_oversized_expanded_office_file(monkeypatch, tmp_path):
