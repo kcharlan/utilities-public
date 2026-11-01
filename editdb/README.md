@@ -80,9 +80,9 @@ the SQL console or another SQLite migration tool when those objects matter.
 CSV imports commit every 1,000 rows. If a later batch fails, rows from earlier
 committed batches remain in the database.
 
-The grid only recognizes the first component of a composite primary key when
-locating rows. Use the SQL console or another SQLite client to update or delete
-rows in tables with composite primary keys.
+The grid uses all components of a composite primary key to locate a row. An
+update or deletion is rejected if its key no longer identifies exactly one row.
+Large integers are returned as strings and BLOBs as hex objects in JSON.
 
 ## Architecture
 

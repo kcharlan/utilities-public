@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sqlite3
 import sys
 import threading
@@ -26,6 +27,64 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
+
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
+def json_row(row):
+    def encode(value):
+        if isinstance(value, bytes):
+            return {'$blob': value.hex()}
+        if isinstance(value, int) and abs(value) > 9007199254740991:
+            return str(value)
+        return value
+    return {key: encode(value) for key, value in dict(row).items()}
+
+def sql_value(value):
+    if isinstance(value, dict) and set(value) == {'$blob'}:
+        try:
+            return bytes.fromhex(value['$blob'])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail='Invalid BLOB key')
+    return value
+
+def find_free_port(preferred):
+    for port in range(preferred, min(preferred + 20, 65536)):
+        with socket.socket() as sock:
+            try:
+                sock.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                pass
+    raise RuntimeError(f'No free port in range starting at {preferred}')
 
 
 def parse_args():
@@ -197,6 +256,7 @@ MAX_QUERY_RESULTS = 10000
 # --- FastAPI App ---
 
 app = FastAPI(title="EditDB API")
+app.add_middleware(LocalOriginGuard)
 db_manager: Optional[DBManager] = None
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -236,7 +296,7 @@ async def execute_query(sql: SQLQuery):
                 if cursor.fetchone():
                     truncated = True
                 
-                result = {"columns": columns, "rows": [dict(r) for r in rows]}
+                result = {"columns": columns, "rows": [json_row(r) for r in rows]}
                 if truncated:
                     result["truncated"] = True
                     result["message"] = f"Results limited to {MAX_QUERY_RESULTS} rows"
@@ -344,7 +404,7 @@ async def get_row_preview(table_name: str, pk_value: str):
         row = cursor.fetchone()
         if not row:
             return {"row": None, "schema": schema}
-        return {"row": dict(row), "schema": schema}
+        return {"row": json_row(row), "schema": schema}
 
 @app.get("/api/table/{table_name}/full")
 async def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
@@ -356,7 +416,7 @@ async def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset
         schema = db_manager.get_schema(table_name)
         # Data
         cursor.execute(f"SELECT * FROM {quote_identifier(table_name)} LIMIT ? OFFSET ?", (limit, offset))
-        data = [dict(row) for row in cursor.fetchall()]
+        data = [json_row(row) for row in cursor.fetchall()]
         # FKs
         fks = db_manager.get_fks(table_name)
         # Count
@@ -379,7 +439,7 @@ async def export_data(table_name: str, fmt: str):
         rows = [dict(row) for row in cursor.fetchall()]
         
         if fmt == "json":
-            content = json.dumps(rows, indent=2)
+            content = json.dumps([json_row(row) for row in rows], indent=2)
             return StreamingResponse(
                 io.BytesIO(content.encode()),
                 media_type="application/json",
@@ -409,7 +469,7 @@ async def import_data(table_name: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
     
     # Finding 8: Add size limit
-    content = await file.read()
+    content = await file.read(MAX_IMPORT_SIZE + 1)
     if len(content) > MAX_IMPORT_SIZE:
         raise HTTPException(status_code=413, detail=f"File too large (max {MAX_IMPORT_SIZE/1024/1024}MB)")
 
@@ -465,7 +525,7 @@ async def get_data(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int 
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT * FROM {quote_identifier(table_name)} LIMIT ? OFFSET ?", (limit, offset))
-        return [dict(row) for row in cursor.fetchall()]
+        return [json_row(row) for row in cursor.fetchall()]
 
 @app.get("/api/count/{table_name}")
 async def get_count(table_name: str):
@@ -522,10 +582,15 @@ async def update_row(table_name: str, payload: Dict[str, Any]):
             where_clause = " AND ".join([f"{quote_identifier(k)} = ?" for k in where_keys])
             set_clause = ", ".join([f"{quote_identifier(k)} = ?" for k in set_keys])
             sql = f"UPDATE {quote_identifier(table_name)} SET {set_clause} WHERE {where_clause}"
-            params = list(payload['values'].values()) + list(payload['where'].values())
-            conn.execute(sql, params)
+            params = list(payload['values'].values()) + [sql_value(v) for v in payload['where'].values()]
+            cursor = conn.execute(sql, params)
+            if cursor.rowcount != 1:
+                conn.rollback()
+                raise HTTPException(status_code=409, detail='Row no longer uniquely identifies one record')
             conn.commit()
             return {"status": "success"}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -538,9 +603,14 @@ async def delete_row(table_name: str, where: Dict[str, Any]):
             for k in where_keys: validate_identifier(k)
             where_clause = " AND ".join([f"{quote_identifier(k)} = ?" for k in where_keys])
             sql = f"DELETE FROM {quote_identifier(table_name)} WHERE {where_clause}"
-            conn.execute(sql, list(where.values()))
+            cursor = conn.execute(sql, [sql_value(v) for v in where.values()])
+            if cursor.rowcount != 1:
+                conn.rollback()
+                raise HTTPException(status_code=409, detail='Row no longer uniquely identifies one record')
             conn.commit()
             return {"status": "success"}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -2031,9 +2101,9 @@ const {focusOnMount} = frontendKit;
 
                         const targetIdx = (result.data || []).findIndex(row => String(row[fkTo]) === String(fkValue));
                         if (targetIdx >= 0) {
-                            const pkCols = (result.schema || []).filter(s => s.pk === 1).map(s => s.name);
+                            const pkCols = (result.schema || []).filter(s => s.pk > 0).map(s => s.name);
                             const targetRow = result.data[targetIdx];
-                            setHighlightKey(pkCols.length > 0 ? pkCols.map(c => targetRow[c]).join('|') : JSON.stringify(targetRow));
+                            setHighlightKey(pkCols.length > 0 ? JSON.stringify(pkCols.map(c => targetRow[c])) : JSON.stringify(targetRow));
                         } else {
                             setHighlightKey(null);
                         }
@@ -2057,8 +2127,8 @@ const {focusOnMount} = frontendKit;
             }, [highlightKey, data]);
 
             const getRowKey = (row) => {
-                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
-                if (pkCols.length > 0) return pkCols.map(c => row[c]).join('|');
+                const pkCols = schema.filter(s => s.pk > 0).map(s => s.name);
+                if (pkCols.length > 0) return JSON.stringify(pkCols.map(c => row[c]));
                 return JSON.stringify(row);
             };
 
@@ -2770,8 +2840,8 @@ const {focusOnMount} = frontendKit;
             const tooltipTimeout = useRef(null);
 
             const getRowKey = (row) => {
-                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
-                if (pkCols.length > 0) return pkCols.map(c => row[c]).join('|');
+                const pkCols = schema.filter(s => s.pk > 0).map(s => s.name);
+                if (pkCols.length > 0) return JSON.stringify(pkCols.map(c => row[c]));
                 return JSON.stringify(row); // Fallback
             };
 
@@ -2844,16 +2914,17 @@ const {focusOnMount} = frontendKit;
 
             const deleteRow = async (row) => {
                 if (!confirm("Delete this row?")) return;
-                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                const pkCols = schema.filter(s => s.pk > 0).map(s => s.name);
                 const where = {};
                 pkCols.forEach(c => where[c] = row[c]);
                 
-                await fetch(`/api/data/${table}/delete`, {
+                const res = await fetch(`/api/data/${table}/delete`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(where)
                 });
-                refresh();
+                if (res.ok) refresh();
+                else alert('Delete failed: ' + await res.text());
             };
 
             const startRowEdit = (row) => {
@@ -2863,7 +2934,7 @@ const {focusOnMount} = frontendKit;
             };
 
             const saveRowEdit = async (row) => {
-                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                const pkCols = schema.filter(s => s.pk > 0).map(s => s.name);
                 if (pkCols.length === 0) {
                     alert("Updating requires a Primary Key.");
                     return;
@@ -2873,20 +2944,25 @@ const {focusOnMount} = frontendKit;
                 
                 const values = {};
                 schema.forEach(col => {
-                    if (col.pk === 0) values[col.name] = editBuffer[col.name];
+                    if (col.pk === 0 && editBuffer[col.name] !== row[col.name]) values[col.name] = editBuffer[col.name];
                 });
+
+                if (Object.keys(values).length === 0) {
+                    setEditingRowKey(null);
+                    return;
+                }
 
                 const res = await fetch(`/api/data/${table}`, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ where, values })
                 });
-                if (res.ok) refresh();
-                setEditingRowKey(null);
+                if (res.ok) { refresh(); setEditingRowKey(null); }
+                else alert('Update failed: ' + await res.text());
             };
 
             const updateCell = async (row, colName, newValue) => {
-                const pkCols = schema.filter(s => s.pk === 1).map(s => s.name);
+                const pkCols = schema.filter(s => s.pk > 0).map(s => s.name);
                 if (pkCols.length === 0) {
                     alert("Updating requires a Primary Key.");
                     return;
@@ -2927,7 +3003,7 @@ const {focusOnMount} = frontendKit;
                                                 const fk = getFKInfo(col.name);
                                                 return (
                                                     htmlTag`<td key=${col.name} class=${`px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs ${isCellEditing || isRowEditing ? 'p-0' : 'cursor-text'}`} onDblClick=${() => !isRowEditing && setEditingCell({ rowKey, colName: col.name })}>${isRowEditing ? (
-                                                            htmlTag`<input value=${editBuffer[col.name] || ""} disabled=${col.pk === 1} onInput=${(e) => setEditBuffer({...editBuffer, [col.name]: e.target.value})} class=${`w-full h-full px-4 py-3 focus:outline-none ${col.pk === 1 ? 'bg-slate-100/50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500' : 'bg-white dark:bg-slate-800 focus:ring-1 focus:ring-blue-400'}`} />`
+                                                            htmlTag`<input value=${editBuffer[col.name] ?? ""} disabled=${col.pk > 0} onInput=${(e) => setEditBuffer({...editBuffer, [col.name]: e.target.value})} class=${`w-full h-full px-4 py-3 focus:outline-none ${col.pk > 0 ? 'bg-slate-100/50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500' : 'bg-white dark:bg-slate-800 focus:ring-1 focus:ring-blue-400'}`} />`
                                                         ) : isCellEditing ? (
                                                             htmlTag`<${CellEditor} value=${row[col.name]} onCommit=${(newValue) => updateCell(row, col.name, newValue)} onCancel=${() => setEditingCell(null)} />`
                                                         ) : (
@@ -3461,16 +3537,19 @@ def main():
         sys.exit(1)
         
     db_manager = DBManager(args.db_path)
+    port = find_free_port(args.port)
+    if port != args.port:
+        logger.warning("Port %s is in use; using port %s instead.", args.port, port)
     
     logger.info(f"🚀 EditDB starting for: {args.db_path}")
-    logger.info(f"📡 API available at http://127.0.0.1:{args.port}/api")
+    logger.info(f"📡 API available at http://127.0.0.1:{port}/api")
     
     if not testing_mode_enabled():
-        threading.Thread(target=open_browser, args=(args.port,), daemon=True).start()
+        threading.Thread(target=open_browser, args=(port,), daemon=True).start()
     
     # Security: Bind to 127.0.0.1 only (not 0.0.0.0) to prevent network access
-    # No CORS headers needed since we only serve localhost requests
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+    # The origin guard also rejects requests from other sites.
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 if __name__ == "__main__":
     main()

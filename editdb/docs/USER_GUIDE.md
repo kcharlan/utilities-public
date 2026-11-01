@@ -142,7 +142,7 @@ Click the **pencil icon** on the left side of a row to enter bulk edit mode. All
 
 Primary-key fields are disabled in bulk edit mode. Tables without a primary key can be browsed and appended to, but EditDB cannot update or delete their rows through the grid.
 
-The grid does not fully support composite primary keys: it uses only the first key component to locate a row. Updating or deleting through the grid could therefore affect multiple rows that share that value. Use the SQL Console or another SQLite client for those tables.
+The grid uses every component of a composite primary key to locate a row. If a key no longer identifies exactly one row, the update or deletion is rejected.
 
 ### Add a Row
 
