@@ -114,7 +114,8 @@ The extension's `background.js` script is the core of the extension. It performs
 3.  **Usage detection:** Each qualifying, non-debounced POST increments that
     hostname's pending request count by one. Gemini WebChannel prompt messages
     are classified by message type and durable transport identity instead and
-    are not debounced. Updates to
+    are not debounced. WebChannel requests count only when their initiator is
+    the Gemini origin. Updates to
     the pending counts are queued so overlapping updates are not lost.
 
 4.  **Data Buffering:** `delivery.js` owns local accounting through a serialized
@@ -203,10 +204,12 @@ Redaction (`capture_redact.js`) replaces the value of any query parameter,
 form field, header or JSON member whose name looks like a credential or
 session or account identifier (`SID`, `gsessionid`, `f.sid`, `at`, `verify`,
 cookies, `Authorization`, API keys, account and device ids, and similar), plus
-OAuth, `Bearer`, `SAPISIDHASH` and Google API-key tokens wherever they appear,
+OAuth, `Bearer`, `Basic`, `SAPISIDHASH`, JWT and API-key tokens and email
+addresses wherever they appear,
 including percent-encoded. Valid JSON is inspected structurally: a sensitive
 member's entire value is replaced, including objects, arrays, and scalar values.
-Nested JSON and URL strings use the same policy. Header blocks carried in
+Nested JSON and URL strings use the same policy, including named value records
+and two-element name/value pairs. Header blocks carried in
 `$httpHeaders` are recognized even when they contain only one line. `Location`,
 `Content-Location`, `Referer`, `Refresh`, and `Link` URL targets are sanitized,
 including relative targets. Unchanged query values keep their original encoding.

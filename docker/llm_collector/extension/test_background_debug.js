@@ -9,7 +9,7 @@ test("logs a Gemini processSession POST without a prompt message, uncounted", as
   const bg = loadBackground();
   assert.ok(bg.filterMatches(PROCESS_SESSION), "processSession host is not observed");
 
-  bg.request(PROCESS_SESSION);
+  bg.fire('onBeforeRequest', {requestId:'synthetic-1', method:'POST', type:'xmlhttprequest', tabId:7, url:PROCESS_SESSION, initiator:'https://gemini.google.com'});
   const status = await bg.status();
 
   assert.deepEqual(
@@ -36,7 +36,7 @@ test("debug records survive a service-worker restart", async () => {
   const sessionStore = {};
   const localStore = {};
   const first = loadBackground({ sessionStore, localStore });
-  first.request(PROCESS_SESSION);
+  first.fire('onBeforeRequest', {requestId:'synthetic-2', method:'POST', type:'xmlhttprequest', tabId:7, url:PROCESS_SESSION, initiator:'https://gemini.google.com'});
   await first.status();
   await tick();
 

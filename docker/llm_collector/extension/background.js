@@ -267,7 +267,10 @@ chrome.webRequest.onBeforeRequest.addListener(
       const u = new URL(d.url);
 
       if (deniedByHost(u)) { dbgPush("host-deny", d, u, "deny rule"); return; }
-      if (isGeminiChannel(u)) { countGeminiChannel(d, u); return; }
+      if (isGeminiChannel(u)) {
+        if (d.initiator === 'https://gemini.google.com') countGeminiChannel(d, u);
+        return;
+      }
       if (!allowedByHost(u)) { dbgPush("not-allowlisted", d, u, "no allow"); return; }
       if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
       if (!passesDebounce(d, u)) { dbgPush("debounced", d, u, `window=${DEDUPE_WINDOW_MS}ms`); return; }
