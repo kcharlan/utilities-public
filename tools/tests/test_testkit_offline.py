@@ -324,3 +324,24 @@ def test_websocket_probe_returns_after_accept_for_live_connection():
         await send({'type': 'websocket.accept'})
         await asyncio.Event().wait()
     assert testkit.probe_websocket(app, '/ws', host='localhost:8000', origin='http://localhost:8000') == 'accept'
+
+
+def test_websocket_probe_blocks_after_connect_and_cancels_live_receive():
+    import sys
+    program = '''
+from tools.testkit import probe_websocket
+
+async def app(scope, receive, send):
+    try:
+        assert await receive() == {"type": "websocket.connect"}
+        await send({"type": "websocket.accept"})
+        message = await receive()
+        raise AssertionError(f"unexpected second event: {message}")
+    finally:
+        print("cleaned up")
+
+assert probe_websocket(app, "/ws", host="localhost:8000", origin="http://localhost:8000") == "accept"
+'''
+    result = subprocess.run([sys.executable, '-c', program], capture_output=True, text=True, timeout=3)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'cleaned up'

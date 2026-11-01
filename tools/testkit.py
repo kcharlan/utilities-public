@@ -86,10 +86,15 @@ def _probe(app, scope):
     async def run():
         messages = []
         ready = asyncio.Event()
+        connected = False
 
         async def receive():
+            nonlocal connected
             if scope['type'] == 'websocket':
-                return {'type': 'websocket.connect'}
+                if not connected:
+                    connected = True
+                    return {'type': 'websocket.connect'}
+                await asyncio.Event().wait()
             return {'type': 'http.request', 'body': b'', 'more_body': False}
 
         async def send(message):
