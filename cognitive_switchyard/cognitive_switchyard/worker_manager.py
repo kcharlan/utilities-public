@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Callable, Mapping, TextIO
 
 from .models import PackManifest, WorkerAlert, WorkerProgressState, WorkerResult, WorkerSnapshot
-from .agent_runtime import PROCESS_LOG_CAP_BYTES, _signal_process_group
+from .agent_runtime import PROCESS_LOG_CAP_BYTES
+from .process_identity import OwnedProcessGroup, ProcessGroupInspectionError, owned_group_members, signal_owned_group
 from .pack_loader import resolve_pack_hook_path
 from .parsers import ArtifactParseError, parse_progress_line, parse_status_sidecar
 
@@ -67,6 +68,7 @@ class _ActiveWorker:
     log_path: Path
     task_log_path: Path | None
     process: subprocess.Popen[str]
+    group: OwnedProcessGroup
     log_handle: TextIO
     task_log_handle: TextIO | None
     started_at: float
@@ -91,6 +93,8 @@ class _ActiveWorker:
     task_max_warning_emitted: bool = False
     readers: list[threading.Thread] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    lifecycle_lock: threading.RLock = field(default_factory=threading.RLock)
+    group_error: Exception | None = None
 
 
 class WorkerManager:
@@ -164,6 +168,7 @@ class WorkerManager:
             log_path=log_path,
             task_log_path=resolved_task_log_path,
             process=process,
+            group=OwnedProcessGroup.capture(process),
             log_handle=log_handle,
             task_log_handle=task_log_handle,
             started_at=started_at,
@@ -195,7 +200,7 @@ class WorkerManager:
             progress = worker.progress
             alerts = tuple(worker.pending_alerts)
             worker.pending_alerts.clear()
-        exit_code = worker.process.poll()
+        exit_code = worker.process.returncode
         with worker.lock:
             last_output_at = worker.last_output_at
             task_idle = worker.task_idle
@@ -297,31 +302,42 @@ class WorkerManager:
         timeout_kind: str = "session_max",
     ) -> None:
         worker = self._get_worker(slot_number)
-        now = self._clock()
-        if worker.finalized:
-            return
-        if worker.process.poll() is not None:
+        with worker.lifecycle_lock:
+            now = self._clock()
+            if worker.finalized:
+                return
             self._refresh_worker(worker)
-            return
-        self._terminate_worker(
-            worker,
-            timeout_kind=timeout_kind,
-            reason=reason,
-            now=now,
-        )
+            if worker.finalized:
+                return
+            self._terminate_worker(
+                worker,
+                timeout_kind=timeout_kind,
+                reason=reason,
+                now=now,
+            )
 
     def _refresh_worker(self, worker: _ActiveWorker) -> None:
+        with worker.lifecycle_lock:
+            self._refresh_worker_locked(worker)
+
+    def _refresh_worker_locked(self, worker: _ActiveWorker) -> None:
         with worker.lock:
             if worker.finalized:
                 return
 
         now = self._clock()
-        exit_code = worker.process.poll()
-        if exit_code is None:
+        if worker.group_error is not None:
+            raise worker.group_error
+        try:
+            members = owned_group_members(worker.group)
+        except (PermissionError, ProcessGroupInspectionError) as exc:
+            worker.group_error = exc
+            raise
+        leader_exited = any(pid == worker.process.pid and state == 5 for pid, _, state in members)
+        if not leader_exited:
             self._enforce_timeouts(worker, now)
-            exit_code = worker.process.poll()
 
-        if exit_code is not None:
+        if leader_exited:
             self._finalize_worker(worker)
 
     def _enforce_timeouts(self, worker: _ActiveWorker, now: float) -> None:
@@ -330,7 +346,7 @@ class WorkerManager:
         with worker.lock:
             if worker.terminate_sent_at is not None:
                 if now - worker.terminate_sent_at >= self._kill_grace_period:
-                    _signal_process_group(worker.process.pid, signal.SIGKILL)
+                    self._signal_owned_worker(worker, signal.SIGKILL)
                     worker.kill_escalated = True
                 return
 
@@ -454,11 +470,21 @@ class WorkerManager:
             worker.terminate_sent_at = now
         # Queue error alert so the frontend banner escalates from warning to error
         self._queue_alert(worker, severity="error", message=reason)
-        _signal_process_group(worker.process.pid, signal.SIGTERM)
+        self._signal_owned_worker(worker, signal.SIGTERM)
+
+    def _signal_owned_worker(self, worker: _ActiveWorker, sig: int) -> None:
+        if worker.group_error is not None:
+            raise worker.group_error
+        try:
+            signal_owned_group(worker.group, sig)
+        except (PermissionError, ProcessGroupInspectionError) as exc:
+            worker.group_error = exc
+            raise
 
     def _finalize_worker(self, worker: _ActiveWorker) -> None:
         # A descendant can keep the pipes open after the leader exits.
-        _signal_process_group(worker.process.pid, signal.SIGKILL)
+        self._signal_owned_worker(worker, signal.SIGKILL)
+        worker.process.wait()
         for reader in worker.readers:
             reader.join(timeout=5.0)
         worker.log_handle.flush()

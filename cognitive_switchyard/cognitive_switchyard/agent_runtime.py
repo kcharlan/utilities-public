@@ -21,6 +21,7 @@ PROCESS_LOG_CAP_BYTES = 1024 * 1024
 _PROCESS_KILL_GRACE_SECONDS = 0.5
 
 from .models import FixerAttemptResult, FixerContext, PackManifest
+from .process_identity import OwnedProcessGroup, owned_group_members, signal_owned_group
 
 
 _SENSITIVE_PATTERNS = [
@@ -232,27 +233,26 @@ class ClaudeCliRuntime:
     ) -> str:
         effective_task_id = task_id_override or phase
         prompt_text = _load_prompt_bundle(prompt_path)
+        full_prompt = f"{prompt_text}\n\n{input_text}"
         command = [
             self.command,
-            "--dangerously-skip-permissions",
             "--model",
             model,
             "--output-format",
             "stream-json",
             "--verbose",
             "-p",
-            prompt_text,
         ]
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Claude CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=input_text)
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
                     cwd=session_root,
-                    input_text=input_text,
+                    input_text=full_prompt,
                     line_callback=_make_detail_extracting_callback(effective_task_id, self._output_line_callback),
                 )
             self._output_line_callback(
@@ -263,7 +263,7 @@ class ClaudeCliRuntime:
             completed = self._subprocess_runner(
                 command=command,
                 cwd=session_root,
-                input_text=input_text,
+                input_text=full_prompt,
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -476,7 +476,6 @@ class CodexCliRuntime:
         command = [
             self.command,
             "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
             "--json",
             "-m",
             model,
@@ -687,7 +686,8 @@ def _default_subprocess_runner(
     # Strip CLAUDECODE env var so child Claude CLI sessions don't refuse to
     # launch when the orchestrator itself is running inside Claude Code.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text)
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
+                                fail_on_stdout_truncation=True)
 
 
 def _streaming_subprocess_runner(
@@ -703,14 +703,8 @@ def _streaming_subprocess_runner(
     the non-streaming runner.
     """
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text, line_callback=line_callback)
-
-
-def _signal_process_group(pid: int, sig: int) -> None:
-    try:
-        os.killpg(pid, sig)
-    except ProcessLookupError:
-        pass
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
+                                line_callback=line_callback, fail_on_stdout_truncation=True)
 
 
 def _decode_capture(data: bytes) -> str:
@@ -719,14 +713,16 @@ def _decode_capture(data: bytes) -> str:
 
 
 def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None, shell=False,
-                         merge_stderr=False):
+                         merge_stderr=False, fail_on_stdout_truncation=False):
     """Capture bounded output and stop the entire process group on timeout."""
     proc = subprocess.Popen(command, cwd=cwd, env=env, shell=shell, start_new_session=True,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
+    group = OwnedProcessGroup.capture(proc)
     captures = [bytearray(), bytearray()]
+    was_truncated = [False, False]
 
-    def read_stream(stream, capture, callback):
+    def read_stream(stream, capture, callback, index):
         pending = b""
         truncated = False
         try:
@@ -734,6 +730,7 @@ def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None
                 capture.extend(chunk)
                 if len(capture) > PROCESS_LOG_CAP_BYTES:
                     del capture[:-PROCESS_LOG_CAP_BYTES]
+                    was_truncated[index] = True
                     if not truncated:
                         _logger.warning("Process output truncated to retain recent output")
                         truncated = True
@@ -761,27 +758,44 @@ def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None
         except (BrokenPipeError, OSError, ValueError):
             pass
 
-    readers = [threading.Thread(target=read_stream, args=(proc.stdout, captures[0], line_callback), daemon=True)]
+    readers = [threading.Thread(target=read_stream, args=(proc.stdout, captures[0], line_callback, 0), daemon=True)]
     if proc.stderr is not None:
-        readers.append(threading.Thread(target=read_stream, args=(proc.stderr, captures[1], None), daemon=True))
-    for thread in readers:
-        thread.start()
-    writer = threading.Thread(target=write_input, daemon=True)
-    writer.start()
-    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if proc.poll() is not None and not any(thread.is_alive() for thread in readers):
-            break
-        time.sleep(0.01)
-    else:
-        _signal_process_group(proc.pid, signal.SIGTERM)
+        readers.append(threading.Thread(target=read_stream, args=(proc.stderr, captures[1], None, 1), daemon=True))
+    def stop_process():
+        signal_owned_group(group, signal.SIGTERM)
         time.sleep(_PROCESS_KILL_GRACE_SECONDS)
-        _signal_process_group(proc.pid, signal.SIGKILL)
+        signal_owned_group(group, signal.SIGKILL)
         proc.wait()
         for thread in readers:
-            thread.join(timeout=1)
+            if thread.ident is not None:
+                thread.join(timeout=1)
+
+    try:
+        for thread in readers:
+            thread.start()
+        writer = threading.Thread(target=write_input, daemon=True)
+        writer.start()
+        deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+        timed_out = True
+        while time.monotonic() < deadline:
+            if not any(thread.is_alive() for thread in readers):
+                members = owned_group_members(group)
+                if any(pid == proc.pid and state == 5 for pid, _, state in members):
+                    signal_owned_group(group, signal.SIGKILL)
+                    proc.wait()
+                    timed_out = False
+                    break
+            time.sleep(0.01)
+    except (KeyboardInterrupt, SystemExit):
+        stop_process()
+        raise
+    if timed_out:
+        stop_process()
         return subprocess.CompletedProcess(command, 124, _decode_capture(captures[0]),
                                            _decode_capture(captures[1] + b"\nProcess timed out"))
+    if fail_on_stdout_truncation and was_truncated[0]:
+        return subprocess.CompletedProcess(command, proc.returncode or 125, _decode_capture(captures[0]),
+                                           _decode_capture(captures[1] + b"\nAgent output truncated"))
     return subprocess.CompletedProcess(command, proc.returncode, _decode_capture(captures[0]),
                                        _decode_capture(captures[1]))
 
