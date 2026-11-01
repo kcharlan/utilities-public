@@ -128,13 +128,12 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
 
         def create_scrape(self, **kwargs):
             assert kwargs["saved_snapshot"] is save
+            self.saved = kwargs["snapshot_models"] is not None
+            self.recorded = bool(kwargs["deltas"])
+            if save:
+                assert kwargs["snapshot_models"] == (new_model,)
+                assert kwargs["deltas"] == (delta,)
             return 11
-
-        def save_snapshot_models(self, **kwargs):
-            self.saved = True
-
-        def record_field_changes(self, **kwargs):
-            self.recorded = True
 
     store = FakeStore()
     loaded = type(

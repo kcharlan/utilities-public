@@ -4,7 +4,7 @@ import gzip
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -386,6 +386,8 @@ class Store:
         saved_snapshot: bool,
         model_count: int,
         error_message: str | None,
+        snapshot_models: list[NormalizedModel] | None = None,
+        deltas: tuple[ModelDelta, ...] = (),
     ) -> int:
         started_at = to_storage_timestamp(started_at)
         completed_at = to_storage_timestamp(completed_at)
@@ -410,11 +412,25 @@ class Store:
                     error_message,
                 ),
             )
+            if snapshot_models is not None:
+                self.save_snapshot_models(
+                    scrape_id=int(cursor.lastrowid), provider_id=provider_id,
+                    models=snapshot_models, connection=connection,
+                )
+                self.record_field_changes(
+                    provider_id=provider_id, from_scrape_id=baseline_scrape_id,
+                    to_scrape_id=int(cursor.lastrowid), deltas=deltas,
+                    detected_at=completed_at, connection=connection,
+                )
             connection.commit()
             return int(cursor.lastrowid)
 
-    def save_snapshot_models(self, *, scrape_id: int, provider_id: str, models: list[NormalizedModel]) -> None:
-        with self._connect() as connection:
+    def save_snapshot_models(
+        self, *, scrape_id: int, provider_id: str, models: list[NormalizedModel],
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        owns_connection = connection is None
+        with self._connect() if owns_connection else nullcontext(connection) as connection:
             for model in models:
                 connection.execute(
                     """
@@ -453,7 +469,8 @@ class Store:
                         model.metadata_json,
                     ),
                 )
-            connection.commit()
+            if owns_connection:
+                connection.commit()
 
     def record_field_changes(
         self,
@@ -463,9 +480,11 @@ class Store:
         to_scrape_id: int,
         deltas: tuple[ModelDelta, ...],
         detected_at: str,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         detected_at = to_storage_timestamp(detected_at)
-        with self._connect() as connection:
+        owns_connection = connection is None
+        with self._connect() if owns_connection else nullcontext(connection) as connection:
             for delta in deltas:
                 if delta.kind in {"added", "removed"}:
                     connection.execute(
@@ -510,7 +529,8 @@ class Store:
                             detected_at,
                         ),
                     )
-            connection.commit()
+            if owns_connection:
+                connection.commit()
 
     def get_latest_saved_baseline(self, provider_id: str) -> BaselineInfo | None:
         with self._connect() as connection:

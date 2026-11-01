@@ -401,6 +401,10 @@ If a provider has no baseline, compare-only mode reports that condition and
 does not fetch that provider. Create the baseline explicitly with
 `scan --save`.
 
+A provider returning an empty catalog after a non-empty baseline is reported
+as an error and its saved baseline is retained. Catalog and history writes
+are committed together; a failed provider does not stop scans of others.
+
 ### Scan and Save Options
 
 ```bash
