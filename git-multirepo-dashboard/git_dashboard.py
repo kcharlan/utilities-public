@@ -6582,7 +6582,12 @@ async def scan_progress_sse(scan_id: int):
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=60)
                 except asyncio.TimeoutError:
-                    break
+                    if (_active_scan_id != scan_id or _scan_task is None
+                            or _scan_task.done()):
+                        break
+                    # An SSE comment keeps the stream open without altering UI state.
+                    yield ": scan still running\n\n"
+                    continue
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("completed", "failed"):
                     break

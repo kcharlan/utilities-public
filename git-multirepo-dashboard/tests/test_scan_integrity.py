@@ -73,10 +73,59 @@ def test_progress_stream_ends_when_queue_stalls():
         response = await app.scan_progress_sse(12345)
         async def timeout(coro, timeout):
             coro.close()
+            assert timeout == 60
             raise asyncio.TimeoutError
         with patch.object(app.asyncio, 'wait_for', side_effect=timeout):
             assert [chunk async for chunk in response.body_iterator] == []
         assert 12345 not in app._scan_queues
+    asyncio.run(check())
+
+
+def test_progress_stream_keeps_active_scan_until_completion():
+    async def check():
+        app._active_scan_id = 12346
+        app._scan_task = asyncio.current_task()
+        response = await app.scan_progress_sse(12346)
+        calls = 0
+        async def wait(coro, timeout):
+            nonlocal calls
+            coro.close()
+            assert timeout == 60
+            calls += 1
+            if calls == 1:
+                raise asyncio.TimeoutError
+            return {'status': 'completed', 'progress': 1, 'total': 1}
+        try:
+            with patch.object(app.asyncio, 'wait_for', side_effect=wait):
+                chunks = [chunk async for chunk in response.body_iterator]
+            assert chunks[0].startswith(':')
+            assert '"completed"' in chunks[1]
+            assert 12346 not in app._scan_queues
+        finally:
+            app._active_scan_id = None
+            app._scan_task = None
+    asyncio.run(check())
+
+
+def test_progress_stream_closes_if_scan_task_has_ended():
+    async def check():
+        class FinishedTask:
+            def done(self):
+                return True
+        app._active_scan_id = 12347
+        app._scan_task = FinishedTask()
+        response = await app.scan_progress_sse(12347)
+        async def timeout(coro, timeout):
+            coro.close()
+            assert timeout == 60
+            raise asyncio.TimeoutError
+        try:
+            with patch.object(app.asyncio, 'wait_for', side_effect=timeout):
+                assert [chunk async for chunk in response.body_iterator] == []
+            assert 12347 not in app._scan_queues
+        finally:
+            app._active_scan_id = None
+            app._scan_task = None
     asyncio.run(check())
 
 

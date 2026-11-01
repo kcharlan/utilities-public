@@ -57,6 +57,75 @@ from tools.testkit import (  # noqa: E402
 GIT_DASHBOARD = PROJECT_ROOT / "git_dashboard.py"
 
 
+@pytest.fixture(scope="session")
+def browser_type_launch_args():
+    return {"headless": True}
+
+
+def test_long_running_scan_keeps_browser_progress(page, tmp_path):
+    """An idle interval during real scan work must not end the browser stream."""
+    repo = _create_git_repo(tmp_path, "slow_repo")
+    db_path = tmp_path / "state.db"
+    timeout_seen = tmp_path / "timeout-seen"
+    release = tmp_path / "release"
+    script = tmp_path / "server.py"
+    script.write_text('''
+import asyncio, sqlite3, sys
+from pathlib import Path
+import uvicorn
+sys.path.insert(0, sys.argv[1])
+import git_dashboard as app
+app.DB_PATH = Path(sys.argv[2])
+app.init_schema(app.DB_PATH)
+with sqlite3.connect(app.DB_PATH) as db:
+    db.execute("INSERT INTO repositories (id, name, path, added_at) VALUES ('r', 'slow_repo', ?, 'x')", (sys.argv[3],))
+seen, release = Path(sys.argv[4]), Path(sys.argv[5])
+real_asyncio = asyncio
+class AsyncioProxy:
+    def __getattr__(self, name):
+        return getattr(real_asyncio, name)
+    async def wait_for(self, coro, timeout):
+        try:
+            return await real_asyncio.wait_for(coro, timeout=0.1 if timeout == 60 else timeout)
+        except real_asyncio.TimeoutError:
+            seen.touch()
+            raise
+app.asyncio = AsyncioProxy()
+async def slow_history(*args):
+    while not release.exists():
+        await real_asyncio.sleep(0.01)
+async def no_op(*args):
+    pass
+app.run_full_history_scan = slow_history
+app.run_branch_scan = no_op
+app.run_dep_scan_for_repo = no_op
+uvicorn.run(app.app, host="127.0.0.1", port=int(sys.argv[6]), log_level="error")
+''')
+    port = _find_free_port()
+    env = dict(os.environ, GIT_DASHBOARD_NO_BROWSER="1")
+    proc = subprocess.Popen(
+        [sys.executable, str(script), str(PROJECT_ROOT), str(db_path), str(repo),
+         str(timeout_seen), str(release), str(port)], env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        assert _wait_for_server(port)
+        page.goto(f"http://127.0.0.1:{port}")
+        page.locator("header >> text=Full Scan").click()
+        deadline = time.monotonic() + 10
+        while not timeout_seen.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert timeout_seen.exists(), "stream did not reach the idle interval"
+        expect(page.locator("header >> text=Full Scan")).to_be_disabled()
+        assert "Scan failed" not in page.locator("body").inner_text()
+        release.touch()
+        expect(page.get_by_text("Scan complete", exact=False).first).to_be_visible(timeout=10000)
+    finally:
+        release.touch()
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
 def test_page_loads_offline(browser, server):
     context = browser.new_context()
     blocked = block_external_requests(context, allowed_origins=[server])

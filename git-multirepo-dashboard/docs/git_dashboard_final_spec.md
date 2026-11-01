@@ -171,7 +171,7 @@ The branch scanner replaces the stored local-branch snapshot after a successful 
 
 `POST /api/fleet/scan` accepts `{"type": "full"}` or `{"type": "deps"}` and returns a scan ID immediately. A module-level guard and a persisted `running` scan-log check reject overlap with HTTP 409.
 
-The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`, which closes after 60 seconds without an event. The active scan marker is cleared in a `finally` block; startup marks interrupted running scans as failed.
+The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`. After 60 seconds without an event, an active scan sends a keepalive; a stream without a live scan closes. The active scan marker is cleared in a `finally` block; startup marks interrupted running scans as failed.
 
 Missing repository paths and per-repository failures are recorded and do not prevent remaining repositories from being attempted. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
 
