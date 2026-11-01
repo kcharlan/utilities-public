@@ -170,7 +170,10 @@ Use the built-in control panel at `http://localhost:7711/configure` to create or
   repository.
 * **Host access:** Targets that use `http://localhost` or `http://127.0.0.1` automatically resolve to `host.docker.internal` so containers can proxy to apps running on your host OS. Override this mapping by setting `HOST_DOCKER_GATEWAY` on the `index` service if your Docker host exposes a different gateway name.
 * **Transparent proxying:** Common request bodies (including `application/x-www-form-urlencoded`) are streamed through without server-side parsing, preserving full POST/PUT behavior for upstream apps.
-* **Sticky routing for absolute paths:** When an app served from `/your-alias` makes follow-up requests to absolute paths (e.g., `/search`) while `Strip path` is enabled, the proxy remembers the client for a short window (5 minutes per IP+User-Agent) and continues routing those requests to the same upstream.
+* **Absolute paths:** Follow-up requests with a same-origin Referer under a
+  stripped-path alias route to that endpoint. Requests without that Referer
+  need the configured prefix; the proxy does not infer a route from client
+  identity, which could send cookies to a different application.
 * **Trust boundary:** The configuration API has no authentication. The default
   Nginx binding is loopback-only; do not expose the stack to an untrusted
   network without adding an access-control layer.

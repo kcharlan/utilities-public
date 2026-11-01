@@ -10,8 +10,6 @@ const CONFIG_ROOT = process.env.CONFIG_ROOT || '/mnt/config';
 const CONFIG_FILE = process.env.CONFIG_FILE || path.join(CONFIG_ROOT, 'endpoints.json');
 const HOST_GATEWAY = process.env.HOST_DOCKER_GATEWAY || 'host.docker.internal';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1']);
-const CLIENT_HINT_TTL_MS = 1000 * 60 * 5;
-const clientEndpointHints = new Map();
 const RESERVED_PREFIXES = ['/files', '/configure', '/api/py', '/api/node'];
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
@@ -33,27 +31,64 @@ class EndpointStore {
   constructor(filePath) {
     this.filePath = filePath;
     this.data = { endpoints: [], updatedAt: new Date().toISOString() };
+    this.error = null;
   }
 
   async init() {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    let raw;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.endpoints)) {
-        throw new Error('Invalid schema');
-      }
-      this.data = {
-        endpoints: parsed.endpoints.map((endpoint) => this.#sanitizeStoredEndpoint(endpoint)),
-        updatedAt: parsed.updatedAt || new Date().toISOString()
-      };
-      this.#sort();
+      raw = await fs.readFile(this.filePath, 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn('[configure] Failed to read config, recreating:', err.message);
+      if (err.code !== 'ENOENT') throw err;
+      try {
+        const recovery = JSON.parse(await fs.readFile(`${this.filePath}.recovery`, 'utf8'));
+        if (!recovery || !Array.isArray(recovery.endpoints) || typeof recovery.error !== 'string') throw new Error('Invalid recovery state');
+        this.data = { endpoints: recovery.endpoints.map((endpoint) => this.#sanitizeStoredEndpoint(endpoint)), updatedAt: recovery.updatedAt };
+        this.error = recovery.error;
+        this.#sort();
+      } catch (recoveryError) {
+        if (recoveryError.code !== 'ENOENT') throw recoveryError;
+        await this.#persist();
       }
-      await this.#persist();
+      return;
     }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.endpoints)) throw new Error('Invalid schema');
+    } catch (err) {
+      if (!(err instanceof SyntaxError) && err.message !== 'Invalid schema') throw err;
+      this.error = 'Configuration is corrupt; the original was quarantined.';
+      try {
+        const previous = JSON.parse(await fs.readFile(`${this.filePath}.last-good`, 'utf8'));
+        if (!previous || !Array.isArray(previous.endpoints)) throw new Error('Invalid last-good configuration');
+        this.data = { endpoints: previous.endpoints.map((endpoint) => this.#sanitizeStoredEndpoint(endpoint)), updatedAt: previous.updatedAt };
+        this.#sort();
+      } catch (backupError) {
+        if (backupError.code !== 'ENOENT') throw backupError;
+      }
+      await this.#quarantine();
+      return;
+    }
+    const endpoints = [];
+    for (const endpoint of parsed.endpoints) {
+      try {
+        endpoints.push(this.#sanitizeStoredEndpoint(endpoint));
+      } catch {
+        this.error = 'Configuration contained invalid entries; the original was quarantined.';
+      }
+    }
+    this.data = { endpoints, updatedAt: parsed.updatedAt || new Date().toISOString() };
+    this.#sort();
+    if (this.error) await this.#quarantine();
+    else await this.#writeAtomic(`${this.filePath}.last-good`, JSON.stringify(this.data, null, 2));
+  }
+
+  async #quarantine() {
+    await this.#writeAtomic(`${this.filePath}.recovery`, JSON.stringify({ ...this.data, error: this.error }, null, 2));
+    await fs.rename(this.filePath, `${this.filePath}.corrupt-${crypto.randomUUID()}`);
+    console.warn(`[configure] ${this.error}`);
   }
 
   list() {
@@ -122,11 +157,15 @@ class EndpointStore {
   }
 
   #sanitizeStoredEndpoint(endpoint) {
+    if (!endpoint || typeof endpoint !== 'object' || typeof endpoint.path !== 'string' ||
+        !endpoint.path.trim() || typeof endpoint.target !== 'string' || !endpoint.target.trim()) {
+      throw new ConfigError('Invalid stored endpoint.');
+    }
     return {
       id: endpoint.id || crypto.randomUUID(),
       name: String(endpoint.name || 'Untitled').trim() || 'Untitled Endpoint',
-      path: normalizePrefix(endpoint.path || '/placeholder'),
-      target: normalizeTarget(endpoint.target || 'http://example.com'),
+      path: normalizePrefix(endpoint.path),
+      target: normalizeTarget(endpoint.target),
       stripPath: Boolean(endpoint.stripPath ?? true),
       enabled: endpoint.enabled !== false,
       notes: typeof endpoint.notes === 'string' ? endpoint.notes : '',
@@ -175,9 +214,19 @@ class EndpointStore {
 
   async #persist() {
     this.data.updatedAt = new Date().toISOString();
-    const tmpPath = `${this.filePath}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(this.data, null, 2));
-    await fs.rename(tmpPath, this.filePath);
+    await this.#writeAtomic(this.filePath, JSON.stringify(this.data, null, 2));
+    await this.#writeAtomic(`${this.filePath}.last-good`, JSON.stringify(this.data, null, 2));
+    await fs.unlink(`${this.filePath}.recovery`).catch((err) => { if (err.code !== 'ENOENT') throw err; });
+  }
+
+  async #writeAtomic(filePath, contents) {
+    const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, contents, { flag: 'wx' });
+      await fs.rename(tmpPath, filePath);
+    } finally {
+      await fs.unlink(tmpPath).catch((err) => { if (err.code !== 'ENOENT') throw err; });
+    }
   }
 }
 
@@ -260,15 +309,20 @@ function remapLoopbackHost(url) {
 }
 
 async function ensureFileBrowserDir(reqPath) {
-  const reqPathname = decodeURIComponent(reqPath || '');
-  const fsPath = path.join(WEBROOT, reqPathname);
-  let stat;
+  const parts = (reqPath || '').split('/').filter(Boolean);
+  if (parts.some((part) => part.startsWith('.') || part === '..')) return null;
+  if (parts[0] === 'files') parts.shift();
   try {
-    stat = await fs.stat(fsPath);
-  } catch {
-    return WEBROOT;
+    const root = await fs.realpath(WEBROOT);
+    const candidate = await fs.realpath(path.join(root, ...parts));
+    const relative = path.relative(root, candidate);
+    if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative) ||
+        relative.split(path.sep).some((part) => part.startsWith('.'))) return null;
+    return (await fs.stat(candidate)).isDirectory() ? candidate : root;
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return fs.realpath(WEBROOT);
+    throw err;
   }
-  return stat.isDirectory() ? fsPath : WEBROOT;
 }
 
 function escapeHtml(value) {
@@ -334,9 +388,19 @@ async function inferTitle(filePath, fileName) {
 async function scanDir(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const visible = entries.filter((entry) => !entry.name.startsWith('.'));
-  const items = await Promise.all(visible.map(async (entry) => {
+  const items = (await Promise.all(visible.map(async (entry) => {
     const full = path.join(dir, entry.name);
-    const stat = await fs.stat(full);
+    let stat;
+    try {
+      const root = await fs.realpath(WEBROOT);
+      const resolved = await fs.realpath(full);
+      const relative = path.relative(root, resolved);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || relative.split(path.sep).some((part) => part.startsWith('.'))) return null;
+      stat = await fs.stat(resolved);
+    } catch (err) {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    }
     if (entry.isDirectory()) {
       return { type: 'dir', name: entry.name, mtime: stat.mtime };
     }
@@ -346,7 +410,7 @@ async function scanDir(dir) {
       title = await inferTitle(full, entry.name);
     }
     return { type: 'file', name: entry.name, title, ext, size: stat.size, mtime: stat.mtime };
-  }));
+  }))).filter(Boolean);
 
   items.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
@@ -697,6 +761,7 @@ function renderConfigureHtml(payload) {
     </main>
   </div>
   <div class="toast" role="status" id="toast"></div>
+  <div id="config-error" role="alert" style="display:none;position:fixed;bottom:24px;right:24px;padding:14px;background:#991b1b;color:white;border-radius:8px"></div>
   <script>
     const INITIAL_STATE = ${initialState};
   </script>
@@ -859,6 +924,11 @@ function renderConfigureHtml(payload) {
     }
 
     renderTable();
+    if (INITIAL_STATE.error) {
+      const warning = document.getElementById('config-error');
+      warning.textContent = INITIAL_STATE.error;
+      warning.style.display = 'block';
+    }
   </script>
 </body>
 </html>`;
@@ -868,17 +938,19 @@ async function serveConfigureUi(reply, store) {
   const html = renderConfigureHtml({
     endpoints: store.list(),
     reservedPrefixes: RESERVED_PREFIXES,
-    updatedAt: store.data.updatedAt
+    updatedAt: store.data.updatedAt,
+    error: store.error
   });
   reply.header('Cache-Control', 'no-store');
   reply.type('text/html; charset=utf-8').send(html);
 }
 
 async function serveFileBrowser(req, reply) {
-  const reqPath = decodeURIComponent(req.params['*'] || '');
+  const reqPath = req.params['*'] || '';
   const dir = await ensureFileBrowserDir(reqPath);
+  if (!dir) return reply.code(404).send({ error: 'Not found' });
   const items = await scanDir(dir);
-  const relative = path.relative(WEBROOT, dir);
+  const relative = path.relative(await fs.realpath(WEBROOT), dir);
   const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
   const displayPath = segments.length ? `/${segments.join('/')}/` : '/';
 
@@ -1207,7 +1279,7 @@ function getFileBrowserStyles() {
 function getRequestPath(req) {
   try {
     const url = new URL(req.raw.url, 'http://localhost');
-    return url.pathname || '/';
+    return decodeURIComponent(url.pathname) || '/';
   } catch {
     return '/';
   }
@@ -1223,18 +1295,10 @@ function buildForwardedFor(req) {
 
 function resolveEndpointForRequest(pathname, req, store) {
   const direct = store.match(pathname);
-  if (direct) {
-    rememberEndpointHint(req, direct.endpoint);
-    return direct;
-  }
+  if (direct) return direct;
   const refererEndpoint = matchByReferer(req, store);
   if (refererEndpoint) {
-    rememberEndpointHint(req, refererEndpoint);
     return { endpoint: refererEndpoint, remainder: pathname };
-  }
-  const stickyEndpoint = matchByClientHint(req, store);
-  if (stickyEndpoint) {
-    return { endpoint: stickyEndpoint, remainder: pathname };
   }
   return null;
 }
@@ -1245,6 +1309,7 @@ function matchByReferer(req, store) {
   let refPathname;
   try {
     const refUrl = new URL(referer);
+    if (refUrl.origin !== `http://${req.headers.host}`) return null;
     refPathname = refUrl.pathname || '/';
   } catch {
     return null;
@@ -1256,52 +1321,6 @@ function matchByReferer(req, store) {
   if (!endpoint.stripPath) return null;
   if (!pathMatches(refPath, endpoint.path)) return null;
   return endpoint;
-}
-
-function rememberEndpointHint(req, endpoint) {
-  if (!endpoint || !endpoint.stripPath) return;
-  const key = getClientHintKey(req);
-  if (!key) return;
-  clientEndpointHints.set(key, {
-    endpointId: endpoint.id,
-    expiresAt: Date.now() + CLIENT_HINT_TTL_MS
-  });
-  if (clientEndpointHints.size > 1000) {
-    pruneClientHints();
-  }
-}
-
-function matchByClientHint(req, store) {
-  const key = getClientHintKey(req);
-  if (!key) return null;
-  const hint = clientEndpointHints.get(key);
-  if (!hint) return null;
-  if (hint.expiresAt < Date.now()) {
-    clientEndpointHints.delete(key);
-    return null;
-  }
-  const endpoint = store.getById(hint.endpointId);
-  if (!endpoint || !endpoint.stripPath) {
-    clientEndpointHints.delete(key);
-    return null;
-  }
-  return endpoint;
-}
-
-function getClientHintKey(req) {
-  const base = req.headers['x-forwarded-for'] || req.ip;
-  if (!base) return null;
-  const ua = req.headers['user-agent'] || '';
-  return `${base}|${ua}`;
-}
-
-function pruneClientHints() {
-  const now = Date.now();
-  for (const [key, hint] of clientEndpointHints) {
-    if (hint.expiresAt < now) {
-      clientEndpointHints.delete(key);
-    }
-  }
 }
 
 async function maybeProxyDynamicEndpoint(req, reply, store, pathname = getRequestPath(req)) {
@@ -1336,6 +1355,17 @@ async function maybeProxyDynamicEndpoint(req, reply, store, pathname = getReques
 }
 
 const app = Fastify({ logger: false });
+app.addHook('onRequest', async (req, reply) => {
+  const port = process.env.PUBLIC_PORT ?? '7711';
+  const host = req.headers.host;
+  const raw = req.raw.rawHeaders || [];
+  const hosts = raw.filter((_, i) => i % 2 === 0 && raw[i].toLowerCase() === 'host').length;
+  const origins = raw.filter((_, i) => i % 2 === 0 && raw[i].toLowerCase() === 'origin').length;
+  if (!/^[1-9]\d*$/.test(port) || Number(port) > 65535 || hosts !== 1 || ![`localhost:${port}`, `127.0.0.1:${port}`].includes(host) ||
+      (!['GET', 'HEAD'].includes(req.method) && (origins !== 1 || req.headers.origin !== `http://${host}`))) {
+    return reply.code(403).send({ error: 'Forbidden' });
+  }
+});
 const RAW_PROXY_CONTENT_TYPES = [
   /^application\/x-www-form-urlencoded(?:;.*)?$/i
 ];
@@ -1361,7 +1391,8 @@ app.get('/configure/api/endpoints', async (req, reply) => {
   reply.send({
     endpoints: store.list(),
     reservedPrefixes: RESERVED_PREFIXES,
-    updatedAt: store.data.updatedAt
+    updatedAt: store.data.updatedAt,
+    error: store.error
   });
 });
 
@@ -1404,6 +1435,13 @@ app.all('/*', async (req, reply) => {
     return;
   }
 
+  if (RESERVED_PREFIXES.some((prefix) => pathMatches(pathname, prefix))) {
+    if (pathMatches(pathname, '/files') && ['GET', 'HEAD'].includes(req.method)) {
+      return serveFileBrowser(req, reply);
+    }
+    return reply.code(404).send({ error: 'Not found' });
+  }
+
   const proxied = await maybeProxyDynamicEndpoint(req, reply, store, pathname);
   if (proxied) {
     return;
@@ -1430,4 +1468,4 @@ if (process.env.FASTIFY_DISABLE_LISTEN !== 'true') {
   app.listen({ port: 3000, host: '0.0.0.0' });
 }
 
-export { renderConfigureHtml };
+export { app, renderConfigureHtml };
