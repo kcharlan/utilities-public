@@ -31,7 +31,8 @@ if "$script" chunk_1.pdf 1M hard; then echo 'hard link accepted' >&2; exit 1; fi
 "$script" chunk_1.pdf 1M out
 qpdf --check out_1.pdf
 "$script" chunk_1.pdf 1 split
-[[ -s split_1.pdf && -s split_2.pdf ]]
+[[ -s split_1.pdf ]] || exit 1
+[[ -s split_2.pdf ]] || exit 1
 # Inject a late qpdf failure after the first chunk was prepared.
 mkdir bin
 qpdf_path=$(command -v qpdf)
@@ -45,6 +46,38 @@ SH
 chmod +x bin/qpdf
 printf 'existing output' > late_1.pdf
 if REAL_QPDF="$qpdf_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 late; then echo 'late failure accepted' >&2; exit 1; fi
-[[ $(cat late_1.pdf) == 'existing output' && ! -e late_2.pdf ]]
+[[ $(cat late_1.pdf) == 'existing output' ]] || exit 1
+[[ ! -e late_2.pdf ]] || exit 1
+rm -- bin/qpdf
+# Inject failure while publishing the second chunk, after the first was renamed.
+mv_path=$(command -v mv)
+cat > bin/mv <<'SH'
+#!/bin/bash
+previous=''
+last=''
+for arg in "$@"; do previous=$last; last=$arg; done
+case "$previous" in */chunk_2.pdf) exit 43;; esac
+case "$previous" in */backup_1) [[ ${FAIL_RESTORE:-0} == 1 ]] && exit 44;; esac
+exec "$REAL_MV" "$@"
+SH
+chmod +x bin/mv
+printf 'first existing output' > publish_1.pdf
+printf 'second existing output' > publish_2.pdf
+if REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 publish; then echo 'publication failure accepted' >&2; exit 1; fi
+[[ $(cat publish_1.pdf) == 'first existing output' ]] || exit 1
+[[ $(cat publish_2.pdf) == 'second existing output' ]] || exit 1
+if REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 new; then echo 'publication failure accepted' >&2; exit 1; fi
+[[ ! -e new_1.pdf ]] || exit 1
+[[ ! -e new_2.pdf ]] || exit 1
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+printf 'recoverable original' > recovery_1.pdf
+if FAIL_RESTORE=1 REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 recovery 2> recovery.log; then echo 'rollback failure accepted' >&2; exit 1; fi
+recovery_dir=$(sed -n 's/^Rollback incomplete; recovery files retained in //p' recovery.log)
+if [[ -z "$recovery_dir" ]]; then cat recovery.log >&2; fi
+[[ -n "$recovery_dir" && -f "$recovery_dir/backup_1" ]] || exit 1
+[[ $(cat "$recovery_dir/backup_1") == 'recoverable original' ]] || exit 1
+mv -f -- "$recovery_dir/backup_1" recovery_1.pdf
+rm -r -- "${recovery_dir:?}"
+[[ $(cat recovery_1.pdf) == 'recoverable original' ]] || exit 1
 if "$script" missing.pdf 1M failed; then echo 'missing input accepted' >&2; exit 1; fi
 [[ ! -e failed_1.pdf ]]
