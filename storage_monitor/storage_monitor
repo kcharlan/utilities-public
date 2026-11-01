@@ -11,12 +11,17 @@
 import argparse
 import base64
 import concurrent.futures
+import fcntl
+import hashlib
+import hmac
 import json
 import logging
 import os
 import plistlib
 import queue
 import re
+import secrets
+import select
 import shutil
 import signal
 import socket
@@ -75,13 +80,23 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_runtime_home(paths: RuntimePaths) -> None:
-    paths.home.mkdir(parents=True, exist_ok=True)
-    paths.history_dir.mkdir(parents=True, exist_ok=True)
+    paths.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    paths.home.chmod(0o700)
+    paths.history_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    paths.history_dir.chmod(0o700)
+
+
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 def open_db_connection(paths: Optional[RuntimePaths] = None) -> sqlite3.Connection:
     target = paths or RUNTIME_PATHS
-    connection = sqlite3.connect(str(target.scan_db), timeout=30)
+    connection = sqlite3.connect(str(target.scan_db), timeout=30, factory=ClosingConnection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
@@ -91,6 +106,7 @@ def open_db_connection(paths: Optional[RuntimePaths] = None) -> sqlite3.Connecti
 
 def initialize_scan_db(paths: RuntimePaths) -> None:
     with open_db_connection(paths) as connection:
+        paths.scan_db.chmod(0o600)
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS scan_runs (
@@ -169,7 +185,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -463,8 +479,6 @@ def get_cached_breakdown(path_key: str) -> Optional[Dict[str, Any]]:
         return None
     cached_at, result = entry
     if time.time() - cached_at > BREAKDOWN_CACHE_TTL_SECONDS:
-        with _breakdown_cache_lock:
-            _breakdown_cache.pop(path_key, None)
         return None
     return result
 
@@ -951,12 +965,14 @@ def atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.chmod(0o600)
     tmp.replace(path)
 
 
 def append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
+        path.chmod(0o600)
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
@@ -1187,12 +1203,15 @@ def check_walker() -> str:
 
 
 _FIELDS = {b"D": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
+WALKER_NO_PROGRESS_TIMEOUT = 120.0
 
 
-def _iter_walker_records(stream):
+def _iter_walker_records(stream, *, timeout=None):
     pending = b""
     fields: List[bytes] = []
     while True:
+        if timeout is not None and not select.select([stream], [], [], timeout)[0]:
+            raise RuntimeError("storage_monitor_walk stalled without progress")
         chunk = stream.read(1 << 20)
         if not chunk:
             break
@@ -1241,11 +1260,18 @@ def walk_tree(
                     payload = "\n".join(map(str, sorted(registered_inodes))).encode()
                     # Raw pipes may accept only part of a large registration list.
                     remaining = memoryview(payload)
+                    os.set_blocking(process.stdin.fileno(), False)
                     while remaining:
-                        remaining = remaining[process.stdin.write(remaining):]
+                        if not select.select([], [process.stdin], [], WALKER_NO_PROGRESS_TIMEOUT)[1]:
+                            raise RuntimeError("storage_monitor_walk stalled without progress")
+                        try:
+                            written = os.write(process.stdin.fileno(), remaining[:4096])
+                        except BlockingIOError:
+                            continue
+                        remaining = remaining[written:]
                 finally:
                     process.stdin.close()
-            for kind, fields in _iter_walker_records(process.stdout):
+            for kind, fields in _iter_walker_records(process.stdout, timeout=WALKER_NO_PROGRESS_TIMEOUT):
                 if summary is not None:
                     raise RuntimeError("storage_monitor_walk protocol error: record after S")
                 if kind == b"D":
@@ -1265,7 +1291,10 @@ def walk_tree(
                         progress_callback(count)
                 else:
                     summary = tuple(map(int, fields))
-            status = process.wait()
+            try:
+                status = process.wait(timeout=WALKER_NO_PROGRESS_TIMEOUT)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("storage_monitor_walk stalled without progress") from exc
             stderr.seek(0)
             detail = stderr.read(8000).decode(errors="replace")[:2000]
             if status == 3:
@@ -1428,12 +1457,21 @@ def format_number(value: Optional[int]) -> str:
     return f"{int(value)} B"
 
 
+_ACTION_SECRET = secrets.token_bytes(32)
+
+
 def encode_action_token(payload: Dict[str, Any]) -> str:
-    return base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode("utf-8")).decode("ascii")
+    body = base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode("utf-8")).decode("ascii")
+    signature = hmac.new(_ACTION_SECRET, body.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
 
 
 def decode_action_token(token: str) -> Dict[str, Any]:
-    return json.loads(base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8"))
+    body, signature = token.split(".", 1)
+    expected = hmac.new(_ACTION_SECRET, body.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("Invalid action signature")
+    return json.loads(base64.urlsafe_b64decode(body.encode("ascii")).decode("utf-8"))
 
 
 def publish_event(event_type: str, payload: Dict[str, Any]) -> None:
@@ -1490,9 +1528,11 @@ def sse_event_stream():
     subscriber_id = add_subscriber()
     try:
         with STATE.lock:
-            if STATE.report is not None:
-                yield f"data: {json.dumps({'type': 'report', 'payload': STATE.report})}\n\n"
-            yield f"data: {json.dumps({'type': 'scan_status', 'payload': STATE.scan_status})}\n\n"
+            report = STATE.report
+            status = dict(STATE.scan_status)
+        if report is not None:
+            yield f"data: {json.dumps({'type': 'report', 'payload': report})}\n\n"
+        yield f"data: {json.dumps({'type': 'scan_status', 'payload': status})}\n\n"
         while True:
             try:
                 message = STATE.subscribers[subscriber_id].get(timeout=15)
@@ -1596,7 +1636,7 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
             "path": str(path),
             "slug": spec["slug"],
         }
-    ) if exists and spec["cleanup_kind"] else None
+    ) if exists and spec["actionable"] and spec["cleanup_kind"] else None
     return {
         "slug": spec["slug"],
         "label": spec["label"],
@@ -1907,7 +1947,7 @@ def resolve_action(action_token: str) -> Dict[str, Any]:
     providers_items = report.get("providers", {}).get("items", [])
     allowed_tokens = {
         item.get("action_token")
-        for item in (*findings_items, *snapshots_items, *providers_items)
+        for item in (*[item for item in findings_items if item.get("actionable")], *snapshots_items, *providers_items)
         if item.get("action_token")
     }
     if action_token not in allowed_tokens:
@@ -1932,6 +1972,8 @@ def unique_trash_destination(path: Path) -> Path:
 def execute_trash_path(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Path does not exist: {path}")
+    if path.is_symlink() or path.stat().st_dev != DATA_VOLUME.stat().st_dev:
+        raise HTTPException(status_code=400, detail="Target is not on the Data volume.")
     destination = unique_trash_destination(path)
     if path.is_file():
         sizes = stat_file_sizes(path)
@@ -2048,13 +2090,14 @@ def record_action(payload: Dict[str, Any], result: Dict[str, Any]) -> None:
 
 
 def reveal_path(path_str: str) -> Dict[str, Any]:
-    path = Path(path_str).expanduser()
+    path = Path(path_str).expanduser().resolve()
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Path does not exist: {path}")
-    if path.is_file():
-        subprocess.Popen(["open", "-R", str(path)])
-    else:
-        subprocess.Popen(["open", str(path)])
+    if is_excluded_breakdown_path(path):
+        raise HTTPException(status_code=400, detail="Path is excluded from the Data volume.")
+    if not any(path == root.resolve() or root.resolve() in path.parents for root in ALLOWED_BREAKDOWN_ROOTS):
+        raise HTTPException(status_code=400, detail="Path is not under an allowed root.")
+    subprocess.Popen(["open", "-R", "--", str(path)])
     return {"ok": True}
 
 
@@ -2524,21 +2567,18 @@ EXCLUDED_BREAKDOWN_PATHS: List[Path] = [
 ]
 
 
+def is_excluded_breakdown_path(path: Path) -> bool:
+    return any(path == root or root in path.parents for root in EXCLUDED_BREAKDOWN_PATHS)
+
+
 def validate_breakdown_path(path_str: str) -> Path:
     """Resolve path_str and verify it is a directory under an allowed root."""
     try:
         resolved = Path(path_str).expanduser().resolve()
     except (ValueError, OSError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid path: {exc}") from exc
-    for excluded in EXCLUDED_BREAKDOWN_PATHS:
-        try:
-            resolved.relative_to(excluded)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Path is excluded from scanning (external/network volume): {resolved}",
-            )
-        except ValueError:
-            pass
+    if is_excluded_breakdown_path(resolved):
+        raise HTTPException(status_code=400, detail=f"Path is excluded from scanning (external/network volume): {resolved}")
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Path does not exist: {resolved}")
     if not resolved.is_dir():
@@ -2655,7 +2695,39 @@ def store_breakdown_for_path(scan_id: int, path: Path) -> Dict[str, Any]:
     return walk_subtree_and_store(scan_id, canonical_path)
 
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="Storage Monitor", version=VERSION)
+app.add_middleware(LocalOriginGuard)
 
 
 @app.get("/")
@@ -2709,6 +2781,17 @@ def api_breakdown(path: str) -> Dict[str, Any]:
     cached = get_cached_breakdown(cache_key)
     if cached is not None:
         return cached
+    scan_id = choose_scan_id_for_path(cache_key)
+    response = fetch_breakdown_from_db(scan_id, cache_key) if scan_id is not None else None
+    if response is None:
+        raise HTTPException(status_code=404, detail="Breakdown is not indexed; rebuild it first.")
+    return response
+
+
+@app.post("/api/breakdown")
+def api_rebuild_breakdown(path: str) -> Dict[str, Any]:
+    validated = validate_breakdown_path(path)
+    cache_key = str(canonicalize_breakdown_path(validated))
     scan_id = choose_scan_id_for_path(cache_key)
     response = fetch_breakdown_from_db(scan_id, cache_key) if scan_id is not None else None
     # If the node exists but has no children indexed, trigger an on-demand scan
@@ -2837,7 +2920,6 @@ def api_reveal(payload: Dict[str, Any]) -> Dict[str, Any]:
 def api_shutdown() -> Dict[str, Any]:
     """Gracefully shut down the server."""
     logger.info("Shutdown requested via API")
-    RUNTIME_PATHS.pid_file.unlink(missing_ok=True)
     # Schedule shutdown after response is sent
     threading.Thread(target=lambda: (time.sleep(0.5), os.kill(os.getpid(), signal.SIGTERM)), daemon=True).start()
     return {"ok": True, "label": "Shutting down..."}
@@ -3786,7 +3868,7 @@ const html = htm.bind(preact.h);
         if (drillPath.some(crumb => crumb.path === item.path)) return;
         setDrillLoading(true);
         try {
-          const res = await fetch(`/api/breakdown?path=${encodeURIComponent(item.path)}`);
+          const res = await fetch(`/api/breakdown?path=${encodeURIComponent(item.path)}`, { method: 'POST' });
           if (!res.ok) { const d = await res.json(); throw new Error(d.detail); }
           const data = await res.json();
           setCachedPaths(prev => {
@@ -4498,42 +4580,27 @@ def ensure_runtime_dirs() -> None:
     initialize_scan_db(RUNTIME_PATHS)
 
 
+_pid_lock = None
+
+
 def kill_prior_instance() -> None:
-    """If a PID file exists from a prior run, kill that process and its children."""
-    pid_file = RUNTIME_PATHS.pid_file
-    if not pid_file.exists():
-        return
+    """Claim the instance lock without trusting or signalling a stored PID."""
+    global _pid_lock
+    fd = os.open(RUNTIME_PATHS.pid_file, os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
     try:
-        old_pid = int(pid_file.read_text().strip())
-    except (ValueError, OSError):
-        pid_file.unlink(missing_ok=True)
-        return
-    if old_pid == os.getpid():
-        return
-    try:
-        os.kill(old_pid, 0)  # Check if alive
-    except OSError:
-        pid_file.unlink(missing_ok=True)
-        return
-    logger.info("Stopping prior instance (PID %s)", old_pid)
-    try:
-        os.kill(old_pid, signal.SIGTERM)
-        # Give it a moment to shut down gracefully
-        for _ in range(20):
-            time.sleep(0.1)
-            try:
-                os.kill(old_pid, 0)
-            except OSError:
-                break
-        else:
-            os.kill(old_pid, signal.SIGKILL)
-    except OSError:
-        pass
-    pid_file.unlink(missing_ok=True)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise SystemExit("Storage Monitor is already running for this runtime home.")
+    _pid_lock = os.fdopen(fd, "r+")
 
 
 def write_pid_file() -> None:
-    RUNTIME_PATHS.pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    _pid_lock.seek(0)
+    _pid_lock.truncate()
+    _pid_lock.write(str(os.getpid()))
+    _pid_lock.flush()
 
 
 def main() -> None:
@@ -4551,6 +4618,7 @@ def main() -> None:
     if port != args.port:
         logger.warning("Port %s is in use; using port %s instead.", args.port, port)
     RUNTIME_PATHS.last_port.write_text(str(port), encoding="utf-8")
+    RUNTIME_PATHS.last_port.chmod(0o600)
     logger.info("Storage Monitor available at http://127.0.0.1:%s", port)
     start_scan()
     if not args.no_browser and not testing_mode_enabled():

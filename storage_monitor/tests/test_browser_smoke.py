@@ -52,6 +52,21 @@ def test_page_loads_offline(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_same_origin_browser_post_reaches_real_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    monkeypatch.setattr(module, "start_scan", lambda: True)
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.route("**/api/events", lambda route: route.fulfill(status=200, content_type="text/event-stream", body=""))
+        page.goto(url)
+        result = page.evaluate("async () => { const r = await fetch('/api/scan', {method: 'POST'}); return [r.status, await r.json()]; }")
+        assert result[0] == 200
+        assert result[1]["started"] is True
+        browser.close()
+
+
 @contextmanager
 def live_server(app):
     with socket.socket() as sock:
