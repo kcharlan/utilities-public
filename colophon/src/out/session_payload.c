@@ -14,6 +14,17 @@ static void string(JsonWriter *w, Str s) {
   else
     jsonw_raw(w, "null");
 }
+/* Limit display-only metadata without splitting a UTF-8 code point. */
+static void metadata_string(JsonWriter *w, Str s) {
+  enum { LIMIT = 64 * 1024, SUFFIX = 3 };
+  if (!s.p || s.n <= LIMIT) { string(w, s); return; }
+  size_t n = LIMIT - SUFFIX;
+  while (n && ((unsigned char)s.p[n] & 0xc0) == 0x80) n--;
+  char *text = malloc(n + SUFFIX);
+  if (!text) { w->error = err_make(ERR_NOMEM, "metadata display allocation failed"); return; }
+  memcpy(text, s.p, n); memcpy(text + n, "\xe2\x80\xa6", SUFFIX);
+  jsonw_string(w, (Str){text, (uint32_t)(n + SUFFIX)}); free(text);
+}
 static void number(JsonWriter *w, MaybeNum n) {
   if (!n.present)
     jsonw_raw(w, "null");
@@ -146,7 +157,7 @@ static void reply(JsonWriter *w, VoiceReply r) {
 static void scalar(JsonWriter *w, JScalar s) {
   switch (s.kind) {
   case JS_STRING:
-    string(w, s.value.s);
+    metadata_string(w, s.value.s);
     break;
   case JS_BOOL:
     jsonw_raw(w, s.value.b ? "true" : "false");
@@ -176,7 +187,7 @@ static void fallback(JsonWriter *w, JScalar raw, const MetadataThread *row,
   }
   MetadataValue v = row ? row->values[column] : (MetadataValue){0};
   if (v.kind == META_TEXT)
-    string(w, v.value.bytes);
+    metadata_string(w, v.value.bytes);
   else if (v.kind == META_INTEGER)
     jsonw_i64(w, v.value.integer);
   else if (v.kind == META_REAL)

@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static Err object_read(Str bytes, JsonRead *out) {
@@ -50,7 +51,7 @@ static Err decode(Str bytes, bool terminated, const ReaderCallbacks *callbacks,
     if (!terminated) return ERR_SUCCESS;
     const char *markers[] = {"{\"timestamp\"", "{\"type\""};
     size_t start = 1;
-    while (start < bytes.n) {
+    for (size_t attempts = 0; start < bytes.n && attempts < 16; attempts++) {
         const char *candidate = NULL;
         for (size_t i = 0; i < 2; i++) {
             const char *found = memmem(bytes.p + start, bytes.n - start, markers[i], strlen(markers[i]));
@@ -120,10 +121,13 @@ static ssize_t read_at(int fd, void *buffer, size_t size, int64_t offset) {
 Err reader_fingerprint(int fd, int64_t size, char output[65]) {
     char text[256];
     if (size < 0) return err_make(ERR_INVALID, "negative snapshot size");
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode)) return err_make(ERR_IO, "log is not a regular file");
     int64_t tail_start = size > 4096 ? size - 4096 : 0;
     unsigned char tail[4096];
     ssize_t count = read_at(fd, tail, (size_t)(size - tail_start), tail_start);
     if (count < 0) return err_make(ERR_IO, "log fingerprint read failed: %s", err_system(errno,text));
+    if (count != size - tail_start) return err_make(ERR_IO, "log ends before frozen size");
     sha256_hex(tail, (size_t)count, output);
     return ERR_SUCCESS;
 }
@@ -135,12 +139,19 @@ typedef struct {
     size_t length, capacity;
 } LineSplitter;
 
+Err reader_check_line_size(size_t length, size_t piece) {
+    if (length > UINT32_MAX || piece > UINT32_MAX - length)
+        return err_make(ERR_IO, "log line exceeds string capacity");
+    return ERR_SUCCESS;
+}
+
 static Err splitter_feed(LineSplitter *s, const char *chunk, size_t count) {
     size_t start = 0;
     while (start < count) {
         const char *end = memchr(chunk + start, '\n', count - start);
         size_t piece = end ? (size_t)(end - chunk) - start : count - start;
-        if (piece > UINT32_MAX - s->length) return err_make(ERR_INVALID, "log line exceeds string capacity");
+        Err size_error = reader_check_line_size(s->length, piece);
+        if (size_error.code) return size_error;
         if (s->length + piece > s->capacity) {
             size_t grown = s->capacity ? s->capacity : READ_CHUNK;
             while (grown < s->length + piece) grown *= 2;
@@ -171,7 +182,7 @@ static Err read_plain(int fd, const DiscoveredLog *snapshot, LineSplitter *s, ch
         size_t request = snapshot->size - offset > READ_CHUNK ? READ_CHUNK : (size_t)(snapshot->size - offset);
         ssize_t count = read_at(fd, chunk, request, offset);
         if (count < 0) return err_make(ERR_IO, "log stream read failed: %s", err_system(errno, text));
-        if (!count) break;
+        if (!count) return err_make(ERR_IO, "log ends before frozen size");
         offset += count;
         Err err = splitter_feed(s, chunk, (size_t)count);
         if (err.code) return err;
@@ -251,7 +262,7 @@ Err reader_read_log(const DiscoveredLog *snapshot, const ReaderCallbacks *callba
     char text[256];
     if (!snapshot->path.p || memchr(snapshot->path.p, 0, snapshot->path.n)) return err_make(ERR_INVALID, "invalid log path");
     /* DiscoveredLog paths are NUL-terminated interned spellings. */
-    int fd = open(snapshot->path.p, O_RDONLY | O_CLOEXEC);
+    int fd = open(snapshot->path.p, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return err_make(ERR_IO, "log open failed: %s", err_system(errno,text));
     Err err = reader_read_fd(fd, snapshot, callbacks, out);
     if (close(fd) < 0 && !err.code) err = err_make(ERR_IO, "log close failed: %s", err_system(errno,text));

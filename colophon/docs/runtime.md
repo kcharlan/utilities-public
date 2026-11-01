@@ -134,7 +134,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.5.2`).
+displays the embedded payload's release version (`colophon 0.5.3`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -224,7 +224,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.5.2`.
+runtime state. Version is currently `colophon 0.5.3`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -537,3 +537,8 @@ Colophon and manually remove the desired records (or the complete
 `cache-claude/` records to prevent later deletion reconciliation from restoring
 those facts. `--rebuild` does not forget retained data. Source transcripts and
 sidecars are never edited.
+
+Displayed scalar and fallback metadata strings are limited to 64 KiB of UTF-8,
+including an ellipsis when truncated. Source metadata and calculations retain
+their original values. Workspace metadata files are limited to 64 KiB, and the
+cached or downloaded price catalog to 32 MiB.

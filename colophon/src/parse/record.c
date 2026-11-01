@@ -90,7 +90,7 @@ Err record_scalar(LogRecord *record, yyjson_val *value, const char *site, JScala
         out->empty = !yyjson_obj_size(value);
     } else {
         PyNum number;
-        if (json_number(value, site, &number)) {
+        if (json_number(value, site, &number) && (!number.is_float || isfinite(number.f))) {
             out->kind = number.is_float ? JS_FLOAT : JS_INT;
             if (number.is_float)
                 out->value.f = number.f;

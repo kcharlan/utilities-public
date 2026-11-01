@@ -335,3 +335,19 @@ validate a nested Timestamp. Clock decoding must also reject malformed framing
 and wrong wire types before applying protobuf's absent-scalar zero defaults.
 Retain empty/default epoch timestamps and singular-message merges, and test
 malformed generator isolation with an independent valid sibling through SQLite.
+
+# Availability of mutable log inputs
+
+Treat a frozen log size as a read contract: a short fingerprint or a later EOF
+must fail that log instead of caching partial facts. Discovery alone cannot
+guarantee a path remains a regular file, so open without blocking and check the
+descriptor, including cache fingerprint reads. Bound malformed-line recovery
+attempts and serialize non-finite values as null to keep one malformed source
+from preventing the remaining sources from being displayed.
+
+## Bound metadata at the display boundary
+
+Preserve source metadata for reconciliation, but limit displayed scalar and fallback
+strings with a UTF-8-safe suffix. Bound file and network readers while reading,
+not after allocating their complete input, and compare cache contents before
+replacing an unchanged record.

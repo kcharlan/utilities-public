@@ -227,7 +227,7 @@ Err cache_get(Cache *c, const DiscoveredLog *key, Intern *ids, LogRecord *out, b
     free(data);
     if (e.code)
         return e.code == ERR_NOMEM ? e : ERR_SUCCESS;
-    int fd = open(key->path.p, O_RDONLY);
+    int fd = open(key->path.p, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
         record_destroy(out);
         return io("log open");

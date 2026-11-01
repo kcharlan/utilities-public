@@ -43,3 +43,14 @@ TEST(metadata_closes_sqlite_and_owns_surviving_values) {
     }
     ASSERT_EQ(0, unlink(path)); ASSERT_EQ(0, rmdir(home));
 }
+TEST(metadata_rejects_nonregular_sqlite_sidecars) {
+    char home[1024]; snprintf(home,sizeof home,"%s/colophon-sidecar-unit.XXXXXX",getenv("TMPDIR")); ASSERT_TRUE(mkdtemp(home));
+    char path[512], sidecar[520];snprintf(path,sizeof path,"%s/state_5.sqlite",home);
+    sqlite3 *db=NULL;ASSERT_EQ(SQLITE_OK,sqlite3_open(path,&db));
+    ASSERT_EQ(SQLITE_OK,sqlite3_exec(db,"CREATE TABLE threads (id)",NULL,NULL,NULL));
+    ASSERT_EQ(SQLITE_OK,sqlite3_close(db));snprintf(sidecar,sizeof sidecar,"%s-journal",path);
+    ASSERT_EQ(0,symlink("/synthetic/missing",sidecar));
+    CodexMetadata m={0};Err e=metadata_load(home,&m);bool rejected=m.errors!=NULL;
+    metadata_destroy(&m);ASSERT_EQ(0,unlink(sidecar));ASSERT_EQ(0,unlink(path));ASSERT_EQ(0,rmdir(home));
+    ASSERT_EQ(ERR_OK,e.code);ASSERT_TRUE(rejected);
+}
