@@ -249,9 +249,9 @@ private struct SnapshotProvider: CredentialProvider {
 private actor SnapshotBackend: ChargerBackend {
     final class Output: @unchecked Sendable {
         private let lock = NSLock()
-        private var channels: [UUID: AsyncStream<BackendEvent>.Continuation] = [:]
-        func subscribe() -> AsyncStream<BackendEvent> {
-            let id = UUID(), (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
+        private var channels: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation] = [:]
+        func subscribe() -> AsyncThrowingStream<BackendEvent, Error> {
+            let id = UUID(), (stream, continuation) = AsyncThrowingStream<BackendEvent, Error>.makeStream()
             lock.withLock { channels[id] = continuation }
             continuation.onTermination = { [weak self] _ in self?.remove(id) }
             return stream
@@ -271,8 +271,8 @@ private actor SnapshotBackend: ChargerBackend {
         self.charger = charger; self.receivedAt = receivedAt; self.details = details; self.followsCommandOnce = followsCommandOnce
     }
     func setReceivedAt(_ date: Date) { receivedAt = date }
-    nonisolated var events: AsyncStream<BackendEvent> { output.subscribe() }
-    func subscribeToEvents() async -> AsyncStream<BackendEvent> { output.subscribe() }
+    nonisolated var events: AsyncThrowingStream<BackendEvent, Error> { output.subscribe() }
+    func subscribeToEvents() async -> AsyncThrowingStream<BackendEvent, Error> { output.subscribe() }
     func signIn(_ credentials: AnkerCredentials) async throws -> AccountSession { .init(authToken: "synthetic-token", userID: "synthetic-user", expiresAt: .distantFuture, nickname: "") }
     func restore(_ session: AccountSession, credentials: AnkerCredentials) async {}
     func listChargers() async throws -> [ChargerInfo] { [charger] }

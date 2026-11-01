@@ -279,6 +279,9 @@ MQTT accepts packets with a remaining length up to 256 KiB. Its incoming stream
 and processing inbox each hold at most 32 packets; exceeding either limit closes
 the connection and retries with backoff. This leaves room for a base64-encoded
 maximum-length device frame and its envelope while bounding queued data.
+Each decoded-event subscriber holds at most 128 events. An overflow ends that
+subscription with an error and closes the affected connection; the app starts a
+fresh subscription while the backend reconnects, without reusing old confirmations.
 
 Synthetic protocol and panel tests do not establish physical charger behavior or
 installed-app interaction. The 2026-10-21 owner observation recorded in

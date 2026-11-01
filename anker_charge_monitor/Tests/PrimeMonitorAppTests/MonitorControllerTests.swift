@@ -21,11 +21,11 @@ let appCharger = ChargerInfo(serial: "synthetic-charger", model: "A2345", alias:
 actor AppBackend: ChargerBackend {
     final class Output: @unchecked Sendable {
         private let lock = NSLock()
-        private var channels: [UUID: AsyncStream<BackendEvent>.Continuation] = [:]
-        private var latest: AsyncStream<BackendEvent>.Continuation?
-        var current: AsyncStream<BackendEvent>.Continuation { lock.withLock { latest! } }
-        func subscribe() -> AsyncStream<BackendEvent> {
-            let id = UUID(), (stream, channel) = AsyncStream<BackendEvent>.makeStream()
+        private var channels: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation] = [:]
+        private var latest: AsyncThrowingStream<BackendEvent, Error>.Continuation?
+        var current: AsyncThrowingStream<BackendEvent, Error>.Continuation { lock.withLock { latest! } }
+        func subscribe() -> AsyncThrowingStream<BackendEvent, Error> {
+            let id = UUID(), (stream, channel) = AsyncThrowingStream<BackendEvent, Error>.makeStream()
             lock.withLock { channels[id] = channel; latest = channel }
             channel.onTermination = { [weak self] _ in self?.remove(id) }
             return stream
@@ -35,6 +35,7 @@ actor AppBackend: ChargerBackend {
             let current = lock.withLock { Array(channels.values) }
             for channel in current { channel.yield(event) }
         }
+        func overflow() { current.finish(throwing: BackendEventError.overflow) }
         // Synthetic receive order, as AnkerCloudBackend keeps it: a new epoch per
         // connect and one sequence step per reply, monotonic across connections.
         private var epoch: UInt64 = 0
@@ -50,7 +51,7 @@ actor AppBackend: ChargerBackend {
         }
     }
     nonisolated let output = Output()
-    nonisolated var events: AsyncStream<BackendEvent> { output.subscribe() }
+    nonisolated var events: AsyncThrowingStream<BackendEvent, Error> { output.subscribe() }
     var log: [String] = []
     var connectedChargers: [ChargerInfo] = []
     var session = appSession
@@ -62,7 +63,7 @@ actor AppBackend: ChargerBackend {
     func releaseConnection() { connectionWait?.resume(); connectionWait = nil }
     func blockDisconnection() { holdDisconnect = true }
     func releaseDisconnection() { disconnectWait?.resume(); disconnectWait = nil }
-    func subscribeToEvents() async -> AsyncStream<BackendEvent> { output.subscribe() }
+    func subscribeToEvents() async -> AsyncThrowingStream<BackendEvent, Error> { output.subscribe() }
     func signIn(_ credentials: AnkerCredentials) async throws -> AccountSession { log.append("login"); return session }
     func restore(_ session: AccountSession, credentials: AnkerCredentials) async { log.append("restore") }
     func listChargers() async throws -> [ChargerInfo] { log.append("list"); return [appCharger] }
@@ -305,6 +306,20 @@ actor AppBackend: ChargerBackend {
         rig.backend.output.yield(.status(.error("dropped"))); await settle()
         rig.backend.output.yield(.status(.connected)); await settle()
         #expect(await rig.backend.log.filter { $0 == "request" }.count == 2)
+        await rig.finish()
+    }
+    @Test func eventOverflowResubscribesWithoutStartingAnotherConnection() async throws {
+        let rig = try ControllerRig(); await rig.start(); await rig.reply()
+        let old = rig.backend.output.current
+        let connects = await rig.backend.log.filter { $0 == "connect" }.count
+        rig.backend.output.overflow(); await settle()
+        #expect(rig.controller.status == .error("Event delivery overflow; reconnecting."))
+        #expect(await rig.backend.log.filter { $0 == "connect" }.count == connects)
+        old.yield(.status(.sessionEnded)); await settle()
+        #expect(rig.controller.status == .error("Event delivery overflow; reconnecting."))
+        rig.backend.output.yield(.status(.connected)); await settle()
+        #expect(rig.controller.status == .connected)
+        #expect(await rig.backend.log.filter { $0 == "connect" }.count == connects)
         await rig.finish()
     }
     @Test func selectionPersistsAndReplacesSnapshot() async throws {

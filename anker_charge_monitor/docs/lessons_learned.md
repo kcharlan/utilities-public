@@ -572,3 +572,6 @@ the former must preserve the original path and block saving until recovery.
 MQTT's per-read limit does not bound a fragmented packet or asynchronous queues.
 Bound declared packet size and both stream and inbox, fail and close on overflow,
 and test the full path through reconnect rather than silently dropping packets.
+Decoded-event subscribers also need a finite queue and an explicit terminal
+overflow. Retire only the stalled subscriber, invalidate command confirmation
+state and subscribe again without resetting the backend's reconnect backoff.
