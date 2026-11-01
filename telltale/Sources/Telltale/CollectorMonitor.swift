@@ -52,6 +52,8 @@ import UserNotifications
     /// it): held here, read in place of the stored notice, and written once the collector has
     /// created the database. `.some(nil)` holds a cleared notice.
     private var heldNotice: HealthNoticeState??
+    private var lastInputs: Inputs?
+    private var databaseUnreadable = false
     private var loop: Task<Void, Never>?
 
     /// The latest report, for the UI.
@@ -99,7 +101,7 @@ import UserNotifications
                 do { try Store.open(paths.database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }
                 catch StoreError.notInitialized { }
             }
-            if let held = heldNotice { try save(held) }
+            if !databaseUnreadable, let held = heldNotice { try save(held) }
             try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {
             lastError = error.localizedDescription
@@ -121,8 +123,19 @@ import UserNotifications
             inputs = try readInputs()
         } catch {
             lastError = error.localizedDescription
-            return nil
+            databaseUnreadable = true
+            var fallback = lastInputs ?? Inputs(
+                enabled: SettingKey.collectorEnabled.defaultValue, intervalMinutes: SettingKey.intervalMinutes.defaultValue,
+                rule: RuleSettings.defaults.collectorHealth, runs: [], sourceStates: [], notice: nil)
+            fallback.notice = heldNotice ?? fallback.notice
+            let message = "Telltale can't read the collector database. Open the Collector view for details."
+            let report = CollectorHealthReport(installed: .red, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit,
+                problems: [message], needsRepair: false, footer: "", notice: message, problemKeys: ["databaseUnreadable"])
+            lastReport = report
+            return (report, fallback, now())
         }
+        databaseUnreadable = false
+        lastInputs = inputs
         let manager = manager
         let (installed, installedAt, loaded) = await Task.detached {
             (manager.installedExecutable(), manager.installedAt(), manager.isLoaded())
@@ -231,11 +244,16 @@ import UserNotifications
     /// Writes the notice through a short-lived connection to the existing database, as the app does
     /// for settings; before the collector has created it, holds the notice in memory instead.
     private func save(_ notice: HealthNoticeState?) throws {
+        if databaseUnreadable {
+            heldNotice = .some(notice)
+            return
+        }
         do {
             try Store.open(paths.database, mode: .readWriteExisting).set(.collectorHealthNotice, notice)
             heldNotice = nil
         } catch StoreError.notInitialized {
             heldNotice = .some(notice)
         }
+        lastInputs?.notice = notice
     }
 }

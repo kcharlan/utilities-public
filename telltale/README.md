@@ -24,6 +24,10 @@ Git, Bash and ripgrep. There are no third-party Swift dependencies; zstd decompr
 vendored as the `CZstd` C target, and the readout font is bundled in `Resources/Fonts` (see
 Third-party notices).
 
+The collector rejects plain log lines over 16 MiB. Compressed rollouts are limited to a 128 MiB
+zstd window, 64 MiB of decompressed data per file, and 4 MiB per line. An oversized file is
+reported as a read problem rather than processed partially.
+
 ## Build and test
 
 From `telltale/`:

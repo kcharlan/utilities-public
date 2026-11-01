@@ -879,6 +879,14 @@ extension RuleOutcome {
         }
     }
 
+    @Test func extremeStoredUsagePercentDoesNotCrash() throws {
+        try withRules { h in
+            h.settings.usageLimit.enabled = true
+            try h.store.setUsageLimit(UsageLimitSnapshot(provider: .codex, at: h.sep4(9, 3), usedPercent: 1e100, windowMinutes: 300, resetsAt: nil))
+            let outcomes = try h.evaluate(through: h.sep4(9, 30))
+            #expect(outcomes.first?.message.contains("100%") == true)
+        }
+    }
     @Test func usageLimitFiresAndClears() throws {
         try withRules { h in
             h.settings.usageLimit.enabled = true

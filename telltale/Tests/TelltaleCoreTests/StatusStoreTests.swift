@@ -116,3 +116,18 @@ import TelltaleTestSupport
         }
     }
 }
+
+@Suite struct StoredStatusLinkSafetyTests {
+    @Test func rejectsUnsafeStoredIncidentAndEventLinks() throws {
+        try withScratchDirectory { directory in
+            let store = try Store.open(directory.appending(path: "telltale.sqlite"), mode: .readWrite)
+            let unsafe = URL(string: "file:///tmp/fake")!
+            let incident = IncidentRecord(source: "fake", id: "fake", name: "Synthetic", status: "investigating",
+                publishedAt: Synthetic.at(0), updatedAt: Synthetic.at(0), link: unsafe, history: [], impacts: [])
+            try store.upsert(incidents: [incident])
+            #expect(throws: StoreError.self) { try store.openIncidents(source: "fake") }
+            try store.insertEvent(EventRow(at: Synthetic.at(0), kind: EventKind.statusPost, provider: "fake", scope: "*", title: "Synthetic", body: "Synthetic", link: unsafe))
+            #expect(try store.feedEvents(limit: 10).first?.event.link == nil)
+        }
+    }
+}

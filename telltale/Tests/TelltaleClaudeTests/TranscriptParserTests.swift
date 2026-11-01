@@ -13,6 +13,15 @@ import TelltaleTestSupport
         _ = try TranscriptBuilder.file(root: root, text: text)
         return ClaudeUsageSource(roots: [root]).ingest(cursor: nil, backfillFrom: .distantPast, now: Date().addingTimeInterval(180))
     }
+    @Test func extremeTokenCountsDoNotOverflow() throws {
+        try withScratchDirectory { root in
+            let text = try TranscriptBuilder.user(t0) + TranscriptBuilder.assistant(t1, output: Int.max, usageExtra: ["input_tokens": Int.max, "cache_read_input_tokens": Int.max, "cache_creation_input_tokens": Int.max])
+            let result = try ingest(root, text)
+            let response = try #require(result.batch.responses.first)
+            #expect(response.inputTokens >= 0)
+            #expect(response.cachedInputTokens <= response.inputTokens)
+        }
+    }
     @Test func multiLineMessageTakesLargestOutputAndFinalUsage() throws {
         try withScratchDirectory { root in
             let text = try TranscriptBuilder.user(t0) + TranscriptBuilder.assistant(t1, output: 500) +

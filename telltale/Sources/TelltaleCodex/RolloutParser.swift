@@ -157,7 +157,8 @@ private struct LineConsumer {
 
     /// The 50-line check runs on the cursor, so it spans runs.
     mutating func finish() {
-        let lines = (cursor.lastOrdinal ?? -1) + 1
+        let ordinal = cursor.lastOrdinal ?? -1
+        let lines = ordinal == Int.max ? Int.max : ordinal + 1
         if cursor.sawTurn && !cursor.sawUsage && lines >= RolloutParser.missingUsageLineThreshold {
             note("session ran turns for \(lines) lines without a token_usage_record")
         }
@@ -282,7 +283,7 @@ private struct RateLimitFields {
         guard let primary, let usedPercent: Double = primary.value("used_percent"),
             let windowMinutes: Int = primary.value("window_minutes")
         else { return nil }
-        self.usedPercent = usedPercent
+        self.usedPercent = min(100, max(0, usedPercent))
         self.windowMinutes = windowMinutes
         resetsAt = (primary.value("resets_at") as Double?).map { Date(timeIntervalSince1970: $0) }
     }

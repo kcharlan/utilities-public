@@ -255,7 +255,7 @@ public enum Copy {
     public static func compactionsFired(count: Int, windowMinutes: Int, blocked: TimeInterval?) -> String {
         var result = "\(count) automatic compactions in the last \(windowMinutes) minutes. Fresh sessions or subagents would keep more context."
         if let blocked {
-            let seconds = Int(blocked.rounded())
+            let seconds = Int(exactly: blocked.rounded()) ?? (blocked > 0 ? Int.max : 0)
             let duration = seconds >= 60 ? "\(seconds / 60) min \(seconds % 60) s" : "\(seconds) s"
             result += " They held sessions for \(duration)."
         }

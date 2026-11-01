@@ -104,7 +104,7 @@ private let recovered = "Telltale's collector is running again."
             #expect(repair.lamp == .red && repair.problems.isEmpty)
             #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
             try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
-            #expect(await h.tick(monitor) == nil)
+            #expect(await h.tick(monitor)?.lamp == .red)
             #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
             try DashboardWorld.exec(h.paths.database, "DELETE FROM source_state WHERE source = 'synthetic'")
             let plist = h.paths.launchAgents.appending(path: "local.utilities.telltale.collector.plist")
@@ -116,6 +116,36 @@ private let recovered = "Telltale's collector is running again."
             try h.store.set(.collectorEnabled, false)
             #expect(await h.tick(monitor)?.lamp == .unlit)
             #expect(try h.store.value(.collectorAcknowledgement) == nil)
+        }
+    }
+    @Test func unreadableDatabaseIsReportedAndNotified() async throws {
+        try await withMonitor { h in
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            let first = try #require(await h.tick(monitor))
+            #expect(first.lamp == .red)
+            #expect(first.notice != nil)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
+        }
+    }
+    @Test func unreadableDatabaseAfterRecoveryStartsNewEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            _ = await h.tick(monitor)
+            _ = await h.tick(monitor)
+            h.setLoaded(true)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 2)
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            _ = await h.tick(monitor)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 3)
         }
     }
     @Test func checksEveryMinute() {

@@ -237,3 +237,9 @@ private enum Fixture {
         #expect(Copy.disconnectsCatchUp(since: Fixture.since, calendar: utc) == "Frequent disconnects since 12:05.")
     }
 }
+
+@Suite struct ExtremeCopyTests {
+    @Test func extremeCompactionDurationDoesNotCrash() {
+        #expect(!Copy.compactionsFired(count: 1, windowMinutes: 1, blocked: 1e100).isEmpty)
+    }
+}

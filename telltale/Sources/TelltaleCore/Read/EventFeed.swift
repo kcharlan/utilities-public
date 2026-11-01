@@ -222,7 +222,8 @@ extension Store {
                 event: EventRow(
                     at: row.date(1), kind: row.text(2), provider: row.text(3), scope: row.text(4), title: row.text(5), body: row.text(6),
                     episodeID: row.optionalInt(7).map(Int64.init), epochID: row.optionalInt(8).map(Int64.init),
-                    link: row.optionalText(9).flatMap(URL.init(string:)), undoneAt: row.optionalDate(10), endsAt: row.optionalDate(11)),
+                    link: row.optionalText(9).flatMap(URL.init(string:)).flatMap { StatusLink.isSafe($0) ? $0 : nil },
+                    undoneAt: row.optionalDate(10), endsAt: row.optionalDate(11)),
                 rule: row.optionalText(12), severity: row.optionalText(13))
         }
     }
