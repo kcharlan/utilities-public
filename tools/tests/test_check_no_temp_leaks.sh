@@ -7,10 +7,28 @@ set -euo pipefail
 # it, with a fake `swift` standing in for the toolchain. Ported from
 # telltale/Tests/ReleaseChecks/test_check_no_temp_leaks.sh.
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+source "$repo/tools/tests/cleanup_fixture.sh"
 checker="$repo/tools/check_no_temp_leaks.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/no-temp-leaks-test.XXXXXX")
 chmod 700 "$scratch"
-trap 'rm -rf "$scratch"' EXIT
+trap 'remove_fixture_paths "$scratch"' EXIT
+mkdir "$scratch/alias-child"
+ln -s / "$scratch/root-link"
+for unsafe in '' / . .. ./ ../ /dev/../ "$scratch/alias-child/.." "$scratch/root-link/"; do
+    if (rm() { : > "$scratch/unexpected-remove"; }; remove_fixture_paths "$unsafe"); then
+        echo "FAIL: fixture cleanup accepted an unsafe path"; exit 1
+    fi
+    [ ! -e "$scratch/unexpected-remove" ] || { echo 'FAIL: fixture cleanup attempted unsafe removal'; exit 1; }
+done
+mkdir "$scratch/cleanup-target" "$scratch/cleanup-directory"
+: > "$scratch/cleanup-file"
+ln -s "$scratch/cleanup-target" "$scratch/cleanup-link"
+remove_fixture_paths "$scratch/cleanup-file" "$scratch/cleanup-directory" "$scratch/cleanup-link" "$scratch/cleanup-missing"
+[ -d "$scratch/cleanup-target" ] && [ ! -e "$scratch/cleanup-file" ] &&
+    [ ! -e "$scratch/cleanup-directory" ] && [ ! -L "$scratch/cleanup-link" ] || {
+    echo 'FAIL: fixture cleanup changed target or left a fixture'; exit 1;
+}
+rmdir "$scratch/cleanup-target"
 fake="$scratch/tmp"
 mkdir "$fake" "$scratch/darwin"
 names='(^|_)synthetic[-_]tool[-_]'
@@ -55,7 +73,7 @@ done
 expect_leak _private_var_project_synthetic_tool_.build.lock sh -c ': > "$OUTER/_private_var_project_synthetic_tool_.build.lock"'
 expect_leak _Users_someone_synthetic_tool_.build_workspace-state.json.lock \
     sh -c ': > "$DARWIN/_Users_someone_synthetic_tool_.build_workspace-state.json.lock"'
-rm -f "$fake"/*.lock "$DARWIN"/*.lock
+remove_fixture_paths "$fake"/*.lock "$DARWIN"/*.lock
 # Inside the private TMPDIR, the lock files of the package being built in the working directory are
 # the toolchain's own; another package's lock still is a leak.
 mkdir "$scratch/synthetic_tool"
@@ -86,7 +104,7 @@ expect_swept() {
     [ -f "$DARWIN/TemporaryDirectory.before1/.keep-directory" ] && [ -f "$DARWIN/TemporaryDirectory.new2/other" ] &&
         [ -s "$DARWIN/TemporaryDirectory.new3/.keep-directory" ] || { echo "FAIL: sweep changed a kept directory"; exit 1; }
     grep -qF '  TemporaryDirectory.new2' "$scratch/out.log" || { echo "FAIL: kept new marker not named"; cat "$scratch/out.log"; exit 1; }
-    rm -rf "$DARWIN"/TemporaryDirectory.new* "$DARWIN"/other-tool.new6
+    remove_fixture_paths "$DARWIN"/TemporaryDirectory.new* "$DARWIN"/other-tool.new6
 }
 expect_pass bash "$scratch/compile.sh"
 expect_swept
@@ -108,7 +126,7 @@ for dir in OUTER DARWIN; do
     fi
     grep -qF '  _x_synthetic-tool-acceptance.Home01_package_.build.lock' "$scratch/out.log" || { echo "FAIL: lock file in $dir not named"; cat "$scratch/out.log"; exit 1; }
     grep -qF '  synthetic-tool-acceptance.Home01' "$scratch/out.log" && { echo "FAIL: builder home reported as a leak"; exit 1; }
-    rm -rf "$fake"/* "$DARWIN"/*.lock
+    remove_fixture_paths "$fake"/* "$DARWIN"/*.lock
 done
 # A Darwin temp dir that can't be listed before the run turns the sweep off: a marker-only
 # directory that appears during the run is kept, never removed.
@@ -190,12 +208,12 @@ for target in brew_version:snapshots:brew-version-snapshots brew_version:accepta
     left=$(ls -A "$caller")
     case "$left" in "$home".??????) ;; *) echo "FAIL: $project make $goal left in TMPDIR: $left"; exit 1 ;; esac
     expect_clean_darwin "$goal in $project"
-    rm -rf "${caller:?}/$left"
+    remove_fixture_paths "${caller:?}/$left"
     # A builder that lets SwiftPM write to the caller's TMPDIR fails the target, naming the lock.
     if SYNTHETIC_LEAKY_BUILDER=1 make_target "$project" "$goal"; then echo "FAIL: $project make $goal missed a leaky builder"; cat "$scratch/out.log"; ls -A "$caller"; exit 1; fi
     lock="$(cd "$tree/$project" && pwd -P | tr / _)_.build.lock"
     grep -qF "  $lock" "$scratch/out.log" || { echo "FAIL: $project make $goal did not name $lock"; cat "$scratch/out.log"; exit 1; }
-    rm -rf "${caller:?}"/* "${caller:?}"/.[!.]* 2>/dev/null || true
+    remove_fixture_paths "${caller:?}"/* "${caller:?}"/.[!.]*
     expect_clean_darwin "$goal in $project"
 done
 echo 'check_no_temp_leaks.sh checks passed'

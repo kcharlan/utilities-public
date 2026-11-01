@@ -109,6 +109,12 @@ LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
     "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
 }
 
+# Explicit peer source root and imported module for a launcher that adds that
+# root to sys.path. The module and its import closure are checked, not exempted.
+LAUNCHER_PEER_MODULES: dict[str, tuple[str, str]] = {
+    "benchmark-llm/bench": ("cognitive_switchyard", "cognitive_switchyard.process_identity"),
+}
+
 NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
     "Calculation tools/backtest/data/compile_market_data.py",
     "benchmark-llm/examples/shared/demo_prompt_executor.py",
@@ -448,15 +454,29 @@ def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
     pending = [launcher]
     seen: set[Path] = set()
     problems: list[str] = []
+    peer = LAUNCHER_PEER_MODULES.get(launcher.relative_to(REPO_ROOT).as_posix())
+    peer_root = None
+    peer_name = None
+    if peer:
+        peer_path, peer_name = peer
+        peer_root = (REPO_ROOT / peer_path).resolve()
+        if (not peer_root.is_relative_to(REPO_ROOT.resolve()) or not peer_root.is_dir()
+                or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+', peer_name)):
+            return [f'invalid peer source root or module: {peer_path}, {peer_name}']
 
-    def module_file(base: Path, name: str) -> Path | None:
+    def module_file(base: Path, name: str, source_root: Path) -> Path | None:
         candidate = base.joinpath(*name.split('.')) if name else base
         for item in (candidate.with_suffix('.py'), candidate / '__init__.py'):
-            if item.is_file() and item.resolve().is_relative_to(root.resolve()):
+            if item.is_file() and item.resolve().is_relative_to(source_root.resolve()):
                 return item
-        if candidate.is_dir() and candidate.resolve().is_relative_to(root.resolve()):
+        if candidate.is_dir() and candidate.resolve().is_relative_to(source_root.resolve()):
             return candidate
         return None
+
+    if peer_root:
+        target = module_file(peer_root, peer_name, peer_root)
+        if not target or not target.is_file():
+            return [f'peer module not found: {peer_name}']
 
     while pending:
         path = pending.pop()
@@ -476,35 +496,48 @@ def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
             else:
                 continue
             for level, name, children in imports:
+                source_root = peer_root if peer_root and path.resolve().is_relative_to(peer_root) else root
                 base = path.parent
                 if level:
                     for _ in range(level - 1):
                         base = base.parent
                 else:
-                    base = root
-                    if name.partition('.')[0] == root.name and not module_file(root, name):
+                    base = source_root
+                    if source_root == root and name.partition('.')[0] == root.name and not module_file(root, name, root):
                         base = root.parent
-                target = module_file(base, name)
+                    if peer_root and source_root == root and name == peer_name:
+                        base = source_root = peer_root
+                target = module_file(base, name, source_root)
                 if target:
                     if target.is_file():
                         pending.append(target)
                     target_dir = target if target.is_dir() else target.parent
                     for parent in target_dir.parents:
-                        if parent == root.parent:
+                        if parent == source_root.parent:
                             break
                         initializer = parent / '__init__.py'
                         if initializer.is_file():
-                            pending.append(initializer)
+                            if initializer.resolve().is_relative_to(source_root.resolve()):
+                                pending.append(initializer)
+                            else:
+                                problems.append(f'initializer escapes source root: {initializer.relative_to(REPO_ROOT)}')
                     initializer = target_dir / '__init__.py'
                     if initializer.is_file():
-                        pending.append(initializer)
+                        if initializer.resolve().is_relative_to(source_root.resolve()):
+                            pending.append(initializer)
+                        else:
+                            problems.append(f'initializer escapes source root: {initializer.relative_to(REPO_ROOT)}')
                     package = target_dir if target.is_dir() or target.name == '__init__.py' else None
                     if package:
                         pending.extend(child for name in children if name != '*'
-                                       if (child := module_file(package, name)) and child.is_file())
+                                       if (child := module_file(package, name, source_root)) and child.is_file())
+                        if peer_root and source_root == peer_root and target.is_dir():
+                            for child_name in children:
+                                if child_name == '*' or not module_file(package, child_name, source_root):
+                                    problems.append(f'{path.relative_to(REPO_ROOT)}: unresolved namespace import: {name}.{child_name}')
                 elif not level and name:
                     top = name.partition('.')[0]
-                    if not module_file(base, top) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
+                    if (not module_file(base, top, source_root) or (peer_root and source_root == peer_root)) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
                         problems.append(f'{path.relative_to(REPO_ROOT)}: third-party imports missing from dependencies: {top}')
     return problems
 
