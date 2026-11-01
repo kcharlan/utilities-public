@@ -26,7 +26,7 @@ To discover and register Git repositories below a directory before startup:
 ./git_dashboard.py --scan ~/source
 ```
 
-`--scan` registers repositories. The browser's initial fleet request then performs the live quick scan; use **Full Scan** to populate history, branches, and dependency health.
+`--scan` registers repositories. The browser requests a quick scan when the fleet overview loads; use **Full Scan** to populate history, branches, and dependency health.
 
 ## Requirements
 
@@ -96,7 +96,7 @@ Git Fleet searches the repository root and subdirectories up to three levels dee
 - `Gemfile`
 - `composer.json`
 
-Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file, including arbitrary filenames and paths outside the repository. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
+Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file and may use arbitrary filenames, but must resolve to regular files within the repository and be no larger than 2 MiB. Discovered manifests are also limited to 2 MiB. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
 
 Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
 

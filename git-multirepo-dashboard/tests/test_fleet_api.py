@@ -248,6 +248,7 @@ def test_get_fleet_kpis(test_app, tmp_path):
 
     client.post("/api/repos", json={"path": str(tmp_path)})
 
+    client.post("/api/fleet/refresh")
     response = client.get("/api/fleet")
     data = response.json()
 
@@ -266,17 +267,17 @@ def test_get_fleet_kpis(test_app, tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. GET /api/fleet — updates working_state table
+# 7. POST /api/fleet/refresh — updates working_state table
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_get_fleet_updates_working_state(test_app, tmp_path):
-    """After GET /api/fleet, each scanned repo has a working_state row with checked_at set."""
+def test_refresh_fleet_updates_working_state(test_app, tmp_path):
+    """The guarded refresh stores a working_state row with checked_at set."""
     client, db_path = test_app
 
     _make_git_repo(tmp_path / "repo_a")
     client.post("/api/repos", json={"path": str(tmp_path)})
 
-    client.get("/api/fleet")
+    client.post("/api/fleet/refresh")
 
     async def _check():
         async with aiosqlite.connect(str(db_path)) as db:
@@ -312,7 +313,7 @@ def test_get_fleet_scanned_at_is_iso(test_app):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_get_fleet_non_git_directory_does_not_crash(test_app, tmp_path):
-    """Register a git repo, then delete its .git/ dir. GET /api/fleet must not crash.
+    """Refresh a registered repo after its .git/ dir is removed, then read it.
 
     The directory still exists (path_exists=True), but git commands will fail.
     The scan should complete gracefully: the repo appears in results with null
@@ -328,6 +329,7 @@ def test_get_fleet_non_git_directory_does_not_crash(test_app, tmp_path):
     import shutil as _shutil
     _shutil.rmtree(str(repo_path / ".git"))
 
+    client.post("/api/fleet/refresh")
     response = client.get("/api/fleet")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 

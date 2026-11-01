@@ -66,7 +66,7 @@ Startup performs these steps:
 
 Missing individual ecosystem tools do not stop startup. Their paths or null values are exposed by `GET /api/status` for the UI's tool-status banner. The application does not prompt for confirmation.
 
-`--scan` performs discovery and registration only. A live quick scan occurs when the browser loads the fleet endpoint; history, branch, and dependency data are populated by a full or dependency scan.
+`--scan` performs discovery and registration only. The browser requests a quick scan when the fleet overview loads; history, branch, and dependency data are populated by a full or dependency scan.
 
 ## Data model
 
@@ -148,14 +148,14 @@ Registration is idempotent for an existing absolute path. The path-repair endpoi
 
 ### Quick scan
 
-`GET /api/fleet` executes live Git queries for every registered repository with a concurrency limit of eight:
+`POST /api/fleet/refresh` executes live Git queries for every registered repository with a concurrency limit of eight:
 
 - validate the work tree
 - parse porcelain status
 - read the latest commit
 - read the current branch
 
-Results update `working_state` without erasing error fields created by broader scans. The endpoint then joins stored branches, dependencies, 13-week sparklines, and fleet KPIs into the response.
+Results update `working_state` without erasing error fields created by broader scans. `GET /api/fleet` reads that stored state and joins branches, dependencies, 13-week sparklines, and fleet KPIs into the response without starting work.
 
 Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
 
@@ -235,7 +235,8 @@ The local SPA consumes these JSON and streaming endpoints:
 | POST | `/api/repos` | Discover/register below a path |
 | DELETE | `/api/repos/{id}` | Remove a registry entry and cascaded data |
 | PATCH | `/api/repos/{id}` | Repair a repository path |
-| GET | `/api/fleet` | Quick-scan and return fleet state/KPIs |
+| GET | `/api/fleet` | Return stored fleet state/KPIs |
+| POST | `/api/fleet/refresh` | Quick-scan registered repositories |
 | POST | `/api/fleet/scan` | Start a `full` or `deps` fleet scan |
 | GET | `/api/fleet/scan/{scan_id}/progress` | SSE progress |
 | GET | `/api/repos/{id}` | Repository detail |

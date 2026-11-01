@@ -238,6 +238,25 @@ def server(server_context):
     return server_context['url']
 
 
+def test_fleet_browser_refresh_scans_synthetic_repo(page, server_context, tmp_path):
+    import sqlite3
+    repo = _create_git_repo(tmp_path, 'synthetic-refresh')
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)",
+                   ('synthetic-refresh', 'synthetic-refresh', str(repo), '2026-01-01'))
+    try:
+        with page.expect_response(lambda r: r.url.endswith('/api/fleet/refresh') and r.request.method == 'POST') as response:
+            _open_app(page, server_context['url'])
+        assert response.value.status == 200
+        expect(page.get_by_text('synthetic-refresh', exact=True)).to_be_visible()
+        with sqlite3.connect(server_context['db_path']) as db:
+            assert db.execute("SELECT checked_at FROM working_state WHERE repo_id=?", ('synthetic-refresh',)).fetchone()[0]
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('DELETE FROM working_state WHERE repo_id=?', ('synthetic-refresh',))
+            db.execute('DELETE FROM repositories WHERE id=?', ('synthetic-refresh',))
+
+
 @pytest.fixture
 def seeded_coverage(server_context, dependency_report_seed, tmp_path):
     import sqlite3

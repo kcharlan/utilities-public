@@ -4245,7 +4245,8 @@ const htmlTag = htm.bind(preact.h);
       const [filterText, setFilterText] = useState('');
 
       useEffect(() => {
-        fetch('/api/fleet')
+        fetch('/api/fleet/refresh', { method: 'POST' })
+          .then(r => { if (!r.ok) throw new Error('Fleet refresh failed'); return fetch('/api/fleet'); })
           .then(r => r.json())
           .then(d => setData(d))
           .catch(err => console.error('Fleet fetch error:', err));
@@ -6978,13 +6979,27 @@ async def get_analytics_dep_overlap(db=Depends(get_db)):
 
 @app.get("/api/fleet")
 async def get_fleet(db=Depends(get_db)):
-    """Quick-scan all registered repos and return the fleet overview.
-
-    Runs up to 8 scans in parallel (asyncio.Semaphore(8)), upserts working_state,
-    and returns per-repo data with branch counts from the branches table and
-    KPIs aggregated from daily_stats.
-    """
-    results = await scan_fleet_quick(db)
+    """Return the stored fleet overview without dispatching scans."""
+    cursor = await db.execute(
+        "SELECT r.id, r.name, r.path, r.runtime, r.default_branch, "
+        "w.has_uncommitted, w.modified_count, w.untracked_count, w.staged_count, "
+        "w.current_branch, w.last_commit_hash, w.last_commit_message, w.last_commit_date "
+        "FROM repositories r LEFT JOIN working_state w ON w.repo_id = r.id"
+    )
+    results = []
+    for row in await cursor.fetchall():
+        repo_id, name, path, runtime, default_branch, dirty, modified, untracked, staged, branch, commit, message, date = row
+        exists = Path(path).is_dir()
+        results.append(dict(id=repo_id, name=name, path=path, runtime=runtime,
+                            default_branch=default_branch, path_exists=exists,
+                            has_uncommitted=bool(dirty) if exists else False,
+                            modified_count=(modified or 0) if exists else 0,
+                            untracked_count=(untracked or 0) if exists else 0,
+                            staged_count=(staged or 0) if exists else 0,
+                            current_branch=branch if exists else None,
+                            last_commit_hash=commit if exists else None,
+                            last_commit_message=message if exists else None,
+                            last_commit_date=date if exists else None))
 
     # Bulk-compute sparklines once for all repos (packet 09)
     sparklines = await compute_sparklines(db)
@@ -7089,6 +7104,13 @@ async def get_fleet(db=Depends(get_db)):
         "kpis": kpis,
         "scanned_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.post("/api/fleet/refresh")
+async def refresh_fleet(db=Depends(get_db)):
+    """Run quick scans only on a same-origin mutation request."""
+    await scan_fleet_quick(db)
+    return {"status": "ok"}
 
 
 # ── Signal handling ───────────────────────────────────────────────────────────
