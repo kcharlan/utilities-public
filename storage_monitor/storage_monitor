@@ -169,7 +169,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -3676,18 +3676,18 @@ const html = htm.bind(preact.h);
       const scanAge = formatRelativeTime(metadata?.updated_at || scanStatus?.updated_at);
 
       return (
-        html`<header style=${{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}> <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', gap: 12, flexWrap: 'wrap' }}>  <div style=${{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}> <span style=${{ fontWeight: 700, fontSize: 16, whiteSpace: 'nowrap' }}>Storage Monitor</span> <div style=${{
+        html`<header style=${{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}><div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', gap: 12, flexWrap: 'wrap' }}><div style=${{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}><span style=${{ fontWeight: 700, fontSize: 16, whiteSpace: 'nowrap' }}>Storage Monitor</span><div style=${{
                 display: 'flex', alignItems: 'center', gap: 6,
                 background: isScanning ? 'var(--warning-bg)' : 'var(--success-bg)',
                 padding: '3px 10px', borderRadius: 12, fontSize: 12,
                 color: isScanning ? 'var(--warning)' : 'var(--success)',
-              }}> <span style=${{
+              }}><span style=${{
                   width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
                   background: isScanning ? 'var(--warning)' : 'var(--success)',
                   animation: isScanning ? 'pulse 1.5s ease infinite' : 'none',
-                }} /> ${isScanning ? `Scanning: ${scanStatus?.phase || 'preparing'}` : (scanAge ? `Scanned ${scanAge}` : 'Ready')} </div> </div>  ${containerSize > 0 && (
-              html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 360, minWidth: 200 }}> <span class=${"mono"} style=${{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}> ${formatBytes(usedBytes)} used </span> <div style=${{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', display: 'flex' }}> <div style=${{ width: `${pct(liveBytes, containerSize)}%`, background: '#1f4952' }} /> <div style=${{ width: `${pct(hiddenBytes, containerSize)}%`, background: '#8a6d3b' }} /> </div> <span class=${"mono"} style=${{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}> ${formatBytes(freeBytes)} free </span> </div>`
-            )}  <div style=${{ display: 'flex', gap: 6, flexWrap: 'wrap' }}> ${[
+                }} />${isScanning ? `Scanning: ${scanStatus?.phase || 'preparing'}` : (scanAge ? `Scanned ${scanAge}` : 'Ready')}</div></div>${containerSize > 0 && (
+              html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 360, minWidth: 200 }}><span class=${"mono"} style=${{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>${formatBytes(usedBytes)} used</span><div style=${{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', display: 'flex' }}><div style=${{ width: `${pct(liveBytes, containerSize)}%`, background: '#1f4952' }} /><div style=${{ width: `${pct(hiddenBytes, containerSize)}%`, background: '#8a6d3b' }} /></div><span class=${"mono"} style=${{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>${formatBytes(freeBytes)} free</span></div>`
+            )}<div style=${{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>${[
                 { label: 'CONTAINER', value: formatBytes(containerSize) },
                 { label: 'USED', value: formatBytes(usedBytes), color: 'var(--accent)' },
                 { label: 'FREE', value: formatBytes(freeBytes), color: 'var(--success)' },
@@ -3696,18 +3696,18 @@ const html = htm.bind(preact.h);
                 html`<div key=${p.label} style=${{
                   background: 'var(--surface-hover)', padding: '4px 10px', borderRadius: 8,
                   display: 'flex', alignItems: 'center', gap: 6,
-                }}> <span style=${{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>${p.label}</span> <span class=${"mono"} style=${{ fontWeight: 600, fontSize: 14, color: p.color || 'var(--text-primary)' }}>${p.value}</span> </div>`
-              ))} </div>  <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}> <button onClick=${onRescan} disabled=${isScanning} style=${{
+                }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>${p.label}</span><span class=${"mono"} style=${{ fontWeight: 600, fontSize: 14, color: p.color || 'var(--text-primary)' }}>${p.value}</span></div>`
+              ))}</div><div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}><button onClick=${onRescan} disabled=${isScanning} style=${{
                 background: 'var(--surface-hover)', color: 'var(--text-primary)',
                 border: '1px solid var(--border)', padding: '4px 12px', borderRadius: 6,
                 fontSize: 13, cursor: 'pointer', opacity: isScanning ? 0.5 : 1,
-              }}>Rescan</button> <button onClick=${() => setShowChecks(!showChecks)} aria-label=${"Scan details"} aria-expanded=${showChecks} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)', padding: 4 }}>ⓘ</button> <button onClick=${onToggleTheme} aria-label=${"Toggle dark mode"} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)', padding: 4 }}>☾</button> </div> </div>  ${isScanning && (
-            html`<div class=${"progress-bar"}> <div class=${"progress-fill"} style=${{ width: `${Math.max(2, (scanStatus.progress || 0) * 100)}%` }} /> </div>`
-          )}  ${showChecks && checks.length > 0 && (
-            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}> ${checks.map(c => (
-                html`<div key=${c.label} style=${{ display: 'flex', gap: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}> <span style=${{ flex: 1 }}>${c.label}</span> <span class=${"mono"} style=${{ color: 'var(--text-secondary)' }}>${c.duration_ms != null ? `${c.duration_ms}ms` : ''}</span> <span style=${{ color: c.ok ? 'var(--success)' : 'var(--danger)' }}>${c.ok ? 'ok' : 'warn'}</span> </div>`
-              ))} </div>`
-          )} </header>`
+              }}>Rescan</button><button onClick=${() => setShowChecks(!showChecks)} aria-label=${"Scan details"} aria-expanded=${showChecks} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)', padding: 4 }}>ⓘ</button><button onClick=${onToggleTheme} aria-label=${"Toggle dark mode"} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)', padding: 4 }}>☾</button></div></div>${isScanning && (
+            html`<div class=${"progress-bar"}><div class=${"progress-fill"} style=${{ width: `${Math.max(2, (scanStatus.progress || 0) * 100)}%` }} /></div>`
+          )}${showChecks && checks.length > 0 && (
+            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}>${checks.map(c => (
+                html`<div key=${c.label} style=${{ display: 'flex', gap: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}><span style=${{ flex: 1 }}>${c.label}</span><span class=${"mono"} style=${{ color: 'var(--text-secondary)' }}>${c.duration_ms != null ? `${c.duration_ms}ms` : ''}</span><span style=${{ color: c.ok ? 'var(--success)' : 'var(--danger)' }}>${c.ok ? 'ok' : 'warn'}</span></div>`
+              ))}</div>`
+          )}</header>`
       );
     }
 
@@ -3719,7 +3719,7 @@ const html = htm.bind(preact.h);
       const cols = sizes.map(s => Math.max(0.15, s / total).toFixed(3) + 'fr').join(' ');
 
       return (
-        html`<div style=${{ display: 'grid', gridTemplateColumns: cols, gap: 3, marginBottom: 10 }}> ${roots.map((root, i) => {
+        html`<div style=${{ display: 'grid', gridTemplateColumns: cols, gap: 3, marginBottom: 10 }}>${roots.map((root, i) => {
             const bd = breakdowns[root];
             const hasData = bd && bd.items && bd.items.length > 0;
             return (
@@ -3728,13 +3728,13 @@ const html = htm.bind(preact.h);
                   color: '#fff',
                   minHeight: 90,
                   opacity: hasData ? 1 : 0.5,
-                }}> ${hasData ? (
-                  html` <div> <div style=${{ fontWeight: 700, fontSize: 15 }}>${ROOT_LABELS[root]}</div> <div style=${{ fontSize: 13, opacity: 0.85 }}>${formatBytes(bd.total_bytes)}</div> </div> <div style=${{ fontSize: 11, opacity: 0.65, marginTop: 4 }}> ${bd.items.slice(0, 3).map(it => it.label).join(', ')} ${bd.items.length > 3 ? ` +${bd.items.length - 3}` : ''} </div> `
+                }}>${hasData ? (
+                  html`<div><div style=${{ fontWeight: 700, fontSize: 15 }}>${ROOT_LABELS[root]}</div><div style=${{ fontSize: 13, opacity: 0.85 }}>${formatBytes(bd.total_bytes)}</div></div><div style=${{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>${bd.items.slice(0, 3).map(it => it.label).join(', ')}${bd.items.length > 3 ? ` +${bd.items.length - 3}` : ''}</div>`
                 ) : (
-                  html`<div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}> ${isScanning ? html`<div class=${"shimmer"} style=${{ width: '60%', height: 12 }} />` : html`<span style=${{ opacity: 0.5, fontSize: 13 }}>${ROOT_LABELS[root]}</span>`} </div>`
-                )} </div>`
+                  html`<div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>${isScanning ? html`<div class=${"shimmer"} style=${{ width: '60%', height: 12 }} />` : html`<span style=${{ opacity: 0.5, fontSize: 13 }}>${ROOT_LABELS[root]}</span>`}</div>`
+                )}</div>`
             );
-          })} </div>`
+          })}</div>`
       );
     }
 
@@ -3833,18 +3833,18 @@ const html = htm.bind(preact.h);
 
       if (!breakdown || !breakdown.items) {
         return isScanning ? (
-          html`<div style=${{ padding: 16 }}> <div class=${"shimmer"} style=${{ height: 16, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 12, marginBottom: 6 }} /> <div class=${"shimmer"} style=${{ height: 12, marginBottom: 6 }} /> <div class=${"shimmer"} style=${{ height: 12 }} /> </div>`
+          html`<div style=${{ padding: 16 }}><div class=${"shimmer"} style=${{ height: 16, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 12, marginBottom: 6 }} /><div class=${"shimmer"} style=${{ height: 12, marginBottom: 6 }} /><div class=${"shimmer"} style=${{ height: 12 }} /></div>`
         ) : null;
       }
 
       return (
-        html`<div class=${"surface"} style=${{ borderRadius: 8, overflow: 'hidden' }}>  <div style=${{
+        html`<div class=${"surface"} style=${{ borderRadius: 8, overflow: 'hidden' }}><div style=${{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             padding: '8px 12px', borderBottom: '1px solid var(--border)',
             background: `${ROOT_COLORS[rootKey]}15`,
-          }}> <div style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, flexWrap: 'wrap' }}>  <span style=${{ cursor: drillPath.length > 0 ? 'pointer' : 'default', fontWeight: 600, textDecoration: drillPath.length > 0 ? 'underline' : 'none' }} onClick=${() => drillPath.length > 0 && navigateBack(-1)}> ${ROOT_LABELS[rootKey]} </span> ${drillPath.map((crumb, i) => (
-                html`<span key=${i}> <span style=${{ opacity: 0.4, margin: '0 4px' }}>></span> <span style=${{ cursor: i < drillPath.length - 1 ? 'pointer' : 'default', textDecoration: i < drillPath.length - 1 ? 'underline' : 'none' }} onClick=${() => i < drillPath.length - 1 && navigateBack(i)}> ${crumb.label} </span> </span>`
-              ))} </div> <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}> <span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}> ${formatBytes(currentTotal)} · ${currentItems.length} items ${updatedAt && ` · ${formatRelativeTime(updatedAt)}`} </span> ${onReveal && drillPath.length > 0 && (
+          }}><div style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, flexWrap: 'wrap' }}><span style=${{ cursor: drillPath.length > 0 ? 'pointer' : 'default', fontWeight: 600, textDecoration: drillPath.length > 0 ? 'underline' : 'none' }} onClick=${() => drillPath.length > 0 && navigateBack(-1)}>${ROOT_LABELS[rootKey]}</span>${drillPath.map((crumb, i) => (
+                html`<span key=${i}><span style=${{ opacity: 0.4, margin: '0 4px' }}>></span><span style=${{ cursor: i < drillPath.length - 1 ? 'pointer' : 'default', textDecoration: i < drillPath.length - 1 ? 'underline' : 'none' }} onClick=${() => i < drillPath.length - 1 && navigateBack(i)}>${crumb.label}</span></span>`
+              ))}</div><div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}><span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${formatBytes(currentTotal)} · ${currentItems.length} items${updatedAt && ` · ${formatRelativeTime(updatedAt)}`}</span>${onReveal && drillPath.length > 0 && (
                 html`<button onClick=${(e) => {
                     e.stopPropagation();
                     const revealTarget = drillData?.path || drillPath[drillPath.length - 1].path;
@@ -3858,8 +3858,8 @@ const html = htm.bind(preact.h);
                     background: 'transparent',
                     color: 'var(--text-secondary)',
                     whiteSpace: 'nowrap',
-                  }}> Reveal </button>`
-              )} ${onRescan && drillPath.length > 0 && (
+                  }}>Reveal</button>`
+              )}${onRescan && drillPath.length > 0 && (
                 html`<button onClick=${async (e) => {
                     e.stopPropagation();
                     const target = drillData?.path || drillPath[drillPath.length - 1].path;
@@ -3883,22 +3883,22 @@ const html = htm.bind(preact.h);
                     color: 'var(--text-secondary)',
                     whiteSpace: 'nowrap',
                     opacity: rescanning ? 0.5 : 1,
-                  }}> ${rescanning ? 'Scanning…' : 'Rescan'} </button>`
-              )} </div> </div>  ${drillLoading ? (
-            html`<div style=${{ padding: '20px 12px', textAlign: 'center' }}> <div style=${{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', fontSize: 13 }}> <span role=${"presentation"} style=${{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> Scanning directory… </div> <div style=${{ marginTop: 12 }}> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14 }} /> </div> </div>`
+                  }}>${rescanning ? 'Scanning…' : 'Rescan'}</button>`
+              )}</div></div>${drillLoading ? (
+            html`<div style=${{ padding: '20px 12px', textAlign: 'center' }}><div style=${{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', fontSize: 13 }}><span role=${"presentation"} style=${{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />Scanning directory…</div><div style=${{ marginTop: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div></div>`
           ) : (
-            html`<div style=${{ maxHeight: 320, overflowY: 'auto', fontSize: 13 }}> ${displayItems.map((item) => (
-                html`<div key=${item.path} class=${item.is_file ? '' : 'surface-hover'} role=${item.is_file ? undefined : 'button'} tabIndex=${item.is_file ? undefined : 0} style=${{ display: 'flex', alignItems: 'center', padding: '5px 12px', borderBottom: '1px solid var(--border)', cursor: item.is_file ? 'default' : 'pointer', opacity: item.is_file ? 0.75 : 1 }} onClick=${item.is_file ? undefined : () => drillInto(item)} onKeyDown=${item.is_file ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); drillInto(item); } }}> <span style=${{
+            html`<div style=${{ maxHeight: 320, overflowY: 'auto', fontSize: 13 }}>${displayItems.map((item) => (
+                html`<div key=${item.path} class=${item.is_file ? '' : 'surface-hover'} role=${item.is_file ? undefined : 'button'} tabIndex=${item.is_file ? undefined : 0} style=${{ display: 'flex', alignItems: 'center', padding: '5px 12px', borderBottom: '1px solid var(--border)', cursor: item.is_file ? 'default' : 'pointer', opacity: item.is_file ? 0.75 : 1 }} onClick=${item.is_file ? undefined : () => drillInto(item)} onKeyDown=${item.is_file ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); drillInto(item); } }}><span style=${{
                     width: 'clamp(180px, 38%, 240px)',
                     minWidth: 0,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                  }}> ${item.is_file ? (
-                      html`<svg width=${"13"} height=${"13"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"var(--text-secondary)"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"} style=${{ flex: '0 0 auto', opacity: 0.5 }}> <path d=${"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"} /><polyline points=${"14 2 14 8 20 8"} /> </svg>`
+                  }}>${item.is_file ? (
+                      html`<svg width=${"13"} height=${"13"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"var(--text-secondary)"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"} style=${{ flex: '0 0 auto', opacity: 0.5 }}><path d=${"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"} /><polyline points=${"14 2 14 8 20 8"} /></svg>`
                     ) : (
-                      html`<svg width=${"13"} height=${"13"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"var(--text-secondary)"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"} style=${{ flex: '0 0 auto', opacity: 0.5 }}> <path d=${"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"} /> </svg>`
-                    )} ${item.is_cached === false && !cachedPaths.has(item.path) && (
+                      html`<svg width=${"13"} height=${"13"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"var(--text-secondary)"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"} style=${{ flex: '0 0 auto', opacity: 0.5 }}><path d=${"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"} /></svg>`
+                    )}${item.is_cached === false && !cachedPaths.has(item.path) && (
                       html`<span title=${"Not yet scanned — click to load"} aria-label=${"Not yet scanned"} style=${{
                           display: 'inline-block',
                           width: 6,
@@ -3909,11 +3909,11 @@ const html = htm.bind(preact.h);
                           animation: 'pulse 2s ease-in-out infinite',
                           flex: '0 0 auto',
                         }} />`
-                    )} <span style=${{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}> ${item.label} </span> </span> <div style=${{ flex: 1, margin: '0 10px' }}> <div class=${"bar-track"}> <div class=${"bar-fill"} style=${{ width: `${pct(item.allocated_bytes, maxBytes)}%`, background: ROOT_COLORS[rootKey] }} /> </div> </div> <span class=${"mono"} style=${{ width: 65, textAlign: 'right' }}> ${formatBytes(item.allocated_bytes)} </span> </div>`
-              ))} ${!showAll && currentItems.length > VISIBLE_COUNT && (
-                html`<div onClick=${() => setShowAll(true)} style=${{ padding: '5px 12px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}> Show all ${currentItems.length} items... </div>`
-              )} </div>`
-          )} </div>`
+                    )}<span style=${{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.label}</span></span><div style=${{ flex: 1, margin: '0 10px' }}><div class=${"bar-track"}><div class=${"bar-fill"} style=${{ width: `${pct(item.allocated_bytes, maxBytes)}%`, background: ROOT_COLORS[rootKey] }} /></div></div><span class=${"mono"} style=${{ width: 65, textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span></div>`
+              ))}${!showAll && currentItems.length > VISIBLE_COUNT && (
+                html`<div onClick=${() => setShowAll(true)} style=${{ padding: '5px 12px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>Show all ${currentItems.length} items...</div>`
+              )}</div>`
+          )}</div>`
       );
     }
 
@@ -3957,15 +3957,15 @@ const html = htm.bind(preact.h);
       }, [findings]);
 
       return (
-        html`<div style=${{ fontSize: 13 }}>  <div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}> <span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span> ${['all', 'low', 'medium', 'high'].map(r => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
               html`<button key=${r} onClick=${() => setRiskFilter(r)} style=${{
                 padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: 'none',
                 background: riskFilter === r ? 'var(--accent)' : 'var(--surface-hover)',
                 color: riskFilter === r ? '#fff' : 'var(--text-secondary)',
               }}>${r}</button>`
-            ))} <div style=${{ flex: 1 }} /> <span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}> ${items.length} items ${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`} </span> </div>  <div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}> <button onClick=${() => handleSort('name')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Finding</button> <span>Category</span> <button onClick=${() => handleSort('risk')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}> Risk ⓘ </button> <button onClick=${() => handleSort('size')} style=${{ cursor: 'pointer', textAlign: 'right', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Size</button> <span style=${{ textAlign: 'right' }}>Actions</span> </div>  <div style=${{ maxHeight: 400, overflowY: 'auto' }}> ${isScanning && items.length === 0 && (
-              html`<div style=${{ padding: 12 }}> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14 }} /> </div>`
-            )} ${items.map((item) => {
+            ))}<div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('size')} style=${{ cursor: 'pointer', textAlign: 'right', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+              html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
+            )}${items.map((item) => {
               const risk = RISK_STYLES[item.risk] || {};
               const isTopReclaim = topReclaimPaths.has(item.path);
               return (
@@ -3973,15 +3973,15 @@ const html = htm.bind(preact.h);
                   display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4,
                   padding: '5px 12px', borderBottom: '1px solid var(--border)', alignItems: 'center',
                   background: isTopReclaim ? `${ROOT_COLORS.data_root}08` : undefined,
-                }}> <span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}> ${item.label} </span> <span style=${{
+                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.label}</span><span style=${{
                     padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center',
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
-                  }}>${(item.category || '').replace(/_/g, ' ')}</span> <span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}> ${risk.label} </span> <span class=${"mono"} style=${{ textAlign: 'right' }}> ${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)} </span> <span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}> ${item.actions?.filter(a => a.kind === 'execute').map(a => (
-                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}> ${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)} </button>`
-                    ))} <button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}> Reveal </button> </span> </div>`
+                  }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
+                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
+                    ))}<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
               );
-            })} </div> </div>`
+            })}</div></div>`
       );
     }
 
@@ -4057,49 +4057,49 @@ const html = htm.bind(preact.h);
       };
 
       return (
-        html`<div style=${{ fontSize: 13 }}>  <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}> <input type=${"checkbox"} checked=${selected.size === items.length && items.length > 0} onInput=${selectAll} aria-label=${"Select all snapshots"} /> <span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${items.length} local snapshot${items.length !== 1 ? 's' : ''}</span> ${selected.size > 0 && (
-              html`<button onClick=${deleteSelected} disabled=${deleting} style=${{ padding: '3px 10px', borderRadius: 4, fontSize: 12, border: 'none', cursor: 'pointer', background: 'var(--danger)', color: '#fff' }}> ${deleting ? 'Deleting...' : `Delete ${selected.size}`} </button>`
-            )} <button onClick=${thinSnapshots} disabled=${thinning || !items.length} style=${{ padding: '3px 10px', borderRadius: 4, fontSize: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)' }}> ${thinning ? 'Reclaiming…' : 'Reclaim space…'} </button> <div style=${{ flex: 1 }} /> <button onClick=${() => setSortNewest(!sortNewest)} style=${{ fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer', textDecoration: 'underline', background: 'none', border: 'none', padding: 0 }}> ${sortNewest ? 'newest first' : 'oldest first'} </button> </div>  <div style=${{ padding: '6px 12px', fontSize: 12, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', lineHeight: 1.5 }}> Snapshot space is managed by APFS and reclaimed as needed. Deleting old snapshots can free space, but the exact amount depends on shared block references. </div>  <div style=${{ maxHeight: 350, overflowY: 'auto' }}> ${isScanning && items.length === 0 && (
-              html`<div style=${{ padding: 12 }}> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14 }} /> </div>`
-            )} ${items.map((snap) => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}><input type=${"checkbox"} checked=${selected.size === items.length && items.length > 0} onInput=${selectAll} aria-label=${"Select all snapshots"} /><span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${items.length} local snapshot${items.length !== 1 ? 's' : ''}</span>${selected.size > 0 && (
+              html`<button onClick=${deleteSelected} disabled=${deleting} style=${{ padding: '3px 10px', borderRadius: 4, fontSize: 12, border: 'none', cursor: 'pointer', background: 'var(--danger)', color: '#fff' }}>${deleting ? 'Deleting...' : `Delete ${selected.size}`}</button>`
+            )}<button onClick=${thinSnapshots} disabled=${thinning || !items.length} style=${{ padding: '3px 10px', borderRadius: 4, fontSize: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)' }}>${thinning ? 'Reclaiming…' : 'Reclaim space…'}</button><div style=${{ flex: 1 }} /><button onClick=${() => setSortNewest(!sortNewest)} style=${{ fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer', textDecoration: 'underline', background: 'none', border: 'none', padding: 0 }}>${sortNewest ? 'newest first' : 'oldest first'}</button></div><div style=${{ padding: '6px 12px', fontSize: 12, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', lineHeight: 1.5 }}>Snapshot space is managed by APFS and reclaimed as needed. Deleting old snapshots can free space, but the exact amount depends on shared block references.</div><div style=${{ maxHeight: 350, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+              html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
+            )}${items.map((snap) => (
               html`<div key=${snap.snapshot_name} style=${{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px',
                 borderBottom: '1px solid var(--border)',
-              }}> <input type=${"checkbox"} checked=${selected.has(snap.snapshot_name)} onInput=${() => toggleSelect(snap.snapshot_name)} aria-label=${`Select snapshot ${snap.parsed_date || snap.snapshot_name}`} /> <span style=${{ flex: 1 }}>${formatSnapshotDate(snap.parsed_date)}</span> <span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${formatRelativeTime(snap.parsed_date)}</span> ${snap.purgeable === true && html`<span style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--success-bg)', color: 'var(--success)' }}>Purgeable</span>`} ${snap.limiting_container_shrink === true && html`<span title=${"Deleting this snapshot can lower the container shrink floor"} style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Limits container shrink</span>`} <button onClick=${() => onExecute(snap.action_token)} disabled=${busyToken === snap.action_token} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--danger-bg)', color: 'var(--danger)' }}> ${busyToken === snap.action_token ? '...' : 'Delete'} </button> <button onClick=${() => onExecute(snap.action_token, { elevate: true })} disabled=${busyToken === snap.action_token} title=${"Delete with admin privileges (password prompt)"} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: '1px solid var(--danger)', cursor: 'pointer', background: 'transparent', color: 'var(--danger)' }}> 🔒 </button> </div>`
-            ))} </div> </div>`
+              }}><input type=${"checkbox"} checked=${selected.has(snap.snapshot_name)} onInput=${() => toggleSelect(snap.snapshot_name)} aria-label=${`Select snapshot ${snap.parsed_date || snap.snapshot_name}`} /><span style=${{ flex: 1 }}>${formatSnapshotDate(snap.parsed_date)}</span><span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${formatRelativeTime(snap.parsed_date)}</span>${snap.purgeable === true && html`<span style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--success-bg)', color: 'var(--success)' }}>Purgeable</span>`}${snap.limiting_container_shrink === true && html`<span title=${"Deleting this snapshot can lower the container shrink floor"} style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Limits container shrink</span>`}<button onClick=${() => onExecute(snap.action_token)} disabled=${busyToken === snap.action_token} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--danger-bg)', color: 'var(--danger)' }}>${busyToken === snap.action_token ? '...' : 'Delete'}</button><button onClick=${() => onExecute(snap.action_token, { elevate: true })} disabled=${busyToken === snap.action_token} title=${"Delete with admin privileges (password prompt)"} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: '1px solid var(--danger)', cursor: 'pointer', background: 'transparent', color: 'var(--danger)' }}>🔒</button></div>`
+            ))}</div></div>`
       );
     }
 
     function LargeFilesTab({ largeFiles, onReveal, isScanning }) {
       const items = largeFiles?.items || [];
       return (
-        html`<div style=${{ fontSize: 13 }}> <div style=${{ display: 'grid', gridTemplateColumns: '2fr 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}> <span>File</span> <span style=${{ textAlign: 'right' }}>Size</span> <span style=${{ textAlign: 'right' }}>Action</span> </div> <div style=${{ maxHeight: 400, overflowY: 'auto' }}> ${isScanning && items.length === 0 && (
-              html`<div style=${{ padding: 12 }}> <div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /> <div class=${"shimmer"} style=${{ height: 14 }} /> </div>`
-            )} ${items.map((item) => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'grid', gridTemplateColumns: '2fr 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><span>File</span><span style=${{ textAlign: 'right' }}>Size</span><span style=${{ textAlign: 'right' }}>Action</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+              html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
+            )}${items.map((item) => (
               html`<div key=${item.path} class=${"surface-hover"} style=${{
                 display: 'grid', gridTemplateColumns: '2fr 75px 100px', gap: 4,
                 padding: '5px 12px', borderBottom: '1px solid var(--border)', alignItems: 'center',
-              }}> <span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}> ${item.label} </span> <span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span> <span style=${{ textAlign: 'right' }}> <button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}> Reveal </button> </span> </div>`
-            ))} ${!isScanning && items.length === 0 && (
+              }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span><span style=${{ textAlign: 'right' }}><button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
+            ))}${!isScanning && items.length === 0 && (
               html`<div style=${{ padding: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>No files ≥ 1 GB found</div>`
-            )} </div> ${largeFiles?.updated_at && (
-            html`<div style=${{ padding: '4px 12px', fontSize: 11, color: 'var(--text-secondary)', borderTop: '1px solid var(--border)' }}> Scanned ${formatRelativeTime(largeFiles.updated_at)} </div>`
-          )} </div>`
+            )}</div>${largeFiles?.updated_at && (
+            html`<div style=${{ padding: '4px 12px', fontSize: 11, color: 'var(--text-secondary)', borderTop: '1px solid var(--border)' }}>Scanned ${formatRelativeTime(largeFiles.updated_at)}</div>`
+          )}</div>`
       );
     }
 
     function ProvidersTab({ providers, busyToken, onExecute }) {
       const items = providers?.items || [];
-      return html`<div style=${{ fontSize: 13, maxHeight: 400, overflowY: 'auto' }}> ${items.map(item => html`<div key=${item.slug} class=${"surface-hover"} style=${{ padding: '9px 12px', borderBottom: '1px solid var(--border)', opacity: item.available ? 1 : 0.55 }}> <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}> <strong style=${{ flex: 1 }}>${item.label}</strong> <span style=${{ fontSize: 11, color: item.risk === 'medium' ? 'var(--warning)' : 'var(--success)' }}>${item.risk}</span> <span class=${"mono"}>${item.estimate_bytes == null ? '—' : `${item.estimate_kind === 'upper_bound' ? 'up to ' : '~'}${formatBytes(item.estimate_bytes)}`}</span> ${item.execution === 'manual' ? (
-              html`<button disabled=${!item.available} onClick=${() => navigator.clipboard.writeText(item.manual_command)} title=${"Copy command"} style=${{ padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text-primary)', cursor: item.available ? 'pointer' : 'not-allowed' }}> Copy command </button>`
+      return html`<div style=${{ fontSize: 13, maxHeight: 400, overflowY: 'auto' }}>${items.map(item => html`<div key=${item.slug} class=${"surface-hover"} style=${{ padding: '9px 12px', borderBottom: '1px solid var(--border)', opacity: item.available ? 1 : 0.55 }}><div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}><strong style=${{ flex: 1 }}>${item.label}</strong><span style=${{ fontSize: 11, color: item.risk === 'medium' ? 'var(--warning)' : 'var(--success)' }}>${item.risk}</span><span class=${"mono"}>${item.estimate_bytes == null ? '—' : `${item.estimate_kind === 'upper_bound' ? 'up to ' : '~'}${formatBytes(item.estimate_bytes)}`}</span>${item.execution === 'manual' ? (
+              html`<button disabled=${!item.available} onClick=${() => navigator.clipboard.writeText(item.manual_command)} title=${"Copy command"} style=${{ padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text-primary)', cursor: item.available ? 'pointer' : 'not-allowed' }}>Copy command</button>`
             ) : (
-              html`<button disabled=${!item.available || busyToken === item.action_token} onClick=${() => window.confirm(`Run ${item.label}?`) && onExecute(item.action_token)} style=${{ padding: '3px 9px', border: 'none', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: item.available ? 'pointer' : 'not-allowed' }}> ${busyToken === item.action_token ? 'Running…' : 'Run'} </button>`
-            )} </div> <div style=${{ color: 'var(--text-secondary)', marginTop: 3 }}>${item.available ? item.description : item.unavailable_reason}</div> ${item.available && item.execution === 'manual' && html`<div style=${{ marginTop: 6, padding: 7, borderRadius: 4, background: 'var(--surface-hover)' }}> <code class=${"mono"}>${item.manual_command}</code> <div style=${{ marginTop: 3, color: 'var(--warning)' }}>${item.manual_instruction}</div> </div>`} </div>`)} ${!items.length && html`<div style=${{ padding: 16, textAlign: 'center', color: 'var(--text-secondary)' }}>Provider results appear after a scan.</div>`} </div>`;
+              html`<button disabled=${!item.available || busyToken === item.action_token} onClick=${() => window.confirm(`Run ${item.label}?`) && onExecute(item.action_token)} style=${{ padding: '3px 9px', border: 'none', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: item.available ? 'pointer' : 'not-allowed' }}>${busyToken === item.action_token ? 'Running…' : 'Run'}</button>`
+            )}</div><div style=${{ color: 'var(--text-secondary)', marginTop: 3 }}>${item.available ? item.description : item.unavailable_reason}</div>${item.available && item.execution === 'manual' && html`<div style=${{ marginTop: 6, padding: 7, borderRadius: 4, background: 'var(--surface-hover)' }}><code class=${"mono"}>${item.manual_command}</code><div style=${{ marginTop: 3, color: 'var(--warning)' }}>${item.manual_instruction}</div></div>`}</div>`)}${!items.length && html`<div style=${{ padding: 16, textAlign: 'center', color: 'var(--text-secondary)' }}>Provider results appear after a scan.</div>`}</div>`;
     }
 
     function OrphansTab({ orphans, onReveal }) {
-      return html`<div style=${{ fontSize: 13 }}> <div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div> <div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
-          html`<div key=${item.path} class=${"surface-hover"} style=${{ display: 'grid', gridTemplateColumns: '2fr 100px 80px 70px', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}> <span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.name}</span> <span>${item.source === 'group_containers' ? 'Group' : 'Container'}</span> <span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span> <button onClick=${() => onReveal(item.path)} style=${{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', borderRadius: 4 }}>Reveal</button> </div>`)}</div> </div>`;
+      return html`<div style=${{ fontSize: 13 }}><div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div><div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
+          html`<div key=${item.path} class=${"surface-hover"} style=${{ display: 'grid', gridTemplateColumns: '2fr 100px 80px 70px', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}><span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.name}</span><span>${item.source === 'group_containers' ? 'Group' : 'Container'}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span><button onClick=${() => onReveal(item.path)} style=${{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', borderRadius: 4 }}>Reveal</button></div>`)}</div></div>`;
     }
 
     function GrowthTab({ onOpenPath }) {
@@ -4111,7 +4111,9 @@ const html = htm.bind(preact.h);
       }, []);
       useEffect(() => { load(null); }, [load]);
       const items = (data.items || []).filter(item => direction === 'gainers' ? item.delta_bytes > 0 : item.delta_bytes < 0);
-      return html`<div style=${{ fontSize: 13 }}> <div style=${{ display: 'flex', gap: 8, padding: 8, borderBottom: '1px solid var(--border)' }}> <select value=${data.baseline_scan_id || ''} onInput=${e => load(e.target.value)} style=${{ background: 'var(--surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}> ${(data.baselines || []).filter(b => b.scan_id !== data.current_scan_id).map(b => html`<option key=${b.scan_id} value=${b.scan_id}>${formatRelativeTime(b.completed_at)}</option>`)} </select> ${['gainers', 'shrinkers'].map(value => html`<button key=${value} onClick=${() => setDirection(value)} style=${{ border: 'none', borderRadius: 4, background: direction === value ? 'var(--accent)' : 'var(--surface-hover)', color: direction === value ? '#fff' : 'var(--text-primary)' }}>${value}</button>`)} </div> <div style=${{ maxHeight: 370, overflowY: 'auto' }}>${items.map(item => html`<div key=${item.path} class=${"surface-hover"} role=${"button"} tabIndex=${"0"} onClick=${() => onOpenPath(item)} onKeyDown=${event => { if (event.key === 'Enter') onOpenPath(item); }} style=${{ display: 'grid', gridTemplateColumns: '2fr 90px 90px 70px', gap: 8, padding: '6px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}> <span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.path}</span> <span class=${"mono"} style=${{ color: item.delta_bytes > 0 ? 'var(--danger)' : 'var(--success)', textAlign: 'right' }}>${item.delta_bytes > 0 ? '+' : '-'}${formatBytes(Math.abs(item.delta_bytes))}</span> <span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.current_bytes)}</span><span>${item.status}</span> </div>`)}</div> ${!data.baseline_scan_id && html`<div style=${{ padding: 18, textAlign: 'center', color: 'var(--text-secondary)' }}>Complete two scans to compare directory growth.</div>`} </div>`;
+      const baselines = (data.baselines || []).filter(b => b.scan_id !== data.current_scan_id);
+      const shownBaseline = baselines.some(b => b.scan_id === data.baseline_scan_id) ? data.baseline_scan_id : baselines[0]?.scan_id;
+      return html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', gap: 8, padding: 8, borderBottom: '1px solid var(--border)' }}><select value=${shownBaseline ?? ''} onInput=${e => load(e.target.value)} style=${{ background: 'var(--surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>${baselines.map(b => html`<option key=${b.scan_id} value=${b.scan_id}>${formatRelativeTime(b.completed_at)}</option>`)}</select>${['gainers', 'shrinkers'].map(value => html`<button key=${value} onClick=${() => setDirection(value)} style=${{ border: 'none', borderRadius: 4, background: direction === value ? 'var(--accent)' : 'var(--surface-hover)', color: direction === value ? '#fff' : 'var(--text-primary)' }}>${value}</button>`)}</div><div style=${{ maxHeight: 370, overflowY: 'auto' }}>${items.map(item => html`<div key=${item.path} class=${"surface-hover"} role=${"button"} tabIndex=${"0"} onClick=${() => onOpenPath(item)} onKeyDown=${event => { if (event.key === 'Enter') onOpenPath(item); }} style=${{ display: 'grid', gridTemplateColumns: '2fr 90px 90px 70px', gap: 8, padding: '6px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}><span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.path}</span><span class=${"mono"} style=${{ color: item.delta_bytes > 0 ? 'var(--danger)' : 'var(--success)', textAlign: 'right' }}>${item.delta_bytes > 0 ? '+' : '-'}${formatBytes(Math.abs(item.delta_bytes))}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.current_bytes)}</span><span>${item.status}</span></div>`)}</div>${!data.baseline_scan_id && html`<div style=${{ padding: 18, textAlign: 'center', color: 'var(--text-secondary)' }}>Complete two scans to compare directory growth.</div>`}</div>`;
     }
 
     function ActionPanel({ findings, snapshots, largeFiles, providers, orphans, busyToken, onExecute, onReveal, onOpenGrowthPath, isScanning }) {
@@ -4123,7 +4125,7 @@ const html = htm.bind(preact.h);
       const orphansCount = orphans?.items?.length || 0;
 
       return (
-        html`<div class=${"surface"} style=${{ borderRadius: 8, overflow: 'hidden' }}>  <div style=${{ display: 'flex', borderBottom: '1px solid var(--border)' }}> ${[
+        html`<div class=${"surface"} style=${{ borderRadius: 8, overflow: 'hidden' }}><div style=${{ display: 'flex', borderBottom: '1px solid var(--border)' }}>${[
               { key: 'findings', label: 'Findings', count: findingsCount },
               { key: 'snapshots', label: 'Snapshots', count: snapshotsCount },
               { key: 'large_files', label: 'Large Files', count: largeFilesCount },
@@ -4132,13 +4134,13 @@ const html = htm.bind(preact.h);
               { key: 'orphans', label: 'App Leftovers', count: orphansCount },
             ].map(t => (
               html`<button key=${t.key} class=${`tab ${activeTab === t.key ? 'active' : ''}`} onClick=${() => setActiveTab(t.key)} style=${{ background: 'none', border: 'none', borderBottom: undefined }}>${t.label}<span style=${{ marginLeft: 4, padding: '1px 6px', borderRadius: 8, fontSize: 11, background: activeTab === t.key ? 'var(--accent)' : 'var(--surface-hover)', color: activeTab === t.key ? '#fff' : 'var(--text-secondary)' }}>${t.count}</span></button>`
-            ))} </div>  ${activeTab === 'findings' && (
+            ))}</div>${activeTab === 'findings' && (
             html`<${FindingsTab} findings=${findings} busyToken=${busyToken} onExecute=${onExecute} onReveal=${onReveal} isScanning=${isScanning} />`
-          )} ${activeTab === 'snapshots' && (
+          )}${activeTab === 'snapshots' && (
             html`<${SnapshotsTab} snapshots=${snapshots} busyToken=${busyToken} onExecute=${onExecute} isScanning=${isScanning} />`
-          )} ${activeTab === 'large_files' && (
+          )}${activeTab === 'large_files' && (
             html`<${LargeFilesTab} largeFiles=${largeFiles} onReveal=${onReveal} isScanning=${isScanning} />`
-          )} ${activeTab === 'providers' && html`<${ProvidersTab} providers=${providers} busyToken=${busyToken} onExecute=${onExecute} />`} ${activeTab === 'growth' && html`<${GrowthTab} onOpenPath=${onOpenGrowthPath} />`} ${activeTab === 'orphans' && html`<${OrphansTab} orphans=${orphans} onReveal=${onReveal} />`} </div>`
+          )}${activeTab === 'providers' && html`<${ProvidersTab} providers=${providers} busyToken=${busyToken} onExecute=${onExecute} />`}${activeTab === 'growth' && html`<${GrowthTab} onOpenPath=${onOpenGrowthPath} />`}${activeTab === 'orphans' && html`<${OrphansTab} orphans=${orphans} onReveal=${onReveal} />`}</div>`
       );
     }
 
@@ -4173,16 +4175,16 @@ const html = htm.bind(preact.h);
       }, [breakdowns, activeRoot]);
 
       return (
-        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>  <${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} />  ${message && (
+        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}><${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} />${message && (
             html`<div style=${{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '6px 16px', fontSize: 13,
               background: messageType === 'error' ? 'var(--danger-bg)' : 'var(--success-bg)',
               color: messageType === 'error' ? 'var(--danger)' : 'var(--success)',
-            }}> <span>${message}</span> <button onClick=${dismissMessage} aria-label=${"Dismiss"} style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 16, padding: '0 4px', lineHeight: 1, opacity: 0.7 }}> × </button> </div>`
-          )} <div style=${{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1600, margin: '0 auto', width: '100%' }}>  <section> <${Treemap} breakdowns=${breakdowns} activeRoot=${activeRoot} onSelectRoot=${setActiveRoot} isScanning=${isScanning} /> ${activeRoot && (
+            }}><span>${message}</span><button onClick=${dismissMessage} aria-label=${"Dismiss"} style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 16, padding: '0 4px', lineHeight: 1, opacity: 0.7 }}>×</button></div>`
+          )}<div style=${{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1600, margin: '0 auto', width: '100%' }}><section><${Treemap} breakdowns=${breakdowns} activeRoot=${activeRoot} onSelectRoot=${setActiveRoot} isScanning=${isScanning} />${activeRoot && (
                 html`<${AccordionBreakdown} rootKey=${activeRoot} breakdown=${breakdowns[activeRoot]} isScanning=${isScanning} onReveal=${revealPath} onRescan=${rescanPath} externalPath=${growthPath} />`
-              )} </section>  <section style=${{ flex: 1, minHeight: 0 }}> <${ActionPanel} findings=${findings} snapshots=${snapshots} largeFiles=${largeFiles} providers=${providers} orphans=${orphans} busyToken=${busyToken} onExecute=${executeAction} onReveal=${revealPath} onOpenGrowthPath=${(item) => { setActiveRoot(item.root_key); setGrowthPath(item.path); }} isScanning=${isScanning} /> </section> </div> </div>`
+              )}</section><section style=${{ flex: 1, minHeight: 0 }}><${ActionPanel} findings=${findings} snapshots=${snapshots} largeFiles=${largeFiles} providers=${providers} orphans=${orphans} busyToken=${busyToken} onExecute=${executeAction} onReveal=${revealPath} onOpenGrowthPath=${(item) => { setActiveRoot(item.root_key); setGrowthPath(item.path); }} isScanning=${isScanning} /></section></div></div>`
       );
     }
 

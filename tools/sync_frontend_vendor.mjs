@@ -8,11 +8,12 @@ import vm from 'node:vm';
 const root = join(dirname(fileURLToPath(import.meta.url)), 'frontend_vendor');
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 const hash = data => createHash('sha256').update(data).digest('hex');
-function load(item) {
-  const data = readFileSync(join(root, item.file));
-  if (hash(data) !== item.sha256) throw Error(`hash mismatch: ${item.file}`);
+function verified(file, sha256) {
+  const data = readFileSync(join(root, file));
+  if (hash(data) !== sha256) throw Error(`hash mismatch: ${file}`);
   return data;
 }
+const load = item => verified(item.file, item.sha256);
 function generate(names) {
   const chosen = names.map(token => {
     const [name, requested] = token.split('=');
@@ -25,7 +26,7 @@ function generate(names) {
   const licenses = new Set(), out = [];
   for (const {name,requested,item} of chosen) {
     const bytes = load(item);
-    if (item.license) licenses.add(readFileSync(join(root, item.license), 'utf8'));
+    if (item.license) licenses.add(verified(item.license, item.licenseSha256).toString());
     if (item.kind === 'font') {
       out.push(`<style>@font-face{font-family:${JSON.stringify(item.family)};font-style:${item.style};font-weight:${item.weight};src:url(data:font/woff2;base64,${bytes.toString('base64')}) format('woff2');}</style>`);
     } else if (name === 'lucide') {
@@ -40,7 +41,7 @@ function generate(names) {
     } else {
       const script = bytes.toString().replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--');
       out.push(`<script>\n${script}\n</script>`);
-      if (item.css) out.push(`<style>\n${readFileSync(join(root,item.css),'utf8')}\n</style>`);
+      if (item.css) out.push(`<style>\n${verified(item.css, item.cssSha256)}\n</style>`);
     }
   }
   return [...licenses].map(x => `<!--\n${x.replace(/-->/g, '-- >')}\n-->`).concat(out).join('\n');
@@ -70,10 +71,13 @@ try {
  const args=process.argv.slice(2), check=args.includes('--check'), all=args.includes('--all');
  let files=args.filter(x=>x!=='--check' && x!=='--all');
  if(all) {
+  const repository=execFileSync('git',['-C',root,'rev-parse','--show-toplevel'],{encoding:'utf8'}).trim();
   let found='';
-  try { found=execFileSync('git',['grep','-lE','^[[:space:]]*(# |<!-- )frontend-vendor:begin '],{encoding:'utf8'}); }
+  try { found=execFileSync('git',['-C',repository,'grep','-lE','^[[:space:]]*(# |<!-- )frontend-vendor:begin '],{encoding:'utf8'}); }
   catch(error) { if(error.status!==1) throw error; }
-  files.push(...found.trim().split('\n').filter(f=>f && !f.startsWith('tools/')));
+  const marked=found.trim().split('\n').filter(f=>f && !f.startsWith('tools/'));
+  if(!marked.length) throw Error(`${repository}: no tracked file has a frontend-vendor region`);
+  files.push(...marked.map(file=>join(repository,file)));
  }
  if(!files.length && !all) throw Error('usage: sync_frontend_vendor.mjs [--check] FILE... | --all [--check]');
  for(const file of files) sync(file,check);

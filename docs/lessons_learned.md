@@ -1,5 +1,28 @@
 # Lessons learned
 
+## 2026-10-31: Compare old and new in a browser when moving React code to Preact
+
+The offline port merged with every suite green; side-by-side browser comparison
+with the old pages then found the regressions, and losing every embedded font
+passed too. Run that comparison for a framework port and turn each difference
+into a test. htm keeps single spaces that JSX dropped, and Playwright normalizes
+whitespace, so assert spacing with raw `textContent` (`assert_exact_text`).
+The browser fires blur when a focused element is removed and Preact delivers it
+(React suppressed it), which turned Escape in an inline editor into a save:
+cancel the commit before removing the field. Preact doesn't re-assert controlled
+values, so put the DOM value back after rejected
+input, a failed toggle or unchanged state. A `<select>` with no matching value
+renders blank where React showed the first option. Preact core treats
+`spellCheck` as unknown; write `spellcheck`. A font without the requested weight
+gets synthetic bold rather than a cap at its heaviest face, so embed that weight
+or stop requesting it. Recharts measures grid ticks separately from labels, so a
+replacement chart can't reuse label positions for grid lines. A test that waits
+for a state with no bound hangs rather than fails; give mutation runs a timeout.
+Chromium turns `:focus-visible` on at the first keydown after a mouse click, so
+judge how focus arrived in the focus handler, not when the key lands. An
+`<input>` strips newlines from `.value` but not from `.defaultValue`, so compare
+a field with the `.value` captured at mount to tell whether it changed.
+
 ## 2026-10-31: Verify offline ports in the rendered browser
 
 Block external requests and check browser errors while exercising actual views; source checks alone cannot catch runtime parsing, input events, CSS cascade or SVG attribute differences. Compare isolated synthetic baseline and port screenshots after fonts and layout settle. Preserve icon wrappers, portal attachment timing, dependent-fetch selection guards and raw string escape semantics where they affect rendering. Charts need real browser coverage for axes, legends, single points and resizing, in addition to geometry tests. Keep canonical embedded assets synchronized and test drift.

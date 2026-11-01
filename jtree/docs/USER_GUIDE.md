@@ -31,8 +31,8 @@ jtree requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). Its PEP 723
 
 **Requirements:** uv and a modern web browser. The interface embeds its libraries, styles, icons and Latin font subsets, and uses system fonts for other glyphs. It does not need network access after the launcher starts.
 
-Automated browser coverage uses current Playwright Chromium. The manual client floors
-for Tailwind 4 are Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox
+Automated browser coverage uses current Playwright Chromium. The embedded stylesheet began as
+compiled Tailwind 4 CSS and is now maintained by hand as plain CSS. It keeps that CSS's manual client floors of Chrome 111, Safari 16.4, and Firefox 128; Safari and Firefox
 are not exercised by the automated browser suite.
 
 ### Welcome Screen

@@ -133,7 +133,7 @@ def test_render_app_html_uses_valid_single_brace_css_and_react_syntax() -> None:
     html = render_app_html({"ok": True})
 
     assert "body {" in html
-    assert "const {useEffect, useMemo, useRef, useState} = preactHooks;" in html
+    assert "const {useEffect, useLayoutEffect, useMemo, useRef, useState} = preactHooks;" in html
     assert "body {{" not in html
     assert "const {{ useEffect, useMemo, useRef, useState }} = React;" not in html
     assert "window.location.reload" not in html

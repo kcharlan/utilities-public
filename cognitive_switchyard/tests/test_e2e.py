@@ -38,6 +38,7 @@ import uvicorn  # noqa: E402
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
 
 from tools.testkit import (  # noqa: E402
+    assert_exact_text,
     assert_no_external_resources,
     assert_offline_page_source,
     block_external_requests,
@@ -1379,6 +1380,84 @@ def _open_synthetic_canvas(fresh_server, page):
     page.goto(fresh_server["url"])
     page.locator("button[aria-label='Open DAG']").click()
     page.locator(".dag-node[data-id='root']").wait_for()
+    _wait_for_fit(page)
+
+
+def _wait_for_fit(page):
+    """The first fit follows node measurement, so a node can exist before the view has moved."""
+    page.wait_for_function("() => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).e !== 0")
+
+
+def _open_dag_payload(fresh_server, page, payload):
+    """Open the DAG view with a synthetic graph served in place of the session's own."""
+    _open_synthetic_canvas(fresh_server, page)
+    _reopen_dag_with(page, payload)
+
+
+def _reopen_dag_with(page, payload):
+    page.get_by_role("button", name="Back to Monitor").click()
+    page.route("**/dag", lambda route: route.fulfill(json=payload))
+    page.locator("button[aria-label='Open DAG']").click()
+    page.locator(".dag-canvas-root").wait_for()
+    for task in payload["tasks"]:
+        page.locator(f".dag-node[data-id='{task['task_id']}']").wait_for()
+    if payload["tasks"]:
+        _wait_for_fit(page)
+
+
+def _dag_task(task_id, *depends_on, anti_affinity=()):
+    return {"task_id": task_id, "title": f"Synthetic {task_id}", "status": "ready", "depends_on": list(depends_on), "anti_affinity": list(anti_affinity)}
+
+
+def _dag_view(page):
+    return page.locator(".dag-viewport").evaluate("el => { const m = new DOMMatrix(getComputedStyle(el).transform); return [m.a, m.e, m.f]; }")
+
+
+def _center(box):
+    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+
+def _edge_point(page, edge_id):
+    return page.locator(f".dag-edges g[data-id='{edge_id}'] .dag-edge").evaluate("el => { const p = el.getPointAtLength(el.getTotalLength() * .4).matrixTransform(el.getScreenCTM()); return [p.x, p.y]; }")
+
+
+def _pane_point(page):
+    box = page.locator(".dag-canvas-root").bounding_box()
+    return box["x"] + 40, box["y"] + 40
+
+
+def _dispatch_wheel(page, x, y, delta, *, ctrl=False, mode=0):
+    page.evaluate("""([x, y, deltaY, ctrlKey, deltaMode]) => document.elementFromPoint(x, y).dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY, ctrlKey, deltaMode })
+    )""", [x, y, delta, ctrl, mode])
+
+
+def _mouse_drag(page, start, by, *, button="left"):
+    page.mouse.move(*start)
+    page.mouse.down(button=button)
+    page.mouse.move(start[0] + by[0], start[1] + by[1], steps=4)
+    page.mouse.up(button=button)
+
+
+def _click_until_disabled(button, *, limit=20):
+    """Zoom limits are reached within a few steps; a button that never disables must fail, not spin."""
+    for _ in range(limit):
+        if button.is_disabled():
+            return
+        button.click()
+    pytest.fail(f"Button still enabled after {limit} clicks: {button}")
+
+
+def _node_at(page, point):
+    return page.evaluate("([x, y]) => document.elementFromPoint(x, y).closest('.dag-node')?.dataset.id", list(point))
+
+
+def _selected_nodes(page):
+    return page.locator(".dag-node.selected").evaluate_all("els => els.map(el => el.dataset.id)")
+
+
+def _selected_edges(page):
+    return page.locator(".dag-edges g[data-selected='true']").evaluate_all("els => els.map(el => el.dataset.id)")
 
 
 class TestDagView:
@@ -1390,24 +1469,25 @@ class TestDagView:
         matrix = lambda: viewport.evaluate("el => { const m = new DOMMatrix(getComputedStyle(el).transform); return [m.a, m.e, m.f]; }")
         fitted = matrix()
         assert fitted != [1, 0, 0]  # fitView overrides the default viewport
-        for _ in range(20):
-            page.locator(".dag-zoom-in").click()
+        zoom_in, zoom_out = page.locator(".dag-zoom-in"), page.locator(".dag-zoom-out")
+        _click_until_disabled(zoom_in)
         assert matrix()[0] == pytest.approx(2)  # React Flow default maxZoom
-        for _ in range(30):
-            page.locator(".dag-zoom-out").click()
+        assert zoom_out.is_enabled()
+        _click_until_disabled(zoom_out)
         assert matrix()[0] == pytest.approx(0.5)  # React Flow default minZoom
+        assert zoom_in.is_enabled()
         page.locator(".dag-fit-view").click()
         assert matrix() == pytest.approx(fitted)
         box = page.locator(".dag-canvas-root").bounding_box()
         x, y = box["x"] + box["width"] * .7, box["y"] + box["height"] * .3
         before = matrix()
-        minimap = page.locator(".dag-minimap-viewport").get_attribute("x")
+        minimap = page.locator(".dag-minimap-mask").get_attribute("d")
         page.mouse.move(x, y)
         page.mouse.wheel(0, -120)
         page.wait_for_function("previous => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a !== previous", arg=before[0])
         after = matrix()
         assert (x - box["x"] - before[1]) / before[0] == pytest.approx((x - box["x"] - after[1]) / after[0], abs=.01)
-        assert page.locator(".dag-minimap-viewport").get_attribute("x") != minimap
+        assert page.locator(".dag-minimap-mask").get_attribute("d") != minimap
         page.mouse.move(box["x"] + 10, box["y"] + 10)
         page.mouse.down(); page.mouse.move(box["x"] + 50, box["y"] + 40); page.mouse.up()
         assert matrix()[1] == pytest.approx(after[1] + 40, abs=1)
@@ -1451,7 +1531,7 @@ class TestDagView:
         page.keyboard.press("Enter")
         assert "selected" in node.get_attribute("class")
         page.keyboard.press("ArrowRight")
-        assert float(node.evaluate("el => el.style.left.replace('px', '')")) == 301
+        assert float(node.evaluate("el => el.style.left.replace('px', '')")) == 305  # React Flow moves 5px per key
         page.keyboard.press("Backspace")
         assert node.count() == 0
         assert page.locator(".dag-edge").count() == 0
@@ -1515,6 +1595,7 @@ class TestDagView:
         page.locator("button[aria-label='Open DAG']").click()
         node = page.locator(".dag-node[data-id='long']")
         node.wait_for()
+        _wait_for_fit(page)
         page.wait_for_function("() => document.querySelector('.dag-node[data-id=long]').offsetHeight > 80")
         page.wait_for_function("""() => { const n = document.querySelector('.dag-node[data-id=long]').getBoundingClientRect(), c = document.querySelector('.dag-canvas-root').getBoundingClientRect(); return n.top >= c.top && n.bottom <= c.bottom && n.left >= c.left && n.right <= c.right; }""")
         page.locator(".dag-fit-view").click()
@@ -1527,8 +1608,8 @@ class TestDagView:
         handle = node.locator(".dag-source-handle").bounding_box()
         edge_start = page.locator(".dag-edge").first.evaluate("el => { const p = el.getPointAtLength(0).matrixTransform(el.getScreenCTM()); return [p.x, p.y]; }")
         assert edge_start[0] == pytest.approx(handle["x"] + handle["width"] / 2, abs=2)
-        assert edge_start[1] == pytest.approx(handle["y"] + handle["height"] / 2, abs=2)
-        mini = page.locator(".dag-minimap rect").nth(2)
+        assert edge_start[1] == pytest.approx(handle["y"] + handle["height"], abs=2)  # React Flow edges start at the handle's outer edge
+        mini = page.locator(".dag-minimap-node").first
         mini_ratio = float(mini.get_attribute("height")) / float(mini.get_attribute("width"))
         assert mini_ratio == pytest.approx(box["height"] / box["width"], abs=.02)
         page.mouse.move(handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2)
@@ -1642,23 +1723,346 @@ class TestDagView:
         store.update_session_status(sid, status="running", started_at="2026-01-01T00:00:01Z")
         page.goto(fresh_server["url"])
         page.locator("button[aria-label='Open DAG']").click()
-        page.locator(".dag-node[data-id='only']").wait_for()
+        node = page.locator(".dag-node[data-id='only']")
+        node.wait_for()
+        page.wait_for_function("() => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a === 2")
         assert page.locator(".dag-edge").count() == 0
-        assert page.locator(".dag-viewport").get_attribute("style")
+        # One node fits at the zoom ceiling, centered in the canvas.
+        assert _dag_view(page)[0] == 2
+        assert _center(node.bounding_box()) == pytest.approx(_center(page.locator(".dag-canvas-root").bounding_box()), abs=1)
 
-    def test_dag_svg_attributes_contain_no_nan(self, fresh_server, page):
-        store, home = fresh_server["store"], fresh_server["runtime_home"]
-        sid = "synthetic-svg"
-        store.create_session(session_id=sid, name="Synthetic SVG", pack="claude-code", created_at="2026-01-01T00:00:00Z", config_json="{}")
-        for task_id, dependency in (("root", "none"), ("leaf", "root")):
-            source = _write_intake_plan(home, sid, task_id, depends_on=dependency)
-            plan = source.read_text(encoding="utf-8")
-            store.upsert_ready_task_plan(session_id=sid, plan=parse_task_plan(plan, source=source), plan_text=plan, created_at="2026-01-01T00:00:01Z")
-        store.update_session_status(sid, status="running", started_at="2026-01-01T00:00:01Z")
-        page.goto(fresh_server["url"])
-        page.locator("button[aria-label='Open DAG']").click()
-        page.locator(".dag-edge").first.wait_for(state="attached")
-        assert page.locator(".dag-canvas-root svg").evaluate_all("els => els.every(el => !el.outerHTML.includes('NaN'))")
+    @pytest.mark.parametrize("payload", [
+        pytest.param({"tasks": [], "groups": []}, id="no-tasks"),
+        pytest.param({"tasks": [_dag_task("only")], "groups": []}, id="one-task"),
+        pytest.param({"tasks": [_dag_task("first"), _dag_task("second")], "groups": []}, id="no-edges"),
+        pytest.param({"tasks": [_dag_task("first", "missing", anti_affinity=["absent"])], "groups": []}, id="dangling-dependency"),
+        pytest.param({"tasks": [_dag_task("first"), _dag_task("second", "first")], "groups": []}, id="one-edge"),
+    ])
+    def test_dag_svg_attributes_contain_no_nan(self, fresh_server, page, payload):
+        _open_dag_payload(fresh_server, page, payload)
+        scan = "root => !/NaN|Infinity|undefined/.test(root.outerHTML)"
+        canvas = page.locator(".dag-canvas-root")
+        assert canvas.evaluate(scan)
+        assert page.locator(".dag-edge").count() == sum(len(task["depends_on"]) for task in payload["tasks"] if task["task_id"] == "second")
+        page.locator(".dag-fit-view").click()
+        page.locator(".dag-zoom-out").click()
+        assert canvas.evaluate(scan)
+
+    def test_dag_mouse_focus_draws_no_rectangle(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.mouse.click(*_edge_point(page, "root-middle"))
+        outline = "el => getComputedStyle(el).outlineStyle"
+        edge = page.locator(".dag-edges g[data-id='root-middle']")
+        assert edge.evaluate("el => el === document.activeElement")
+        assert edge.evaluate(outline) == "none"
+        node = page.locator(".dag-node[data-id='middle']")
+        node.click()
+        assert node.evaluate(outline) == "none"
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        assert node.evaluate("el => el === document.activeElement")
+        assert node.evaluate(outline) == "none"
+
+    def test_dag_chrome_keeps_double_click_and_wheel_from_the_canvas(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.locator(".dag-fit-view").click()
+        fitted = _dag_view(page)
+        minimap = _center(page.locator(".dag-minimap").bounding_box())
+        controls = _center(page.locator(".dag-zoom-out").bounding_box())
+        page.mouse.dblclick(*minimap)
+        assert _dag_view(page) == fitted
+        page.mouse.dblclick(*_edge_point(page, "root-middle"))
+        assert _dag_view(page) == fitted
+        _dispatch_wheel(page, *minimap, -100)
+        _dispatch_wheel(page, *controls, -100)
+        assert _dag_view(page) == fitted
+        # A double-click on a control is its two clicks and nothing more.
+        page.locator(".dag-zoom-out").dblclick()
+        assert _dag_view(page)[0] == pytest.approx(fitted[0] / 1.2 ** 2, abs=.001)
+        # React Flow's pane zooms under an edge, so a wheel over one still zooms.
+        page.locator(".dag-fit-view").click()
+        _dispatch_wheel(page, *_edge_point(page, "root-middle"), -100)
+        page.wait_for_function("zoom => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a > zoom", arg=fitted[0])
+
+    @pytest.mark.parametrize(("delta", "ctrl", "mode", "macos_factor", "other_factor"), [
+        pytest.param(-10, True, 0, 2 ** .2, 2 ** .02, id="pinch"),
+        pytest.param(-3, False, 1, 2 ** .15, 2 ** .15, id="lines"),
+        pytest.param(-.1, False, 2, 2 ** .1, 2 ** .1, id="pages"),
+    ])
+    def test_dag_wheel_follows_react_flow_scale(self, fresh_server, page, delta, ctrl, mode, macos_factor, other_factor):
+        _open_synthetic_canvas(fresh_server, page)
+        zoom = _dag_view(page)[0]
+        _dispatch_wheel(page, *_pane_point(page), delta, ctrl=ctrl, mode=mode)
+        factor = macos_factor if page.evaluate("navigator.userAgent.includes('Mac')") else other_factor
+        page.wait_for_function("zoom => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a !== zoom", arg=zoom)
+        assert _dag_view(page)[0] == pytest.approx(zoom * factor, abs=.001)
+
+    def test_dag_dragged_and_selected_nodes_stay_on_top(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        target = _center(page.locator(".dag-node[data-id='middle']").bounding_box())
+        page.mouse.move(*_center(page.locator(".dag-node[data-id='root']").bounding_box()))
+        page.mouse.down()
+        page.mouse.move(*target, steps=5)
+        assert _node_at(page, target) == "root"
+        page.mouse.up()
+        assert _node_at(page, target) == "root"
+        assert page.locator(".dag-node[data-id='root']").evaluate("el => getComputedStyle(el).zIndex") == "1000"
+        page.locator(".dag-node[data-id='leaf']").click()
+        assert page.locator(".dag-node[data-id='root']").evaluate("el => getComputedStyle(el).zIndex") == "auto"
+
+    def test_dag_modifier_drag_keeps_the_node_on_top(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        target = _center(page.locator(".dag-node[data-id='middle']").bounding_box())
+        page.keyboard.down("Meta")
+        page.mouse.move(*_center(page.locator(".dag-node[data-id='root']").bounding_box()))
+        page.mouse.down()
+        page.mouse.move(*target, steps=5)
+        assert _node_at(page, target) == "root"
+        page.mouse.up()
+        page.keyboard.up("Meta")
+        assert _selected_nodes(page) == ["root"]
+
+    def test_dag_locked_canvas_leaves_nodes_edges_and_selection_alone(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        node.click()
+        page.locator(".dag-toggle-interactivity").click()
+        view = _dag_view(page)
+        position = node.evaluate("el => [el.style.left, el.style.top]")
+        _mouse_drag(page, _center(node.bounding_box()), (60, 20))
+        assert _dag_view(page) == view
+        assert node.evaluate("el => [el.style.left, el.style.top]") == position
+        pane = _pane_point(page)
+        page.mouse.click(*pane)
+        page.locator(".dag-node[data-id='leaf']").click()
+        page.mouse.click(*_edge_point(page, "root-middle"))
+        assert _selected_nodes(page) == ["middle"]
+        assert _selected_edges(page) == []
+        # A shift-drag across every node neither selects them nor pans.
+        canvas = page.locator(".dag-canvas-root").bounding_box()
+        page.keyboard.down("Shift")
+        _mouse_drag(page, pane, (canvas["width"] - 120, canvas["height"] - 120))
+        page.keyboard.up("Shift")
+        assert _dag_view(page) == view
+        assert _selected_nodes(page) == ["middle"]
+        # The pane itself still pans, and an edge lets the drag through to it.
+        _mouse_drag(page, pane, (30, 10))
+        assert _dag_view(page)[1] == pytest.approx(view[1] + 30, abs=1)
+        panned = _dag_view(page)
+        _mouse_drag(page, _edge_point(page, "root-middle"), (30, 10))
+        assert _dag_view(page)[1] == pytest.approx(panned[1] + 30, abs=1)
+
+    def test_dag_ctrl_drag_does_not_pan(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        view = _dag_view(page)
+        page.keyboard.down("Control")
+        _mouse_drag(page, _pane_point(page), (60, 30))
+        page.keyboard.up("Control")
+        assert _dag_view(page) == view
+
+    def test_dag_middle_button_pans_over_nodes_and_edges(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        position = node.evaluate("el => [el.style.left, el.style.top]")
+        view = _dag_view(page)
+        _mouse_drag(page, _center(node.bounding_box()), (40, 10), button="middle")
+        assert _dag_view(page)[1] == pytest.approx(view[1] + 40, abs=1)
+        assert node.evaluate("el => [el.style.left, el.style.top]") == position
+        view = _dag_view(page)
+        _mouse_drag(page, _edge_point(page, "root-middle"), (40, 10), button="middle")
+        assert _dag_view(page)[1] == pytest.approx(view[1] + 40, abs=1)
+
+    def test_dag_drag_ends_when_the_button_is_no_longer_held(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        x, y = _pane_point(page)
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 20, y + 20, steps=2)
+        panned = _dag_view(page)
+        assert panned != pytest.approx([panned[0], 0, 0])
+        # What the browser sends after a context menu swallowed the pointerup.
+        page.evaluate("""([x, y]) => document.querySelector('.dag-canvas-root').dispatchEvent(
+            new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', buttons: 0, clientX: x, clientY: y })
+        )""", [x + 80, y + 80])
+        page.mouse.move(x + 120, y + 120, steps=2)
+        assert _dag_view(page) == panned
+        page.mouse.up()
+
+    def test_dag_panning_keeps_the_selection_and_a_pane_click_clears_it(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.locator(".dag-node[data-id='middle']").click()
+        pane = _pane_point(page)
+        _mouse_drag(page, pane, (30, 10))
+        assert _selected_nodes(page) == ["middle"]
+        page.mouse.click(*pane)
+        assert _selected_nodes(page) == []
+
+    def test_dag_group_lets_pane_gestures_through(self, fresh_server, page):
+        _open_dag_payload(fresh_server, page, {"tasks": [_dag_task("first"), _dag_task("second")], "groups": [{"name": "synthetic-group", "members": ["first", "second"]}]})
+        group = page.locator(".dag-node[data-id='group-synthetic-group']")
+        assert group.evaluate("el => getComputedStyle(el).pointerEvents") == "none"
+        view = _dag_view(page)
+        box = group.bounding_box()
+        _mouse_drag(page, (box["x"] + box["width"] / 2, box["y"] + 4), (20, 10))
+        assert _dag_view(page)[1] == pytest.approx(view[1] + 20, abs=1)
+
+    @pytest.mark.parametrize("button", ["left", "middle"])  # a middle-button pan is followed by no click at all
+    def test_dag_meta_click_selects_after_a_pan(self, fresh_server, page, button):
+        _open_synthetic_canvas(fresh_server, page)
+        _mouse_drag(page, _pane_point(page), (30, 10), button=button)
+        page.keyboard.down("Meta")
+        page.locator(".dag-node[data-id='middle']").click()
+        page.keyboard.up("Meta")
+        assert _selected_nodes(page) == ["middle"]
+
+    def test_dag_keyboard_matches_react_flow(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        left = lambda: float(node.evaluate("el => parseFloat(el.style.left)"))
+        top = lambda: float(node.evaluate("el => parseFloat(el.style.top)"))
+        node.focus()
+        before = left()
+        page.keyboard.press("ArrowRight")  # not selected yet
+        assert left() == before
+        page.keyboard.press("Enter")
+        page.keyboard.press("ArrowRight")
+        assert left() == before + 5
+        before = top()
+        page.keyboard.press("Shift+ArrowDown")
+        assert top() == before + 20
+        page.keyboard.press("Escape")
+        assert _selected_nodes(page) == []
+        page.wait_for_function("() => document.activeElement === document.body")
+        node.focus()
+        page.keyboard.press("Escape")  # nothing to deselect
+        assert _selected_nodes(page) == []
+        page.keyboard.press(" ")
+        assert _selected_nodes(page) == ["middle"]
+        edge = page.locator(".dag-edges g[data-id='root-middle']")
+        edge.focus()
+        page.keyboard.press(" ")
+        assert _selected_edges(page) == ["root-middle"]
+        assert _selected_nodes(page) == []
+        page.keyboard.press("Escape")
+        assert _selected_edges(page) == []
+        assert edge.evaluate("el => el !== document.activeElement")
+
+    def test_dag_enter_keeps_a_multiple_selection(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        page.locator(".dag-node[data-id='root']").click()
+        page.keyboard.down("Meta")
+        page.locator(".dag-node[data-id='leaf']").click()
+        page.keyboard.up("Meta")
+        page.keyboard.press("Enter")
+        assert sorted(_selected_nodes(page)) == ["leaf", "root"]
+        page.keyboard.press("Escape")
+        assert _selected_nodes(page) == ["root"]
+
+    def test_dag_fit_uses_ten_percent_padding(self, fresh_server, page):
+        # Zooms measured from React Flow at this viewport. Padding of 20% gives 1.714 and 1.133.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        _open_synthetic_canvas(fresh_server, page)
+        assert _dag_view(page)[0] == pytest.approx(1.871, abs=.001)
+        _reopen_dag_with(page, {"tasks": [_dag_task(f"t{i}") for i in range(5)], "groups": []})
+        assert _dag_view(page)[0] == pytest.approx(1.238, abs=.001)
+        top = page.locator(".dag-node[data-id='t0']").bounding_box()
+        bottom = page.locator(".dag-node[data-id='t4']").bounding_box()
+        canvas = page.locator(".dag-canvas-root").bounding_box()
+        padding = (canvas["height"] - canvas["height"] / 1.1) / 2
+        assert top["y"] - canvas["y"] == pytest.approx(padding, abs=3)  # React Flow floors the padding; 20% would be about 69px
+        assert canvas["y"] + canvas["height"] - bottom["y"] - bottom["height"] == pytest.approx(padding, abs=3)  # React Flow floors the padding; 20% would be about 69px
+
+    def test_dag_zoom_buttons_match_react_flow(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        for selector, label in ((".dag-zoom-in", "Zoom In"), (".dag-zoom-out", "Zoom Out"), (".dag-fit-view", "Fit View"), (".dag-toggle-interactivity", "Toggle Interactivity")):
+            button = page.locator(selector)
+            assert button.get_attribute("title") == label
+            assert button.get_attribute("aria-label") == label
+            assert button.locator("svg path").count() == 1
+            assert button.inner_text() == ""
+        zoom_in = page.locator(".dag-zoom-in")
+        _click_until_disabled(zoom_in)
+        assert zoom_in.locator("svg").evaluate("el => getComputedStyle(el).fillOpacity") == "0.4"
+        assert zoom_in.evaluate("el => getComputedStyle(el).pointerEvents") == "none"
+        lock = page.locator(".dag-toggle-interactivity svg path")
+        unlocked = lock.get_attribute("d")
+        page.locator(".dag-toggle-interactivity").click()
+        assert lock.get_attribute("d") != unlocked
+
+    def test_dag_visual_details_match_react_flow(self, fresh_server, page):
+        _open_dag_payload(fresh_server, page, {
+            "tasks": [_dag_task("first"), _dag_task("second", "first"), _dag_task("third", "first")],
+            "groups": [{"name": "synthetic-group", "members": ["second", "third"]}],
+        })
+        marker = page.locator("#dag-arrow")
+        assert (marker.get_attribute("markerWidth"), marker.get_attribute("markerHeight")) == ("12.5", "12.5")
+        arrow = marker.locator("polyline")
+        assert (arrow.get_attribute("fill"), arrow.get_attribute("stroke")) == ("#b1b1b7", "#b1b1b7")
+        handle = page.locator(".dag-node[data-id='first'] .dag-source-handle")
+        assert handle.evaluate("el => [el.offsetWidth, el.offsetHeight]") == [6, 6]
+        cursor = "el => getComputedStyle(el).cursor"
+        assert page.locator(".dag-canvas-root").evaluate(cursor) == "grab"
+        assert page.locator(".dag-edges g").first.evaluate(cursor) == "pointer"
+        assert page.locator(".dag-minimap").evaluate(cursor) == "auto"
+        # The minimap draws every node, group rectangles included, in its own background.
+        rects = page.locator(".dag-minimap-node").evaluate_all("els => els.map(el => [el.style.fill, el.getAttribute('rx')])")
+        assert len(rects) == page.locator(".dag-node").count()
+        assert rects[0] == ["rgba(167, 139, 250, 0.08)", "5"]
+        mask = page.locator(".dag-minimap-mask")
+        assert mask.evaluate("el => getComputedStyle(el).fill") == "rgba(240, 240, 240, 0.6)"
+        assert mask.get_attribute("fill-rule") == "evenodd"
+
+    def test_dag_edges_use_react_flow_bezier_offsets(self, fresh_server, page):
+        _open_dag_payload(fresh_server, page, {"tasks": [_dag_task("first"), _dag_task("second", "first"), _dag_task("third", "first")], "groups": []})
+        height = page.locator(".dag-node[data-id='first']").evaluate("el => el.offsetHeight")
+        path = lambda edge: [float(value) for value in page.locator(f".dag-edges g[data-id='{edge}'] .dag-edge").get_attribute("d").replace("M", "").replace("C", " ").replace(",", " ").split()]
+        # Handles overhang the 2px border by 1px. A target below the source bends by half the distance.
+        start, end = 40 + height + 1, 160 - 1
+        offset = (end - start) / 2
+        assert path("first-third") == pytest.approx([130, start, 130, start + offset, 390, end - offset, 390, end])
+        # A target above it bends by 6.25 times the square root of the distance.
+        end = 40 - 1
+        offset = 6.25 * (start - end) ** .5
+        assert path("first-second") == pytest.approx([130, start, 130, start + offset, 390, end - offset, 390, end])
+
+    def test_dag_auto_pan_follows_the_current_zoom(self, fresh_server, page):
+        _open_synthetic_canvas(fresh_server, page)
+        node = page.locator(".dag-node[data-id='middle']")
+        canvas = page.locator(".dag-canvas-root").bounding_box()
+        x, y = canvas["x"] + canvas["width"] - 2, canvas["y"] + canvas["height"] / 2
+        page.mouse.move(*_center(node.bounding_box()))
+        page.mouse.down()
+        page.mouse.move(x, y, steps=4)
+        page.mouse.wheel(0, -100)
+        page.wait_for_timeout(100)
+        first = node.bounding_box()["x"] - x
+        page.wait_for_timeout(300)
+        second = node.bounding_box()["x"] - x
+        page.mouse.up()
+        assert second == pytest.approx(first, abs=4)
+
+    def test_dag_canvas_skips_app_renders(self, fresh_server, page):
+        page.add_init_script("""window.__sockets = [];
+            window.WebSocket = class extends window.WebSocket {
+                constructor(...args) { super(...args); window.__sockets.push(this); }
+            };""")
+        _open_synthetic_canvas(fresh_server, page)
+        page.evaluate("""() => {
+            window.__renders = { app: 0, dag: 0 };
+            const previous = preact.options.diffed;
+            preact.options.diffed = (vnode) => {
+                if (vnode.type?.name === 'DagView') window.__renders.app += 1;
+                if (String(vnode.props?.class).startsWith('dag-node')) window.__renders.dag += 1;
+                previous?.(vnode);
+            };
+            window.__sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'log_line', data: { worker_slot: 0, task_id: 'root', line: 'Synthetic log line' } }) });
+        }""")
+        page.wait_for_timeout(1200)  # also spans the one-second timer
+        renders = page.evaluate("window.__renders")
+        assert renders["app"] > 0
+        assert renders["dag"] == 0
+        page.locator(".dag-node[data-id='middle']").click()
+        page.wait_for_function("() => window.__renders.dag > 0")
 
     def test_dag_returns_tasks(self, server_url, runtime_home, page):
         """DAG endpoint returns task dependency graph."""
@@ -1740,6 +2144,7 @@ class TestDagView:
             "element => getComputedStyle(element).position"
         ) == "absolute"
 
+        _wait_for_fit(page)
         viewport = page.locator(".dag-viewport")
         fitted_transform = viewport.get_attribute("style")
         page.locator(".dag-zoom-in").click()
@@ -1818,6 +2223,7 @@ class TestDagView:
         root_node = page.locator(".dag-node[data-id='root']")
         leaf_node = page.locator(".dag-node[data-id='leaf']")
         root_node.wait_for(timeout=SLOW_TIMEOUT)
+        _wait_for_fit(page)
 
         assert root_node.locator(".secondary").inner_text() == "Task root"
         assert root_node.locator(".status-badge").inner_text() == "done"
@@ -3519,3 +3925,193 @@ class TestStuckWorkerObservability:
             page.wait_for_timeout(500)
 
         assert errors == [], f"Console errors after session with done tasks: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# EXACT TEXT IN WHITESPACE-PRESERVING ELEMENTS
+# ---------------------------------------------------------------------------
+
+class TestExactTextHasNoPadding:
+    """These elements use pre or pre-wrap, where any padding space shows on screen."""
+
+    SESSION_ID = "synthetic-exact-text"
+    NOTES = "# Synthetic notes\n    indented synthetic line\n"
+    PACK = {"name": "claude-code", "description": "Synthetic pack", "version": "1.0"}
+
+    def _session(self, status):
+        return {
+            "id": self.SESSION_ID, "name": "Synthetic Session", "pack": "claude-code", "status": status,
+            "created_at": "2030-01-01T00:00:00Z", "started_at": "2030-01-01T00:00:01Z",
+            "completed_at": "2030-01-01T00:10:00Z" if status == "completed" else None,
+            "workers": [], "summary": {"duration_seconds": 100},
+            "config": {"worker_count": 1, "environment": {
+                "COGNITIVE_SWITCHYARD_SOURCE_REPO": "/synthetic/source",
+                "COGNITIVE_SWITCHYARD_REPO_ROOT": "/synthetic/worktree",
+                "COGNITIVE_SWITCHYARD_BRANCH": "switchyard-synthetic",
+            }},
+        }
+
+    def _dashboard(self, status):
+        return {
+            "session": dict(self._session(status), elapsed=1, run_elapsed=1, run_number=1),
+            "pipeline": {"active": 1, "done": 1}, "pipeline_dirs": {}, "runtime_state": {},
+            "effective_runtime_config": {}, "recent_events": [],
+            "workers": [
+                {"slot": 0, "status": "idle"},
+                {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task",
+                 "phase_num": 1, "phase_total": 1, "elapsed": 1, "last_log_line": "Synthetic tail line"},
+                {"slot": 2, "status": "problem", "task_id": "t002", "task_title": "Synthetic stalled task", "elapsed": 1},
+            ],
+        }
+
+    def _serve(self, page, *, session_status, dashboard_status):
+        task = {"task_id": "t001", "title": "Synthetic task", "status": "active", "depends_on": [], "worker_slot": 1}
+        history = dict(self._session("completed"), release_notes={"path": "RELEASE_NOTES.md", "content": self.NOTES})
+        current = self._session(session_status) if session_status else None
+        base = f"/api/sessions/{self.SESSION_ID}"
+        responses = {
+            "/api/packs": {"packs": [self.PACK]},
+            "/api/sessions": {"sessions": [history]},
+            base: {"session": current or history},
+            f"{base}/dashboard": self._dashboard(dashboard_status),
+            f"{base}/tasks": {"tasks": [task]},
+            f"{base}/intake": {"locked": False, "files": []},
+            f"{base}/tasks/t001": {"task": task},
+            f"{base}/tasks/t001/log": {"content": "Synthetic log line\n", "mtime_iso": "2030-01-01T00:00:09Z"},
+        }
+        html = render_app_html({
+            "packs": [self.PACK], "sessions": [history], "settings": {}, "current_session": current,
+            "dashboard": self._dashboard(dashboard_status) if current else None,
+            "intake": {"locked": False, "files": []},
+        })
+
+        def handle(route):
+            path = route.request.url.removeprefix("http://switchyard.test").split("?")[0]
+            if path == "/":
+                route.fulfill(status=200, content_type="text/html", body=html)
+            elif path in responses:
+                route.fulfill(json=responses[path])
+            else:
+                route.fulfill(status=404, body="synthetic not found")
+
+        page.add_init_script(
+            "window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} };"
+        )
+        page.route("http://switchyard.test/**", handle)
+        page.goto("http://switchyard.test/")
+
+    @staticmethod
+    def _child_text(locator):
+        return locator.evaluate("element => [...element.childNodes].map(node => node.textContent)")
+
+    def test_completion_code_block_starts_at_the_command(self, page, browser_error_guard):
+        self._serve(page, session_status="running", dashboard_status="completed")
+        block = page.locator(".completion-code-block").first
+        block.wait_for(timeout=SLOW_TIMEOUT)
+        assert self._child_text(block) == [
+            "cd /synthetic/worktree\ngit log --oneline\ngit diff --stat HEAD~1",
+            "Copy",
+        ]
+        assert_exact_text(block.locator(".copy-btn"), "Copy")
+
+    def test_release_notes_keep_their_own_indentation(self, page, browser_error_guard):
+        self._serve(page, session_status=None, dashboard_status="completed")
+        page.locator("button", has_text="History").first.click()
+        page.locator(".session-card-header div").first.click()
+        notes = page.locator("pre.log-panel")
+        notes.wait_for(timeout=SLOW_TIMEOUT)
+        assert_exact_text(notes, self.NOTES)
+
+    def test_top_bar_run_time_has_no_padding(self, page, browser_error_guard):
+        self._serve(page, session_status="running", dashboard_status="running")
+        timer = page.locator('span[title="Current run time"]')
+        timer.wait_for(timeout=SLOW_TIMEOUT)
+        text = timer.evaluate("element => element.textContent")
+        assert text and text == text.strip()
+
+    def test_log_lines_hold_only_their_timestamp_and_text(self, page, browser_error_guard):
+        self._serve(page, session_status="running", dashboard_status="running")
+        tails = page.locator(".log-line")
+        tails.first.wait_for(timeout=SLOW_TIMEOUT)
+        assert [self._child_text(line) for line in tails.all()] == [
+            ["Synthetic tail line"], ["Waiting for task..."],
+        ]
+        page.locator(".worker-card.active").first.click()
+        detail = page.locator(".log-line").first
+        detail.locator("span").wait_for(timeout=SLOW_TIMEOUT)
+        assert self._child_text(detail) == ["00:00:09", "Synthetic log line"]
+
+
+# ---------------------------------------------------------------------------
+# CONTROLLED FORM VALUES
+# ---------------------------------------------------------------------------
+
+class TestControlledFormValues:
+    """Selects show their first option for an unlisted value, keeping it stored; number text stays as typed."""
+
+    PACKS = [
+        {"name": "synthetic-first", "description": "Synthetic pack"},
+        {"name": "synthetic-second", "description": "Synthetic pack"},
+    ]
+    SETTINGS = {"default_pack": "synthetic-unlisted", "retention_days": 30, "default_planners": 1, "default_workers": 1}
+
+    def _serve(self, page):
+        html = render_app_html({"packs": self.PACKS, "sessions": [], "settings": self.SETTINGS, "current_session": None, "dashboard": None, "intake": {"locked": False, "files": []}})
+        responses = {
+            "/api/packs": {"packs": self.PACKS},
+            "/api/sessions": {"sessions": []},
+            "/api/settings": {"settings": self.SETTINGS},
+            "/api/repo-branches": {"branches": ["synthetic-a", "synthetic-b"]},
+            "/api/resolve-path": {"resolved": "/synthetic/repo", "exists": True, "is_git": True},
+        }
+
+        def handle(route):
+            path = route.request.url.removeprefix("http://switchyard.test").split("?")[0]
+            if path == "/":
+                route.fulfill(status=200, content_type="text/html", body=html)
+            elif path in responses:
+                route.fulfill(json=responses[path])
+            else:
+                route.fulfill(status=404, body="synthetic not found")
+
+        page.add_init_script("window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} };")
+        page.route("http://switchyard.test/**", handle)
+        page.goto("http://switchyard.test/")
+
+    def test_settings_pack_shows_first_option_and_saves_stored_value(self, page, browser_error_guard):
+        self._serve(page)
+        page.locator("button[aria-label='Settings']").click()
+        page.get_by_role("button", name="Save Settings").wait_for(timeout=SLOW_TIMEOUT)
+        select = page.locator("label:has-text('Default Pack') + select")
+        assert select.evaluate("el => [el.selectedIndex, el.value]") == [0, "synthetic-first"]
+        with page.expect_request("**/api/settings") as saved:
+            page.get_by_role("button", name="Save Settings").click()
+        assert saved.value.post_data_json["default_pack"] == "synthetic-unlisted"
+
+    def test_setup_pack_shows_first_option(self, page, browser_error_guard):
+        self._serve(page)
+        select = page.locator("label:has-text('Pack') + select").first
+        select.wait_for(timeout=SLOW_TIMEOUT)
+        assert select.evaluate("el => [el.selectedIndex, el.value]") == [0, "synthetic-first"]
+
+    def test_setup_branch_shows_first_option(self, page, browser_error_guard):
+        self._serve(page)
+        page.get_by_placeholder("/path/to/your/project").fill("/synthetic/repo")
+        page.keyboard.press("Enter")
+        select = page.locator("select:has(option[value='__new__'])")
+        select.wait_for(timeout=SLOW_TIMEOUT)
+        assert select.evaluate("el => [el.selectedIndex, el.value]") == [0, "synthetic-a"]
+
+    def test_settings_number_keeps_a_typed_decimal(self, page, browser_error_guard):
+        self._serve(page)
+        page.locator("button[aria-label='Settings']").click()
+        field = page.locator("label:has-text('Session Retention') + input")
+        field.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.press("Backspace")
+        page.keyboard.type("1.5")
+        # Clearing stores 0, which the field shows, so React also ended on this text.
+        assert field.evaluate("el => el.value") == "01.5"
+        with page.expect_request("**/api/settings") as saved:
+            page.get_by_role("button", name="Save Settings").click()
+        assert saved.value.post_data_json["retention_days"] == 1.5

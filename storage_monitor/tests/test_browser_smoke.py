@@ -72,26 +72,148 @@ def live_server(app):
         assert not thread.is_alive()
 
 
-def route_dashboard_api(page, snapshots=None):
+GIGABYTE = 1024 ** 3
+SYNTHETIC_REPORT_ROWS = {
+    "summary": {
+        "container_size_bytes": 1000 * GIGABYTE,
+        "container_used_bytes": 400 * GIGABYTE,
+        "container_free_bytes": 600 * GIGABYTE,
+    },
+    "breakdowns": {
+        "data_root": {
+            "total_bytes": 3 * GIGABYTE,
+            "updated_at": "2030-01-01T00:00:00Z",
+            "items": [
+                {
+                    "path": "/synthetic/data/folder",
+                    "label": "synthetic-folder",
+                    "allocated_bytes": 2 * GIGABYTE,
+                    "is_file": False,
+                    "is_cached": True,
+                },
+                {
+                    "path": "/synthetic/data/file.bin",
+                    "label": "synthetic-file.bin",
+                    "allocated_bytes": GIGABYTE,
+                    "is_file": True,
+                },
+            ],
+        },
+    },
+    "findings": {
+        "updated_at": "2030-01-01T00:00:00Z",
+        "items": [
+            {
+                "path": "/synthetic/cache",
+                "label": "Synthetic finding",
+                "category": "cache",
+                "risk": "low",
+                "estimated_reclaim_bytes": GIGABYTE,
+                "actions": [
+                    {"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-token"},
+                ],
+            },
+        ],
+    },
+    "large_files": {
+        "updated_at": "2030-01-01T00:00:00Z",
+        "items": [
+            {
+                "path": "/synthetic/large.bin",
+                "label": "Synthetic large file",
+                "allocated_bytes": 2 * GIGABYTE,
+            },
+        ],
+    },
+    "providers": {
+        "items": [
+            {
+                "slug": "synthetic-manual",
+                "label": "Synthetic manual provider",
+                "available": True,
+                "risk": "medium",
+                "estimate_bytes": GIGABYTE,
+                "estimate_kind": "upper_bound",
+                "execution": "manual",
+                "description": "Synthetic description",
+                "manual_command": "synthetic-command --clean",
+                "manual_instruction": "Synthetic instruction",
+            },
+            {
+                "slug": "synthetic-unavailable",
+                "label": "Synthetic unavailable provider",
+                "available": False,
+                "risk": "low",
+                "estimate_bytes": None,
+                "execution": "execute",
+                "action_token": "synthetic-provider",
+                "unavailable_reason": "Synthetic reason",
+            },
+        ],
+    },
+    "orphans": {
+        "items": [
+            {
+                "path": "/synthetic/orphan",
+                "name": "Synthetic leftover",
+                "source": "group_containers",
+                "allocated_bytes": GIGABYTE,
+            },
+        ],
+    },
+}
+SYNTHETIC_GROWTH = {
+    "baselines": [
+        {"scan_id": 3, "completed_at": "2030-01-03T00:00:00Z"},
+        {"scan_id": 2, "completed_at": "2030-01-02T00:00:00Z"},
+    ],
+    "baseline_scan_id": 2,
+    "current_scan_id": 3,
+    "items": [
+        {
+            "path": "/synthetic/growing",
+            "delta_bytes": GIGABYTE,
+            "current_bytes": 2 * GIGABYTE,
+            "baseline_bytes": GIGABYTE,
+        },
+    ],
+    "updated_at": "2030-01-03T00:00:00Z",
+}
+TAB_ROWS = {
+    "Findings": "Synthetic finding",
+    "Snapshots": None,
+    "Large Files": "Synthetic large file",
+    "Providers": "Synthetic manual provider",
+    "Growth": "/synthetic/growing",
+    "App Leftovers": "Synthetic leftover",
+}
+
+
+def assert_every_tab_styled(page):
+    assert_classes_styled(page, ignore=["active"])
+    for tab, row in TAB_ROWS.items():
+        page.locator(".tab").filter(has_text=tab).click()
+        if row:
+            page.get_by_text(row, exact=True).first.wait_for()
+        assert_classes_styled(page, ignore=["active"])
+
+
+def route_dashboard_api(page, snapshots=None, growth=SYNTHETIC_GROWTH):
     page.route(
         "**/api/state",
         lambda route: route.fulfill(
             json={
                 "scan_status": {"running": False, "phase": "complete", "progress": 1},
                 "report": {
+                    **SYNTHETIC_REPORT_ROWS,
                     "generated_at": "2030-01-01T00:00:00Z",
-                    "summary": {},
-                    "breakdowns": {},
-                    "findings": {"items": []},
                     "snapshots": {"items": snapshots or []},
-                    "large_files": {"items": []},
-                    "providers": {"items": []},
-                    "orphans": {"items": []},
                     "checks": [],
                 },
             }
         ),
     )
+    page.route("**/api/growth*", lambda route: route.fulfill(json=growth))
     page.route(
         "**/api/events",
         lambda route: route.fulfill(status=200, content_type="text/event-stream", body=""),
@@ -138,7 +260,7 @@ def test_dashboard_persists_theme_without_browser_errors(
             route_dashboard_api(page)
             page.goto(url, wait_until="networkidle")
             page.get_by_text("Storage Monitor", exact=True).wait_for()
-            assert_classes_styled(page, ignore=["active"])
+            assert_every_tab_styled(page)
 
             root_styles = page.locator("#root").evaluate(
                 "element => ({ minHeight: getComputedStyle(element).minHeight, "
@@ -178,6 +300,24 @@ def test_dashboard_persists_theme_without_browser_errors(
         browser.close()
 
 
+def test_growth_baseline_select_never_renders_blank(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    unresolved = {**SYNTHETIC_GROWTH, "baseline_scan_id": None, "current_scan_id": None, "items": []}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        with guard_browser_errors(page):
+            route_dashboard_api(page, growth=unresolved)
+            page.goto(url, wait_until="networkidle")
+            page.locator(".tab").filter(has_text="Growth").click()
+            select = page.locator("select")
+            select.locator("option").first.wait_for(state="attached")
+            assert select.evaluate("element => element.selectedIndex") == 0
+            assert select.input_value() == "3"
+        browser.close()
+
+
 def test_dashboard_keeps_first_party_styles_offline(
     monkeypatch,
     tmp_path,
@@ -187,7 +327,9 @@ def test_dashboard_keeps_first_party_styles_offline(
 
     with live_server(module.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page()
+        context = browser.new_context()
+        blocked = block_external_requests(context, allowed_origins=[url])
+        page = context.new_page()
         with guard_browser_errors(page):
             route_dashboard_api(page)
 
@@ -197,6 +339,7 @@ def test_dashboard_keeps_first_party_styles_offline(
                 "element => [getComputedStyle(element).backgroundColor, "
                 "getComputedStyle(element).color]"
             ) == ["rgb(244, 245, 247)", "rgb(26, 27, 30)"]
+            assert_no_external_resources(page, blocked)
         browser.close()
 
 

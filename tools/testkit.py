@@ -12,6 +12,7 @@ import sys
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import urlsplit
@@ -266,18 +267,88 @@ def assert_no_external_resources(page, blocked: list[str]) -> None:
     assert not blocked and not resources, f"External resources: blocked={blocked}, timed={resources}"
 
 
+# A host that starts with an interpolation is the page's own, as in `ws://${location.host}/ws`.
+_REMOTE_URL = r"(?:https?:)?//(?!\$\{)"
+_QUOTED_REMOTE = rf"['\"`]\s*{_REMOTE_URL}"
+# The codemod writes attributes in htm templates as attr=${"literal"} or attr=${`literal`}.
+_REMOTE_VALUE = rf"(?:\$\{{\s*)?(?:{_QUOTED_REMOTE}|https?://)"
+_RETIRED_TYPES = r"(?:importmap|text/babel|text/tailwindcss)"
+_REFRESH_URL = rf"\burl\s*=\s*['\"]?\s*{_REMOTE_URL}"
+# Script and style text can build markup and load resources itself, so these run on
+# its raw text. Comments stay in: skipping them needs a real lexer, and a comment
+# matches only if it holds commented-out loading code.
+_OFFLINE_CODE_PATTERNS = (
+    rf"<\s*(?!a\b|area\b)[a-z][\w:-]*\b[^>]*\b(?:xlink:)?href\s*=\s*{_REMOTE_VALUE}",
+    rf"\b(?:src|srcset|poster)\s*[:=]\s*{_REMOTE_VALUE}",
+    rf"\bbackground\s*=\s*{_REMOTE_VALUE}",
+    rf"<\s*meta\b(?=[^>]*\bhttp-equiv\s*=\s*\W*refresh\b)[^>]*{_REFRESH_URL}",
+    rf"\b(?:import|export)\b(?:[^;\n]*?\bfrom)?\s*{_QUOTED_REMOTE}",
+    rf"\bimport\s*\(\s*{_QUOTED_REMOTE}",
+    rf"\b(?:fetch|Worker|SharedWorker|EventSource|sendBeacon)\s*\(\s*{_QUOTED_REMOTE}",
+    rf"\bWebSocket\s*\(\s*['\"`]\s*(?:(?:https?|wss?):)?//(?!\$\{{)",
+    rf"\.open\s*\(\s*['\"`][a-z]+['\"`]\s*,\s*{_QUOTED_REMOTE}",
+    rf"\bsetAttribute(?:NS)?\s*\([^)]*?,\s*{_QUOTED_REMOTE}",
+    rf"\bimportScripts\s*\([^)]*?{_QUOTED_REMOTE}",
+    rf"\burl\s*\(\s*['\"`]?\s*{_REMOTE_URL}",
+    rf"@import\s+(?:url\s*\(\s*)?['\"`]?\s*{_REMOTE_URL}",
+    rf"\btype\s*=\s*['\"`]?{_RETIRED_TYPES}\b",
+)
+
+
+class _OfflineMarkup(HTMLParser):
+    """Check live markup attributes and collect script and style text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.violations: list[str] = []
+        self.code: list[str] = []
+        self._in_code = False
+
+    @staticmethod
+    def _rejected(tag: str, name: str, value: str) -> bool:
+        if name == "type":
+            return bool(re.fullmatch(_RETIRED_TYPES, value, re.I))
+        if name == "srcset":
+            return bool(re.search(rf"(?:^|,)\s*{_REMOTE_URL}", value, re.I))
+        if name in {"src", "poster", "background"} or (name == "data" and tag == "object") or (
+            name in {"href", "xlink:href"} and tag not in {"a", "area"}
+        ):
+            return bool(re.match(_REMOTE_URL, value, re.I))
+        return False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        for name, value in attrs:
+            value = (value or "").strip()
+            if name == "style":
+                self.code.append(value)
+            elif self._rejected(tag, name, value):
+                self.violations.append(f"<{tag} {name}={value!r}>")
+        fields = {name: (value or "") for name, value in attrs}
+        if (tag == "meta" and fields.get("http-equiv", "").strip().lower() == "refresh"
+                and re.search(_REFRESH_URL, fields.get("content", ""), re.I)):
+            self.violations.append(f"<meta refresh {fields['content']!r}>")
+        self._in_code = tag in {"script", "style"}
+
+    def handle_endtag(self, tag) -> None:
+        self._in_code = False
+
+    def handle_data(self, data) -> None:
+        if self._in_code:
+            self.code.append(data)
+
+
 def assert_offline_page_source(html: str) -> None:
-    """Reject remote executable resources and retired runtime compilers."""
-    source = re.sub(r"/\*.*?\*/|<!--.*?-->", "", html, flags=re.S)
-    patterns = (
-        r"<\s*(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*['\"]?(?:https?:)?//",
-        r"\b(?:import|export)\s+(?:[^;\n]*?\s+from\s+)?['\"](?:https?:)?//",
-        r"\bimport\s*\(\s*['\"](?:https?:)?//",
-        r"\b(?:url\s*\(|@import\s+)(?:\s*['\"]?)?(?:https?:)?//",
-        r"\btype\s*=\s*['\"](?:importmap|text/babel|text/tailwindcss)['\"]",
-    )
-    for pattern in patterns:
-        assert not re.search(pattern, source, re.I), f"Offline source contains {pattern}"
+    """Reject remote resources and retired runtime compilers in a page's source."""
+    markup = _OfflineMarkup()
+    markup.feed(html)
+    markup.close()
+    code = "".join(markup.code)
+    found = markup.violations + [
+        match.group(0)[:120]
+        for pattern in _OFFLINE_CODE_PATTERNS
+        for match in re.finditer(pattern, code, re.I)
+    ]
+    assert not found, f"Offline source contains: {found}"
 
 
 def assert_frontend_vendor_current(path: str | Path) -> None:
@@ -294,6 +365,28 @@ def assert_launcher_compiles_cleanly(path: str | Path) -> None:
         warnings.simplefilter("error", SyntaxWarning)
         warnings.simplefilter("error", DeprecationWarning)
         compile(path.read_bytes(), str(path), "exec")
+
+
+def assert_exact_text(locator, expected: str) -> None:
+    """Compare raw DOM text; Playwright's to_have_text and inner_text normalize whitespace."""
+    actual = locator.evaluate("element => element.textContent")
+    assert actual == expected, f"Expected exact text {expected!r}, got {actual!r}"
+
+
+def assert_fonts_loaded(page, families: Sequence[str]) -> None:
+    """Require a loaded FontFace per family; computed styles pass on the CSS stack alone."""
+    faces = page.evaluate(r"""async (families) => {
+        await document.fonts.ready;
+        const faces = [...document.fonts];
+        return Object.fromEntries(families.map(family => [family, faces
+            .filter(face => face.family.replace(/^['"]|['"]$/g, '') === family)
+            .map(face => face.status)]));
+    }""", list(families))
+    failed = {
+        family: statuses for family, statuses in faces.items()
+        if "loaded" not in statuses or "error" in statuses
+    }
+    assert not failed, f"Fonts without a loaded FontFace: {failed}"
 
 
 def assert_classes_styled(page, ignore: Sequence[str] = ()) -> None:

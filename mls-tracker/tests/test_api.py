@@ -5,7 +5,11 @@ Strategy:
 - API endpoints are tested via FastAPI's TestClient with mocked ESPN calls.
 - No real network calls; all external HTTP is mocked.
 """
+import subprocess
+import threading
 import time
+from concurrent.futures import Future
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -14,6 +18,8 @@ from tools.testkit import ASGISyncClient
 import mls_tracker
 
 REAL_FETCH_LOGO_DATA = mls_tracker.fetch_logo_data
+SYNTHETIC_PNG = b"\x89PNG\r\n\x1a\nsynthetic"
+SYNTHETIC_PNG_URL = "data:image/png;base64,iVBORw0KGgpzeW50aGV0aWM="
 
 
 # ============================================================
@@ -106,7 +112,7 @@ def _mock_requests_get(url, **kwargs):
         resp.status_code = 200
         resp.headers = {"Content-Type": "image/png"}
         resp.__enter__.return_value = resp
-        resp.raw.read1.side_effect = [b"synthetic-logo", b""]
+        resp.raw.read1.side_effect = [SYNTHETIC_PNG, b""]
     elif "teams" in url:
         resp.json.return_value = MOCK_TEAMS_RESPONSE
     elif "standings" in url:
@@ -120,6 +126,7 @@ def _mock_requests_get(url, **kwargs):
 def _patch_espn_and_reset_cache():
     """Patch external HTTP calls and reset the global cache for every test."""
     mls_tracker.cache.invalidate()
+    mls_tracker.logo_cache.clear()
     with patch("mls_tracker.requests.get", side_effect=_mock_requests_get), patch(
         "mls_tracker.fetch_logo_data", side_effect=mls_tracker._fetch_logo_data
     ):
@@ -603,7 +610,7 @@ class TestDataFlow:
         assert alpha is not None
         # Team Alpha has color=C8102E which is not low-contrast → should be primary
         assert alpha["colors"]["primary"] == "#C8102E"
-        assert alpha["logo"] == "data:image/png;base64,c3ludGhldGljLWxvZ28="
+        assert alpha["logo"] == SYNTHETIC_PNG_URL
 
     def test_black_primary_team_gets_swapped_colors(self, client):
         """Team Bravo has black primary → should swap to alt color."""
@@ -809,15 +816,401 @@ def test_logo_worker_runs_transport_on_synthetic_response(monkeypatch):
         "import runpy,sys; from unittest.mock import MagicMock; "
         "m=runpy.run_path(sys.argv[1], run_name='mls_logo_worker'); "
         "r=MagicMock(status_code=200, headers={'Content-Type':'image/png'}); "
-        "r.__enter__.return_value=r; r.raw.read1.side_effect=[b'synthetic',b'']; "
+        "r.__enter__.return_value=r; r.raw.read1.side_effect=[b'\\x89PNG\\r\\n\\x1a\\nsynthetic',b'']; "
         "m['_fetch_logo_data'].__globals__['requests'].get=lambda *a,**k:r; "
         "print(m['_fetch_logo_data'](sys.argv[2]),end='')"
     )
     monkeypatch.setattr(mls_tracker, 'LOGO_WORKER_CODE', code)
-    assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == 'data:image/png;base64,c3ludGhldGlj'
+    assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/500/123.png') == SYNTHETIC_PNG_URL
 
 
 def test_parent_rejects_unsafe_logo_before_worker():
     with patch('mls_tracker.subprocess.run') as run:
         assert REAL_FETCH_LOGO_DATA('https://a.espncdn.com/i/teamlogos/soccer/../../../other.png') == ''
         run.assert_not_called()
+
+
+def test_logo_worker_ignores_a_shadowing_module_in_the_launch_directory(tmp_path):
+    marker = tmp_path / "shadow-ran"
+    (tmp_path / "requests.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    with patch("mls_tracker.subprocess.run") as run:
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        REAL_FETCH_LOGO_DATA("https://a.espncdn.com/i/teamlogos/soccer/500/123.png")
+    argv = run.call_args.args[0]
+    # The worker rejects this address before any request, so nothing reaches the network.
+    argv[-1] = "https://not-espn.invalid/i/teamlogos/soccer/500/123.png"
+
+    result = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, timeout=30)
+
+    assert not marker.exists()
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+class TestLogoContent:
+    URL = "https://a.espncdn.com/i/teamlogos/soccer/500/123.png"
+
+    @staticmethod
+    def _fetch(body, media_type):
+        response = MagicMock(status_code=200, headers={"Content-Type": media_type})
+        response.__enter__.return_value = response
+        response.raw.read1.side_effect = [body, b""]
+        with patch("mls_tracker.requests.get", return_value=response):
+            return mls_tracker._fetch_logo_data(TestLogoContent.URL)
+
+    @pytest.mark.parametrize(
+        ("body", "media_type"),
+        [
+            (SYNTHETIC_PNG, "image/png"),
+            (b"\xff\xd8\xff\xe0synthetic", "image/jpeg"),
+            (b"RIFF\x10\x00\x00\x00WEBPsynthetic", "image/webp"),
+        ],
+    )
+    def test_accepts_bytes_matching_the_declared_type(self, body, media_type):
+        assert self._fetch(body, media_type).startswith(f"data:{media_type};base64,")
+
+    @pytest.mark.parametrize(
+        ("body", "media_type"),
+        [
+            (b"<html>synthetic</html>", "image/png"),
+            (b"\xff\xd8\xff\xe0synthetic", "image/png"),
+            (SYNTHETIC_PNG, "image/jpeg"),
+            (b"RIFF\x10\x00\x00\x00WAVEsynthetic", "image/webp"),
+            (b"", "image/png"),
+        ],
+    )
+    def test_rejects_bytes_not_matching_the_declared_type(self, body, media_type):
+        assert self._fetch(body, media_type) == ""
+
+
+class TestLogoHref:
+    @pytest.mark.parametrize("href", [5, None, ["synthetic"], {"synthetic": 1}, b"synthetic"])
+    def test_non_string_href_is_invalid(self, href):
+        assert mls_tracker._valid_logo_url(href) is False
+        assert REAL_FETCH_LOGO_DATA(href) == ""
+
+    @pytest.mark.parametrize("href", [5, ["synthetic"]])
+    def test_non_string_href_leaves_a_blank_logo_in_the_response(self, client, href):
+        payload = {"sports": [{"leagues": [{"teams": [_make_team_entry(
+            1, "Team Alpha", "ALP", "123456", "abcdef", href)]}]}]}
+
+        def espn(url, **kwargs):
+            if "teams" not in url:
+                return _mock_requests_get(url, **kwargs)
+            response = MagicMock()
+            response.json.return_value = payload
+            return response
+
+        with patch("mls_tracker.requests.get", side_effect=espn):
+            resp = client.get("/api/data?season=2025")
+
+        assert resp.status_code == 200
+        assert resp.json()["conferences"]["Eastern Conference"][0]["logo"] == ""
+
+
+class TestLogoCache:
+    URL_A = "https://a.espncdn.com/i/teamlogos/soccer/500/a.png"
+    URL_B = "https://a.espncdn.com/i/teamlogos/soccer/500/b.png"
+    URL_C = "https://a.espncdn.com/i/teamlogos/soccer/500/c.png"
+
+    def test_good_logos_survive_data_expiry_and_manual_refresh(self, client):
+        with patch("mls_tracker.fetch_logo_data", return_value=SYNTHETIC_PNG_URL) as fetch:
+            client.get("/api/data?season=2025")
+            downloads = fetch.call_count
+            assert downloads > 0
+            client.post("/api/refresh")
+            mls_tracker.cache._teams_ts = 0
+            resp = client.get("/api/data?season=2025")
+
+        assert fetch.call_count == downloads
+        assert resp.json()["conferences"]["Eastern Conference"][0]["logo"] == SYNTHETIC_PNG_URL
+
+    def test_downloads_each_distinct_url_once(self):
+        logos = mls_tracker.LogoCache()
+        with patch("mls_tracker.fetch_logo_data", return_value="data:one") as fetch:
+            assert logos.resolve([self.URL_A, self.URL_A, ""]) == ["data:one", "data:one", ""]
+        fetch.assert_called_once_with(self.URL_A)
+
+    def test_expired_logo_is_replaced_by_a_good_download(self):
+        logos = mls_tracker.LogoCache(ttl=100)
+        with patch("mls_tracker.time.time", return_value=1000.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:old"
+        ):
+            logos.resolve([self.URL_A])
+        with patch("mls_tracker.time.time", return_value=1050.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:new"
+        ) as within_lifetime:
+            assert logos.resolve([self.URL_A]) == ["data:old"]
+        within_lifetime.assert_not_called()
+        with patch("mls_tracker.time.time", return_value=1101.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:new"
+        ):
+            assert logos.resolve([self.URL_A]) == ["data:new"]
+
+    def test_failed_refresh_keeps_a_good_logo_and_retries(self):
+        logos = mls_tracker.LogoCache(ttl=100)
+        with patch("mls_tracker.time.time", return_value=1000.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:good"
+        ):
+            logos.resolve([self.URL_A])
+        with patch("mls_tracker.time.time", return_value=2000.0), patch(
+            "mls_tracker.fetch_logo_data", return_value=""
+        ):
+            assert logos.resolve([self.URL_A]) == ["data:good"]
+        with patch("mls_tracker.time.time", return_value=2001.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:later"
+        ):
+            assert logos.resolve([self.URL_A]) == ["data:later"]
+
+    def test_failed_first_download_stays_blank_and_retries(self):
+        logos = mls_tracker.LogoCache()
+        with patch("mls_tracker.fetch_logo_data", return_value=""):
+            assert logos.resolve([self.URL_A]) == [""]
+        with patch("mls_tracker.fetch_logo_data", return_value="data:good"):
+            assert logos.resolve([self.URL_A]) == ["data:good"]
+
+    def test_total_payload_is_capped_and_only_kept_logos_are_stored(self, monkeypatch):
+        monkeypatch.setattr(mls_tracker, "MAX_LOGO_PAYLOAD_CHARS", 10)
+        sizes = {self.URL_A: "a" * 6, self.URL_B: "b" * 6, self.URL_C: "c" * 4}
+        logos = mls_tracker.LogoCache()
+
+        with patch("mls_tracker.fetch_logo_data", side_effect=sizes.get) as fetch:
+            assert logos.resolve(list(sizes)) == [sizes[self.URL_A], "", sizes[self.URL_C]]
+            assert logos.resolve(list(sizes)) == [sizes[self.URL_A], "", sizes[self.URL_C]]
+
+        assert fetch.call_args_list.count(((self.URL_A,),)) == 1
+        assert fetch.call_args_list.count(((self.URL_B,),)) == 2
+
+    def test_partial_list_keeps_a_good_logo_until_it_expires(self):
+        logos = mls_tracker.LogoCache(ttl=100)
+        with patch("mls_tracker.time.time", return_value=1000.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:good"
+        ):
+            logos.resolve([self.URL_A, self.URL_B])
+        with patch("mls_tracker.time.time", return_value=1050.0), patch(
+            "mls_tracker.fetch_logo_data", return_value=""
+        ) as fetch:
+            logos.resolve([self.URL_B])
+            assert logos.resolve([self.URL_A]) == ["data:good"]
+        fetch.assert_not_called()
+
+        with patch("mls_tracker.time.time", return_value=1101.0), patch(
+            "mls_tracker.fetch_logo_data", side_effect=lambda url: "data:later" if url == self.URL_B else ""
+        ):
+            logos.resolve([self.URL_B])
+            # Unlisted past its lifetime, so it was pruned and a failed download finds nothing.
+            assert logos.resolve([self.URL_A]) == [""]
+
+    def test_older_overlapping_resolve_keeps_a_newer_logo(self):
+        logos = mls_tracker.LogoCache()
+
+        def fetch(url):
+            if url == self.URL_A:
+                logos.resolve([self.URL_B])
+                return "data:a"
+            return "data:b"
+
+        with patch("mls_tracker.fetch_logo_data", side_effect=fetch):
+            assert logos.resolve([self.URL_A]) == ["data:a"]
+        with patch("mls_tracker.fetch_logo_data", return_value="") as later:
+            assert logos.resolve([self.URL_A, self.URL_B]) == ["data:a", "data:b"]
+        later.assert_not_called()
+
+    def test_older_failed_refresh_cannot_replace_a_newer_download(self):
+        logos = mls_tracker.LogoCache(ttl=100)
+        with patch("mls_tracker.time.time", return_value=1000.0), patch(
+            "mls_tracker.fetch_logo_data", return_value="data:old"
+        ):
+            logos.resolve([self.URL_A])
+        answers = iter(["", "data:new"])
+
+        def fetch(url):
+            answer = next(answers)
+            if not answer:
+                logos.resolve([self.URL_A])
+            return answer
+
+        with patch("mls_tracker.time.time", return_value=2000.0), patch(
+            "mls_tracker.fetch_logo_data", side_effect=fetch
+        ):
+            assert logos.resolve([self.URL_A]) == ["data:old"]
+        with patch("mls_tracker.time.time", return_value=2001.0), patch(
+            "mls_tracker.fetch_logo_data", return_value=""
+        ) as later:
+            assert logos.resolve([self.URL_A]) == ["data:new"]
+        later.assert_not_called()
+
+
+class TestDataCacheFetchOutsideLock:
+    @staticmethod
+    def _blocking_fetch(values):
+        started = threading.Event()
+        release = threading.Event()
+        remaining = iter(values)
+
+        def fetch():
+            started.set()
+            assert release.wait(10)
+            return next(remaining)
+
+        return fetch, started, release
+
+    @staticmethod
+    @contextmanager
+    def _parked_followers():
+        """Count followers as they reach the shared flight, before it can resolve."""
+        parked = threading.Semaphore(0)
+
+        class ParkedFuture(Future):
+            def result(self, timeout=None):
+                parked.release()
+                return super().result(timeout)
+
+        with patch("mls_tracker.Future", ParkedFuture):
+            yield parked
+
+    def test_invalidate_does_not_wait_and_discards_the_running_fetch(self):
+        cache = mls_tracker.DataCache()
+        fetch, started, release = self._blocking_fetch([["before"], ["after"]])
+        results = []
+        with patch("mls_tracker.fetch_teams_from_espn", side_effect=fetch):
+            reader = threading.Thread(target=lambda: results.append(cache.get_teams()))
+            reader.start()
+            assert started.wait(10)
+
+            invalidator = threading.Thread(target=cache.invalidate)
+            invalidator.start()
+            invalidator.join(2)
+            assert not invalidator.is_alive(), "invalidate waited for the network"
+
+            release.set()
+            reader.join(10)
+            assert results == [["before"]]
+            assert cache._teams is None
+            assert cache.get_teams() == ["after"]
+
+    def test_reader_after_invalidate_starts_its_own_fetch(self):
+        cache = mls_tracker.DataCache()
+        fetch, started, release = self._blocking_fetch([["before"], ["after"]])
+        results = {}
+        with patch("mls_tracker.fetch_teams_from_espn", side_effect=fetch) as teams:
+            first = threading.Thread(target=lambda: results.update(first=cache.get_teams()))
+            first.start()
+            assert started.wait(10)
+            cache.invalidate()
+            second = threading.Thread(target=lambda: results.update(second=cache.get_teams()))
+            second.start()
+            deadline = time.monotonic() + 10
+            while teams.call_count < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert teams.call_count == 2
+            release.set()
+            first.join(10)
+            second.join(10)
+        assert sorted(results.values()) == [["after"], ["before"]]
+
+    def test_concurrent_readers_share_one_fetch(self):
+        cache = mls_tracker.DataCache()
+        fetch, started, release = self._blocking_fetch([{"season": "synthetic"}])
+        results = []
+        with self._parked_followers() as parked, patch(
+            "mls_tracker.fetch_standings_from_espn", side_effect=lambda season: fetch()
+        ) as standings:
+            readers = [
+                threading.Thread(target=lambda: results.append(cache.get_standings(2025)), daemon=True)
+                for _ in range(4)
+            ]
+            readers[0].start()
+            assert started.wait(10)
+            for reader in readers[1:]:
+                reader.start()
+            # Every follower is waiting on the flight while its fetch is still held open.
+            for _ in readers[1:]:
+                assert parked.acquire(timeout=10)
+            release.set()
+            for reader in readers:
+                reader.join(10)
+                assert not reader.is_alive()
+        assert standings.call_count == 1
+        assert results == [{"season": "synthetic"}] * 4
+
+    def _load_with_a_waiting_follower(self, cache, fetch, store):
+        """Run a leader and one parked follower; return each one's outcome."""
+        outcomes = {}
+
+        def load(name):
+            try:
+                outcomes[name] = cache._load("synthetic", lambda: None, fetch, store)
+            except RuntimeError as exc:
+                outcomes[name] = exc
+
+        return load, outcomes
+
+    def test_waiting_follower_receives_the_leaders_fetch_failure(self):
+        cache = mls_tracker.DataCache()
+        started = threading.Event()
+        release = threading.Event()
+        fetches = []
+
+        def fetch():
+            fetches.append(1)
+            started.set()
+            assert release.wait(10)
+            raise RuntimeError("synthetic fetch failure")
+
+        load, outcomes = self._load_with_a_waiting_follower(cache, fetch, lambda value: None)
+        with self._parked_followers() as parked:
+            leader = threading.Thread(target=load, args=("leader",), daemon=True)
+            follower = threading.Thread(target=load, args=("follower",), daemon=True)
+            leader.start()
+            assert started.wait(10)
+            follower.start()
+            assert parked.acquire(timeout=10)
+            release.set()
+            leader.join(10)
+            follower.join(10)
+            assert not leader.is_alive() and not follower.is_alive()
+
+        assert len(fetches) == 1
+        assert outcomes["follower"] is outcomes["leader"]
+        assert str(outcomes["follower"]) == "synthetic fetch failure"
+        assert not cache._flights
+
+    def test_waiting_follower_is_resolved_when_store_raises(self):
+        cache = mls_tracker.DataCache()
+        fetch, started, release = self._blocking_fetch([["synthetic"]])
+
+        def store(value):
+            raise RuntimeError("synthetic store failure")
+
+        load, outcomes = self._load_with_a_waiting_follower(cache, fetch, store)
+        with self._parked_followers() as parked:
+            leader = threading.Thread(target=load, args=("leader",), daemon=True)
+            follower = threading.Thread(target=load, args=("follower",), daemon=True)
+            leader.start()
+            assert started.wait(10)
+            follower.start()
+            assert parked.acquire(timeout=10)
+            release.set()
+            leader.join(10)
+            follower.join(10)
+            assert not leader.is_alive() and not follower.is_alive(), "a follower waited forever"
+
+        assert str(outcomes["leader"]) == "synthetic store failure"
+        assert outcomes["follower"] is outcomes["leader"]
+        assert not cache._flights
+
+    def test_failed_fetch_is_not_cached(self):
+        cache = mls_tracker.DataCache()
+        calls = []
+
+        def fail_once():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("synthetic fetch failure")
+            return ["recovered"]
+
+        with patch("mls_tracker.fetch_teams_from_espn", side_effect=fail_once):
+            with pytest.raises(RuntimeError, match="synthetic fetch failure"):
+                cache.get_teams()
+            assert cache.get_teams() == ["recovered"]

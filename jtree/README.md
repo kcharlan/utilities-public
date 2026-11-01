@@ -111,9 +111,9 @@ The browser interface uses no external network resources after the launcher star
 
 ### Browser support
 
-The automated browser suite runs with current Playwright Chromium. Tailwind 4's manual
-client floors for this browser-delivered UI are Chrome 111, Safari 16.4, and
-Firefox 128. Safari and Firefox are not covered by the automated browser test,
+The automated browser suite runs with current Playwright Chromium. The embedded
+stylesheet began as compiled Tailwind 4 CSS and is now maintained by hand as plain CSS. It keeps
+that CSS's manual client floors: Chrome 111, Safari 16.4, and Firefox 128. Safari and Firefox are not covered by the automated browser test,
 so browser-specific behavior on those clients requires manual verification.
 
 ## Requirements

@@ -107,6 +107,7 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster
 
 If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py launchmaster --install-browsers`.
 
-The suite includes startup checks, synthetic API integration checks, schedule
-checks, and Playwright browser tests. API and browser servers use isolated
-temporary homes and synthetic jobs; their job mutation endpoints are disabled.
+The suite includes startup checks, unit tests that feed synthetic `launchctl`
+output through the real parsers, a boot of `main()` with `launchctl` faked,
+synthetic API integration checks, schedule checks, and Playwright browser
+tests. API and browser servers use isolated temporary homes and synthetic jobs; their job mutation endpoints are disabled.

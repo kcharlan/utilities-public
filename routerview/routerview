@@ -39,7 +39,7 @@ import uvicorn
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
@@ -1761,19 +1761,20 @@ async def get_breakdown(
 @app.get("/api/heatmap")
 async def get_heatmap(
     metric: str = Query("cost"),
-    range: str = Query("this_week"), from_: str = Query(None, alias="from"),
+    time_range: str = Query("this_week", alias="range"), from_: str = Query(None, alias="from"),
     to: str = Query(None), tz: str = Query("UTC"),
     model: str = Query(None), provider: str = Query(None),
     api_key: str = Query(None), origin: str = Query(None),
     finish_reason: str = Query(None),
 ):
-    from_s, to_s = parse_time_range(range, from_, to, tz)
+    from_s, to_s = parse_time_range(time_range, from_, to, tz)
     extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
 
     metric_expr = {
         "cost":     "SUM(cost_usd)",
         "requests": "COUNT(*)",
         "tokens":   "SUM(tokens_total)",
+        "latency":  "AVG(generation_time_ms)",
     }.get(metric, "SUM(cost_usd)")
 
     where = "WHERE 1=1"
@@ -3364,7 +3365,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 }
 </style>
 <style>
-.rv-main-legend .svgc-legend { font-size: 11px; padding-top: 8px; }
+.rv-main-legend { margin: -5px 5px 5px; }
+.rv-main-legend .svgc-legend { font-size: 11px; padding-top: 8px; gap: 0 10px; }
+.rv-donut-panel { position: relative; }
+.rv-donut-legend { position: absolute; left: 0; right: 0; bottom: 5px; column-gap: 10px; line-height: 16.5px; }
 body { background: #0f172a; color: #f1f5f9; font-family: ui-sans-serif,system-ui,sans-serif; margin:0; }
 ::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-track { background: #1e293b; }
@@ -3447,17 +3451,33 @@ function SkeletonCard() {
   return html`<div class=${"bg-slate-800 dark:bg-slate-800 rounded-xl p-4 h-28 animate-pulse"} />`;
 }
 function EmptyState({message='No data for this range'}) {
-  return html`<div class=${"flex flex-col items-center justify-center h-40 text-slate-500 gap-2"}> <${LI.BarChart2} size=${32} className=${"opacity-30"} /> <p class=${"text-sm"}>${message}</p> </div>`;
+  return html`<div class=${"flex flex-col items-center justify-center h-40 text-slate-500 gap-2"}><${LI.BarChart2} size=${32} className=${"opacity-30"} /><p class=${"text-sm"}>${message}</p></div>`;
 }
 function ErrorBanner({error,onRetry}) {
   if(!error) return null;
-  return html`<div class=${"fixed top-0 left-0 right-0 z-50 bg-red-900/90 text-red-100 px-4 py-2 flex items-center justify-between text-sm"}> <span>${error}</span> <button onClick=${onRetry} class=${"ml-4 underline"}>Retry</button> </div>`;
+  return html`<div class=${"fixed top-0 left-0 right-0 z-50 bg-red-900/90 text-red-100 px-4 py-2 flex items-center justify-between text-sm"}><span>${error}</span><button onClick=${onRetry} class=${"ml-4 underline"}>Retry</button></div>`;
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
-function exportChartSVG(ref, name) {
-  const svg = ref.current?.querySelector('svg'); if(!svg) return;
+// Standalone SVG and PNG files have no page stylesheet, so var() must be resolved here.
+function exportableSvg(ref) {
+  const svg = ref.current?.querySelector('svg'); if(!svg) return null;
   const clone = svg.cloneNode(true);
+  const styles = getComputedStyle(svg);
+  const lookup = (_, name, fallback='') => styles.getPropertyValue(name).trim()||fallback.trim();
+  for(const node of [clone,...clone.querySelectorAll('*')]) {
+    for(const attr of [...node.attributes]) {
+      while(attr.value.includes('var(')) {
+        const resolved = attr.value.replace(/var\\(\\s*(--[\\w-]+)\\s*(?:,\\s*([^()]*))?\\)/g, lookup);
+        if(resolved===attr.value) break;
+        attr.value = resolved;
+      }
+    }
+  }
+  return clone;
+}
+function exportChartSVG(ref, name) {
+  const clone = exportableSvg(ref); if(!clone) return;
   // Insert dark background as first child
   const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
   bg.setAttribute('width','100%'); bg.setAttribute('height','100%'); bg.setAttribute('fill','#0f172a');
@@ -3469,7 +3489,7 @@ function exportChartSVG(ref, name) {
   URL.revokeObjectURL(url);
 }
 function exportChartRaster(ref, name, fmt='png') {
-  const svg = ref.current?.querySelector('svg'); if(!svg) return;
+  const svg = exportableSvg(ref); if(!svg) return;
   const data = new XMLSerializer().serializeToString(svg);
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -3491,7 +3511,7 @@ function ExportMenu({chartRef, onCSV, name='chart'}) {
   const ref=useRef();
   useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
-  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Download} size=${12} /> Export </button> ${open&&html`<div class=${"absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-32 py-1"}> ${onCSV&&html`<button onClick=${()=>{onCSV();setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>CSV</button>`} ${chartRef&&html` <button onClick=${()=>{exportChartSVG(chartRef,name);setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>SVG</button> <button onClick=${()=>{exportChartRaster(chartRef,name,'png');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>PNG</button> <button onClick=${()=>{exportChartRaster(chartRef,name,'jpg');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>JPG</button> `} </div>`} </div>`;
+  return html`<div ref=${ref} class=${"relative"}><button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded hover:border-slate-500"}><${LI.Download} size=${12} /> Export</button>${open&&html`<div class=${"absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-32 py-1"}>${onCSV&&html`<button onClick=${()=>{onCSV();setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>CSV</button>`}${chartRef&&html`<button onClick=${()=>{exportChartSVG(chartRef,name);setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>SVG</button><button onClick=${()=>{exportChartRaster(chartRef,name,'png');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>PNG</button><button onClick=${()=>{exportChartRaster(chartRef,name,'jpg');setOpen(false);}} class=${"w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700"}>JPG</button>`}</div>`}</div>`;
 }
 
 // ── FilterDropdown ────────────────────────────────────────────────────────────
@@ -3505,10 +3525,10 @@ function FilterDropdown({label, options=[], selected=[], onChange}) {
   const toggle = val => onChange(selected.includes(val)?selected.filter(v=>v!==val):[...selected,val]);
   const getLabel = o => typeof o==='object'?(o.label||o.id):o;
   const getId = o => typeof o==='object'?o.id:o;
-  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors ${selected.length>0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}> ${label}${selected.length>0&&html`<span class=${"bg-blue-500 text-white rounded-full px-1.5 ml-0.5"}>${selected.length}</span>`} <${LI.ChevronDown} size=${10} /> </button> ${open&&html`<div class=${"absolute top-full mt-1 left-0 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 w-56 max-h-72 overflow-hidden flex flex-col"}> <div class=${"p-2 border-b border-slate-700"}> <input type=${"text"} value=${search} onInput=${e=>setSearch(e.target.value)} placeholder=${"Search..."} ref=${focusOnMount} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none placeholder-slate-500"} /> </div> <div class=${"flex text-xs px-2 py-1 gap-3 border-b border-slate-700"}> <button onClick=${()=>onChange(filtered.map(getId))} class=${"text-blue-400 hover:text-blue-300"}>All</button> <button onClick=${()=>onChange([])} class=${"text-slate-400 hover:text-slate-300"}>Clear</button> </div> <div class=${"overflow-y-auto flex-1"}> ${filtered.length===0&&html`<div class=${"px-3 py-2 text-xs text-slate-500"}>No matches</div>`} ${filtered.map(opt=>{
+  return html`<div ref=${ref} class=${"relative"}><button onClick=${()=>setOpen(!open)} class=${`flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors ${selected.length>0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>${label}${selected.length>0&&html`<span class=${"bg-blue-500 text-white rounded-full px-1.5 ml-0.5"}>${selected.length}</span>`}<${LI.ChevronDown} size=${10} /></button>${open&&html`<div class=${"absolute top-full mt-1 left-0 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 w-56 max-h-72 overflow-hidden flex flex-col"}><div class=${"p-2 border-b border-slate-700"}><input type=${"text"} value=${search} onInput=${e=>setSearch(e.target.value)} placeholder=${"Search..."} ref=${focusOnMount} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none placeholder-slate-500"} /></div><div class=${"flex text-xs px-2 py-1 gap-3 border-b border-slate-700"}><button onClick=${()=>onChange(filtered.map(getId))} class=${"text-blue-400 hover:text-blue-300"}>All</button><button onClick=${()=>onChange([])} class=${"text-slate-400 hover:text-slate-300"}>Clear</button></div><div class=${"overflow-y-auto flex-1"}>${filtered.length===0&&html`<div class=${"px-3 py-2 text-xs text-slate-500"}>No matches</div>`}${filtered.map(opt=>{
           const id=getId(opt), lbl=getLabel(opt);
-          return html`<label key=${id} class=${"flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 cursor-pointer text-xs text-slate-300"}> <input type=${"checkbox"} checked=${selected.includes(id)} onInput=${()=>toggle(id)} class=${"accent-blue-500"} /> <span class=${"truncate"} title=${lbl}>${lbl}</span> </label>`;
-        })} </div> </div>`} </div>`;
+          return html`<label key=${id} class=${"flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 cursor-pointer text-xs text-slate-300"}><input type=${"checkbox"} checked=${selected.includes(id)} onInput=${()=>toggle(id)} class=${"accent-blue-500"} /><span class=${"truncate"} title=${lbl}>${lbl}</span></label>`;
+        })}</div></div>`}</div>`;
 }
 
 // ── KPI Cards ─────────────────────────────────────────────────────────────────
@@ -3516,10 +3536,10 @@ const COST_CYCLES = ['avg','p50','p95','min','max'];
 const LAT_CYCLES  = ['avg','p50','p95','min','max'];
 function KPICard({title,value,subValue,delta,deltaLabel,positive,children}) {
   const deltaColor = delta==null?'text-slate-500':positive===false?'text-red-400':'text-green-400';
-  return html`<div class=${"bg-card dark:bg-surface rounded-xl p-4 flex flex-col gap-1 min-w-0"}> <p class=${"text-xs text-slate-400 truncate"}>${title}</p> <p class=${"text-2xl font-bold text-slate-100 truncate"}>${value}</p> ${subValue&&html`<p class=${"text-xs text-slate-500"}>${subValue}</p>`} ${delta!=null&&html`<p class=${`text-xs ${deltaColor}`}>${delta>0?'+':''}${(delta*100).toFixed(1)}% ${deltaLabel}</p>`} ${children} </div>`;
+  return html`<div class=${"bg-card dark:bg-surface rounded-xl p-4 flex flex-col gap-1 min-w-0"}><p class=${"text-xs text-slate-400 truncate"}>${title}</p><p class=${"text-2xl font-bold text-slate-100 truncate"}>${value}</p>${subValue&&html`<p class=${"text-xs text-slate-500"}>${subValue}</p>`}${delta!=null&&html`<p class=${`text-xs ${deltaColor}`}>${delta>0?'+':''}${(delta*100).toFixed(1)}% ${deltaLabel}</p>`}${children}</div>`;
 }
 function KPICards({summary,costCycle,setCostCycle,latCycle,setLatCycle}) {
-  if(!summary) return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}> ${Array(6).fill(0).map((_,i)=>html`<${SkeletonCard} key=${i} />`)}</div>`;
+  if(!summary) return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}>${Array(6).fill(0).map((_,i)=>html`<${SkeletonCard} key=${i} />`)}</div>`;
   const s = summary;
   const comp = s.comparison;
   const compLabel = s.compare_mode ? ({dow:'DoD',wow:'WoW',mom_date:'MoM',mom_relative:'MoM',qoq:'QoQ',yoy_date:'YoY',yoy_relative:'YoY',prior_period:'vs prior'}[s.compare_mode]||'vs prior') : null;
@@ -3528,7 +3548,7 @@ function KPICards({summary,costCycle,setCostCycle,latCycle,setLatCycle}) {
   const costKey = {avg:'avg_cost_per_request',p50:'p50_cost_per_request',p95:'p95_cost_per_request',min:'min_cost_per_request',max:'max_cost_per_request'}[costCycle]||'avg_cost_per_request';
   const latKey  = {avg:'avg_latency_ms',p50:'p50_latency_ms',p95:'p95_latency_ms',min:'min_latency_ms',max:'max_latency_ms'}[latCycle]||'avg_latency_ms';
 
-  return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}> <${KPICard} title=${"Total Requests"} value=${fmtNum(s.request_count)} delta=${comp?delta(s.request_count,comp.request_count):null} deltaLabel=${compLabel} positive=${true} /> <${KPICard} title=${"Total Cost"} value=${fmt$(s.total_cost)} subValue=${s.projected_cost?`~${fmt$(s.projected_cost)} projected`:null} delta=${comp?delta(s.total_cost,comp.total_cost):null} deltaLabel=${compLabel} positive=${false} /> <${KPICard} title=${`Cost/Req (${costCycle.toUpperCase()})`} value=${fmt$4(s[costKey])} delta=${comp?delta(s[costKey],comp[costKey]):null} deltaLabel=${compLabel} positive=${false}> <button onClick=${()=>setCostCycle(c=>COST_CYCLES[(COST_CYCLES.indexOf(c)+1)%COST_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button> <//> <${KPICard} title=${`Latency (${latCycle.toUpperCase()})`} value=${fmtMs(s[latKey])} delta=${comp?delta(s[latKey],comp[latKey]):null} deltaLabel=${compLabel} positive=${false}> <button onClick=${()=>setLatCycle(c=>LAT_CYCLES[(LAT_CYCLES.indexOf(c)+1)%LAT_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button> <//> <${KPICard} title=${"Cache Hit Rate"} value=${fmtPct(s.cache_hit_rate)} delta=${comp?delta(s.cache_hit_rate,comp.cache_hit_rate):null} deltaLabel=${compLabel} positive=${true} /> <${KPICard} title=${"Total Tokens"} value=${fmtNum(s.total_tokens)} delta=${comp?delta(s.total_tokens,comp.total_tokens):null} deltaLabel=${compLabel} positive=${true} /> </div>`;
+  return html`<div class=${"grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"}><${KPICard} title=${"Total Requests"} value=${fmtNum(s.request_count)} delta=${comp?delta(s.request_count,comp.request_count):null} deltaLabel=${compLabel} positive=${true} /><${KPICard} title=${"Total Cost"} value=${fmt$(s.total_cost)} subValue=${s.projected_cost?`~${fmt$(s.projected_cost)} projected`:null} delta=${comp?delta(s.total_cost,comp.total_cost):null} deltaLabel=${compLabel} positive=${false} /><${KPICard} title=${`Cost/Req (${costCycle.toUpperCase()})`} value=${fmt$4(s[costKey])} delta=${comp?delta(s[costKey],comp[costKey]):null} deltaLabel=${compLabel} positive=${false}><button onClick=${()=>setCostCycle(c=>COST_CYCLES[(COST_CYCLES.indexOf(c)+1)%COST_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button><//><${KPICard} title=${`Latency (${latCycle.toUpperCase()})`} value=${fmtMs(s[latKey])} delta=${comp?delta(s[latKey],comp[latKey]):null} deltaLabel=${compLabel} positive=${false}><button onClick=${()=>setLatCycle(c=>LAT_CYCLES[(LAT_CYCLES.indexOf(c)+1)%LAT_CYCLES.length])} class=${"text-xs text-blue-400 hover:text-blue-300 self-start"}>cycle →</button><//><${KPICard} title=${"Cache Hit Rate"} value=${fmtPct(s.cache_hit_rate)} delta=${comp?delta(s.cache_hit_rate,comp.cache_hit_rate):null} deltaLabel=${compLabel} positive=${true} /><${KPICard} title=${"Total Tokens"} value=${fmtNum(s.total_tokens)} delta=${comp?delta(s.total_tokens,comp.total_tokens):null} deltaLabel=${compLabel} positive=${true} /></div>`;
 }
 
 // ── Custom Tooltip ────────────────────────────────────────────────────────────
@@ -3551,7 +3571,7 @@ function ChartTooltip({active,payload,label,metric,compareRange}) {
   const showTotals = metric!=='latency';
   const primaryTotal = sumTooltipValues(primary);
   const compTotal = sumTooltipValues(comp);
-  return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-xs max-w-xs"}> <p class=${"text-slate-400 mb-2"}>${label}</p> ${orderedPrimary.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4"}> <span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name}</span> <span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span> </div>`)} ${showTotals&&primary.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700"}> <span class=${"font-medium text-slate-300"}>Total</span> <span class=${"font-mono text-slate-100"}>${fmt(primaryTotal)}</span> </div>`} ${comp.length>0&&html` <p class=${"text-slate-500 mt-2 mb-1 border-t border-slate-700 pt-1"}>${compareRange||'Comparison'}</p> ${orderedComp.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4 opacity-60"}> <span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name.replace(/^_c_/,'')}</span> <span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span> </div>`)} ${showTotals&&comp.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700 opacity-80"}> <span class=${"font-medium text-slate-300"}>Total</span> <span class=${"font-mono text-slate-100"}>${fmt(compTotal)}</span> </div>`} `} </div>`;
+  return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-xs max-w-xs"}><p class=${"text-slate-400 mb-2"}>${label}</p>${orderedPrimary.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4"}><span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name}</span><span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span></div>`)}${showTotals&&primary.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700"}><span class=${"font-medium text-slate-300"}>Total</span><span class=${"font-mono text-slate-100"}>${fmt(primaryTotal)}</span></div>`}${comp.length>0&&html`<p class=${"text-slate-500 mt-2 mb-1 border-t border-slate-700 pt-1"}>${compareRange||'Comparison'}</p>${orderedComp.map((p,i)=>html`<div key=${i} class=${"flex justify-between gap-4 opacity-60"}><span class=${"flex items-center gap-1"}><span style=${{width:8,height:8,borderRadius:'50%',background:p.color,display:'inline-block'}} />${p.name.replace(/^_c_/,'')}</span><span class=${"font-mono text-slate-200"}>${fmt(p.value)}</span></div>`)}${showTotals&&comp.length>1&&html`<div class=${"flex justify-between gap-4 mt-2 pt-2 border-t border-slate-700 opacity-80"}><span class=${"font-medium text-slate-300"}>Total</span><span class=${"font-mono text-slate-100"}>${fmt(compTotal)}</span></div>`}`}</div>`;
 }
 
 // ── Main Chart ────────────────────────────────────────────────────────────────
@@ -3688,9 +3708,9 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
     return html`<div onMouseMove=${event=>handleMouseMove(event,chartData.length)} onMouseLeave=${handleMouseLeave}>
       ${hasComp && html`<p class=${"text-xs text-slate-500 mb-1 ml-1"}>${label}</p>`}
       <${CartesianChart} kind=${chartType} data=${chartData} xKey=${"bucket"} series=${series}
-        height=${height} margin=${{left:70, right:32, top:10, bottom:25}} yFormat=${yFmt} xFormat=${xFmt}
+        height=${height} margin=${{left:75, right:5, top:5, bottom:35}} yFormat=${yFmt} xFormat=${xFmt} ariaLabel=${`${metricLabel} over time`}
         yDomain=${yDomain} grid=${{horizontal:true,vertical:true,stroke:'#334155',strokeDasharray:'3 3'}}
-        xAxisLine=${'#475569'} yAxisLine=${'#475569'} referenceOpacity=${0.5} plotClass=${"rv-main-chart-plot"}
+        xAxisLine=${'#475569'} yAxisLine=${'#475569'} tickLine=${'#475569'} referenceOpacity=${0.5} plotClass=${"rv-main-chart-plot"}
         referenceX=${ri!=null?chartData[ri]?.bucket:undefined}
         tooltip=${props=>html`<${ChartTooltip} ...${props} metric=${metric} />`} />
       ${!hasComp && html`<div ref=${legendRef} class=${"rv-main-legend"}><${Legend} kind=${chartType} series=${[...series].sort((a,b)=>a.label<b.label?-1:a.label>b.label?1:0)} hidden=${hidden} onToggle=${name=>setHidden(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n;})} /></div>`}
@@ -3698,11 +3718,11 @@ function MainChart({data,chartType='area',metric='cost',groupBy='model',comparis
   };
   const renderCompChart = (chartData,label,height) => renderChart(chartData,label,height,true);
 
-  return html`<div class=${"bg-slate-800 rounded-xl p-4"}> <div class=${"flex items-center justify-between mb-3"}> <h2 class=${"text-sm font-medium text-slate-300"}> ${metricLabel} over Time${isCum?' (Cumulative)':''} ${groupBy!=='none'&&html`<span class=${"text-slate-500 font-normal ml-1"}>by ${groupBy}</span>`} </h2> <div class=${"flex items-center gap-2"}> ${canCumulative&&html`<button onClick=${()=>setCumulative(c=>!c)} class=${`text-xs px-2 py-1 rounded ${cumulative?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:text-slate-300'}`} title=${"Toggle cumulative view"}>Σ Cumulative</button>`} <${ExportMenu} chartRef=${ref} onCSV=${onExport} name=${"timeseries"} /> </div> </div> <div ref=${ref}> ${hasComp ? html` ${renderChart(primaryData, 'Current Period', 240)} <div class=${"my-2"} /> ${renderCompChart(compData, data.compare_range||'Prior Period', 200)} <div class=${"flex flex-wrap justify-center gap-3 mt-2 text-xs"}> ${data.series.map(s=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"}><div class=${"flex items-center justify-between mb-3"}><h2 class=${"text-sm font-medium text-slate-300"}>${metricLabel} over Time${isCum?' (Cumulative)':''}${groupBy!=='none'&&html`<span class=${"text-slate-500 font-normal ml-1"}>by ${groupBy}</span>`}</h2><div class=${"flex items-center gap-2"}>${canCumulative&&html`<button onClick=${()=>setCumulative(c=>!c)} class=${`text-xs px-2 py-1 rounded ${cumulative?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:text-slate-300'}`} title=${"Toggle cumulative view"}>Σ Cumulative</button>`}<${ExportMenu} chartRef=${ref} onCSV=${onExport} name=${"timeseries"} /></div></div><div ref=${ref}>${hasComp ? html`${renderChart(primaryData, 'Current Period', 240)}<div class=${"my-2"} />${renderCompChart(compData, data.compare_range||'Prior Period', 200)}<div class=${"flex flex-wrap justify-center gap-3 mt-2 text-xs"}>${data.series.map(s=>{
             const col=modelColor(s.name);
             const dim=hidden.has(s.name);
-            return html`<button key=${s.name} class=${"flex items-center gap-1"} style=${{opacity:dim?0.3:1}} onClick=${()=>setHidden(prev=>{const n=new Set(prev);n.has(s.name)?n.delete(s.name):n.add(s.name);return n;})}> <span style=${{width:8,height:8,borderRadius:'50%',background:col,display:'inline-block'}} /><span class=${"text-slate-400"}>${s.name}</span> </button>`;
-          })} </div> ` : renderChart(primaryData, '', Math.max(0,380-legendHeight))} </div> </div>`;
+            return html`<button key=${s.name} class=${"flex items-center gap-1"} style=${{opacity:dim?0.3:1}} onClick=${()=>setHidden(prev=>{const n=new Set(prev);n.has(s.name)?n.delete(s.name):n.add(s.name);return n;})}><span style=${{width:8,height:8,borderRadius:'50%',background:col,display:'inline-block'}} /><span class=${"text-slate-400"}>${s.name}</span></button>`;
+          })}</div>` : renderChart(primaryData, '', Math.max(0,380-legendHeight))}</div></div>`;
 }
 
 // ── Heatmap ───────────────────────────────────────────────────────────────────
@@ -3713,11 +3733,11 @@ function HeatmapView({data}) {
   const maxVal = allVals.length?Math.max(...allVals):1;
   const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const HOURS=Array.from({length:24},(_,i)=>i);
-  return html`<div class=${"bg-slate-800 rounded-xl p-4 overflow-x-auto"}> <h2 class=${"text-sm font-medium text-slate-300 mb-3"}>Usage Heatmap</h2> <div class=${"flex gap-1"}> <div class=${"flex flex-col gap-1 pt-5"}> ${DAYS.map(d=>html`<div key=${d} class=${"h-6 w-8 text-xs text-slate-500 flex items-center"}>${d}</div>`)} </div> <div> <div class=${"flex gap-1 mb-1"}> ${HOURS.map(h=>html`<div key=${h} class=${"w-6 text-center text-slate-600"} style=${{fontSize:9}}>${h%6===0?h:''}</div>`)} </div> ${DAYS.map((d,di)=>html`<div key=${di} class=${"flex gap-1 mb-1"}> ${HOURS.map(h=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4 overflow-x-auto"}><h2 class=${"text-sm font-medium text-slate-300 mb-3"}>Usage Heatmap</h2><div class=${"flex gap-1"}><div class=${"flex flex-col gap-1 pt-5"}>${DAYS.map(d=>html`<div key=${d} class=${"h-6 w-8 text-xs text-slate-500 flex items-center"}>${d}</div>`)}</div><div><div class=${"flex gap-1 mb-1"}>${HOURS.map(h=>html`<div key=${h} class=${"w-6 text-center text-slate-600"} style=${{fontSize:9}}>${h%6===0?h:''}</div>`)}</div>${DAYS.map((d,di)=>html`<div key=${di} class=${"flex gap-1 mb-1"}>${HOURS.map(h=>{
             const v=matrix[di]?.[h];
-            const intensity=v!=null?v/maxVal:0;
+            const intensity=v!=null&&maxVal>0?v/maxVal:0;
             return html`<div key=${h} title=${`${d} ${h}:00 — ${v!=null?v.toFixed(4):'no data'}`} class=${"w-6 h-6 rounded-sm cursor-default"} style=${{background:v!=null?`rgba(59,130,246,${0.1+intensity*0.9})`:'#1e293b'}} />`;
-          })} </div>`)} </div> </div> </div>`;
+          })}</div>`)}</div></div></div>`;
 }
 
 // ── Breakdown Panel ───────────────────────────────────────────────────────────
@@ -3729,13 +3749,13 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
   const BDTooltip = ({active,payload,label})=>{
     if(!active||!payload?.length) return null;
     const d=payload[0]?.payload;
-    return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl text-xs"}> <p class=${"text-slate-300 font-medium mb-1"}>${d?.dimension||label}</p> <p class=${"text-slate-400"}>${fmtVal(payload[0]?.value)}</p> </div>`;
+    return html`<div class=${"bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl text-xs"}><p class=${"text-slate-300 font-medium mb-1"}>${d?.dimension||label}</p><p class=${"text-slate-400"}>${fmtVal(payload[0]?.value)}</p></div>`;
   };
   const activateBarFilter = dimension => {
     if(onFilter&&dimension) onFilter(dimension);
   };
 
-  return html`<div class=${"bg-slate-800 rounded-xl p-4"} ...${dragProps}> <div class=${"flex items-center justify-between mb-3"}> <div class=${"flex items-center gap-2"}> ${dragProps&&html`<${LI.GripVertical} size=${14} className=${"text-slate-600 cursor-grab"} />`} <h3 class=${"text-sm font-medium text-slate-300"}>${title}</h3> </div> <${ExportMenu} chartRef=${chartRef} name=${panelKey} onCSV=${()=>window.open(`/api/export/csv?view=breakdown&group_by=${panelKey}&metric=${metric}&${exportQS}`)} /> </div> <div ref=${chartRef}> ${type==='pie'
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"} ...${dragProps}><div class=${"flex items-center justify-between mb-3"}><div class=${"flex items-center gap-2"}>${dragProps&&html`<${LI.GripVertical} size=${14} className=${"text-slate-600 cursor-grab"} />`}<h3 class=${"text-sm font-medium text-slate-300"}>${title}</h3></div><${ExportMenu} chartRef=${chartRef} name=${panelKey} onCSV=${()=>window.open(`/api/export/csv?view=breakdown&group_by=${panelKey}&metric=${metric}&${exportQS}`)} /></div><div ref=${chartRef}>${type==='pie'
         ? (()=>{
             // Roll up small slices into "Other" when there are many items
             const MAX_SLICES = 7;
@@ -3747,16 +3767,18 @@ function BreakdownPanel({title,data,type='bar',metric='cost',onFilter,chartRef,p
               const otherVal = rest.reduce((s,r)=>s+r.value,0);
               pieItems = [...top, {dimension:`Other (${rest.length})`, value:otherVal}];
             }
-            const chartItems=pieItems.map((item,i)=>({...item,label:item.dimension,color:COLORS[i%COLORS.length]}));
-            return html`<${DonutChart} items=${chartItems} height=${200} innerRadius=${50} outerRadius=${85} startAngle=${0} clockwise=${false} stroke=${"var(--color-white)"} strokeWidth=${1} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>onFilter&&item.dimension&&!item.dimension.startsWith('Other')&&onFilter(item.dimension)} />
-              <div class=${"rv-donut-legend flex flex-wrap justify-center gap-3 text-xs"} style=${{fontSize:11}}>${[...chartItems].sort((a,b)=>a.label<b.label?-1:a.label>b.label?1:0).map(item=>html`<span style=${{color:item.color}}><span style=${{display:"inline-block",width:14,height:10,background:item.color,marginRight:4}} />${item.label}</span>`)}</div>`;
+            const chartItems=pieItems.map((item,i)=>({...item,label:item.dimension,color:COLORS[i%COLORS.length],selectable:!!(onFilter&&item.dimension&&!item.dimension.startsWith('Other'))}));
+            const legendRows = Math.ceil(pieItems.length/3);
+            const pieH = 200 + legendRows * 22;
+            return html`<div class=${"rv-donut-panel"} style=${{height:pieH}}><${DonutChart} items=${chartItems} height=${200} cy=${(pieH-10-legendRows*16.5)*.45+5} innerRadius=${50} outerRadius=${85} startAngle=${0} clockwise=${false} stroke=${"var(--color-white)"} strokeWidth=${1} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>onFilter(item.dimension)} />
+              <div class=${"rv-donut-legend flex flex-wrap justify-center text-xs"} style=${{fontSize:11}}>${[...chartItems].sort((a,b)=>a.label<b.label?-1:a.label>b.label?1:0).map(item=>html`<span style=${{color:item.color}}><span style=${{display:"inline-block",width:14,height:10,background:item.color,marginRight:4}} />${item.label}</span>`)}</div></div>`;
           })()
         : (()=>{
             const barItems = items.slice(0,10);
             const barH = Math.max(220, barItems.length * 28 + 40);
             const chartItems=barItems.map(item=>({...item,label:item.dimension,color:modelColor(item.dimension),ariaLabel:`Filter by ${panelKey.replace(/_/g,' ')} ${item.dimension}`}));
-            return html`<${HBarChart} items=${chartItems} height=${barH} labelWidth=${130} labelMaxChars=${19} valueFormat=${fmtVal} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>activateBarFilter(item.dimension)} />`;
-          })()} </div> </div>`;
+            return html`<${HBarChart} items=${chartItems} height=${barH} labelWidth=${130} labelMaxChars=${20} valueFormat=${fmtVal} tooltip=${props=>html`<${BDTooltip} ...${props} />`} onSelect=${item=>activateBarFilter(item.dimension)} />`;
+          })()}</div></div>`;
 }
 
 // ── Log Viewer ────────────────────────────────────────────────────────────────
@@ -3795,11 +3817,14 @@ function LogViewer({logData,logSort,setLogSort,logSearch,setLogSearch,logPage,se
   const total=logData?.total||0;
   const pages=logData?.pages||1;
 
-  return html`<div class=${"bg-slate-800 rounded-xl p-4"}> <div class=${"flex items-center gap-3 mb-3 flex-wrap"}> <h2 class=${"text-sm font-medium text-slate-300"}>Recent Generations</h2> <div class=${"flex items-center gap-1 bg-slate-700 rounded px-2 flex-1 min-w-32 max-w-56"}> <${LI.Search} size=${12} className=${"text-slate-500"} /> <input id=${"log-search"} type=${"text"} value=${localSearch} onInput=${e=>handleSearch(e.target.value)} placeholder=${"Search..."} class=${"bg-transparent text-xs text-slate-200 outline-none py-1 w-full placeholder-slate-600"} /> </div> <div class=${"relative"}> <button onClick=${()=>setColOpen(!colOpen)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Columns} size=${12} /> Cols </button> ${colOpen&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 w-40 py-2"}> ${ALL_COLS.map(c=>html`<label key=${c.key} class=${"flex items-center gap-2 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer"}> <input type=${"checkbox"} checked=${visibleCols.includes(c.key)} onInput=${()=>setVisibleCols(prev=>prev.includes(c.key)?prev.filter(k=>k!==c.key):[...prev,c.key])} class=${"accent-blue-500"} /> ${c.label} </label>`)} </div>`} </div> <button onClick=${onExportCSV} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}> <${LI.Download} size=${12} /> CSV </button> <span class=${"text-xs text-slate-500 ml-auto"}> ${total>0?`${(logPage-1)*logPageSize+1}–${Math.min(logPage*logPageSize,total)} of ${fmtNum(total)}`:'0 results'} </span> </div> <div class=${"overflow-x-auto"}> <table class=${"w-full text-xs"}> <thead> <tr class=${"border-b border-slate-700"}> ${cols.map(c=>html`<th key=${c.key} class=${`p-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none ${c.align==='right'?'text-right':c.align==='center'?'text-center':'text-left'}`} onClick=${()=>handleSort(c.key)}> <span class=${"flex items-center gap-0.5 whitespace-nowrap justify-start"}>${c.align==='right'&&html`<span class=${"flex-1"} />`}${c.label}<${SortIcon} col=${c.key} /></span> </th>`)} </tr> </thead> <tbody> ${data.length===0&&html`<tr><td colSpan=${cols.length} class=${"p-4 text-center text-slate-500"}>No generations found</td></tr>`} ${data.map(row=>html`<${preact.Fragment} key=${row.id}> <tr class=${`border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-colors ${row.anomalies?.length?'border-l-2 border-l-amber-500':''} ${expandedRow===row.id?'bg-slate-700/40':''}`} onClick=${()=>setExpandedRow(expandedRow===row.id?null:row.id)}> ${cols.map(c=>html`<td key=${c.key} class=${`p-2 text-slate-300 ${c.align==='right'?'text-right':c.align==='center'?'text-center':''} max-w-32 truncate`}> ${c.fmt?c.fmt(row[c.key]):row[c.key]??'-'} ${c.key==='model_short'&&row.anomalies?.length>0&&html`<span class=${"ml-1 text-amber-400"} title=${row.anomalies.join(', ')}>⚠</span>`} </td>`)} </tr> ${expandedRow===row.id&&html`<tr> <td colSpan=${cols.length} class=${"p-3 bg-slate-900/50"}> <div class=${"grid grid-cols-2 md:grid-cols-3 gap-2 text-xs mb-2"}> ${Object.entries(row).filter(([k])=>!['trace_metadata','anomalies'].includes(k)).map(([k,v])=>html`<div key=${k} class=${"flex gap-2"}> <span class=${"text-slate-500 shrink-0"}>${k}:</span> <span class=${"text-slate-300 break-all"}>${String(v??'-')}</span> </div>`)} </div> ${row.trace_metadata&&html`<details class=${"mt-2"}> <summary class=${"text-xs text-slate-500 cursor-pointer"}>trace_metadata</summary> <pre class=${"mt-1 text-xs text-slate-400 bg-slate-900 rounded p-2 overflow-auto max-h-40"}>${JSON.stringify(JSON.parse(row.trace_metadata||'{}'),null,2)}</pre> </details>`} </td> </tr>`} <//>`)} </tbody> </table> </div> <div class=${"flex items-center justify-between mt-3 pt-3 border-t border-slate-700"}> <div class=${"flex items-center gap-2"}> <span class=${"text-xs text-slate-500"}>Per page:</span> ${[25,50,100,250].map(n=>html`<button key=${n} onClick=${()=>{setLogPageSize(n);setLogPage(1);}} class=${`px-2 py-0.5 text-xs rounded ${logPageSize===n?'bg-blue-600 text-white':'text-slate-400 hover:text-slate-200'}`}>${n}</button>`)} </div> <div class=${"flex items-center gap-1"}> <button onClick=${()=>setLogPage(1)} disabled=${logPage<=1} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>First</button> <button onClick=${()=>setLogPage(p=>Math.max(1,p-1))} disabled=${logPage<=1} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronLeft} size=${14} /></button> <input type=${"text"} value=${logPage} onInput=${e=>{
+  return html`<div class=${"bg-slate-800 rounded-xl p-4"}><div class=${"flex items-center gap-3 mb-3 flex-wrap"}><h2 class=${"text-sm font-medium text-slate-300"}>Recent Generations</h2><div class=${"flex items-center gap-1 bg-slate-700 rounded px-2 flex-1 min-w-32 max-w-56"}><${LI.Search} size=${12} className=${"text-slate-500"} /><input id=${"log-search"} type=${"text"} value=${localSearch} onInput=${e=>handleSearch(e.target.value)} placeholder=${"Search..."} class=${"bg-transparent text-xs text-slate-200 outline-none py-1 w-full placeholder-slate-600"} /></div><div class=${"relative"}><button onClick=${()=>setColOpen(!colOpen)} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}><${LI.Columns} size=${12} /> Cols</button>${colOpen&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 w-40 py-2"}>${ALL_COLS.map(c=>html`<label key=${c.key} class=${"flex items-center gap-2 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer"}><input type=${"checkbox"} checked=${visibleCols.includes(c.key)} onInput=${()=>setVisibleCols(prev=>prev.includes(c.key)?prev.filter(k=>k!==c.key):[...prev,c.key])} class=${"accent-blue-500"} />${c.label}</label>`)}</div>`}</div><button onClick=${onExportCSV} class=${"flex items-center gap-1 px-2 py-1 text-xs text-slate-400 border border-slate-700 rounded hover:border-slate-500"}><${LI.Download} size=${12} /> CSV</button><span class=${"text-xs text-slate-500 ml-auto"}>${total>0?`${(logPage-1)*logPageSize+1}–${Math.min(logPage*logPageSize,total)} of ${fmtNum(total)}`:'0 results'}</span></div><div class=${"overflow-x-auto"}><table class=${"w-full text-xs"}><thead><tr class=${"border-b border-slate-700"}>${cols.map(c=>html`<th key=${c.key} class=${`p-2 text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none ${c.align==='right'?'text-right':c.align==='center'?'text-center':'text-left'}`} onClick=${()=>handleSort(c.key)}><span class=${"flex items-center gap-0.5 whitespace-nowrap justify-start"}>${c.align==='right'&&html`<span class=${"flex-1"} />`}${c.label}<${SortIcon} col=${c.key} /></span></th>`)}</tr></thead><tbody>${data.length===0&&html`<tr><td colSpan=${cols.length} class=${"p-4 text-center text-slate-500"}>No generations found</td></tr>`}${data.map(row=>html`<${preact.Fragment} key=${row.id}><tr class=${`border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-colors ${row.anomalies?.length?'border-l-2 border-l-amber-500':''} ${expandedRow===row.id?'bg-slate-700/40':''}`} onClick=${()=>setExpandedRow(expandedRow===row.id?null:row.id)}>${cols.map(c=>html`<td key=${c.key} class=${`p-2 text-slate-300 ${c.align==='right'?'text-right':c.align==='center'?'text-center':''} max-w-32 truncate`}>${c.fmt?c.fmt(row[c.key]):row[c.key]??'-'}${c.key==='model_short'&&row.anomalies?.length>0&&html`<span class=${"ml-1 text-amber-400"} title=${row.anomalies.join(', ')}>⚠</span>`}</td>`)}</tr>${expandedRow===row.id&&html`<tr><td colSpan=${cols.length} class=${"p-3 bg-slate-900/50"}><div class=${"grid grid-cols-2 md:grid-cols-3 gap-2 text-xs mb-2"}>${Object.entries(row).filter(([k])=>!['trace_metadata','anomalies'].includes(k)).map(([k,v])=>html`<div key=${k} class=${"flex gap-2"}><span class=${"text-slate-500 shrink-0"}>${k}:</span><span class=${"text-slate-300 break-all"}>${String(v??'-')}</span></div>`)}</div>${row.trace_metadata&&html`<details class=${"mt-2"}><summary class=${"text-xs text-slate-500 cursor-pointer"}>trace_metadata</summary><pre class=${"mt-1 text-xs text-slate-400 bg-slate-900 rounded p-2 overflow-auto max-h-40"}>${JSON.stringify(JSON.parse(row.trace_metadata||'{}'),null,2)}</pre></details>`}</td></tr>`}<//>`)}</tbody></table></div><div class=${"flex items-center justify-between mt-3 pt-3 border-t border-slate-700"}><div class=${"flex items-center gap-2"}><span class=${"text-xs text-slate-500"}>Per page:</span>${[25,50,100,250].map(n=>html`<button key=${n} onClick=${()=>{setLogPageSize(n);setLogPage(1);}} class=${`px-2 py-0.5 text-xs rounded ${logPageSize===n?'bg-blue-600 text-white':'text-slate-400 hover:text-slate-200'}`}>${n}</button>`)}</div><div class=${"flex items-center gap-1"}><button onClick=${()=>setLogPage(1)} disabled=${logPage<=1} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>First</button><button onClick=${()=>setLogPage(p=>Math.max(1,p-1))} disabled=${logPage<=1} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronLeft} size=${14} /></button><input type=${"text"} value=${logPage} onInput=${e=>{
           const v=parseInt(e.target.value,10);
-          if(!isNaN(v)&&v>=1&&v<=pages) setLogPage(v);
-          else if(e.target.value==='') setLogPage(1);
-        }} onKeyDown=${e=>{if(e.key==='Enter'){const v=parseInt(e.target.value,10);if(!isNaN(v))setLogPage(Math.max(1,Math.min(pages,v)));}}} class=${"w-10 text-center text-xs text-slate-300 bg-slate-700 rounded px-1 py-0.5 outline-none border border-slate-600 focus:border-blue-500"} /> <span class=${"text-xs text-slate-500"}>/ ${pages}</span> <button onClick=${()=>setLogPage(p=>Math.min(pages,p+1))} disabled=${logPage>=pages} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronRight} size=${14} /></button> <button onClick=${()=>setLogPage(pages)} disabled=${logPage>=pages} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>Last</button> </div> </div> </div>`;
+          let next=logPage;
+          if(!isNaN(v)&&v>=1&&v<=pages) next=v;
+          else if(e.target.value==='') next=1;
+          setLogPage(next);
+          e.target.value=String(next);
+        }} onKeyDown=${e=>{if(e.key==='Enter'){const v=parseInt(e.target.value,10);if(!isNaN(v))setLogPage(Math.max(1,Math.min(pages,v)));}}} class=${"w-10 text-center text-xs text-slate-300 bg-slate-700 rounded px-1 py-0.5 outline-none border border-slate-600 focus:border-blue-500"} /><span class=${"text-xs text-slate-500"}>/ ${pages}</span><button onClick=${()=>setLogPage(p=>Math.min(pages,p+1))} disabled=${logPage>=pages} class=${"p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"}><${LI.ChevronRight} size=${14} /></button><button onClick=${()=>setLogPage(pages)} disabled=${logPage>=pages} class=${"px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-30"}>Last</button></div></div></div>`;
 }
 
 // ── Settings Panel ────────────────────────────────────────────────────────────
@@ -3845,7 +3870,7 @@ function SettingsPanel({onClose,onImportComplete}) {
     setRebuilding(false);
   };
 
-  return html`<div class=${"fixed inset-0 z-50 flex"}> <div class=${"flex-1 bg-black/60 backdrop-blur-sm"} onClick=${onClose} /> <div class=${"w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto p-6 flex flex-col gap-6"}> <div class=${"flex items-center justify-between"}> <h2 class=${"text-lg font-semibold text-slate-100"}>Settings</h2> <button onClick=${onClose} class=${"text-slate-400 hover:text-slate-200"}><${LI.X} size=${20} /></button> </div> ${health&&html`<section class=${"flex flex-col gap-2"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Database</h3> <div class=${"grid grid-cols-2 gap-2 text-xs"}> <div class=${"text-slate-500"}>Generations:</div><div class=${"text-slate-300"}>${fmtNum(health.total_generations)}</div> <div class=${"text-slate-500"}>DB size:</div><div class=${"text-slate-300"}>${health.db_size_mb} MB</div> <div class=${"text-slate-500"}>Version:</div><div class=${"text-slate-300"}>${health.version}</div> </div> <button onClick=${refreshStats} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}>Refresh Stats</button> <button onClick=${rebuildTimestamps} disabled=${rebuilding} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded disabled:opacity-50"}>${rebuilding?'Rebuilding...':'Rebuild Timestamps'}</button> </section>`} <section class=${"flex flex-col gap-3"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Purge Data</h3> <input type=${"date"} value=${purgeDate} onInput=${e=>setPurgeDate(e.target.value)} class=${"bg-slate-800 text-xs text-slate-200 px-3 py-2 rounded border border-slate-700 outline-none focus:border-blue-500"} /> <button onClick=${purge} class=${"px-3 py-2 text-xs bg-red-700 hover:bg-red-600 text-white rounded"}>Purge Before Date</button> </section> <section class=${"flex flex-col gap-3"}> <h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Import</h3> <input type=${"file"} ref=${fileRef} accept=${".csv"} onInput=${importFile} class=${"hidden"} /> <button onClick=${()=>fileRef.current?.click()} disabled=${importing} class=${"flex items-center gap-2 px-3 py-2 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}> ${importing?html`<${Spinner} />`:html`<${LI.Upload} size=${12} />`} Import CSV </button> ${importResult&&html`<div class=${`text-xs p-2 rounded ${importResult.error?'bg-red-900/40 text-red-300':'bg-green-900/40 text-green-300'}`}> ${importResult.error||`Inserted: ${importResult.inserted}, Skipped: ${importResult.skipped}`} </div>`} </section> </div> </div>`;
+  return html`<div class=${"fixed inset-0 z-50 flex"}><div class=${"flex-1 bg-black/60 backdrop-blur-sm"} onClick=${onClose} /><div class=${"w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto p-6 flex flex-col gap-6"}><div class=${"flex items-center justify-between"}><h2 class=${"text-lg font-semibold text-slate-100"}>Settings</h2><button onClick=${onClose} class=${"text-slate-400 hover:text-slate-200"}><${LI.X} size=${20} /></button></div>${health&&html`<section class=${"flex flex-col gap-2"}><h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Database</h3><div class=${"grid grid-cols-2 gap-2 text-xs"}><div class=${"text-slate-500"}>Generations:</div><div class=${"text-slate-300"}>${fmtNum(health.total_generations)}</div><div class=${"text-slate-500"}>DB size:</div><div class=${"text-slate-300"}>${health.db_size_mb} MB</div><div class=${"text-slate-500"}>Version:</div><div class=${"text-slate-300"}>${health.version}</div></div><button onClick=${refreshStats} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}>Refresh Stats</button><button onClick=${rebuildTimestamps} disabled=${rebuilding} class=${"px-3 py-1.5 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded disabled:opacity-50"}>${rebuilding?'Rebuilding...':'Rebuild Timestamps'}</button></section>`}<section class=${"flex flex-col gap-3"}><h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Purge Data</h3><input type=${"date"} value=${purgeDate} onInput=${e=>setPurgeDate(e.target.value)} class=${"bg-slate-800 text-xs text-slate-200 px-3 py-2 rounded border border-slate-700 outline-none focus:border-blue-500"} /><button onClick=${purge} class=${"px-3 py-2 text-xs bg-red-700 hover:bg-red-600 text-white rounded"}>Purge Before Date</button></section><section class=${"flex flex-col gap-3"}><h3 class=${"text-sm font-medium text-slate-300 border-b border-slate-700 pb-1"}>Import</h3><input type=${"file"} ref=${fileRef} accept=${".csv"} onInput=${importFile} class=${"hidden"} /><button onClick=${()=>fileRef.current?.click()} disabled=${importing} class=${"flex items-center gap-2 px-3 py-2 text-xs border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 rounded"}>${importing?html`<${Spinner} />`:html`<${LI.Upload} size=${12} />`} Import CSV</button>${importResult&&html`<div class=${`text-xs p-2 rounded ${importResult.error?'bg-red-900/40 text-red-300':'bg-green-900/40 text-green-300'}`}>${importResult.error||`Inserted: ${importResult.inserted}, Skipped: ${importResult.skipped}`}</div>`}</section></div></div>`;
 }
 
 // ── Shortcuts Modal ───────────────────────────────────────────────────────────
@@ -3854,7 +3879,7 @@ function ShortcutsModal({onClose}) {
     ['/','Focus log search'],['←','Previous time period'],['→','Next time period'],
     ['R','Refresh data'],['Esc','Clear all filters'],['?','Show this help'],
   ];
-  return html`<div class=${"fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"} onClick=${onClose}> <div class=${"bg-slate-900 border border-slate-700 rounded-2xl p-6 w-80"} onClick=${e=>e.stopPropagation()}> <div class=${"flex items-center justify-between mb-4"}> <h3 class=${"text-sm font-semibold text-slate-200"}>Keyboard Shortcuts</h3> <button onClick=${onClose} class=${"text-slate-500 hover:text-slate-300"}><${LI.X} size=${16} /></button> </div> ${shortcuts.map(([k,d])=>html`<div key=${k} class=${"flex items-center justify-between py-1.5 border-b border-slate-800"}> <span class=${"text-xs text-slate-400"}>${d}</span> <kbd class=${"bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 font-mono"}>${k}</kbd> </div>`)} </div> </div>`;
+  return html`<div class=${"fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"} onClick=${onClose}><div class=${"bg-slate-900 border border-slate-700 rounded-2xl p-6 w-80"} onClick=${e=>e.stopPropagation()}><div class=${"flex items-center justify-between mb-4"}><h3 class=${"text-sm font-semibold text-slate-200"}>Keyboard Shortcuts</h3><button onClick=${onClose} class=${"text-slate-500 hover:text-slate-300"}><${LI.X} size=${16} /></button></div>${shortcuts.map(([k,d])=>html`<div key=${k} class=${"flex items-center justify-between py-1.5 border-b border-slate-800"}><span class=${"text-xs text-slate-400"}>${d}</span><kbd class=${"bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 font-mono"}>${k}</kbd></div>`)}</div></div>`;
 }
 
 // ── Saved Views ───────────────────────────────────────────────────────────────
@@ -3865,7 +3890,7 @@ function SavedViewsDropdown({views,onSelect,onSave,onDelete}) {
   const ref=useRef();
   useEffect(()=>{ const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown',h); return()=>document.removeEventListener('mousedown',h); },[]);
-  return html`<div ref=${ref} class=${"relative"}> <button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:border-slate-500 hover:text-slate-300"}> <${LI.Bookmark} size=${12} /> Views <${LI.ChevronDown} size=${10} /> </button> ${open&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-56 py-2"}> ${saving?html`<div class=${"px-3 py-2"}> <input type=${"text"} value=${name} onInput=${e=>setName(e.target.value)} placeholder=${"View name..."} ref=${focusOnMount} onKeyDown=${e=>{if(e.key==='Enter'&&name){onSave(name);setSaving(false);setName('');setOpen(false);}if(e.key==='Escape') setSaving(false);}} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none mb-2"} /> <div class=${"flex gap-2"}> <button onClick=${()=>setSaving(false)} class=${"flex-1 py-1 text-xs text-slate-400 border border-slate-700 rounded"}>Cancel</button> <button onClick=${()=>{if(name){onSave(name);setSaving(false);setName('');setOpen(false);}}} class=${"flex-1 py-1 text-xs bg-blue-600 text-white rounded"}>Save</button> </div> </div>`:html` <button onClick=${()=>setSaving(true)} class=${"w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-700 flex items-center gap-2"}> <${LI.Plus} size=${12} /> Save current view </button> ${views.length>0&&html`<div class=${"border-t border-slate-700 mt-1 pt-1"}> ${views.map(v=>html`<div key=${v.id} class=${"flex items-center justify-between px-3 py-1.5 hover:bg-slate-700 group"}> <button onClick=${()=>{onSelect(v);setOpen(false);}} class=${"text-xs text-slate-300 truncate flex-1 text-left"}>${v.name}</button> <button onClick=${()=>onDelete(v.id)} class=${"opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-2"}><${LI.Trash2} size=${10} /></button> </div>`)} </div>`} `} </div>`} </div>`;
+  return html`<div ref=${ref} class=${"relative"}><button onClick=${()=>setOpen(!open)} class=${"flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:border-slate-500 hover:text-slate-300"}><${LI.Bookmark} size=${12} /> Views <${LI.ChevronDown} size=${10} /></button>${open&&html`<div class=${"absolute top-full mt-1 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 w-56 py-2"}>${saving?html`<div class=${"px-3 py-2"}><input type=${"text"} value=${name} onInput=${e=>setName(e.target.value)} placeholder=${"View name..."} ref=${focusOnMount} onKeyDown=${e=>{if(e.key==='Enter'&&name){onSave(name);setSaving(false);setName('');setOpen(false);}if(e.key==='Escape') setSaving(false);}} class=${"w-full bg-slate-700 text-xs text-slate-200 px-2 py-1 rounded outline-none mb-2"} /><div class=${"flex gap-2"}><button onClick=${()=>setSaving(false)} class=${"flex-1 py-1 text-xs text-slate-400 border border-slate-700 rounded"}>Cancel</button><button onClick=${()=>{if(name){onSave(name);setSaving(false);setName('');setOpen(false);}}} class=${"flex-1 py-1 text-xs bg-blue-600 text-white rounded"}>Save</button></div></div>`:html`<button onClick=${()=>setSaving(true)} class=${"w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-slate-700 flex items-center gap-2"}><${LI.Plus} size=${12} /> Save current view</button>${views.length>0&&html`<div class=${"border-t border-slate-700 mt-1 pt-1"}>${views.map(v=>html`<div key=${v.id} class=${"flex items-center justify-between px-3 py-1.5 hover:bg-slate-700 group"}><button onClick=${()=>{onSelect(v);setOpen(false);}} class=${"text-xs text-slate-300 truncate flex-1 text-left"}>${v.name}</button><button onClick=${()=>onDelete(v.id)} class=${"opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-2"}><${LI.Trash2} size=${10} /></button></div>`)}</div>`}`}</div>`}</div>`;
 }
 
 // ── Header ────────────────────────────────────────────────────────────────────
@@ -3889,13 +3914,14 @@ const COMPARE_OPTS=[
 function Header({timeRange,setTimeRange,customFrom,setCustomFrom,customTo,setCustomTo,filters,setFilters,dimensions,onSettings,compareEnabled,setCompareEnabled,compareMode,setCompareMode,views,onSelectView,onSaveView,onDeleteView,chartType,setChartType,metric,setMetric,groupBy,setGroupBy,summary,tz}) {
   const clearAll=()=>setFilters({model:[],provider:[],api_key:[],origin:[],finish_reason:[]});
   const hasFilters=Object.values(filters).some(v=>v.length>0);
+  const shownOption=(value,options)=>options.some(o=>o.v===value)?value:options[0].v;
   const CHART_TYPES=[{v:'area',l:'Area'},{v:'line',l:'Line'},{v:'bar',l:'Bar'},{v:'heatmap',l:'Heatmap'}];
   const METRICS=[{v:'cost',l:'Cost $'},{v:'requests',l:'Requests'},{v:'tokens',l:'Tokens'},{v:'latency',l:'Latency'}];
   const GROUPS=[{v:'model',l:'By Model'},{v:'provider',l:'By Provider'},{v:'api_key',l:'By Key'},{v:'none',l:'No Group'}];
   const activeRangeLabel = RANGE_OPTS.find(o=>o.v===timeRange)?.l||'Custom Range';
   const resolvedRange = summary?.from&&summary?.to ? formatResolvedRange(summary.from, summary.to, tz) : null;
 
-  return html`<div class=${"bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-col gap-2 sticky top-0 z-30"}> <div class=${"flex items-center gap-3 flex-wrap"}> <span class=${"font-bold text-blue-400 text-sm tracking-wide shrink-0"}>RouterView</span> <select value=${timeRange} onInput=${e=>setTimeRange(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-700 outline-none focus:border-blue-500 cursor-pointer"}> ${RANGE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> ${timeRange==='custom'&&html` <input type=${"datetime-local"} value=${customFrom||''} onInput=${e=>setCustomFrom(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} /> <span class=${"text-slate-600 text-xs"}>to</span> <input type=${"datetime-local"} value=${customTo||''} onInput=${e=>setCustomTo(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} /> `} <div class=${"flex items-center gap-1.5"}> <label class=${"flex items-center gap-1.5 cursor-pointer"}> <div onClick=${()=>setCompareEnabled(!compareEnabled)} class=${`w-8 h-4 rounded-full transition-colors cursor-pointer relative ${compareEnabled?'bg-blue-600':'bg-slate-700'}`}> <span class=${`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${compareEnabled?'left-4.5':'left-0.5'}`} style=${{left:compareEnabled?18:2}} /> </div> <span class=${"text-xs text-slate-400"}>Compare</span> </label> ${compareEnabled&&html`<select value=${compareMode} onInput=${e=>setCompareMode(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 outline-none"}> ${COMPARE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select>`} </div> <div class=${"flex items-center gap-1 ml-auto"}> <select value=${chartType} onInput=${e=>setChartType(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${CHART_TYPES.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <select value=${metric} onInput=${e=>setMetric(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${METRICS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <select value=${groupBy} onInput=${e=>setGroupBy(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}> ${GROUPS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)} </select> <${SavedViewsDropdown} views=${views} onSelect=${onSelectView} onSave=${onSaveView} onDelete=${onDeleteView} /> <button onClick=${onSettings} class=${"p-1.5 text-slate-400 hover:text-slate-200 rounded"}><${LI.Settings} size=${14} /></button> </div> </div> ${resolvedRange&&html`<div class=${"text-xs text-slate-500"}> ${activeRangeLabel}: ${resolvedRange} </div>`} ${dimensions&&html`<div class=${"flex items-center gap-2 flex-wrap"}> <${FilterDropdown} label=${"Model"} options=${dimensions.models||[]} selected=${filters.model} onChange=${v=>setFilters(f=>({...f,model:v}))} /> <${FilterDropdown} label=${"Provider"} options=${dimensions.providers||[]} selected=${filters.provider} onChange=${v=>setFilters(f=>({...f,provider:v}))} /> <${FilterDropdown} label=${"API Key"} options=${dimensions.api_keys||[]} selected=${filters.api_key} onChange=${v=>setFilters(f=>({...f,api_key:v}))} /> <${FilterDropdown} label=${"Origin"} options=${dimensions.origins||[]} selected=${filters.origin} onChange=${v=>setFilters(f=>({...f,origin:v}))} /> <${FilterDropdown} label=${"Finish"} options=${dimensions.finish_reasons||[]} selected=${filters.finish_reason} onChange=${v=>setFilters(f=>({...f,finish_reason:v}))} /> ${hasFilters&&html`<button onClick=${clearAll} class=${"text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"}><${LI.X} size=${10} /> Clear all</button>`} </div>`} ${hasFilters&&html`<div class=${"flex flex-wrap gap-1.5"}> ${Object.entries(filters).flatMap(([k,vals])=>vals.map(v=>html`<span key=${k+v} class=${"flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full"}> ${k}:${v} <button onClick=${()=>setFilters(f=>({...f,[k]:f[k].filter(x=>x!==v)}))} class=${"hover:text-blue-100"}><${LI.X} size=${9} /></button> </span>`))} </div>`} </div>`;
+  return html`<div class=${"bg-slate-900 border-b border-slate-800 px-4 py-2 flex flex-col gap-2 sticky top-0 z-30"}><div class=${"flex items-center gap-3 flex-wrap"}><span class=${"font-bold text-blue-400 text-sm tracking-wide shrink-0"}>RouterView</span><select value=${shownOption(timeRange,RANGE_OPTS)} onInput=${e=>setTimeRange(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-700 outline-none focus:border-blue-500 cursor-pointer"}>${RANGE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)}</select>${timeRange==='custom'&&html`<input type=${"datetime-local"} value=${customFrom||''} onInput=${e=>setCustomFrom(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} /><span class=${"text-slate-600 text-xs"}>to</span><input type=${"datetime-local"} value=${customTo||''} onInput=${e=>setCustomTo(e.target.value)} class=${"bg-slate-800 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 outline-none"} />`}<div class=${"flex items-center gap-1.5"}><label class=${"flex items-center gap-1.5 cursor-pointer"}><div onClick=${()=>setCompareEnabled(!compareEnabled)} class=${`w-8 h-4 rounded-full transition-colors cursor-pointer relative ${compareEnabled?'bg-blue-600':'bg-slate-700'}`}><span class=${`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${compareEnabled?'left-4.5':'left-0.5'}`} style=${{left:compareEnabled?18:2}} /></div><span class=${"text-xs text-slate-400"}>Compare</span></label>${compareEnabled&&html`<select value=${shownOption(compareMode,COMPARE_OPTS)} onInput=${e=>setCompareMode(e.target.value)} class=${"bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700 outline-none"}>${COMPARE_OPTS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)}</select>`}</div><div class=${"flex items-center gap-1 ml-auto"}><select value=${shownOption(chartType,CHART_TYPES)} onInput=${e=>setChartType(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}>${CHART_TYPES.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)}</select><select value=${shownOption(metric,METRICS)} onInput=${e=>setMetric(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}>${METRICS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)}</select><select value=${shownOption(groupBy,GROUPS)} onInput=${e=>setGroupBy(e.target.value)} class=${"bg-slate-800 text-slate-400 text-xs px-1.5 py-1 rounded border border-slate-700 outline-none"}>${GROUPS.map(o=>html`<option key=${o.v} value=${o.v}>${o.l}</option>`)}</select><${SavedViewsDropdown} views=${views} onSelect=${onSelectView} onSave=${onSaveView} onDelete=${onDeleteView} /><button onClick=${onSettings} class=${"p-1.5 text-slate-400 hover:text-slate-200 rounded"}><${LI.Settings} size=${14} /></button></div></div>${resolvedRange&&html`<div class=${"text-xs text-slate-500"}>${activeRangeLabel}: ${resolvedRange}</div>`}${dimensions&&html`<div class=${"flex items-center gap-2 flex-wrap"}><${FilterDropdown} label=${"Model"} options=${dimensions.models||[]} selected=${filters.model} onChange=${v=>setFilters(f=>({...f,model:v}))} /><${FilterDropdown} label=${"Provider"} options=${dimensions.providers||[]} selected=${filters.provider} onChange=${v=>setFilters(f=>({...f,provider:v}))} /><${FilterDropdown} label=${"API Key"} options=${dimensions.api_keys||[]} selected=${filters.api_key} onChange=${v=>setFilters(f=>({...f,api_key:v}))} /><${FilterDropdown} label=${"Origin"} options=${dimensions.origins||[]} selected=${filters.origin} onChange=${v=>setFilters(f=>({...f,origin:v}))} /><${FilterDropdown} label=${"Finish"} options=${dimensions.finish_reasons||[]} selected=${filters.finish_reason} onChange=${v=>setFilters(f=>({...f,finish_reason:v}))} />${hasFilters&&html`<button onClick=${clearAll} class=${"text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"}><${LI.X} size=${10} /> Clear all</button>`}</div>`}${hasFilters&&html`<div class=${"flex flex-wrap gap-1.5"}>${Object.entries(filters).flatMap(([k,vals])=>vals.map(v=>html`<span key=${k+v} class=${"flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded-full"}>${k}:${v}<button onClick=${()=>setFilters(f=>({...f,[k]:f[k].filter(x=>x!==v)}))} class=${"hover:text-blue-100"}><${LI.X} size=${9} /></button></span>`))}</div>`}</div>`;
 }
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
@@ -3903,7 +3929,7 @@ class ErrorBoundary extends preact.Component {
   constructor(p){super(p);this.state={error:null};}
   static getDerivedStateFromError(e){return{error:e};}
   render(){
-    if(this.state.error) return html`<div class=${"p-8 text-red-400 text-sm"}> <h2 class=${"font-bold mb-2"}>Something went wrong</h2> <pre class=${"text-xs opacity-70 overflow-auto"}>${this.state.error.message}</pre> <button onClick=${()=>this.setState({error:null})} class=${"mt-4 px-3 py-1 border border-red-700 rounded text-xs hover:bg-red-900/30"}>Retry</button> </div>`;
+    if(this.state.error) return html`<div class=${"p-8 text-red-400 text-sm"}><h2 class=${"font-bold mb-2"}>Something went wrong</h2><pre class=${"text-xs opacity-70 overflow-auto"}>${this.state.error.message}</pre><button onClick=${()=>this.setState({error:null})} class=${"mt-4 px-3 py-1 border border-red-700 rounded text-xs hover:bg-red-900/30"}>Retry</button></div>`;
     return this.props.children;
   }
 }
@@ -4129,9 +4155,9 @@ function App() {
   const exportLog=()=>window.open(`/api/export/csv?view=generations&${buildQS()}`);
   const exportTimeseries=()=>window.open(`/api/export/csv?view=timeseries&${buildQS()}`);
 
-  return html`<div class=${"min-h-screen bg-slate-950"}> <${ErrorBanner} error=${error} onRetry=${()=>{fetchData();fetchLog();}} /> <${Header} timeRange=${timeRange} setTimeRange=${setTimeRange} customFrom=${customFrom} setCustomFrom=${setCustomFrom} customTo=${customTo} setCustomTo=${setCustomTo} filters=${filters} setFilters=${setFilters} dimensions=${dimensions} summary=${summary} tz=${tz} onSettings=${()=>setShowSettings(true)} compareEnabled=${compareEnabled} setCompareEnabled=${setCompareEnabled} compareMode=${compareMode} setCompareMode=${setCompareMode} views=${views} onSelectView=${selectView} onSaveView=${saveView} onDeleteView=${deleteView} chartType=${chartType} setChartType=${setChartType} metric=${metric} setMetric=${setMetric} groupBy=${groupBy} setGroupBy=${setGroupBy} /> <div class=${"p-4 flex flex-col gap-4 max-w-[1600px] mx-auto"}> <${KPICards} summary=${summary} costCycle=${costCycle} setCostCycle=${setCostCycle} latCycle=${latCycle} setLatCycle=${setLatCycle} /> <div ref=${mainChartRef}> ${chartType==='heatmap'
+  return html`<div class=${"min-h-screen bg-slate-950"}><${ErrorBanner} error=${error} onRetry=${()=>{fetchData();fetchLog();}} /><${Header} timeRange=${timeRange} setTimeRange=${setTimeRange} customFrom=${customFrom} setCustomFrom=${setCustomFrom} customTo=${customTo} setCustomTo=${setCustomTo} filters=${filters} setFilters=${setFilters} dimensions=${dimensions} summary=${summary} tz=${tz} onSettings=${()=>setShowSettings(true)} compareEnabled=${compareEnabled} setCompareEnabled=${setCompareEnabled} compareMode=${compareMode} setCompareMode=${setCompareMode} views=${views} onSelectView=${selectView} onSaveView=${saveView} onDeleteView=${deleteView} chartType=${chartType} setChartType=${setChartType} metric=${metric} setMetric=${setMetric} groupBy=${groupBy} setGroupBy=${setGroupBy} /><div class=${"p-4 flex flex-col gap-4 max-w-[1600px] mx-auto"}><${KPICards} summary=${summary} costCycle=${costCycle} setCostCycle=${setCostCycle} latCycle=${latCycle} setLatCycle=${setLatCycle} /><div ref=${mainChartRef}>${chartType==='heatmap'
           ?html`<${HeatmapView} data=${heatmapData} />`
-          :html`<${MainChart} data=${timeseries} chartType=${chartType} metric=${metric} groupBy=${groupBy} comparison=${compareEnabled} onExport=${exportTimeseries} />`} </div> <div class=${"grid grid-cols-1 md:grid-cols-3 gap-4"}> ${panelOrder.map(key=>{
+          :html`<${MainChart} data=${timeseries} chartType=${chartType} metric=${metric} groupBy=${groupBy} comparison=${compareEnabled} onExport=${exportTimeseries} />`}</div><div class=${"grid grid-cols-1 md:grid-cols-3 gap-4"}>${panelOrder.map(key=>{
           const def=panelDefs[key]; if(!def) return null;
           return html`<${BreakdownPanel} key=${key} title=${def.title} data=${breakdown[key]} type=${def.type} metric=${def.metric} onFilter=${val=>onPanelFilter(def.dim,val)} chartRef=${panelRefs[key]} panelKey=${key} exportQS=${buildQS()} dragProps=${{
               draggable:true,
@@ -4139,7 +4165,7 @@ function App() {
               onDragOver:dragOver, onDragLeave:dragLeave,
               onDrop:e=>drop(e,key),
             }} />`;
-        })} </div> <${LogViewer} logData=${logData} logSort=${logSort} setLogSort=${setLogSort} logSearch=${logSearch} setLogSearch=${setLogSearch} logPage=${logPage} setLogPage=${setLogPage} logPageSize=${logPageSize} setLogPageSize=${setLogPageSize} visibleCols=${visibleCols} setVisibleCols=${setVisibleCols} expandedRow=${expandedRow} setExpandedRow=${setExpandedRow} onExportCSV=${exportLog} /> </div> ${showSettings&&html`<${SettingsPanel} onClose=${()=>setShowSettings(false)} onImportComplete=${()=>{fetchData();fetchLog();}} />`} ${showShortcuts&&html`<${ShortcutsModal} onClose=${()=>setShowShortcuts(false)} />`} </div>`;
+        })}</div><${LogViewer} logData=${logData} logSort=${logSort} setLogSort=${setLogSort} logSearch=${logSearch} setLogSearch=${setLogSearch} logPage=${logPage} setLogPage=${setLogPage} logPageSize=${logPageSize} setLogPageSize=${setLogPageSize} visibleCols=${visibleCols} setVisibleCols=${setVisibleCols} expandedRow=${expandedRow} setExpandedRow=${setExpandedRow} onExportCSV=${exportLog} /></div>${showSettings&&html`<${SettingsPanel} onClose=${()=>setShowSettings(false)} onImportComplete=${()=>{fetchData();fetchLog();}} />`}${showShortcuts&&html`<${ShortcutsModal} onClose=${()=>setShowShortcuts(false)} />`}</div>`;
 }
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
@@ -4437,15 +4463,58 @@ SOFTWARE.
     const [a,b]=domain.map(number), [c,d]=range.map(number);
     return value => a===b ? (c+d)/2 : c+(number(value)-a)*(d-c)/(b-a);
   }
+  // The tick helpers through fixedTicks are adapted from recharts-scale (MIT License,
+  // (c) the recharts-scale authors, https://github.com/recharts/recharts-scale).
+  const roundTick=value=>Number(value.toPrecision(14));
+  const digitCount=value=>value===0?1:Math.floor(Math.log10(Math.abs(value)))+1;
+  function tickStep(rough,correction=0) {
+    if(!(rough>0)) return 0;
+    const digits=digitCount(rough), unit=10**digits, ratioScale=digits===1?.1:.05;
+    return roundTick((Math.ceil(roundTick(rough/unit/ratioScale))+correction)*ratioScale*unit);
+  }
+  function singleValueTicks(value,count) {
+    const middleIndex=Math.floor((count-1)/2);
+    let step=1, middle=value;
+    if(!Number.isInteger(value)) {
+      if(Math.abs(value)<1) {step=10**(digitCount(value)-1);middle=Math.floor(value/step)*step;}
+      else middle=Math.floor(value);
+    } else if(value===0) middle=middleIndex;
+    return Array.from({length:count},(_,i)=>roundTick(middle+(i-middleIndex)*step));
+  }
   function niceTicks(min,max,count=5) {
-    min=number(min); max=number(max); count=Math.max(1,number(count));
+    min=number(min); max=number(max); count=Math.max(2,Math.floor(number(count)));
     if(min>max) [min,max]=[max,min];
-    if(min===max) {const pad=Math.abs(min)*0.1||1;min-=pad;max+=pad;}
-    const raw=(max-min)/count, magnitude=10**Math.floor(Math.log10(raw));
-    const factor=raw/magnitude, step=(factor<=1?1:factor<=2?2:factor<=5?5:10)*magnitude;
-    const start=Math.floor(min/step), end=Math.ceil(max/step), result=[];
-    for(let i=start;i<=end && result.length<1000;i++) result.push(Number((i*step).toPrecision(14)));
-    return result;
+    if(min===max) return singleValueTicks(min,count);
+    if(!Number.isFinite(max-min)) return [min,max];
+    for(let correction=0;correction<1000;correction++) {
+      const step=tickStep((max-min)/(count-1),correction);
+      let middle=0;
+      if(min>0||max<0) {const centre=(min+max)/2;middle=roundTick(centre-centre%step);}
+      let below=Math.ceil(roundTick((middle-min)/step)), above=Math.ceil(roundTick((max-middle)/step));
+      const used=below+above+1;
+      if(used>count) continue;
+      if(max>0) above+=count-used; else below+=count-used;
+      return Array.from({length:below+above+1},(_,i)=>roundTick(middle+(i-below)*step));
+    }
+    return [min,max];
+  }
+  function fixedTicks(min,max,count=5) {
+    min=number(min); max=number(max); count=Math.max(2,Math.floor(number(count)));
+    if(min>max) [min,max]=[max,min];
+    if(min===max) return [min];
+    const step=tickStep((max-min)/(count-1)), result=[];
+    for(let i=0;i<1000;i++) {const tick=roundTick(min+i*step);if(tick>=max)break;result.push(tick);}
+    return [...result,max];
+  }
+  function axisDomain(spec,dataMin,dataMax) {
+    const bound=value=>typeof value==='number'&&Number.isFinite(value);
+    let [first,second]=Array.isArray(spec)?spec:[0,'auto'];
+    if(bound(first)&&bound(second)&&first>second) [first,second]=[second,first];
+    const min=bound(first)?Math.min(first,dataMin):dataMin;
+    const max=bound(second)?Math.max(second,dataMax):dataMax;
+    if(bound(first)&&bound(second)) return {ticks:fixedTicks(min,max),lo:min,hi:max};
+    const ticks=niceTicks(min,max);
+    return {ticks,lo:ticks[0],hi:ticks.at(-1)};
   }
   function stack(rows,keys,offset='none') {
     const result=keys.map(()=>[]);
@@ -4457,11 +4526,22 @@ SOFTWARE.
     });});return result;
   }
   const xy=p=>Array.isArray(p)?[number(p[0]),number(p[1])]:[number(p.x),number(p.y)];
+  // Adapted from d3-shape's curveMonotoneX (ISC License, (c) Mike Bostock, https://github.com/d3/d3-shape).
   function monotonePath(points) {
     const p=points.map(xy);if(!p.length)return '';
     let path=`M${p[0][0]},${p[0][1]}`;if(p.length===1)return path;
-    const slopes=p.slice(1).map((v,i)=>v[0]===p[i][0]?0:(v[1]-p[i][1])/(v[0]-p[i][0]));
-    const tangents=p.map((_,i)=>i===0?slopes[0]:i===p.length-1?slopes.at(-1):slopes[i-1]*slopes[i]<=0?0:2/(1/slopes[i-1]+1/slopes[i]));
+    if(p.length===2)return `${path}L${p[1][0]},${p[1][1]}`;
+    const slope=(a,b)=>b[0]===a[0]?0:(b[1]-a[1])/(b[0]-a[0]);
+    const tangents=p.map((point,i)=>{
+      if(i===0||i===p.length-1) return 0;
+      const before=slope(p[i-1],point), after=slope(point,p[i+1]);
+      const h0=point[0]-p[i-1][0], h1=p[i+1][0]-point[0];
+      const mean=h0+h1?(before*h1+after*h0)/(h0+h1):0;
+      return (Math.sign(before)+Math.sign(after))*Math.min(Math.abs(before),Math.abs(after),.5*Math.abs(mean))||0;
+    });
+    const edge=(a,b,tangent)=>{const h=b[0]-a[0];return h?(3*(b[1]-a[1])/h-tangent)/2:tangent;};
+    tangents[0]=edge(p[0],p[1],tangents[1]);
+    tangents[p.length-1]=edge(p[p.length-2],p[p.length-1],tangents[p.length-2]);
     for(let i=0;i<p.length-1;i++) {const dx=(p[i+1][0]-p[i][0])/3;path+=`C${p[i][0]+dx},${p[i][1]+dx*tangents[i]} ${p[i+1][0]-dx},${p[i+1][1]-dx*tangents[i+1]} ${p[i+1][0]},${p[i+1][1]}`;}
     return path;
   }
@@ -4473,24 +4553,30 @@ SOFTWARE.
     const arcs=(r,a,d,s)=>{const n=Math.abs(d)>=2*Math.PI-1e-9?2:1;let out='';for(let i=1;i<=n;i++)out+=`A${r},${r} 0 ${Math.abs(d/n)>Math.PI?1:0} ${s} ${point(r,a+d*i/n)}`;return out;};
     return `M${point(outer,start)}${arcs(outer,start,delta,sweep)}L${point(inner,start+delta)}${arcs(inner,start+delta,-delta,1-sweep)}Z`;
   }
+  function barPath(start,end,y,height,radius=4) {
+    const sign=end<start?-1:1, r=Math.min(radius,Math.abs(end-start)/2,height/2), sweep=sign>0?1:0;
+    return `M${start},${y}L${end-sign*r},${y}A${r},${r} 0 0 ${sweep} ${end},${y+r}L${end},${y+height-r}A${r},${r} 0 0 ${sweep} ${end-sign*r},${y+height}L${start},${y+height}Z`;
+  }
   function useWidth(width) {
     const ref=useRef(null), [measured,setMeasured]=useState(number(width)||400);
-    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(node.getBoundingClientRect().width||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
+    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(Math.round(node.getBoundingClientRect().width)||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
     return [ref,number(width)||measured];
   }
-  const selectable=(item,onSelect)=>onSelect?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
+  const selectable=(item,onSelect)=>onSelect&&item.selectable!==false?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
   const style={position:'relative',width:'100%'};
+  const wrapperStyle={position:'absolute',top:0,left:0,width:'100%'};
+  const keyboardFocus=event=>event.currentTarget.matches?.(':focus-visible')!==false;
   function tooltipPosition(point,size,chart,viewport) {
-    const left=Math.max(chart.left,viewport.left)-chart.left;
-    const top=Math.max(chart.top,viewport.top)-chart.top;
-    const right=Math.max(left,Math.min(chart.right,viewport.right)-chart.left);
-    const bottom=Math.max(top,Math.min(chart.bottom,viewport.bottom)-chart.top);
-    const place=(value,extent,min,max)=>{
-      const forward=value+10, flipped=value-10-extent;
-      const preferred=forward+extent<=max?forward:flipped;
-      return Math.max(min,Math.min(preferred,Math.max(min,max-extent)));
-    };
-    return {left:place(point.x,size.width,left,right),top:place(point.y,size.height,top,bottom)};
+    const plot=point.plot||{left:0,top:0,right:chart.right-chart.left,bottom:chart.bottom-chart.top};
+    const left=Math.max(plot.left,viewport.left-chart.left);
+    const top=Math.max(plot.top,viewport.top-chart.top);
+    const right=Math.max(left,Math.min(plot.right,viewport.right-chart.left));
+    const bottom=Math.max(top,Math.min(plot.bottom,viewport.bottom-chart.top));
+    const forward=value=>value+10, flipped=(value,extent)=>value-10-extent;
+    const x=forward(point.x)+size.width<=right?forward(point.x):flipped(point.x,size.width);
+    const y=forward(point.y)+size.height<=bottom?forward(point.y):Math.max(top,flipped(point.y,size.height));
+    return {left:Math.max(left,Math.min(x,Math.max(left,right-size.width))),
+      top:Math.max(viewport.top-chart.top,Math.min(y,viewport.bottom-chart.top-size.height))};
   }
   function Tooltip({children,position,onDismiss}) {
     const ref=useRef(null);
@@ -4501,9 +4587,8 @@ SOFTWARE.
         const bounds=chart.getBoundingClientRect();
         const viewport={left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
         const availableWidth=Math.max(0,Math.min(bounds.right,viewport.right)-Math.max(bounds.left,viewport.left));
-        const availableHeight=Math.max(0,Math.min(bounds.bottom,viewport.bottom)-Math.max(bounds.top,viewport.top));
         node.style.maxWidth=`${availableWidth}px`;
-        node.style.maxHeight=`${availableHeight}px`;
+        node.style.maxHeight=`${viewport.bottom-viewport.top}px`;
         const size=node.getBoundingClientRect();
         const constrained=node.scrollWidth>node.clientWidth || node.scrollHeight>node.clientHeight;
         node.style.pointerEvents=constrained?'auto':'none';
@@ -4530,41 +4615,74 @@ SOFTWARE.
     },[position.x,position.y,children]);
     return h('div',{ref,class:'svgc-tooltip',
       onMouseMove:event=>event.stopPropagation(),
-      onFocusOut:event=>{if(!event.currentTarget.contains(event.relatedTarget)) onDismiss();}
+      onFocusOut:event=>{if(!event.currentTarget.parentElement?.contains(event.relatedTarget)) onDismiss();}
     },children);
   }
   function tooltipNode(tooltip,payload,position,onDismiss) {
     if(!tooltip||!payload) return null;
     return h(Tooltip,{position,onDismiss},typeof tooltip==='function'?tooltip(payload):tooltip);
   }
-  function spacedTicks(ticks,scale,minSpacing=20) {
-    if(ticks.length<2) return ticks;
-    const first=ticks[0], last=ticks.at(-1);
-    if(Math.abs(scale(first)-scale(last))<minSpacing) return [first];
-    const shown=[first];
-    for(const tick of ticks.slice(1,-1)) {
-      if(Math.abs(scale(tick)-scale(shown.at(-1)))>=minSpacing &&
-         Math.abs(scale(tick)-scale(last))>=minSpacing) shown.push(tick);
-    }
-    return [...shown,last];
-  }
   const leaveChart=(event,setHover)=>{
     const tooltip=event.currentTarget.querySelector('.svgc-tooltip');
     if(!tooltip?.contains(window.document?.activeElement)) setHover(null);
   };
-  function itemHover(event,item) {
-    const bounds=event.currentTarget?.ownerSVGElement?.parentElement?.getBoundingClientRect();
-    return {item,x:bounds?event.clientX-bounds.left:event.offsetX,
-      y:bounds?event.clientY-bounds.top:event.offsetY};
+  const measuredText=new Map();
+  let measureContext;
+  const textContext=()=>measureContext??=window.document?.body
+    ?window.document.createElement('canvas').getContext('2d'):undefined;
+  function textWidth(text,fontSize,family) {
+    const value=String(text??''), key=`${family}|${fontSize}|${value}`, known=measuredText.get(key);
+    if(known!==undefined) return known;
+    const context=textContext();
+    if(!context) return Array.from(value).length*fontSize*.6;
+    context.font=`${fontSize}px ${family}`;
+    const width=context.measureText(value).width;
+    if(window.document.fonts?.status==='loaded') {
+      if(measuredText.size>200000) measuredText.clear();
+      measuredText.set(key,width);
+    }
+    return width;
+  }
+  function pageFont() {
+    const body=window.document?.body, style=body&&window.getComputedStyle(body);
+    const family=style?.fontFamily||'sans-serif', size=(style&&parseFloat(style.fontSize))||16;
+    const ratio=style?parseFloat(style.lineHeight)/size:NaN, context=textContext();
+    const line=fontSize=>{
+      if(Number.isFinite(ratio)) return ratio*fontSize;
+      if(!context) return fontSize*1.2;
+      context.font=`${fontSize}px ${family}`;
+      const metrics=context.measureText('x');
+      return Math.round(metrics.fontBoundingBoxAscent)+Math.round(metrics.fontBoundingBoxDescent);
+    };
+    return {family,size,line};
+  }
+  const labelFamily=(node,page)=>{
+    const label=node?.querySelector?.('svg text');
+    return label?window.getComputedStyle(label).fontFamily:page.family;
+  };
+  const withEdges=(lines,low,high)=>[low,...lines.filter(line=>Math.abs(line-low)>1e-6&&Math.abs(line-high)>1e-6),high];
+  function preserveEndTicks(ticks,start,end,gap=5) {
+    const shown=[];
+    let limit=end;
+    for(let i=ticks.length-1;i>=0;i--) {
+      const tick=ticks[i], half=tick.size/2;
+      const at=i===ticks.length-1?Math.min(tick.x,end-half):tick.x;
+      if(at-half>=start&&at+half<=limit) {shown.push({...tick,at});limit=at-half-gap;}
+    }
+    return shown.reverse();
+  }
+  function intervalTicks(ticks,every,start,end) {
+    return ticks.filter(({i})=>i%every===0).map(tick=>({...tick,
+      at:Math.max(start+tick.size/2,Math.min(tick.x,end-tick.size/2))}));
   }
   function CartesianChart({
     kind='area', data=[], xKey, series=[], stackOffset='none', height=300,
     width, margin={}, yFormat=String, xFormat=String, tickEvery, yDomain,
     referenceX, referenceY, referenceOpacity=1, grid=true, xAxisLine=false,
-    yAxisLine=false, plotClass='', tooltip,
+    yAxisLine=false, tickLine=false, plotClass='', tooltip, ariaLabel='Chart',
     compact=false
   }) {
-    const [ref,w]=useWidth(width), [hover,setHover]=useState(null);
+    const [ref,w]=useWidth(width), [hover,setHover]=useState(null), keyboardReading=useRef(false);
     const m={top:10,right:10,bottom:compact?0:25,left:compact?0:55,...margin};
     const left=m.left, right=Math.max(left,w-m.right), top=m.top;
     const bottom=Math.max(top,height-m.bottom), pw=right-left;
@@ -4577,41 +4695,41 @@ SOFTWARE.
       if(stackSlot===undefined) stackSlot=slotCount++;
       return stackSlot;
     });
-    const values=bands.flat(2).concat([0]);
-    let lo=Math.min(...values), hi=Math.max(...values);
-    const explicitDomain=Array.isArray(yDomain) && yDomain.length>=2 &&
-      Number.isFinite(yDomain[0]) && Number.isFinite(yDomain[1]);
-    if(Array.isArray(yDomain)) {
-      if(Number.isFinite(yDomain[0])) lo=yDomain[0];
-      if(Number.isFinite(yDomain[1])) hi=yDomain[1];
-    }
-    let ticks=niceTicks(lo,hi,4);
-    if(explicitDomain) {
-      const min=Math.min(lo,hi), max=Math.max(lo,hi);
-      ticks=[min,...ticks.filter(t=>t>min && t<max),...(min===max?[]:[max])];
-    } else if(!yDomain) {
-      lo=ticks[0]; hi=ticks.at(-1);
-    }
+    let dataMin=Infinity, dataMax=-Infinity;
+    const include=value=>{if(value<dataMin)dataMin=value;if(value>dataMax)dataMax=value;};
+    bands.forEach((band,j)=>band.forEach(pair=>{include(pair[1]);if(series[j].stack)include(pair[0]);}));
+    if(dataMin>dataMax) dataMin=dataMax=0;
+    const {ticks,lo,hi}=axisDomain(yDomain,dataMin,dataMax);
     const y=linearScale([lo,hi],[bottom,top]);
-    const renderedTicks=spacedTicks(ticks,y);
+    const base=Math.max(lo,Math.min(hi,0));
+    const yLabelTicks=size=>preserveEndTicks(ticks.map(tick=>({tick,x:height-y(tick),size})),0,height)
+      .map(({tick,at})=>({tick,at:height-at}));
+    const page=pageFont(), axisFamily=labelFamily(ref.current,page);
+    const shownY=compact?[]:yLabelTicks(page.line(11));
     const x=i=>data.length<=1?(left+right)/2:kind==='bar'
       ?left+(i+.5)*pw/data.length:left+i*pw/(data.length-1);
+    const band=data.length?pw/data.length:0, bandOffset=band*.1;
+    const barGap=slotCount>1&&band-2*bandOffset-(slotCount-1)*4>0?4:0;
+    const rawBarWidth=slotCount?(band-2*bandOffset-(slotCount-1)*barGap)/slotCount:0;
+    const barWidth=rawBarWidth>1?Math.round(rawBarWidth):rawBarWidth;
     const marks=series.map((s,j)=>{
       const b=bands[j], color=s.color||'currentColor';
+      const low=pair=>s.stack?pair[0]:base;
       if(kind==='bar') {
-        const groupWidth=data.length?pw/data.length*.8:0;
-        const barWidth=slotCount?groupWidth/slotCount:0;
-        return b.map((pair,i)=>h('rect',{
-          class:'svgc-bar',x:x(i)-groupWidth/2+slots[j]*barWidth,
-          y:Math.min(y(pair[0]),y(pair[1])),width:barWidth,
-          height:Math.abs(y(pair[1])-y(pair[0])),fill:s.fill||color,
-          'fill-opacity':s.fillOpacity??1,stroke:color,
-          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
-          'stroke-dasharray':s.strokeDasharray
-        }));
+        return b.map((pair,i)=>{
+          const barHeight=Math.abs(y(pair[1])-y(low(pair)));
+          return barHeight>0&&h('rect',{
+            class:'svgc-bar',x:x(i)-band/2+bandOffset+(barWidth+barGap)*slots[j],
+            y:Math.min(y(low(pair)),y(pair[1])),width:barWidth,
+            height:barHeight,fill:s.fill||color,
+            'fill-opacity':s.fillOpacity??1,stroke:color,
+            'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+            'stroke-dasharray':s.strokeDasharray
+          });
+        });
       }
       const upper=b.map((v,i)=>[x(i),y(v[1])]);
-      const lower=b.map((v,i)=>[x(i),y(v[0])]);
+      const lower=b.map((v,i)=>[x(i),y(low(v))]);
       return h('g',null,
         kind==='area'&&s.fill!=='none'&&h('path',{
           class:'svgc-area',d:areaPath(upper,lower),fill:s.fill||color,
@@ -4627,51 +4745,82 @@ SOFTWARE.
       );
     });
     const move=e=>{
-      if(!data.length) return;
-      const rect=e.currentTarget.getBoundingClientRect(), local=e.clientX-rect.left;
-      const fraction=pw?Math.max(0,Math.min(1,(local-left)/pw)):0;
+      if(!data.length||!tooltip) return;
+      const rect=e.currentTarget.getBoundingClientRect();
+      const local=e.clientX-rect.left, localY=e.clientY-rect.top;
+      if(local<left||local>right||localY<top||localY>bottom) {leaveChart(e,setHover);return;}
+      const fraction=pw?(local-left)/pw:0;
       const index=data.length===1?0:kind==='bar'
         ?Math.min(data.length-1,Math.floor(fraction*data.length))
         :Math.round(fraction*(data.length-1));
-      setHover({index,x:local,y:e.clientY-rect.top});
+      setHover({index,x:x(index),y:localY});
     };
+    const keyHover=index=>({index,x:x(index),y:(top+bottom)/2});
+    const surface=tooltip?{tabindex:0,role:'application','aria-label':ariaLabel,
+      onFocus:event=>{
+        keyboardReading.current=keyboardFocus(event);
+        if(data.length&&!hover&&keyboardReading.current)setHover(keyHover(0));
+      },
+      onBlur:event=>{if(!event.currentTarget.parentElement?.contains(event.relatedTarget))setHover(null);},
+      onKeyDown:event=>{
+        if(!data.length) return;
+        if(event.key==='Escape') {setHover(null);return;}
+        const step=event.key==='ArrowRight'?1:event.key==='ArrowLeft'?-1:0;
+        if(!step) return;
+        event.preventDefault();
+        // A page shortcut keeps these keys after a mouse click. Judged at focus, because
+        // Chromium also matches :focus-visible on a mouse-focused element once a key is down.
+        if(keyboardReading.current) event.stopPropagation();
+        const index=hover?hover.index+step:step>0?0:data.length-1;
+        setHover(keyHover(Math.max(0,Math.min(data.length-1,index))));
+      }}:{};
     const row=hover&&data[hover.index];
     const payload=row&&{
       active:true,label:row[xKey],row,index:hover.index,
       payload:series.map(s=>({dataKey:s.key,name:s.label||s.key,
         value:row[s.key],color:s.color,payload:row}))
     };
+    const cursorX=payload?x(hover.index):0;
     const refIndex=data.findIndex(row=>row[xKey]===referenceX);
     const options=typeof grid==='object' && grid!==null?grid:{};
     const horizontal=typeof grid==='object'?options.horizontal!==false:!!grid;
     const vertical=typeof grid==='object'&&options.vertical===true;
     const gridStroke=options.stroke??'var(--border-default, #334155)';
     const gridDash=options.strokeDasharray??'3 3';
-    const xLabels=data.map((row,i)=>({i,label:xFormat(row[xKey])}));
-    const maxLabelWidth=Math.max(0,...xLabels.map(({label})=>Array.from(String(label??'')).length*9+12));
+    const tickStroke=typeof tickLine==='string'?tickLine:'var(--border-default, #334155)';
+    const xLabels=compact?[]:data.map((row,i)=>{
+      const label=xFormat(row[xKey]);
+      return {i,label,x:x(i),size:textWidth(label,11,axisFamily)};
+    });
+    let widestLabel=0;
+    for(const {size} of xLabels) if(size>widestLabel) widestLabel=size;
     const categoryGap=data.length>1?pw/(kind==='bar'?data.length:data.length-1):pw;
-    const interval=Number.isFinite(tickEvery)?Math.max(1,Math.floor(tickEvery)):
-      Math.max(1,categoryGap>0?Math.ceil(maxLabelWidth/categoryGap):data.length);
-    const shownX=xLabels.filter(({i})=>i%interval===0);
+    const shownX=Number.isFinite(tickEvery)
+      ?intervalTicks(xLabels,Math.max(1,Math.floor(tickEvery),categoryGap>0?Math.ceil((widestLabel+5)/categoryGap):1),0,w)
+      :preserveEndTicks(xLabels,0,w);
+    const gridX=vertical&&!compact?withEdges((Number.isFinite(tickEvery)?shownX
+      :preserveEndTicks(xLabels.map(tick=>({...tick,size:textWidth(tick.label,page.size,page.family)})),0,w)).map(tick=>tick.x),left,right):[];
+    const gridY=horizontal&&!compact?withEdges(yLabelTicks(page.line(page.size)).map(({tick})=>y(tick)),bottom,top):[];
     return h('div',{ref,class:'svgc-responsive',style:{...style,height,width:width||'100%'}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},
         onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
-        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`},
+        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`,...surface},
           h('rect',{class:plotClass,x:left,y:top,width:pw,height:bottom-top,fill:'transparent'}),
-          !compact&&renderedTicks.map(t=>h('g',null,
-            horizontal&&h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
-              y1:y(t),y2:y(t),stroke:gridStroke,'stroke-dasharray':gridDash}),
-            h('text',{x:left-6,y:y(t),fill:'var(--text-muted, #94a3b8)',
-              'text-anchor':'end','font-size':11},yFormat(t))
-          )),
-          !compact&&vertical&&shownX.map(({i})=>h('line',{
-            class:'svgc-grid-vertical',x1:x(i),x2:x(i),y1:top,y2:bottom,
+          gridY.map(line=>h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
+            y1:line,y2:line,stroke:gridStroke,'stroke-dasharray':gridDash})),
+          gridX.map(lineX=>h('line',{
+            class:'svgc-grid-vertical',x1:lineX,x2:lineX,y1:top,y2:bottom,
             stroke:gridStroke,'stroke-dasharray':gridDash
           })),
-          !compact&&shownX.map(({label,i})=>h('text',{
-            x:x(i),y:height-4,fill:'var(--text-muted, #94a3b8)',
-            'text-anchor':'middle','font-size':11
-          },label)),
+          payload&&kind==='bar'&&h('rect',{class:'svgc-cursor',x:cursorX-band/2,y:top+.5,
+            width:band,height:Math.max(0,bottom-top-1),fill:'#ccc','pointer-events':'none'}),
+          marks,
+          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
+            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
+            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
+          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
+            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
+            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity}),
           !compact&&xAxisLine&&h('line',{
             class:'svgc-x-axis-line',x1:left,x2:right,y1:bottom,y2:bottom,
             stroke:typeof xAxisLine==='string'?xAxisLine:'var(--border-default, #334155)'
@@ -4680,86 +4829,127 @@ SOFTWARE.
             class:'svgc-y-axis-line',x1:left,x2:left,y1:top,y2:bottom,
             stroke:typeof yAxisLine==='string'?yAxisLine:'var(--border-default, #334155)'
           }),
-          marks,
-          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
-            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
-            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
-          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
-            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
-            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity})
+          !compact&&tickLine&&shownX.map(({x:tickX})=>h('line',{class:'svgc-tick-line',
+            x1:tickX,x2:tickX,y1:bottom,y2:bottom+6,stroke:tickStroke})),
+          tickLine&&shownY.map(({tick})=>h('line',{class:'svgc-tick-line',
+            x1:left-6,x2:left,y1:y(tick),y2:y(tick),stroke:tickStroke})),
+          payload&&kind!=='bar'&&h('line',{class:'svgc-cursor',x1:cursorX,x2:cursorX,y1:top,y2:bottom,
+            stroke:'#ccc','pointer-events':'none'}),
+          payload&&kind!=='bar'&&series.map((s,j)=>h('circle',{class:'svgc-active-dot',cx:cursorX,
+            cy:y(bands[j][hover.index][1]),r:4,fill:s.color||'currentColor',stroke:'#fff','stroke-width':2,
+            'pointer-events':'none'})),
+          shownY.map(({tick,at})=>h('text',{x:left-8,y:at,dy:'.355em',
+            fill:'var(--text-muted, #94a3b8)','text-anchor':'end','font-size':11},yFormat(tick))),
+          !compact&&shownX.map(({label,at})=>h('text',{
+            x:at,y:bottom+8,dy:'.71em',fill:'var(--text-muted, #94a3b8)',
+            'text-anchor':'middle','font-size':11
+          },label))
         ),
-        tooltipNode(tooltip,payload,hover||{},()=>setHover(null))
+        tooltipNode(tooltip,payload,{...hover,plot:{left,top,right,bottom}},()=>setHover(null))
       )
     );
   }
+  const itemPayload=hover=>hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',
+    name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]};
   function DonutChart({items=[],height=250,innerRadius=50,outerRadius=85,tooltip,onSelect,
-    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth}) {
+    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth,cy}) {
     const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const centreY=number(cy)||height/2;
     const total=items.reduce((sum,item)=>sum+Math.max(0,number(item.value)),0);
     let angle=number(startAngle);
     const sectors=items.map(item=>{
       const start=angle;
       angle+=total?(clockwise?1:-1)*Math.max(0,number(item.value))/total*2*Math.PI:0;
-      return h('path',{class:'svgc-sector',d:arcPath(w/2,height/2,innerRadius,outerRadius,start,angle),
+      const middle=(start+angle)/2, radius=(innerRadius+outerRadius)/2;
+      const show=()=>setHover({item,x:w/2+radius*Math.cos(middle),y:centreY+radius*Math.sin(middle)});
+      const hide=()=>setHover(null);
+      return h('path',{class:'svgc-sector',d:arcPath(w/2,centreY,innerRadius,outerRadius,start,angle),
         fill:item.color,stroke,'stroke-width':strokeWidth,...selectable(item,onSelect),
-        onMouseMove:e=>setHover(itemHover(e,item))},h('title',null,item.label));
+        onMouseMove:show,onMouseLeave:hide,
+        onFocus:event=>{if(keyboardFocus(event))show();},onBlur:hide},h('title',null,item.label));
     });
     return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},onMouseLeave:event=>leaveChart(event,setHover)},
         h('svg',{width:w,height},sectors),
-        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+        tooltipNode(tooltip,itemPayload(hover),hover||{},()=>setHover(null))));
   }
   function HBarChart({items=[],height=250,valueFormat=String,labelWidth=130,labelMaxChars=Infinity,onSelect,tooltip}) {
     const [ref,w]=useWidth(),[hover,setHover]=useState(null);
-    const max=Math.max(0,...items.map(i=>number(i.value)));
-    const plotHeight=Math.max(0,height-24), rowHeight=plotHeight/Math.max(1,items.length);
-    const plotWidth=Math.max(0,w-labelWidth-8);
-    const ticks=max?niceTicks(0,max,4):[0], axisMax=ticks.at(-1);
+    const left=5+labelWidth, right=Math.max(left,w-5), top=5, bottom=Math.max(top,height-35);
+    let dataMin=0, dataMax=0;
+    for(const item of items) {const value=number(item.value);if(value<dataMin)dataMin=value;if(value>dataMax)dataMax=value;}
+    const ticks=niceTicks(dataMin,dataMax), position=linearScale([ticks[0],ticks.at(-1)],[left,right]);
+    const rowHeight=(bottom-top)/Math.max(1,items.length), zero=position(0);
+    const axisStroke='var(--border-default, #475569)';
+    const rowHover=(index,x)=>({index,item:items[index],x,y:top+(index+.5)*rowHeight});
+    const move=event=>{
+      if(!tooltip||!items.length) return;
+      const rect=event.currentTarget.getBoundingClientRect();
+      const localX=event.clientX-rect.left, localY=event.clientY-rect.top;
+      if(localX<left||localX>right||localY<top||localY>bottom) {leaveChart(event,setHover);return;}
+      setHover(rowHover(Math.min(items.length-1,Math.floor((localY-top)/rowHeight)),localX));
+    };
+    const page=pageFont(), axisFamily=labelFamily(ref.current,page);
+    const shownRows=new Set(preserveEndTicks(items.map((_,i)=>({i,x:top+(i+.5)*rowHeight,size:page.line(page.size)})),0,height).map(({i})=>i));
     const bars=items.map((item,i)=>{
-      const label=String(item.label??'');
-      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-1))+'…':label;
+      const label=String(item.label??''), value=number(item.value), end=position(value);
+      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-2))+'…':label;
+      const barY=top+i*rowHeight+rowHeight*.1, barHeight=rowHeight*.8;
       return h('g',null,
-        h('text',{x:labelWidth-6,y:(i+.5)*rowHeight,'text-anchor':'end',
-          'dominant-baseline':'middle',fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
-        h('rect',{class:'svgc-bar',x:labelWidth,y:i*rowHeight+rowHeight*.15,
-          width:axisMax?plotWidth*Math.max(0,number(item.value))/axisMax:0,height:rowHeight*.7,rx:4,
-          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(item.value)}`,
-          ...selectable(item,onSelect),onMouseMove:e=>setHover(itemHover(e,item))})
+        shownRows.has(i)&&h('text',{x:left-12,y:top+(i+.5)*rowHeight,dy:4,'text-anchor':'end',
+          fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
+        shownRows.has(i)&&h('line',{class:'svgc-tick-line',x1:left-6,x2:left,y1:top+(i+.5)*rowHeight,y2:top+(i+.5)*rowHeight,stroke:axisStroke}),
+        h('path',{class:'svgc-bar',d:barPath(zero,end,barY,barHeight),x:Math.min(zero,end),y:barY,
+          width:Math.abs(end-zero),height:barHeight,
+          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(value)}`,
+          ...selectable(item,onSelect),
+          onFocus:event=>{if(keyboardFocus(event))setHover(rowHover(i,Math.max(zero,end)));},
+          onBlur:()=>setHover(null)})
       );
     });
+    const tickLabels=preserveEndTicks(ticks.map((value,i)=>{
+      const label=valueFormat(value);
+      return {i,value,label,x:position(value),size:textWidth(label,11,axisFamily)};
+    }),0,w);
     return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
-        h('svg',{width:w,height},bars,
-          h('line',{class:'svgc-hbar-axis',x1:labelWidth,x2:labelWidth+plotWidth,y1:plotHeight,y2:plotHeight,stroke:'var(--border-default, #475569)'}),
-          ticks.map((t,i)=>h('text',{class:'svgc-hbar-tick',x:labelWidth+(axisMax?t/axisMax*plotWidth:0),y:height-4,
-            'text-anchor':i===0?'start':i===ticks.length-1?'end':'middle',
-            fill:'var(--text-muted, #94a3b8)','font-size':11},valueFormat(t)))
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},
+          hover&&h('rect',{class:'svgc-cursor',x:left+.5,y:top+hover.index*rowHeight,
+            width:Math.max(0,right-left-1),height:rowHeight,fill:'#ccc','pointer-events':'none'}),
+          bars,
+          h('line',{class:'svgc-hbar-axis',x1:left,x2:right,y1:bottom,y2:bottom,stroke:axisStroke}),
+          h('line',{class:'svgc-hbar-category-axis',x1:left,x2:left,y1:top,y2:bottom,stroke:axisStroke}),
+          tickLabels.map(({x:tickX,at,label})=>[
+            h('line',{class:'svgc-tick-line',x1:tickX,x2:tickX,y1:bottom,y2:bottom+6,stroke:axisStroke}),
+            h('text',{class:'svgc-hbar-tick',x:at,y:bottom+8,dy:'.71em','text-anchor':'middle',
+              fill:axisStroke,'font-size':11},label)
+          ])
         ),
-        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+        tooltipNode(tooltip,itemPayload(hover),{...hover,plot:{left,top,right,bottom}},()=>setHover(null))));
   }
   function Legend({series=[],hidden=new Set(),onToggle,kind='area'}) {
     return h('div',{class:'svgc-legend'},series.map(s=>{
       const color=s.color||'currentColor';
       const symbol=kind==='bar'
-        ?h('rect',{x:1,y:1,width:14,height:8,fill:s.fill||color,stroke:color,'stroke-dasharray':s.strokeDasharray})
-        :[h('line',{x1:1,y1:5,x2:15,y2:5,stroke:color,'stroke-width':2,'stroke-dasharray':s.strokeDasharray}),
-          h('circle',{cx:8,cy:5,r:3,fill:color})];
+        ?h('path',{d:'M0,4h32v24h-32z',fill:color,stroke:'none'})
+        :h('path',{d:'M0,16h10.67A5.33,5.33,0,1,1,21.33,16H32M21.33,16A5.33,5.33,0,1,1,10.67,16',
+          fill:'none',stroke:color,'stroke-width':4,'stroke-dasharray':s.strokeDasharray});
       return h('button',{type:'button',class:'svgc-legend-item',
         'aria-pressed':!hidden.has(s.key),onClick:()=>onToggle?.(s.key),
         style:{color:s.color,opacity:hidden.has(s.key)?.45:1}},
-        h('svg',{'aria-hidden':'true',width:16,height:10,viewBox:'0 0 16 10'},symbol),s.label||s.key);
+        h('svg',{'aria-hidden':'true',width:14,height:14,viewBox:'0 0 32 32'},symbol),s.label||s.key);
     }));
   }
-  window.svgCharts={geometry:{linearScale,niceTicks,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
+  window.svgCharts={geometry:{linearScale,niceTicks,fixedTicks,axisDomain,preserveEndTicks,barPath,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
 })();
 
 </script>
 <style>
 /* SVG charts: keep overlays and controls usable in either theme. */
 .svgc-responsive, .svgc-wrapper { min-width: 0; }
-.svgc-tooltip { position: absolute; z-index: 2; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
+.svgc-tooltip { position: absolute; z-index: 1000; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
 .svgc-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; }
-.svgc-legend-item { display: inline-flex; align-items: center; gap: .3em; background: transparent; border: 0; cursor: pointer; font: inherit; }
+.svgc-legend-item { display: inline-flex; align-items: center; gap: 4px; background: transparent; border: 0; cursor: pointer; font: inherit; }
 .svgc-bar[role="button"], .svgc-sector[role="button"] { cursor: pointer; }
 
 </style>"""

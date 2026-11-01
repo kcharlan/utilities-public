@@ -53,7 +53,7 @@ The dashboard refreshes immediately after a successful CSV import, including the
 - Saved views and keyboard shortcuts
 - Local SQLite retention in a configurable runtime directory
 
-Keyboard shortcuts (ignored while typing in a field): `/` focuses the log search, Left/Right arrows step through the preset time ranges, `R` refreshes the dashboard and log, Escape clears all filters, and `?` shows the shortcut list.
+Keyboard shortcuts (ignored while typing in a field): `/` focuses the log search, Left/Right arrows step through the preset time ranges (when you Tab to a chart, they read its tooltip instead), `R` refreshes the dashboard and log, Escape clears all filters, and `?` shows the shortcut list.
 
 ## Architecture
 

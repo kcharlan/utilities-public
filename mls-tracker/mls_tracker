@@ -9,7 +9,7 @@
 # ///
 import argparse
 import base64
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import asyncio
 import logging
 import os
@@ -20,7 +20,7 @@ import threading
 import webbrowser
 import time
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Callable, Optional, List
 from urllib.parse import urlsplit
 
 import requests
@@ -49,7 +49,14 @@ ESPN_HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEASON_GAMES = 34
 CACHE_TTL_SECONDS = 300  # 5 minutes
 MAX_LOGO_BYTES = 512 * 1024
+MAX_LOGO_PAYLOAD_CHARS = 8 * 1024 * 1024  # all embedded logos together, as data URLs
+LOGO_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # ESPN logos are near-immutable
 LOGO_DEADLINE_SECONDS = 8
+LOGO_MEDIA_TYPES = {
+    "image/png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
+    "image/jpeg": lambda data: data.startswith(b"\xff\xd8\xff"),
+    "image/webp": lambda data: data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+}
 LOGO_WORKER_CODE = (
     "import runpy,sys; "
     "module=runpy.run_path(sys.argv[1], run_name='mls_logo_worker'); "
@@ -104,7 +111,10 @@ MAX_CACHED_SEASONS = 3
 class DataCache:
     def __init__(self, ttl: int = CACHE_TTL_SECONDS):
         self._ttl = ttl
+        # Guards the fields below; never held across network work.
         self._lock = threading.Lock()
+        self._flights: Dict[Any, Future] = {}
+        self._generation = 0
         self._standings: Dict[int, Any] = {}
         self._standings_ts: Dict[int, float] = {}
         self._teams: Optional[List[Dict]] = None
@@ -116,41 +126,137 @@ class DataCache:
             self._standings_ts.clear()
             self._teams = None
             self._teams_ts = 0
+            # A fetch that began before this point must not satisfy later readers.
+            self._flights.clear()
+            self._generation += 1
 
     def _expired(self, ts: float) -> bool:
         return (time.time() - ts) > self._ttl
 
+    def _load(self, key: Any, cached: Callable[[], Any], fetch: Callable[[], Any],
+              store: Callable[[Any], None]) -> Any:
+        """Return cached data, or share one fetch per key that runs outside the lock."""
+        with self._lock:
+            hit = cached()
+            if hit is not None:
+                return hit
+            flight = self._flights.get(key)
+            leader = flight is None
+            if leader:
+                flight = self._flights[key] = Future()
+                generation = self._generation
+        if not leader:
+            return flight.result()
+        try:
+            value = fetch()
+            with self._lock:
+                if generation == self._generation:
+                    store(value)
+            flight.set_result(value)
+            return value
+        except BaseException as exc:
+            flight.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                if self._flights.get(key) is flight:
+                    del self._flights[key]
+
     # ---------- Teams ----------
     def get_teams(self) -> List[Dict]:
-        with self._lock:
+        def cached():
             if self._teams is not None and not self._expired(self._teams_ts):
                 return self._teams
-            self._teams = fetch_teams_from_espn()
+            return None
+
+        def store(teams):
+            self._teams = teams
             self._teams_ts = time.time()
-            return self._teams
+
+        return self._load("teams", cached, lambda: fetch_teams_from_espn(), store)
 
     # ---------- Standings ----------
     def get_standings(self, season: int) -> Dict[str, List[Dict]]:
-        with self._lock:
+        def cached():
             if season in self._standings and not self._expired(self._standings_ts.get(season, 0)):
                 return self._standings[season]
-            self._standings[season] = fetch_standings_from_espn(season)
+            return None
+
+        def store(standings):
+            self._standings[season] = standings
             self._standings_ts[season] = time.time()
             if len(self._standings) > MAX_CACHED_SEASONS:
                 oldest = min(self._standings_ts, key=self._standings_ts.get)
                 del self._standings[oldest]
                 del self._standings_ts[oldest]
-            return self._standings[season]
+
+        return self._load(("standings", season), cached, lambda: fetch_standings_from_espn(season), store)
+
+
+class LogoCache:
+    """Keep data-URL logos in memory by source URL, apart from the data cache."""
+
+    def __init__(self, ttl: int = LOGO_CACHE_TTL_SECONDS):
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._logos: Dict[str, tuple] = {}
+
+    def resolve(self, urls: List[str]) -> List[str]:
+        """Return one logo per URL, downloading only missing or expired ones.
+
+        A failed download keeps the previous logo. Logos beyond the total payload
+        cap come back blank and are not stored. The store also keeps unexpired logos
+        this call did not list, so a partial team list or an older overlapping call
+        cannot drop a good one.
+        """
+        now = time.time()
+        with self._lock:
+            known = {url: self._logos[url] for url in urls if url in self._logos}
+        stale = [url for url in dict.fromkeys(urls)
+                 if url and (url not in known or now - known[url][1] > self._ttl)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            downloads = dict(zip(stale, pool.map(fetch_logo_data, stale)))
+
+        kept: Dict[str, tuple] = {}
+        logos = []
+        total = 0
+        for url in urls:
+            entry = (downloads[url], now) if downloads.get(url) else known.get(url)
+            if entry is None:
+                logos.append("")
+            elif total + len(entry[0]) > MAX_LOGO_PAYLOAD_CHARS:
+                logger.warning("ESPN logos exceed the total payload limit; omitting %s", url)
+                logos.append("")
+            else:
+                total += len(entry[0])
+                kept[url] = entry
+                logos.append(entry[0])
+        with self._lock:
+            for url, entry in self._logos.items():
+                if url in kept:
+                    if entry[1] > kept[url][1]:
+                        kept[url] = entry
+                elif now - entry[1] <= self._ttl:
+                    kept[url] = entry
+            self._logos = kept
+        return logos
+
+    def clear(self):
+        with self._lock:
+            self._logos = {}
 
 
 cache = DataCache()
+logo_cache = LogoCache()
 
 
 # ============================================================
 # ESPN Data Fetching
 # ============================================================
 
-def _valid_logo_url(url: str) -> bool:
+def _valid_logo_url(url: Any) -> bool:
+    if not isinstance(url, str):
+        return False
     try:
         parsed = urlsplit(url)
         return bool(parsed.scheme == "https" and parsed.netloc == "a.espncdn.com"
@@ -166,7 +272,8 @@ def fetch_logo_data(url: str) -> str:
         return ""
     try:
         result = subprocess.run(
-            [sys.executable, "-c", LOGO_WORKER_CODE, os.path.abspath(__file__), url],
+            # -P keeps the launch directory off sys.path, so nothing there can shadow an import.
+            [sys.executable, "-P", "-c", LOGO_WORKER_CODE, os.path.abspath(__file__), url],
             capture_output=True, text=True, timeout=LOGO_DEADLINE_SECONDS, check=True,
         )
         if result.stderr:
@@ -194,7 +301,7 @@ def _fetch_logo_data(url: str) -> str:
                 logger.warning("ESPN logo has unsupported content encoding")
                 return ""
             media_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-            if media_type not in {"image/png", "image/jpeg", "image/webp"}:
+            if media_type not in LOGO_MEDIA_TYPES:
                 logger.warning("ESPN logo has unsupported content type")
                 return ""
             chunks = []
@@ -215,9 +322,11 @@ def _fetch_logo_data(url: str) -> str:
                     logger.warning("ESPN logo exceeds size limit")
                     return ""
                 chunks.append(chunk)
-            if not size:
+            data = b"".join(chunks)
+            if not LOGO_MEDIA_TYPES[media_type](data):
+                logger.warning("ESPN logo content does not match its type")
                 return ""
-            return f"data:{media_type};base64,{base64.b64encode(b''.join(chunks)).decode('ascii')}"
+            return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
     except (requests.exceptions.RequestException, requests.packages.urllib3.exceptions.HTTPError, ValueError) as e:
         logger.warning("Failed to fetch ESPN logo: %s", e)
         return ""
@@ -238,18 +347,17 @@ def fetch_teams_from_espn() -> List[Dict]:
         t = item.get("team", {})
         colors = process_team_colors(t.get("color", ""), t.get("alternateColor", ""))
         logos = t.get("logos", [])
-        logo = logos[0].get("href", "") if logos else ""
+        href = logos[0].get("href", "") if logos else ""
         teams.append({
             "id": t.get("id"),
             "name": t.get("displayName", "Unknown"),
             "abbreviation": t.get("abbreviation", ""),
             "shortName": t.get("shortDisplayName", ""),
             "colors": colors,
-            "logo": logo,
+            "logo": href if isinstance(href, str) else "",
         })
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for team, logo in zip(teams, pool.map(fetch_logo_data, (team["logo"] for team in teams))):
-            team["logo"] = logo
+    for team, logo in zip(teams, logo_cache.resolve([team["logo"] for team in teams])):
+        team["logo"] = logo
     return teams
 
 
@@ -1777,7 +1885,7 @@ class ErrorBoundary extends preact.Component {
   render() {
     if (this.state.hasError) {
       return (
-        html`<div class=${"min-h-screen flex items-center justify-center bg-surface-50 p-8"}> <div class=${"bg-surface-100 rounded-xl p-8 max-w-lg shadow-lg text-center"}> <div class=${"text-red-500 text-5xl mb-4"}>!</div> <h2 class=${"font-display text-2xl uppercase tracking-wide mb-2 text-surface-900"}>Something went wrong</h2> <p class=${"text-surface-700 mb-4 font-body"}>${this.state.error?.message}</p> <button onClick=${() => window.location.reload()} class=${"px-6 py-2 bg-team-primary text-white rounded font-display uppercase tracking-wider text-sm hover:opacity-90 transition-opacity"}> Reload </button> </div> </div>`
+        html`<div class=${"min-h-screen flex items-center justify-center bg-surface-50 p-8"}><div class=${"bg-surface-100 rounded-xl p-8 max-w-lg shadow-lg text-center"}><div class=${"text-red-500 text-5xl mb-4"}>!</div><h2 class=${"font-display text-2xl uppercase tracking-wide mb-2 text-surface-900"}>Something went wrong</h2><p class=${"text-surface-700 mb-4 font-body"}>${this.state.error?.message}</p><button onClick=${() => window.location.reload()} class=${"px-6 py-2 bg-team-primary text-white rounded font-display uppercase tracking-wider text-sm hover:opacity-90 transition-opacity"}>Reload</button></div></div>`
       );
     }
     return this.props.children;
@@ -1787,7 +1895,7 @@ class ErrorBoundary extends preact.Component {
 /* ========== LOADING SKELETON ========== */
 function LoadingSkeleton() {
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-8"}> <div class=${"shimmer h-48 rounded-xl mb-6"} /> <div class=${"shimmer h-12 rounded-lg mb-6"} /> <div class=${"grid grid-cols-4 gap-4 mb-6"}> ${[...Array(4)].map((_, i) => html`<div key=${i} class=${"shimmer h-28 rounded-xl"} />`)} </div> <div class=${"shimmer h-96 rounded-xl"} /> </div>`
+    html`<div class=${"max-w-6xl mx-auto px-4 py-8"}><div class=${"shimmer h-48 rounded-xl mb-6"} /><div class=${"shimmer h-12 rounded-lg mb-6"} /><div class=${"grid grid-cols-4 gap-4 mb-6"}>${[...Array(4)].map((_, i) => html`<div key=${i} class=${"shimmer h-28 rounded-xl"} />`)}</div><div class=${"shimmer h-96 rounded-xl"} /></div>`
   );
 }
 
@@ -1801,7 +1909,12 @@ function SettingsBar({ conferences, teams, conference, team, season, cutoff, dar
   }).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    html`<div class=${"bg-surface-100/95 border-b border-surface-200 sticky top-0 z-40 backdrop-blur-sm"}> <div class=${"max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3"}> <div class=${"flex items-center gap-2 mr-2"}> <div class=${"w-2 h-2 rounded-full bg-green-500 pulse-dot"} /> <span class=${"font-display text-xs uppercase tracking-[0.2em] text-surface-700"}>Live</span> </div> <div class=${"flex items-center gap-1.5"}> <label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Conf</label> <select value=${conference} onInput=${e => onConferenceChange(e.target.value)} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}> <option value=${"eastern"}>Eastern</option> <option value=${"western"}>Western</option> </select> </div> <div class=${"flex items-center gap-1.5"}> <label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Team</label> <select value=${team} onInput=${e => onTeamChange(e.target.value)} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer max-w-[180px]"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}> ${filteredTeams.map(t => html`<option key=${t.name} value=${t.name}>${t.name}</option>`)} </select> </div> <div class=${"flex items-center gap-1.5"}> <label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Season</label> <select value=${season} onInput=${e => onSeasonChange(parseInt(e.target.value))} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}> ${years.map(y => html`<option key=${y} value=${y}>${y}</option>`)} </select> </div> <div class=${"flex items-center gap-1.5"}> <label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Line</label> <input type=${"number"} min=${1} max=${15} value=${cutoff} onInput=${e => onCutoffChange(parseInt(e.target.value) || 9)} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 border border-surface-300 w-14 focus:outline-none focus:border-team-primary text-center"} /> </div> <div class=${"flex items-center gap-2 ml-auto"}> <button onClick=${onRefresh} disabled=${loading} class=${"p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors disabled:opacity-50"} title=${"Refresh data"}> <${Icon} name=${"RefreshCw"} size=${15} className=${loading ? 'animate-spin' : ''} /> </button> <button onClick=${onDarkModeToggle} class=${"p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors"} title=${"Toggle dark mode"}> <${Icon} name=${darkMode ? 'Sun' : 'Moon'} size=${15} /> </button> </div> </div> </div>`
+    html`<div class=${"bg-surface-100/95 border-b border-surface-200 sticky top-0 z-40 backdrop-blur-sm"}><div class=${"max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3"}><div class=${"flex items-center gap-2 mr-2"}><div class=${"w-2 h-2 rounded-full bg-green-500 pulse-dot"} /><span class=${"font-display text-xs uppercase tracking-[0.2em] text-surface-700"}>Live</span></div><div class=${"flex items-center gap-1.5"}><label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Conf</label><select value=${conference} onInput=${e => onConferenceChange(e.target.value)} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}><option value=${"eastern"}>Eastern</option><option value=${"western"}>Western</option></select></div><div class=${"flex items-center gap-1.5"}><label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Team</label><select value=${team} onInput=${e => onTeamChange(e.target.value)} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer max-w-[180px]"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}>${filteredTeams.map(t => html`<option key=${t.name} value=${t.name}>${t.name}</option>`)}</select></div><div class=${"flex items-center gap-1.5"}><label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Season</label><select value=${season} onInput=${e => onSeasonChange(parseInt(e.target.value))} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 pr-6 border border-surface-300 focus:outline-none focus:border-team-primary cursor-pointer"} style=${{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}>${years.map(y => html`<option key=${y} value=${y}>${y}</option>`)}</select></div><div class=${"flex items-center gap-1.5"}><label class=${"text-xs font-display uppercase tracking-wider text-surface-700"}>Line</label><input type=${"number"} min=${1} max=${15} value=${cutoff} onInput=${e => {
+              const next = parseInt(e.target.value) || 9;
+              onCutoffChange(next);
+              // Preact skips the render when state is unchanged, so restore the shown value.
+              if (next === cutoff && e.target.value != next) e.target.value = next;
+            }} class=${"bg-surface-200 text-surface-900 text-sm rounded px-2 py-1.5 border border-surface-300 w-14 focus:outline-none focus:border-team-primary text-center"} /></div><div class=${"flex items-center gap-2 ml-auto"}><button onClick=${onRefresh} disabled=${loading} class=${"p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors disabled:opacity-50"} title=${"Refresh data"}><${Icon} name=${"RefreshCw"} size=${15} className=${loading ? 'animate-spin' : ''} /></button><button onClick=${onDarkModeToggle} class=${"p-1.5 rounded bg-surface-200 hover:bg-surface-300 border border-surface-300 text-surface-700 transition-colors"} title=${"Toggle dark mode"}><${Icon} name=${darkMode ? 'Sun' : 'Moon'} size=${15} /></button></div></div></div>`
   );
 }
 
@@ -1810,9 +1923,9 @@ function TeamHeader({ scenarios, season }) {
   if (!scenarios) return null;
   const { target } = scenarios;
   return (
-    html`<div class=${"header-clip relative overflow-hidden"} style=${{ background: `linear-gradient(135deg, var(--team-primary) 0%, var(--team-secondary) 60%, var(--team-primary) 100%)` }}>  <div class=${"absolute inset-0 opacity-10"} style=${{ backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 20px, rgba(255,255,255,0.1) 20px, rgba(255,255,255,0.1) 22px)` }} /> <div class=${"max-w-6xl mx-auto px-4 py-8 pb-16 flex items-center gap-6 relative z-10"}> ${target.logo && (
+    html`<div class=${"header-clip relative overflow-hidden"} style=${{ background: `linear-gradient(135deg, var(--team-primary) 0%, var(--team-secondary) 60%, var(--team-primary) 100%)` }}><div class=${"absolute inset-0 opacity-10"} style=${{ backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 20px, rgba(255,255,255,0.1) 20px, rgba(255,255,255,0.1) 22px)` }} /><div class=${"max-w-6xl mx-auto px-4 py-8 pb-16 flex items-center gap-6 relative z-10"}>${target.logo && (
           html`<img src=${target.logo} alt=${""} class=${"w-20 h-20 object-contain drop-shadow-lg"} style=${{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))' }} />`
-        )} <div> <h1 class=${"font-display text-4xl md:text-5xl uppercase tracking-wide text-white drop-shadow-sm leading-tight"}> ${target.name} </h1> <p class=${"font-display text-lg uppercase tracking-[0.3em] mt-1"} style=${{ color: 'var(--team-accent)' }}> ${season} Season — ${scenarios.conference} </p> </div> <div class=${"ml-auto text-right hidden md:block"}> <div class=${"font-display text-6xl text-white opacity-90 leading-none"}>#${target.position}</div> <div class=${"font-display text-sm uppercase tracking-[0.2em] text-white opacity-60 mt-1"}>Conference Rank</div> </div> </div> </div>`
+        )}<div><h1 class=${"font-display text-4xl md:text-5xl uppercase tracking-wide text-white drop-shadow-sm leading-tight"}>${target.name}</h1><p class=${"font-display text-lg uppercase tracking-[0.3em] mt-1"} style=${{ color: 'var(--team-accent)' }}>${season} Season — ${scenarios.conference}</p></div><div class=${"ml-auto text-right hidden md:block"}><div class=${"font-display text-6xl text-white opacity-90 leading-none"}>#${target.position}</div><div class=${"font-display text-sm uppercase tracking-[0.2em] text-white opacity-60 mt-1"}>Conference Rank</div></div></div></div>`
   );
 }
 
@@ -1830,7 +1943,7 @@ function StatusBanner({ scenarios }) {
   const cfg = configs[status] || configs.contention;
 
   return (
-    html`<div class=${"header-clip-inv -mt-[30px] relative z-10"}> <div class=${"max-w-6xl mx-auto px-4 pt-[38px] pb-4"}> <div class=${"rounded-xl overflow-hidden shadow-lg fade-in-up"} style=${{ animationDelay: '0.1s' }}> <div class=${"px-5 py-4 flex items-center gap-4"} style=${{ background: cfg.bg }}> <${Icon} name=${cfg.icon} size=${24} className=${"text-white flex-shrink-0"} /> <div> <h3 class=${"font-display text-xl uppercase tracking-wider text-white"}>${cfg.label}</h3> <p class=${"text-white/90 text-sm font-body mt-0.5"}>${cfg.desc}</p> </div> </div> </div> </div> </div>`
+    html`<div class=${"header-clip-inv -mt-[30px] relative z-10"}><div class=${"max-w-6xl mx-auto px-4 pt-[38px] pb-4"}><div class=${"rounded-xl overflow-hidden shadow-lg fade-in-up"} style=${{ animationDelay: '0.1s' }}><div class=${"px-5 py-4 flex items-center gap-4"} style=${{ background: cfg.bg }}><${Icon} name=${cfg.icon} size=${24} className=${"text-white flex-shrink-0"} /><div><h3 class=${"font-display text-xl uppercase tracking-wider text-white"}>${cfg.label}</h3><p class=${"text-white/90 text-sm font-body mt-0.5"}>${cfg.desc}</p></div></div></div></div></div>`
   );
 }
 
@@ -1847,9 +1960,9 @@ function MetricsDashboard({ scenarios }) {
   ];
 
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}> <div class=${"grid grid-cols-2 md:grid-cols-4 gap-3"}> ${metrics.map((m, i) => (
-          html`<div key=${m.label} class=${"bg-surface-100 rounded-xl p-4 border border-surface-200 shadow-sm fade-in-up relative overflow-hidden group hover:border-team-primary transition-colors"} style=${{ animationDelay: `${0.15 + i * 0.05}s` }}> <div class=${"absolute top-0 left-0 w-full h-0.5"} style=${{ background: `linear-gradient(90deg, var(--team-primary), transparent)` }} /> <div class=${"flex items-start justify-between mb-2"}> <span class=${"font-display text-[10px] uppercase tracking-[0.15em] text-surface-700"}>${m.label}</span> <${Icon} name=${m.icon} size=${14} className=${"text-team-primary opacity-60"} /> </div> <div class=${"font-display text-3xl text-surface-900 tracking-tight"}>${m.value}</div> <div class=${"text-xs text-surface-700 mt-1 font-body"}>${m.sub}</div> </div>`
-        ))} </div> </div>`
+    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}><div class=${"grid grid-cols-2 md:grid-cols-4 gap-3"}>${metrics.map((m, i) => (
+          html`<div key=${m.label} class=${"bg-surface-100 rounded-xl p-4 border border-surface-200 shadow-sm fade-in-up relative overflow-hidden group hover:border-team-primary transition-colors"} style=${{ animationDelay: `${0.15 + i * 0.05}s` }}><div class=${"absolute top-0 left-0 w-full h-0.5"} style=${{ background: `linear-gradient(90deg, var(--team-primary), transparent)` }} /><div class=${"flex items-start justify-between mb-2"}><span class=${"font-display text-[10px] uppercase tracking-[0.15em] text-surface-700"}>${m.label}</span><${Icon} name=${m.icon} size=${14} className=${"text-team-primary opacity-60"} /></div><div class=${"font-display text-3xl text-surface-900 tracking-tight"}>${m.value}</div><div class=${"text-xs text-surface-700 mt-1 font-body"}>${m.sub}</div></div>`
+        ))}</div></div>`
   );
 }
 
@@ -1861,13 +1974,13 @@ function StandingsTable({ conferences, conference, team, cutoff }) {
   if (!teams.length) return null;
 
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}> <div class=${"flex items-center gap-3 mb-3"}> <h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>Conference Standings</h2> <div class=${"h-px flex-1 bg-surface-200"} /> </div> <div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.3s' }}> <div class=${"overflow-x-auto"}> <table class=${"w-full text-sm font-body"}> <thead> <tr class=${"text-surface-700 font-display text-[10px] uppercase tracking-[0.15em]"} style=${{ background: 'var(--surface-200)' }}> <th class=${"text-left py-2.5 px-3 w-8"}>#</th> <th class=${"text-left py-2.5 px-3"}>Team</th> <th class=${"text-center py-2.5 px-2 w-10"}>GP</th> <th class=${"text-center py-2.5 px-2 w-10"}>W</th> <th class=${"text-center py-2.5 px-2 w-10"}>L</th> <th class=${"text-center py-2.5 px-2 w-10"}>T</th> <th class=${"text-center py-2.5 px-2 w-12 font-bold"}>PTS</th> <th class=${"text-center py-2.5 px-2 w-10"}>GD</th> <th class=${"text-center py-2.5 px-2 w-14"}>PPG</th> </tr> </thead> <tbody> ${teams.map((t, i) => {
+    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}><div class=${"flex items-center gap-3 mb-3"}><h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>Conference Standings</h2><div class=${"h-px flex-1 bg-surface-200"} /></div><div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.3s' }}><div class=${"overflow-x-auto"}><table class=${"w-full text-sm font-body"}><thead><tr class=${"text-surface-700 font-display text-[10px] uppercase tracking-[0.15em]"} style=${{ background: 'var(--surface-200)' }}><th class=${"text-left py-2.5 px-3 w-8"}>#</th><th class=${"text-left py-2.5 px-3"}>Team</th><th class=${"text-center py-2.5 px-2 w-10"}>GP</th><th class=${"text-center py-2.5 px-2 w-10"}>W</th><th class=${"text-center py-2.5 px-2 w-10"}>L</th><th class=${"text-center py-2.5 px-2 w-10"}>T</th><th class=${"text-center py-2.5 px-2 w-12 font-bold"}>PTS</th><th class=${"text-center py-2.5 px-2 w-10"}>GD</th><th class=${"text-center py-2.5 px-2 w-14"}>PPG</th></tr></thead><tbody>${teams.map((t, i) => {
                 const isSelected = t.name === team;
                 const isPlayoffLine = (i + 1) === cutoff;
                 return (
-                  html`<tr key=${t.name} class=${`standings-row border-b border-surface-200 transition-all ${isPlayoffLine ? 'playoff-line' : ''} ${isSelected ? 'font-semibold' : ''}`} style=${isSelected ? { background: 'color-mix(in srgb, var(--team-primary) 12%, transparent)' } : {}}> <td class=${"py-2 px-3 text-surface-700 font-display text-xs"}>${t.position}</td> <td class=${"py-2 px-3"}> <div class=${"flex items-center gap-2"}> ${isSelected && html`<div class=${"w-1 h-5 rounded-full"} style=${{ background: 'var(--team-primary)' }} />`} ${t.logo && html`<img src=${t.logo} alt=${""} class=${"w-5 h-5 object-contain"} />`} <span class=${`${isSelected ? 'text-team-primary' : 'text-surface-900'}`}>${t.name}</span> ${t.abbreviation && html`<span class=${"text-[10px] text-surface-700 font-display tracking-wider hidden md:inline"}>(${t.abbreviation})</span>`} </div> </td> <td class=${"text-center py-2 px-2 text-surface-700"}>${t.gp}</td> <td class=${"text-center py-2 px-2 text-surface-900"}>${t.w}</td> <td class=${"text-center py-2 px-2 text-surface-700"}>${t.l}</td> <td class=${"text-center py-2 px-2 text-surface-700"}>${t.t}</td> <td class=${"text-center py-2 px-2 font-display font-bold text-surface-900"}>${t.pts}</td> <td class=${`text-center py-2 px-2 ${t.gd > 0 ? 'text-green-600' : t.gd < 0 ? 'text-red-500' : 'text-surface-700'}`}>${t.gd > 0 ? '+' : ''}${t.gd}</td> <td class=${"text-center py-2 px-2 text-surface-700"}>${t.ppg.toFixed(2)}</td> </tr>`
+                  html`<tr key=${t.name} class=${`standings-row border-b border-surface-200 transition-all ${isPlayoffLine ? 'playoff-line' : ''} ${isSelected ? 'font-semibold' : ''}`} style=${isSelected ? { background: 'color-mix(in srgb, var(--team-primary) 12%, transparent)' } : {}}><td class=${"py-2 px-3 text-surface-700 font-display text-xs"}>${t.position}</td><td class=${"py-2 px-3"}><div class=${"flex items-center gap-2"}>${isSelected && html`<div class=${"w-1 h-5 rounded-full"} style=${{ background: 'var(--team-primary)' }} />`}${t.logo && html`<img src=${t.logo} alt=${""} class=${"w-5 h-5 object-contain"} />`}<span class=${`${isSelected ? 'text-team-primary' : 'text-surface-900'}`}>${t.name}</span>${t.abbreviation && html`<span class=${"text-[10px] text-surface-700 font-display tracking-wider hidden md:inline"}>(${t.abbreviation})</span>`}</div></td><td class=${"text-center py-2 px-2 text-surface-700"}>${t.gp}</td><td class=${"text-center py-2 px-2 text-surface-900"}>${t.w}</td><td class=${"text-center py-2 px-2 text-surface-700"}>${t.l}</td><td class=${"text-center py-2 px-2 text-surface-700"}>${t.t}</td><td class=${"text-center py-2 px-2 font-display font-bold text-surface-900"}>${t.pts}</td><td class=${`text-center py-2 px-2 ${t.gd > 0 ? 'text-green-600' : t.gd < 0 ? 'text-red-500' : 'text-surface-700'}`}>${t.gd > 0 ? '+' : ''}${t.gd}</td><td class=${"text-center py-2 px-2 text-surface-700"}>${t.ppg.toFixed(2)}</td></tr>`
                 );
-              })} </tbody> </table> </div> <div class=${"flex items-center gap-2 px-4 py-2 bg-surface-200 text-[10px] font-display uppercase tracking-[0.15em] text-surface-700"}> <div class=${"w-4 border-b-2 border-dashed"} style=${{ borderColor: 'var(--team-primary)' }} /> <span>Playoff cutoff line (position ${cutoff})</span> </div> </div> </div>`
+              })}</tbody></table></div><div class=${"flex items-center gap-2 px-4 py-2 bg-surface-200 text-[10px] font-display uppercase tracking-[0.15em] text-surface-700"}><div class=${"w-4 border-b-2 border-dashed"} style=${{ borderColor: 'var(--team-primary)' }} /><span>Playoff cutoff line (position ${cutoff})</span></div></div></div>`
   );
 }
 
@@ -1878,12 +1991,12 @@ function ScenariosSection({ scenarios }) {
 
   function ScenarioCard({ title, icon, data, accent }) {
     return (
-      html`<div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.35s' }}> <div class=${"px-4 py-3 flex items-center gap-2"} style=${{ background: accent, color: 'white' }}> <${Icon} name=${icon} size=${18} className=${"text-white"} /> <h3 class=${"font-display text-sm uppercase tracking-[0.15em]"}>${title}</h3> ${!data.possible && html`<span class=${"ml-auto text-[10px] font-display uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded"}>Not Possible</span>`} </div> <div class=${"p-4"}> <div class=${"grid grid-cols-2 gap-3"}> <div> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Wins</div> <div class=${"font-display text-2xl text-surface-900"}>${data.wins}</div> </div> <div> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Ties</div> <div class=${"font-display text-2xl text-surface-900"}>${data.ties}</div> </div> <div> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Losses</div> <div class=${"font-display text-2xl text-surface-900"}>${data.losses}</div> </div> <div> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Final Pts</div> <div class=${"font-display text-2xl text-team-primary"}>${data.final_pts}</div> </div> </div> </div> </div>`
+      html`<div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.35s' }}><div class=${"px-4 py-3 flex items-center gap-2"} style=${{ background: accent, color: 'white' }}><${Icon} name=${icon} size=${18} className=${"text-white"} /><h3 class=${"font-display text-sm uppercase tracking-[0.15em]"}>${title}</h3>${!data.possible && html`<span class=${"ml-auto text-[10px] font-display uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded"}>Not Possible</span>`}</div><div class=${"p-4"}><div class=${"grid grid-cols-2 gap-3"}><div><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Wins</div><div class=${"font-display text-2xl text-surface-900"}>${data.wins}</div></div><div><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Ties</div><div class=${"font-display text-2xl text-surface-900"}>${data.ties}</div></div><div><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Losses</div><div class=${"font-display text-2xl text-surface-900"}>${data.losses}</div></div><div><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Final Pts</div><div class=${"font-display text-2xl text-team-primary"}>${data.final_pts}</div></div></div></div></div>`
     );
   }
 
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}> <div class=${"flex items-center gap-3 mb-3"}> <h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>Playoff Scenarios</h2> <div class=${"h-px flex-1 bg-surface-200"} /> </div> <div class=${"grid md:grid-cols-2 gap-4"}> <${ScenarioCard} title=${"Worst Case"} icon=${"Flame"} data=${worst_case} accent=${"var(--team-secondary)"} /> <${ScenarioCard} title=${"Easiest Path"} icon=${"Route"} data=${easiest_path} accent=${"var(--team-primary)"} /> </div> </div>`
+    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}><div class=${"flex items-center gap-3 mb-3"}><h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>Playoff Scenarios</h2><div class=${"h-px flex-1 bg-surface-200"} /></div><div class=${"grid md:grid-cols-2 gap-4"}><${ScenarioCard} title=${"Worst Case"} icon=${"Flame"} data=${worst_case} accent=${"var(--team-secondary)"} /><${ScenarioCard} title=${"Easiest Path"} icon=${"Route"} data=${easiest_path} accent=${"var(--team-primary)"} /></div></div>`
   );
 }
 
@@ -1893,9 +2006,9 @@ function CompetitionCard({ scenarios }) {
   const { cutoff } = scenarios;
 
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}> <div class=${"flex items-center gap-3 mb-3"}> <h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>The Competition</h2> <div class=${"h-px flex-1 bg-surface-200"} /> </div> <div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.4s' }}> <div class=${"p-5 flex items-center gap-5"}> ${cutoff.logo && (
+    html`<div class=${"max-w-6xl mx-auto px-4 py-4"}><div class=${"flex items-center gap-3 mb-3"}><h2 class=${"font-display text-xl uppercase tracking-wider text-surface-900"}>The Competition</h2><div class=${"h-px flex-1 bg-surface-200"} /></div><div class=${"bg-surface-100 rounded-xl border border-surface-200 shadow-sm overflow-hidden fade-in-up"} style=${{ animationDelay: '0.4s' }}><div class=${"p-5 flex items-center gap-5"}>${cutoff.logo && (
             html`<img src=${cutoff.logo} alt=${""} class=${"w-16 h-16 object-contain flex-shrink-0"} />`
-          )} <div class=${"flex-1"}> <div class=${"flex items-center gap-2 mb-1"}> <h3 class=${"font-display text-lg uppercase tracking-wider text-surface-900"}>${cutoff.name}</h3> <span class=${"text-[10px] font-display uppercase tracking-wider px-2 py-0.5 rounded-full"} style=${{ background: 'color-mix(in srgb, var(--team-primary) 15%, transparent)', color: 'var(--team-primary)' }}>#${cutoff.position}</span> </div> <div class=${"grid grid-cols-2 md:grid-cols-4 gap-4 mt-3"}> <div class=${"accent-bar pl-3"}> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Points</div> <div class=${"font-display text-xl text-surface-900"}>${cutoff.pts}</div> </div> <div class=${"accent-bar pl-3"}> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Projected</div> <div class=${"font-display text-xl text-surface-900"}>${cutoff.projected}</div> </div> <div class=${"accent-bar pl-3"}> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>PPG</div> <div class=${"font-display text-xl text-surface-900"}>${cutoff.ppg.toFixed(2)}</div> </div> <div class=${"accent-bar pl-3"}> <div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Games Left</div> <div class=${"font-display text-xl text-surface-900"}>${cutoff.gr}</div> </div> </div> </div> </div> </div> </div>`
+          )}<div class=${"flex-1"}><div class=${"flex items-center gap-2 mb-1"}><h3 class=${"font-display text-lg uppercase tracking-wider text-surface-900"}>${cutoff.name}</h3><span class=${"text-[10px] font-display uppercase tracking-wider px-2 py-0.5 rounded-full"} style=${{ background: 'color-mix(in srgb, var(--team-primary) 15%, transparent)', color: 'var(--team-primary)' }}>#${cutoff.position}</span></div><div class=${"grid grid-cols-2 md:grid-cols-4 gap-4 mt-3"}><div class=${"accent-bar pl-3"}><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Points</div><div class=${"font-display text-xl text-surface-900"}>${cutoff.pts}</div></div><div class=${"accent-bar pl-3"}><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Projected</div><div class=${"font-display text-xl text-surface-900"}>${cutoff.projected}</div></div><div class=${"accent-bar pl-3"}><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>PPG</div><div class=${"font-display text-xl text-surface-900"}>${cutoff.ppg.toFixed(2)}</div></div><div class=${"accent-bar pl-3"}><div class=${"text-[10px] font-display uppercase tracking-[0.12em] text-surface-700"}>Games Left</div><div class=${"font-display text-xl text-surface-900"}>${cutoff.gr}</div></div></div></div></div></div></div>`
   );
 }
 
@@ -1903,9 +2016,9 @@ function CompetitionCard({ scenarios }) {
 function Footer({ season }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    html`<div class=${"max-w-6xl mx-auto px-4 py-6 mt-4"}> <div class=${"border-t border-surface-200 pt-4"}> <button onClick=${() => setExpanded(!expanded)} class=${"flex items-center gap-2 text-surface-700 hover:text-surface-900 transition-colors text-sm font-body"}> <${Icon} name=${expanded ? 'ChevronDown' : 'ChevronRight'} size=${14} /> <span>Technical Details</span> </button> ${expanded && (
-          html`<div class=${"mt-3 text-xs text-surface-700 font-body space-y-1 bg-surface-100 rounded-lg p-4 border border-surface-200"}> <p><strong class=${"text-surface-900"}>Data Source:</strong> ESPN MLS API</p> <p><strong class=${"text-surface-900"}>Standings URL:</strong> <code class=${"text-team-primary"}>https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season=${season}</code></p> <p><strong class=${"text-surface-900"}>Teams URL:</strong> <code class=${"text-team-primary"}>https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams</code></p> <p><strong class=${"text-surface-900"}>Cache TTL:</strong> 5 minutes</p> <p><strong class=${"text-surface-900"}>Clinch Logic:</strong> target_pts > cutoff_max_possible (3 × cutoff_GR + cutoff_pts)</p> <p><strong class=${"text-surface-900"}>Last Refresh:</strong> ${new Date().toLocaleString()}</p> </div>`
-        )} <p class=${"text-[10px] text-surface-700 mt-3 font-display uppercase tracking-[0.1em]"}>MLS Playoff Tracker — Data from ESPN. Not affiliated with MLS.</p> </div> </div>`
+    html`<div class=${"max-w-6xl mx-auto px-4 py-6 mt-4"}><div class=${"border-t border-surface-200 pt-4"}><button onClick=${() => setExpanded(!expanded)} class=${"flex items-center gap-2 text-surface-700 hover:text-surface-900 transition-colors text-sm font-body"}><${Icon} name=${expanded ? 'ChevronDown' : 'ChevronRight'} size=${14} /><span>Technical Details</span></button>${expanded && (
+          html`<div class=${"mt-3 text-xs text-surface-700 font-body space-y-1 bg-surface-100 rounded-lg p-4 border border-surface-200"}><p><strong class=${"text-surface-900"}>Data Source:</strong> ESPN MLS API</p><p><strong class=${"text-surface-900"}>Standings URL:</strong> <code class=${"text-team-primary"}>https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings?season=${season}</code></p><p><strong class=${"text-surface-900"}>Teams URL:</strong> <code class=${"text-team-primary"}>https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/teams</code></p><p><strong class=${"text-surface-900"}>Cache TTL:</strong> 5 minutes</p><p><strong class=${"text-surface-900"}>Clinch Logic:</strong> target_pts > cutoff_max_possible (3 × cutoff_GR + cutoff_pts)</p><p><strong class=${"text-surface-900"}>Last Refresh:</strong> ${new Date().toLocaleString()}</p></div>`
+        )}<p class=${"text-[10px] text-surface-700 mt-3 font-display uppercase tracking-[0.1em]"}>MLS Playoff Tracker — Data from ESPN. Not affiliated with MLS.</p></div></div>`
   );
 }
 
@@ -2026,9 +2139,9 @@ function App() {
   if (loading && !scenarios) return html`<${LoadingSkeleton} />`;
 
   return (
-    html`<div class=${"min-h-screen bg-surface-50 transition-colors duration-300"}> <${SettingsBar} conferences=${conferences} teams=${allTeams} conference=${conference} team=${team} season=${season} cutoff=${cutoff} darkMode=${darkMode} onConferenceChange=${handleConferenceChange} onTeamChange=${setTeam} onSeasonChange=${setSeason} onCutoffChange=${setCutoff} onDarkModeToggle=${() => setDarkMode(d => !d)} onRefresh=${handleRefresh} loading=${loading} /> ${error && (
-        html`<div class=${"max-w-6xl mx-auto px-4 pt-4"}> <div class=${"bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-center gap-2 text-red-700 dark:text-red-400 text-sm"}> <${Icon} name=${"AlertCircle"} size=${16} /> <span>${error}</span> <button onClick=${handleRefresh} class=${"ml-auto text-red-500 hover:text-red-700 font-display text-xs uppercase tracking-wider"}>Retry</button> </div> </div>`
-      )} <${TeamHeader} scenarios=${scenarios} season=${season} /> <${StatusBanner} scenarios=${scenarios} /> <${MetricsDashboard} scenarios=${scenarios} /> <${StandingsTable} conferences=${conferences} conference=${conference} team=${team} cutoff=${cutoff} /> <${ScenariosSection} scenarios=${scenarios} /> <${CompetitionCard} scenarios=${scenarios} /> <${Footer} season=${season} /> </div>`
+    html`<div class=${"min-h-screen bg-surface-50 transition-colors duration-300"}><${SettingsBar} conferences=${conferences} teams=${allTeams} conference=${conference} team=${team} season=${season} cutoff=${cutoff} darkMode=${darkMode} onConferenceChange=${handleConferenceChange} onTeamChange=${setTeam} onSeasonChange=${setSeason} onCutoffChange=${setCutoff} onDarkModeToggle=${() => setDarkMode(d => !d)} onRefresh=${handleRefresh} loading=${loading} />${error && (
+        html`<div class=${"max-w-6xl mx-auto px-4 pt-4"}><div class=${"bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-center gap-2 text-red-700 dark:text-red-400 text-sm"}><${Icon} name=${"AlertCircle"} size=${16} /><span>${error}</span><button onClick=${handleRefresh} class=${"ml-auto text-red-500 hover:text-red-700 font-display text-xs uppercase tracking-wider"}>Retry</button></div></div>`
+      )}<${TeamHeader} scenarios=${scenarios} season=${season} /><${StatusBanner} scenarios=${scenarios} /><${MetricsDashboard} scenarios=${scenarios} /><${StandingsTable} conferences=${conferences} conference=${conference} team=${team} cutoff=${cutoff} /><${ScenariosSection} scenarios=${scenarios} /><${CompetitionCard} scenarios=${scenarios} /><${Footer} season=${season} /></div>`
   );
 }
 

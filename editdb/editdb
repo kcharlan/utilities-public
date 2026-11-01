@@ -544,7 +544,7 @@ async def delete_row(table_name: str, where: Dict[str, Any]):
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-# --- HTML TEMPLATE (React/Tailwind SPA) ---
+# --- HTML TEMPLATE (Preact SPA with compiled CSS) ---
 
 
 
@@ -1909,7 +1909,7 @@ const {focusOnMount} = frontendKit;
          * - Input validation on all SQL identifiers
          */
 
-        const {useState, useEffect, useMemo} = preactHooks;
+        const {useState, useEffect, useLayoutEffect, useMemo} = preactHooks;
 
 
 
@@ -1974,13 +1974,13 @@ const {focusOnMount} = frontendKit;
 
             if (loading) {
                 return (
-                    htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3"}> <div class=${"flex items-center gap-2 text-sm text-slate-400"}> <div class=${"animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"}></div> Loading... </div> </div>`
+                    htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3"}><div class=${"flex items-center gap-2 text-sm text-slate-400"}><div class=${"animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"}></div>Loading...</div></div>`
                 );
             }
 
             if (error || !preview?.row) {
                 return (
-                    htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3"}> <div class=${"text-sm text-slate-400 italic"}> ${error ? 'Failed to load preview' : 'No matching row found'} </div> </div>`
+                    htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-3"}><div class=${"text-sm text-slate-400 italic"}>${error ? 'Failed to load preview' : 'No matching row found'}</div></div>`
                 );
             }
 
@@ -1989,13 +1989,13 @@ const {focusOnMount} = frontendKit;
                 .slice(0, 6);
 
             return (
-                htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden"}> <div class=${"px-3 py-2 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2"}> <${Icon} name=${"table"} size=${12} className=${"text-blue-500"} /> <span class=${"text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider"}>${fkTable}</span> <span class=${"text-xs text-slate-400 dark:text-slate-500 ml-auto"}>${fkTo} = ${String(fkValue)}</span> </div> <div class=${"p-3 space-y-1.5"}> ${displayCols.map(col => (
-                            htmlTag`<div key=${col.name} class=${"flex items-baseline gap-2 text-sm"}> <span class=${"text-slate-400 dark:text-slate-500 text-xs font-medium min-w-[80px] truncate"}>${col.name}</span> <span class=${"text-slate-700 dark:text-slate-200 truncate"}> ${preview.row[col.name] === null
+                htmlTag`<div style=${style} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden"}><div class=${"px-3 py-2 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2"}><${Icon} name=${"table"} size=${12} className=${"text-blue-500"} /><span class=${"text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider"}>${fkTable}</span><span class=${"text-xs text-slate-400 dark:text-slate-500 ml-auto"}>${fkTo} = ${String(fkValue)}</span></div><div class=${"p-3 space-y-1.5"}>${displayCols.map(col => (
+                            htmlTag`<div key=${col.name} class=${"flex items-baseline gap-2 text-sm"}><span class=${"text-slate-400 dark:text-slate-500 text-xs font-medium min-w-[80px] truncate"}>${col.name}</span><span class=${"text-slate-700 dark:text-slate-200 truncate"}>${preview.row[col.name] === null
                                         ? htmlTag`<em class=${"text-slate-300 dark:text-slate-600"}>NULL</em>`
-                                        : String(preview.row[col.name])} </span> </div>`
-                        ))} ${preview.schema.length > 6 && (
+                                        : String(preview.row[col.name])}</span></div>`
+                        ))}${preview.schema.length > 6 && (
                             htmlTag`<div class=${"text-xs text-slate-400 italic pt-1"}>+ ${preview.schema.length - 6} more columns</div>`
-                        )} </div> </div>`
+                        )}</div></div>`
             );
         };
 
@@ -2065,39 +2065,39 @@ const {focusOnMount} = frontendKit;
             const getFKInfo = (colName) => fks.find(fk => fk.from === colName);
 
             return (
-                htmlTag`<div class=${"fixed inset-0 z-40 flex justify-end"} onClick=${onClose}> <div class=${"absolute inset-0 bg-black/20 dark:bg-black/40"} /> <div class=${"relative w-[55%] max-w-4xl min-w-[420px] bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-700 animate-slide-in-right"} onClick=${e => e.stopPropagation()}> <div class=${"px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50"}> <div class=${"flex items-center gap-3"}> <${Icon} name=${"table"} size=${18} className=${"text-blue-500"} /> <h2 class=${"font-bold text-slate-800 dark:text-slate-100"}>${fkTable}</h2> <span class=${"text-sm text-slate-400 dark:text-slate-500"}> ${fkTo} = ${String(fkValue)} </span> </div> <button onClick=${onClose} class=${"p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"}> <${Icon} name=${"x"} size=${18} /> </button> </div> ${breadcrumbs && breadcrumbs.length > 1 && (
-                            htmlTag`<div class=${"px-5 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center gap-1 text-xs text-slate-400 bg-slate-50/50 dark:bg-slate-800/30 overflow-x-auto custom-scrollbar"}> ${breadcrumbs.map((bc, i) => (
-                                    htmlTag`<${preact.Fragment} key=${`${bc.fkTable}-${bc.fkTo}-${bc.fkValue}-${i}`}> ${i > 0 && htmlTag`<${Icon} name=${"chevron-right"} size=${10} className=${"text-slate-300 shrink-0"} />`} <button onClick=${() => onBreadcrumbClick(i)} class=${`hover:text-blue-500 transition-colors whitespace-nowrap ${i === breadcrumbs.length - 1 ? 'text-slate-600 dark:text-slate-300 font-medium' : ''}`}> ${bc.fkTable}(${bc.fkTo}=${String(bc.fkValue)}) </button> <//>`
-                                ))} </div>`
-                        )} ${loading ? (
-                            htmlTag`<div class=${"flex-1 flex items-center justify-center"}> <div class=${"animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"}></div> </div>`
+                htmlTag`<div class=${"fixed inset-0 z-40 flex justify-end"} onClick=${onClose}><div class=${"absolute inset-0 bg-black/20 dark:bg-black/40"} /><div class=${"relative w-[55%] max-w-4xl min-w-[420px] bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-700 animate-slide-in-right"} onClick=${e => e.stopPropagation()}><div class=${"px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50"}><div class=${"flex items-center gap-3"}><${Icon} name=${"table"} size=${18} className=${"text-blue-500"} /><h2 class=${"font-bold text-slate-800 dark:text-slate-100"}>${fkTable}</h2><span class=${"text-sm text-slate-400 dark:text-slate-500"}>${fkTo} = ${String(fkValue)}</span></div><button onClick=${onClose} class=${"p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"}><${Icon} name=${"x"} size=${18} /></button></div>${breadcrumbs && breadcrumbs.length > 1 && (
+                            htmlTag`<div class=${"px-5 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center gap-1 text-xs text-slate-400 bg-slate-50/50 dark:bg-slate-800/30 overflow-x-auto custom-scrollbar"}>${breadcrumbs.map((bc, i) => (
+                                    htmlTag`<${preact.Fragment} key=${`${bc.fkTable}-${bc.fkTo}-${bc.fkValue}-${i}`}>${i > 0 && htmlTag`<${Icon} name=${"chevron-right"} size=${10} className=${"text-slate-300 shrink-0"} />`}<button onClick=${() => onBreadcrumbClick(i)} class=${`hover:text-blue-500 transition-colors whitespace-nowrap ${i === breadcrumbs.length - 1 ? 'text-slate-600 dark:text-slate-300 font-medium' : ''}`}>${bc.fkTable}(${bc.fkTo}=${String(bc.fkValue)})</button><//>`
+                                ))}</div>`
+                        )}${loading ? (
+                            htmlTag`<div class=${"flex-1 flex items-center justify-center"}><div class=${"animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"}></div></div>`
                         ) : !data || data.length === 0 ? (
                             htmlTag`<div class=${"flex-1 flex items-center justify-center text-slate-400 italic"}>No data found</div>`
                         ) : (
-                            htmlTag`<div class=${"flex-1 overflow-auto custom-scrollbar"}> <table class=${"w-full text-left border-collapse min-w-max"}> <thead> <tr class=${"bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10"}> ${schema.map(col => {
+                            htmlTag`<div class=${"flex-1 overflow-auto custom-scrollbar"}><table class=${"w-full text-left border-collapse min-w-max"}><thead><tr class=${"bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10"}>${schema.map(col => {
                                                 const fk = getFKInfo(col.name);
                                                 return (
-                                                    htmlTag`<th key=${col.name} class=${"px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50"}> <div class=${"flex items-center gap-2"}> ${col.pk === 1 && htmlTag`<${Icon} name=${"key"} size=${12} className=${"text-amber-500"} />`} ${fk && htmlTag`<${Icon} name=${"link"} size=${12} className=${"text-blue-500"} title=${`References ${fk.table}(${fk.to})`} />`} ${col.name} <span class=${"text-[10px] font-normal text-slate-400"}>${col.type}</span> </div> </th>`
+                                                    htmlTag`<th key=${col.name} class=${"px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50"}><div class=${"flex items-center gap-2"}>${col.pk === 1 && htmlTag`<${Icon} name=${"key"} size=${12} className=${"text-amber-500"} />`}${fk && htmlTag`<${Icon} name=${"link"} size=${12} className=${"text-blue-500"} title=${`References ${fk.table}(${fk.to})`} />`}${col.name}<span class=${"text-[10px] font-normal text-slate-400"}>${col.type}</span></div></th>`
                                                 );
-                                            })} </tr> </thead> <tbody class=${"divide-y divide-slate-100 dark:divide-slate-800"}> ${data.map(row => {
+                                            })}</tr></thead><tbody class=${"divide-y divide-slate-100 dark:divide-slate-800"}>${data.map(row => {
                                             const rowKey = getRowKey(row);
                                             const isHighlighted = rowKey === highlightKey;
                                             return (
-                                                htmlTag`<tr key=${rowKey} data-drawer-row-key=${rowKey} class=${`transition-colors ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-400/50 ring-inset animate-highlight-fade' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}> ${schema.map(col => {
+                                                htmlTag`<tr key=${rowKey} data-drawer-row-key=${rowKey} class=${`transition-colors ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-400/50 ring-inset animate-highlight-fade' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>${schema.map(col => {
                                                         const fk = getFKInfo(col.name);
                                                         return (
-                                                            htmlTag`<td key=${col.name} class=${"px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs"}> ${row[col.name] === null ? (
+                                                            htmlTag`<td key=${col.name} class=${"px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs"}>${row[col.name] === null ? (
                                                                     htmlTag`<em class=${"text-slate-300 dark:text-slate-600"}>NULL</em>`
                                                                 ) : fk ? (
-                                                                    htmlTag`<button onClick=${() => onNavigate(fk.table, fk.to, row[col.name])} class=${"text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"}> ${String(row[col.name])} </button>`
+                                                                    htmlTag`<button onClick=${() => onNavigate(fk.table, fk.to, row[col.name])} class=${"text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"}>${String(row[col.name])}</button>`
                                                                 ) : (
                                                                     String(row[col.name])
-                                                                )} </td>`
+                                                                )}</td>`
                                                         );
-                                                    })} </tr>`
+                                                    })}</tr>`
                                             );
-                                        })} </tbody> </table> </div>`
-                        )} </div> </div>`
+                                        })}</tbody></table></div>`
+                        )}</div></div>`
             );
         };
 
@@ -2135,7 +2135,7 @@ const {focusOnMount} = frontendKit;
 
                     return (
 
-                        htmlTag`<div class=${"h-screen w-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6"}> <div class=${"max-w-xl w-full bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/30 rounded-xl shadow-sm p-6 text-center"}> <h2 class=${"text-lg font-bold text-red-700 dark:text-red-400 mb-2"}>EditDB UI Error</h2> <p class=${"text-sm text-slate-600 dark:text-slate-400 mb-4"}> A frontend error occurred. The backend is still running. </p> <pre class=${"text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left"}>${this.state.message}</pre> <div class=${"mt-4 flex justify-center"}> <button onClick=${() => window.location.reload()} class=${"bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"}> Reload Page </button> </div> </div> </div>`
+                        htmlTag`<div class=${"h-screen w-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6"}><div class=${"max-w-xl w-full bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/30 rounded-xl shadow-sm p-6 text-center"}><h2 class=${"text-lg font-bold text-red-700 dark:text-red-400 mb-2"}>EditDB UI Error</h2><p class=${"text-sm text-slate-600 dark:text-slate-400 mb-4"}>A frontend error occurred. The backend is still running.</p><pre class=${"text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left"}>${this.state.message}</pre><div class=${"mt-4 flex justify-center"}><button onClick=${() => window.location.reload()} class=${"bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"}>Reload Page</button></div></div></div>`
 
                     );
 
@@ -2598,7 +2598,7 @@ const {focusOnMount} = frontendKit;
 
                 return (
 
-                    htmlTag`<div class=${"flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 text-slate-400"}> <div class=${"flex flex-col items-center gap-4"}> <div class=${"animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"}></div> <div class=${"text-lg font-medium"}>Initializing EditDB...</div> </div> </div>`
+                    htmlTag`<div class=${"flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 text-slate-400"}><div class=${"flex flex-col items-center gap-4"}><div class=${"animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"}></div><div class=${"text-lg font-medium"}>Initializing EditDB...</div></div></div>`
 
                 );
 
@@ -2608,27 +2608,27 @@ const {focusOnMount} = frontendKit;
 
             return (
 
-                htmlTag`<div class=${"flex h-screen overflow-hidden bg-brand-dark-50 dark:bg-brand-dark-950 transition-colors duration-200"}>  <div class=${"w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-sm"}> <div class=${"p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between"}> <div class=${"flex items-center gap-2"}> <div class=${"bg-blue-600 p-1.5 rounded-lg text-white"}> <${Icon} name=${"database"} size=${20} /> </div> <h1 class=${"font-bold text-slate-800 dark:text-slate-100 truncate"}>${dbInfo.db_name}</h1> </div> <button onClick=${() => setDarkMode(!darkMode)} class=${"p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors"} title=${"Toggle Theme"}> <${Icon} name=${darkMode ? "sun" : "moon"} size=${16} /> </button> </div> <div class=${"flex-1 overflow-y-auto custom-scrollbar py-4"}> <button onClick=${() => { setView('sql'); setSelectedTable(null); }} class=${`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors mb-4 ${view === 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}> <${Icon} name=${"terminal"} size=${16} className=${view === 'sql' ? "text-blue-600" : "text-slate-400"} /> <span class=${"font-semibold"}>SQL Console</span> </button> <div class=${"px-4 mb-2 flex items-center justify-between"}> <span class=${"text-xs font-semibold text-slate-400 uppercase tracking-wider"}>Tables</span> <button onClick=${createTable} class=${"text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded"}> <${Icon} name=${"plus"} size=${14} /> </button> </div> ${tables.map(t => (
+                htmlTag`<div class=${"flex h-screen overflow-hidden bg-brand-dark-50 dark:bg-brand-dark-950 transition-colors duration-200"}><div class=${"w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-sm"}><div class=${"p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between"}><div class=${"flex items-center gap-2"}><div class=${"bg-blue-600 p-1.5 rounded-lg text-white"}><${Icon} name=${"database"} size=${20} /></div><h1 class=${"font-bold text-slate-800 dark:text-slate-100 truncate"}>${dbInfo.db_name}</h1></div><button onClick=${() => setDarkMode(!darkMode)} class=${"p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors"} title=${"Toggle Theme"}><${Icon} name=${darkMode ? "sun" : "moon"} size=${16} /></button></div><div class=${"flex-1 overflow-y-auto custom-scrollbar py-4"}><button onClick=${() => { setView('sql'); setSelectedTable(null); }} class=${`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors mb-4 ${view === 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}><${Icon} name=${"terminal"} size=${16} className=${view === 'sql' ? "text-blue-600" : "text-slate-400"} /><span class=${"font-semibold"}>SQL Console</span></button><div class=${"px-4 mb-2 flex items-center justify-between"}><span class=${"text-xs font-semibold text-slate-400 uppercase tracking-wider"}>Tables</span><button onClick=${createTable} class=${"text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded"}><${Icon} name=${"plus"} size=${14} /></button></div>${tables.map(t => (
 
-                                htmlTag`<button key=${t} onClick=${() => handleSelectTable(t)} class=${`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors ${selectedTable === t && view !== 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}> <${Icon} name=${"table"} size=${16} className=${selectedTable === t && view !== 'sql' ? "text-blue-600" : "text-slate-400"} /> <span class=${"truncate"}>${t}</span> </button>`
+                                htmlTag`<button key=${t} onClick=${() => handleSelectTable(t)} class=${`w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 transition-colors ${selectedTable === t && view !== 'sql' ? 'sidebar-item-active text-blue-700 font-medium' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}><${Icon} name=${"table"} size=${16} className=${selectedTable === t && view !== 'sql' ? "text-blue-600" : "text-slate-400"} /><span class=${"truncate"}>${t}</span></button>`
 
-                            ))} ${indexes.length > 0 && (
+                            ))}${indexes.length > 0 && (
 
-                                htmlTag`<${preact.Fragment}> <div class=${"px-4 mt-6 mb-2 flex items-center justify-between"}> <span class=${"text-xs font-semibold text-slate-400 uppercase tracking-wider"}>Indexes</span> <button onClick=${createIndex} class=${"text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded"} title=${"Create Index"}> <${Icon} name=${"plus"} size=${14} /> </button> </div> ${indexes.map(idx => (
+                                htmlTag`<${preact.Fragment}><div class=${"px-4 mt-6 mb-2 flex items-center justify-between"}><span class=${"text-xs font-semibold text-slate-400 uppercase tracking-wider"}>Indexes</span><button onClick=${createIndex} class=${"text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 p-1 rounded"} title=${"Create Index"}><${Icon} name=${"plus"} size=${14} /></button></div>${indexes.map(idx => (
 
-                                        htmlTag`<div key=${idx.name} class=${"px-4 py-1.5 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between group"} title=${`Table: ${idx.tbl_name}\\n${idx.sql}`}> <div class=${"flex items-center gap-3 truncate"}> <${Icon} name=${"zap"} size=${12} className=${"text-amber-400 shrink-0"} /> <span class=${"truncate"}>${idx.name}</span> </div> <div class=${"flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"}> <button onClick=${(e) => { e.stopPropagation(); editIndexInConsole(idx); }} class=${"text-slate-300 hover:text-blue-500 p-1"} title=${"Edit in Console"}> <${Icon} name=${"edit-2"} size=${12} /> </button> <button onClick=${(e) => { e.stopPropagation(); deleteIndex(idx.name); }} class=${"text-slate-300 hover:text-red-500 p-1"} title=${"Delete Index"}> <${Icon} name=${"x"} size=${12} /> </button> </div> </div>`
+                                        htmlTag`<div key=${idx.name} class=${"px-4 py-1.5 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between group"} title=${`Table: ${idx.tbl_name}\\n${idx.sql}`}><div class=${"flex items-center gap-3 truncate"}><${Icon} name=${"zap"} size=${12} className=${"text-amber-400 shrink-0"} /><span class=${"truncate"}>${idx.name}</span></div><div class=${"flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"}><button onClick=${(e) => { e.stopPropagation(); editIndexInConsole(idx); }} class=${"text-slate-300 hover:text-blue-500 p-1"} title=${"Edit in Console"}><${Icon} name=${"edit-2"} size=${12} /></button><button onClick=${(e) => { e.stopPropagation(); deleteIndex(idx.name); }} class=${"text-slate-300 hover:text-red-500 p-1"} title=${"Delete Index"}><${Icon} name=${"x"} size=${12} /></button></div></div>`
 
-                                    ))} <//>`
+                                    ))}<//>`
 
-                            )} </div> </div>  <div class=${"flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden"}> ${view === 'sql' ? (
+                            )}</div></div><div class=${"flex-1 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden"}>${view === 'sql' ? (
 
                             htmlTag`<${SQLConsole} query=${query} setQuery=${setQuery} />`
 
                         ) : selectedTable ? (
 
-                            htmlTag`<${preact.Fragment}>  <div class=${"bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between shadow-sm"}> <div class=${"flex items-center gap-4"}> <h2 class=${"text-xl font-bold text-slate-800 dark:text-slate-100"}>${selectedTable}</h2> <div class=${"flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg"}> <button onClick=${() => setView('data')} class=${`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'data' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}> Data </button> <button onClick=${() => setView('schema')} class=${`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'schema' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}> Schema </button> </div> </div> <div class=${"flex items-center gap-2"}> <button onClick=${cloneTable} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Clone Table Schema"}> <${Icon} name=${"copy"} size=${18} /> </button> <button onClick=${renameTable} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Rename Table"}> <${Icon} name=${"edit-2"} size=${18} /> </button> <button onClick=${refresh} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Refresh"}> <${Icon} name=${"refresh-cw"} size=${18} /> </button> <button onClick=${deleteTable} class=${"p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"} title=${"Delete Table"}> <${Icon} name=${"trash-2"} size=${18} /> </button> </div> </div>  <div class=${"flex-1 overflow-auto custom-scrollbar p-6"}> ${loading ? (
+                            htmlTag`<${preact.Fragment}><div class=${"bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between shadow-sm"}><div class=${"flex items-center gap-4"}><h2 class=${"text-xl font-bold text-slate-800 dark:text-slate-100"}>${selectedTable}</h2><div class=${"flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg"}><button onClick=${() => setView('data')} class=${`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'data' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Data</button><button onClick=${() => setView('schema')} class=${`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'schema' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Schema</button></div></div><div class=${"flex items-center gap-2"}><button onClick=${cloneTable} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Clone Table Schema"}><${Icon} name=${"copy"} size=${18} /></button><button onClick=${renameTable} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Rename Table"}><${Icon} name=${"edit-2"} size=${18} /></button><button onClick=${refresh} class=${"p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"} title=${"Refresh"}><${Icon} name=${"refresh-cw"} size=${18} /></button><button onClick=${deleteTable} class=${"p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"} title=${"Delete Table"}><${Icon} name=${"trash-2"} size=${18} /></button></div></div><div class=${"flex-1 overflow-auto custom-scrollbar p-6"}>${loading ? (
 
-                                        htmlTag`<div class=${"flex items-center justify-center h-full"}> <div class=${"animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"}></div> </div>`
+                                        htmlTag`<div class=${"flex items-center justify-center h-full"}><div class=${"animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"}></div></div>`
 
                                     ) : view === 'data' ? (
 
@@ -2638,18 +2638,18 @@ const {focusOnMount} = frontendKit;
 
                                         htmlTag`<${SchemaEditor} schema=${schema} table=${selectedTable} refresh=${refresh} />`
 
-                                    )} </div> <//>`
+                                    )}</div><//>`
 
                         ) : (
 
-                            htmlTag`<div class=${"flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600"}> <${Icon} name=${"database"} size=${48} className=${"mb-4 opacity-20"} /> <p class=${"text-lg"}>Select a table or open SQL Console</p> </div>`
+                            htmlTag`<div class=${"flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600"}><${Icon} name=${"database"} size=${48} className=${"mb-4 opacity-20"} /><p class=${"text-lg"}>Select a table or open SQL Console</p></div>`
 
-                        )} </div> ${drawerStack.length > 0 && (() => {
+                        )}</div>${drawerStack.length > 0 && (() => {
                         const current = drawerStack[drawerStack.length - 1];
                         return (
                             htmlTag`<${FKDrawer} key=${`${current.fkTable}-${current.fkTo}-${current.fkValue}-${drawerStack.length}`} fkTable=${current.fkTable} fkTo=${current.fkTo} fkValue=${current.fkValue} onClose=${handleDrawerClose} onNavigate=${handleDrawerNavigate} breadcrumbs=${drawerStack} onBreadcrumbClick=${(index) => setDrawerStack(prev => prev.slice(0, index + 1))} />`
                         );
-                    })()} </div>`
+                    })()}</div>`
 
             );
 
@@ -2699,26 +2699,66 @@ const {focusOnMount} = frontendKit;
             };
 
             return (
-                htmlTag`<div class=${"flex flex-col h-full p-6 gap-6 overflow-hidden"}> <div class=${"flex gap-6 h-1/2 min-h-[300px]"}> <div class=${"flex-1 bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4"}> <div class=${"flex items-center justify-between"}> <h3 class=${"font-bold text-slate-800 flex items-center gap-2"}> <${Icon} name=${"terminal"} size=${18} className=${"text-blue-600"} /> Raw SQL Query </h3> <button onClick=${runQuery} disabled=${loading} class=${"bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm"}> ${loading ? htmlTag`<div class=${"animate-spin rounded-full h-4 w-4 border-b-2 border-white"}></div>` : htmlTag`<${Icon} name=${"play"} size=${16} />`} Run Query </button> </div> <textarea value=${query || ""} onInput=${e => setQuery(e.target.value)} class=${"w-full flex-1 p-4 font-mono text-sm bg-slate-900 text-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"} placeholder=${"Enter SQL query here..."} /> </div>  <div class=${"w-80 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden"}> <div class=${"p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50"}> <h4 class=${"text-xs font-bold text-slate-400 uppercase tracking-wider"}>History</h4> <button onClick=${clearHistory} class=${"text-slate-400 hover:text-red-500 p-1"} title=${"Clear History"}> <${Icon} name=${"trash-2"} size=${14} /> </button> </div> <div class=${"flex-1 overflow-y-auto custom-scrollbar"}> ${history.length === 0 ? (
+                htmlTag`<div class=${"flex flex-col h-full p-6 gap-6 overflow-hidden"}><div class=${"flex gap-6 h-1/2 min-h-[300px]"}><div class=${"flex-1 bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4"}><div class=${"flex items-center justify-between"}><h3 class=${"font-bold text-slate-800 flex items-center gap-2"}><${Icon} name=${"terminal"} size=${18} className=${"text-blue-600"} />Raw SQL Query</h3><button onClick=${runQuery} disabled=${loading} class=${"bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm"}>${loading ? htmlTag`<div class=${"animate-spin rounded-full h-4 w-4 border-b-2 border-white"}></div>` : htmlTag`<${Icon} name=${"play"} size=${16} />`}Run Query</button></div><textarea value=${query || ""} onInput=${e => setQuery(e.target.value)} class=${"w-full flex-1 p-4 font-mono text-sm bg-slate-900 text-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"} placeholder=${"Enter SQL query here..."} /></div><div class=${"w-80 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden"}><div class=${"p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50"}><h4 class=${"text-xs font-bold text-slate-400 uppercase tracking-wider"}>History</h4><button onClick=${clearHistory} class=${"text-slate-400 hover:text-red-500 p-1"} title=${"Clear History"}><${Icon} name=${"trash-2"} size=${14} /></button></div><div class=${"flex-1 overflow-y-auto custom-scrollbar"}>${history.length === 0 ? (
                                     htmlTag`<div class=${"p-8 text-center text-slate-300 text-sm italic"}>No recent queries</div>`
                                 ) : (
                                     history.map((q, i) => (
-                                        htmlTag`<button key=${i} onClick=${() => setQuery(q)} class=${"w-full text-left p-3 text-xs font-mono text-slate-600 border-b border-slate-50 hover:bg-slate-50 transition-colors truncate"} title=${q}> ${q} </button>`
+                                        htmlTag`<button key=${i} onClick=${() => setQuery(q)} class=${"w-full text-left p-3 text-xs font-mono text-slate-600 border-b border-slate-50 hover:bg-slate-50 transition-colors truncate"} title=${q}>${q}</button>`
                                     ))
-                                )} </div> </div> </div> ${error && (
-                        htmlTag`<div class=${"bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl flex items-start gap-3 shadow-sm"}> <${Icon} name=${"alert-circle"} size=${18} className=${"shrink-0"} /> <div class=${"text-sm font-mono whitespace-pre-wrap"}>${error}</div> </div>`
-                    )} ${results && (
-                        htmlTag`<div class=${"flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col"}> <div class=${"p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center"}> <span class=${"text-sm font-medium text-slate-500"}> ${results.rows ? `${results.rows.length} Rows Returned` : `Command executed successfully. ${results.rows_affected ?? 0} rows affected.`} </span> </div> ${results.columns && results.columns.length > 0 && (
-                                htmlTag`<div class=${"flex-1 overflow-auto custom-scrollbar"}> <table class=${"w-full text-left border-collapse min-w-max"}> <thead> <tr class=${"bg-slate-50 border-b border-slate-200 sticky top-0"}> ${results.columns.map((c, idx) => (
+                                )}</div></div></div>${error && (
+                        htmlTag`<div class=${"bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl flex items-start gap-3 shadow-sm"}><${Icon} name=${"alert-circle"} size=${18} className=${"shrink-0"} /><div class=${"text-sm font-mono whitespace-pre-wrap"}>${error}</div></div>`
+                    )}${results && (
+                        htmlTag`<div class=${"flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col"}><div class=${"p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center"}><span class=${"text-sm font-medium text-slate-500"}>${results.rows ? `${results.rows.length} Rows Returned` : `Command executed successfully. ${results.rows_affected ?? 0} rows affected.`}</span></div>${results.columns && results.columns.length > 0 && (
+                                htmlTag`<div class=${"flex-1 overflow-auto custom-scrollbar"}><table class=${"w-full text-left border-collapse min-w-max"}><thead><tr class=${"bg-slate-50 border-b border-slate-200 sticky top-0"}>${results.columns.map((c, idx) => (
                                                     htmlTag`<th key=${`${c}-${idx}`} class=${"px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"}>${c}</th>`
-                                                ))} </tr> </thead> <tbody class=${"divide-y divide-slate-100"}> ${(results.rows || []).map((row, i) => (
-                                                htmlTag`<tr key=${i} class=${"hover:bg-slate-50 transition-colors"}> ${results.columns.map((c, idx) => (
-                                                        htmlTag`<td key=${`${c}-${idx}`} class=${"px-4 py-3 text-sm text-slate-600 truncate max-w-xs"}> ${row && row[c] !== undefined && row[c] !== null ? String(row[c]) : htmlTag`<em class=${"text-slate-300"}>NULL</em>`} </td>`
-                                                    ))} </tr>`
-                                            ))} </tbody> </table> </div>`
-                            )} </div>`
-                    )} </div>`
+                                                ))}</tr></thead><tbody class=${"divide-y divide-slate-100"}>${(results.rows || []).map((row, i) => (
+                                                htmlTag`<tr key=${i} class=${"hover:bg-slate-50 transition-colors"}>${results.columns.map((c, idx) => (
+                                                        htmlTag`<td key=${`${c}-${idx}`} class=${"px-4 py-3 text-sm text-slate-600 truncate max-w-xs"}>${row && row[c] !== undefined && row[c] !== null ? String(row[c]) : htmlTag`<em class=${"text-slate-300"}>NULL</em>`}</td>`
+                                                    ))}</tr>`
+                                            ))}</tbody></table></div>`
+                            )}</div>`
+                    )}</div>`
             );
+        };
+
+        // A browser can fire blur while removing a focused input, and Preact delivers it.
+        // Blur means "saved by clicking away" only while the editor is staying in the page:
+        // the unmount cleanup runs before the input is removed, so closing cannot write.
+        // Clicking away from unchanged text closes without writing: the text cannot show NULL,
+        // large integers or BLOBs faithfully, so writing it back would change them. Enter is
+        // the explicit write, and is how NULL becomes an empty string. "Unchanged" compares
+        // with the value at mount: an input strips newlines from value but not defaultValue.
+        const CellEditor = ({ value, onCommit, onCancel }) => {
+            const input = useRef(null);
+            const mountedText = useRef('');
+            const leaving = useRef(false);
+            const saving = useRef(false);
+            useLayoutEffect(() => {
+                mountedText.current = input.current.value;
+                focusOnMount(input.current);
+                return () => { leaving.current = true; };
+            }, []);
+
+            const commit = async (newValue) => {
+                if (leaving.current || saving.current) return;
+                saving.current = true;
+                try {
+                    await onCommit(newValue);
+                } finally {
+                    saving.current = false;
+                }
+            };
+
+            const handleBlur = (e) => {
+                if (leaving.current || saving.current) return;
+                if (e.target.value === mountedText.current) onCancel();
+                else commit(e.target.value);
+            };
+
+            return htmlTag`<input ref=${input} defaultValue=${value} onBlur=${handleBlur} onKeyDown=${(e) => {
+                    if (e.key === 'Enter') commit(e.target.value);
+                    if (e.key === 'Escape') onCancel();
+                }} class=${"w-full h-full px-4 py-3 bg-white dark:bg-slate-800 shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-400"} />`;
         };
 
         const DataGrid = ({ data, schema, fks, table, refresh, onNavigate, page, pageSize, totalRows, onPageChange }) => {
@@ -2869,57 +2909,56 @@ const {focusOnMount} = frontendKit;
             const totalPages = Math.ceil(totalRows / pageSize);
 
             return (
-                htmlTag`<div class=${"bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full"}> <div class=${"p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 gap-4"}> <div class=${"relative flex-1 max-w-md"}> <${Icon} name=${"search"} size=${16} className=${"absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"} /> <input type=${"text"} placeholder=${"Filter columns..."} value=${filter} onInput=${e => setFilter(e.target.value)} class=${"w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"} /> </div> <div class=${"flex items-center gap-4"}> <span class=${"text-sm font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap"}> ${totalRows > 0 ? `${(page * pageSize) + 1}-${Math.min((page + 1) * pageSize, totalRows)} of ${totalRows}` : '0 of 0'} </span> <div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}> <button onClick=${() => onPageChange(page - 1)} disabled=${page === 0} class=${"p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"}> <${Icon} name=${"chevron-left"} size=${16} /> </button> <div class=${"px-2 flex items-center text-xs font-bold text-slate-600 dark:text-slate-400"}> ${page + 1} / ${totalPages || 1} </div> <button onClick=${() => onPageChange(page + 1)} disabled=${page >= totalPages - 1} class=${"p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"}> <${Icon} name=${"chevron-right"} size=${16} /> </button> </div> <div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}> <button onClick=${() => window.open(`/api/export/${table}/csv`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export CSV"}> <${Icon} name=${"download"} size=${14} /> <span class=${"text-[10px] font-bold ml-1 uppercase"}>CSV</span> </button> <div class=${"w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"}></div> <button onClick=${() => window.open(`/api/export/${table}/json`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export JSON"}> <${Icon} name=${"download"} size=${14} /> <span class=${"text-[10px] font-bold ml-1 uppercase"}>JSON</span> </button> <div class=${"w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"}></div> <button onClick=${() => window.open(`/api/export-schema/${table}`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export Schema (SQL)"}> <${Icon} name=${"file-code"} size=${14} /> <span class=${"text-[10px] font-bold ml-1 uppercase"}>SQL</span> </button> </div> <div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}> <label class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md cursor-pointer flex items-center"} title=${"Import Data (CSV)"}> <${Icon} name=${"upload"} size=${14} /> <span class=${"text-[10px] font-bold ml-1 uppercase"}>Data</span> <input type=${"file"} accept=${".csv"} onInput=${handleImport} class=${"hidden"} /> </label> </div> <button onClick=${addRow} class=${"bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"}> <${Icon} name=${"plus"} size=${16} /> Add Row </button> </div> </div> <div class=${"overflow-auto flex-1 custom-scrollbar"}> <table class=${"w-full text-left border-collapse min-w-max"}> <thead> <tr class=${"bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10"}> <th class=${"px-4 py-3 w-12 bg-slate-50 dark:bg-slate-800/50"}></th> ${schema.map(col => {
+                htmlTag`<div class=${"bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full"}><div class=${"p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 gap-4"}><div class=${"relative flex-1 max-w-md"}><${Icon} name=${"search"} size=${16} className=${"absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"} /><input type=${"text"} placeholder=${"Filter columns..."} value=${filter} onInput=${e => setFilter(e.target.value)} class=${"w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"} /></div><div class=${"flex items-center gap-4"}><span class=${"text-sm font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap"}>${totalRows > 0 ? `${(page * pageSize) + 1}-${Math.min((page + 1) * pageSize, totalRows)} of ${totalRows}` : '0 of 0'}</span><div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}><button onClick=${() => onPageChange(page - 1)} disabled=${page === 0} class=${"p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"}><${Icon} name=${"chevron-left"} size=${16} /></button><div class=${"px-2 flex items-center text-xs font-bold text-slate-600 dark:text-slate-400"}>${page + 1} / ${totalPages || 1}</div><button onClick=${() => onPageChange(page + 1)} disabled=${page >= totalPages - 1} class=${"p-1 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 disabled:opacity-30 rounded-md"}><${Icon} name=${"chevron-right"} size=${16} /></button></div><div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}><button onClick=${() => window.open(`/api/export/${table}/csv`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export CSV"}><${Icon} name=${"download"} size=${14} /><span class=${"text-[10px] font-bold ml-1 uppercase"}>CSV</span></button><div class=${"w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"}></div><button onClick=${() => window.open(`/api/export/${table}/json`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export JSON"}><${Icon} name=${"download"} size=${14} /><span class=${"text-[10px] font-bold ml-1 uppercase"}>JSON</span></button><div class=${"w-px bg-slate-200 dark:bg-slate-700 my-1 mx-0.5"}></div><button onClick=${() => window.open(`/api/export-schema/${table}`)} class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md"} title=${"Export Schema (SQL)"}><${Icon} name=${"file-code"} size=${14} /><span class=${"text-[10px] font-bold ml-1 uppercase"}>SQL</span></button></div><div class=${"flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-sm"}><label class=${"p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-md cursor-pointer flex items-center"} title=${"Import Data (CSV)"}><${Icon} name=${"upload"} size=${14} /><span class=${"text-[10px] font-bold ml-1 uppercase"}>Data</span><input type=${"file"} accept=${".csv"} onInput=${handleImport} class=${"hidden"} /></label></div><button onClick=${addRow} class=${"bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"}><${Icon} name=${"plus"} size=${16} /> Add Row</button></div></div><div class=${"overflow-auto flex-1 custom-scrollbar"}><table class=${"w-full text-left border-collapse min-w-max"}><thead><tr class=${"bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10"}><th class=${"px-4 py-3 w-12 bg-slate-50 dark:bg-slate-800/50"}></th>${schema.map(col => {
                                         const fk = getFKInfo(col.name);
                                         return (
-                                            htmlTag`<th key=${col.name} class=${"px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50"}> <div class=${"flex items-center gap-2"}> ${col.pk === 1 && htmlTag`<${Icon} name=${"key"} size=${12} className=${"text-amber-500"} />`} ${fk && htmlTag`<${Icon} name=${"link"} size=${12} className=${"text-blue-500"} title=${`References ${fk.table}(${fk.to})`} />`} ${col.name} <span class=${"text-[10px] font-normal text-slate-400"}>${col.type}</span> </div> </th>`
+                                            htmlTag`<th key=${col.name} class=${"px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50"}><div class=${"flex items-center gap-2"}>${col.pk === 1 && htmlTag`<${Icon} name=${"key"} size=${12} className=${"text-amber-500"} />`}${fk && htmlTag`<${Icon} name=${"link"} size=${12} className=${"text-blue-500"} title=${`References ${fk.table}(${fk.to})`} />`}${col.name}<span class=${"text-[10px] font-normal text-slate-400"}>${col.type}</span></div></th>`
                                         );
-                                    })} <th class=${"px-4 py-3 w-16 bg-slate-50 dark:bg-slate-800/50"}></th> </tr> </thead> <tbody class=${"divide-y divide-slate-100 dark:divide-slate-800"}> ${filteredData.map((row) => {
+                                    })}<th class=${"px-4 py-3 w-16 bg-slate-50 dark:bg-slate-800/50"}></th></tr></thead><tbody class=${"divide-y divide-slate-100 dark:divide-slate-800"}>${filteredData.map((row) => {
                                     const rowKey = getRowKey(row);
                                     const isRowEditing = editingRowKey === rowKey;
                                     return (
-                                        htmlTag`<tr key=${rowKey} class=${`transition-colors group ${isRowEditing ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}> <td class=${"px-4 py-3"}> ${isRowEditing ? (
-                                                    htmlTag`<button onClick=${() => saveRowEdit(row)} class=${"text-green-600 dark:text-green-400 hover:text-green-700"}> <${Icon} name=${"check"} size=${16} /> </button>`
+                                        htmlTag`<tr key=${rowKey} class=${`transition-colors group ${isRowEditing ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}><td class=${"px-4 py-3"}>${isRowEditing ? (
+                                                    htmlTag`<button onClick=${() => saveRowEdit(row)} class=${"text-green-600 dark:text-green-400 hover:text-green-700"}><${Icon} name=${"check"} size=${16} /></button>`
                                                 ) : (
-                                                    htmlTag`<button onClick=${() => startRowEdit(row)} class=${"text-slate-300 dark:text-slate-600 hover:text-blue-600 group-hover:opacity-100 opacity-0 transition-opacity"}> <${Icon} name=${"edit-3"} size=${16} /> </button>`
-                                                )} </td> ${schema.map(col => {
+                                                    htmlTag`<button onClick=${() => startRowEdit(row)} class=${"text-slate-300 dark:text-slate-600 hover:text-blue-600 group-hover:opacity-100 opacity-0 transition-opacity"}><${Icon} name=${"edit-3"} size=${16} /></button>`
+                                                )}</td>${schema.map(col => {
                                                 const isCellEditing = editingCell?.rowKey === rowKey && editingCell?.colName === col.name;
                                                 const fk = getFKInfo(col.name);
                                                 return (
-                                                    htmlTag`<td key=${col.name} class=${`px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs ${isCellEditing || isRowEditing ? 'p-0' : 'cursor-text'}`} onDblClick=${() => !isRowEditing && setEditingCell({ rowKey, colName: col.name })}> ${isRowEditing ? (
+                                                    htmlTag`<td key=${col.name} class=${`px-4 py-3 text-sm text-slate-600 dark:text-slate-300 truncate max-w-xs ${isCellEditing || isRowEditing ? 'p-0' : 'cursor-text'}`} onDblClick=${() => !isRowEditing && setEditingCell({ rowKey, colName: col.name })}>${isRowEditing ? (
                                                             htmlTag`<input value=${editBuffer[col.name] || ""} disabled=${col.pk === 1} onInput=${(e) => setEditBuffer({...editBuffer, [col.name]: e.target.value})} class=${`w-full h-full px-4 py-3 focus:outline-none ${col.pk === 1 ? 'bg-slate-100/50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500' : 'bg-white dark:bg-slate-800 focus:ring-1 focus:ring-blue-400'}`} />`
                                                         ) : isCellEditing ? (
-                                                            htmlTag`<input ref=${focusOnMount} defaultValue=${row[col.name]} onBlur=${(e) => updateCell(row, col.name, e.target.value)} onKeyDown=${(e) => {
-                                                                    if (e.key === 'Enter') updateCell(row, col.name, e.target.value);
-                                                                    if (e.key === 'Escape') setEditingCell(null);
-                                                                }} class=${"w-full h-full px-4 py-3 bg-white dark:bg-slate-800 shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-400"} />`
+                                                            htmlTag`<${CellEditor} value=${row[col.name]} onCommit=${(newValue) => updateCell(row, col.name, newValue)} onCancel=${() => setEditingCell(null)} />`
                                                         ) : (
                                                             row[col.name] === null ? (
                                                                 htmlTag`<em class=${"text-slate-300 dark:text-slate-600"}>NULL</em>`
                                                             ) : fk ? (
-                                                                htmlTag`<button onClick=${() => onNavigate(fk.table, fk.to, row[col.name])} onMouseEnter=${(e) => handleFKMouseEnter(e, fk, row[col.name])} onMouseLeave=${handleFKMouseLeave} class=${"text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"}> ${String(row[col.name])} </button>`
+                                                                htmlTag`<button onClick=${() => onNavigate(fk.table, fk.to, row[col.name])} onMouseEnter=${(e) => handleFKMouseEnter(e, fk, row[col.name])} onMouseLeave=${handleFKMouseLeave} class=${"text-blue-600 dark:text-blue-400 hover:underline text-left truncate w-full"}>${String(row[col.name])}</button>`
                                                             ) : (
                                                                 String(row[col.name])
                                                             )
-                                                        )} </td>`
+                                                        )}</td>`
                                                 );
-                                            })} <td class=${"px-4 py-3 text-right"}> ${isRowEditing ? (
-                                                    htmlTag`<button onClick=${() => setEditingRowKey(null)} class=${"text-slate-400 dark:text-slate-500 hover:text-slate-600"}> <${Icon} name=${"x"} size=${16} /> </button>`
+                                            })}<td class=${"px-4 py-3 text-right"}>${isRowEditing ? (
+                                                    htmlTag`<button onClick=${() => setEditingRowKey(null)} class=${"text-slate-400 dark:text-slate-500 hover:text-slate-600"}><${Icon} name=${"x"} size=${16} /></button>`
                                                 ) : (
-                                                    htmlTag`<button onClick=${() => deleteRow(row)} class=${"text-slate-300 dark:text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"}> <${Icon} name=${"trash-2"} size=${14} /> </button>`
-                                                )} </td> </tr>`
+                                                    htmlTag`<button onClick=${() => deleteRow(row)} class=${"text-slate-300 dark:text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"}><${Icon} name=${"trash-2"} size=${14} /></button>`
+                                                )}</td></tr>`
                                     );
-                                })} </tbody> </table> </div> ${tooltipInfo && (
+                                })}</tbody></table></div>${tooltipInfo && (
                         htmlTag`<${FKTooltip} fkTable=${tooltipInfo.fkTable} fkTo=${tooltipInfo.fkTo} fkValue=${tooltipInfo.fkValue} anchorRect=${tooltipInfo.anchorRect} />`
-                    )} </div>`
+                    )}</div>`
             );
         };
+
+        const COLUMN_TYPES = ['TEXT', 'INTEGER', 'REAL', 'BLOB'];
 
         const SchemaEditor = ({ schema, table, refresh }) => {
             const [cols, setCols] = useState([]);
 
             useEffect(() => {
-                setCols(schema.map(s => ({ ...s, newName: s.name, delete: false, isNew: false })));
+                setCols(schema.map(s => ({ ...s, newName: s.name, declaredType: s.type, delete: false, isNew: false })));
             }, [schema]);
 
             const addColumn = () => {
@@ -2946,16 +2985,16 @@ const {focusOnMount} = frontendKit;
             };
 
             return (
-                htmlTag`<div class=${"bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 max-w-4xl mx-auto"}> <div class=${"flex items-center justify-between mb-8"}> <div> <h3 class=${"text-lg font-bold text-slate-800 dark:text-slate-100"}>Structure Design</h3> <p class=${"text-sm text-slate-500 dark:text-slate-400"}>Edit columns, types, or add new fields.</p> </div> <div class=${"flex gap-2"}> <button onClick=${addColumn} class=${"bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2"}> <${Icon} name=${"plus"} size=${18} /> Add Column </button> <button onClick=${apply} class=${"bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2"}> <${Icon} name=${"check-circle-2"} size=${18} /> Apply Changes </button> </div> </div> <div class=${"space-y-4"}> ${cols.map((col, idx) => (
-                            htmlTag`<div key=${idx} class=${`flex items-center gap-4 p-4 rounded-xl border ${col.delete ? 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/20 opacity-60' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-all'}`}> <div class=${"flex-1"}> <label class=${"text-[10px] font-bold text-slate-400 uppercase mb-1 block"}>Column Name</label> <input type=${"text"} value=${col.newName} onInput=${e => {
+                htmlTag`<div class=${"bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 max-w-4xl mx-auto"}><div class=${"flex items-center justify-between mb-8"}><div><h3 class=${"text-lg font-bold text-slate-800 dark:text-slate-100"}>Structure Design</h3><p class=${"text-sm text-slate-500 dark:text-slate-400"}>Edit columns, types, or add new fields.</p></div><div class=${"flex gap-2"}><button onClick=${addColumn} class=${"bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2"}><${Icon} name=${"plus"} size=${18} /> Add Column</button><button onClick=${apply} class=${"bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2"}><${Icon} name=${"check-circle-2"} size=${18} /> Apply Changes</button></div></div><div class=${"space-y-4"}>${cols.map((col, idx) => (
+                            htmlTag`<div key=${idx} class=${`flex items-center gap-4 p-4 rounded-xl border ${col.delete ? 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/20 opacity-60' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-all'}`}><div class=${"flex-1"}><label class=${"text-[10px] font-bold text-slate-400 uppercase mb-1 block"}>Column Name</label><input type=${"text"} value=${col.newName} onInput=${e => {
                                             const next = [...cols];
                                             next[idx].newName = e.target.value;
                                             setCols(next);
-                                        }} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"} /> </div> <div class=${"w-48"}> <label class=${"text-[10px] font-bold text-slate-400 uppercase mb-1 block"}>Type</label> <select value=${col.type} onInput=${e => {
+                                        }} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"} /></div><div class=${"w-48"}><label class=${"text-[10px] font-bold text-slate-400 uppercase mb-1 block"}>Type</label><select value=${col.type} onInput=${e => {
                                             const next = [...cols];
                                             next[idx].type = e.target.value;
                                             setCols(next);
-                                        }} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"}> <option>TEXT</option> <option>INTEGER</option> <option>REAL</option> <option>BLOB</option> </select> </div> <div class=${"pt-5"}> <button onClick=${() => {
+                                        }} class=${"bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-blue-500 focus:outline-none dark:text-slate-200"}>${[...new Set([...COLUMN_TYPES, col.declaredType ?? 'TEXT'])].map(type => htmlTag`<option key=${type} value=${type}>${type || '(none)'}</option>`)}</select></div><div class=${"pt-5"}><button onClick=${() => {
                                             const next = [...cols];
                                             if (col.isNew) {
                                                 next.splice(idx, 1);
@@ -2963,12 +3002,12 @@ const {focusOnMount} = frontendKit;
                                                 next[idx].delete = !next[idx].delete;
                                             }
                                             setCols(next);
-                                        }} class=${`p-2 rounded-lg transition-colors ${col.delete ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500'}`}> <${Icon} name=${col.delete ? "rotate-ccw" : "trash-2"} size=${18} /> </button> </div> </div>`
-                        ))} </div> </div>`
+                                        }} class=${`p-2 rounded-lg transition-colors ${col.delete ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20' : 'text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500'}`}><${Icon} name=${col.delete ? "rotate-ccw" : "trash-2"} size=${18} /></button></div></div>`
+                        ))}</div></div>`
             );
         };
 
-        preact.render(htmlTag`<${ErrorBoundary}> <${App} /> <//>`, document.getElementById('root'));
+        preact.render(htmlTag`<${ErrorBoundary}><${App} /><//>`, document.getElementById('root'));
     </script>
 </body>
 </html>

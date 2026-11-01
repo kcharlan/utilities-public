@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 DEFAULT_PORT = 8200
 
 logger = logging.getLogger("launchmaster")
@@ -1300,7 +1300,7 @@ function Icon({ name, size = 16, className = '' }) {
 // ---- Apple logo SVG (inline, no font dependency) ----
 function AppleLogo({ size = 14, color = 'currentColor', className = '' }) {
   return (
-    html`<svg width=${size} height=${size} viewBox=${"0 0 24 24"} fill=${color} class=${className} style=${{ display: 'inline-block', verticalAlign: 'middle' }}> <path d=${"M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"} /> </svg>`
+    html`<svg width=${size} height=${size} viewBox=${"0 0 24 24"} fill=${color} class=${className} style=${{ display: 'inline-block', verticalAlign: 'middle' }}><path d=${"M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"} /></svg>`
   );
 }
 
@@ -1479,22 +1479,22 @@ function useJobActions({ addToast, presentConfirm, settings, openDetail }) {
 // ---- Toast system ----
 function ToastContainer({ toasts, removeToast }) {
   return (
-    html`<div class=${"toast-container"}> ${toasts.map(t => (
-        html`<div key=${t.id} class=${'toast ' + t.type}> <span class=${"toast-icon"}> <${Icon} name=${t.type === 'success' ? 'check-circle' : t.type === 'error' ? 'x-circle' : 'alert-triangle'} size=${16} /> </span> <span class=${"toast-message"}>${t.message}</span> <button class=${"toast-close"} onClick=${() => removeToast(t.id)}> <${Icon} name=${"x"} size=${14} /> </button> </div>`
-      ))} </div>`
+    html`<div class=${"toast-container"}>${toasts.map(t => (
+        html`<div key=${t.id} class=${'toast ' + t.type}><span class=${"toast-icon"}><${Icon} name=${t.type === 'success' ? 'check-circle' : t.type === 'error' ? 'x-circle' : 'alert-triangle'} size=${16} /></span><span class=${"toast-message"}>${t.message}</span><button class=${"toast-close"} onClick=${() => removeToast(t.id)}><${Icon} name=${"x"} size=${14} /></button></div>`
+      ))}</div>`
   );
 }
 
 // ---- Confirm Dialog ----
 function ConfirmDialog({ title, message, onConfirm, onCancel, danger = false }) {
   return (
-    html`<div class=${"confirm-overlay"} onClick=${onCancel}> <div class=${"confirm-dialog"} onClick=${e => e.stopPropagation()} onKeyDown=${e => {
+    html`<div class=${"confirm-overlay"} onClick=${onCancel}><div class=${"confirm-dialog"} onClick=${e => e.stopPropagation()} onKeyDown=${e => {
           if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
             onCancel();
           }
-        }}> <div class=${"confirm-title"}>${title}</div> <div class=${"confirm-message"}>${message}</div> <div class=${"confirm-actions"}> <button class=${"btn"} onClick=${onCancel} ref=${focusOnMount}>Cancel</button> <button class=${'btn ' + (danger ? 'btn-danger' : 'btn-accent')} onClick=${onConfirm}> ${danger ? 'Delete' : 'Confirm'} </button> </div> </div> </div>`
+        }}><div class=${"confirm-title"}>${title}</div><div class=${"confirm-message"}>${message}</div><div class=${"confirm-actions"}><button class=${"btn"} onClick=${onCancel} ref=${focusOnMount}>Cancel</button><button class=${'btn ' + (danger ? 'btn-danger' : 'btn-accent')} onClick=${onConfirm}>${danger ? 'Delete' : 'Confirm'}</button></div></div></div>`
   );
 }
 
@@ -1569,14 +1569,14 @@ function JobActionMenuContent({ job, x, y, onClose, runAction, openDetail }) {
         left: position ? position.left : x,
         top: position ? position.top : y,
         visibility: position ? 'visible' : 'hidden',
-      }}> ${actionGroups.map((group, groupIndex) => (
-        html`<${preact.Fragment} key=${groupIndex}> ${groupIndex > 0 && html`<div class=${"job-action-menu-separator"} role=${"separator"} />`} ${group.map(actionId => {
+      }}>${actionGroups.map((group, groupIndex) => (
+        html`<${preact.Fragment} key=${groupIndex}>${groupIndex > 0 && html`<div class=${"job-action-menu-separator"} role=${"separator"} />`}${group.map(actionId => {
             const action = JOB_ACTIONS[actionId];
             return (
               html`<button type=${"button"} role=${"menuitem"} class=${'job-action-menu-item' + (action.danger ? ' danger' : '')} key=${actionId} onClick=${() => dispatch(actionId)}><${Icon} name=${action.icon} size=${14} /><span>${action.label}</span></button>`
             );
-          })} <//>`
-      ))} </div>`;
+          })}<//>`
+      ))}</div>`;
 }
 
 // ---- Status Cards ----
@@ -1588,9 +1588,9 @@ function StatusCards({ jobs, activeFilter, setActiveFilter }) {
   }, [jobs]);
 
   return (
-    html`<div class=${"status-cards"}> ${['running', 'idle', 'failed', 'disabled', 'unloaded'].map(s => (
-        html`<div key=${s} class=${'status-card ' + s + (activeFilter === s ? ' active' : '')} onClick=${() => setActiveFilter(activeFilter === s ? null : s)}> <div class=${"status-card-count"}>${counts[s]}</div> <div class=${"status-card-label"}>${statusLabel(s)}</div> </div>`
-      ))} </div>`
+    html`<div class=${"status-cards"}>${['running', 'idle', 'failed', 'disabled', 'unloaded'].map(s => (
+        html`<div key=${s} class=${'status-card ' + s + (activeFilter === s ? ' active' : '')} onClick=${() => setActiveFilter(activeFilter === s ? null : s)}><div class=${"status-card-count"}>${counts[s]}</div><div class=${"status-card-label"}>${statusLabel(s)}</div></div>`
+      ))}</div>`
   );
 }
 
@@ -1602,15 +1602,15 @@ function FailedPanel({ jobs, onOpenDetail, onOpenLogs, onOpenEdit, onReload, ope
   if (failedJobs.length === 0) return null;
 
   return (
-    html`<div class=${"failed-panel"}> <div class=${"failed-panel-header"} onClick=${() => setCollapsed(!collapsed)}> <div class=${"failed-panel-title"}> <div class=${"failed-pulse"} /> ${failedJobs.length} Failed Job${failedJobs.length > 1 ? 's' : ''} — Attention Required </div> <${Icon} name=${collapsed ? 'chevron-down' : 'chevron-up'} size=${16} /> </div> ${!collapsed && (
-        html`<div class=${"failed-panel-body"}> ${failedJobs.map((j, i) => (
-            html`<div key=${j.label} class=${"failed-job-row"} style=${{ animationDelay: (i * 50) + 'ms', cursor: 'pointer' }} onClick=${() => onOpenDetail(j)}> <div class=${"failed-job-info"}> <span class=${"failed-job-label"}>${j.label}</span> <span class=${"failed-job-exit"}>exit ${j.last_exit}</span> ${j.blame && html`<span class=${"failed-job-blame"} title=${j.blame}>${j.blame}</span>`} </div> <div class=${"failed-job-actions"}> <button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onOpenLogs(j); }}> <${Icon} name=${"file-text"} size=${12} /> Logs </button> <button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onOpenEdit(j); }}> <${Icon} name=${"pencil"} size=${12} /> Edit </button> <button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onReload(j); }}> <${Icon} name=${"refresh-cw"} size=${12} /> Reload </button> <button class=${"row-action-btn"} title=${"More actions"} aria-label=${"More actions"} onClick=${e => {
+    html`<div class=${"failed-panel"}><div class=${"failed-panel-header"} onClick=${() => setCollapsed(!collapsed)}><div class=${"failed-panel-title"}><div class=${"failed-pulse"} />${failedJobs.length} Failed Job${failedJobs.length > 1 ? 's' : ''} — Attention Required</div><${Icon} name=${collapsed ? 'chevron-down' : 'chevron-up'} size=${16} /></div>${!collapsed && (
+        html`<div class=${"failed-panel-body"}>${failedJobs.map((j, i) => (
+            html`<div key=${j.label} class=${"failed-job-row"} style=${{ animationDelay: (i * 50) + 'ms', cursor: 'pointer' }} onClick=${() => onOpenDetail(j)}><div class=${"failed-job-info"}><span class=${"failed-job-label"}>${j.label}</span><span class=${"failed-job-exit"}>exit ${j.last_exit}</span>${j.blame && html`<span class=${"failed-job-blame"} title=${j.blame}>${j.blame}</span>`}</div><div class=${"failed-job-actions"}><button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onOpenLogs(j); }}><${Icon} name=${"file-text"} size=${12} /> Logs</button><button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onOpenEdit(j); }}><${Icon} name=${"pencil"} size=${12} /> Edit</button><button class=${"btn btn-sm btn-ghost"} onClick=${(e) => { e.stopPropagation(); onReload(j); }}><${Icon} name=${"refresh-cw"} size=${12} /> Reload</button><button class=${"row-action-btn"} title=${"More actions"} aria-label=${"More actions"} onClick=${e => {
                     e.stopPropagation();
                     const rect = e.currentTarget.getBoundingClientRect();
                     openActionMenu(j, rect.left, rect.bottom + 4);
-                  }}> <${Icon} name=${"more-vertical"} size=${13} /> </button> </div> </div>`
-          ))} </div>`
-      )} </div>`
+                  }}><${Icon} name=${"more-vertical"} size=${13} /></button></div></div>`
+          ))}</div>`
+      )}</div>`
   );
 }
 
@@ -1633,7 +1633,7 @@ function FilterBar({ search, setSearch, domainFilter, setDomainFilter, showApple
   };
 
   return (
-    html`<div class=${"filter-bar"}> <${Icon} name=${"search"} size=${14} /> <div style=${{ flex: 1, minWidth: 200, position: 'relative' }}> <input ref=${searchRef} class=${"filter-search"} style=${{ width: '100%', paddingRight: search ? 60 : 10 }} placeholder=${"Search jobs by label...  (/ to focus, Esc to clear)"} value=${search} onInput=${e => setSearch(e.target.value)} onKeyDown=${handleSearchKeyDown} /> ${search && (
+    html`<div class=${"filter-bar"}><${Icon} name=${"search"} size=${14} /><div style=${{ flex: 1, minWidth: 200, position: 'relative' }}><input ref=${searchRef} class=${"filter-search"} style=${{ width: '100%', paddingRight: search ? 60 : 10 }} placeholder=${"Search jobs by label...  (/ to focus, Esc to clear)"} value=${search} onInput=${e => setSearch(e.target.value)} onKeyDown=${handleSearchKeyDown} />${search && (
           html`<button onClick=${() => { setSearch(''); searchRef.current && searchRef.current.focus(); }} style=${{
               position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
               background: 'var(--bg-hover)', border: '1px solid var(--border-strong)',
@@ -1641,18 +1641,18 @@ function FilterBar({ search, setSearch, domainFilter, setDomainFilter, showApple
               display: 'flex', alignItems: 'center', gap: 3,
               padding: '2px 8px', lineHeight: 1, zIndex: 2,
               fontSize: 11, fontFamily: 'var(--font-mono)',
-            }} title=${"Clear search (Esc)"}> <${Icon} name=${"x"} size=${11} /> clear </button>`
-        )} </div> <select class=${"filter-select"} value=${domainFilter} onInput=${e => {
+            }} title=${"Clear search (Esc)"}><${Icon} name=${"x"} size=${11} /> clear</button>`
+        )}</div><select class=${"filter-select"} value=${domainFilter} onInput=${e => {
         const val = e.target.value;
         setDomainFilter(val);
         // If selecting Apple domain, auto-enable apple visibility
         if (val === 'apple') setShowApple(true);
-      }}> <option value=${"all"}>All Domains</option> <option value=${"user-agent"}>User Agents</option> <option value=${"global-agent"}>Global Agents</option> <option value=${"system-daemon"}>System Daemons</option> ${showApple && html`<option value=${"apple"}>Apple</option>`} </select> <div class=${'filter-toggle' + (showApple ? ' active' : '') + (appleForced ? ' forced' : '')} onClick=${() => {
+      }}><option value=${"all"}>All Domains</option><option value=${"user-agent"}>User Agents</option><option value=${"global-agent"}>Global Agents</option><option value=${"system-daemon"}>System Daemons</option>${showApple && html`<option value=${"apple"}>Apple</option>`}</select><div class=${'filter-toggle' + (showApple ? ' active' : '') + (appleForced ? ' forced' : '')} onClick=${() => {
           if (appleForced) return; // Can't toggle off while filtering to Apple
           setShowApple(!showApple);
-        }} style=${appleForced ? { opacity: 0.5, cursor: 'not-allowed' } : {}} title=${appleForced ? 'Cannot hide Apple jobs while filtering by Apple domain' : 'Toggle Apple system jobs'}> <${Icon} name=${"shield"} size=${14} /> Apple Jobs </div> ${activeFilter && (
-        html`<div class=${"filter-chip"} onClick=${() => setActiveFilter(null)}> ${statusLabel(activeFilter)} <${Icon} name=${"x"} size=${10} /> </div>`
-      )} <div style=${{ flex: 1 }} /> <span style=${{ fontSize: 11, color: 'var(--text-tertiary)' }}> <kbd class=${"kbd"}>?</kbd> shortcuts </span> </div>`
+        }} style=${appleForced ? { opacity: 0.5, cursor: 'not-allowed' } : {}} title=${appleForced ? 'Cannot hide Apple jobs while filtering by Apple domain' : 'Toggle Apple system jobs'}><${Icon} name=${"shield"} size=${14} />Apple Jobs</div>${activeFilter && (
+        html`<div class=${"filter-chip"} onClick=${() => setActiveFilter(null)}>${statusLabel(activeFilter)} <${Icon} name=${"x"} size=${10} /></div>`
+      )}<div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-tertiary)' }}><kbd class=${"kbd"}>?</kbd> shortcuts</span></div>`
   );
 }
 
@@ -1683,22 +1683,22 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
         fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500,
         opacity: disabled ? 0.4 : 1,
         transition: 'all 0.15s',
-      }} onMouseEnter=${e => { if (!disabled) { e.target.style.background = 'var(--bg-hover)'; e.target.style.borderColor = 'var(--border-strong)'; }}} onMouseLeave=${e => { if (!disabled) { e.target.style.background = 'var(--bg-surface)'; e.target.style.borderColor = 'var(--border-default)'; }}}> ${children} </button>`
+      }} onMouseEnter=${e => { if (!disabled) { e.target.style.background = 'var(--bg-hover)'; e.target.style.borderColor = 'var(--border-strong)'; }}} onMouseLeave=${e => { if (!disabled) { e.target.style.background = 'var(--bg-surface)'; e.target.style.borderColor = 'var(--border-default)'; }}}>${children}</button>`
   );
 
   return (
     html`<div style=${{
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
       fontSize: 12,
-    }}> <${PgBtn} onClick=${() => onPageChange(1)} disabled=${currentPage === 1} title=${"First page"}> « First <//> <${PgBtn} onClick=${() => onPageChange(currentPage - 1)} disabled=${currentPage === 1} title=${"Previous page"}> ‹ Prev <//> ${editingPage ? (
-        html`<form onSubmit=${handleSubmit} style=${{ display: 'inline-flex', alignItems: 'center', gap: 4 }}> <input ref=${focusOnMount} class=${"form-input"} style=${{ width: 48, height: 28, padding: '2px 6px', textAlign: 'center', fontSize: 12 }} value=${pageInput} onInput=${e => setPageInput(e.target.value)} onBlur=${() => { setEditingPage(false); setPageInput(''); }} placeholder=${String(currentPage)} /> <span style=${{ color: 'var(--text-tertiary)' }}>/ ${totalPages}</span> </form>`
+    }}><${PgBtn} onClick=${() => onPageChange(1)} disabled=${currentPage === 1} title=${"First page"}>« First<//><${PgBtn} onClick=${() => onPageChange(currentPage - 1)} disabled=${currentPage === 1} title=${"Previous page"}>‹ Prev<//>${editingPage ? (
+        html`<form onSubmit=${handleSubmit} style=${{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input ref=${focusOnMount} class=${"form-input"} style=${{ width: 48, height: 28, padding: '2px 6px', textAlign: 'center', fontSize: 12 }} value=${pageInput} onInput=${e => setPageInput(e.target.value)} onBlur=${() => { setEditingPage(false); setPageInput(''); }} placeholder=${String(currentPage)} /><span style=${{ color: 'var(--text-tertiary)' }}>/ ${totalPages}</span></form>`
       ) : (
         html`<span style=${{
             padding: '4px 12px', cursor: 'pointer', color: 'var(--text-secondary)',
             userSelect: 'none', border: '1px solid var(--border-default)',
             borderRadius: 4, background: 'var(--bg-surface)',
-          }} onClick=${() => { setEditingPage(true); setPageInput(String(currentPage)); }} title=${"Click to jump to page"}> Page <span style=${{ color: 'var(--accent)', fontWeight: 700 }}>${currentPage}</span> of ${totalPages} </span>`
-      )} <${PgBtn} onClick=${() => onPageChange(currentPage + 1)} disabled=${currentPage === totalPages} title=${"Next page"}> Next › <//> <${PgBtn} onClick=${() => onPageChange(totalPages)} disabled=${currentPage === totalPages} title=${"Last page"}> Last » <//> </div>`
+          }} onClick=${() => { setEditingPage(true); setPageInput(String(currentPage)); }} title=${"Click to jump to page"}>Page <span style=${{ color: 'var(--accent)', fontWeight: 700 }}>${currentPage}</span> of ${totalPages}</span>`
+      )}<${PgBtn} onClick=${() => onPageChange(currentPage + 1)} disabled=${currentPage === totalPages} title=${"Next page"}>Next ›<//><${PgBtn} onClick=${() => onPageChange(totalPages)} disabled=${currentPage === totalPages} title=${"Last page"}>Last »<//></div>`
   );
 }
 
@@ -1747,30 +1747,30 @@ function JobTable({ jobs, selected, setSelected, onRowClick, showApple, runActio
   const paginatedJobs = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const SortHeader = ({ col, children, style }) => (
-    html`<th class=${sortCol === col ? 'sorted' : ''} onClick=${() => handleSort(col)} style=${style}> ${children} <span class=${"sort-arrow"}>${sortCol === col ? (sortAsc ? '\u25B2' : '\u25BC') : '\u25B2'}</span> </th>`
+    html`<th class=${sortCol === col ? 'sorted' : ''} onClick=${() => handleSort(col)} style=${style}>${children}<span class=${"sort-arrow"}>${sortCol === col ? (sortAsc ? '\u25B2' : '\u25BC') : '\u25B2'}</span></th>`
   );
 
   return (
-    html`<div class=${"job-table-container"} style=${{ overflow: 'auto' }}> <table class=${"job-table"}> <thead> <tr> <th style=${{ width: 36 }}> <div class=${'checkbox' + (selected.length === jobs.length && jobs.length > 0 ? ' checked' : '')} onClick=${toggleAll} /> </th> <${SortHeader} col=${"status"} style=${{ width: 60 }}>Status<//> <${SortHeader} col=${"label"}>Label<//> <${SortHeader} col=${"domain"} style=${{ width: 120 }}>Domain<//> <th style=${{ width: 180 }}>Schedule</th> <th style=${{ width: 70 }}>PID</th> <${SortHeader} col=${"exit"} style=${{ width: 80 }}>Last Exit<//> <th class=${"actions-col"} style=${{ width: 110, textAlign: 'right' }}>Actions</th> </tr> </thead> <tbody> ${paginatedJobs.map((job, i) => {
+    html`<div class=${"job-table-container"} style=${{ overflow: 'auto' }}><table class=${"job-table"}><thead><tr><th style=${{ width: 36 }}><div class=${'checkbox' + (selected.length === jobs.length && jobs.length > 0 ? ' checked' : '')} onClick=${toggleAll} /></th><${SortHeader} col=${"status"} style=${{ width: 60 }}>Status<//><${SortHeader} col=${"label"}>Label<//><${SortHeader} col=${"domain"} style=${{ width: 120 }}>Domain<//><th style=${{ width: 180 }}>Schedule</th><th style=${{ width: 70 }}>PID</th><${SortHeader} col=${"exit"} style=${{ width: 80 }}>Last Exit<//><th class=${"actions-col"} style=${{ width: 110, textAlign: 'right' }}>Actions</th></tr></thead><tbody>${paginatedJobs.map((job, i) => {
             const status = getJobStatus(job);
             const apple = isAppleJob(job);
             return (
               html`<tr key=${job.label} class=${(selected.includes(job.label) ? 'selected ' : '') + 'status-' + status + (apple ? ' apple-row' : '')} onClick=${() => onRowClick(job)} onContextMenu=${e => {
                   e.preventDefault();
                   openActionMenu(job, e.clientX, e.clientY);
-                }} style=${{ animationDelay: (i * 20) + 'ms' }}> <td> <div class=${'checkbox' + (selected.includes(job.label) ? ' checked' : '')} onClick=${e => toggleSelect(job.label, e)} /> </td> <td> <div class=${'status-dot ' + status} title=${statusLabel(status)} /> </td> <td> <div class=${"job-label-cell"}> ${apple && html`<span class=${"apple-row-icon"} title=${"Apple system job"}><${AppleLogo} size=${14} color=${"#d0a050"} /></span>`} <span class=${"job-label-text"}>${job.label}</span> </div> </td> <td> <span class=${'domain-badge ' + (apple ? 'apple' : job.domain)}> ${apple && html`<${AppleLogo} size=${10} color=${"#e8a030"} className=${"apple-badge-icon"} />`} ${job.domain.replace('-', ' ')} </span> </td> <td><span class=${"schedule-text"} title=${job.schedule}>${job.schedule_human}</span></td> <td><span class=${"pid-text"}>${job.pid || '\u2014'}</span></td> <td> ${job.last_exit !== null ? (
-                    html`<span class=${'exit-code ' + (job.last_exit === 0 ? 'zero' : 'nonzero')}> ${job.last_exit} </span>`
-                  ) : '\u2014'} </td> <td class=${"actions-cell"} style=${{ textAlign: 'right' }}> <div class=${"row-actions"}> <button class=${"row-action-btn"} title=${"Run Now (one-shot)"} onClick=${e => { e.stopPropagation(); runAction(job, 'run-now'); }}> <${Icon} name=${"zap"} size=${13} /> </button> <button class=${"row-action-btn"} title=${"Stop (x)"} onClick=${e => { e.stopPropagation(); runAction(job, 'stop'); }}> <${Icon} name=${"square"} size=${13} /> </button> <button class=${"row-action-btn"} title=${"More actions"} aria-label=${"More actions"} onClick=${e => {
+                }} style=${{ animationDelay: (i * 20) + 'ms' }}><td><div class=${'checkbox' + (selected.includes(job.label) ? ' checked' : '')} onClick=${e => toggleSelect(job.label, e)} /></td><td><div class=${'status-dot ' + status} title=${statusLabel(status)} /></td><td><div class=${"job-label-cell"}>${apple && html`<span class=${"apple-row-icon"} title=${"Apple system job"}><${AppleLogo} size=${14} color=${"#d0a050"} /></span>`}<span class=${"job-label-text"}>${job.label}</span></div></td><td><span class=${'domain-badge ' + (apple ? 'apple' : job.domain)}>${apple && html`<${AppleLogo} size=${10} color=${"#e8a030"} className=${"apple-badge-icon"} />`}${job.domain.replace('-', ' ')}</span></td><td><span class=${"schedule-text"} title=${job.schedule}>${job.schedule_human}</span></td><td><span class=${"pid-text"}>${job.pid || '\u2014'}</span></td><td>${job.last_exit !== null ? (
+                    html`<span class=${'exit-code ' + (job.last_exit === 0 ? 'zero' : 'nonzero')}>${job.last_exit}</span>`
+                  ) : '\u2014'}</td><td class=${"actions-cell"} style=${{ textAlign: 'right' }}><div class=${"row-actions"}><button class=${"row-action-btn"} title=${"Run Now (one-shot)"} onClick=${e => { e.stopPropagation(); runAction(job, 'run-now'); }}><${Icon} name=${"zap"} size=${13} /></button><button class=${"row-action-btn"} title=${"Stop (x)"} onClick=${e => { e.stopPropagation(); runAction(job, 'stop'); }}><${Icon} name=${"square"} size=${13} /></button><button class=${"row-action-btn"} title=${"More actions"} aria-label=${"More actions"} onClick=${e => {
                         e.stopPropagation();
                         const rect = e.currentTarget.getBoundingClientRect();
                         openActionMenu(job, rect.left, rect.bottom + 4);
-                      }}> <${Icon} name=${"more-vertical"} size=${13} /> </button> </div> </td> </tr>`
+                      }}><${Icon} name=${"more-vertical"} size=${13} /></button></div></td></tr>`
             );
-          })} </tbody> </table> <div style=${{
+          })}</tbody></table><div style=${{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '6px 12px', borderTop: '1px solid var(--border-subtle)',
         background: 'var(--bg-elevated)', fontSize: 11, color: 'var(--text-tertiary)',
-      }}> <span>${sorted.length} job${sorted.length !== 1 ? 's' : ''}${sorted.length !== jobs.length ? ' (filtered from ' + jobs.length + ')' : ''}</span> <${Pagination} currentPage=${page} totalPages=${totalPages} onPageChange=${setCurrentPage} /> <span>${PAGE_SIZE} per page</span> </div> </div>`
+      }}><span>${sorted.length} job${sorted.length !== 1 ? 's' : ''}${sorted.length !== jobs.length ? ' (filtered from ' + jobs.length + ')' : ''}</span><${Pagination} currentPage=${page} totalPages=${totalPages} onPageChange=${setCurrentPage} /><span>${PAGE_SIZE} per page</span></div></div>`
   );
 }
 
@@ -1813,7 +1813,7 @@ function BulkBar({ count, onClear, selectedLabels, jobs, addToast, presentConfir
 
   if (count === 0) return null;
   return (
-    html`<div class=${"bulk-bar"}> <span class=${"bulk-bar-count"}>${count} selected</span> <div class=${"bulk-bar-divider"} /> <button class=${"btn btn-sm"} onClick=${() => requestBulkAction('start', 'Started')}><${Icon} name=${"play"} size=${12} /> Start All</button> <button class=${"btn btn-sm"} onClick=${() => requestBulkAction('stop', 'Stopped')}><${Icon} name=${"square"} size=${12} /> Stop All</button> <button class=${"btn btn-sm"} onClick=${() => requestBulkAction('reload', 'Reloaded')}><${Icon} name=${"refresh-cw"} size=${12} /> Reload All</button> <button class=${"btn btn-sm"} onClick=${() => requestBulkAction('enable', 'Enabled')}><${Icon} name=${"toggle-left"} size=${12} /> Enable</button> <button class=${"btn btn-sm"} onClick=${() => requestBulkAction('disable', 'Disabled')}><${Icon} name=${"toggle-right"} size=${12} /> Disable</button> <button class=${"btn btn-sm btn-danger"} onClick=${() => requestBulkAction('delete', 'Deleted')}><${Icon} name=${"trash-2"} size=${12} /> Delete</button> <div style=${{ flex: 1 }} /> <button class=${"btn btn-sm btn-ghost"} onClick=${onClear}>Clear Selection</button> </div>`
+    html`<div class=${"bulk-bar"}><span class=${"bulk-bar-count"}>${count} selected</span><div class=${"bulk-bar-divider"} /><button class=${"btn btn-sm"} onClick=${() => requestBulkAction('start', 'Started')}><${Icon} name=${"play"} size=${12} /> Start All</button><button class=${"btn btn-sm"} onClick=${() => requestBulkAction('stop', 'Stopped')}><${Icon} name=${"square"} size=${12} /> Stop All</button><button class=${"btn btn-sm"} onClick=${() => requestBulkAction('reload', 'Reloaded')}><${Icon} name=${"refresh-cw"} size=${12} /> Reload All</button><button class=${"btn btn-sm"} onClick=${() => requestBulkAction('enable', 'Enabled')}><${Icon} name=${"toggle-left"} size=${12} /> Enable</button><button class=${"btn btn-sm"} onClick=${() => requestBulkAction('disable', 'Disabled')}><${Icon} name=${"toggle-right"} size=${12} /> Disable</button><button class=${"btn btn-sm btn-danger"} onClick=${() => requestBulkAction('delete', 'Deleted')}><${Icon} name=${"trash-2"} size=${12} /> Delete</button><div style=${{ flex: 1 }} /><button class=${"btn btn-sm btn-ghost"} onClick=${onClear}>Clear Selection</button></div>`
   );
 }
 
@@ -1909,57 +1909,57 @@ function DetailPanel({ job, initialTab, onClose, addToast, runAction }) {
   };
 
   return (
-    html` <div class=${'panel-overlay' + (job ? ' visible' : '')} onClick=${onClose} /> <div class=${'detail-panel' + (job ? ' open' : '')}> <div class=${"panel-header"}> <div class=${"panel-header-title"}> <div class=${'status-dot ' + status} /> ${job.label} </div> <div class=${"panel-header-actions"}> <button class=${"btn btn-sm"} onClick=${() => runAction(job, 'start')}> <${Icon} name=${"play"} size=${12} /> Start </button> <button class=${"btn btn-sm"} onClick=${() => runAction(job, 'stop')}> <${Icon} name=${"square"} size=${12} /> Stop </button> <button class=${"btn btn-sm"} onClick=${() => runAction(job, 'run-now')} title=${"One-shot execution via kickstart"}> <${Icon} name=${"zap"} size=${12} /> Run Now </button> <button class=${"btn btn-sm btn-accent"} onClick=${() => runAction(job, 'reload')}> <${Icon} name=${"refresh-cw"} size=${12} /> Reload </button> <button class=${"icon-btn"} onClick=${onClose}> <${Icon} name=${"x"} size=${16} /> </button> </div> </div> <div class=${"panel-tabs"}> ${['info', 'logs', 'edit'].map(t => (
-            html`<div key=${t} class=${'panel-tab' + (activeTab === t ? ' active' : '')} onClick=${() => setActiveTab(t)}> ${t === 'info' ? 'Info' : t === 'logs' ? 'Logs' : 'Edit Plist'} </div>`
-          ))} </div> <div class=${"panel-body"}> ${activeTab === 'info' && (
-            html`<div class=${"animate-fade"}> <div class=${"info-grid"}> <span class=${"info-label"}>Label</span> <span class=${"info-value"}>${job.label}</span> <span class=${"info-label"}>Status</span> <span class=${"info-value"}> <span class=${'status-dot ' + status} style=${{ marginRight: 8 }} /> ${statusLabel(status)} ${job.pid && ' (PID ' + job.pid + ')'} </span> <span class=${"info-label"}>Domain</span> <span class=${"info-value"}>${job.domain}</span> <span class=${"info-label"}>Plist</span> <span class=${"info-value"}>${job.plist_path}</span> <span class=${"info-label"}>Schedule</span> <span class=${"info-value"}>${job.schedule_human}</span> <span class=${"info-label"}>Loaded</span> <span class=${"info-value"}>${job.loaded ? 'Yes' : 'No'}</span> <span class=${"info-label"}>Enabled</span> <span class=${"info-value"}>${job.enabled ? 'Yes' : 'No'}</span> <span class=${"info-label"}>Last Exit</span> <span class=${"info-value"}> ${job.last_exit !== null ? (
+    html`<div class=${'panel-overlay' + (job ? ' visible' : '')} onClick=${onClose} /><div class=${'detail-panel' + (job ? ' open' : '')}><div class=${"panel-header"}><div class=${"panel-header-title"}><div class=${'status-dot ' + status} />${job.label}</div><div class=${"panel-header-actions"}><button class=${"btn btn-sm"} onClick=${() => runAction(job, 'start')}><${Icon} name=${"play"} size=${12} /> Start</button><button class=${"btn btn-sm"} onClick=${() => runAction(job, 'stop')}><${Icon} name=${"square"} size=${12} /> Stop</button><button class=${"btn btn-sm"} onClick=${() => runAction(job, 'run-now')} title=${"One-shot execution via kickstart"}><${Icon} name=${"zap"} size=${12} /> Run Now</button><button class=${"btn btn-sm btn-accent"} onClick=${() => runAction(job, 'reload')}><${Icon} name=${"refresh-cw"} size=${12} /> Reload</button><button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button></div></div><div class=${"panel-tabs"}>${['info', 'logs', 'edit'].map(t => (
+            html`<div key=${t} class=${'panel-tab' + (activeTab === t ? ' active' : '')} onClick=${() => setActiveTab(t)}>${t === 'info' ? 'Info' : t === 'logs' ? 'Logs' : 'Edit Plist'}</div>`
+          ))}</div><div class=${"panel-body"}>${activeTab === 'info' && (
+            html`<div class=${"animate-fade"}><div class=${"info-grid"}><span class=${"info-label"}>Label</span><span class=${"info-value"}>${job.label}</span><span class=${"info-label"}>Status</span><span class=${"info-value"}><span class=${'status-dot ' + status} style=${{ marginRight: 8 }} />${statusLabel(status)}${job.pid && ' (PID ' + job.pid + ')'}</span><span class=${"info-label"}>Domain</span><span class=${"info-value"}>${job.domain}</span><span class=${"info-label"}>Plist</span><span class=${"info-value"}>${job.plist_path}</span><span class=${"info-label"}>Schedule</span><span class=${"info-value"}>${job.schedule_human}</span><span class=${"info-label"}>Loaded</span><span class=${"info-value"}>${job.loaded ? 'Yes' : 'No'}</span><span class=${"info-label"}>Enabled</span><span class=${"info-value"}>${job.enabled ? 'Yes' : 'No'}</span><span class=${"info-label"}>Last Exit</span><span class=${"info-value"}>${job.last_exit !== null ? (
                     html`<span class=${'exit-code ' + (job.last_exit === 0 ? 'zero' : 'nonzero')}>${job.last_exit}</span>`
-                  ) : '\u2014'} </span> ${job.blame && (
-                  html` <span class=${"info-label"}>Blame</span> <span class=${"info-value"} style=${{ color: 'var(--status-failed)' }}>${job.blame}</span> `
-                )} ${job.program && (
-                  html` <span class=${"info-label"}>Program</span> <span class=${"info-value"}>${job.program}</span> `
-                )} ${job.program_arguments && job.program_arguments.length > 0 && (
-                  html` <span class=${"info-label"}>Arguments</span> <span class=${"info-value"}>${job.program_arguments.join(' ')}</span> `
-                )} ${job.working_directory && (
-                  html` <span class=${"info-label"}>Working Dir</span> <span class=${"info-value"}>${job.working_directory}</span> `
-                )} <span class=${"info-label"}>Stdout</span> <span class=${"info-value"}>${job.stdout_path || '\u2014'}</span> <span class=${"info-label"}>Stderr</span> <span class=${"info-value"}>${job.stderr_path || '\u2014'}</span> </div> <div style=${{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}> <button class=${"btn"} onClick=${() => runAction(job, job.enabled ? 'disable' : 'enable')}> <${Icon} name=${"toggle-left"} size=${14} /> ${job.enabled ? 'Disable' : 'Enable'} </button> <button class=${"btn"} onClick=${() => runAction(job, job.loaded ? 'unload' : 'load')}> <${Icon} name=${job.loaded ? 'log-out' : 'log-in'} size=${14} /> ${job.loaded ? 'Unload' : 'Load'} </button> <button class=${"btn"} onClick=${() => runAction(job, 'export')}> <${Icon} name=${"download"} size=${14} /> Export Plist </button> <button class=${"btn btn-danger"} onClick=${async () => {
+                  ) : '\u2014'}</span>${job.blame && (
+                  html`<span class=${"info-label"}>Blame</span><span class=${"info-value"} style=${{ color: 'var(--status-failed)' }}>${job.blame}</span>`
+                )}${job.program && (
+                  html`<span class=${"info-label"}>Program</span><span class=${"info-value"}>${job.program}</span>`
+                )}${job.program_arguments && job.program_arguments.length > 0 && (
+                  html`<span class=${"info-label"}>Arguments</span><span class=${"info-value"}>${job.program_arguments.join(' ')}</span>`
+                )}${job.working_directory && (
+                  html`<span class=${"info-label"}>Working Dir</span><span class=${"info-value"}>${job.working_directory}</span>`
+                )}<span class=${"info-label"}>Stdout</span><span class=${"info-value"}>${job.stdout_path || '\u2014'}</span><span class=${"info-label"}>Stderr</span><span class=${"info-value"}>${job.stderr_path || '\u2014'}</span></div><div style=${{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}><button class=${"btn"} onClick=${() => runAction(job, job.enabled ? 'disable' : 'enable')}><${Icon} name=${"toggle-left"} size=${14} /> ${job.enabled ? 'Disable' : 'Enable'}</button><button class=${"btn"} onClick=${() => runAction(job, job.loaded ? 'unload' : 'load')}><${Icon} name=${job.loaded ? 'log-out' : 'log-in'} size=${14} /> ${job.loaded ? 'Unload' : 'Load'}</button><button class=${"btn"} onClick=${() => runAction(job, 'export')}><${Icon} name=${"download"} size=${14} /> Export Plist</button><button class=${"btn btn-danger"} onClick=${async () => {
                   const result = await runAction(job, 'delete');
                   if (result.ok) onClose();
-                }}><${Icon} name=${"trash-2"} size=${14} /> Delete Job</button> </div> </div>`
-          )} ${activeTab === 'edit' && (
-            html`<div class=${"animate-fade"}> <div class=${"plist-editor"}> <div class=${"plist-editor-header"}> <span>${job.plist_path}</span> <div style=${{ display: 'flex', gap: 8 }}> ${modified && html`<span style=${{ color: 'var(--accent)', fontSize: 11 }}>${'\u25CF'} Modified</span>`} <button class=${"btn btn-sm btn-accent"} onClick=${handleSavePlist} disabled=${!modified} style=${{ opacity: modified ? 1 : 0.5 }}> <${Icon} name=${"save"} size=${12} /> Save </button> <button class=${"btn btn-sm"} onClick=${handleSaveAndReload}> <${Icon} name=${"refresh-cw"} size=${12} /> Save & Reload </button> </div> </div> ${plistLoading ? (
+                }}><${Icon} name=${"trash-2"} size=${14} /> Delete Job</button></div></div>`
+          )}${activeTab === 'edit' && (
+            html`<div class=${"animate-fade"}><div class=${"plist-editor"}><div class=${"plist-editor-header"}><span>${job.plist_path}</span><div style=${{ display: 'flex', gap: 8 }}>${modified && html`<span style=${{ color: 'var(--accent)', fontSize: 11 }}>${'\u25CF'} Modified</span>`}<button class=${"btn btn-sm btn-accent"} onClick=${handleSavePlist} disabled=${!modified} style=${{ opacity: modified ? 1 : 0.5 }}><${Icon} name=${"save"} size=${12} /> Save</button><button class=${"btn btn-sm"} onClick=${handleSaveAndReload}><${Icon} name=${"refresh-cw"} size=${12} /> Save & Reload</button></div></div>${plistLoading ? (
                   html`<div style=${{ padding: 20, color: 'var(--text-tertiary)' }}>Loading plist...</div>`
                 ) : (
-                  html`<textarea value=${plistContent} onInput=${e => { setPlistContent(e.target.value); setModified(true); }} spellCheck=${false} />`
-                )} </div> </div>`
-          )} ${activeTab === 'logs' && (
-            html`<div class=${"animate-fade"}> <div class=${"log-viewer"}> <div class=${"log-toolbar"}> <div class=${"log-toolbar-left"}> ${['stderr', 'stdout', 'unified'].map(t => (
-                      html`<div key=${t} class=${'log-tab' + (logTab === t ? ' active' : '')} onClick=${() => setLogTab(t)}> ${t} </div>`
-                    ))} </div> <div style=${{ display: 'flex', gap: 4 }}> <button class=${"btn btn-sm btn-ghost"} onClick=${() => {
+                  html`<textarea value=${plistContent} onInput=${e => { setPlistContent(e.target.value); setModified(true); }} spellcheck=${false} />`
+                )}</div></div>`
+          )}${activeTab === 'logs' && (
+            html`<div class=${"animate-fade"}><div class=${"log-viewer"}><div class=${"log-toolbar"}><div class=${"log-toolbar-left"}>${['stderr', 'stdout', 'unified'].map(t => (
+                      html`<div key=${t} class=${'log-tab' + (logTab === t ? ' active' : '')} onClick=${() => setLogTab(t)}>${t}</div>`
+                    ))}</div><div style=${{ display: 'flex', gap: 4 }}><button class=${"btn btn-sm btn-ghost"} onClick=${() => {
                       // Refresh logs
                       setLogLoading(true);
                       api('/jobs/' + encoded + '/logs/' + logTab)
                         .then(data => { setLogContent(data.content || data.lines || ''); setLogLoading(false); })
                         .catch(err => { setLogContent('Error: ' + err.message); setLogLoading(false); });
-                    }}> <${Icon} name=${"refresh-cw"} size=${12} /> Refresh </button> </div> </div> <div class=${"log-content"}> ${logLoading ? (
+                    }}><${Icon} name=${"refresh-cw"} size=${12} /> Refresh</button></div></div><div class=${"log-content"}>${logLoading ? (
                     html`<div style=${{ color: 'var(--text-tertiary)' }}>Loading logs...</div>`
                   ) : (
                     typeof logContent === 'string' ? (
                       logContent.split('\\n').map((line, i) => (
-                        html`<div key=${i} class=${"log-line"}> <span class=${line.toLowerCase().includes('error') || line.toLowerCase().includes('traceback') ? 'error' : line.toLowerCase().includes('warn') ? 'warn' : ''}> ${line} </span> </div>`
+                        html`<div key=${i} class=${"log-line"}><span class=${line.toLowerCase().includes('error') || line.toLowerCase().includes('traceback') ? 'error' : line.toLowerCase().includes('warn') ? 'warn' : ''}>${line}</span></div>`
                       ))
                     ) : Array.isArray(logContent) ? (
                       logContent.map((line, i) => (
-                        html`<div key=${i} class=${"log-line"}> ${line.time && html`<span class=${"timestamp"}>${line.time} </span>`} <span class=${line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : ''}> ${line.text || line} </span> </div>`
+                        html`<div key=${i} class=${"log-line"}>${line.time && html`<span class=${"timestamp"}>${line.time} </span>`}<span class=${line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : ''}>${line.text || line}</span></div>`
                       ))
                     ) : null
-                  )} </div> </div> </div>`
-          )} </div> </div> `
+                  )}</div></div></div>`
+          )}</div></div>`
   );
 }
 
 // ---- Create Job Modal ----
-function CreateJobModal({ onClose, addToast }) {
+function CreateJobModal({ onClose, addToast, touchedRef }) {
   const [step, setStep] = useState('form'); // form | preview
   const [creating, setCreating] = useState(false);
   const [formData, setFormData] = useState({
@@ -1981,7 +1981,10 @@ function CreateJobModal({ onClose, addToast }) {
     workingDir: '',
   });
 
-  const update = (k, v) => setFormData(prev => ({ ...prev, [k]: v }));
+  const update = (k, v) => {
+    touchedRef.current = true;
+    setFormData(prev => ({ ...prev, [k]: v }));
+  };
 
   const buildPlistData = () => {
     const data = {
@@ -2100,11 +2103,11 @@ function CreateJobModal({ onClose, addToast }) {
   }, [formData]);
 
   return (
-    html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal"} onClick=${e => e.stopPropagation()}> <div class=${"modal-header"}> <div class=${"modal-title"}> <${Icon} name=${"plus-circle"} size=${18} /> Create New Job </div> <button class=${"icon-btn"} onClick=${onClose}> <${Icon} name=${"x"} size=${16} /> </button> </div> <div class=${"modal-body"}> ${step === 'form' ? (
-            html`<div class=${"animate-fade"}> <div class=${"form-group"}> <label class=${"form-label"}>Label (reverse-DNS)</label> <input class=${"form-input"} ref=${focusOnMount} placeholder=${"com.example.my-tool"} value=${formData.label} onInput=${e => update('label', e.target.value)} /> <div class=${"form-hint"}>Unique identifier, e.g. com.example.tool-name</div> </div> <div class=${"form-group"}> <label class=${"form-label"}>Program / Command</label> <input class=${"form-input"} placeholder=${"/usr/local/bin/python3"} value=${formData.program} onInput=${e => update('program', e.target.value)} /> </div> <div class=${"form-group"}> <label class=${"form-label"}>Arguments (one per line)</label> <textarea class=${"form-input"} rows=${3} placeholder=${"/path/to/script.py\\n--flag\\nvalue"} value=${formData.args} onInput=${e => update('args', e.target.value)} style=${{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /> </div> <div class=${"form-group"}> <label class=${"form-label"}>Domain</label> <select class=${"form-input"} value=${formData.domain} onInput=${e => update('domain', e.target.value)}> <option value=${"user-agent"}>User Agent (~/Library/LaunchAgents)</option> <option value=${"global-agent"}>Global Agent (/Library/LaunchAgents)</option> <option value=${"system-daemon"}>System Daemon (/Library/LaunchDaemons)</option> </select> </div>  <div style=${{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 14, marginBottom: 14 }}> <div style=${{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', marginBottom: 10 }}> Schedule </div> <div class=${"form-group"}> <label class=${"form-label"}>Schedule Type</label> <select class=${"form-input"} value=${formData.scheduleType} onInput=${e => update('scheduleType', e.target.value)}> <option value=${"none"}>None (manual start only)</option> <option value=${"interval"}>Interval (every N seconds)</option> <option value=${"calendar"}>Calendar (cron-like schedule)</option> <option value=${"watch"}>Watch Paths (run when files change)</option> </select> <div class=${"form-hint"}> ${formData.scheduleType === 'none' && 'Job will only run when started manually or via RunAtLoad/KeepAlive.'} ${formData.scheduleType === 'interval' && 'Job repeats at a fixed interval.'} ${formData.scheduleType === 'calendar' && 'Job runs at specific times (like cron). Leave fields blank for "any".'} ${formData.scheduleType === 'watch' && 'Job runs whenever the specified paths are modified.'} </div> </div> ${formData.scheduleType === 'interval' && (
-                  html`<div class=${"form-group animate-fade"}> <label class=${"form-label"}>Interval (seconds)</label> <div class=${"form-row"}> <div class=${"form-group"} style=${{ marginBottom: 0 }}> <input class=${"form-input"} type=${"number"} placeholder=${"e.g. 300"} value=${formData.startInterval} onInput=${e => update('startInterval', e.target.value)} /> </div> <div style=${{ display: 'flex', alignItems: 'center', color: 'var(--text-tertiary)', fontSize: 11 }}> ${formData.startInterval && ('= ' + (formData.startInterval >= 3600 ? Math.floor(formData.startInterval / 3600) + 'h ' + Math.floor((formData.startInterval % 3600) / 60) + 'm' : formData.startInterval >= 60 ? Math.floor(formData.startInterval / 60) + 'm ' + (formData.startInterval % 60) + 's' : formData.startInterval + 's'))} </div> </div> </div>`
-                )} ${formData.scheduleType === 'calendar' && (
-                  html`<div class=${"animate-fade"}> <div class=${"form-row"}> <div class=${"form-group"}> <label class=${"form-label"}>Hour (0-23)</label> <input class=${"form-input"} type=${"number"} min=${"0"} max=${"23"} placeholder=${"any"} value=${formData.calendarHour} onInput=${e => update('calendarHour', e.target.value)} /> </div> <div class=${"form-group"}> <label class=${"form-label"}>Minute (0-59)</label> <input class=${"form-input"} type=${"number"} min=${"0"} max=${"59"} placeholder=${"0"} value=${formData.calendarMinute} onInput=${e => update('calendarMinute', e.target.value)} /> </div> </div> <div class=${"form-group"}> <label class=${"form-label"}>Weekdays (click to select, leave empty for every day)</label> <div style=${{ display: 'flex', gap: 4 }}> ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, idx) => {
+    html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal"} onClick=${e => e.stopPropagation()}><div class=${"modal-header"}><div class=${"modal-title"}><${Icon} name=${"plus-circle"} size=${18} /> Create New Job</div><button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button></div><div class=${"modal-body"}>${step === 'form' ? (
+            html`<div class=${"animate-fade"}><div class=${"form-group"}><label class=${"form-label"}>Label (reverse-DNS)</label><input class=${"form-input"} ref=${focusOnMount} placeholder=${"com.example.my-tool"} value=${formData.label} onInput=${e => update('label', e.target.value)} /><div class=${"form-hint"}>Unique identifier, e.g. com.example.tool-name</div></div><div class=${"form-group"}><label class=${"form-label"}>Program / Command</label><input class=${"form-input"} placeholder=${"/usr/local/bin/python3"} value=${formData.program} onInput=${e => update('program', e.target.value)} /></div><div class=${"form-group"}><label class=${"form-label"}>Arguments (one per line)</label><textarea class=${"form-input"} rows=${3} placeholder=${"/path/to/script.py\\n--flag\\nvalue"} value=${formData.args} onInput=${e => update('args', e.target.value)} style=${{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></div><div class=${"form-group"}><label class=${"form-label"}>Domain</label><select class=${"form-input"} value=${formData.domain} onInput=${e => update('domain', e.target.value)}><option value=${"user-agent"}>User Agent (~/Library/LaunchAgents)</option><option value=${"global-agent"}>Global Agent (/Library/LaunchAgents)</option><option value=${"system-daemon"}>System Daemon (/Library/LaunchDaemons)</option></select></div><div style=${{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 14, marginBottom: 14 }}><div style=${{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', marginBottom: 10 }}>Schedule</div><div class=${"form-group"}><label class=${"form-label"}>Schedule Type</label><select class=${"form-input"} value=${formData.scheduleType} onInput=${e => update('scheduleType', e.target.value)}><option value=${"none"}>None (manual start only)</option><option value=${"interval"}>Interval (every N seconds)</option><option value=${"calendar"}>Calendar (cron-like schedule)</option><option value=${"watch"}>Watch Paths (run when files change)</option></select><div class=${"form-hint"}>${formData.scheduleType === 'none' && 'Job will only run when started manually or via RunAtLoad/KeepAlive.'}${formData.scheduleType === 'interval' && 'Job repeats at a fixed interval.'}${formData.scheduleType === 'calendar' && 'Job runs at specific times (like cron). Leave fields blank for "any".'}${formData.scheduleType === 'watch' && 'Job runs whenever the specified paths are modified.'}</div></div>${formData.scheduleType === 'interval' && (
+                  html`<div class=${"form-group animate-fade"}><label class=${"form-label"}>Interval (seconds)</label><div class=${"form-row"}><div class=${"form-group"} style=${{ marginBottom: 0 }}><input class=${"form-input"} type=${"number"} placeholder=${"e.g. 300"} value=${formData.startInterval} onInput=${e => update('startInterval', e.target.value)} /></div><div style=${{ display: 'flex', alignItems: 'center', color: 'var(--text-tertiary)', fontSize: 11 }}>${formData.startInterval && ('= ' + (formData.startInterval >= 3600 ? Math.floor(formData.startInterval / 3600) + 'h ' + Math.floor((formData.startInterval % 3600) / 60) + 'm' : formData.startInterval >= 60 ? Math.floor(formData.startInterval / 60) + 'm ' + (formData.startInterval % 60) + 's' : formData.startInterval + 's'))}</div></div></div>`
+                )}${formData.scheduleType === 'calendar' && (
+                  html`<div class=${"animate-fade"}><div class=${"form-row"}><div class=${"form-group"}><label class=${"form-label"}>Hour (0-23)</label><input class=${"form-input"} type=${"number"} min=${"0"} max=${"23"} placeholder=${"any"} value=${formData.calendarHour} onInput=${e => update('calendarHour', e.target.value)} /></div><div class=${"form-group"}><label class=${"form-label"}>Minute (0-59)</label><input class=${"form-input"} type=${"number"} min=${"0"} max=${"59"} placeholder=${"0"} value=${formData.calendarMinute} onInput=${e => update('calendarMinute', e.target.value)} /></div></div><div class=${"form-group"}><label class=${"form-label"}>Weekdays (click to select, leave empty for every day)</label><div style=${{ display: 'flex', gap: 4 }}>${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, idx) => {
                           const isSelected = formData.calendarWeekdays.includes(idx);
                           return (
                             html`<div key=${idx} onClick=${() => {
@@ -2124,11 +2127,11 @@ function CreateJobModal({ onClose, addToast }) {
                                 color: isSelected ? 'var(--text-inverse)' : 'var(--text-secondary)',
                                 border: '1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border-default)'),
                                 fontWeight: isSelected ? 600 : 400,
-                              }}> ${day} </div>`
+                              }}>${day}</div>`
                           );
-                        })} </div> <div class=${"form-hint"} style=${{ marginTop: 4 }}> ${formData.calendarWeekdays.length === 0
+                        })}</div><div class=${"form-hint"} style=${{ marginTop: 4 }}>${formData.calendarWeekdays.length === 0
                           ? 'Every day'
-                          : formData.calendarWeekdays.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')} </div> </div> <div class=${"form-group"}> <label class=${"form-label"}>Day of Month</label> <div style=${{ display: 'flex', gap: 6, alignItems: 'center' }}> <input class=${"form-input"} style=${{ width: 80 }} type=${"number"} min=${"1"} max=${"31"} placeholder=${"any"} value=${formData.calendarDay} onInput=${e => {
+                          : formData.calendarWeekdays.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}</div></div><div class=${"form-group"}><label class=${"form-label"}>Day of Month</label><div style=${{ display: 'flex', gap: 6, alignItems: 'center' }}><input class=${"form-input"} style=${{ width: 80 }} type=${"number"} min=${"1"} max=${"31"} placeholder=${"any"} value=${formData.calendarDay} onInput=${e => {
                             let v = e.target.value;
                             if (v !== '') {
                               const n = parseInt(v, 10);
@@ -2137,11 +2140,11 @@ function CreateJobModal({ onClose, addToast }) {
                               else if (n < 1 && v !== '') v = '1';
                             }
                             update('calendarDay', v);
-                          }} /> ${formData.calendarDay && (
-                          html`<button class=${"btn btn-sm btn-ghost"} onClick=${() => update('calendarDay', '')} title=${"Clear to "+String.fromCodePoint(39)+"any day"+String.fromCodePoint(39)}> <${Icon} name=${"x"} size=${12} /> Any </button>`
-                        )} ${!formData.calendarDay && (
+                          }} />${formData.calendarDay && (
+                          html`<button class=${"btn btn-sm btn-ghost"} onClick=${() => update('calendarDay', '')} title=${"Clear to "+String.fromCodePoint(39)+"any day"+String.fromCodePoint(39)}><${Icon} name=${"x"} size=${12} /> Any</button>`
+                        )}${!formData.calendarDay && (
                           html`<span style=${{ fontSize: 11, color: 'var(--text-tertiary)' }}>any day of month</span>`
-                        )} </div> </div> <div class=${"form-hint"} style=${{ marginTop: -8, marginBottom: 8 }}> Preview: ${(() => {
+                        )}</div></div><div class=${"form-hint"} style=${{ marginTop: -8, marginBottom: 8 }}>Preview: ${(() => {
                         const parts = [];
                         const wd = formData.calendarWeekdays;
                         if (wd.length > 0) parts.push(wd.map(d => ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][d]).join(', '));
@@ -2149,24 +2152,24 @@ function CreateJobModal({ onClose, addToast }) {
                         if (wd.length === 0 && !formData.calendarDay) parts.push('Daily');
                         parts.push('at ' + (formData.calendarHour || '*') + ':' + (formData.calendarMinute || '0').padStart(2, '0'));
                         return parts.join(' ');
-                      })()} </div> </div>`
-                )} ${formData.scheduleType === 'watch' && (
-                  html`<div class=${"form-group animate-fade"}> <label class=${"form-label"}>Watch Paths (one per line)</label> <textarea class=${"form-input"} rows=${3} placeholder=${"~/Downloads\\n/tmp/trigger-file"} value=${formData.watchPaths} onInput=${e => update('watchPaths', e.target.value)} style=${{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /> <div class=${"form-hint"}>Job runs whenever any of these paths are modified.</div> </div>`
-                )} </div> <div class=${"form-row"}> <div class=${"form-group"}> <label class=${"form-label"}>Stdout Path</label> <input class=${"form-input"} placeholder=${"/tmp/my-tool.log"} value=${formData.stdoutPath} onInput=${e => update('stdoutPath', e.target.value)} /> </div> <div class=${"form-group"}> <label class=${"form-label"}>Stderr Path</label> <input class=${"form-input"} placeholder=${"/tmp/my-tool.err"} value=${formData.stderrPath} onInput=${e => update('stderrPath', e.target.value)} /> </div> </div> <div class=${"form-group"}> <label class=${"form-label"}>Working Directory</label> <input class=${"form-input"} placeholder=${"(optional)"} value=${formData.workingDir} onInput=${e => update('workingDir', e.target.value)} /> </div> <div style=${{ marginTop: 8 }}> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Run at Load</span> <div class=${'toggle-switch' + (formData.runAtLoad ? ' on' : '')} onClick=${() => update('runAtLoad', !formData.runAtLoad)} /> </div> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Keep Alive</span> <div class=${'toggle-switch' + (formData.keepAlive ? ' on' : '')} onClick=${() => update('keepAlive', !formData.keepAlive)} /> </div> </div> </div>`
+                      })()}</div></div>`
+                )}${formData.scheduleType === 'watch' && (
+                  html`<div class=${"form-group animate-fade"}><label class=${"form-label"}>Watch Paths (one per line)</label><textarea class=${"form-input"} rows=${3} placeholder=${"~/Downloads\\n/tmp/trigger-file"} value=${formData.watchPaths} onInput=${e => update('watchPaths', e.target.value)} style=${{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /><div class=${"form-hint"}>Job runs whenever any of these paths are modified.</div></div>`
+                )}</div><div class=${"form-row"}><div class=${"form-group"}><label class=${"form-label"}>Stdout Path</label><input class=${"form-input"} placeholder=${"/tmp/my-tool.log"} value=${formData.stdoutPath} onInput=${e => update('stdoutPath', e.target.value)} /></div><div class=${"form-group"}><label class=${"form-label"}>Stderr Path</label><input class=${"form-input"} placeholder=${"/tmp/my-tool.err"} value=${formData.stderrPath} onInput=${e => update('stderrPath', e.target.value)} /></div></div><div class=${"form-group"}><label class=${"form-label"}>Working Directory</label><input class=${"form-input"} placeholder=${"(optional)"} value=${formData.workingDir} onInput=${e => update('workingDir', e.target.value)} /></div><div style=${{ marginTop: 8 }}><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Run at Load</span><div class=${'toggle-switch' + (formData.runAtLoad ? ' on' : '')} onClick=${() => update('runAtLoad', !formData.runAtLoad)} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Keep Alive</span><div class=${'toggle-switch' + (formData.keepAlive ? ' on' : '')} onClick=${() => update('keepAlive', !formData.keepAlive)} /></div></div></div>`
           ) : (
-            html`<div class=${"animate-fade"}> <div style=${{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}> Preview the generated plist before creating: </div> <div class=${"plist-preview"}>${previewXml}</div> </div>`
-          )} </div> <div class=${"modal-footer"}> ${step === 'preview' && (
-            html`<button class=${"btn"} onClick=${() => setStep('form')} style=${{ marginRight: 'auto' }}> <${Icon} name=${"arrow-left"} size=${14} /> Back </button>`
-          )} <button class=${"btn"} onClick=${onClose}>Cancel</button> ${step === 'form' ? (
-            html`<button class=${"btn btn-accent"} onClick=${() => setStep('preview')}> Preview Plist <${Icon} name=${"arrow-right"} size=${14} /> </button>`
+            html`<div class=${"animate-fade"}><div style=${{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>Preview the generated plist before creating:</div><div class=${"plist-preview"}>${previewXml}</div></div>`
+          )}</div><div class=${"modal-footer"}>${step === 'preview' && (
+            html`<button class=${"btn"} onClick=${() => setStep('form')} style=${{ marginRight: 'auto' }}><${Icon} name=${"arrow-left"} size=${14} /> Back</button>`
+          )}<button class=${"btn"} onClick=${onClose}>Cancel</button>${step === 'form' ? (
+            html`<button class=${"btn btn-accent"} onClick=${() => setStep('preview')}>Preview Plist <${Icon} name=${"arrow-right"} size=${14} /></button>`
           ) : (
-            html`<button class=${"btn btn-accent"} onClick=${handleCreate} disabled=${creating} style=${{ opacity: creating ? 0.6 : 1 }}> <${Icon} name=${"plus"} size=${14} /> ${creating ? 'Creating...' : 'Create & Load'} </button>`
-          )} </div> </div> </div>`
+            html`<button class=${"btn btn-accent"} onClick=${handleCreate} disabled=${creating} style=${{ opacity: creating ? 0.6 : 1 }}><${Icon} name=${"plus"} size=${14} /> ${creating ? 'Creating...' : 'Create & Load'}</button>`
+          )}</div></div></div>`
   );
 }
 
 // ---- Settings Modal ----
-function SettingsModal({ onClose, settings, setSettings, addToast }) {
+function SettingsModal({ onClose, settings, setSettings, addToast, touchedRef }) {
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -2186,7 +2189,7 @@ function SettingsModal({ onClose, settings, setSettings, addToast }) {
   };
 
   return (
-    html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal"} onClick=${e => e.stopPropagation()} style=${{ width: 480 }}> <div class=${"modal-header"}> <div class=${"modal-title"}><${Icon} name=${"settings"} size=${18} /> Settings</div> <button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button> </div> <div class=${"modal-body"}> <div class=${"settings-section"}> <div class=${"settings-section-title"}>Refresh</div> <div class=${"form-group"}> <label class=${"form-label"}>Poll Interval (seconds)</label> <input class=${"form-input"} type=${"number"} value=${settings.poll_interval} onInput=${e => setSettings(s => ({ ...s, poll_interval: Number(e.target.value) }))} style=${{ width: 120 }} /> <div class=${"form-hint"}>How often to refresh job status via WebSocket</div> </div> </div> <div class=${"settings-section"}> <div class=${"settings-section-title"}>Display</div> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Show Apple System Jobs</span> <div class=${'toggle-switch' + (settings.show_apple_jobs ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, show_apple_jobs: !s.show_apple_jobs }))} /> </div> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Dark Mode</span> <div class=${'toggle-switch' + (settings.dark_mode ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, dark_mode: !s.dark_mode }))} /> </div> </div> <div class=${"settings-section"}> <div class=${"settings-section-title"}>Safety</div> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Confirm before destructive actions</span> <div class=${'toggle-switch' + (settings.confirm_destructive ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_destructive: !s.confirm_destructive }))} /> </div> <div class=${"toggle-row"}> <span class=${"toggle-row-label"}>Confirm before modifying Apple jobs</span> <div class=${'toggle-switch' + (settings.confirm_apple_modify ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_apple_modify: !s.confirm_apple_modify }))} /> </div> </div> <div class=${"settings-section"}> <div class=${"settings-section-title"}>Keyboard Shortcuts</div> <div style=${{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}> <kbd class=${"kbd"}>s</kbd> <span>Start selected job</span> <kbd class=${"kbd"}>x</kbd> <span>Stop selected job</span> <kbd class=${"kbd"}>r</kbd> <span>Reload selected job</span> <kbd class=${"kbd"}>e</kbd> <span>Edit selected job</span> <kbd class=${"kbd"}>l</kbd> <span>View logs</span> <kbd class=${"kbd"}>n</kbd> <span>Create new job</span> <kbd class=${"kbd"}>Esc</kbd> <span>Close menu/dialog/panel, then deselect</span> <kbd class=${"kbd"}>/</kbd> <span>Focus search</span> <kbd class=${"kbd"}>?</kbd> <span>Open settings & shortcuts</span> </div> </div> </div> <div class=${"modal-footer"}> <button class=${"btn"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-accent"} onClick=${handleSave} disabled=${saving}> ${saving ? 'Saving...' : 'Save & Close'} </button> </div> </div> </div>`
+    html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal"} onClick=${e => e.stopPropagation()} style=${{ width: 480 }}><div class=${"modal-header"}><div class=${"modal-title"}><${Icon} name=${"settings"} size=${18} /> Settings</div><button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button></div><div class=${"modal-body"}><div class=${"settings-section"}><div class=${"settings-section-title"}>Refresh</div><div class=${"form-group"}><label class=${"form-label"}>Poll Interval (seconds)</label><input class=${"form-input"} type=${"number"} value=${settings.poll_interval} onInput=${e => { touchedRef.current = true; setSettings(s => ({ ...s, poll_interval: Number(e.target.value) })); }} style=${{ width: 120 }} /><div class=${"form-hint"}>How often to refresh job status via WebSocket</div></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Display</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Show Apple System Jobs</span><div class=${'toggle-switch' + (settings.show_apple_jobs ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, show_apple_jobs: !s.show_apple_jobs }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Dark Mode</span><div class=${'toggle-switch' + (settings.dark_mode ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, dark_mode: !s.dark_mode }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Safety</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before destructive actions</span><div class=${'toggle-switch' + (settings.confirm_destructive ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_destructive: !s.confirm_destructive }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before modifying Apple jobs</span><div class=${'toggle-switch' + (settings.confirm_apple_modify ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_apple_modify: !s.confirm_apple_modify }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Keyboard Shortcuts</div><div style=${{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}><kbd class=${"kbd"}>s</kbd> <span>Start selected job</span><kbd class=${"kbd"}>x</kbd> <span>Stop selected job</span><kbd class=${"kbd"}>r</kbd> <span>Reload selected job</span><kbd class=${"kbd"}>e</kbd> <span>Edit selected job</span><kbd class=${"kbd"}>l</kbd> <span>View logs</span><kbd class=${"kbd"}>n</kbd> <span>Create new job</span><kbd class=${"kbd"}>Esc</kbd> <span>Close menu/dialog/panel, then deselect</span><kbd class=${"kbd"}>/</kbd> <span>Focus search</span><kbd class=${"kbd"}>?</kbd> <span>Open settings & shortcuts</span></div></div></div><div class=${"modal-footer"}><button class=${"btn"} onClick=${onClose}>Cancel</button><button class=${"btn btn-accent"} onClick=${handleSave} disabled=${saving}>${saving ? 'Saving...' : 'Save & Close'}</button></div></div></div>`
   );
 }
 
@@ -2202,6 +2205,8 @@ function App() {
   const [detailInitialTab, setDetailInitialTab] = useState('info');
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const modalTouchedRef = useRef(false);
+  useLayoutEffect(() => { modalTouchedRef.current = false; }, [showCreate, showSettings]);
   const [showConfirm, setShowConfirm] = useState(null);
   const [actionMenu, setActionMenu] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -2280,20 +2285,23 @@ function App() {
     }
   }, [jobs]);
 
+  // Hiding Apple jobs removes the Apple option, so the filter falls back with the select.
+  const activeDomain = domainFilter === 'apple' && !showApple ? 'all' : domainFilter;
+
   // Filter jobs
   const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
       if (!showApple && isAppleJob(j)) return false;
-      if (domainFilter !== 'all') {
-        if (domainFilter === 'apple') {
+      if (activeDomain !== 'all') {
+        if (activeDomain === 'apple') {
           if (!isAppleJob(j)) return false;
-        } else if (j.domain !== domainFilter) return false;
+        } else if (j.domain !== activeDomain) return false;
       }
       if (statusFilter && getJobStatus(j) !== statusFilter) return false;
       if (search && !j.label.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
-  }, [jobs, search, domainFilter, statusFilter, showApple]);
+  }, [jobs, search, activeDomain, statusFilter, showApple]);
 
   // Import handler
   const fileInputRef = useRef(null);
@@ -2358,11 +2366,14 @@ function App() {
           setActionMenu(null);
           return;
         }
+        const modalOpen = showCreate || showSettings;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-          // Let the FilterBar's own Esc handler run first for search
+          // Let the FilterBar's own Esc handler run first for search. A modal field keeps
+          // anything typed into it, and never reaches past the modal to the detail panel.
+          if (modalOpen && !modalTouchedRef.current) { setShowCreate(false); setShowSettings(false); }
           return;
         }
-        if (detailJob || showCreate || showSettings) {
+        if (detailJob || modalOpen) {
           setDetailJob(null); setShowCreate(false); setShowSettings(false);
           return;
         }
@@ -2415,17 +2426,17 @@ function App() {
   ]);
 
   return (
-    html`<div class=${"app-shell"}>  <input ref=${fileInputRef} type=${"file"} accept=${".plist"} style=${{ display: 'none' }} onInput=${handleFileSelected} />  <div class=${"topbar"}> <div class=${"topbar-left"}> <span class=${"topbar-brand"}>launchmaster</span> <span class=${"topbar-subtitle"}>launchd control center</span> </div> <div class=${"topbar-right"}> <div class=${"topbar-ws-status"}> <div class=${'ws-dot' + (connected ? '' : ' disconnected')} /> <span>${connected ? 'Live' : 'Disconnected'}</span> </div> <button class=${"btn btn-sm"} onClick=${handleImport}> <${Icon} name=${"upload"} size=${13} /> Import </button> <button class=${"btn btn-sm btn-accent"} onClick=${() => setShowCreate(true)}> <${Icon} name=${"plus"} size=${13} /> New Job </button> <button class=${"icon-btn"} onClick=${() => { refresh(); addToast('success', 'Status refreshed'); }}> <${Icon} name=${"refresh-cw"} size=${16} /> </button> <button class=${"icon-btn"} onClick=${() => setShowSettings(true)}> <${Icon} name=${"settings"} size=${16} /> </button> </div> </div>  <div class=${"main-content"}> <${StatusCards} jobs=${filteredJobs} activeFilter=${statusFilter} setActiveFilter=${setStatusFilter} /> <${FailedPanel} jobs=${filteredJobs} onOpenDetail=${(j) => { setDetailInitialTab('info'); setDetailJob(j); }} onOpenLogs=${(j) => { setDetailInitialTab('logs'); setDetailJob(j); }} onOpenEdit=${(j) => { setDetailInitialTab('edit'); setDetailJob(j); }} onReload=${(j) => runAction(j, 'reload')} openActionMenu=${openActionMenu} /> <${FilterBar} search=${search} setSearch=${setSearch} domainFilter=${domainFilter} setDomainFilter=${setDomainFilter} showApple=${showApple} setShowApple=${setShowApple} activeFilter=${statusFilter} setActiveFilter=${setStatusFilter} /> <${BulkBar} count=${selected.length} onClear=${() => setSelected([])} selectedLabels=${selected} jobs=${jobs} addToast=${addToast} presentConfirm=${presentConfirm} settings=${settings} /> <${JobTable} jobs=${filteredJobs} selected=${selected} setSelected=${setSelected} onRowClick=${handleRowClick} showApple=${showApple} runAction=${runAction} openActionMenu=${openActionMenu} /> </div>  ${actionMenu && actionMenuJob && (
+    html`<div class=${"app-shell"}><input ref=${fileInputRef} type=${"file"} accept=${".plist"} style=${{ display: 'none' }} onInput=${handleFileSelected} /><div class=${"topbar"}><div class=${"topbar-left"}><span class=${"topbar-brand"}>launchmaster</span><span class=${"topbar-subtitle"}>launchd control center</span></div><div class=${"topbar-right"}><div class=${"topbar-ws-status"}><div class=${'ws-dot' + (connected ? '' : ' disconnected')} /><span>${connected ? 'Live' : 'Disconnected'}</span></div><button class=${"btn btn-sm"} onClick=${handleImport}><${Icon} name=${"upload"} size=${13} /> Import</button><button class=${"btn btn-sm btn-accent"} onClick=${() => setShowCreate(true)}><${Icon} name=${"plus"} size=${13} /> New Job</button><button class=${"icon-btn"} onClick=${() => { refresh(); addToast('success', 'Status refreshed'); }}><${Icon} name=${"refresh-cw"} size=${16} /></button><button class=${"icon-btn"} onClick=${() => setShowSettings(true)}><${Icon} name=${"settings"} size=${16} /></button></div></div><div class=${"main-content"}><${StatusCards} jobs=${filteredJobs} activeFilter=${statusFilter} setActiveFilter=${setStatusFilter} /><${FailedPanel} jobs=${filteredJobs} onOpenDetail=${(j) => { setDetailInitialTab('info'); setDetailJob(j); }} onOpenLogs=${(j) => { setDetailInitialTab('logs'); setDetailJob(j); }} onOpenEdit=${(j) => { setDetailInitialTab('edit'); setDetailJob(j); }} onReload=${(j) => runAction(j, 'reload')} openActionMenu=${openActionMenu} /><${FilterBar} search=${search} setSearch=${setSearch} domainFilter=${activeDomain} setDomainFilter=${setDomainFilter} showApple=${showApple} setShowApple=${setShowApple} activeFilter=${statusFilter} setActiveFilter=${setStatusFilter} /><${BulkBar} count=${selected.length} onClear=${() => setSelected([])} selectedLabels=${selected} jobs=${jobs} addToast=${addToast} presentConfirm=${presentConfirm} settings=${settings} /><${JobTable} jobs=${filteredJobs} selected=${selected} setSelected=${setSelected} onRowClick=${handleRowClick} showApple=${showApple} runAction=${runAction} openActionMenu=${openActionMenu} /></div>${actionMenu && actionMenuJob && (
         html`<${JobActionMenu} key=${actionMenu.label + ':' + actionMenu.x + ':' + actionMenu.y} job=${actionMenuJob} x=${actionMenu.x} y=${actionMenu.y} onClose=${closeActionMenu} runAction=${runAction} openDetail=${handleRowClick} />`
-      )}  ${detailJob && (
+      )}${detailJob && (
         html`<${DetailPanel} job=${detailJob} initialTab=${detailInitialTab} onClose=${() => setDetailJob(null)} addToast=${addToast} runAction=${runAction} />`
-      )}  ${showCreate && (
-        html`<${CreateJobModal} onClose=${() => setShowCreate(false)} addToast=${addToast} />`
-      )}  ${showSettings && (
-        html`<${SettingsModal} onClose=${() => setShowSettings(false)} settings=${settings} setSettings=${setSettings} addToast=${addToast} />`
-      )}  ${showConfirm && (
+      )}${showCreate && (
+        html`<${CreateJobModal} onClose=${() => setShowCreate(false)} addToast=${addToast} touchedRef=${modalTouchedRef} />`
+      )}${showSettings && (
+        html`<${SettingsModal} onClose=${() => setShowSettings(false)} settings=${settings} setSettings=${setSettings} addToast=${addToast} touchedRef=${modalTouchedRef} />`
+      )}${showConfirm && (
         html`<${ConfirmDialog} title=${showConfirm.title} message=${showConfirm.message} danger=${showConfirm.danger} onConfirm=${confirmCurrent} onCancel=${cancelConfirm} />`
-      )}  <${ToastContainer} toasts=${toasts} removeToast=${removeToast} /> </div>`
+      )}<${ToastContainer} toasts=${toasts} removeToast=${removeToast} /></div>`
   );
 }
 
@@ -3201,29 +3212,7 @@ def build_job_list(include_apple: bool = False) -> List[Dict[str, Any]]:
             continue
         jobs_by_label[label] = orphan
 
-    jobs = list(jobs_by_label.values())
-
-    # Test-only deterministic fixtures. Production runs never set this variable.
-    synthetic_jobs_path = os.environ.get("LAUNCHMASTER_SYNTHETIC_JOBS")
-    if synthetic_jobs_path:
-        try:
-            with open(synthetic_jobs_path, "r", encoding="utf-8") as f:
-                synthetic_jobs = json.load(f)
-            if not isinstance(synthetic_jobs, list):
-                raise ValueError("synthetic jobs file must contain a JSON list")
-            for synthetic_job in synthetic_jobs:
-                if not isinstance(synthetic_job, dict) or not synthetic_job.get("label"):
-                    raise ValueError(
-                        "each synthetic job must be an object with a label"
-                    )
-                if synthetic_job.get("is_apple", False) and not include_apple:
-                    continue
-                jobs.append(dict(synthetic_job))
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning("Unable to load synthetic jobs from %s: %s",
-                           synthetic_jobs_path, exc)
-
-    return jobs
+    return list(jobs_by_label.values())
 
 
 def get_job_status(job: Dict[str, Any]) -> str:

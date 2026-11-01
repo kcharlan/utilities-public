@@ -1989,7 +1989,7 @@ class ErrorBoundary extends preact.Component {
     render() {
         if (this.state.hasError) {
             return (
-                html`<div class=${"h-screen w-screen flex items-center justify-center p-6"} style=${{background:'#0a1628'}}> <div class=${"max-w-xl w-full rounded-xl border border-red-900/30 p-6 text-center"} style=${{background:'#0f1f3a'}}> <h2 class=${"text-lg font-bold text-red-400 mb-2"}>jtree UI Error</h2> <p class=${"text-sm text-slate-400 mb-4"}>A frontend error occurred. The backend is still running.</p> <pre class=${"text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left"}>${this.state.message}</pre> <div class=${"mt-4 flex justify-center"}> <button onClick=${() => window.location.reload()} class=${"btn btn-primary"}>Reload Page</button> </div> </div> </div>`
+                html`<div class=${"h-screen w-screen flex items-center justify-center p-6"} style=${{background:'#0a1628'}}><div class=${"max-w-xl w-full rounded-xl border border-red-900/30 p-6 text-center"} style=${{background:'#0f1f3a'}}><h2 class=${"text-lg font-bold text-red-400 mb-2"}>jtree UI Error</h2><p class=${"text-sm text-slate-400 mb-4"}>A frontend error occurred. The backend is still running.</p><pre class=${"text-xs bg-slate-900 text-red-200 rounded-lg p-3 overflow-auto text-left"}>${this.state.message}</pre><div class=${"mt-4 flex justify-center"}><button onClick=${() => window.location.reload()} class=${"btn btn-primary"}>Reload Page</button></div></div></div>`
             );
         }
         return this.props.children;
@@ -2283,7 +2283,7 @@ function computeLanes(positions, expandedSet, childrenCache, groupColors) {
 const LaneLayer = ({ lanes, isDark }) => {
     if (!lanes || lanes.length === 0) return null;
     return (
-        html`<${preact.Fragment}> ${lanes.map((lane) => (
+        html`<${preact.Fragment}>${lanes.map((lane) => (
                 html`<div key=${`lane-${lane.path}`} style=${{
                         position: 'absolute',
                         left: lane.x,
@@ -2297,7 +2297,7 @@ const LaneLayer = ({ lanes, isDark }) => {
                             : 'transparent',
                         pointerEvents: 'none',
                     }} />`
-            ))} <//>`
+            ))}<//>`
     );
 };
 
@@ -2314,9 +2314,9 @@ const Toast = ({ message, onClose }) => {
 const Breadcrumb = ({ path, onNavigate, isDark }) => {
     const segs = pathSegments(path);
     return (
-        html`<div class=${"flex items-center gap-1 px-3 py-1 overflow-x-auto"} style=${{minHeight: 28}}> ${segs.map((seg, i) => (
-                html`<${preact.Fragment} key=${seg.path}> ${i > 0 && html`<span class=${"text-xs opacity-40 mx-0.5"}>></span>`} <span class=${"breadcrumb-item"} style=${{ color: i === segs.length - 1 ? '#3b82f6' : undefined }} onClick=${() => onNavigate(seg.path)}> ${seg.label} </span> <//>`
-            ))} </div>`
+        html`<div class=${"flex items-center gap-1 px-3 py-1 overflow-x-auto"} style=${{minHeight: 28}}>${segs.map((seg, i) => (
+                html`<${preact.Fragment} key=${seg.path}>${i > 0 && html`<span class=${"text-xs opacity-40 mx-0.5"}>></span>`}<span class=${"breadcrumb-item"} style=${{ color: i === segs.length - 1 ? '#3b82f6' : undefined }} onClick=${() => onNavigate(seg.path)}>${seg.label}</span><//>`
+            ))}</div>`
     );
 };
 
@@ -2350,15 +2350,15 @@ const SearchBar = memo(({ onSearch, onClose, isDark }) => {
     }, [query, searchType]);
 
     return (
-        html`<div class=${"search-panel"}> <div class=${"p-3 flex flex-col gap-2"}> <div class=${"flex items-center gap-2"}> <${Icon} name=${"search"} size=${14} className=${"opacity-50"} /> <input ref=${inputRef} class=${"input-field flex-1"} placeholder=${"Search keys and values..."} value=${query} onInput=${e => setQuery(e.target.value)} onKeyDown=${e => e.key === 'Escape' && onClose()} /> <button class=${"btn btn-ghost p-1"} onClick=${onClose}><${Icon} name=${"x"} size=${14} /></button> </div> <div class=${"flex gap-1"}> ${['both', 'key', 'value'].map(t => (
+        html`<div class=${"search-panel"}><div class=${"p-3 flex flex-col gap-2"}><div class=${"flex items-center gap-2"}><${Icon} name=${"search"} size=${14} className=${"opacity-50"} /><input ref=${inputRef} class=${"input-field flex-1"} placeholder=${"Search keys and values..."} value=${query} onInput=${e => setQuery(e.target.value)} onKeyDown=${e => e.key === 'Escape' && onClose()} /><button class=${"btn btn-ghost p-1"} onClick=${onClose}><${Icon} name=${"x"} size=${14} /></button></div><div class=${"flex gap-1"}>${['both', 'key', 'value'].map(t => (
                         html`<button key=${t} class=${`text-xs px-2 py-1 rounded ${searchType === t ? 'bg-blue-600 text-white' : 'btn-ghost'}`} onClick=${() => setSearchType(t)}>${t}</button>`
-                    ))} </div> </div> ${results.length > 0 && (
-                html`<div class=${"overflow-y-auto max-h-[280px] border-t"} style=${{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}> ${results.map((r, i) => (
-                        html`<div key=${i} class=${"context-menu-item text-xs"} onClick=${() => onSearch(r.path)}> <span class=${"font-mono truncate flex-1"} style=${{color: r.matchType === 'key' ? '#4fc3f7' : '#66bb6a'}}> ${r.path} </span> <span class=${"truncate opacity-60 max-w-[100px]"}>${r.preview}</span> </div>`
-                    ))} </div>`
-            )} ${query && !loading && results.length === 0 && (
+                    ))}</div></div>${results.length > 0 && (
+                html`<div class=${"overflow-y-auto max-h-[280px] border-t"} style=${{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>${results.map((r, i) => (
+                        html`<div key=${i} class=${"context-menu-item text-xs"} onClick=${() => onSearch(r.path)}><span class=${"font-mono truncate flex-1"} style=${{color: r.matchType === 'key' ? '#4fc3f7' : '#66bb6a'}}>${r.path}</span><span class=${"truncate opacity-60 max-w-[100px]"}>${r.preview}</span></div>`
+                    ))}</div>`
+            )}${query && !loading && results.length === 0 && (
                 html`<div class=${"p-3 text-xs opacity-50 text-center border-t"} style=${{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>No results</div>`
-            )} </div>`
+            )}</div>`
     );
 });
 
@@ -2374,30 +2374,30 @@ const ContextMenu = ({ x, y, node, onClose, onAction, readonly, isDark, hasClipb
     const isRoot = node.path === '';
 
     return (
-        html`<div ref=${menuRef} class=${"context-menu"} style=${{ left: x, top: y }}> ${isContainer && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('toggleExpand', node); onClose(); }}> <${Icon} name=${"chevrons-right"} size=${14} /> Expand/Collapse </div>`
-            )} ${isContainer && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('expandAll', node); onClose(); }}> <${Icon} name=${"maximize-2"} size=${14} /> Expand All </div>`
-            )} ${isContainer && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('collapseAll', node); onClose(); }}> <${Icon} name=${"minimize-2"} size=${14} /> Collapse All </div>`
-            )} ${isContainer && html`<div class=${"context-menu-separator"} />`} ${!readonly && isContainer && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('addChild', node); onClose(); }}> <${Icon} name=${"plus"} size=${14} /> Add Child </div>`
-            )} ${!readonly && !isRoot && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('delete', node); onClose(); }}> <${Icon} name=${"trash-2"} size=${14} className=${"text-red-400"} /> Delete </div>`
-            )} ${!readonly && !isRoot && node._parentType === 'object' && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('rename', node); onClose(); }}> <${Icon} name=${"pencil"} size=${14} /> Rename Key </div>`
-            )} ${!readonly && node.childCount === 0 && node.type !== 'object' && node.type !== 'array' && (
-                html`<div class=${"context-menu-item"} onClick=${() => { onAction('editValue', node); onClose(); }}> <${Icon} name=${"edit"} size=${14} /> Edit Value </div>`
-            )} ${!readonly && !isRoot && node._parentType === 'array' && (() => {
+        html`<div ref=${menuRef} class=${"context-menu"} style=${{ left: x, top: y }}>${isContainer && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('toggleExpand', node); onClose(); }}><${Icon} name=${"chevrons-right"} size=${14} /> Expand/Collapse</div>`
+            )}${isContainer && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('expandAll', node); onClose(); }}><${Icon} name=${"maximize-2"} size=${14} /> Expand All</div>`
+            )}${isContainer && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('collapseAll', node); onClose(); }}><${Icon} name=${"minimize-2"} size=${14} /> Collapse All</div>`
+            )}${isContainer && html`<div class=${"context-menu-separator"} />`}${!readonly && isContainer && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('addChild', node); onClose(); }}><${Icon} name=${"plus"} size=${14} /> Add Child</div>`
+            )}${!readonly && !isRoot && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('delete', node); onClose(); }}><${Icon} name=${"trash-2"} size=${14} className=${"text-red-400"} /> Delete</div>`
+            )}${!readonly && !isRoot && node._parentType === 'object' && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('rename', node); onClose(); }}><${Icon} name=${"pencil"} size=${14} /> Rename Key</div>`
+            )}${!readonly && node.childCount === 0 && node.type !== 'object' && node.type !== 'array' && (
+                html`<div class=${"context-menu-item"} onClick=${() => { onAction('editValue', node); onClose(); }}><${Icon} name=${"edit"} size=${14} /> Edit Value</div>`
+            )}${!readonly && !isRoot && node._parentType === 'array' && (() => {
                 const idx = parseInt(node.path.split('.').pop(), 10);
                 return (
-                    html`<${preact.Fragment}> <div class=${"context-menu-separator"} /> <div class=${`context-menu-item ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (idx > 0) { onAction('moveUp', node); onClose(); } }}> <${Icon} name=${"arrow-up"} size=${14} /> Move Up </div> <div class=${`context-menu-item ${node._isLastInArray ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (!node._isLastInArray) { onAction('moveDown', node); onClose(); } }}> <${Icon} name=${"arrow-down"} size=${14} /> Move Down </div> <div class=${"context-menu-item"} onClick=${() => { onAction('moveTo', node); onClose(); }}> <${Icon} name=${"arrow-right-left"} size=${14} /> Move to Position... </div> <//>`
+                    html`<${preact.Fragment}><div class=${"context-menu-separator"} /><div class=${`context-menu-item ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (idx > 0) { onAction('moveUp', node); onClose(); } }}><${Icon} name=${"arrow-up"} size=${14} /> Move Up</div><div class=${`context-menu-item ${node._isLastInArray ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (!node._isLastInArray) { onAction('moveDown', node); onClose(); } }}><${Icon} name=${"arrow-down"} size=${14} /> Move Down</div><div class=${"context-menu-item"} onClick=${() => { onAction('moveTo', node); onClose(); }}><${Icon} name=${"arrow-right-left"} size=${14} /> Move to Position...</div><//>`
                 );
-            })()} <div class=${"context-menu-separator"} /> <div class=${"context-menu-item"} onClick=${() => { onAction('copyNode', node); onClose(); }}> <${Icon} name=${"copy"} size=${14} /> Copy Node </div> ${!readonly && isContainer && (
-                html`<div class=${`context-menu-item ${!hasClipboard ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (hasClipboard) { onAction('paste', node); onClose(); } }}> <${Icon} name=${"clipboard-paste"} size=${14} /> Paste </div>`
-            )} <div class=${"context-menu-separator"} /> <div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(node.path); onClose(); }}> <${Icon} name=${"link"} size=${14} /> Copy Path </div> ${node.childCount === 0 && (
-                html`<div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(String(node.value)); onClose(); }}> <${Icon} name=${"clipboard"} size=${14} /> Copy Value </div>`
-            )} </div>`
+            })()}<div class=${"context-menu-separator"} /><div class=${"context-menu-item"} onClick=${() => { onAction('copyNode', node); onClose(); }}><${Icon} name=${"copy"} size=${14} /> Copy Node</div>${!readonly && isContainer && (
+                html`<div class=${`context-menu-item ${!hasClipboard ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (hasClipboard) { onAction('paste', node); onClose(); } }}><${Icon} name=${"clipboard-paste"} size=${14} /> Paste</div>`
+            )}<div class=${"context-menu-separator"} /><div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(node.path); onClose(); }}><${Icon} name=${"link"} size=${14} /> Copy Path</div>${node.childCount === 0 && (
+                html`<div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(String(node.value)); onClose(); }}><${Icon} name=${"clipboard"} size=${14} /> Copy Value</div>`
+            )}</div>`
     );
 };
 
@@ -2417,23 +2417,23 @@ const GraphNode = memo(({ node, pos, groupColor, isExpanded, isSelected, isSearc
                 width: pos.width,
                 borderLeft: isLeaf ? 'none' : `4px solid ${ownColor}`,
                 background: isDark ? `linear-gradient(135deg, #0f1f3a, ${tc.bg})` : `linear-gradient(135deg, #ffffff, ${tc.bg})`,
-            }} onClick=${(e) => { e.stopPropagation(); onClick(node); }} onDblClick=${(e) => { e.stopPropagation(); onDoubleClick(node); }} onContextMenu=${(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, node); }}> <div style=${{ flex: 1, padding: '10px 12px', minWidth: 0 }}> <div class=${"flex items-center justify-between gap-2 mb-1"}> <span class=${"font-semibold truncate text-sm"} title=${displayKey}>${displayKey}</span> <span class=${"type-badge"} style=${{ background: tc.badgeBg, color: tc.text }}>${node.type}</span> </div> ${isLeaf ? (
-                    html`<div class=${"font-mono text-xs truncate opacity-80"} title=${String(node.value)}> ${formatValue(node.value, node.type)} </div>`
+            }} onClick=${(e) => { e.stopPropagation(); onClick(node); }} onDblClick=${(e) => { e.stopPropagation(); onDoubleClick(node); }} onContextMenu=${(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, node); }}><div style=${{ flex: 1, padding: '10px 12px', minWidth: 0 }}><div class=${"flex items-center justify-between gap-2 mb-1"}><span class=${"font-semibold truncate text-sm"} title=${displayKey}>${displayKey}</span><span class=${"type-badge"} style=${{ background: tc.badgeBg, color: tc.text }}>${node.type}</span></div>${isLeaf ? (
+                    html`<div class=${"font-mono text-xs truncate opacity-80"} title=${String(node.value)}>${formatValue(node.value, node.type)}</div>`
                 ) : (
-                    html`<div class=${"text-xs opacity-60"}> <span class=${"inline-flex items-center gap-1 hover:opacity-90"} onClick=${(e) => { e.stopPropagation(); onChevronClick(node); }} style=${{ cursor: 'pointer' }} title=${isExpanded ? 'Collapse' : 'Expand'}> <${Icon} name=${isExpanded ? "chevron-down" : "chevron-right"} size=${12} /> ${node.summary} </span> </div>`
-                )} </div> </div>`
+                    html`<div class=${"text-xs opacity-60"}><span class=${"inline-flex items-center gap-1 hover:opacity-90"} onClick=${(e) => { e.stopPropagation(); onChevronClick(node); }} style=${{ cursor: 'pointer' }} title=${isExpanded ? 'Collapse' : 'Expand'}><${Icon} name=${isExpanded ? "chevron-down" : "chevron-right"} size=${12} />${node.summary}</span></div>`
+                )}</div></div>`
     );
 });
 
 const SVGEdgeLayer = ({ edges, isDark, groupColors }) => {
     return (
-        html`<svg style=${{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}> ${edges.map((edge, i) => {
+        html`<svg style=${{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>${edges.map((edge, i) => {
                 const chain = groupColors?.get(edge.childPath);
                 const edgeColor = (chain && chain.length > 0) ? chain[chain.length - 1] : typeColor(edge.childType, isDark).border;
                 return (
                     html`<path key=${i} d=${bezierPath(edge.from, edge.to)} fill=${"none"} stroke=${edgeColor} stroke-width=${1.5} opacity=${0.4} />`
                 );
-            })} </svg>`
+            })}</svg>`
     );
 };
 
@@ -2503,9 +2503,9 @@ const Minimap = ({ positions, viewBox, canvasSize, onNavigate, isDark }) => {
     }, [minimapToWorld, viewBox, canvasSize, onNavigate, scale]);
 
     return (
-        html`<div class=${"minimap"} ref=${minimapRef} onMouseDown=${handleMouseDown} style=${{cursor: 'pointer'}}> <svg width=${200} height=${150}> ${allPositions.map(([path, pos]) => (
+        html`<div class=${"minimap"} ref=${minimapRef} onMouseDown=${handleMouseDown} style=${{cursor: 'pointer'}}><svg width=${200} height=${150}>${allPositions.map(([path, pos]) => (
                     html`<rect key=${path} x=${(pos.x - minX + 20) * scale} y=${(pos.y - minY + 20) * scale} width=${pos.width * scale} height=${pos.height * scale} rx=${2} fill=${isDark ? '#1a3a5c' : '#94a3b8'} opacity=${0.6} />`
-                ))} <rect x=${Math.max(0, vpLeft)} y=${Math.max(0, vpTop)} width=${Math.min(vpW, 200)} height=${Math.min(vpH, 150)} fill=${"none"} stroke=${"#3b82f6"} stroke-width=${2} rx=${2} /> </svg> </div>`
+                ))}<rect x=${Math.max(0, vpLeft)} y=${Math.max(0, vpTop)} width=${Math.min(vpW, 200)} height=${Math.min(vpH, 150)} fill=${"none"} stroke=${"#3b82f6"} stroke-width=${2} rx=${2} /></svg></div>`
     );
 };
 
@@ -2534,13 +2534,13 @@ const EditModal = ({ node, onSave, onClose, isDark }) => {
     };
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-3"}>Edit Value</h3> <div class=${"text-xs font-mono opacity-60 mb-2 truncate"}>${node.path || 'root'}</div> ${node.type === 'boolean' ? (
-                    html`<div class=${"flex gap-2 mb-4"}> <button class=${`btn ${value === true ? 'btn-primary' : 'btn-ghost'}`} onClick=${() => setValue(true)}>true</button> <button class=${`btn ${value === false ? 'btn-primary' : 'btn-ghost'}`} onClick=${() => setValue(false)}>false</button> </div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Edit Value</h3><div class=${"text-xs font-mono opacity-60 mb-2 truncate"}>${node.path || 'root'}</div>${node.type === 'boolean' ? (
+                    html`<div class=${"flex gap-2 mb-4"}><button class=${`btn ${value === true ? 'btn-primary' : 'btn-ghost'}`} onClick=${() => setValue(true)}>true</button><button class=${`btn ${value === false ? 'btn-primary' : 'btn-ghost'}`} onClick=${() => setValue(false)}>false</button></div>`
                 ) : node.type === 'null' ? (
                     html`<div class=${"text-sm opacity-60 mb-4 italic"}>Value is null</div>`
                 ) : (
                     html`<input class=${"input-field mb-4"} type=${node.type === 'number' ? 'number' : 'text'} value=${value} onInput=${e => setValue(node.type === 'number' ? e.target.value : e.target.value)} onKeyDown=${e => e.key === 'Enter' && handleSave()} ref=${focusOnMount} />`
-                )} <div class=${"flex justify-end gap-2"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> ${node.type !== 'null' && html`<button class=${"btn btn-primary"} onClick=${handleSave}>Save</button>`} </div> </div> </div>`
+                )}<div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button>${node.type !== 'null' && html`<button class=${"btn btn-primary"} onClick=${handleSave}>Save</button>`}</div></div></div>`
     );
 };
 
@@ -2556,31 +2556,31 @@ const AddChildModal = ({ parentNode, onSave, onClose }) => {
         if (childType === 'object') parsedValue = {};
         else if (childType === 'array') parsedValue = [];
         else if (childType === 'number') parsedValue = Number(value) || 0;
-        else if (childType === 'boolean') parsedValue = value === 'true';
+        else if (childType === 'boolean') parsedValue = value !== 'false';
         else if (childType === 'null') parsedValue = null;
         else parsedValue = value;
         onSave(parentNode.path, isObject ? key : null, parsedValue, childType);
     };
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-3"}>Add Child</h3> ${isObject && (
-                    html`<div class=${"mb-3"}> <label class=${"text-xs opacity-60 block mb-1"}>Key</label> <input class=${"input-field"} value=${key} onInput=${e => setKey(e.target.value)} ref=${focusOnMount} placeholder=${"key name"} /> </div>`
-                )} <div class=${"mb-3"}> <label class=${"text-xs opacity-60 block mb-1"}>Type</label> <select class=${"input-field"} value=${childType} onInput=${e => setChildType(e.target.value)}> ${['string', 'number', 'boolean', 'null', 'object', 'array'].map(t => (
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Add Child</h3>${isObject && (
+                    html`<div class=${"mb-3"}><label class=${"text-xs opacity-60 block mb-1"}>Key</label><input class=${"input-field"} value=${key} onInput=${e => setKey(e.target.value)} ref=${focusOnMount} placeholder=${"key name"} /></div>`
+                )}<div class=${"mb-3"}><label class=${"text-xs opacity-60 block mb-1"}>Type</label><select class=${"input-field"} value=${childType} onInput=${e => setChildType(e.target.value)}>${['string', 'number', 'boolean', 'null', 'object', 'array'].map(t => (
                             html`<option key=${t} value=${t}>${t}</option>`
-                        ))} </select> </div> ${!['object', 'array', 'null'].includes(childType) && (
-                    html`<div class=${"mb-4"}> <label class=${"text-xs opacity-60 block mb-1"}>Value</label> ${childType === 'boolean' ? (
-                            html`<select class=${"input-field"} value=${value} onInput=${e => setDefaultValue(e.target.value)}> <option value=${"true"}>true</option> <option value=${"false"}>false</option> </select>`
+                        ))}</select></div>${!['object', 'array', 'null'].includes(childType) && (
+                    html`<div class=${"mb-4"}><label class=${"text-xs opacity-60 block mb-1"}>Value</label>${childType === 'boolean' ? (
+                            html`<select class=${"input-field"} value=${value === 'false' ? 'false' : 'true'} onInput=${e => setDefaultValue(e.target.value)}><option value=${"true"}>true</option><option value=${"false"}>false</option></select>`
                         ) : (
                             html`<input class=${"input-field"} type=${childType === 'number' ? 'number' : 'text'} value=${value} onInput=${e => setDefaultValue(e.target.value)} onKeyDown=${e => e.key === 'Enter' && handleSave()} />`
-                        )} </div>`
-                )} <div class=${"flex justify-end gap-2"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-primary"} onClick=${handleSave}>Add</button> </div> </div> </div>`
+                        )}</div>`
+                )}<div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${handleSave}>Add</button></div></div></div>`
     );
 };
 
 const DeleteConfirmModal = ({ node, onConfirm, onClose }) => {
     const isSubtree = node.childCount > 0;
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-2 text-red-400"}>Delete Node</h3> <p class=${"text-sm mb-1"}> Delete <span class=${"font-mono text-xs"}>${node.path}</span>? </p> ${isSubtree && html`<p class=${"text-xs opacity-60 mb-4"}>This will delete the entire subtree (${node.childCount} children).</p>`} <div class=${"flex justify-end gap-2 mt-4"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-danger"} onClick=${() => onConfirm(node.path)}>Delete</button> </div> </div> </div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-2 text-red-400"}>Delete Node</h3><p class=${"text-sm mb-1"}>Delete <span class=${"font-mono text-xs"}>${node.path}</span>?</p>${isSubtree && html`<p class=${"text-xs opacity-60 mb-4"}>This will delete the entire subtree (${node.childCount} children).</p>`}<div class=${"flex justify-end gap-2 mt-4"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-danger"} onClick=${() => onConfirm(node.path)}>Delete</button></div></div></div>`
     );
 };
 
@@ -2589,7 +2589,7 @@ const RenameKeyModal = ({ node, onSave, onClose }) => {
     const [newKey, setNewKey] = useState(currentKey);
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-3"}>Rename Key</h3> <input class=${"input-field mb-4"} value=${newKey} onInput=${e => setNewKey(e.target.value)} onKeyDown=${e => e.key === 'Enter' && newKey.trim() && onSave(node.path, newKey.trim())} ref=${focusOnMount} /> <div class=${"flex justify-end gap-2"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-primary"} onClick=${() => newKey.trim() && onSave(node.path, newKey.trim())} disabled=${!newKey.trim()}>Rename</button> </div> </div> </div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Rename Key</h3><input class=${"input-field mb-4"} value=${newKey} onInput=${e => setNewKey(e.target.value)} onKeyDown=${e => e.key === 'Enter' && newKey.trim() && onSave(node.path, newKey.trim())} ref=${focusOnMount} /><div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${() => newKey.trim() && onSave(node.path, newKey.trim())} disabled=${!newKey.trim()}>Rename</button></div></div></div>`
     );
 };
 
@@ -2606,7 +2606,7 @@ const MoveToModal = ({ node, onMove, onClose }) => {
     };
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-3"}>Move to Position</h3> <div class=${"text-xs opacity-60 mb-2"}>Current position: ${currentIdx}</div> <label class=${"text-xs opacity-60 block mb-1"}>New position (0-based index)</label> <input class=${"input-field mb-4"} type=${"number"} min=${"0"} value=${targetIdx} onInput=${e => setTargetIdx(e.target.value)} onKeyDown=${e => e.key === 'Enter' && handleSave()} ref=${focusOnMount} /> <div class=${"flex justify-end gap-2"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-primary"} onClick=${handleSave} disabled=${targetIdx === '' || parseInt(targetIdx, 10) === currentIdx}>Move</button> </div> </div> </div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Move to Position</h3><div class=${"text-xs opacity-60 mb-2"}>Current position: ${currentIdx}</div><label class=${"text-xs opacity-60 block mb-1"}>New position (0-based index)</label><input class=${"input-field mb-4"} type=${"number"} min=${"0"} value=${targetIdx} onInput=${e => setTargetIdx(e.target.value)} onKeyDown=${e => e.key === 'Enter' && handleSave()} ref=${focusOnMount} /><div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${handleSave} disabled=${targetIdx === '' || parseInt(targetIdx, 10) === currentIdx}>Move</button></div></div></div>`
     );
 };
 
@@ -2655,13 +2655,13 @@ const SaveAsModal = ({ currentFile, onSave, onClose, onBrowserSave }) => {
     };
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-3"}>Save As</h3> <button class=${"btn btn-primary w-full flex items-center justify-center gap-2 py-3 mb-3"} onClick=${handleBrowserSave} disabled=${saving}> <${Icon} name=${"download"} size=${16} /> ${saving ? 'Saving...' : 'Choose location...'} </button> ${!showPathInput ? (
-                    html`<button class=${"w-full text-center text-xs opacity-50 hover:opacity-80 cursor-pointer py-2 px-3 rounded border border-dashed transition-all"} style=${{ borderColor: 'currentColor' }} onClick=${() => setShowPathInput(true)}> <${Icon} name=${"terminal"} size=${12} className=${"inline mr-1"} /> or save to a server path </button>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Save As</h3><button class=${"btn btn-primary w-full flex items-center justify-center gap-2 py-3 mb-3"} onClick=${handleBrowserSave} disabled=${saving}><${Icon} name=${"download"} size=${16} />${saving ? 'Saving...' : 'Choose location...'}</button>${!showPathInput ? (
+                    html`<button class=${"w-full text-center text-xs opacity-50 hover:opacity-80 cursor-pointer py-2 px-3 rounded border border-dashed transition-all"} style=${{ borderColor: 'currentColor' }} onClick=${() => setShowPathInput(true)}><${Icon} name=${"terminal"} size=${12} className=${"inline mr-1"} />or save to a server path</button>`
                 ) : (
-                    html`<div> <label class=${"text-xs opacity-60 block mb-1"}>Server file path</label> <input class=${"input-field mb-3"} value=${filePath} onInput=${e => setFilePath(e.target.value)} onKeyDown=${e => e.key === 'Enter' && filePath.trim() && onSave(filePath.trim())} ref=${focusOnMount} placeholder=${"/path/to/file.json"} /> <div class=${"flex justify-end gap-2"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> <button class=${"btn btn-primary"} onClick=${() => filePath.trim() && onSave(filePath.trim())} disabled=${!filePath.trim()}>Save</button> </div> </div>`
-                )} ${!showPathInput && (
-                    html`<div class=${"flex justify-end mt-3"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> </div>`
-                )} </div> </div>`
+                    html`<div><label class=${"text-xs opacity-60 block mb-1"}>Server file path</label><input class=${"input-field mb-3"} value=${filePath} onInput=${e => setFilePath(e.target.value)} onKeyDown=${e => e.key === 'Enter' && filePath.trim() && onSave(filePath.trim())} ref=${focusOnMount} placeholder=${"/path/to/file.json"} /><div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${() => filePath.trim() && onSave(filePath.trim())} disabled=${!filePath.trim()}>Save</button></div></div>`
+                )}${!showPathInput && (
+                    html`<div class=${"flex justify-end mt-3"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button></div>`
+                )}</div></div>`
     );
 };
 
@@ -2686,11 +2686,11 @@ const OpenFileModal = ({ onOpenContent, onOpenPath, onClose, error }) => {
     };
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}> <div class=${"modal-box"} onClick=${e => e.stopPropagation()}> <h3 class=${"text-sm font-semibold mb-4"}>Open JSON File</h3> <input ref=${fileInputRef} type=${"file"} accept=${".json,application/json"} onInput=${handleFileSelect} style=${{display: 'none'}} /> <button class=${"btn btn-primary flex items-center gap-2 w-full justify-center py-3 mb-3"} onClick=${() => fileInputRef.current?.click()} disabled=${loading}> <${Icon} name=${"folder-open"} size=${16} /> ${loading ? 'Loading...' : 'Choose file...'} </button> ${error && html`<div class=${"text-xs text-red-400 mb-2"}>${error}</div>`} ${!showPathInput ? (
-                    html`<div class=${"text-center mt-3"}> <button class=${"text-xs opacity-50 hover:opacity-80 flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded border"} style=${{ borderColor: 'currentColor', borderStyle: 'dashed' }} onClick=${() => setShowPathInput(true)}> <${Icon} name=${"terminal"} size=${12} /> Enter a server path instead </button> </div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-4"}>Open JSON File</h3><input ref=${fileInputRef} type=${"file"} accept=${".json,application/json"} onInput=${handleFileSelect} style=${{display: 'none'}} /><button class=${"btn btn-primary flex items-center gap-2 w-full justify-center py-3 mb-3"} onClick=${() => fileInputRef.current?.click()} disabled=${loading}><${Icon} name=${"folder-open"} size=${16} />${loading ? 'Loading...' : 'Choose file...'}</button>${error && html`<div class=${"text-xs text-red-400 mb-2"}>${error}</div>`}${!showPathInput ? (
+                    html`<div class=${"text-center mt-3"}><button class=${"text-xs opacity-50 hover:opacity-80 flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded border"} style=${{ borderColor: 'currentColor', borderStyle: 'dashed' }} onClick=${() => setShowPathInput(true)}><${Icon} name=${"terminal"} size=${12} />Enter a server path instead</button></div>`
                 ) : (
-                    html`<div class=${"mt-3"}> <label class=${"text-xs opacity-50 block mb-1"}>Server path</label> <div class=${"flex gap-2"}> <input class=${"input-field flex-1"} value=${filePath} onInput=${e => setFilePath(e.target.value)} onKeyDown=${e => e.key === 'Enter' && filePath.trim() && onOpenPath(filePath.trim())} ref=${focusOnMount} placeholder=${"/path/to/file.json"} /> <button class=${"btn btn-primary"} onClick=${() => filePath.trim() && onOpenPath(filePath.trim())} disabled=${!filePath.trim()}>Open</button> </div> </div>`
-                )} <div class=${"flex justify-end mt-4"}> <button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button> </div> </div> </div>`
+                    html`<div class=${"mt-3"}><label class=${"text-xs opacity-50 block mb-1"}>Server path</label><div class=${"flex gap-2"}><input class=${"input-field flex-1"} value=${filePath} onInput=${e => setFilePath(e.target.value)} onKeyDown=${e => e.key === 'Enter' && filePath.trim() && onOpenPath(filePath.trim())} ref=${focusOnMount} placeholder=${"/path/to/file.json"} /><button class=${"btn btn-primary"} onClick=${() => filePath.trim() && onOpenPath(filePath.trim())} disabled=${!filePath.trim()}>Open</button></div></div>`
+                )}<div class=${"flex justify-end mt-4"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button></div></div></div>`
     );
 };
 
@@ -2715,17 +2715,17 @@ const NavSidebarItem = ({ node, depth, activePath, sidebarExpanded, onToggle, on
     }, [isActive]);
 
     return (
-        html`<div> <div ref=${itemRef} class=${`nav-tree-item ${isActive ? 'active' : ''}`} style=${{ paddingLeft: depth * 14 + 4 }} onClick=${(e) => { e.stopPropagation(); onNavigate(node.path); }}> ${hasExpandableChildren ? (
-                    html`<span class=${`nav-twisty ${isOpen ? 'open' : ''}`} onClick=${(e) => { e.stopPropagation(); onToggle(node.path); }}> <svg width=${"8"} height=${"8"} viewBox=${"0 0 8 8"}> <path d=${"M2 1 L6 4 L2 7"} fill=${"none"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /> </svg> </span>`
+        html`<div><div ref=${itemRef} class=${`nav-tree-item ${isActive ? 'active' : ''}`} style=${{ paddingLeft: depth * 14 + 4 }} onClick=${(e) => { e.stopPropagation(); onNavigate(node.path); }}>${hasExpandableChildren ? (
+                    html`<span class=${`nav-twisty ${isOpen ? 'open' : ''}`} onClick=${(e) => { e.stopPropagation(); onToggle(node.path); }}><svg width=${"8"} height=${"8"} viewBox=${"0 0 8 8"}><path d=${"M2 1 L6 4 L2 7"} fill=${"none"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /></svg></span>`
                 ) : (
                     html`<span style=${{ width: 16, flexShrink: 0 }} />`
-                )} <span class=${"nav-type-dot"} style=${{ background: typeColor }} /> <span class=${"truncate font-mono"} style=${{ fontSize: 13 }} title=${node.path || 'root'}> ${displayKey} </span> <span style=${{ fontSize: 12, opacity: 0.35, marginLeft: 'auto', paddingLeft: 6, flexShrink: 0 }}> ${isObj ? `{${node.childCount}}` : `[${node.childCount}]`} </span> </div> ${isOpen && node._navChildren && (
-                html`<div> ${node._navChildren
+                )}<span class=${"nav-type-dot"} style=${{ background: typeColor }} /><span class=${"truncate font-mono"} style=${{ fontSize: 13 }} title=${node.path || 'root'}>${displayKey}</span><span style=${{ fontSize: 12, opacity: 0.35, marginLeft: 'auto', paddingLeft: 6, flexShrink: 0 }}>${isObj ? `{${node.childCount}}` : `[${node.childCount}]`}</span></div>${isOpen && node._navChildren && (
+                html`<div>${node._navChildren
                         .filter(c => c.type === 'object' || c.type === 'array')
                         .map(child => (
                             html`<${NavSidebarItem} key=${child.path} node=${child} depth=${depth + 1} activePath=${activePath} sidebarExpanded=${sidebarExpanded} onToggle=${onToggle} onNavigate=${onNavigate} isDark=${isDark} />`
-                        ))} </div>`
-            )} </div>`
+                        ))}</div>`
+            )}</div>`
     );
 };
 
@@ -2833,13 +2833,13 @@ const NavSidebar = ({ rootNode, activePath, onNavigate, isDark, isOpen, onToggle
     if (!enrichedRoot) return null;
 
     return (
-        html`<div class=${"nav-sidebar"} style=${{ width: isOpen ? 280 : 28 }}> ${!isOpen && (
-                html`<div class=${"nav-rail"} onClick=${onToggleOpen} title=${"Open navigator (Ctrl+B)"}> <span class=${"nav-rail-icon"}> <${Icon} name=${"list-tree"} size=${15} /> </span> <span class=${"nav-rail-label"}>Nav</span> </div>`
-            )} ${isOpen && (
-                html`<div style=${{ width: 280, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}> <div class=${"px-3 py-2 flex items-center gap-2 flex-shrink-0"} style=${{
+        html`<div class=${"nav-sidebar"} style=${{ width: isOpen ? 280 : 28 }}>${!isOpen && (
+                html`<div class=${"nav-rail"} onClick=${onToggleOpen} title=${"Open navigator (Ctrl+B)"}><span class=${"nav-rail-icon"}><${Icon} name=${"list-tree"} size=${15} /></span><span class=${"nav-rail-label"}>Nav</span></div>`
+            )}${isOpen && (
+                html`<div style=${{ width: 280, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}><div class=${"px-3 py-2 flex items-center gap-2 flex-shrink-0"} style=${{
                         borderBottom: `1px solid ${isDark ? '#1a3a5c' : '#e2e8f0'}`,
-                    }}> <${Icon} name=${"list-tree"} size=${13} className=${"opacity-40"} /> <span class=${"text-xs font-semibold opacity-50 uppercase tracking-wider flex-1"}>Navigator</span> <button class=${"btn btn-ghost p-0.5 opacity-40 hover:opacity-80"} onClick=${onToggleOpen} title=${"Close navigator (Ctrl+B)"} style=${{ lineHeight: 0 }}> <${Icon} name=${"panel-left-close"} size=${14} /> </button> </div> <div class=${"flex-1 overflow-y-auto overflow-x-hidden py-1 px-1"} style=${{ scrollbarGutter: 'stable' }}> <${NavSidebarItem} node=${enrichedRoot} depth=${0} activePath=${activePath} sidebarExpanded=${sidebarExpanded} onToggle=${handleToggle} onNavigate=${onNavigate} isDark=${isDark} /> </div> </div>`
-            )} </div>`
+                    }}><${Icon} name=${"list-tree"} size=${13} className=${"opacity-40"} /><span class=${"text-xs font-semibold opacity-50 uppercase tracking-wider flex-1"}>Navigator</span><button class=${"btn btn-ghost p-0.5 opacity-40 hover:opacity-80"} onClick=${onToggleOpen} title=${"Close navigator (Ctrl+B)"} style=${{ lineHeight: 0 }}><${Icon} name=${"panel-left-close"} size=${14} /></button></div><div class=${"flex-1 overflow-y-auto overflow-x-hidden py-1 px-1"} style=${{ scrollbarGutter: 'stable' }}><${NavSidebarItem} node=${enrichedRoot} depth=${0} activePath=${activePath} sidebarExpanded=${sidebarExpanded} onToggle=${handleToggle} onNavigate=${onNavigate} isDark=${isDark} /></div></div>`
+            )}</div>`
     );
 };
 
@@ -3760,82 +3760,82 @@ const App = () => {
 
     if (stillLoading) {
         return (
-            html`<div class=${"h-screen w-screen flex items-center justify-center"}> <div class=${"text-sm opacity-50"}>Loading...</div> </div>`
+            html`<div class=${"h-screen w-screen flex items-center justify-center"}><div class=${"text-sm opacity-50"}>Loading...</div></div>`
         );
     }
 
     return (
-        html`<div class=${"h-screen w-screen flex flex-col overflow-hidden"}>  <div class=${"flex items-center justify-between px-4 h-14 border-b flex-shrink-0"} style=${{
+        html`<div class=${"h-screen w-screen flex flex-col overflow-hidden"}><div class=${"flex items-center justify-between px-4 h-14 border-b flex-shrink-0"} style=${{
                      background: isDark ? '#0d1b30' : '#ffffff',
                      borderColor: isDark ? '#1a3a5c' : '#e2e8f0',
                      position: 'relative',
                      zIndex: 50,
-                 }}> <div class=${"flex items-center gap-3"}> <span class=${"text-base font-semibold text-node-type-object"}>jtree</span> <span class=${"text-xs opacity-40 font-mono"}>${status?.file || status?.fileName}</span> ${(status?.file || status?.fileName) && (
-                        html`<button class=${"btn btn-ghost p-0.5 opacity-40 hover:opacity-80"} title=${"Copy path to clipboard"} onClick=${() => { const text = status.file || status.fileName; navigator.clipboard.writeText(text); setToast('Copied to clipboard'); }}> <${Icon} name=${"clipboard-copy"} size=${12} /> </button>`
-                    )} ${status?.dirty && html`<span class=${"text-xs text-amber-400 font-medium"}>unsaved</span>`} ${status?.readonly && html`<span class=${"text-xs px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400"}>readonly</span>`} </div> <div class=${"flex items-center gap-1"}> <button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => { setOpenError(null); setModal({ type: 'open' }); }} title=${"Open file (Ctrl+O)"}> <${Icon} name=${"folder-open"} size=${14} /> Open </button> ${status?.loaded && !status?.readonly && (
-                        html` <button class=${"btn btn-ghost flex items-center gap-1"} onClick=${handleUndo} title=${"Undo (Ctrl+Z)"} disabled=${!status?.canUndo}> <${Icon} name=${"undo-2"} size=${14} /> Undo </button> <button class=${"btn btn-ghost flex items-center gap-1"} onClick=${handleRedo} title=${"Redo (Ctrl+Shift+Z)"} disabled=${!status?.canRedo}> <${Icon} name=${"redo-2"} size=${14} /> Redo </button> ${status?.hasFilePath ? (
-                                html`<button class=${"btn btn-primary flex items-center gap-1"} onClick=${handleSave} title=${"Save (Ctrl+S)"}> <${Icon} name=${"save"} size=${14} /> Save </button>`
+                 }}><div class=${"flex items-center gap-3"}><span class=${"text-base font-semibold text-node-type-object"}>jtree</span><span class=${"text-xs opacity-40 font-mono"}>${status?.file || status?.fileName}</span>${(status?.file || status?.fileName) && (
+                        html`<button class=${"btn btn-ghost p-0.5 opacity-40 hover:opacity-80"} title=${"Copy path to clipboard"} onClick=${() => { const text = status.file || status.fileName; navigator.clipboard.writeText(text); setToast('Copied to clipboard'); }}><${Icon} name=${"clipboard-copy"} size=${12} /></button>`
+                    )}${status?.dirty && html`<span class=${"text-xs text-amber-400 font-medium"}>unsaved</span>`}${status?.readonly && html`<span class=${"text-xs px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400"}>readonly</span>`}</div><div class=${"flex items-center gap-1"}><button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => { setOpenError(null); setModal({ type: 'open' }); }} title=${"Open file (Ctrl+O)"}><${Icon} name=${"folder-open"} size=${14} /> Open</button>${status?.loaded && !status?.readonly && (
+                        html`<button class=${"btn btn-ghost flex items-center gap-1"} onClick=${handleUndo} title=${"Undo (Ctrl+Z)"} disabled=${!status?.canUndo}><${Icon} name=${"undo-2"} size=${14} /> Undo</button><button class=${"btn btn-ghost flex items-center gap-1"} onClick=${handleRedo} title=${"Redo (Ctrl+Shift+Z)"} disabled=${!status?.canRedo}><${Icon} name=${"redo-2"} size=${14} /> Redo</button>${status?.hasFilePath ? (
+                                html`<button class=${"btn btn-primary flex items-center gap-1"} onClick=${handleSave} title=${"Save (Ctrl+S)"}><${Icon} name=${"save"} size=${14} /> Save</button>`
                             ) : (
-                                html`<button class=${"btn btn-primary flex items-center gap-1"} onClick=${() => setModal({ type: 'saveAs' })} title=${"Save As (Ctrl+S)"}> <${Icon} name=${"save"} size=${14} /> Save As </button>`
-                            )} ${status?.hasFilePath && (
-                                html`<button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setModal({ type: 'saveAs' })} title=${"Save As..."}> <${Icon} name=${"file-down"} size=${14} /> Save As </button>`
-                            )} `
-                    )} ${status?.loaded && (
-                        html`<div style=${{ position: 'relative', display: 'inline-block' }}> <button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setShowExportMenu(s => !s)} title=${"Export view"}> <${Icon} name=${"image"} size=${14} /> Export </button> ${showExportMenu && (
-                                html`<div class=${"context-menu"} style=${{ position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 140, zIndex: 100 }}> <div class=${"context-menu-item"} onClick=${() => handleExport('png')}> <${Icon} name=${"image"} size=${14} /> PNG </div> <div class=${"context-menu-item"} onClick=${() => handleExport('svg')}> <${Icon} name=${"file-code"} size=${14} /> SVG </div> <div class=${"context-menu-item"} onClick=${() => handleExport('jpeg')}> <${Icon} name=${"file-image"} size=${14} /> JPEG </div> </div>`
-                            )} </div>`
-                    )} ${status?.loaded && (
-                        html`<button class=${`btn btn-ghost flex items-center gap-1 ${showNav ? 'opacity-100' : ''}`} onClick=${() => setShowNav(s => !s)} title=${"Navigator (Ctrl+B)"}> <${Icon} name=${"list-tree"} size=${14} /> </button>`
-                    )} ${status?.loaded && (
-                        html`<button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setShowSearch(s => !s)} title=${"Search (Ctrl+F)"}> <${Icon} name=${"search"} size=${14} /> </button>`
-                    )} <button class=${"btn btn-ghost"} onClick=${() => setIsDark(d => !d)} title=${"Toggle theme"}> <${Icon} name=${isDark ? 'sun' : 'moon'} size=${14} /> </button> </div> </div>  ${!noFileLoaded && (
+                                html`<button class=${"btn btn-primary flex items-center gap-1"} onClick=${() => setModal({ type: 'saveAs' })} title=${"Save As (Ctrl+S)"}><${Icon} name=${"save"} size=${14} /> Save As</button>`
+                            )}${status?.hasFilePath && (
+                                html`<button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setModal({ type: 'saveAs' })} title=${"Save As..."}><${Icon} name=${"file-down"} size=${14} /> Save As</button>`
+                            )}`
+                    )}${status?.loaded && (
+                        html`<div style=${{ position: 'relative', display: 'inline-block' }}><button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setShowExportMenu(s => !s)} title=${"Export view"}><${Icon} name=${"image"} size=${14} /> Export</button>${showExportMenu && (
+                                html`<div class=${"context-menu"} style=${{ position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 140, zIndex: 100 }}><div class=${"context-menu-item"} onClick=${() => handleExport('png')}><${Icon} name=${"image"} size=${14} /> PNG</div><div class=${"context-menu-item"} onClick=${() => handleExport('svg')}><${Icon} name=${"file-code"} size=${14} /> SVG</div><div class=${"context-menu-item"} onClick=${() => handleExport('jpeg')}><${Icon} name=${"file-image"} size=${14} /> JPEG</div></div>`
+                            )}</div>`
+                    )}${status?.loaded && (
+                        html`<button class=${`btn btn-ghost flex items-center gap-1 ${showNav ? 'opacity-100' : ''}`} onClick=${() => setShowNav(s => !s)} title=${"Navigator (Ctrl+B)"}><${Icon} name=${"list-tree"} size=${14} /></button>`
+                    )}${status?.loaded && (
+                        html`<button class=${"btn btn-ghost flex items-center gap-1"} onClick=${() => setShowSearch(s => !s)} title=${"Search (Ctrl+F)"}><${Icon} name=${"search"} size=${14} /></button>`
+                    )}<button class=${"btn btn-ghost"} onClick=${() => setIsDark(d => !d)} title=${"Toggle theme"}><${Icon} name=${isDark ? 'sun' : 'moon'} size=${14} /></button></div></div>${!noFileLoaded && (
                 html`<div class=${"border-b flex-shrink-0"} style=${{
                     background: isDark ? '#0b1726' : '#f8fafc',
                     borderColor: isDark ? '#1a3a5c' : '#e2e8f0',
                     position: 'relative',
                     zIndex: 40,
-                }}> <${Breadcrumb} path=${selectedPath} onNavigate=${handleBreadcrumbNavigate} isDark=${isDark} /> </div>`
-            )}  ${noFileLoaded ? (
-                html`<div class=${"flex-1 blueprint-grid flex items-center justify-center"}> <div class=${"text-center"} style=${{maxWidth: 400}}> <div class=${"text-4xl font-bold mb-3 text-node-type-object"}>jtree</div> <p class=${"text-sm opacity-50 mb-6"}>Interactive JSON Viewer & Editor</p> <button class=${"btn btn-primary flex items-center gap-2 mx-auto text-base px-6 py-3"} onClick=${() => { setOpenError(null); setModal({ type: 'open' }); }}> <${Icon} name=${"folder-open"} size=${18} /> Open a JSON file </button> <p class=${"text-xs opacity-30 mt-4 font-mono"}>or run: jtree ${String.fromCodePoint(60)}file.json></p> </div> </div>`
+                }}><${Breadcrumb} path=${selectedPath} onNavigate=${handleBreadcrumbNavigate} isDark=${isDark} /></div>`
+            )}${noFileLoaded ? (
+                html`<div class=${"flex-1 blueprint-grid flex items-center justify-center"}><div class=${"text-center"} style=${{maxWidth: 400}}><div class=${"text-4xl font-bold mb-3 text-node-type-object"}>jtree</div><p class=${"text-sm opacity-50 mb-6"}>Interactive JSON Viewer & Editor</p><button class=${"btn btn-primary flex items-center gap-2 mx-auto text-base px-6 py-3"} onClick=${() => { setOpenError(null); setModal({ type: 'open' }); }}><${Icon} name=${"folder-open"} size=${18} /> Open a JSON file</button><p class=${"text-xs opacity-30 mt-4 font-mono"}>or run: jtree ${String.fromCodePoint(60)}file.json></p></div></div>`
             ) : (
-            html`<div class=${"flex flex-1 overflow-hidden"}>  <${NavSidebar} rootNode=${rootNode} activePath=${selectedPath} onNavigate=${handleNavSidebarNavigate} isDark=${isDark} isOpen=${showNav} onToggleOpen=${() => setShowNav(s => !s)} />  <div ref=${canvasRef} class=${"flex-1 relative blueprint-grid"} style=${{ cursor: isPanning ? 'grabbing' : 'grab' }} onWheel=${handleWheel} onMouseDown=${handleMouseDown} onMouseMove=${handleMouseMove} onMouseUp=${handleMouseUp} onMouseLeave=${handleMouseUp} onClick=${() => { setContextMenu(null); setShowExportMenu(false); }}> <div ref=${graphContentRef} style=${{
+            html`<div class=${"flex flex-1 overflow-hidden"}><${NavSidebar} rootNode=${rootNode} activePath=${selectedPath} onNavigate=${handleNavSidebarNavigate} isDark=${isDark} isOpen=${showNav} onToggleOpen=${() => setShowNav(s => !s)} /><div ref=${canvasRef} class=${"flex-1 relative blueprint-grid"} style=${{ cursor: isPanning ? 'grabbing' : 'grab' }} onWheel=${handleWheel} onMouseDown=${handleMouseDown} onMouseMove=${handleMouseMove} onMouseUp=${handleMouseUp} onMouseLeave=${handleMouseUp} onClick=${() => { setContextMenu(null); setShowExportMenu(false); }}><div ref=${graphContentRef} style=${{
                         transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                         transformOrigin: '0 0',
                         position: 'absolute',
                         top: 0,
                         left: 0,
-                    }}> <${LaneLayer} lanes=${lanes} isDark=${isDark} /> <${SVGEdgeLayer} edges=${edges} isDark=${isDark} groupColors=${groupColors} /> ${visibleNodes.map(node => {
+                    }}><${LaneLayer} lanes=${lanes} isDark=${isDark} /><${SVGEdgeLayer} edges=${edges} isDark=${isDark} groupColors=${groupColors} />${visibleNodes.map(node => {
                         const pos = positions.get(node.path);
                         if (!pos) return null;
                         return (
                             html`<${GraphNode} key=${node.path} node=${node} pos=${pos} groupColor=${groupColors.get(node.path)} isExpanded=${expandedSet.has(node.path)} isSelected=${selectedPath === node.path} isSearchMatch=${searchMatchPath === node.path} isDark=${isDark} onClick=${handleNodeClick} onDoubleClick=${handleNodeDoubleClick} onChevronClick=${handleChevronClick} onContextMenu=${handleContextMenu} />`
                         );
-                    })} </div>  <div class=${"absolute bottom-4 left-4 text-xs font-mono opacity-40"}> ${Math.round(zoom * 100)}% </div> </div> </div>`
-            )}  ${showSearch && (
+                    })}</div><div class=${"absolute bottom-4 left-4 text-xs font-mono opacity-40"}>${Math.round(zoom * 100)}%</div></div></div>`
+            )}${showSearch && (
                 html`<${SearchBar} onSearch=${handleSearchNavigate} onClose=${() => setShowSearch(false)} isDark=${isDark} />`
-            )} ${contextMenu && (
+            )}${contextMenu && (
                 html`<${ContextMenu} x=${contextMenu.x} y=${contextMenu.y} node=${contextMenu.node} onClose=${() => setContextMenu(null)} onAction=${handleContextAction} readonly=${status?.readonly} isDark=${isDark} hasClipboard=${!!clipboard} />`
-            )} ${modal?.type === 'edit' && (
+            )}${modal?.type === 'edit' && (
                 html`<${EditModal} node=${modal.node} onSave=${handleEditSave} onClose=${() => setModal(null)} isDark=${isDark} />`
-            )} ${modal?.type === 'addChild' && (
+            )}${modal?.type === 'addChild' && (
                 html`<${AddChildModal} parentNode=${modal.node} onSave=${handleAddChild} onClose=${() => setModal(null)} />`
-            )} ${modal?.type === 'delete' && (
+            )}${modal?.type === 'delete' && (
                 html`<${DeleteConfirmModal} node=${modal.node} onConfirm=${handleDelete} onClose=${() => setModal(null)} />`
-            )} ${modal?.type === 'rename' && (
+            )}${modal?.type === 'rename' && (
                 html`<${RenameKeyModal} node=${modal.node} onSave=${handleRename} onClose=${() => setModal(null)} />`
-            )} ${modal?.type === 'moveTo' && (
+            )}${modal?.type === 'moveTo' && (
                 html`<${MoveToModal} node=${modal.node} onMove=${(pp, from, to) => { handleMoveChild(pp, from, to); setModal(null); }} onClose=${() => setModal(null)} />`
-            )} ${modal?.type === 'saveAs' && (
+            )}${modal?.type === 'saveAs' && (
                 html`<${SaveAsModal} currentFile=${status?.file} onSave=${handleSaveAs} onBrowserSave=${(name) => { setModal(null); setToast(`Saved as ${name}`); fetchStatus(); }} onClose=${() => setModal(null)} />`
-            )} ${modal?.type === 'open' && (
+            )}${modal?.type === 'open' && (
                 html`<${OpenFileModal} onOpenContent=${handleOpenContent} onOpenPath=${handleOpenPath} onClose=${() => setModal(null)} error=${openError} />`
-            )} ${!noFileLoaded && (
+            )}${!noFileLoaded && (
                 html`<${Minimap} positions=${positions} viewBox=${{ x: -pan.x / zoom, y: -pan.y / zoom }} canvasSize=${{ width: canvasSize.width / zoom, height: canvasSize.height / zoom }} onNavigate=${handleMinimapNavigate} isDark=${isDark} />`
-            )} ${toast && html`<${Toast} message=${toast} onClose=${() => setToast(null)} />`} </div>`
+            )}${toast && html`<${Toast} message=${toast} onClose=${() => setToast(null)} />`}</div>`
     );
 };
 
-preact.render(html`<${ErrorBoundary}> <${App} /> <//>`, document.getElementById('root'));
+preact.render(html`<${ErrorBoundary}><${App} /><//>`, document.getElementById('root'));
 </script>
 </body>
 </html>"""

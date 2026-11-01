@@ -18,6 +18,22 @@ test('monotone path includes points and keeps a flat segment flat',()=>{
  const p=g.monotonePath([[0,0],[1,1],[2,1],[3,0]]);assert.match(p,/1[, ]1/);assert.match(p,/2[, ]1/);assert.match(p,/C[^C]*1[^C]*1[^C]*2[, ]1/);
  assert.equal(g.monotonePath([]),'');assert.match(g.monotonePath([[1,2]]),/^M\s*1[, ]2/);
 });
+const curveSegments=path=>[...path.matchAll(/C([^ ]+) ([^ ]+) ([^CL]+)/g)].map(match=>match.slice(1).map(pair=>pair.split(',').map(Number)));
+test('monotone curve control points never overshoot their segment',()=>{
+ const cases=[[[0,0],[1,1],[2,1],[3,0]],[[0,0],[1,10],[2,10.5],[3,30],[4,30],[5,2]],[[0,5],[2,1],[3,9],[7,9],[8,0]]];
+ for(const points of cases) {
+  const segments=curveSegments(g.monotonePath(points));assert.equal(segments.length,points.length-1);
+  segments.forEach(([c1,c2,end],i)=>{
+   const lo=Math.min(points[i][1],end[1]),hi=Math.max(points[i][1],end[1]);
+   for(const control of [c1,c2]) assert.ok(control[1]>=lo-1e-9&&control[1]<=hi+1e-9,`segment ${i} control ${control[1]} outside ${lo}..${hi}`);
+  });
+ }
+});
+test('monotone curve matches the old d3 monotoneX tangents and draws two points straight',()=>{
+ assert.equal(g.monotonePath([[0,0],[3,3]]),'M0,0L3,3');
+ const [first]=curveSegments(g.monotonePath([[0,0],[3,3],[6,0]]));
+ assert.deepEqual(first,[[1,1.5],[2,3],[3,3]]);
+});
 test('full circular arcs and degenerate geometry remain finite',()=>{
  const arc=g.arcPath(0,0,4,8,0,Math.PI*2);assert.ok((arc.match(/A/g)||[]).length>=4);
  const results=[g.monotonePath([]),g.monotonePath([[0,0]]),g.areaPath([],[]),g.arcPath(0,0,0,0,0,0),JSON.stringify(g.stack([{}],['x'],'sign')),JSON.stringify(g.niceTicks(0,0,5))];
@@ -32,7 +48,7 @@ test('components expose selectors, selection keys and tooltip payloads',()=>{
  const render=()=>{cursor=0;return w.svgCharts.HBarChart({items:[item],labelMaxChars:6,onSelect:value=>selected=value,tooltip:value=>{payload=value;return 'tip';}});};
  let tree=render(),bar=find(tree,n=>n.props?.class==='svgc-bar');assert.equal(bar.props.role,'button');let prevented=false;bar.props.onKeyDown({key:' ',preventDefault(){prevented=true;}});assert.equal(selected,item);assert.equal(prevented,true);
  const title=find(tree,n=>n.tag==='title');assert.equal(title.children[0],item.label);
- bar.props.onMouseMove({offsetX:12,offsetY:8});tree=render();assert.equal(payload.label,item.label);assert.equal(payload.payload[0].payload,item);assert.equal(payload.payload[0].value,7);
+ find(tree,n=>n.props?.class==='svgc-wrapper').props.onMouseMove({clientX:300,clientY:100,currentTarget:{getBoundingClientRect:()=>({left:0,top:0})}});tree=render();assert.equal(payload.label,item.label);assert.equal(payload.payload[0].payload,item);assert.equal(payload.payload[0].value,7);
  const donut=w.svgCharts.DonutChart({items:[item],onSelect:value=>selected=value});assert.equal(find(donut,n=>n.props?.class==='svgc-sector').props.role,'button');
 });
 test('cartesian plot renders references, curves and nearest-row tooltip',()=>{
@@ -85,7 +101,7 @@ test('optional x axis line uses requested stroke and defaults off',()=>{
 });
 test('explicit numeric y domains bound ticks and retain endpoints including degenerate domains',()=>{
  for(const [lo,hi] of [[0,11],[0,24],[-3,7],[4,4]]) {
-  const labels=renderCartesian({yDomain:[lo,hi]}).filter(n=>n.tag==='text'&&n.props['text-anchor']==='end');
+  const labels=renderCartesian({yDomain:[lo,hi],data:[{x:'a',v:lo},{x:'b',v:hi}]}).filter(n=>n.tag==='text'&&n.props['text-anchor']==='end');
   const values=labels.map(n=>Number(n.children[0]));assert.ok(values.includes(lo));assert.ok(values.includes(hi));
   assert.ok(values.every(v=>Number.isFinite(v)&&v>=lo&&v<=hi));
   assert.ok(labels.every(n=>Number.isFinite(n.props.y)&&n.props.y>=10&&n.props.y<=175));
@@ -102,8 +118,10 @@ test('tooltip placement flips and clamps to the chart and viewport intersection'
  assert.ok(right.left<390);
  const corner=place({x:2,y:2},size,chart,viewport);
  assert.ok(corner.left>=0 && corner.top>=0);
- const oversized=place({x:50,y:50},{width:600,height:500},chart,viewport);
- assert.equal(oversized.left,0);assert.equal(oversized.top,0);
+ // Tall tooltips may leave the chart, as the old page's did, so a viewport-height
+ // tooltip starts at the top of the viewport rather than the top of the chart.
+ const oversized=place({x:50,y:50},{width:600,height:350},chart,viewport);
+ assert.equal(oversized.left,0);assert.equal(oversized.top,-100);
 });
 test('all charts use a shared measured tooltip container with intrinsic width',()=>{
  const source=readFileSync(new URL('../frontend_vendor/svg_charts.js',import.meta.url),'utf8');
@@ -112,17 +130,19 @@ test('all charts use a shared measured tooltip container with intrinsic width',(
  assert.match(source,/getBoundingClientRect\(\)/);assert.match(css,/width:\s*max-content/);
  assert.equal((source.match(/tooltipNode\(tooltip,/g)||[]).length,4);
 });
-test('item chart pointer coordinates are relative to the chart wrapper',()=>{
+test('donut tooltip sits at the sector midpoint and horizontal bars track the pointer row',()=>{
  let state=[],cursor=0;const h=(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity).filter(Boolean)});
  const hooks={useRef:()=>({current:null}),useState(initial){const i=cursor++;return [state[i]??initial,value=>state[i]=value];},useEffect(){}};
  const w={preact:{h},preactHooks:hooks};vm.runInNewContext(readFileSync(new URL('../frontend_vendor/svg_charts.js',import.meta.url),'utf8'),{window:w});
- for(const [component,selector] of [['HBarChart','svgc-bar'],['DonutChart','svgc-sector']]) {
-  state=[];const render=()=>{cursor=0;return w.svgCharts[component]({items:[{label:'synthetic',value:1}],tooltip:()=>null});};
-  const all=root=>{const nodes=[];const visit=n=>{nodes.push(n);for(const c of n.children||[])if(typeof c==='object')visit(c);};visit(root);return nodes;};
-  const mark=all(render()).find(n=>n.props.class===selector);
-  mark.props.onMouseMove({clientX:155,clientY:220,offsetX:5,offsetY:6,currentTarget:{ownerSVGElement:{parentElement:{getBoundingClientRect:()=>({left:100,top:200})}}}});
-  const tooltip=all(render()).find(n=>typeof n.tag==='function');assert.equal(tooltip.props.position.x,55);assert.equal(tooltip.props.position.y,20);
- }
+ const all=root=>{const nodes=[];const visit=n=>{nodes.push(n);for(const c of n.children||[])if(typeof c==='object')visit(c);};visit(root);return nodes;};
+ const tip=root=>all(root).find(n=>typeof n.tag==='function');
+ state=[];let render=()=>{cursor=0;return w.svgCharts.DonutChart({items:[{label:'synthetic',value:1},{label:'other',value:1}],height:200,cy:90,startAngle:0,tooltip:()=>null});};
+ all(render()).find(n=>n.props.class==='svgc-sector').props.onMouseMove();
+ let position=tip(render()).props.position;assert.ok(Math.abs(position.x-200)<1e-6);assert.equal(position.y,90+67.5);
+ state=[];render=()=>{cursor=0;return w.svgCharts.HBarChart({items:[{label:'a',value:1},{label:'b',value:0}],height:205,tooltip:()=>null});};
+ const wrapper=all(render()).find(n=>n.props.class==='svgc-wrapper');
+ wrapper.props.onMouseMove({clientX:300,clientY:140,currentTarget:{getBoundingClientRect:()=>({left:0,top:0})}});
+ const tooltip=tip(render());assert.equal(tooltip.props.position.x,300);assert.equal(tooltip.props.position.y,128.75);
 });
 test('constrained tooltip permits scrolling and keeps hover stable while interacting',()=>{
  let state=[],cursor=0,effect;const h=(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity).filter(x=>x!=null&&x!==false)});
@@ -178,8 +198,8 @@ test('donut supports configurable start, direction and sector outline without ch
 test('horizontal axis uses round ticks without crowding a near-maximum endpoint',()=>{
  const nodes=renderItemChart('HBarChart',{items:[{label:'synthetic',value:11}],height:200});
  const ticks=nodes.filter(n=>n.props.class==='svgc-hbar-tick');
- assert.deepEqual(ticks.map(n=>Number(n.children[0])),[0,5,10,15]);
- assert.equal(ticks[0].props['text-anchor'],'start');assert.equal(ticks.at(-1).props['text-anchor'],'end');
+ assert.deepEqual(ticks.map(n=>Number(n.children[0])),[0,3,6,9,12]);
+ assert.ok(ticks.every(n=>n.props['text-anchor']==='middle'));
  const bar=nodes.find(n=>n.props.class==='svgc-bar');assert.ok(bar.props.x+bar.props.width<ticks.at(-1).props.x);
 });
 test('single-point area and line series expose finite visible and hidden value dots',()=>{
@@ -207,10 +227,11 @@ test('default formatted x tick selection adapts to width while explicit interval
  const labels=nodes=>nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='middle');
  const wide=render(800,opts),narrow=render(320,opts);assert.ok(labels(wide).length<60);assert.ok(labels(narrow).length<labels(wide).length);
  for(const nodes of [wide,narrow]) {
-  const x=labels(nodes).map(n=>n.props.x);for(let i=1;i<x.length;i++)assert.ok(x[i]-x[i-1]>=52);
-  assert.deepEqual(nodes.filter(n=>n.props.class==='svgc-grid-vertical').map(n=>n.props.x1),x);
+  const x=labels(nodes).map(n=>n.props.x);for(let i=1;i<x.length;i++)assert.ok(x[i]-x[i-1]>=38);
+  const grid=nodes.filter(n=>n.props.class==='svgc-grid-vertical').map(n=>n.props.x1);
+  assert.equal(grid[0],55);assert.equal(grid.at(-1),nodes===wide?790:310);assert.ok(grid.length<x.length+2);
  }
- assert.equal(labels(render(320,{...opts,tickEvery:6})).length,10);
+ assert.equal(labels(render(600,{...opts,tickEvery:6})).length,10);
 });
 test('legend renders decorative type symbols and retains button toggling and hidden state',()=>{
  const h=(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity).filter(x=>x!=null&&x!==false)});
@@ -218,9 +239,9 @@ test('legend renders decorative type symbols and retains button toggling and hid
  let toggled;const series=[{key:'a',label:'Alpha',color:'var(--a)',strokeDasharray:'5 3'}];
  const line=w.svgCharts.Legend({series,kind:'line',hidden:new Set(['a']),onToggle:key=>toggled=key});
  const button=line.children[0],symbol=button.children[0];assert.equal(button.tag,'button');assert.equal(button.props['aria-pressed'],false);button.props.onClick();assert.equal(toggled,'a');
- assert.equal(symbol.tag,'svg');assert.equal(symbol.props['aria-hidden'],'true');assert.equal(symbol.children[0].tag,'line');assert.equal(symbol.children[0].props.stroke,'var(--a)');assert.equal(symbol.children[0].props['stroke-dasharray'],'5 3');
- for(const kind of ['area','line']) {const marks=w.svgCharts.Legend({series,kind}).children[0].children[0].children;assert.deepEqual(marks.map(mark=>mark.tag),['line','circle']);assert.equal(marks[1].props.fill,'var(--a)');}
- assert.equal(w.svgCharts.Legend({series,kind:'bar'}).children[0].children[0].children[0].tag,'rect');
+ assert.equal(symbol.tag,'svg');assert.equal(symbol.props['aria-hidden'],'true');assert.equal(symbol.children[0].tag,'path');assert.equal(symbol.children[0].props.stroke,'var(--a)');assert.equal(symbol.children[0].props['stroke-dasharray'],'5 3');
+ for(const kind of ['area','line']) {const mark=w.svgCharts.Legend({series,kind}).children[0].children[0].children[0];assert.equal(mark.tag,'path');assert.equal(mark.props.fill,'none');assert.equal(mark.props['stroke-width'],4);}
+ {const mark=w.svgCharts.Legend({series,kind:'bar'}).children[0].children[0].children[0];assert.equal(mark.tag,'path');assert.equal(mark.props.fill,'var(--a)');assert.equal(mark.props.stroke,'none');}
  assert.ok(button.children.includes('Alpha'));
 });
 test('optional y axis line and reference opacity preserve default behavior',()=>{
@@ -230,4 +251,170 @@ test('optional y axis line and reference opacity preserve default behavior',()=>
  const line=custom.find(n=>n.props.class==='svgc-y-axis-line');assert.equal(line.props.stroke,'var(--axis)');assert.equal(line.props.x1,line.props.x2);
  assert.ok(custom.filter(n=>n.props.class==='svgc-reference-line').every(n=>n.props['stroke-opacity']===.5));
  assert.ok(renderCartesian({yAxisLine:true}).some(n=>n.props.class==='svgc-y-axis-line'));
+});
+function chartHarness(component,props) {
+ let state=[],cursor=0;const h=(tag,attrs,...children)=>({tag,props:attrs||{},children:children.flat(Infinity).filter(x=>x!==null&&x!==undefined&&x!==false)});
+ const hooks={useRef(initial=null){const i=cursor++;return state[i]??={current:initial};},useState(initial){const i=cursor++;return [i in state?state[i]:initial,value=>{state[i]=value;}];},useEffect(){}};
+ const w={preact:{h},preactHooks:hooks};vm.runInNewContext(readFileSync(new URL('../frontend_vendor/svg_charts.js',import.meta.url),'utf8'),{window:w});
+ const nodes=()=>{cursor=0;const out=[];const visit=n=>{out.push(n);for(const c of n.children||[])if(typeof c==='object')visit(c);};visit(w.svgCharts[component](props));return out;};
+ const pick=cls=>nodes().filter(n=>n.props.class===cls);
+ const moveTo=(x,y)=>pick('svgc-wrapper')[0].props.onMouseMove({clientX:x,clientY:y,currentTarget:{getBoundingClientRect:()=>({left:0,top:0}),querySelector:()=>null}});
+ return {nodes,pick,moveTo,svg:()=>nodes().find(n=>n.tag==='svg')};
+}
+const rows=[{x:'a',p:2,q:3},{x:'b',p:4,q:1},{x:'c',p:1,q:6}];
+const stackedSeries=[{key:'p',stack:true,color:'#111'},{key:'q',stack:true,color:'#222'}];
+const finite=nodes=>assert.doesNotMatch(JSON.stringify(nodes.map(n=>n.props),(k,v)=>typeof v==='number'&&!Number.isFinite(v)?String(v):v),/NaN|Infinity/);
+test('a series beyond the spread argument limit renders without a stack overflow',()=>{
+ const data=Array.from({length:130000},(_,i)=>({x:`b${i}`,a:i%7,b:i%5}));
+ const nodes=renderCartesian({data,kind:'line',series:[{key:'a'},{key:'b'}]});
+ assert.equal(nodes.filter(n=>n.props.class==='svgc-curve').length,2);
+ assert.ok(renderItemChart('HBarChart',{items:Array.from({length:130000},(_,i)=>({label:`i${i}`,value:i%3})),height:400}).length>0);
+});
+test('cartesian surface is keyboard reachable and arrow keys move the tooltip and active marks',()=>{
+ let payload;const chart=chartHarness('CartesianChart',{data:rows,xKey:'x',series:stackedSeries,width:300,height:200,tooltip:p=>{payload=p;return 'tip';}});
+ const surface=()=>chart.svg().props;assert.equal(surface().tabindex,0);assert.equal(surface().role,'application');
+ surface().onFocus({currentTarget:{matches:()=>true}});chart.nodes();assert.equal(payload.label,'a');
+ const key=name=>{let prevented=false,stopped=false;surface().onKeyDown({key:name,currentTarget:{matches:()=>true},preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});return {prevented,stopped};};
+ assert.deepEqual(key('ArrowRight'),{prevented:true,stopped:true});chart.nodes();assert.equal(payload.label,'b');
+ assert.equal(chart.pick('svgc-active-dot').length,2);assert.equal(chart.pick('svgc-cursor').length,1);
+ key('ArrowRight');key('ArrowRight');chart.nodes();assert.equal(payload.label,'c');
+ key('ArrowLeft');chart.nodes();assert.equal(payload.label,'b');
+ surface().onFocus({currentTarget:{matches:()=>false}});
+ assert.deepEqual(key('ArrowRight'),{prevented:true,stopped:false});chart.nodes();assert.equal(payload.label,'c');
+ surface().onFocus({currentTarget:{matches:()=>true}});
+ key('ArrowLeft');chart.nodes();assert.equal(payload.label,'b');
+ assert.deepEqual(key('a'),{prevented:false,stopped:false});
+ key('Escape');assert.equal(chart.pick('svgc-active-dot').length,0);
+ surface().onFocus({currentTarget:{matches:()=>false}});assert.equal(chart.pick('svgc-cursor').length,0);
+ surface().onFocus({currentTarget:{matches:()=>true}});assert.equal(chart.pick('svgc-cursor').length,1);
+ surface().onBlur({currentTarget:{parentElement:{contains:()=>false}},relatedTarget:null});assert.equal(chart.pick('svgc-cursor').length,0);
+ assert.equal(chartHarness('CartesianChart',{data:rows,xKey:'x',series:stackedSeries,width:300}).svg().props.tabindex,undefined);
+});
+test('hover draws a cursor line and active dots at the stacked value, or a band behind bars',()=>{
+ const chart=chartHarness('CartesianChart',{data:rows,xKey:'x',series:stackedSeries,width:300,height:200,yDomain:[0,8],tooltip:()=>'tip'});
+ assert.equal(chart.pick('svgc-cursor').length,0);chart.moveTo(150,80);
+ const line=chart.pick('svgc-cursor')[0];assert.equal(line.tag,'line');assert.equal(line.props.stroke,'#ccc');assert.equal(line.props.x1,line.props.x2);
+ const dots=chart.pick('svgc-active-dot');assert.equal(dots.length,2);
+ assert.equal(dots[0].props.fill,'#111');assert.equal(dots[0].props.r,4);assert.equal(dots[0].props.stroke,'#fff');
+ assert.ok(dots[1].props.cy<dots[0].props.cy,'second dot sits on the stacked total');
+ const bars=chartHarness('CartesianChart',{kind:'bar',data:rows,xKey:'x',series:stackedSeries,width:300,height:200,tooltip:()=>'tip'});
+ bars.moveTo(150,80);const band=bars.pick('svgc-cursor')[0];assert.equal(band.tag,'rect');assert.equal(bars.pick('svgc-active-dot').length,0);
+ const paint=bars.svg().children.map(n=>n.props?.class);
+ assert.ok(paint.indexOf("svgc-cursor")<paint.indexOf("svgc-bar"),"band is painted behind the bars");
+ assert.equal(chartHarness('CartesianChart',{data:rows,xKey:'x',series:stackedSeries,width:300,height:200}).pick('svgc-cursor').length,0);
+});
+test('tooltip appears only inside the plot and clears outside it',()=>{
+ const chart=chartHarness('CartesianChart',{data:rows,xKey:'x',series:stackedSeries,width:300,height:200,tooltip:()=>'tip'});
+ const shown=()=>chart.nodes().some(n=>typeof n.tag==='function');
+ chart.moveTo(150,80);assert.ok(shown());
+ chart.moveTo(30,80);assert.ok(!shown(),'Y gutter');
+ chart.moveTo(150,80);chart.moveTo(150,190);assert.ok(!shown(),'X labels');
+ chart.moveTo(150,80);chart.moveTo(150,3);assert.ok(!shown(),'above the plot');
+});
+test('tall tooltips are limited by the viewport, not the chart, and stay on screen',()=>{
+ const chart={left:0,top:400,right:800,bottom:700},viewport={left:0,top:0,right:1000,bottom:900};
+ const placed=g.tooltipPosition({x:100,y:150},{width:200,height:560},chart,viewport);
+ assert.ok(chart.top+placed.top>=0);assert.ok(chart.top+placed.top+560<=900);
+ const fits=g.tooltipPosition({x:100,y:20},{width:200,height:100},chart,viewport);assert.equal(fits.top,30);
+ const source=readFileSync(new URL('../frontend_vendor/svg_charts.js',import.meta.url),'utf8');
+ assert.match(source,/maxHeight=`\$\{viewport\.bottom-viewport\.top\}px`/);
+});
+test('domains always contain the data and non-finite bounds fall back to the data',()=>{
+ const yLabels=nodes=>nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='end');
+ const data=[{x:'a',v:-2},{x:'b',v:83}];
+ for(const yDomain of [[0,5],['auto','auto'],[0,'auto'],[null,null],[NaN,Infinity]]) {
+  const nodes=renderCartesian({kind:'line',data,yDomain});finite(nodes);
+  const labels=yLabels(nodes);assert.ok(labels.every(n=>n.props.y>=10&&n.props.y<=175),String(yDomain));
+  const values=labels.map(n=>Number(n.children[0]));assert.ok(Math.min(...values)<=-2&&Math.max(...values)>=83,String(yDomain));
+  const curve=nodes.find(n=>n.props.class==='svgc-curve').props.d.match(/-?[\d.]+/g).map(Number).filter((_,i)=>i%2);
+  assert.ok(curve.every(v=>v>=10-1e-6&&v<=175+1e-6),String(yDomain));
+ }
+ assert.deepEqual(plain(g.axisDomain(["auto","auto"],5,9).ticks),[5,6,7,8,9]);
+ const fixed=renderCartesian({kind:'bar',data:[{x:'a',v:5}],yDomain:[2,8]}).find(n=>n.props.class==='svgc-bar');
+ assert.equal(fixed.props.y+fixed.props.height,175);
+});
+test('tick rules match the old axis on the cases the reviewers measured',()=>{
+ assert.deepEqual(plain(g.niceTicks(-100,130,5)),[-130,-65,0,65,130]);
+ assert.deepEqual(plain(g.niceTicks(0,74,5)),[0,20,40,60,80]);
+ assert.deepEqual(plain(g.niceTicks(0,0,5)),[0,1,2,3,4]);
+ assert.deepEqual(plain(g.fixedTicks(0,12.6,5)),[0,4,8,12,12.6]);
+ assert.deepEqual(plain(g.fixedTicks(0,21.35,5)),[0,6,12,18,21.35]);
+ assert.deepEqual(plain(g.fixedTicks(-2,6.31,5)),[-2,1,4,6.31]);
+ assert.deepEqual(plain(g.fixedTicks(4,4,5)),[4]);
+ assert.deepEqual(plain(g.niceTicks(0,.36,5)),[0,.09,.18,.27,.36]);
+});
+test('negative horizontal bars draw from zero and stay hoverable',()=>{
+ const chart=chartHarness('HBarChart',{items:[{label:'loss',value:-4},{label:'gain',value:8}],height:200,tooltip:p=>p.payload[0].value});
+ const [loss,gain]=chart.pick('svgc-bar');assert.ok(loss.props.width>0);assert.ok(gain.props.width>0);
+ assert.equal(loss.props.x+loss.props.width,gain.props.x);finite(chart.nodes());
+ const values=chart.pick('svgc-hbar-tick').map(n=>Number(n.children[0]));assert.ok(Math.min(...values)<=-4);
+ chart.moveTo(loss.props.x+1,40);assert.equal(chart.nodes().find(n=>typeof n.tag==='function').props.position.y,5+40);
+});
+test('horizontal bars round only the far end, keep axis lines and label rule, and clear outside rows',()=>{
+ const label='a'.repeat(20),longer='b'.repeat(21);
+ const chart=chartHarness('HBarChart',{items:[{label,value:4},{label:longer,value:1},{label:'zero',value:0}],height:200,labelMaxChars:20,tooltip:()=>'tip'});
+ assert.equal(g.barPath(10,50,0,10),'M10,0L46,0A4,4 0 0 1 50,4L50,6A4,4 0 0 1 46,10L10,10Z');
+ assert.equal(chart.pick('svgc-hbar-axis').length,1);assert.equal(chart.pick('svgc-hbar-category-axis').length,1);
+ assert.ok(chart.pick('svgc-tick-line').length>=8);
+ const labels=chart.nodes().filter(n=>n.tag==='text'&&n.props['text-anchor']==='end').map(n=>n.children.at(-1));
+ assert.deepEqual(labels,[label,`${'b'.repeat(18)}…`,'zero']);
+ chart.moveTo(300,130);assert.equal(chart.pick('svgc-cursor').length,1);
+ chart.moveTo(60,130);assert.equal(chart.pick('svgc-cursor').length,0);
+});
+test('leaving a donut sector hides its tooltip and unselectable sectors are not buttons',()=>{
+ const items=[{label:'a',value:1},{label:'Other (2)',value:1,selectable:false}];
+ const chart=chartHarness('DonutChart',{items,height:200,onSelect(){},tooltip:()=>'tip'});
+ const [first,other]=chart.pick('svgc-sector');assert.equal(first.props.role,'button');assert.equal(other.props.role,undefined);assert.equal(other.props.tabindex,undefined);assert.equal(other.props.onClick,undefined);
+ first.props.onMouseMove();assert.ok(chart.nodes().some(n=>typeof n.tag==='function'));
+ chart.pick('svgc-sector')[0].props.onMouseLeave();assert.ok(!chart.nodes().some(n=>typeof n.tag==='function'));
+});
+test('x labels keep the last label, stay inside the svg and respect width with a fixed interval',()=>{
+ const data=Array.from({length:30},(_,i)=>({x:`2026-10-${String(i+1).padStart(2,'0')}`,v:i}));
+ const labels=nodes=>nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='middle');
+ for(const width of [320,600,1200]) {
+  const shown=labels(renderCartesian({width,data,margin:{right:5}}));
+  assert.equal(shown.at(-1).children[0],'2026-10-30');
+  const half=shown.at(-1).children[0].length*11*.6/2;assert.ok(shown.at(-1).props.x+half<=width);
+ }
+ const dense=labels(renderCartesian({width:320,data,tickEvery:2}));
+ for(let i=1;i<dense.length;i++)assert.ok(dense[i].props.x-dense[i-1].props.x>=66);
+});
+test('all-zero series use the old zero to four axis with the baseline at the bottom',()=>{
+ const nodes=renderCartesian({data:[{x:'a',v:0},{x:'b',v:0}],yFormat:String});
+ assert.deepEqual(nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='end').map(n=>n.children[0]),['0','1','2','3','4']);
+ const spark=renderCartesian({compact:true,height:28,margin:{top:0,right:0,bottom:0,left:0},data:[{x:'a',v:0},{x:'b',v:0}]});
+ assert.match(spark.find(n=>n.props.class==='svgc-curve').props.d,/^M0,28/);
+ assert.ok(renderItemChart('HBarChart',{items:[{label:'a',value:0}],height:200}).filter(n=>n.props.class==='svgc-hbar-tick').length>=2);
+});
+test('grouped bars keep the four pixel gap, zero bars draw nothing and y labels centre on gridlines',()=>{
+ const nodes=renderCartesian({kind:'bar',width:800,data:[{x:'a',p:3,q:5,r:0}],series:[{key:'p'},{key:'q'},{key:'r'}]});
+ const bars=nodes.filter(n=>n.props.class==='svgc-bar');assert.equal(bars.length,2);
+ assert.equal(bars[1].props.x-(bars[0].props.x+bars[0].props.width),4);
+ const tick=nodes.find(n=>n.tag==='text'&&n.props['text-anchor']==='end');assert.equal(tick.props.dy,'.355em');
+ const marks=renderCartesian({tickLine:'var(--tick)'}).filter(n=>n.props.class==='svgc-tick-line');assert.ok(marks.length>0&&marks.every(n=>n.props.stroke==='var(--tick)'));
+ assert.equal(renderCartesian({}).filter(n=>n.props.class==='svgc-tick-line').length,0);
+});
+test('chart wrapper is out of flow so the svg cannot hold a shrinking parent open',()=>{
+ for(const nodes of [renderCartesian({}),renderItemChart('DonutChart',{items:[]}),renderItemChart('HBarChart',{items:[]})]) {
+  assert.equal(nodes.find(n=>n.props.class==='svgc-wrapper').props.style.position,'absolute');
+  assert.equal(nodes.find(n=>n.props.class==='svgc-responsive').props.style.position,'relative');
+ }
+});
+test('axis labels move inward at the chart edge while their marks and gridlines stay on the data',()=>{
+ const data=[0,1,2,3].map(i=>({x:`synthetic-category-${i}`,v:[0,3,6,24.94][i]}));
+ const nodes=renderCartesian({width:400,data,margin:{top:5,right:5,left:70,bottom:35},yDomain:[0,24.94],tickLine:'#123',
+  grid:{horizontal:true,vertical:true}});
+ const yLabels=nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='end');
+ const horizontal=nodes.filter(n=>n.props.class==='svgc-grid-horizontal').map(n=>n.props.y1);
+ assert.equal(yLabels.at(-1).children.join(''),'24.94');assert.ok(yLabels.at(-1).props.y>5);assert.ok(horizontal.includes(5));
+ const xLabels=nodes.filter(n=>n.tag==='text'&&n.props['text-anchor']==='middle');
+ const marks=nodes.filter(n=>n.props.class==='svgc-tick-line'&&n.props.x1===n.props.x2).map(n=>n.props.x1);
+ assert.equal(marks.at(-1),395);assert.ok(xLabels.at(-1).props.x<395);
+});
+test('tooltips flip inside the plot, not the whole chart',()=>{
+ const viewport={left:0,top:0,right:2000,bottom:2000},chart={left:0,top:0,right:1000,bottom:380};
+ const plot={left:75,top:5,right:995,bottom:320};
+ assert.equal(g.tooltipPosition({x:500,y:190,plot},{width:176,height:131},chart,viewport).top,49);
+ assert.equal(g.tooltipPosition({x:500,y:60,plot},{width:176,height:131},chart,viewport).top,70);
+ assert.equal(g.tooltipPosition({x:500,y:60,plot},{width:176,height:300},chart,viewport).top,5);
 });
